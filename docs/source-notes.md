@@ -21,7 +21,9 @@
 
 项目正式名称为 **TAP（Test Automation Platform）**。
 
-2026-08-20 的后续决策进一步确认：**第一交付阶段优先构建 RAG Foundation**，Agent 编排、Test IR 编译和测试执行闭环顺延到后续阶段。
+2026-08-20 的后续决策确认：**第一交付阶段优先构建 RAG Foundation**，Agent 编排、Test IR 编译和测试执行闭环顺延到后续阶段。
+
+2026-08-21 的进一步要求确认：Phase 1 基于 **Azure AI Search**，必须写清分型数据切片、端到端溯源和可重复检索调优，并交付一个参考 Codex/Claude Code 交互模式的 Knowledge Chat。这里参考的是 Project/Conversation、流式状态、中断、排队追问、资源引用和证据侧栏，不复制品牌或隐藏推理展示。
 
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
@@ -30,9 +32,9 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 Core = Test IR + Git versioning + unified execution evidence
 ```
 
-确认的产品形态：
+原始会话确认、并由 2026-08-21 交互决策继续演进的产品形态：
 
-- Manus 式自然语言交互。
+- 原讨论以 Manus 为自然语言交互标杆；当前 Phase 1 明确改为参考 Codex/Claude Code 的 Project/Conversation、流式状态、中断、队列和证据交互。
 - BrowserStack 式测试执行/低代码资产体验。
 - Git 式可审查、可编辑、可版本化测试资产。
 - 内网环境不能把 BrowserStack 或 Manus 当必需运行依赖。
@@ -65,7 +67,7 @@ Core = Test IR + Git versioning + unified execution evidence
 
 ## 官方资料校正
 
-以下资料用于校正产品事实，不替代 `engprod` 中的业务约束与决策（访问日期：2026-08-20）。
+以下资料用于校正产品事实，不替代 `engprod` 中的业务约束与决策（访问日期：2026-08-21）。
 
 ### DeepSeek Harness
 
@@ -91,9 +93,23 @@ Core = Test IR + Git versioning + unified execution evidence
 
 - [Azure AI Search documentation](https://learn.microsoft.com/en-us/azure/search/)
 - [Hybrid search overview](https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview)
+- [RRF ranking and debug subscores](https://learn.microsoft.com/en-us/azure/search/hybrid-search-ranking)
+- [Vector filter modes](https://learn.microsoft.com/en-us/azure/search/vector-search-filters)
+- [Index projections](https://learn.microsoft.com/en-us/azure/search/search-how-to-define-index-projections)
+- [Structure-aware document chunking](https://learn.microsoft.com/en-us/azure/search/search-how-to-semantic-chunking)
+- [Semantic ranker configuration](https://learn.microsoft.com/en-us/azure/search/semantic-how-to-configure)
+- [Scoring profiles](https://learn.microsoft.com/en-us/azure/search/index-add-scoring-profiles)
+- [Naming rules and document keys](https://learn.microsoft.com/en-us/rest/api/searchservice/naming-rules)
 - [Security filters for result trimming](https://learn.microsoft.com/en-us/azure/search/search-security-trimming-for-azure-search)
 
-采用的事实：Azure AI Search 支持全文与向量混合查询、RRF 融合及查询期过滤。四索引、AST/Symbol 检索、Parent/Child 与轻量依赖图是 TAP 的应用层设计。
+采用的事实：Azure AI Search 支持全文与向量混合查询、RRF 融合、semantic rerank 及查询期过滤；`preFilter` 优先保障过滤后召回。Index Projection 属于 Indexer + Skillset 管线，不是 Push API 通用能力。四索引、typed chunking、稳定身份、AST/Symbol 检索、Parent/Child、跨索引 RRF 与轻量依赖图是 TAP 的应用层设计。
+
+### Knowledge Chat 交互参考
+
+- [OpenAI Projects and chats](https://learn.chatgpt.com/docs/projects)
+- [Anthropic Claude Code interactive mode](https://code.claude.com/docs/en/interactive-mode)
+
+采用的事实：Project/Conversation 可组织相关来源和独立目标；交互式编码会话支持恢复、流式进度、中断与运行中排队消息。TAP 将这些模式用于知识问答，并自行定义身份、ACL、Citation、Trace、视觉与 API；不声称复刻任一产品。
 
 ### LiteLLM
 

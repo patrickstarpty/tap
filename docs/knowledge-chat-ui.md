@@ -1,0 +1,232 @@
+# TAP Knowledge Chat
+
+| 字段 | 值 |
+| --- | --- |
+| 阶段 | Phase 1 正式交付物 |
+| 目标 | 用一个可持续使用的聊天界面验收 RAG 的权限、检索、回答、引用与反馈闭环 |
+| 交互参考 | Codex 与 Claude Code 的项目/会话、流式状态、中断、排队追问和资源引用模式 |
+| 边界 | 借鉴交互模型，不复制品牌、视觉资产或像素布局；Phase 1 不执行 Shell、代码修改或测试任务 |
+
+## 1. 产品目标
+
+`TAP Knowledge Chat` 是 RAG 的首个正式用户面，而不是临时 Demo。用户在有权限的 Project 中发起知识问答，观察检索阶段，获得带逐条引用的回答，并能打开不可变 source revision 的原文证据。
+
+Phase 1 不把它扩展为通用 Agent：没有工具执行、多 Agent 规划、Test IR 编辑、Git 写入、测试运行或审批流。后续阶段在同一会话外壳中增加这些能力，但不能改变 Phase 1 已冻结的 Retrieval 与 Citation 契约。
+
+## 2. 页面布局
+
+```text
+┌─ Projects / Conversations ─┬──────────── TAP Knowledge Chat ────────────┬─ Sources / Claims / Trace ─┐
+│ Project switcher            │ Project · Environment · Corpus version    │ Sources                     │
+│ + New conversation          │ Scope chips                               │ Claims                      │
+│ Search / pin / status       │                                           │ Retrieval Trace (restricted)│
+│                             │ User question                             │                             │
+│ Conversation history        │ Observable retrieval stages               │ Exact revision + anchor     │
+│                             │ Streaming answer with [1] [2] citations   │ Chunk lineage               │
+│                             │                                           │                             │
+│                             │ Queued follow-ups                         │                             │
+│                             │ @resource  /command  [composer] [stop/send]│                             │
+└─────────────────────────────┴───────────────────────────────────────────┴─────────────────────────────┘
+```
+
+### 左栏：Project 与会话
+
+- 只列出当前 Entra 身份可访问的 Project 和会话。
+- Project 保存默认 `environment`、source families 与 corpus scope；客户端选择只能收窄范围，不能扩大权限。
+- 支持新建、搜索、置顶和恢复会话。一个独立问题目标建议使用一个会话，避免上下文无界增长。
+- 每个 turn 固化 `corpusVersion`、`retrievalProfileId`、`traceId` 和回答模型版本。
+
+### 中栏：问答工作区
+
+- 顶部明确展示 Project、Environment、Corpus version 和有效 scope chips。
+- 回答期间展示结构化阶段：`理解问题 → 检索 → 融合 → 重排 → 组织答案 → 校验引用`。
+- 阶段只展示可审计事件、命中数量、降级状态和耗时；不展示模型隐藏思维链、系统提示词或内部推理文本。
+- 回答以 Markdown 流式呈现；每个实质 claim 后显示可点击的 `[1]`、`[2]` 引用。
+- Composer 固定在底部，支持键盘操作、`@resource`、`/command`、发送与停止。
+
+### 右栏：证据与诊断
+
+- 默认折叠；普通用户可查看 Sources 与 Claims。
+- 点击引用后打开证据卡，并定位精确 revision 与 structural anchor。
+- 只有 `RAG-Diagnostics-Reader` 角色可打开完整 Retrieval Trace；Trace 每次读取重新授权并审计。
+
+## 3. 核心交互
+
+### 3.1 流式回答与恢复
+
+浏览器通过 SSE 接收持久化事件。刷新或网络中断后用 `Last-Event-ID` 续传；不能重新执行已经完成的检索或产生第二份回答。页面同时展示稳定的 `turnId`、运行状态和降级信息。
+
+### 3.2 中断与立即纠偏
+
+- 生成期间“发送”变为“停止”，`Esc` 也可中断。
+- 前端等待 cancel acknowledgement 后再把 turn 标记为 `canceled`；已经生成的文本保留但标记“已中断”，不能伪装成完整答案。
+- 用户可在运行中选择“中断并立即发送”纠偏消息；新 turn 只能在旧 turn cancel 已确认后开始，避免输出交错。
+
+### 3.3 排队追问
+
+- 当前 turn 运行时，按 Enter 把消息加入 composer 上方的队列。
+- 队列项可编辑、删除和调整顺序；每一项在前一 turn 完成后创建独立 turn。
+- 禁止把队列内容静默拼入正在执行的 query，否则 trace、引用和幂等语义都会失真。
+
+### 3.4 Slash command
+
+Phase 1 支持：
+
+| 命令 | 行为 |
+| --- | --- |
+| `/new` | 新建会话 |
+| `/scope` | 查看或收窄 Project、Environment、source family |
+| `/status` | 查看当前 turn、corpus 与检索 profile 状态 |
+| `/trace` | 打开当前 turn 的证据摘要；完整诊断受角色限制 |
+| `/debug` | 诊断角色临时请求可审计 debug 信息，不改变生产 profile |
+| `/feedback` | 打开结构化反馈表单 |
+| `/clear` | 清空未发送 composer 内容，不删除审计历史 |
+
+命令由前端解析为显式 API 操作，不能作为自然语言拼接给模型。
+
+### 3.5 `@` 资源引用
+
+输入 `@` 后按用户权限搜索并选择：
+
+```text
+@doc:architecture
+@code:CheckoutService.submit
+@bdd:test_checkout_happy_path
+@failure:payment-timeout
+```
+
+选中后生成稳定 resource chip，发送 `sourceId + requestedRevision + anchor`，而不是只把展示文本塞进 prompt。BFF 重新授权后才把它转为检索约束；无权限、revision 已删除或越出当前 Project 的引用必须 fail closed。
+
+### 3.6 编辑、重试与反馈
+
+- “编辑并重试”从被编辑消息创建新 turn，并保留原 turn 作为不可变历史；不能覆盖旧 trace。
+- 回答下方提供 👍/👎。负反馈原因至少包括：答案错误、缺少/错误引用、来源过期、敏感信息、检索遗漏、速度慢。
+- 反馈绑定 `turnId + traceId + corpusVersion + retrievalProfileId`，可进入 Golden Dataset 候选；不得直接在线改变排序权重。
+
+## 4. 引用与溯源体验
+
+普通证据卡展示：
+
+- 标题、source family、可安全展示的来源名。
+- `sourceRevision`、structured anchor、`indexedAt`。
+- 命中片段及关键词高亮。
+- `chunkId`、`logicalChunkId`、`sourceContentHash`、`chunkContentHash` 和内容角色（原文或派生摘要）。
+- “打开原始来源”和“查看上下文”；均经 Citation Resolver 重新授权，不把内部 Blob/Git URI 直接暴露给浏览器。
+
+不同语料的精确定位：
+
+| 类型 | 定位方式 |
+| --- | --- |
+| 文档 | heading path、页码/bounding box 或字符 offset |
+| 代码 | `repo@commit/path#Lx-Ly` 与 symbol |
+| BDD | Feature → Scenario → Step 与 stable Test ID |
+| Failure | incident、run、fingerprint、时间窗口和 evidence reference |
+
+模型只允许输出 prompt 中分配的 evidence label。服务端将 label 映射为 Citation；不存在的 label、模型生成 URL 或不属于本 turn context 的 chunk 一律拒绝。派生 summary 必须显式标为 `generated_summary` 并列出 `derivedFromChunkIds`，不能伪装成原文证据。
+
+历史答案本身也可能含敏感内容。恢复会话、展开答案、打开引用或查看原文时都按当前 ACL 重新授权；撤权或语料权限收紧后，相关内容锁定为“权限或语料已变化，请重新回答”，不能通过旧聊天继续查看摘录。
+
+## 5. Retrieval Trace Inspector
+
+诊断角色可查看：
+
+1. 原始/规范化 query、Query Class 与有界分解 query。
+2. 目标 index family、physical index、schema/corpus/profile/model version。
+3. server-side scope 与脱敏 ACL digest。
+4. exact、BM25、vector 候选及 rank；Azure 单索引 RRF 与 TAP 跨索引 RRF 分开显示。
+5. rerank 前后顺序、parent/adjacent/dependency expansion 和淘汰原因。
+6. 最终 context、token budget、引用校验、各阶段耗时与 degraded/abstain 原因。
+
+Trace 不显示隐藏思维链、系统提示词、原始 group IDs、秘密、完整 filter 表达式或未授权候选内容。`traceId` 只是关联标识，不是访问凭证。
+
+## 6. 前后端 API
+
+浏览器只访问 TAP BFF；绝不直连 Azure AI Search、LiteLLM、MySQL、Blob 或 Git。
+
+```text
+POST   /v1/chats
+GET    /v1/projects/{projectId}/chats
+GET    /v1/chats/{chatId}
+POST   /v1/chats/{chatId}/turns
+POST   /v1/turns/{turnId}/cancel
+GET    /v1/chats/{chatId}/queue
+POST   /v1/chats/{chatId}/queue
+PATCH  /v1/chats/{chatId}/queue/{messageId}
+DELETE /v1/chats/{chatId}/queue/{messageId}
+GET    /v1/turns/{turnId}/events
+POST   /v1/turns/{turnId}/feedback
+GET    /v1/citations/{citationId}
+GET    /v1/retrieval/traces/{traceId}
+```
+
+SSE 事件至少包括：
+
+```text
+turn.started
+stage.started
+stage.completed
+retrieval.hits_ready
+rerank.completed
+answer.delta
+citation.resolved
+turn.completed
+turn.abstained
+turn.degraded
+turn.canceled
+turn.failed
+```
+
+每个事件包含单调递增 `eventId`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；事件重放不能触发新的模型或检索调用。正式 DTO 和状态约束见 [Knowledge Chat Contract](contracts.md#9-knowledge-chat-contract)。
+
+## 7. 前端实现基线
+
+- React + TypeScript；是否采用 Next.js 由企业部署与现有 Design System 决定。
+- Entra ID 登录，BFF 换取服务端可信身份/策略上下文。
+- REST 承担 mutation，SSE 承担单向事件和 answer delta；断线恢复依赖持久事件游标。
+- 消息、引用、queue 与运行状态按服务端事实归并，不在浏览器猜测最终状态。
+- 可访问性覆盖键盘、焦点管理、屏幕阅读器和非颜色状态提示。
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> submitting
+    submitting --> running: turn.started
+    running --> stopping: cancel requested
+    stopping --> canceled: turn.canceled
+    running --> completed: turn.completed
+    running --> abstained: turn.abstained
+    running --> running: turn.degraded (advisory)
+    running --> failed: turn.failed
+    completed --> idle
+    abstained --> idle
+    canceled --> idle
+    failed --> idle
+```
+
+`turn.degraded` 只更新运行中的告警 badge，不是终态；随后必须收到 completed、abstained、canceled 或 failed。最终回答同时固化 `degradedMode` 与原因。
+
+## 8. 安全要求
+
+- Public Chat DTO 不接受 `tenantId`、group IDs、classification ceiling 或任意 filter；BFF 从 Entra 与 Policy 服务注入，客户端 scope 只能做交集。
+- Markdown 使用 allowlist sanitizer；代码块作为文本渲染；链接只允许批准的 URL scheme，并经 Citation Resolver 跳转，防止 XSS、伪造链接和路径泄漏。
+- Cookie/session 使用 Secure、HttpOnly、SameSite 与 CSRF 防护；设置严格 CSP，禁止内联脚本和任意外域资源。
+- 每次 Citation、Trace、历史 turn 与 source preview 读取都重新授权并记录审计；防止 citation/trace IDOR。
+- 外部文档内容一律视为不可信数据；不得借 prompt injection 影响 ACL、工具或系统指令。Phase 1 没有工具执行能力。
+
+## 9. Phase 1 验收
+
+- 完成 `选择 Project → 新建/恢复会话 → 流式提问 → 查看活动摘要 → 打开精确引用 → 反馈` 的端到端链路。
+- 刷新/断线后可从 SSE cursor 恢复，不能重复生成 turn。
+- 可停止、排队、编辑或撤销追问，不产生交错回答。
+- 每个非拒答实质 claim 至少一个可解析引用；引用定位到相同 source/chunk hash 的不可变 revision/anchor。
+- 证据不足、冲突来源、revision mismatch、degraded mode 与 canceled 都有独立视觉状态。
+- 撤权后不能从历史会话、旧引用或 Trace 读取受限内容。
+- 恶意 Markdown、伪造 citation、越权 resource chip 和客户端伪造 ACL 的安全测试通过。
+- 反馈能关联 Retrieval Trace 并生成可评审的 Golden Dataset 候选。
+
+## 10. 交互参考
+
+- [OpenAI Projects and chats](https://learn.chatgpt.com/docs/projects)：Project、相关会话与来源上下文的组织方式。
+- [Anthropic Claude Code interactive mode](https://code.claude.com/docs/en/interactive-mode)：可恢复会话、运行中排队消息、中断、状态与 transcript 交互。
+
+这些资料只用于校正公开交互事实；TAP 的视觉设计、权限模型、API 和数据契约保持独立。

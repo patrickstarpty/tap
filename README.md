@@ -4,7 +4,7 @@ TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化�
 
 ## 一句话架构
 
-TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心，企业形态在 AKS 上提供“Manus 式自然语言交互、BrowserStack 式测试资产管理、Git 式可审查可编辑代码”；模型、Agent Harness、BrowserStack 和自建执行网格都通过适配层接入。
+TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心。Phase 1 先在 AKS 上交付基于 Azure AI Search 的 RAG 与参考 Codex/Claude Code 交互模式的 Knowledge Chat；后续逐步加入 BrowserStack 式测试资产管理和 Git 式可审查可编辑代码。模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
 
 已确认的企业技术栈：
 
@@ -21,6 +21,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - 同时支持内网自建 Browser/Device Grid 与 BrowserStack，避免单一供应商依赖。
 - 通过 LiteLLM 统一路由 Chat、Coder、Embedding、Reranker、Vision 模型。
 - 默认隔离不可信代码，限制凭证、网络和高风险工具调用。
+- 第一阶段提供可持续使用的 Project/Conversation 知识问答页面，并用逐条引用、Trace 与反馈闭环验收 RAG。
 
 ## 非目标
 
@@ -33,6 +34,10 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 - [总体技术架构](docs/architecture.md)：边界、组件、数据、流程、安全、可靠性与部署。
 - [Phase 1：RAG 基础](docs/rag-phase-1.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
+- [数据切片与溯源](docs/chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
+- [Azure AI Search 索引设计](docs/ai-search-index-design.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
+- [检索调优方案](docs/retrieval-tuning.md)：BM25/Vector/Hybrid/RRF/Rerank 的可复现实验阶梯。
+- [TAP Knowledge Chat](docs/knowledge-chat-ui.md)：Codex/Claude Code 式会话、流式状态、引用与 Trace 交互。
 - [核心契约](docs/contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
 - [架构决策](docs/decisions.md)：已经采纳的决策、取舍与待确认项。
 - [交付路线图](docs/roadmap.md)：从架构基线到可用 MVP 的阶段计划。
@@ -52,6 +57,6 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 - 架构状态：`v0.1 baseline / review-ready`
 - 实现状态：`not started`
-- 当前交付重点：`Phase 1 — RAG foundation`
+- 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [架构决策](docs/decisions.md#待确认项)

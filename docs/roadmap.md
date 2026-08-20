@@ -1,6 +1,6 @@
 # TAP 交付路线图
 
-TAP 采用 **RAG 先行** 的交付顺序：第一阶段只构建可独立验收的知识检索底座；Test IR、Agent 编排、测试执行和智能增强在 Retrieval Contract 稳定后逐步接入。每阶段用可重复的验收证据退出，不以日期代替完成标准。
+TAP 采用 **RAG 先行** 的交付顺序：第一阶段构建可独立验收的知识检索底座，并以正式的 Knowledge Chat 完成端到端用户验收；Test IR、Agent 编排、测试执行和智能增强在 Retrieval/Citation Contract 稳定后逐步接入。每阶段用可重复的验收证据退出，不以日期代替完成标准。
 
 Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundation](rag-phase-1.md)。
 
@@ -20,7 +20,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - ACL、删除、数据分级和模型可见范围均有书面规则。
 - Golden Dataset、基线结果和评测脚本可版本化、可重复运行。
 
-## Phase 1：RAG Foundation（当前重点）
+## Phase 1：RAG Foundation + Knowledge Chat（当前重点）
 
 ### 技术基线
 
@@ -28,7 +28,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - TAP AKS 服务负责变更发现、读取、权限元数据、脱敏、typed parsing/chunking、enrichment、Embedding、索引写入和删除传播。
 - MySQL 保存 catalog、ACL、ingestion ledger/checkpoint 和审计；Redis 只用于锁、限流和短期缓存；Blob 保存原始文档与证据。
 - LiteLLM 采用无状态路由；Embedding/Reranker 模型与输入、版本和策略均可追溯，密钥由 Key Vault 管理。
-- Retrieval API 与 Inspector 作为独立交付面，不依赖 Agentic Loop 或测试执行网格。
+- React/TypeScript Knowledge Chat + BFF 通过 REST/SSE 使用 Retrieval/Answer/Citation 服务，不依赖 Agentic Loop 或测试执行网格。
 
 ### 交付
 
@@ -36,18 +36,20 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - 可幂等、可恢复、可删除、可全量重建的增量 ingestion pipeline，并支持索引蓝绿升级和回滚。
 - BM25 + Vector hybrid retrieval、跨索引融合、RRF/rerank、Parent/Child 上下文恢复、轻量依赖扩展和有界多跳检索。
 - 检索前强制 `tenantId/projectId/allowedGroupIds/classification/environment` security trimming。
-- Search API、带 claim-level citation 的 Answer 薄层、Retrieval Trace 和 Inspector。
+- Search/Answer API、claim-level Citation Resolver、Retrieval Trace 和受限 Inspector。
+- TAP Knowledge Chat：Project/Conversation、流式阶段、停止、排队追问、`@resource`、Sources/Claims drawer、断线续传和结构化反馈。
 - 四类语料分别报告 Recall/MRR/nDCG、引用正确性、权限、新鲜度、可靠性、时延和成本。
 
 ### 出口标准
 
 - 权限对抗测试中的 unauthorized retrieval/answer 为 **0**。
-- 100% 最终 context 都能定位到 `sourceUri + sourceRevision + anchor + chunkId`。
+- 100% 最终 context 都能定位到不可变 `sourceRevision + structured anchor + sourceContentHash + chunkContentHash + chunkId`，并由 Citation Resolver 重新授权。
 - 相同 revision 重放不产生重复 chunk；任务中断可从 checkpoint 恢复。
 - 四索引均可从 Git/Blob/MySQL 权威源重建，并与 Ingestion Manifest 对账。
 - 删除、权限收紧、秘密脱敏和索引版本回滚演练通过。
 - Hybrid + rerank 稳定优于 BM25 baseline；质量目标经真实 Golden Dataset 校准并批准。
-- Retrieval API 在没有 Agent、Test IR 和 Grid 的情况下可独立使用，契约冻结后供 Phase 2 消费。
+- Retrieval API 与 Knowledge Chat 在没有 Agent、Test IR 和 Grid 的情况下可独立使用，契约冻结后供 Phase 2 消费。
+- Chat E2E 覆盖新建/恢复会话、流式回答、停止、排队、精确引用、反馈和断线恢复；撤权后历史答案、Citation 与 Trace 均无法泄露受限内容。
 
 ### 明确非目标
 
@@ -55,6 +57,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - Test IR 编译器、低代码编辑器和测试代码生成。
 - Browser/Device Grid、BrowserStack Adapter 和 API Runner。
 - Self-Healing、RCA 自动闭环、自动代码或 Locator 修改。
+- 通用 Agent 工具执行、Shell、Git 写入和测试工作台；Phase 1 Chat 只做知识问答。
 
 ## Phase 2：Test IR 与 Agentic Test Lab
 
@@ -84,7 +87,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - MySQL operational SoR、transactional Outbox、Outbox Relay、Redis 任务流/租约/Reconciler。
 - Blob 证据及生命周期策略、Key Vault SecretRef、自建 Browser Grid 和 API/Contract ephemeral worker。
 - 新建、复用、更新、执行、诊断五类 Intent Router。
-- 基础 Console：Chat、结构化低代码/Test IR editor、IR/代码 diff、Run 时间线、证据、审批和重跑。
+- 在 Phase 1 Knowledge Chat 外壳中扩展测试工作台：结构化低代码/Test IR editor、IR/代码 diff、Run 时间线、证据、审批和重跑。
 
 ### 出口标准
 
@@ -125,6 +128,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 | Phase 1 | Knowledge Contracts | 四索引 Schema、chunk ID、manifest、trace、citation、ACL filter |
 | Phase 1 | Ingestion | typed parsers/chunkers、增量/删除、checkpoint、rebuild、index migration |
 | Phase 1 | Retrieval | BM25/vector、RRF/rerank、Parent/Child、multi-hop、API、Inspector |
+| Phase 1 | Knowledge Chat | Project/Conversation、REST/SSE、停止/队列、@resource、claim citation、反馈与安全重授权 |
 | Phase 1 | Evaluation | Golden Dataset、baseline、质量/权限/新鲜度/成本回归 |
 | Phase 1 | RAG Operations | OTel、dashboard、告警、Runbook、Key Vault、配额和审计 |
 | Phase 2+ | Test IR & Git Assets | Schema、stable ID、compiler、migration、semantic diff、branch/PR |

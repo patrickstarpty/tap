@@ -3,9 +3,9 @@
 | 字段 | 值 |
 | --- | --- |
 | 状态 | Phase 1 delivery baseline |
-| 目标 | 构建可评测、权限安全、可追溯、可增量更新的企业 RAG 基础 |
-| 核心技术 | Git、Entra ID、AKS、Azure AI Search、MySQL、Redis、Blob、Key Vault、LiteLLM |
-| 主要用户面 | Retrieval API、Retrieval Inspector、带引用的知识问答薄层 |
+| 目标 | 构建可评测、权限安全、可追溯、可增量更新，并能通过聊天完成知识问答的企业 RAG 垂直切片 |
+| 核心技术 | Git、Entra ID、AKS、Azure AI Search、MySQL、Redis、Blob、Key Vault、LiteLLM、React/TypeScript |
+| 主要用户面 | TAP Knowledge Chat、Retrieval API、Citation/Trace Inspector |
 
 ## 1. 阶段目标
 
@@ -17,6 +17,7 @@
 - 每次检索在查询前执行 tenant/project/group/classification/environment 权限过滤。
 - 每个结果和生成结论都带可定位到 source revision 的引用。
 - 检索质量、权限、时延、成本和数据新鲜度都有可重复评测。
+- 用户能在 Project/Conversation 中流式提问、中断或排队追问，并从逐条引用打开精确证据。
 
 ## 2. 非目标
 
@@ -27,8 +28,9 @@ Phase 1 不以以下能力作为出口条件：
 - Browser Grid、Device Grid、BrowserStack 或 API Runner 执行。
 - Self-Healing、RCA 自动闭环和代码/Locator 自动修改。
 - 通用知识图谱、模型微调或跨云检索平台。
+- Shell/工具执行、代码编辑、Git 写入、测试运行和通用 Agent 产品能力。
 
-知识问答只作为检索质量的验证界面，不发展为完整 Chat 产品。
+Phase 1 的 Knowledge Chat 是可持续使用的 RAG 用户面和正式出口条件；它聚焦知识问答，不在本阶段扩展为通用 Agent 或 Test Automation 工作台。
 
 ## 3. Phase 1 架构
 
@@ -41,6 +43,7 @@ flowchart LR
     end
 
     subgraph AKS[AKS - RAG Foundation]
+      BFF[Knowledge Chat BFF]
       Detect[Change Detection]
       Fetch[Fetch + Verify Revision]
       Classify[Classify + ACL + Redact]
@@ -60,8 +63,13 @@ flowchart LR
       Context[Parent / Graph Expansion + Context Budget]
       Cite[Citations / Retrieval Trace]
       Answer[Grounded Answer / Abstain]
-      Inspector[Retrieval Inspector / Thin QA]
+      Resolver[Citation Resolver]
+      TracePolicy[Restricted Trace Policy]
     end
+
+    Web[TAP Knowledge Chat Web] -->|REST + SSE| BFF
+    BFF --> API
+    BFF --> ChatDB[(MySQL<br/>Chats / Turns / Events)]
 
     Git --> Detect
     Blob --> Detect
@@ -82,11 +90,21 @@ flowchart LR
     API --> Query --> Filter --> Hybrid
     Filter --> Search
     Search --> Hybrid --> Fuse --> Rerank --> Context --> Cite
-    Cite --> Inspector
-    Cite --> Answer
+    Cite --> Answer -->|Answer deltas + citations| BFF
+    Cite --> Resolver --> BFF
+    Cite --> TracePolicy --> BFF
+    BFF -->|SSE / citation response| Web
+    BFF --> Resolver
 ```
 
 Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP 在 AKS 中控制。Azure AI Search 是可重建索引，不负责替代原始内容或 ACL 权威源。
+
+专项实现设计：
+
+- [数据切片与端到端溯源](chunking-and-provenance.md)
+- [Azure AI Search 索引设计](ai-search-index-design.md)
+- [检索调优方案](retrieval-tuning.md)
+- [TAP Knowledge Chat](knowledge-chat-ui.md)
 
 ## 4. 四索引设计
 
@@ -101,7 +119,7 @@ Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP
 | `allowedGroupIds` | Entra/group security trimming |
 | `classification` / `environment` / `aclVersion` | 数据分级、环境边界与权限版本 |
 | `sourceType` / `sourceUri` / `sourceId` / `anchor` | 权威来源和可解析引用 |
-| `sourceRevision` / `contentHash` | 版本、去重和审计 |
+| `sourceRevision` / `sourceContentHash` / `chunkContentHash` | 原始 snapshot 版本、切片完整性、去重和审计 |
 | `rootId` / `parentId` / `chunkLevel` / `corpusVersion` | Parent/Child、多粒度上下文与原子语料快照 |
 | `title` / `content` / `language` / `tags` | 全文检索与展示 |
 | `contentVector` / `embeddingModelVersion` | 向量检索与模型迁移 |
@@ -111,9 +129,12 @@ Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP
 逻辑身份与 snapshot 身份分开计算：
 
 ```text
-logicalChunkId = sha256(tenantId | projectId | sourceId | structuralLocator)
-chunkId = sha256(logicalChunkId | sourceRevision | contentHash | chunkerVersion)
+hashId(value) = "h_" + lowercaseHex(SHA-256(value))
+logicalChunkId = hashId(tenantId | projectId | sourceId | structuralLocator | chunkKind)
+chunkId = hashId(logicalChunkId | sourceRevision | chunkContentHash | chunkerVersion)
 ```
+
+`chunkId` 作为 AI Search document key 只使用允许的 URL-safe 字符；URI、冒号前缀和路径不直接进入 key。
 
 ### 4.2 类型专用字段与切片
 
@@ -131,25 +152,25 @@ OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必�
 ### 5.1 标准流程
 
 1. Git webhook/scan、Blob event/scan、MySQL Outbox 发现 revision 变化。
-2. 用 `sourceUri + sourceRevision + contentHash` 幂等去重。
+2. 用 `sourceUri + sourceRevision + sourceContentHash` 幂等去重。
 3. 从权威源读取内容并校验 revision 未漂移。
 4. 从可信策略源计算 tenant/project/group/classification/environment；权限服务不可用时 fail closed，空 ACL 不自动解释为公开。
 5. 按 source type 选择 parser/chunker；结构化边界优先，token window 只兜底。
 6. 生成 parent/child、summary、symbol 和轻量依赖边，并在 Embedding 前完成秘密/PII 脱敏；不同 ACL 的 child 不合并为同一个 parent summary。
-7. 经无状态 LiteLLM Gateway 调用固定版本 Embedding 模型；未变化的 content hash 不重复 Embedding。
+7. 经无状态 LiteLLM Gateway 调用固定版本 Embedding 模型；未变化的 `chunkContentHash` 不重复 Embedding。
 8. 批量 `mergeOrUpload` 到目标版本索引并保存 Ingestion Manifest。
 9. 在 MySQL 更新 checkpoint、数量、hash、失败原因与 trace ID。
 10. rename、删除或权限收紧时写 tombstone，并在批准的新鲜度窗口内从索引移除/更新；部分批次失败进入可重放清单，禁止静默丢失。
 
 ### 5.2 Ingestion Manifest
 
-每次批次保存：source revision、parser/chunker/embedding/schema version、输入/输出数量、失败记录、index target、开始/结束时间、内容 hash 和操作者。相同输入与版本必须生成相同 chunk IDs。
+每次批次保存：source revision、parser/chunker/embedding/schema version、输入/输出数量、失败记录、index target、开始/结束时间、`sourceContentHash`/`chunkContentHash` 和操作者。相同输入与版本必须生成相同 chunk IDs。
 
 ### 5.3 索引升级
 
 - Schema、chunker 或 embedding 发生不兼容变化时创建 `*-v2`，不原地混合向量空间。
 - 后台全量重建并运行同一评测集。
-- 用 `corpusVersion` 与逻辑索引指针原子切换完整 active corpus，避免查询到混合 revision；保留快速回滚窗口。
+- 四个 reader alias 逐个更新并等待传播确认，不宣称跨 alias 原子性；传播期间 turn 继续固定旧 `corpusVersion`，新索引只会产生可见 degraded/零结果，禁止放宽 filter 混合新旧数据。全部 alias 收敛后再原子发布 TAP `activeCorpusVersion` 应用层指针，并保留快速回滚窗口。
 - 旧索引只在新索引质量、ACL 和数据对账通过后清理。
 
 ## 6. Retrieval Pipeline
@@ -161,12 +182,12 @@ OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必�
 5. Azure AI Search 在单索引内做 hybrid/RRF；TAP Retrieval Service 按 per-index rank 做跨索引 RRF，不直接比较不同索引的原始 score。
 6. Reranker 对候选重排；记录模型、输入格式和分数，不将其与 embedding 版本混淆。
 7. 根据 Parent/Child 和轻量代码—测试依赖边补充必要上下文；parent、依赖边、facet/count 和补充 chunk 均再次应用同一 ACL。
-8. 去重、控制 token budget，并生成带 `sourceUri + sourceRevision + anchor + chunkId` 的引用。
+8. 去重、控制 token budget，并生成带不可变 `source revision + structured anchor + sourceContentHash + chunkContentHash + chunkId` 的 Citation；内部 URI 经 resolver 重新授权后才可打开。
 9. Retrieval Trace 保存 tenant/project/actor、ACL digest、query plan、filters、候选、分数、丢弃原因、最终 context、版本与耗时；内容按 trace retention/redaction policy 保存。
 
 Phase 1 默认不缓存检索结果；若评测后启用，cache key 必须包含 tenant、project、ACL digest、classification、environment、corpus/index/model version，撤权与删除必须同步失效。
 
-## 7. Retrieval API
+## 7. Retrieval 与 Knowledge Chat API
 
 Phase 1 至少交付：
 
@@ -181,11 +202,13 @@ GET /v1/retrieval/traces/{id}
   -> query plan / filters / candidates / scores / final context
 ```
 
-`answer` 是检索验收薄层；`search` 才是后续 Agent、Test Authoring 和 RCA 依赖的稳定契约。
+`answer` 是 Knowledge Chat 的正式回答接口；`search` 是后续 Agent、Test Authoring 和 RCA 依赖的稳定检索契约。两者共享同一可信 Policy Context、Retrieval Profile、Trace 和 Citation 模型。
 
-Answer 薄层只能使用返回的 context；证据不足、来源冲突或 revision 不一致时必须拒答或显式提示冲突。正式请求/响应字段见 [Retrieval Contract](contracts.md#8-retrieval-contract)。
+Answer 服务只能使用返回的 context；证据不足、来源冲突或 revision 不一致时必须拒答或显式提示冲突。正式请求/响应字段见 [Retrieval Contract](contracts.md#8-retrieval-contract)。
 
-Retrieval Inspector 需要展示：原始 query、分解 query、ACL filter、各检索通道分数、RRF/rerank 前后顺序、parent expansion、最终 context 和引用跳转。
+Knowledge Chat 通过 BFF 提供 Project/Conversation、流式回答、中断、排队追问、`@resource`、逐条引用和反馈。浏览器不得直连 AI Search 或 LiteLLM；公开请求不能携带 tenant/group/classification/filter。正式 Chat/SSE 契约见 [Knowledge Chat Contract](contracts.md#9-knowledge-chat-contract)，页面行为见 [TAP Knowledge Chat](knowledge-chat-ui.md)。
+
+Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL digest、各检索通道 rank/score、RRF/rerank 前后顺序、parent expansion、最终 context 和引用跳转。普通用户只看 Sources/Claims；完整 Trace 仅限诊断角色。
 
 `traceId` 只是关联标识，不能作为访问凭证。`GET /traces/{id}` 和 Inspector 每次读取都必须从当前 Entra 身份重新校验 tenant/project/actor 或受限诊断角色，并按当前 ACL fail closed；默认脱敏 query、group/filter 细节、候选内容和秘密。撤权后不得通过旧 trace、引用或 Inspector 继续读取原文，所有读取都进入审计日志。
 
@@ -225,11 +248,13 @@ Retrieval Inspector 需要展示：原始 query、分解 query、ACL filter、�
 硬门槛：
 
 - 权限对抗测试中 unauthorized retrieval/answer 为 **0**。
-- 100% 最终 context 具备 `sourceUri + sourceRevision + anchor + chunkId`。
+- 100% 最终 context 具备不可变 `source revision + structured anchor + sourceContentHash + chunkContentHash + chunkId`。
 - 相同 source revision 重跑无重复 chunk；中断后可从 checkpoint 恢复。
 - 四个索引都能从 Git/Blob/MySQL 重建，并与 Ingestion Manifest 对账。
 - 删除、权限收紧、秘密脱敏与索引版本回滚通过演练。
-- Retrieval API 和 Inspector 可在不依赖 Agentic Loop 的情况下独立使用。
+- Retrieval API、Knowledge Chat 和 Inspector 可在不依赖 Agentic Loop 的情况下独立使用。
+- Chat 完成 `选择 Project → 新建/恢复会话 → 流式提问 → 打开精确引用 → 反馈` 的端到端链路；支持停止、排队追问与断线续传。
+- Citation、Trace 和历史会话每次按当前 ACL 重新授权，撤权后无法从旧内容读取受限证据。
 
 建议的首轮质量目标（需用真实 Golden Dataset 校准后批准）：
 
@@ -258,11 +283,12 @@ Retrieval Inspector 需要展示：原始 query、分解 query、ACL filter、�
 
 - 权限过滤、BM25 + Vector、cross-index fusion、rerank。
 - Parent/Child、context budget、代码—测试依赖扩展和有界多跳。
-- Search API、Answer 薄层和 Retrieval Inspector。
+- Search/Answer API、Citation Resolver 和受限 Retrieval Inspector。
 
-### P1.3：评测与生产化
+### P1.3：Knowledge Chat 与生产化
 
-- 离线回归、ACL/删除/重建演练、容量和故障注入。
+- 实现 Project/Conversation、REST + SSE、流式回答、停止、队列追问、`@resource`、Sources/Claims drawer 和反馈。
+- 离线回归、Chat E2E、ACL/删除/重建演练、恶意 Markdown/citation IDOR、容量和故障注入。
 - OTel trace、dashboard、告警、Runbook、成本与配额。
 - 通过出口标准后冻结 Retrieval Contract，供 Phase 2 使用。
 

@@ -219,25 +219,105 @@ Agent Finding 必须显式标记 `generated_by_agent=true`，且引用支持其�
 ## 8. Retrieval Contract
 
 ```typescript
-interface RetrievalRequest {
+type SourceFamily = "doc" | "code" | "bdd" | "failure";
+
+interface ResourceRef {
+  family: SourceFamily;
+  sourceId: string;
+  requestedRevision?: string;
+  anchor?: StructuralAnchor;
+}
+
+// 浏览器、Agent 和其他消费者只允许提交检索意图与更窄的 scope。
+interface PublicRetrievalQuery {
+  query: string;
+  sources?: SourceFamily[];
+  resourceRefs?: ResourceRef[];
+  requestedEnvironment?: string;
+  requestedCorpusVersion?: string;
+  requestedRevision?: string;
+  topK?: number;
+}
+
+// 只能由 BFF/Policy 层依据 Entra 身份和服务端事实构造。
+interface RetrievalPolicyContext {
   tenantId: string;
   projectId: string;
-  actor: { userId: string; allowedGroupIds: string[] };
-  classificationCeiling: string;
-  environment: string;
-  query: string;
-  sources: Array<"doc" | "code" | "bdd" | "failure">;
-  revision?: string;
-  corpusVersion?: string;
-  topK: number;
+  actor: { userId: string; allowedGroupIds: string[]; roles: string[] };
+  allowedClassifications: string[];
+  allowedEnvironments: string[];
+  aclDigest: string;
+  policyVersion: string;
+  decisionId: string;
+}
+
+// 仅在服务内部传递，不能作为公共 HTTP DTO 反序列化。
+interface InternalRetrievalRequest {
+  query: PublicRetrievalQuery;
+  policy: RetrievalPolicyContext;
+  retrievalProfileId: string;
+}
+
+type StructuralAnchor =
+  | { type: "document"; headingPath?: string[]; page?: number; bbox?: number[]; startOffset?: number; endOffset?: number }
+  | { type: "code"; repo: string; path: string; symbol?: string; lineStart: number; lineEnd: number }
+  | { type: "bdd"; featureId: string; scenarioId?: string; stepId?: string }
+  | { type: "openapi"; method: string; path: string; jsonPointer: string }
+  | { type: "failure"; incidentId: string; runId?: string; timeStart?: string; timeEnd?: string };
+
+interface SourceRevisionRef {
+  sourceId: string;
+  sourceType: string;
+  revisionKind: "git_commit" | "blob_version" | "mysql_version";
+  revision: string;
+  sourceContentHash: string;
+  anchor: StructuralAnchor;
+}
+
+interface ChunkRecord {
+  chunkId: string;                 // immutable snapshot identity
+  logicalChunkId: string;          // stable identity across revisions
+  rootId: string;
+  parentId?: string;
+  adjacentChunkIds?: string[];
+  source: SourceRevisionRef;
+  chunkContentHash: string;
+  contentRole: "source" | "generated_summary";
+  derivedFromChunkIds?: string[];
+  derivation?: {
+    derivationKey: string;
+    modelSnapshot: string;
+    promptVersion: string;
+    decodingProfile: string;
+    redactionPolicyVersion: string;
+  };
+  ordinal: number;
+  tokenCount: number;
+  parserVersion: string;
+  chunkerVersion: string;
+  pipelineVersion: string;
+  aclVersion: number;
+}
+
+interface Citation {
+  citationId: string;              // opaque resolver ID, not a source URL
+  evidenceLabel: string;           // for example S1
+  chunkId: string;
+  logicalChunkId: string;
+  source: SourceRevisionRef;
+  chunkContentHash: string;
+  contentRole: "source" | "generated_summary";
+  derivedFromChunkIds?: string[];
 }
 
 interface RetrievalResponse {
   traceId: string;
   corpusVersion: string;
+  retrievalProfileId: string;
   degradedMode: boolean;
+  degradationReasons?: string[];
   hits: Array<{
-    indexFamily: "doc" | "code" | "bdd" | "failure";
+    indexFamily: SourceFamily;
     physicalIndex: string;
     chunkId: string;
     logicalChunkId: string;
@@ -245,10 +325,9 @@ interface RetrievalResponse {
     title?: string;
     content: string;
     language?: string;
-    sourceUri: string;
-    sourceRevision: string;
-    anchor: string;
-    contentHash: string;
+    source: SourceRevisionRef;
+    chunkContentHash: string;
+    citationId: string;
     scores: { exact?: number; bm25?: number; vector?: number; rrf?: number; rerank?: number };
     aclDecisionId: string;
     schemaVersion: string;
@@ -260,31 +339,143 @@ interface RetrievalResponse {
 interface RetrievalAnswerResponse {
   traceId: string;
   corpusVersion: string;
+  retrievalProfileId: string;
   degradedMode: boolean;
+  degradationReasons?: string[];
   answer: string;
   abstained: boolean;
   abstentionReason?: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
   claims: Array<{
     claimId: string;
     text: string;
-    citationChunkIds: string[];
+    citationIds: string[];
   }>;
-  citations: Array<{
-    chunkId: string;
-    sourceUri: string;
-    sourceRevision: string;
-    anchor: string;
-    contentHash: string;
-  }>;
+  citations: Citation[];
 }
 ```
 
-- `tenantId`、`projectId`、`allowedGroupIds`、classification 和 environment 由可信身份/策略层注入，模型不能提供或放宽。
-- classification ceiling 必须由策略层转换为明确的允许集合，不能做字符串大小比较；environment 的默认语义是 `global OR requested environment`。
-- 每个命中返回稳定的 index family、实际物理索引名、chunk/logical ID、可解析的 source revision + anchor、score components、ACL decision、corpus/schema/model version，供引用和审计；物理索引可以从 `*-v1` 蓝绿升级到 `*-v2`，不破坏契约。
-- 非拒答结果中的每个实质 claim 必须引用至少一个当前 context 中的 `chunkId`；citation 必须可解析到不可变 revision、anchor 与 content hash。证据不足、来源冲突或 revision 不一致时返回结构化拒答原因。
+- 公共请求中不得出现 `tenantId`、`projectId`、group IDs、classification、任意 ACL/filter 表达式或物理索引名。BFF 从 Entra 与 Policy 服务构造 `RetrievalPolicyContext`；`requested*` 只能与服务端允许范围取交集，不能扩大权限。
+- `topK`、resource 数量、query 长度、分解次数和 context budget 均由服务端 profile 限幅；公共字段是请求偏好，不是资源或排名控制权。
+- classification 由策略层转换为明确的允许集合，不能做字符串大小比较；environment 的默认语义是 `global OR requested environment`，且 requested environment 必须在允许集合中。
+- 每个命中返回稳定 index family、实际 physical index、chunk/logical ID、不可变 `SourceRevisionRef`、score components、ACL decision、corpus/schema/profile/model version。物理索引从 `*-v1` 蓝绿升级到 `*-v2` 不破坏公共契约。
+- `logicalChunkId` 在同一结构位置跨 revision 稳定；`chunkId` 随 source revision/content/chunker version 变化。完整生成规则见 [切片与溯源设计](chunking-and-provenance.md)。
+- `chunkId` 作为 Azure AI Search document key 使用 `h_` + SHA-256 lowercase hex；不得把带冒号的 digest、URI 或路径直接作为 key。
+- 非拒答结果中的每个实质 claim 必须引用至少一个当前 context 中的 `citationId`。Citation Resolver 将其解析到不可变 revision、structured anchor、`sourceContentHash` 与 `chunkContentHash`；浏览器不直接使用内部 `sourceUri`。证据不足、来源冲突或 revision 不一致时返回结构化拒答原因。
 - 代码命中返回原语言 symbol/AST chunk；不得为了统一格式把源码转成 Markdown。
 - Parent/Child、依赖图、facet/count 和缓存均必须再次应用同一 ACL filter；不同 ACL 的 child 不得汇总进同一个 parent summary。
 - ACL/Policy 服务不可用时 fail closed；秘密/PII 必须在 Embedding 前脱敏。
 - Retrieval Trace 必须绑定 tenant/project/actor 与 ACL digest；`traceId` 不具有授权语义。Trace/Inspector 读取需要重新授权、必要脱敏和审计，撤权后不能借旧 trace 绕过当前 ACL。
 - Index schema 与 embedding/reranker version 一起版本化；不同向量空间不混合查询。
+
+## 9. Knowledge Chat Contract
+
+```typescript
+interface ChatSession {
+  chatId: string;
+  projectId: string;               // route + current authorization decide visibility
+  title: string;
+  defaultSourceScope: SourceFamily[];
+  defaultEnvironment?: string;
+  createdAt: string;
+  updatedAt: string;
+  latestTurnId?: string;
+}
+
+interface ChatTurnRequest {
+  clientRequestId: string;
+  message: string;
+  sourceScope?: SourceFamily[];
+  resourceRefs?: ResourceRef[];
+  requestedEnvironment?: string;
+  requestedCorpusVersion?: string;
+}
+
+interface QueuedChatMessage {
+  messageId: string;
+  clientRequestId: string;
+  afterTurnId: string;
+  position: number;
+  message: string;
+  sourceScope?: SourceFamily[];
+  resourceRefs?: ResourceRef[];
+  requestedEnvironment?: string;
+  requestedCorpusVersion?: string;
+  createdAt: string;
+  version: number;                  // optimistic concurrency for edit/reorder
+}
+
+interface ChatTurnSummary {
+  turnId: string;
+  clientRequestId: string;
+  state: ChatTurnState;
+  degradedMode: boolean;
+  degradationReasons?: string[];
+  corpusVersion: string;
+  retrievalProfileId: string;
+  traceId?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+type ChatTurnState =
+  | "queued"
+  | "running"
+  | "stopping"
+  | "completed"
+  | "abstained"
+  | "canceled"
+  | "failed";
+
+type ChatStreamEvent =
+  | { type: "turn.started"; payload: { state: "running" } }
+  | { type: "stage.started"; payload: { stage: string } }
+  | { type: "stage.completed"; payload: { stage: string; durationMs: number } }
+  | { type: "retrieval.hits_ready"; payload: { traceId: string; authorizedHitCount: number } }
+  | { type: "rerank.completed"; payload: { candidateCount: number; durationMs: number } }
+  | { type: "answer.delta"; payload: { text: string } }
+  | { type: "citation.resolved"; payload: { citation: Citation } }
+  | { type: "turn.completed"; payload: { answer: RetrievalAnswerResponse } }
+  | { type: "turn.abstained"; payload: { answer: RetrievalAnswerResponse } }
+  | { type: "turn.degraded"; payload: { reason: string; availableStages: string[] } } // nonterminal advisory
+  | { type: "turn.canceled"; payload: { partialAnswerRetained: boolean } }
+  | { type: "turn.failed"; payload: { code: string; retryable: boolean } };
+
+interface ChatEventEnvelope {
+  eventId: string;                 // monotonic within a turn
+  chatId: string;
+  turnId: string;
+  occurredAt: string;
+  schemaVersion: number;
+  event: ChatStreamEvent;
+}
+```
+
+API 基线：
+
+```text
+POST   /v1/chats
+GET    /v1/projects/{projectId}/chats
+GET    /v1/chats/{chatId}
+POST   /v1/chats/{chatId}/turns
+POST   /v1/turns/{turnId}/cancel
+GET    /v1/chats/{chatId}/queue
+POST   /v1/chats/{chatId}/queue
+PATCH  /v1/chats/{chatId}/queue/{messageId}
+DELETE /v1/chats/{chatId}/queue/{messageId}
+GET    /v1/turns/{turnId}/events
+POST   /v1/turns/{turnId}/feedback
+GET    /v1/citations/{citationId}
+GET    /v1/retrieval/traces/{traceId}
+```
+
+- 浏览器只连接 TAP BFF，不能直连 Azure AI Search 或 LiteLLM。BFF 为 Chat turn 注入与 Retrieval Contract 相同的可信 `RetrievalPolicyContext`。
+- `clientRequestId` 在同一 chat 内幂等；重复提交返回同一 `turnId`。SSE 事件持久化并支持 `Last-Event-ID`，重放事件不得重放检索、模型或其他副作用。
+- cancel 是显式状态迁移：客户端先请求停止，收到 `turn.canceled` 后才能立即发送纠偏 turn。部分文本必须标记为已中断。
+- 运行中的排队消息通过 chat-scoped Queue API 创建和列出，并用 `afterTurnId` 固定依赖；保持独立 ID、顺序和内容，不得静默拼入当前 query。编辑旧消息会创建新 turn，旧 turn/trace 保持不可变。
+- `turn.degraded` 是运行中的非终态告警；最终仍必须收到 completed/abstained/canceled/failed 之一，且 `turn.completed` 中的 `degradedMode` 与 reasons 固化本次降级事实。
+- `turn.completed` 的 answer 必须 `abstained=false`；`turn.abstained` 携带 `abstained=true` 的完整 AnswerResponse，保留冲突/证据不足的引用与结构化原因。
+- `stage.*` 只描述可观察的系统动作、数量、耗时和状态，不传输隐藏思维链、系统提示词或内部推理文本。
+- `citationId`、`traceId`、`chatId` 和 `turnId` 都不是访问凭证。恢复会话、展开历史答案、解析引用或读取 Trace 时，按当前身份/ACL 重新授权并审计；撤权后 fail closed。
+- Markdown、代码块、链接和 source preview 必须经过 allowlist sanitizer 与安全 URL resolver；禁止模型生成的任意 URL 直接成为可点击引用。
+
+页面行为与验收标准见 [TAP Knowledge Chat](knowledge-chat-ui.md)。

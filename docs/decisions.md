@@ -76,11 +76,25 @@
 
 ### ADR-011：第一交付阶段专注 RAG Foundation
 
-- **状态**：已确认（2026-08-20）。
-- **决策**：第一阶段只交付可评测、权限安全、可追溯的 RAG 基础，包括四索引、分型解析/切片、增量索引、hybrid retrieval、RRF/rerank、Parent/Child、多跳检索、引用和 Retrieval API/Inspector。
+- **状态**：已确认（2026-08-20，2026-08-21 扩充用户验收面）。
+- **决策**：第一阶段交付可评测、权限安全、可追溯的 RAG 垂直切片，包括四索引、分型解析/切片、增量索引、hybrid retrieval、RRF/rerank、Parent/Child、多跳检索、引用、Retrieval API/Inspector 和正式的 Knowledge Chat。
 - **非目标**：Agentic Loop、Test IR 编译器、Browser/Device Grid、自愈/RCA 和自动代码修改不作为 Phase 1 出口条件。
 - **原因**：检索质量、权限和数据治理是后续 Agent、测试生成与 RCA 的共同地基，应先独立验证。
-- **后果**：后续组件只能通过稳定 Retrieval Contract 使用 RAG；不得在各 Agent 内重复实现私有检索链路。
+- **后果**：后续组件只能通过稳定 Retrieval/Citation Contract 使用 RAG；不得在各 Agent 内重复实现私有检索链路。Chat 只做知识问答，不提前引入工具执行或测试工作台。
+
+### ADR-012：TAP 管切片与溯源，Azure AI Search 管索引与检索
+
+- **状态**：已确认（2026-08-21）。
+- **决策**：TAP 在 AKS 自行完成 typed parsing/chunking、稳定 `logicalChunkId`、不可变 `chunkId`、ACL/provenance、Embedding、删除传播与 Push API 写入；Azure AI Search 负责倒排/向量索引、可信 filter、单索引 hybrid/RRF 和可选 semantic ranker。Phase 1 不用 Document Indexer/Skillset/Index Projection 写 active corpus；它们只作为后续通用 Office/PDF 文档的隔离 POC。
+- **原因**：代码、BDD、Failure 和精确结构 anchor 需要应用层 typed pipeline；AI Search 的 index projection 只适用于 Indexer + Skillset，自动 projected key 也不满足 TAP 跨 revision 的稳定逻辑身份。
+- **后果**：每个 chunk 重复 parent、ACL 与 lineage 字段，不依赖 query-time join；Writer 写物理索引，Reader 查 alias。Schema/chunker/embedding 不兼容升级通过新物理索引、同一 Golden Dataset 和 alias 切换完成。未来 projection POC 必须引入独立 `searchDocumentKey` 与 `chunkId` 映射，不能假设服务生成的 key 是业务身份。
+
+### ADR-013：Phase 1 交付 Codex/Claude Code 式 Knowledge Chat
+
+- **状态**：已确认（2026-08-21）。
+- **决策**：交付 `TAP Knowledge Chat`，采用 Project/Conversation、流式可观察阶段、停止、排队追问、`@resource`、逐条 Citation 和 Sources/Claims/Trace 侧栏的交互模式。参考 Codex 与 Claude Code 的交互原则，不复制品牌视觉，也不展示模型隐藏思维链。
+- **原因**：API/离线指标不足以验证真实用户是否能理解范围、发现降级、追查证据并反馈检索遗漏；Chat 是 Phase 1 的正式验收面。
+- **后果**：浏览器只连接 BFF，不直连 AI Search/LiteLLM；公共 DTO 不接受 ACL 字段。历史答案、Citation 和 Trace 每次按当前身份重授权。Phase 3 在这一外壳上增加 Test IR editor、Run、审批，而不是重新建设另一套 Chat。
 
 ## 被后续讨论覆盖的旧方案
 
@@ -110,3 +124,4 @@
 9. 物理 Device Farm 的设备数量、宿主系统、USB/网络拓扑和远程控制边界。
 10. 质量门禁、RPO/RTO、结果收敛延迟、单 Run 成本等目标值需基线测量后审批。
 11. LiteLLM 是否只采用无状态 Gateway；若需要其 Virtual Keys/预算/Admin 持久化能力，必须先验证 MySQL/Redis 兼容性，不能静默新增 PostgreSQL。
+12. Knowledge Chat 最终采用组织现有 React Design System 还是独立 Next.js shell；选择不得改变 REST/SSE、Entra/BFF 与 Citation 安全契约。

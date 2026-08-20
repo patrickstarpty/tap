@@ -3,16 +3,16 @@
 | 字段 | 值 |
 | --- | --- |
 | 文档状态 | Architecture Baseline v0.1，待正式评审 |
-| 更新时间 | 2026-08-20 |
+| 更新时间 | 2026-08-21 |
 | 核心主线 | Test IR + Git 版本化 + 统一执行证据 |
 | 部署基线 | AKS + PaaS MySQL + PaaS Redis + Azure AI Search + Blob Storage + Key Vault + LiteLLM |
 | 证据边界 | 已恢复 `engprod` 三条讨论；长回复存在源端截断，详见 [来源说明](source-notes.md) |
 
 ## 1. 产品定位
 
-TAP（Test Automation Platform）是融合 Agent 能力的自动化测试平台。它把三类产品体验组合在同一条可审计链路中：
+TAP（Test Automation Platform）是融合知识检索与 Agent 能力的自动化测试平台。它把三类产品体验组合在同一条可审计链路中：
 
-- **Manus 式自然语言交互**：用户描述目标，主 Agent 理解意图、规划、调度子 Agent 并汇总结果。
+- **Codex/Claude Code 式会话交互**：按 Project/Conversation 组织工作，流式展示可观察阶段，支持中断、排队追问、资源引用与证据侧栏；不展示隐藏思维链。
 - **BrowserStack 式测试资产管理**：低门槛管理测试流程、设备/浏览器矩阵、运行和证据。
 - **Git 式可审查可编辑代码**：BDD、Test IR、脚本、Locator、Fixture、Hook 和数据模板都有版本、diff、review 与回滚。
 
@@ -39,13 +39,16 @@ TAP（Test Automation Platform）是融合 Agent 能力的自动化测试平台�
 
 ```mermaid
 flowchart TB
-    User[Developer / QA / SDET] --> UX[Chat / Low-code Test IR Editor / CLI]
+    User[Developer / QA / SDET] --> ChatUX[TAP Knowledge Chat]
+    User --> Workbench[Low-code Test IR Editor / CLI]
     GH[GitHub / CI] --> Ingress[Ingress / API Gateway]
-    UX --> Ingress
+    ChatUX -->|REST + SSE| Ingress
+    Workbench --> Ingress
     Ingress --> Gateway[Platform API & BFF]
     Identity[Entra ID] --> Gateway
 
     subgraph AKS[AKS - TAP Platform]
+      Gateway --> Knowledge[Knowledge & RAG]
       Gateway --> Session[Session & Intent]
       Session --> AgentOrch[Agent Orchestrator]
       AgentOrch --> Plan[Planner: DAG / Agentic Loop]
@@ -61,12 +64,15 @@ flowchart TB
       Stream --> APIWorker[API / Contract Workers]
       Stream --> CloudWorker[BrowserStack Adapter]
       Indexer[Knowledge Indexer<br/>Parse / Chunk / Embed / ACL]
+      Citation[Citation Resolver / Trace Policy]
+      Knowledge --> Citation
     end
 
     Authoring <--> Git[(Git: versioned test assets)]
     Gateway <--> MySQL[(PaaS MySQL: operational SoR)]
     AgentOrch <--> Redis[(PaaS Redis)]
     Knowledge <--> Search[(Azure AI Search)]
+    Citation --> Gateway
     BrowserWorker --> Blob[(Blob: evidence & artifacts)]
     DeviceWorker --> Blob
     APIWorker --> Blob
@@ -92,7 +98,7 @@ flowchart TB
 
 | 层 | 组件 | 责任 |
 | --- | --- | --- |
-| 体验与接入 | Chat/Low-code Editor/CLI、GitHub App、Ingress/API Gateway、Entra ID、Platform API/BFF | 自然语言、结构化编辑、认证、审批、Webhook、Check 回写 |
+| 体验与接入 | Knowledge Chat/Low-code Editor/CLI、GitHub App、Ingress/API Gateway、Entra ID、Platform API/BFF | Project/Conversation、流式问答、引用、结构化编辑、认证、审批、Webhook、Check 回写 |
 | Agent 控制面 | Session/Intent、Agent Orchestrator、DAG/Loop Planner、子 Agent | 理解目标、编排任务、控制上下文与权限、汇总结果 |
 | 测试控制面 | Test Authoring、Test IR、Execution Orchestrator、Self-Healing/RCA | 资产生命周期、编译、调度、结果归一化、修复建议 |
 | 知识面 | Ingestion、Chunking、Hybrid Retrieval、Dependency Graph | 文档/代码/BDD/失败知识的权限感知检索 |
@@ -271,6 +277,15 @@ Azure AI Search 是最终企业选型。首期使用四个独立索引，避免�
 
 AI Search 是可重建投影。原文与大文件来自 Git/Blob，结构化运行事实来自 MySQL。
 
+Phase 1 的完整实现规格拆分为：
+
+- [数据切片与端到端溯源](chunking-and-provenance.md)
+- [Azure AI Search 索引设计](ai-search-index-design.md)
+- [检索调优方案](retrieval-tuning.md)
+- [TAP Knowledge Chat](knowledge-chat-ui.md)
+
+TAP 自行解析、切片、计算稳定身份、附加 ACL/lineage 并通过 Push API 写入物理索引；AI Search 负责倒排/向量索引、filter、单索引 hybrid/RRF 与可选 semantic ranker。查询默认使用服务端可信 ACL `preFilter`，客户端和模型不能提交或覆盖安全 filter。
+
 ## 8. 数据与存储职责
 
 ```mermaid
@@ -413,7 +428,7 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 
 ## 15. 演进路径
 
-1. **RAG Foundation**：先完成 Azure AI Search 四索引、typed ingestion、权限过滤、hybrid retrieval、引用与离线评测；以 Retrieval API/Inspector 交付，不以前置 Agent 或执行网格为目标。详见 [Phase 1 专项设计](rag-phase-1.md)。
+1. **RAG Foundation + Knowledge Chat**：先完成 Azure AI Search 四索引、typed ingestion、权限过滤、hybrid retrieval、引用、离线评测，以及可流式问答/中断/排队追问/打开证据的 Chat 页面；不以前置 Agent 或执行网格为目标。详见 [Phase 1 专项设计](rag-phase-1.md)。
 2. **Agentic Test Lab**：复用已验证的 RAG，加入本地 Agent、Test IR、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，打通 NL/BDD 到证据闭环。
 3. **团队 MVP**：Git Test IR、MySQL、Redis、Blob、受控 MCP 工具、GitHub PR；自建 Grid 优先覆盖内网。
 4. **企业平台扩展**：AKS/KEDA、Key Vault、LiteLLM 多模型、BrowserStack Adapter、多租户权限与审计。
@@ -424,7 +439,7 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 - Test IR JSON Schema、action vocabulary、编译器与 schema migration。
 - Git 目录布局、branch/PR 流程、stable Test ID 与 rename/alias 规则。
 - MySQL 逻辑模型与 Run/Task/Attempt 单调状态机。
-- 四个 AI Search 索引 Schema、embedding/rerank 模型与权限过滤契约。
+- 四个 AI Search 索引的容量/SKU、embedding/rerank 模型与真实 Golden Dataset 参数校准；逻辑 Schema、权限过滤与调优流程已在 Phase 1 专项文档定义。
 - BrowserStack Local、自建 Browser Grid、Appium Device Farm 的网络与容量设计。
 - Agent Runtime 选型验证：LangGraph 基线与 DeepSeek Harness Adapter POC。
 - 统一 Evidence Manifest、脱敏规则、Blob 生命周期与法律保留策略。
