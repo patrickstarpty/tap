@@ -10,7 +10,7 @@
 
 ## 1. 产品定位
 
-TAP 是一个 Agentic Test Platform。它把三类产品体验组合在同一条可审计链路中：
+TAP（Test Automation Platform）是融合 Agent 能力的自动化测试平台。它把三类产品体验组合在同一条可审计链路中：
 
 - **Manus 式自然语言交互**：用户描述目标，主 Agent 理解意图、规划、调度子 Agent 并汇总结果。
 - **BrowserStack 式测试资产管理**：低门槛管理测试流程、设备/浏览器矩阵、运行和证据。

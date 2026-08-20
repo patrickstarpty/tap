@@ -19,6 +19,8 @@
 
 ## 从会话确认的最终主线
 
+项目正式名称为 **TAP（Test Automation Platform）**。
+
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM

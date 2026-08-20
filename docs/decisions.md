@@ -91,7 +91,7 @@
 
 ## 待确认项
 
-1. `TAP` 的正式英文全称、产品负责人和首批使用团队。
+1. 产品负责人和首批使用团队；英文全称已确认为 **Test Automation Platform**。
 2. 个人 Agentic Test Lab 进入团队 MVP、再进入企业 AKS 的量化退出门槛分别是什么？
 3. Test IR v1 首批目标编译器：Selenium、Playwright、Appium、Cucumber、API/Contract 中哪些必须同时交付？
 4. Git 仓库模式：每项目独立仓库、单一资产仓库，还是业务代码同仓？

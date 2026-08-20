@@ -1,6 +1,6 @@
-# TAP
+# TAP — Test Automation Platform
 
-TAP 是 `engprod` 讨论沉淀出的研发效能与智能测试平台项目代号。本仓库当前保存可评审、可演进的技术架构基线；实现代码尚未开始。`TAP` 的英文全称尚未确定，文档不擅自展开缩写。
+TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库当前保存可评审、可演进的技术架构基线；实现代码尚未开始。
 
 ## 一句话架构
 
