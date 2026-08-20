@@ -32,6 +32,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 文档导航
 
 - [总体技术架构](docs/architecture.md)：边界、组件、数据、流程、安全、可靠性与部署。
+- [Phase 1：RAG 基础](docs/rag-phase-1.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
 - [核心契约](docs/contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
 - [架构决策](docs/decisions.md)：已经采纳的决策、取舍与待确认项。
 - [交付路线图](docs/roadmap.md)：从架构基线到可用 MVP 的阶段计划。
@@ -51,5 +52,6 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 - 架构状态：`v0.1 baseline / review-ready`
 - 实现状态：`not started`
+- 当前交付重点：`Phase 1 — RAG foundation`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [架构决策](docs/decisions.md#待确认项)

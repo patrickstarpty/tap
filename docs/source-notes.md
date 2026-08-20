@@ -21,6 +21,8 @@
 
 项目正式名称为 **TAP（Test Automation Platform）**。
 
+2026-08-20 的后续决策进一步确认：**第一交付阶段优先构建 RAG Foundation**，Agent 编排、Test IR 编译和测试执行闭环顺延到后续阶段。
+
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM

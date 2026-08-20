@@ -74,6 +74,14 @@
 - **决策**：API/BFF、Authoring、Orchestrator、Policy、Result/RCA 可先以模块化部署单元交付；Agent、Browser、Device、API Worker 独立。按真实瓶颈再拆服务。
 - **原因**：MVP 的主要风险是 Test IR、证据和可靠闭环，不是微服务数量。
 
+### ADR-011：第一交付阶段专注 RAG Foundation
+
+- **状态**：已确认（2026-08-20）。
+- **决策**：第一阶段只交付可评测、权限安全、可追溯的 RAG 基础，包括四索引、分型解析/切片、增量索引、hybrid retrieval、RRF/rerank、Parent/Child、多跳检索、引用和 Retrieval API/Inspector。
+- **非目标**：Agentic Loop、Test IR 编译器、Browser/Device Grid、自愈/RCA 和自动代码修改不作为 Phase 1 出口条件。
+- **原因**：检索质量、权限和数据治理是后续 Agent、测试生成与 RCA 的共同地基，应先独立验证。
+- **后果**：后续组件只能通过稳定 Retrieval Contract 使用 RAG；不得在各 Agent 内重复实现私有检索链路。
+
 ## 被后续讨论覆盖的旧方案
 
 | 早期方案 | 最终状态 |

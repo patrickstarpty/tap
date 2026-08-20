@@ -413,11 +413,11 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 
 ## 15. 演进路径
 
-1. **Agentic Test Lab**：单用户、本地 Ollama、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，打通 NL/BDD 到证据闭环。
-2. **团队 MVP**：FastAPI + LangGraph、Git Test IR、MySQL、Redis、Blob、受控 MCP 工具、GitHub PR；自建 Grid 优先覆盖内网。
-3. **企业平台**：AKS/KEDA、Azure AI Search 四索引、Key Vault、LiteLLM 多模型、BrowserStack Adapter、多租户权限与审计。
-4. **智能增强**：失败聚类、RCA、自愈候选、Vision 辅助、基于历史的选测；始终通过确定性验证。
-5. **规模化**：按真实瓶颈拆分 Ingress、Indexer、Result Pipeline 或 Scheduler，而不是预先微服务化。
+1. **RAG Foundation**：先完成 Azure AI Search 四索引、typed ingestion、权限过滤、hybrid retrieval、引用与离线评测；以 Retrieval API/Inspector 交付，不以前置 Agent 或执行网格为目标。详见 [Phase 1 专项设计](rag-phase-1.md)。
+2. **Agentic Test Lab**：复用已验证的 RAG，加入本地 Agent、Test IR、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，打通 NL/BDD 到证据闭环。
+3. **团队 MVP**：Git Test IR、MySQL、Redis、Blob、受控 MCP 工具、GitHub PR；自建 Grid 优先覆盖内网。
+4. **企业平台扩展**：AKS/KEDA、Key Vault、LiteLLM 多模型、BrowserStack Adapter、多租户权限与审计。
+5. **智能增强与规模化**：失败聚类、RCA、自愈候选、Vision、风险选测；按真实瓶颈拆分组件。
 
 ## 16. 需要进一步细化的设计
 

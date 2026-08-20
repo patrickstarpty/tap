@@ -228,12 +228,63 @@ interface RetrievalRequest {
   query: string;
   sources: Array<"doc" | "code" | "bdd" | "failure">;
   revision?: string;
+  corpusVersion?: string;
   topK: number;
+}
+
+interface RetrievalResponse {
+  traceId: string;
+  corpusVersion: string;
+  degradedMode: boolean;
+  hits: Array<{
+    indexFamily: "doc" | "code" | "bdd" | "failure";
+    physicalIndex: string;
+    chunkId: string;
+    logicalChunkId: string;
+    parentId?: string;
+    title?: string;
+    content: string;
+    language?: string;
+    sourceUri: string;
+    sourceRevision: string;
+    anchor: string;
+    contentHash: string;
+    scores: { exact?: number; bm25?: number; vector?: number; rrf?: number; rerank?: number };
+    aclDecisionId: string;
+    schemaVersion: string;
+    embeddingModelVersion: string;
+    rerankerModelVersion?: string;
+  }>;
+}
+
+interface RetrievalAnswerResponse {
+  traceId: string;
+  corpusVersion: string;
+  degradedMode: boolean;
+  answer: string;
+  abstained: boolean;
+  abstentionReason?: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
+  claims: Array<{
+    claimId: string;
+    text: string;
+    citationChunkIds: string[];
+  }>;
+  citations: Array<{
+    chunkId: string;
+    sourceUri: string;
+    sourceRevision: string;
+    anchor: string;
+    contentHash: string;
+  }>;
 }
 ```
 
 - `tenantId`、`projectId`、`allowedGroupIds`、classification 和 environment 由可信身份/策略层注入，模型不能提供或放宽。
-- 每个命中返回 index、document/chunk ID、source revision、score components 与 ACL decision，供引用和审计。
+- classification ceiling 必须由策略层转换为明确的允许集合，不能做字符串大小比较；environment 的默认语义是 `global OR requested environment`。
+- 每个命中返回稳定的 index family、实际物理索引名、chunk/logical ID、可解析的 source revision + anchor、score components、ACL decision、corpus/schema/model version，供引用和审计；物理索引可以从 `*-v1` 蓝绿升级到 `*-v2`，不破坏契约。
+- 非拒答结果中的每个实质 claim 必须引用至少一个当前 context 中的 `chunkId`；citation 必须可解析到不可变 revision、anchor 与 content hash。证据不足、来源冲突或 revision 不一致时返回结构化拒答原因。
 - 代码命中返回原语言 symbol/AST chunk；不得为了统一格式把源码转成 Markdown。
-- Parent/Child 扩展和依赖图扩展必须再次应用同一 ACL filter。
+- Parent/Child、依赖图、facet/count 和缓存均必须再次应用同一 ACL filter；不同 ACL 的 child 不得汇总进同一个 parent summary。
+- ACL/Policy 服务不可用时 fail closed；秘密/PII 必须在 Embedding 前脱敏。
+- Retrieval Trace 必须绑定 tenant/project/actor 与 ACL digest；`traceId` 不具有授权语义。Trace/Inspector 读取需要重新授权、必要脱敏和审计，撤权后不能借旧 trace 绕过当前 ACL。
 - Index schema 与 embedding/reranker version 一起版本化；不同向量空间不混合查询。
