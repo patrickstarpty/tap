@@ -102,8 +102,16 @@
 - **决策**：在 TAP `AgentRuntime` 端口之后增加 `CodexRuntimeAdapter`。后台长期集成首选服务端 Codex SDK；`codex exec` 只用于本地 POC、CI 和一次性批处理；只有需要完整会话、steer/fork、审批和细粒度流式事件时才 POC App Server，且在其 command/transport 仍被官方标为 experimental/unsupported for production 时不形成生产承诺。普通 Knowledge Chat、Ingestion、ACL、QueryPlan、Azure AI Search 写入和 Citation 不依赖 Codex。
 - **用途**：Phase 1.5 只读 Research、跨代码/知识分析与 staging parser/enrichment 建议；Phase 2 再增加 Draft Test IR、最小语义 patch 和候选 Framework Code。Codex 只能通过 TAP Tool Gateway 调用阶段内已批准的窄接口，不能直接持有 AI Search、MySQL、Blob、Key Vault 或生产 Git 凭据。
 - **原因**：Codex SDK 官方支持把 coding-focused Agent 集成进内部工具、工作流和应用，但 Agent Runtime 的线程、工具和 workspace 能力与 LiteLLM 模型路由、确定性 RAG 是不同层次。把它放在可替换 Provider 后面可以复用其代码理解与生成能力，同时保持供应商可替换、权限安全和 RAG 独立可用。
-- **后果**：一 Attempt 一隔离 Worker；Phase 1.5 仅 `read_only`，Phase 2 候选 patch 才允许 `workspace_write`，始终禁止 `full_access`。命令网络及 web search/connectors/plugins/非 TAP MCP/Browser/Computer Use 分别默认关闭。Phase 1.5 enrichment 经 Validator/管理员审批后才交给标准 Indexer；Phase 2 代码先形成 local immutable validation commit 并通过确定性检查与人工审批，Commit Service 才能发布 branch/PR。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+- **后果**：一 Attempt 一隔离 Worker；Phase 1.5 仅 `read_only`，Phase 2 候选 patch 才允许 `workspace_write`，始终禁止 `full_access`。命令网络及 web search/connectors/plugins/非 TAP MCP/Browser/Computer Use 分别默认关闭。Phase 1.5 enrichment 经 Validator/管理员审批后才交给标准 Indexer；Phase 2 代码只形成 local immutable validation commit/受控测试 ChangeSet 并完成确定性检查与人工审批，不持有生产 Git 凭据；Phase 3 才由正式 Commit Service 发布 remote branch/PR。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
 - **模型与认证门禁**：个人 Lab 可用受保护的 API key POC；共享后台不使用个人 ChatGPT 登录。企业优先评估短期 access token/workload identity。Codex 自定义 provider 需完整兼容 Responses API；LiteLLM 接入必须先通过 streaming/tool/cancel/usage 契约测试，否则作为显式、受审计的 direct-provider 例外。
+
+### ADR-015：前端采用 React/TypeScript，后端采用 Python/FastAPI，按运行角色隔离
+
+- **状态**：已确认（2026-08-21）。
+- **决策**：TAP Web 使用 React + TypeScript；公共 API/BFF、Conversation/Turn、Retrieval、Ingestion control API 与后续平台控制面使用 Python + FastAPI/ASGI。首版保持一个仓库和共享领域 package，通过不同 entrypoint 把 `api-sse`、`turn-worker`、`ingestion-worker`、`embedding-worker`、`index-writer`、`relay-reconciler`、`agent-worker`、`execution-worker` 分角色部署。
+- **原因**：当前在线主链主要等待 Azure AI Search、模型、MySQL/Redis 和 Blob I/O，Python ASGI 足以支撑既定规模；React/TypeScript 适合 Project/Conversation、流式回答、引用/Trace 和后续 Test IR/Run 工作台。风险来自阻塞 I/O、CPU 重任务混入 API、无界 fan-out、SSE/React 每 token 放大，而不是语言本身。
+- **后果**：API/SSE 全链路异步；CPU/内存密集解析、Embedding、本地 rerank、Codex 和测试运行必须使用独立 process/Pod。流式恢复使用合并事件、REST snapshot + SSE tail、背压和分页；React 使用规范化状态、增量 Markdown 与长列表虚拟化。Python OpenAPI/JSON Schema 生成 TypeScript client/type，禁止手工维护两套状态机。
+- **换语言门槛**：先通过 profiler 证明在异步化、隔离和横向扩容后，Python Runtime 仍主导 p99 或成本，才局部用 Go/Rust/native worker 替换高连接网关或 CPU parser；不整体重写平台。
 
 ## 被后续讨论覆盖的旧方案
 
@@ -126,7 +134,7 @@
 2. 个人 Agentic Test Lab 进入团队 MVP、再进入企业 AKS 的量化退出门槛分别是什么？
 3. Test IR v1 首批目标编译器：Selenium、Playwright、Appium、Cucumber、API/Contract 中哪些必须同时交付？
 4. Git 仓库模式：每项目独立仓库、单一资产仓库，还是业务代码同仓？
-5. Agent 首期是否只能创建候选 patch，还是允许自动创建 branch/PR？审批人和权限范围是什么？
+5. Publish Approval 的策略、审批人和权限范围是什么？Agent 已确定只能创建候选 Artifact；远端 branch/PR 只能由 Commit Service 发布，待确认 Lab 是否允许策略自动批准、团队阶段是否一律要求人工批准。
 6. BrowserStack 在企业阶段是否允许访问；若允许，数据区域、Local Tunnel、并发和预算是什么？
 7. Entra ID、Key Vault、Private Endpoint、模型数据区域和日志保留的组织标准。
 8. MySQL/Redis 的具体 PaaS 产品与 SLA，以及 Queue/Event Stream 是否允许引入独立服务。

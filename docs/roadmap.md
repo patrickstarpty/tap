@@ -25,8 +25,9 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 ### 技术基线
 
 - Azure AI Search 四索引：`kb-doc-v1`、`kb-code-v1`、`kb-bdd-v1`、`kb-failure-v1`。
+- React/TypeScript 前端；Python + FastAPI/ASGI 后端。同一代码库至少按 `api-sse`、`turn-worker`、`ingestion-worker`、`embedding-worker`、`index-writer`、`relay-reconciler` 角色部署。
 - TAP AKS 服务负责变更发现、读取、权限元数据、脱敏、typed parsing/chunking、enrichment、Embedding、索引写入和删除传播。
-- MySQL 保存 catalog、ACL、ingestion ledger/checkpoint 和审计；Redis 只用于锁、限流和短期缓存；Blob 保存原始文档与证据。
+- MySQL 保存 Project/Policy、Chat/Turn/Queue、materialized answer、domain event/Outbox、catalog、ACL、ingestion ledger/checkpoint 和审计；Redis 只做可重建的 command/worker 分发、lease、SSE live fanout、锁、限流和短期缓存；Blob 保存原始文档、大型 Trace/Eval Artifact 与证据。
 - LiteLLM 采用无状态路由；Embedding/Reranker 模型与输入、版本和策略均可追溯，密钥由 Key Vault 管理。
 - React/TypeScript Knowledge Chat + BFF 通过 REST/SSE 使用 Retrieval/Answer/Citation 服务，不依赖 Agentic Loop 或测试执行网格。
 
@@ -38,6 +39,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - 检索前强制 `tenantId/projectId/allowedGroupIds/classification/environment` security trimming。
 - Search/Answer API、claim-level Citation Resolver、Retrieval Trace 和受限 Inspector。
 - TAP Knowledge Chat：Project/Conversation、流式阶段、停止、排队追问、`@resource`、Sources/Claims drawer、断线续传和结构化反馈。
+- REST snapshot + SSE tail、delta 合并、慢消费者背压、会话/Trace 分页；React 对流式尾块增量渲染并对长列表虚拟化。
 - 四类语料分别报告 Recall/MRR/nDCG、引用正确性、权限、新鲜度、可靠性、时延和成本。
 
 ### 出口标准
@@ -86,10 +88,11 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 
 ### 交付
 
+- 在单用户/单 Project Lab 中交付最小 Test Authoring、Execution Orchestrator、Result/Evidence Collector 和 RCA 模块；使用本地 Git/worktree、Docker Selenium Grid 和本地/受控测试远端，不把团队 GitHub 副作用当成本阶段前置。
 - 定义 Test IR v1、stable Test ID、Git layout、schema migration 和语义 diff。
 - 固化 Run/Task/Attempt、Evidence Manifest、Finding、Approval 与幂等契约。
 - LangGraph + FastAPI 可作为主 Orchestrator 实验基线；Codex SDK 作为可替换 Code/Workflow Specialist，检索/执行/审查子 Agent 支持固定 DAG 与受控 Agentic Loop。
-- 在 Test IR Schema、validator/compiler 就绪后增加 `code-edit` Profile：固定 source revision 与独立 worktree，生成 Draft Test IR、最小语义 patch、local validation commit 和候选代码；人工审批后才允许 Commit Service 发布 branch/PR。
+- 在 Test IR Schema、validator/compiler 就绪后增加 `code-edit` Profile：固定 source revision 与独立 worktree，生成 Draft Test IR、最小语义 patch、local validation commit 和候选代码；本阶段只在本地 Git 或受控测试远端验证发布链，正式 Commit Service/GitHub App 在 Phase 3 产品化。
 - 通过 Phase 1 Retrieval API 检索、复用和更新已有测试资产，不在 Agent 内复制私有检索链路。
 - Ollama 起步并通过 LiteLLM 保持模型契约；高并发时再评估 vLLM。
 - Selenium Grid 4 + Docker、Allure + OpenTelemetry + Jaeger；Web 闭环稳定后再接 Appium Device Farm。
@@ -97,7 +100,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 
 ### 出口标准
 
-- 自然语言/BDD → 检索已有资产 → Draft Test IR → Git diff → Browser 执行 → 统一证据 → RCA/自愈建议 → 人工确认完整跑通。
+- 自然语言/BDD → 检索已有资产 → Draft Test IR → local validation commit/Git diff → Browser 执行 → 统一证据 → 单次 RCA/自愈建议 → 人工确认，在 Lab 环境完整跑通。
 - 新建与更新已有资产是两条明确路径；更新只生成最小语义 patch。
 - 断开外部 SaaS 后仍可运行内网核心闭环。
 - Agent 关闭后，确定性执行、断言和证据采集仍能独立工作。
@@ -107,8 +110,9 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 ### 交付
 
 - GitHub App/Webhook、PR/Check 回写、分支与审批流程。
-- Platform API/BFF、Session/Intent、Test Authoring、Execution Orchestrator 和 RCA 基础模块。
-- MySQL operational SoR、transactional Outbox、Outbox Relay、Redis 任务流/租约/Reconciler。
+- 将 Phase 2 Lab 的 Platform API/BFF、Session/Intent、Test Authoring、Execution Orchestrator、Result/Evidence Collector 和 RCA 基础模块产品化为多用户、可恢复服务。
+- 交付 Commit Service 作为唯一远端 Git 写者；执行 `local validation commit → 确定性验证 → Publish Approval → remote branch/PR`，Agent/Orchestrator 不持有生产 Git 凭据。
+- 将 Phase 1 已用于 Chat/Ingestion 的 MySQL operational SoR、transactional Outbox、Outbox Relay、Redis 分发/租约/Reconciler 扩展到 Agent/Run/Execution，并完成多用户生产硬化。
 - Blob 证据及生命周期策略、Key Vault SecretRef、自建 Browser Grid 和 API/Contract ephemeral worker。
 - 新建、复用、更新、执行、诊断五类 Intent Router。
 - 在 Phase 1 Knowledge Chat 外壳中扩展测试工作台：结构化低代码/Test IR editor、IR/代码 diff、Run 时间线、证据、审批和重跑。
@@ -156,7 +160,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 | Phase 1 | Evaluation | Golden Dataset、baseline、质量/权限/新鲜度/成本回归 |
 | Phase 1 | RAG Operations | OTel、dashboard、告警、Runbook、Key Vault、配额和审计 |
 | Phase 1.5 | Codex Runtime POC | SDK Adapter、隔离 Worker、Tool Gateway、research/enrichment profiles、Artifact、验证、审批与安全评测 |
-| Phase 2+ | Test IR & Git Assets | Schema、stable ID、compiler、migration、semantic diff、branch/PR |
+| Phase 2 | Test IR & Local Change | Schema、stable ID、compiler、migration、semantic diff、isolated worktree/local validation commit |
 | Phase 2+ | Agent & Execution | Intent Router、DAG/Loop、provider ports、scheduler、lease、cancel |
 | Phase 2+ | Evidence & RCA | manifest、collector、Blob layout、redaction、failure analysis |
-| Phase 3+ | Platform | MySQL Run state、Outbox、Redis stream、Console、security governance |
+| Phase 3+ | Platform & Git | MySQL Run state、Outbox、Redis stream、Commit Service、GitHub App/branch/PR/Check、Console、security governance |

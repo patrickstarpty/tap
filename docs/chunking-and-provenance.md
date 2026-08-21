@@ -186,7 +186,7 @@ flowchart LR
 6. rename、删除、ACL 收紧产生 tombstone；在 active corpus 发布前完成对账。
 7. 新 schema/embedding dimension 创建 `*-v2`；全量重建与评测通过后逐 family 更新 alias，确认传播完成，再原子切换 TAP 的 `activeCorpusVersion` 应用层指针。
 
-Phase 1 不要求实时 CDC。Git snapshot、Blob scan/event 和 Failure Export Manifest 足以形成增量闭环；MySQL Outbox/实时事件可以在平台运行面建设后接入。
+Phase 1 不要求从权威源接入实时 CDC。Git snapshot、Blob scan/event 和 Failure Export Manifest 足以发现 revision 变化；变化一旦被发现，内部 ingestion command、ledger/checkpoint 与 Outbox 必须在 MySQL 中持久化，再经 Relay/Redis 分发。后续阶段只扩展数据源 CDC 和生产容量，不另建第二套调度事实。
 
 ## 6. Azure AI Search 字段映射
 

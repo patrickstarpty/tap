@@ -135,6 +135,8 @@ stateDiagram-v2
 - Schema 只做向后兼容扩展；破坏性变化升级 `schema_version`。
 - 事件中只存小型结构化事实；大载荷进入 Blob 并用 ArtifactRef 引用。
 
+MySQL 中持久化的 Chat、Agent 和 Test Run domain event 共享内部 envelope：`eventId`、`tenantId`、`projectId`、`aggregateType`、`aggregateId`、aggregate 内单调 `sequence`、`eventType`、`schemaVersion`、`correlationId`、`causationId`、`traceId`、`occurredAt`、`idempotencyKey` 与 typed payload。三类 aggregate 保持各自状态机。面向浏览器的 SSE 是授权后的领域投影，可省略内部 tenant/policy 字段，但必须保留 opaque `eventId` 和 `sequence`。
+
 ## 5. Provider Port
 
 ### AgentRuntime
@@ -387,6 +389,79 @@ stateDiagram-v2
 ### ExecutionProvider
 
 ```typescript
+type ExecutionKind = "browser" | "device" | "api_contract";
+
+interface ArtifactRef {
+  artifactId: string;
+  uri: string;                      // internal URI; never exposed directly to browser
+  contentHash: string;
+  mediaType: string;
+  classification: string;
+}
+
+interface SecretRef {
+  provider: "key_vault" | "workload_identity";
+  reference: string;                // secret value is never present in the plan
+  audience: string;
+  version?: string;
+}
+
+interface CapabilitySet {
+  provider: string;
+  executionKinds: ExecutionKind[];
+  browsers?: string[];
+  platforms?: string[];
+  devices?: string[];
+  features: string[];
+  maxConcurrency?: number;
+  version: string;
+}
+
+interface ExecutionPlan {
+  executionPlanId: string;
+  tenantId: string;
+  projectId: string;
+  runId: string;
+  taskId: string;
+  attemptId: string;
+  executionKind: ExecutionKind;
+  sourceRevision: SourceRevisionRef;
+  testAssetId: string;
+  testAssetRevision: string;
+  compiledArtifact: ArtifactRef;
+  matrix: Record<string, string[]>;
+  environment: string;
+  evidencePolicy: Record<string, unknown>;
+  providerOptionsRef?: string;
+  deadlineAt: string;
+  idempotencyKey: string;
+}
+
+interface ProviderAttempt {
+  provider: string;
+  externalAttemptId: string;
+  submittedAt: string;
+  idempotencyKey: string;
+}
+
+interface AttemptSnapshot {
+  externalAttemptId: string;
+  state: "queued" | "running" | "completed" | "failed" | "canceled" | "unknown";
+  observedAt: string;
+  providerSequence?: string;
+  diagnostic?: Record<string, unknown>;
+}
+
+interface ProviderArtifact {
+  externalArtifactId: string;
+  kind: string;
+  mediaType: string;
+  sizeBytes?: number;
+  contentHash?: string;
+  downloadHandle: string;            // consumed only by trusted Result Collector
+  occurredAt: string;
+}
+
 interface ExecutionProvider {
   capabilities(): Promise<CapabilitySet>;
   submit(plan: ExecutionPlan, credential: SecretRef): Promise<ProviderAttempt>;
@@ -397,6 +472,8 @@ interface ExecutionProvider {
 ```
 
 端口不能暴露 DeepSeek Harness 的插件对象或 BrowserStack capability JSON。Provider 特有字段放入版本化 `provider_options`，领域层只读取经过声明的通用能力。
+
+Provider 只返回原始状态和 artifact handle。可信 Result Collector 负责去重/排序、下载、脱敏、完整性校验、Blob 上传与 Evidence Manifest 构建；Provider `completed` 不等于 TAP Workflow success，只有 Manifest 封存和确定性 Quality Gate 完成后才能推进业务终态。
 
 ## 6. Evidence Manifest 与 Finding
 
@@ -729,6 +806,19 @@ interface ChatTurnSummary {
   completedAt?: string;
 }
 
+interface ChatTurnSnapshot {
+  turn: ChatTurnSummary;
+  answerSoFar: string;
+  citations: Citation[];
+  lastSequence: number;
+  snapshotVersion: number;
+}
+
+interface CursorPage<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
 type ChatTurnState =
   | "queued"
   | "running"
@@ -755,12 +845,19 @@ type ChatStreamEvent =
   | { type: "turn.failed"; payload: { code: string; retryable: boolean } };
 
 interface ChatEventEnvelope {
-  eventId: string;                 // monotonic within a turn
+  eventId: string;                 // opaque identity; never used for lexical ordering
+  sequence: number;                // monotonic within a turn; ordering/resume key
   chatId: string;
   turnId: string;
   occurredAt: string;
   schemaVersion: number;
   event: ChatStreamEvent;
+}
+
+interface StreamResetRequired {
+  code: "stream_reset_required";
+  turnId: string;
+  snapshotUrl: string;
 }
 ```
 
@@ -768,23 +865,26 @@ API 基线：
 
 ```text
 POST   /v1/chats
-GET    /v1/projects/{projectId}/chats
-GET    /v1/chats/{chatId}
+GET    /v1/projects/{projectId}/chats?cursor=&limit=
+GET    /v1/chats/{chatId}?cursor=&limit=
 POST   /v1/chats/{chatId}/turns
 POST   /v1/turns/{turnId}/fork
 POST   /v1/turns/{turnId}/cancel
+GET    /v1/turns/{turnId}
 GET    /v1/chats/{chatId}/queue
 POST   /v1/chats/{chatId}/queue
 PATCH  /v1/chats/{chatId}/queue/{messageId}
 DELETE /v1/chats/{chatId}/queue/{messageId}
-GET    /v1/turns/{turnId}/events
+GET    /v1/turns/{turnId}/events?afterSequence=
 POST   /v1/turns/{turnId}/feedback
 GET    /v1/citations/{citationId}
-GET    /v1/retrieval/traces/{traceId}
+GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 ```
 
 - 浏览器只连接 TAP BFF，不能直连 Azure AI Search 或 LiteLLM。BFF 为 Chat turn 注入与 Retrieval Contract 相同的可信 `RetrievalPolicyContext`。
-- `clientRequestId` 在同一 chat 内幂等；重复提交返回同一 `turnId`。SSE 事件持久化并支持 `Last-Event-ID`，重放事件不得重放检索、模型或其他副作用。
+- `clientRequestId` 在同一 chat 内幂等；重复提交返回同一 `turnId`。`GET /turns/{turnId}` 返回 materialized `ChatTurnSnapshot`，随后 SSE 只从 `afterSequence` 追尾。SSE wire `id` 是十进制 `sequence`，因此自动 `Last-Event-ID` 与显式 query cursor 同义；payload 的 `eventId` 仍是不透明身份。排序、幂等归并和恢复使用显式 `sequence`，重放事件不得重放检索、模型或其他副作用。
+- Event Projection 必须把 provider token 合并为有界、稳定、可重放的 `answer.delta`；禁止每 token 一次 MySQL transaction/SSE event。若连接时 cursor 已超出 replay 数量/字节上限，SSE endpoint 在建立流之前返回 HTTP `409 application/json`，body 符合 `StreamResetRequired`；若已建立的流检测到不可恢复缺口，则发送一次 `event: stream.reset_required`（data 同一结构）后关闭。客户端必须重新 `GET` snapshot，再以新的 `lastSequence` 建立 SSE tail，不能无限从头回放。
+- Chat history、Project chat list 与 Retrieval Trace 必须使用 cursor pagination 和服务端 limit 上限；主 SSE 只传 Trace ID/计数/摘要，候选正文按需读取并重新授权。
 - cancel 是显式状态迁移：客户端先请求停止，收到 `turn.canceled` 后才能立即发送纠偏 turn。部分文本必须标记为已中断。
 - 运行中的排队消息通过 chat-scoped Queue API 创建和列出，并用 `afterTurnId` 固定依赖；保持独立 ID、顺序和内容，不得静默拼入当前 query。编辑旧消息会创建新 turn，旧 turn/trace 保持不可变。
 - Fork 从一个不可变 turn 创建新的 `ChatSession`，记录 `parentChatId/branchedFromTurnId`；它可以更改问题、scope 或 AnswerMode，由服务端产生新的 Retrieval Profile/QueryPlan，但不能改写原 session、answer、QueryPlan、Context Snapshot 或 Trace。

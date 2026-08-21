@@ -2,9 +2,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 文档状态 | Architecture Baseline v0.2，待正式评审 |
+| 文档状态 | Architecture Baseline v0.3，待正式评审 |
 | 更新时间 | 2026-08-21 |
 | 核心主线 | Test IR + Git 版本化 + 统一执行证据 |
+| 应用技术栈 | React + TypeScript 前端；Python + FastAPI/ASGI 后端；同一代码库按在线服务与 Worker 角色部署 |
 | 部署基线 | AKS + PaaS MySQL + PaaS Redis + Azure AI Search + Blob Storage + Key Vault + LiteLLM |
 | 证据边界 | 已恢复 `engprod` 三条讨论；长回复存在源端截断，详见 [来源说明](source-notes.md) |
 
@@ -37,6 +38,8 @@ TAP（Test Automation Platform）是融合知识检索与 Agent 能力的自动�
 
 ## 3. 总体架构
 
+下图表达目标能力、阶段边界和受信任写路径，不是逐条消息的运行时时序图。所有异步命令仍必须先与领域状态在 MySQL 中同事务写入 Outbox，再经 Relay/Redis 分发；Phase 1 的精确部署与恢复链路见第 7 节。
+
 ```mermaid
 flowchart TB
     User[Developer / QA / SDET] --> ChatUX[TAP Knowledge Chat]
@@ -48,43 +51,81 @@ flowchart TB
     Identity[Entra ID] --> Gateway
 
     subgraph AKS[AKS - TAP Platform]
-      Gateway --> Knowledge[Knowledge & RAG]
-      Gateway --> Session[Session & Intent]
-      Session --> AgentOrch[Agent Orchestrator]
+      Gateway --> Session[Project / Chat / Turn]
+      Session --> Mode{Request Mode}
+      Mode -->|quick / deep - Phase 1| Knowledge[Knowledge & RAG]
+      Mode -.->|research / enrichment - Phase 1.5| AgentJob[Agent Job Service]
+      Mode -.->|author / update / execute - Phase 2+| AgentOrch[Agent Orchestrator]
       AgentOrch --> Plan[Planner: DAG / Agentic Loop]
       AgentOrch --> Knowledge[Knowledge & RAG]
       AgentOrch --> Authoring[Test Authoring & Test IR]
       AgentOrch --> ExecOrch[Execution Orchestrator]
       AgentOrch --> RCA[Self-Healing & RCA]
       AgentOrch --> ModelPolicy[Model Policy / Budget Ledger]
-      Plan --> Agents[Retrieval / Execution / Review Agents]
-      AgentOrch --> RuntimePort[AgentRuntime Port]
-      RuntimePort --> CodexWorker[Optional Codex SDK Workers]
+      Plan --> Agents[Retrieval / Execution Planning / Review Agents]
+
+      AgentJob --> State[Job / Run / Task / Attempt<br/>Approval + Outbox]
+      AgentOrch --> State
+      ExecOrch --> State
+      State --> Relay[Outbox Relay]
+      Relay --> Stream[Typed Queue / Lease / Live Event]
+      Stream --> AgentDispatch[Agent Dispatcher]
+      Stream --> ExecDispatch[Execution Dispatcher]
+      AgentDispatch --> RuntimePort[AgentRuntime Port]
+      RuntimePort --> CodexWorker[Optional Codex SDK Controller<br/>one Attempt / isolated Pod]
       RuntimePort --> OtherRuntime[Other Runtime Adapters]
       CodexWorker --> ToolGateway[TAP Tool Gateway]
       ToolGateway --> Knowledge
-      ToolGateway --> Authoring
-      ExecOrch --> Stream[Queue / Event Stream]
-      Stream --> BrowserWorker[Browser Workers]
-      Stream --> DeviceWorker[Device Workers]
-      Stream --> APIWorker[API / Contract Workers]
-      Stream --> CloudWorker[BrowserStack Adapter]
+      ToolGateway --> AssetRead[Test Asset / Snapshot Read APIs]
+      CodexWorker --> ArtifactBroker[Trusted Artifact Broker]
+      ArtifactBroker --> ArtifactKind{Artifact Kind}
+      ArtifactKind -->|research report| Report[Report / Agent Finding]
+      Report --> State
+      ArtifactKind -->|staging enrichment| EnrichValidator[Enrichment Validator]
+      EnrichValidator --> AdminApproval[Admin Approval]
+      AdminApproval --> Indexer
+      ArtifactKind -->|draft IR / patch| Candidate[Candidate IR / Patch]
+      Authoring --> Candidate
+      Candidate --> Validator[Schema / Compiler / Policy Validator]
+      Validator --> ExecOrch
+      Result --> QualityGate[Deterministic Quality Gate]
+      QualityGate --> State
+      QualityGate --> PublishApproval[Human Publish Approval]
+      PublishApproval --> Commit[Commit Service<br/>only remote Git writer]
+
+      ExecDispatch --> BrowserWorker[Browser Workers]
+      ExecDispatch --> DeviceWorker[Device Workers]
+      ExecDispatch --> APIWorker[API / Contract Workers]
+      ExecDispatch --> CloudWorker[BrowserStack Adapter]
+      BrowserWorker --> Result[Result Collector / Normalizer / Redactor]
+      DeviceWorker --> Result
+      APIWorker --> Result
+      CloudWorker --> Result
+      Result --> RCA
+      RCA -.-> Candidate
+      Result --> State
       Indexer[Knowledge Indexer<br/>Parse / Chunk / Embed / ACL]
       Citation[Citation Resolver / Trace Policy]
       Knowledge --> Citation
     end
 
-    Authoring <--> Git[(Git: versioned test assets)]
+    Git[(Git: versioned test assets)] --> AssetRead
+    Git --> Authoring
+    Commit --> Git
     Gateway <--> MySQL[(PaaS MySQL: operational SoR)]
-    AgentOrch <--> Redis[(PaaS Redis)]
+    State --> MySQL
+    Stream <--> Redis[(PaaS Redis)]
     Knowledge <--> Search[(Azure AI Search)]
     Citation --> Gateway
-    BrowserWorker --> Blob[(Blob: evidence & artifacts)]
-    DeviceWorker --> Blob
-    APIWorker --> Blob
+    ArtifactBroker --> Blob[(Blob: evidence & artifacts)]
+    Result --> Blob
     CloudWorker <--> BS[BrowserStack]
-    CloudWorker --> Blob
-    Gateway --> KV[Key Vault]
+    KV[Key Vault / Workload Identity] --> Credential[Credential Broker]
+    Credential --> Gateway
+    Credential -->|controller-only auth channel| CodexWorker
+    Credential --> Result
+    Credential --> ExecDispatch
+    Credential --> Commit
 
     ModelPolicy --> MySQL
     ModelPolicy --> LLM[LiteLLM Gateway]
@@ -93,6 +134,8 @@ flowchart TB
     LLM --> Embed[Embedding Model]
     LLM --> Rerank[Reranker]
     LLM --> Vision[Vision Model]
+    Knowledge --> ModelPolicy
+    CodexWorker --> ModelPolicy
 
     Git --> Indexer
     Blob --> Indexer
@@ -111,6 +154,164 @@ flowchart TB
 | 模型面 | LiteLLM Gateway + TAP Model Policy | 多模型协议/路由与 TAP 自有策略、预算账本、审计分离 |
 | 执行面 | Browser Grid、Device Grid、API/Contract Runner、BrowserStack | 隔离执行、矩阵调度、证据采集 |
 | 数据面 | MySQL、Redis、AI Search、Blob、Git、Key Vault | 主记录、短状态、索引、对象、版本、秘密各司其职 |
+
+### 3.1 能力地图与阶段边界
+
+Phase 1 的 RAG 不是与 TAP 分离的一套聊天应用，而是未来平台共享的知识面、会话外壳和身份/审计底座。后续能力在同一 Project、Policy、Event、Artifact 和 Citation 模型上扩展，不重建第二套前端或私有检索链路。
+
+| 平台能力 | Phase 1 | Phase 1.5 | Phase 2 | Phase 3+ |
+| --- | --- | --- | --- | --- |
+| Project、Conversation、Turn、Identity、Policy、Audit | 交付 | 复用 | 复用 | 企业治理 |
+| Azure AI Search RAG、Citation、Trace、Feedback/Eval | 交付 | 作为唯一检索入口 | 供 Authoring/RCA/Agent 复用 | 规模化调优 |
+| React 工作台外壳 | Knowledge Chat、Sources/Trace | Agent Job 状态 | 增加 Test IR/diff | 增加 Run/Approval/Evidence |
+| Agent Runtime | 不依赖 | 可拔掉的 Codex Research/Enrichment POC | Code/Workflow Specialist | 多 Runtime/治理 |
+| Test IR、编译、语义 diff | 不交付 | 不交付 | 交付 | 生产化 |
+| DAG/Agentic Loop、Execution、Self-Healing/RCA | 不交付 | 仅验证端口 | Lab 闭环 | 团队/企业执行面 |
+| Git branch/PR 与统一执行证据 | 只读索引来源 | 只读或 staging Artifact | 候选 patch + 验证 | 正式审批与质量门禁 |
+
+所有阶段遵守三条边界：
+
+1. **Knowledge Plane 可独立工作**：关闭 Agent Runtime、Test IR 或执行网格时，Phase 1 Chat/Retrieval 仍完整可用。
+2. **平台能力只通过契约复用**：Agent、Authoring 和 RCA 调用同一个 Retrieval/Citation Contract；前端只调用 BFF。
+3. **非确定性结果只形成候选**：Agent 的 report、Test IR、patch 和 RCA Finding 必须进入 Validator、Evidence 和 Approval 链，不能直接修改权威状态。
+
+### 3.2 React + Python 应用架构
+
+首版采用一个仓库、共享领域契约、多个部署角色。控制面先保持模块化，不为每个框预建微服务；只有 CPU/内存密集、长任务或需要独立扩缩的工作负载拆成 Worker 进程/Pod。
+
+```mermaid
+flowchart TB
+    subgraph Browser[React + TypeScript Web]
+      Shell[App Shell<br/>Project / Conversation / Navigation]
+      Chat[Knowledge Chat<br/>Composer / Stream / Queue]
+      EvidenceUI[Sources / Claims / Trace]
+      FutureUI[Phase 2+<br/>Test IR / Diff / Run / Approval]
+      Shell --> Chat
+      Shell --> EvidenceUI
+      Shell -.-> FutureUI
+    end
+
+    Shell -->|HTTPS REST + SSE| Ingress[Ingress / API Gateway]
+    Entra[Entra ID] --> Ingress
+
+    subgraph Online[Python Online Control Plane]
+      BFF[FastAPI BFF<br/>Auth / DTO / REST / SSE]
+      Project[Project & Policy]
+      Conversation[Conversation / Turn / Queue]
+      Retrieval[Retrieval API<br/>QueryPlan / ACL / Hybrid / Rerank]
+      Answer[Answer / Citation / Trace]
+      Feedback[Feedback / Evaluation API]
+      Platform[Phase 2+ Modules<br/>Intent / Test IR / Orchestrator / RCA]
+      BFF --> Project
+      BFF --> Conversation
+      Retrieval --> Answer
+      BFF --> Feedback
+      BFF -.-> Platform
+      Platform -.-> Retrieval
+    end
+
+    Ingress --> BFF
+
+    subgraph Async[Python Async and Worker Roles]
+      TurnWorker[Turn Worker<br/>bounded retrieval + generation]
+      Relay[Outbox Relay / Reconciler]
+      Parse[Parse / Chunk Workers]
+      EmbedWorker[Embedding Workers]
+      IndexWriter[Index Writers]
+      EvalWorker[Offline Evaluation Workers]
+    end
+
+    TurnWorker --> Retrieval
+    Answer --> TurnWorker
+    Conversation -->|append-only events + outbox| MySQL[(PaaS MySQL)]
+    TurnWorker -->|coalesced event + snapshot| MySQL
+    MySQL --> Relay --> Redis[(PaaS Redis<br/>distribution / lease / cache)]
+    Redis --> TurnWorker
+    Redis -->|live notification| BFF
+    MySQL -->|REST snapshot read + SSE event tail read| BFF
+    Redis --> Parse
+    Parse --> EmbedWorker --> IndexWriter
+    IndexWriter --> Search[(Azure AI Search)]
+    Retrieval --> Search
+    Feedback --> EvalWorker
+
+    subgraph Specialist[Isolated Specialist and Execution Workers]
+      Agent[Optional Codex Runtime Pod]
+      BrowserRun[Browser Workers]
+      DeviceRun[Device Gateway / Workers]
+      APIRun[API / Contract Workers]
+      ArtifactBroker[Trusted Artifact Broker]
+      ResultCollector[Result / Evidence Collector]
+    end
+
+    Platform -.-> Agent
+    Platform -.-> BrowserRun
+    Platform -.-> DeviceRun
+    Platform -.-> APIRun
+    Agent -->|TAP narrow tools only| Retrieval
+    Agent --> ArtifactBroker
+    BrowserRun --> ResultCollector
+    DeviceRun --> ResultCollector
+    APIRun --> ResultCollector
+
+    Git[(Git)] --> Parse
+    Blob[(Blob)] --> Parse
+    MySQL --> Parse
+    Answer --> LLM[LiteLLM / approved model endpoints]
+    EmbedWorker --> LLM
+    Retrieval --> LLM
+    Agent -->|separate provider contract| LLM
+    ArtifactBroker --> Blob
+    ResultCollector --> Blob
+    ResultCollector --> MySQL
+    KV[Key Vault / Workload Identity] --> Cred[Credential Broker]
+    Cred --> BFF
+    Cred --> EmbedWorker
+    Cred -->|controller only| Agent
+```
+
+应用边界：
+
+- **React/TypeScript** 只承载展示、交互和本地临时状态；Project、Turn、Queue、Citation、Trace、Run 与 Approval 的最终状态来自服务端。
+- **FastAPI BFF** 负责认证交换、公共 DTO、幂等、REST/SSE 和当前权限重授权，不执行 parser、Embedding、本地 rerank、Agent 或测试任务。
+- **Turn Worker** 执行有界 QueryPlan、检索、生成和 Citation 校验；浏览器断开只结束 BFF 流，不取消后台 Turn。
+- **Ingestion Workers** 负责变更读取、typed parsing/chunking、脱敏、Embedding、删除传播和索引写入；不与 API/SSE Pod 共享 CPU/内存池。
+- **Agent/Execution Workers** 一 Attempt 一隔离环境，通过 `AgentRuntime`/`ExecutionProvider` 端口接入；不直接成为 BFF 内部调用栈。
+- **契约优先**：Python 以 OpenAPI/JSON Schema 发布公共 DTO，React 生成 TypeScript client/type；不得在前后端手工维护两套同名状态机。
+
+### 3.3 部署角色与扩缩边界
+
+首版可以共享 Python package、领域模型和迁移脚本，但至少构建不同 entrypoint/image target：
+
+| 角色 | 主要职责 | 扩缩信号 | 禁止承载 |
+| --- | --- | --- | --- |
+| `web` | React 静态资源和前端路由 | HTTP 流量/CDN 命中 | 秘密、服务端 ACL、模型调用 |
+| `api-sse` | FastAPI REST/SSE、认证、游标恢复、Citation/Trace 读取 | 活跃 SSE、event-loop lag、API latency | parser、Embedding、Agent、测试执行 |
+| `turn-worker` | Context/QueryPlan、Retrieval、Answer、Citation validation | turn queue age、下游配额 | 长期持有浏览器连接 |
+| `ingestion-worker` | fetch、parse、chunk、redact、lineage | source/parse queue age、CPU/RSS | 在线请求 |
+| `embedding-worker` | batch/cache/model calls | token queue、模型配额 | API/SSE |
+| `index-writer` | AI Search batch、tombstone、checkpoint | index queue、429/latency | 解析和回答 |
+| `relay-reconciler` | Outbox、lease、幂等、故障对账 | outbox age、orphan count | 业务生成 |
+| `agent-worker` | Codex/其他 Runtime 的隔离 Attempt | agent queue、预算、runtime quota | 生产凭据、直接索引/Git 发布 |
+| `execution-worker` | Browser/Device/API 测试 Attempt | queue、grid/device capacity | 控制面状态 SoR |
+
+这不是要求一开始建立九个独立微服务。实现初期可以把低吞吐角色合并部署，但 `api-sse`、CPU 密集 Ingestion、Agent 和不可信测试执行必须保持资源与安全隔离。
+
+### 3.4 统一 Console 信息架构
+
+React 应用保持一个 App Shell，并按阶段开启模块，不为 RAG 和测试平台建设两套导航：
+
+| 模块 | 用户能力 | 后端边界 | 阶段 |
+| --- | --- | --- | --- |
+| Project & Access | Project、Environment、Membership、数据范围 | Project/Policy/IAM | Phase 1 最小；Phase 4 完整治理 |
+| Knowledge Chat | Conversation、Quick/Deep、@resource、Citation/Trace、Feedback | Chat/Turn/Retrieval/Citation | Phase 1 |
+| Agent Jobs | Research/Enrichment 状态、Artifact、审批 | Agent Job/Runtime/Artifact | Phase 1.5 |
+| Test Assets | BDD/Test IR、语义 diff、compile/validation | Test Authoring/Test IR | Phase 2 |
+| Runs & Matrix | RunSpec、Browser/Device/API matrix、取消/重跑 | Execution Orchestrator | Phase 2 Lab；Phase 3 产品化 |
+| Evidence & RCA | Timeline、Manifest、Finding、RCA/Healing candidate | Result Pipeline/RCA | Phase 2 Lab；Phase 3+ |
+| Changes & Approvals | local candidate、Publish Approval、branch/PR/Check | Validator/Approval/Commit Service | Phase 3 |
+| Providers, Models & Budgets | Provider capability、模型策略、用量/配额 | Provider Registry/Model Policy | Phase 4 |
+| Audit & Admin | 权限、保留、配置、审计与 Runbook | Governance/Audit | Phase 4 |
 
 ## 4. Agent Orchestrator
 
@@ -216,15 +417,20 @@ flowchart TB
     Draft --> Review[Review Agent + Human Diff]
     Patch --> Review
     Review --> Compile[Compile / Validate]
-    Compile --> Sandbox[隔离执行]
+    Compile --> Workspace[隔离 Worktree / Workspace]
+    Workspace --> LocalCommit[本地 immutable validation commit]
+    LocalCommit --> Sandbox[隔离执行]
     Sandbox --> Stable{稳定性与门禁通过?}
-    Stable -->|yes| PR[Git Branch / PR]
+    Stable -->|yes| Approval[Human Approval]
+    Approval --> Commit[Commit Service]
+    Commit --> PR[Remote Git Branch / PR]
     Stable -->|no| Feedback[证据 + 重新规划]
 ```
 
 - **新建**：先形成 Test Plan 和 Draft IR，再生成执行资产。
 - **更新**：先解析稳定 Test ID 与现有 revision，只允许最小 patch；不得默认重生成整套脚本。
-- 两条路径都必须经过 Schema 校验、编译、隔离执行、Review 和 Git diff。
+- 两条路径都必须经过 Schema 校验、编译、本地 validation commit、隔离执行、Review 和 Git diff。
+- Agent、Authoring 和 Orchestrator 都不持有远端 Git 写凭据；只有审批后的 Commit Service 能发布 branch/PR。Phase 2 Lab 可只使用本地 Git 或受控测试远端，正式 GitHub App/Check/Reconciler 在 Phase 3 交付。
 
 ## 6. 执行面
 
@@ -241,6 +447,20 @@ flowchart TB
 
 ### 6.2 统一执行证据
 
+```mermaid
+flowchart LR
+    Provider[Provider event / artifact] --> Collect[Result Collector]
+    Collect --> Normalize[Normalize + order + deduplicate]
+    Normalize --> Redact[Redact + classification]
+    Redact --> Verify[Hash / integrity verification]
+    Verify --> Manifest[Evidence Manifest Builder / Signer]
+    Manifest --> Blob[(Blob immutable artifacts / manifest)]
+    Manifest --> State[(MySQL manifest ref / hash / state)]
+    State --> Outbox[Outbox]
+    Outbox --> Gate[Deterministic Quality Gate]
+    Manifest --> RCA[Read-only RCA / Healing analysis]
+```
+
 每次 Attempt 都生成 Manifest：
 
 - 源代码 commit、Test IR revision、编译器/Runner 镜像、环境与 matrix。
@@ -249,7 +469,11 @@ flowchart TB
 - Provider 原始 ID、开始/结束时间、重试关系、退出原因和资源费用。
 - Artifact content hash、Blob URI、数据分级、保留期限和脱敏状态。
 
-确定性结果与 Agent 诊断分别存储。Agent 可引用证据并生成 Finding，不能回写或覆盖原始证据。
+Result Pipeline 用 provider event ID、Attempt ID、artifact hash 和 sequence 处理重复、迟到与乱序回调。Blob 保存不可变原始证据和 Manifest 对象；MySQL 保存 Manifest ID/hash、Attempt 关联、处理状态、保留策略与审计事实。Manifest/状态/Outbox 提交成功后，Quality Gate 与 RCA 才能消费。
+
+确定性结果、Quality Decision 与 Agent 诊断分别存储。Agent 可只读引用证据并生成 Finding，不能回写、覆盖或把失败改成成功；Provider 的 `completed` 也不等于 TAP Workflow 已通过。
+
+TAP 区分两类 evidence：Knowledge Evidence 是 `Chunk/Citation/Retrieval Trace`，用于证明回答依据；Execution Evidence 是 `Artifact/Evidence Manifest/Assertion/Finding/Quality Decision`，用于证明一次测试运行发生了什么。RCA 可以引用两类 evidence，但不能把 Retrieval score 当测试结果，也不能把 Agent Finding 当确定性 assertion。
 
 ### 6.3 自愈与 RCA
 
@@ -257,6 +481,7 @@ flowchart TB
 - Self-Healing 根据旧 Locator、DOM/视觉证据和历史成功样本生成候选 patch。
 - RCA 聚合日志、trace、HAR、代码/BDD 变更和历史失败，输出原因、置信度与 evidence refs。
 - 所有修复先在隔离矩阵重复验证；通过后形成 Git PR 和审批记录。
+- Phase 2 Lab 只要求单次证据分析与候选 Locator/Test IR patch；Phase 3 产品化 Finding/审批/重跑/处置；Phase 5 再加入历史聚类、Vision、风险选测和效果反馈。
 
 ## 7. Knowledge & RAG
 
@@ -286,15 +511,87 @@ Azure AI Search 是最终企业选型。首期使用四个独立索引，避免�
 
 AI Search 是可重建投影。原文与大文件来自 Git/Blob，结构化运行事实来自 MySQL。
 
-Phase 1 的完整实现规格拆分为：
+Phase 1 的必需实现规格拆分为：
 
 - [数据切片与端到端溯源](chunking-and-provenance.md)
 - [Azure AI Search 索引设计](ai-search-index-design.md)
 - [检索调优方案](retrieval-tuning.md)
 - [TAP Knowledge Chat](knowledge-chat-ui.md)
-- [受控 Codex Agent Runtime](codex-agent-runtime.md)
+
+Phase 1.5 的可选旁路另见 [受控 Codex Agent Runtime](codex-agent-runtime.md)；它不是 Phase 1 的运行依赖或出口条件。
 
 TAP 自行解析、切片、计算稳定身份、附加 ACL/lineage 并通过 Push API 写入物理索引；AI Search 负责倒排/向量索引、filter、单索引 hybrid/RRF 与可选 semantic ranker。查询默认使用服务端可信 ACL `preFilter`，客户端和模型不能提交或覆盖安全 filter。
+
+### 7.3 Phase 1 在线问答链路
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant W as React Web
+    participant B as FastAPI BFF / SSE
+    participant D as MySQL Turn/Event/Outbox
+    participant Q as Redis Distribution
+    participant T as Turn Worker
+    participant P as Policy / Entra Context
+    participant R as Retrieval + Citation
+    participant S as Azure AI Search
+    participant M as LiteLLM / Model
+
+    U->>W: 提交问题 / @resource / AnswerMode
+    W->>B: POST turn + clientRequestId
+    B->>P: 当前身份与 Project Policy
+    P-->>B: trusted Policy Context
+    B->>D: 创建 Turn + Outbox（同事务）
+    D-->>B: turnId + materialized snapshot
+    B-->>W: 202 + turnId
+    D->>Q: Outbox Relay 分发 command
+    Q->>T: lease Turn
+    T->>P: 执行前重新授权
+    T->>R: Context Snapshot + immutable QueryPlan
+    R->>S: ACL preFilter + bounded hybrid queries
+    S-->>R: authorized candidates
+    R->>M: rerank / grounded answer
+    M-->>R: ranked evidence / answer deltas
+    R-->>T: claims + citations + trace
+    T->>D: 同事务合并 delta、append event、更新 snapshot + Outbox
+    W->>B: GET Turn snapshot（首次打开或恢复）
+    B->>D: 读取 materialized snapshot
+    D-->>B: answer-so-far + lastSequence
+    B-->>W: REST snapshot
+    W->>B: 建立 SSE tail（afterSequence / Last-Event-ID）
+    D->>Q: Outbox Relay 分发 event notification
+    Q-->>B: live notify（仅提示出现新 sequence）
+    B->>D: 按 sequence 读取授权后的 event tail
+    D-->>B: persisted tail events
+    B-->>W: SSE tail events
+    W->>B: GET Citation / Trace
+    B->>P: 按当前身份重新授权
+    B-->>W: 精确 revision/anchor 或 fail closed
+```
+
+关键约束：Turn Worker 与 SSE 连接解耦；浏览器断线不取消 Turn。BFF 不为每个连接轮询或长期占用 MySQL transaction/connection。恢复时先读取 materialized Turn snapshot，再从 `lastSequence` 追尾；重放绝不再次触发 Search、模型或其他副作用。
+
+### 7.4 Phase 1 Ingestion 链路
+
+```mermaid
+flowchart LR
+    Source[Git / Blob / MySQL source revision] --> Detect[Change Detection]
+    Detect --> Ledger[(MySQL Ledger + Outbox)]
+    Ledger --> Relay[Outbox Relay]
+    Relay --> Queue[(Redis Distribution / Lease)]
+    Queue --> Fetch[Fetch + Verify immutable revision]
+    Fetch --> Parse[Typed Parse / Chunk]
+    Parse --> Redact[ACL / Redaction / Lineage]
+    Redact --> Embed[Batch Embedding]
+    Embed --> Write[Index Writer]
+    Write --> Physical[AI Search physical indexes]
+    Physical -->|ACK| Checkpoint[Checkpoint / Manifest]
+    Checkpoint --> Ledger
+    Physical --> Validate[Golden Dataset + ACL + parity]
+    Validate --> Alias[Reader aliases + activeCorpusVersion]
+```
+
+解析、切片、Embedding 与索引写入使用不同的有界队列和 retry budget。大文件设置 bytes/token/RSS 限额，Embedding 按 `chunkContentHash + modelVersion` 去重并批量调用；Index Writer 只在 AI Search 确认后推进 checkpoint。全量重建与在线问答使用独立并发配额，不能让 rebuild 抢占查询容量。
 
 ## 8. 数据与存储职责
 
@@ -316,19 +613,35 @@ flowchart LR
 
 | 存储 | 权威内容 | 禁止用途 |
 | --- | --- | --- |
-| PaaS MySQL | 项目、权限、Test IR catalog/projection、版本映射、Run/Attempt、RCA、自愈、审批、审计、Outbox | 大日志、视频、短期锁 |
+| PaaS MySQL | 项目/权限；Chat/Turn/Queue；materialized answer、append-only domain event 与 Outbox；QueryPlan/Context Snapshot/Trace metadata；ingestion ledger/manifest；Test IR catalog/projection、版本映射、Run/Attempt、RCA、自愈、审批、反馈与审计 | 大日志、视频、每 token 一次写入、短期锁 |
 | Git | BDD、Test IR 文件、脚本、Locator、Fixture、Hook、测试数据模板的版本源 | 运行状态、队列、秘密 |
 | Azure AI Search | 文档/代码/BDD/失败的可重建 hybrid index | 主数据或权限 SoR |
-| PaaS Redis | session、任务流、短锁、限流、短缓存、semantic/Embedding 缓存、Worker heartbeat | 唯一审计记录或长期事实 |
-| Blob Storage | 文档原件、App 包、trace、视频、截图、HAR、日志、非权威候选 patch | 高频事务状态；候选 patch 的最终版本必须进入 Git |
+| PaaS Redis | command/worker queue、lease、SSE live fanout、短锁、限流、短缓存、semantic/Embedding 缓存、Worker heartbeat | Chat queue 业务事实、唯一事件/审计记录或长期事实 |
+| Blob Storage | 文档原件、App 包、大型 Trace/Eval Artifact、Agent report、执行 trace、视频、截图、HAR、日志、非权威候选 patch | 高频事务状态；候选 patch 的最终版本必须进入 Git |
 | Key Vault | 模型、Git、数据库、执行 Provider 的 API key/证书及轮换 | 把明文秘密复制进 RunSpec |
 
-### Git 与 MySQL 的一致性
+Phase 1 中，Chat queued message、Turn 终态、answer projection、event sequence 和 Outbox 必须落 MySQL；Redis 丢失只影响实时分发，BFF 可先从 MySQL 读取 REST snapshot，再按 sequence 恢复 SSE event tail。Retrieval Trace 的授权/索引/版本/摘要元数据保存在 MySQL，大型候选与调试 Artifact 按 retention/redaction policy 进入 Blob 并以 hash 引用。模型 token delta 先合并为可重放事件，禁止每个 token 单独提交数据库事务。
+
+### 8.1 Git 与 MySQL 的一致性
 
 - Git 是测试内容 revision 的权威源；MySQL 是目录、权限、流程和运行事实的权威源。
 - 所有运行引用不可变 Git commit；MySQL 保存 `asset_id + git_commit + content_hash`。
-- 内容编辑先通过 branch + immutable commit 或受控 Commit Service 完成；验证通过后再创建/更新 PR，由 Sync Worker 更新 MySQL projection 与索引。
+- 内容编辑先在隔离 worktree 形成 immutable local validation commit；确定性验证和人工审批通过后，只有 Commit Service 能发布远端 branch/PR，由 Sync Worker 更新 MySQL projection 与索引。
 - 不做无约束双写。写 Git 成功而投影失败时由 Reconciler 重放；索引随时可从 Git/Blob/MySQL 重建。
+
+### 8.2 统一事件平面与独立状态机
+
+Chat、Agent 和测试执行共享事件基础设施与 envelope，但保持三套领域状态机，不能抽象成一套“万能 Session”：
+
+| Aggregate | 状态机 | 主要事实 |
+| --- | --- | --- |
+| `ChatTurn` | queued/running/stopping/completed/abstained/canceled/failed | QueryPlan、Context Snapshot、answer、Citation、Trace、degradation |
+| `AgentJob/Attempt` | queued/leased/running/waiting/cancel_requested/completed/failed/unavailable | Runtime、Policy、tool、Artifact、approval、cost |
+| `TestRun/Task/Attempt` | planned/queued/dispatched/running/collecting/completed/failed/canceled | RunSpec、Provider、assertion、Evidence、Finding、quality gate |
+
+公共 envelope 至少包含：`eventId`、`tenantId`、`projectId`、`aggregateType`、`aggregateId`、aggregate 内单调递增 `sequence`、`eventType`、`schemaVersion`、`correlationId`、`causationId`、`traceId`、`occurredAt` 和 `idempotencyKey`。`eventId` 是不透明标识，排序与断点恢复使用显式 `sequence`。
+
+状态迁移、domain event 和 Outbox 在一个 MySQL 事务内提交；Outbox Relay 把事件至少一次分发到 Redis。消费者以 `aggregateId + sequence` 和业务幂等键去重。面向浏览器的 SSE 是领域事件的授权投影，不是 Redis 消息或模型 provider event 的原样透传；Runtime/Provider 未识别事件只能进入诊断字段，不能改变 TAP 终态。
 
 ## 9. 模型层与 LiteLLM
 
@@ -355,9 +668,12 @@ sequenceDiagram
     participant A as Agent Orchestrator
     participant K as Knowledge & RAG
     participant T as Test IR Service
-    participant G as Git
+    participant S as Snapshot / Worktree Broker
+    participant V as Deterministic Validator
     participant E as Execution Orchestrator
     participant W as Grid / BrowserStack
+    participant C as Commit Service
+    participant G as Remote Git
 
     U->>A: 描述目标或提交 BDD
     A->>K: 权限过滤后的多路检索
@@ -365,15 +681,18 @@ sequenceDiagram
     A->>T: 生成 Test Plan + Draft IR
     T-->>U: 结构化预览 / 澄清 / diff
     U->>T: 确认
-    T->>G: 创建 branch + immutable validation commit
-    G-->>T: commit SHA
-    T->>E: 用固定 commit 执行验证矩阵
+    T->>S: 创建隔离 worktree + local validation commit
+    S-->>V: sealed candidate + hash
+    V->>V: Schema / compiler / policy checks
+    V->>E: validated ExecutionPlan + fixed candidate ref
     E->>W: Browser / Device / API tasks
     W-->>E: 统一证据与结果
     E-->>A: Finding / RCA / stability
     alt 确定性验证通过
-      A->>G: 创建/更新 PR 或标记 ready-for-review
       A-->>U: 汇总与审批请求
+      U->>C: 批准发布候选
+      C->>G: 创建/更新 remote branch + PR
+      G-->>C: commit / PR reference
     else 验证失败
       A-->>U: 证据与修订建议
     end
@@ -385,13 +704,15 @@ sequenceDiagram
 2. 加载目标 revision、相关代码/BDD、最近失败和资产依赖。
 3. Agent 只生成语义 patch；Review Agent 检查范围、Schema、风险和遗漏。
 4. 编译后在隔离 Runner 执行受影响测试与必要回归。
-5. 证据通过后创建 Git PR；需要时由人工批准 locator/self-healing 变更。
+5. 证据通过并经人工审批后，由 Commit Service 创建 Git branch/PR；Agent 和 Orchestrator 没有远端 Git 写权限。
 
 ### 10.3 PR 质量反馈
 
 GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/风险选测 → 自建或 BrowserStack 执行 → 证据归一化 → 可选 Agent RCA → 确定性 Quality Gate → GitHub Check/评论。
 
-## 11. 可靠性
+## 11. 可靠性、性能与容量
+
+### 11.1 一致性与故障恢复
 
 - MySQL 状态、RunEvent 与 Outbox 同事务；Redis Stream 负责分发，不承担唯一事实。
 - Webhook、队列、Provider callback 都按至少一次处理，所有 Handler 使用稳定幂等键。
@@ -401,9 +722,53 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 - 模型、BrowserStack、自建 Grid 各自使用 bulkhead、deadline、retry budget 和 circuit breaker。
 - KEDA 只根据可观测队列与资源指标扩缩 Worker；不会扩缩物理设备本身。
 
+### 11.2 Python 在线服务与 Worker 隔离
+
+- `api-sse` 使用 FastAPI/ASGI 与全异步 Search、HTTP、MySQL、Redis client；同步 SDK/文件解析不能阻塞 event loop。
+- AKS 默认一个 Uvicorn process/Pod，通过 Pod 横向扩容；单 Pod worker 数、pool 和并发必须通过压测决定，不能用多进程掩盖阻塞调用。
+- parser/chunker/OCR/AST、本地 tokenizer/reranker/Embedding、Artifact 压缩和 Agent/测试执行进入独立 process/Pod。重任务不使用进程内 `BackgroundTasks`。
+- Search、Embedding、Rerank、LLM、MySQL 与 Redis 各自配置有界连接池、tenant/project semaphore、deadline、`Retry-After` 与带抖动重试；Quick/Deep 的 subquery/index fan-out 有硬上限，禁止无界 `gather`。
+- MySQL 连接按 `pod replicas × pool size` 做全局预算；SSE 等待时不持有数据库连接。过载时显式排队、429/503 或降级，不能让请求无限堆积。
+
+### 11.3 SSE 与 React 性能契约
+
+以下是首轮压测起点，不是生产 SLO：
+
+- Event Projection 层把 provider token 合并为稳定可重放的 `answer.delta`；初始以 `50–100ms` 或 `32–128` 字符为触发条件，目标不超过 `10–20 events/s/turn`，单事件不超过 `16KiB`。禁止每 token 一次 MySQL commit/SSE event/React state update。
+- BFF 每连接使用有界缓冲；初始上限 `64–128 events` 或 `256KiB`，慢消费者断开后用 snapshot + cursor 续传。Heartbeat 初始 `15–25s`，Ingress idle timeout 至少是 heartbeat 的 `2–3` 倍。
+- `GET Turn Snapshot` 返回 answer-so-far、citations、state 和 `lastSequence`；SSE 只追尾。若待重放超过 `500 events` 或 `1MiB`，服务端要求重新取得 snapshot，不能从第一条 token delta 无限回放。
+- React 把 REST server state、SSE 高频状态与 composer/面板临时状态分开；按 chat/turn/message/citation/trace 规范化，delta 先进入 buffer，再按 animation frame 或最多约 `50ms` 批量提交。
+- 流式 Markdown 只增量处理未闭合尾块，完成段落 memoize；代码高亮、Source preview 和 Trace 按需加载。长会话与候选列表分页并采用动态高度虚拟化，不能一次性挂载完整历史或 Trace。
+
+### 11.4 容量与压测
+
+“约 200 DAU、近万文档”只说明产品规模，不能直接决定容量。在线容量按峰值 active turns、SSE connections、fan-out 和下游 quota 计算；Ingestion 按 chunk/vector/token 总量、平均 revision 大小与更新速率计算。首轮至少覆盖：
+
+1. `200/500/1000` 个 SSE 连接，分别模拟空闲与 `10%/30%/100%` 活跃比例。
+2. `20/50/100` 个并发 active turns，覆盖 Quick/Deep、跨索引最大 fan-out、取消和断线恢复。
+3. 四类语料全量 rebuild 与在线问答并行，验证 Search/Embedding 配额隔离和查询 p95/p99。
+4. AI Search/LLM 429 与慢响应、Redis/MySQL 抖动、Pod 重启、SSE reconnect、重复消息和 checkpoint 恢复。
+
+必须观测：active SSE、event-loop lag、TTFT、turn p95/p99、每依赖 latency/429、DB/HTTP pool wait、queue age、delta 写入率、Search throttling、LLM token/费用、worker RSS/CPU、ingestion freshness 与恢复重复率。只有 profiler 证明 Python Runtime 在完成异步化、隔离和横向扩容后仍主导 p99/成本，才局部把高连接网关或 CPU parser 改为 Go/Rust/native worker；不整体重写平台。
+
 建议先测量基线，再审批 SLO 数值。至少分别定义：控制面可用性、Run 建立延迟、结果收敛延迟、审计完整性、RPO/RTO、Provider 降级和成本上限。
 
 ## 12. 安全与合规
+
+```mermaid
+flowchart LR
+    Identity[Entra identity / service principal] --> PDP[Project Policy Decision Point]
+    PDP --> Decision[Short-lived Policy Decision<br/>tenant / project / role / ACL digest / capability]
+    Decision --> BFFPEP[BFF PEP]
+    Decision --> RetrievalPEP[Retrieval / Citation PEP]
+    Decision --> ToolPEP[Tool / Artifact PEP]
+    Decision --> ExecPEP[Execution / Commit PEP]
+    Untrusted[Documents / code / model output / provider callback] --> Sandbox[Untrusted data or sandbox zone]
+    Sandbox --> Validate[Deterministic validator / sanitizer]
+    Validate --> ToolPEP
+```
+
+Entra 只提供身份起点；Project Policy 是决策源，BFF、Retrieval/Citation、Tool/Artifact、Execution/Commit 都是独立执行点。公共 DTO、模型和 sandbox 只能收窄 scope，不能传入 tenant/group/classification 或扩大 capability。旧 Chat/Citation/Trace、Agent tool、Artifact 发布、执行与 Git 写入分别按当前 Policy 重新授权，Policy 不可用时 fail closed。
 
 | 风险 | 控制 |
 | --- | --- |
@@ -420,39 +785,146 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 
 ## 13. 可观测性
 
-- OpenTelemetry 贯穿 `conversation → plan → run → task → attempt → provider/agent session`。
+- OpenTelemetry 贯穿 `project → chat → turn → retrieval operation → query plan → context snapshot → retrieval trace`，以及后续 `workflow → run/job → task → attempt → provider/runtime`；二者通过 correlation ID 关联而不混用状态机。
 - Allure 作为测试报告视图；OTel trace/log/metric 负责跨组件诊断；个人实验阶段可用 Jaeger，企业环境后端可替换。
-- 必要指标：队列等待、Grid 利用率、设备占用、Provider 错误、flake、RCA 采纳率、自愈验证率、Agent token/费用、Search 命中与引用率。
+- RAG/Chat 指标：active SSE、event-loop lag、TTFT、delta rate、断线恢复、DB/HTTP pool wait、Search latency/QPS/throttling、retrieval/rerank/context token、citation/abstain/feedback、ingestion queue/freshness/rebuild parity。
+- 测试/Agent 指标：队列等待、Grid 利用率、设备占用、Provider 错误、flake、Evidence 收敛、RCA 采纳率、自愈验证率、Agent cold start/tool latency/token/费用与 Artifact seal。
 - 审计事件、业务事件、调试日志分开保存与设置保留策略。
 
 ## 14. AKS 部署拓扑
 
-建议使用逻辑隔离的 namespace/node pool：
+```mermaid
+flowchart TB
+    User[Browser / CLI] --> Edge[Enterprise Edge / WAF]
+    Entra[Entra ID] --> Edge
+    GitHub[GitHub / CI] <--> Edge
 
-- `tap-control`：API/BFF、Authoring、Orchestrator、RCA、Indexer。
-- `tap-agent-workers`：LangGraph/可选 Harness Runtime、Codex SDK Adapter、Tool Gateway、临时工作区；Codex Attempt 使用独立短生命周期 Pod、ServiceAccount、卷、沙箱和 egress profile，不共享 tenant workspace 或 runtime home。
-- `tap-browser-grid`：Selenium Grid Router/nodes；若采用 Playwright，使用独立 ephemeral worker pool，不混用 Selenium Grid 协议。两者分别由 KEDA/HPA 扩缩。
-- `tap-device-gateway`：管理外部 Appium device hosts；物理设备不假设运行在 AKS Pod 内。
-- `tap-api-workers`：API/Contract ephemeral jobs。
-- `tap-observability`：OTel Collector 与组织标准观测 Agent。
+    subgraph VNet[Azure VNet]
+      subgraph AKS[AKS Cluster]
+        subgraph EdgeNS[tap-edge]
+          Ingress[Ingress / API Gateway]
+          Web[React static assets]
+        end
+        subgraph ApiNS[tap-api]
+          API[FastAPI API/SSE]
+          Project[Project / Policy / Chat]
+        end
+        subgraph KnowledgeNS[tap-knowledge]
+          Turn[Turn Workers]
+          Retrieval[Retrieval / Citation]
+          Ingest[Parse / Chunk Workers]
+          Embed[Embedding Workers]
+          Writer[Index Writers / Eval]
+        end
+        subgraph ControlNS[tap-control-phase2plus]
+          Workflow[Authoring / Workflow / Approval]
+          Commit[Commit Service]
+          Evidence[Result / Evidence Collector]
+        end
+        subgraph AgentNS[tap-agent-workers]
+          Dispatch[Agent Dispatcher / Tool Gateway]
+          Codex[Ephemeral Codex Attempt Pods]
+          Broker[Artifact / Credential Brokers]
+        end
+        subgraph ExecNS[tap-execution]
+          Scheduler[Execution Dispatcher]
+          APIWorker[API / Playwright Workers]
+          Selenium[Selenium Grid Router / Nodes]
+          DeviceGW[Appium Device Gateway]
+          BSTunnel[Per-Run BrowserStack Tunnel]
+        end
+        subgraph ModelNS[tap-model]
+          ModelPolicy[Model Policy]
+          LiteLLM[Stateless LiteLLM]
+          Egress[Audited Model Egress]
+        end
+        subgraph ObsNS[tap-observability]
+          OTel[OTel Collector / Audit Pipeline]
+        end
+      end
 
-网络策略默认拒绝跨 namespace 与公网出口；访问 MySQL、Redis、AI Search、Blob、Key Vault、LiteLLM 使用 workload identity/private endpoint（具体 Azure 网络实现进入部署设计）。
+      Private[Private Endpoints]
+      MySQL[(PaaS MySQL)]
+      Redis[(PaaS Redis)]
+      Search[(Azure AI Search)]
+      Blob[(Blob Storage)]
+      KV[Key Vault]
+    end
+
+    Edge --> Ingress --> Web
+    Ingress --> API --> Project
+    API --> Turn --> Retrieval
+    Project --> Workflow
+    Turn --> MySQL
+    Ingest --> Embed --> Writer --> Search
+    Workflow --> Dispatch --> Codex
+    Codex -->|TAP tools only| Retrieval
+    Codex --> Broker --> Blob
+    Workflow --> Scheduler
+    Scheduler --> APIWorker
+    Scheduler --> Selenium
+    Scheduler --> DeviceGW
+    Scheduler --> BSTunnel
+    APIWorker --> Evidence
+    Selenium --> Evidence
+    Evidence --> Blob
+    Evidence --> MySQL
+    Commit --> GitHub
+
+    API --> Private
+    Retrieval --> Private
+    Ingest --> Private
+    Writer --> Private
+    Workflow --> Private
+    Evidence --> Private
+    Private --> MySQL
+    Private --> Redis
+    Private --> Search
+    Private --> Blob
+    Private --> KV
+
+    Retrieval --> ModelPolicy
+    Embed --> ModelPolicy
+    Codex -->|controller only| ModelPolicy
+    ModelPolicy --> LiteLLM --> Egress
+    ModelPolicy -.->|contract-tested exception| Egress
+
+    DeviceGW <--> DeviceHost[External Device Hosts]
+    BSTunnel <--> BS[BrowserStack]
+    Egress --> Provider[Approved Model Providers]
+    API --> OTel
+    Turn --> OTel
+    Workflow --> OTel
+    Dispatch --> OTel
+    Scheduler --> OTel
+```
+
+部署约束：
+
+- `tap-api`、CPU/内存密集的 `tap-knowledge` workers、`tap-agent-workers` 和不可信 `tap-execution` 使用独立 Deployment/node pool 或至少独立资源/网络边界；Indexer 不再与 API/SSE 共用 Pod。
+- Codex Attempt 使用短生命周期 Pod、无默认 ServiceAccount token、独立卷、干净 runtime home、sandbox 和 egress profile；credential 只进入可信 controller/broker，不能进入模型控制的命令环境。
+- Selenium Grid 与 Playwright ephemeral worker pool 分开；物理 Appium device host 位于 AKS 外，由 Device Gateway 管理。BrowserStack Local Tunnel 按 Run 创建并限制目标/TTL。
+- Namespace 与公网出口默认拒绝，只按图中路径 allowlist。PaaS 访问采用 workload identity/private endpoint；模型 provider、GitHub、BrowserStack 和被测系统通过受审计 egress。
+- Phase 1 可以使用最小非生产 AKS + 现有 PaaS 验证纵向切片；Phase 4 的“企业 AKS”指多副本/多可用区、Private Link、KEDA、DR、SLO、容量与多租户硬化，不是重新实现 Phase 1 组件。
 
 ## 15. 演进路径
 
 1. **RAG Foundation + Knowledge Chat**：先完成 Azure AI Search 四索引、typed ingestion、权限过滤、hybrid retrieval、引用、离线评测，以及可流式问答/中断/排队追问/打开证据的 Chat 页面；不以前置 Agent 或执行网格为目标。详见 [Phase 1 专项设计](rag-phase-1.md)。
 2. **受控 Agent Runtime POC**：在不改变 Phase 1 出口条件的前提下，以 Codex SDK Adapter 验证只读 Research 与 staging Knowledge Enrichment；关闭 Runtime 时 RAG/Chat 必须完整工作。
-3. **Agentic Test Lab**：复用已验证的 RAG，先定义 Test IR/validator/compiler，再加入 Codex code-edit Specialist、本地 Agent、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，打通 NL/BDD 到证据闭环。
-4. **团队 MVP**：Git Test IR、MySQL、Redis、Blob、受控 MCP 工具、GitHub PR；自建 Grid 优先覆盖内网。
+3. **Agentic Test Lab**：复用已验证的 RAG，先定义 Test IR/validator/compiler，再加入 Codex code-edit Specialist、最小 Test Authoring/Execution/Result/RCA、本地 Git/worktree、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，在单用户/单 Project Lab 打通 NL/BDD 到证据闭环。
+4. **团队 MVP**：把 Lab 模块产品化为多用户可恢复服务，将 Phase 1 已用于 Chat/Ingestion 的 MySQL Outbox、Redis lease 与 Reconciler 模式扩展到 Agent/Run/Execution 并做生产硬化，同时交付 Commit Service、GitHub App/PR/Check、正式审批和自建 Grid；远端 Git 副作用只由 Commit Service 执行。
 5. **企业平台扩展**：AKS/KEDA、Key Vault、LiteLLM 多模型、BrowserStack Adapter、多租户权限与审计。
 6. **智能增强与规模化**：失败聚类、RCA、自愈候选、Vision、风险选测；按真实瓶颈拆分组件。
 
 ## 16. 需要进一步细化的设计
 
 - Test IR JSON Schema、action vocabulary、编译器与 schema migration。
+- Project/Membership/RoleBinding/EnvironmentPolicy，以及 Entra group sync、service principal 与职责分离管理契约。
+- WorkflowPlan、DAG node/Loop action、TestPlan/ChangeSet/ValidationResult、Approval/QualityDecision、RcaReport/HealingCandidate 契约。
 - Git 目录布局、branch/PR 流程、stable Test ID 与 rename/alias 规则。
 - MySQL 逻辑模型与 Run/Task/Attempt 单调状态机。
 - 四个 AI Search 索引的容量/SKU、embedding/rerank 模型与真实 Golden Dataset 参数校准；逻辑 Schema、权限过滤与调优流程已在 Phase 1 专项文档定义。
 - BrowserStack Local、自建 Browser Grid、Appium Device Farm 的网络与容量设计。
 - Agent Runtime 选型验证：Codex SDK Adapter、LangGraph 基线与 DeepSeek Harness Adapter POC；同时验证认证、Responses provider、sandbox、事件、取消、成本和隔离。
+- ModelPolicyDecision、ModelInvocationRecord 与 UsageLedgerEntry 契约，以及 LiteLLM/受审计 direct-provider egress 的统一账本。
 - 统一 Evidence Manifest、脱敏规则、Blob 生命周期与法律保留策略。

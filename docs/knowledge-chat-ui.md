@@ -57,7 +57,7 @@ Phase 1.5 的 Codex Research（以及受限管理员发起的 Knowledge Enrichme
 
 ### 3.1 流式回答与恢复
 
-浏览器通过 SSE 接收持久化事件。刷新或网络中断后用 `Last-Event-ID` 续传；不能重新执行已经完成的检索或产生第二份回答。页面同时展示稳定的 `turnId`、运行状态和降级信息。
+浏览器通过 SSE 接收持久化事件。首次连接或恢复时先用 REST 读取 materialized Turn snapshot（answer-so-far、citations、state、`lastSequence`），再从 cursor 追尾；SSE wire `id` 使用十进制 `sequence`，因此浏览器的 `Last-Event-ID` 与显式 `afterSequence` 表示同一断点，不触发重新检索。若待重放超过服务端上限，统一返回 `stream_reset_required` 并重新取得 snapshot，不能从第一条 token delta 无限回放。页面同时展示稳定的 `turnId`、运行状态和降级信息。
 
 ### 3.2 中断与立即纠偏
 
@@ -152,19 +152,20 @@ Trace 不显示隐藏思维链、系统提示词、原始 group IDs、秘密、�
 
 ```text
 POST   /v1/chats
-GET    /v1/projects/{projectId}/chats
-GET    /v1/chats/{chatId}
+GET    /v1/projects/{projectId}/chats?cursor=&limit=
+GET    /v1/chats/{chatId}?cursor=&limit=
 POST   /v1/chats/{chatId}/turns
 POST   /v1/turns/{turnId}/fork
 POST   /v1/turns/{turnId}/cancel
+GET    /v1/turns/{turnId}
 GET    /v1/chats/{chatId}/queue
 POST   /v1/chats/{chatId}/queue
 PATCH  /v1/chats/{chatId}/queue/{messageId}
 DELETE /v1/chats/{chatId}/queue/{messageId}
-GET    /v1/turns/{turnId}/events
+GET    /v1/turns/{turnId}/events?afterSequence=
 POST   /v1/turns/{turnId}/feedback
 GET    /v1/citations/{citationId}
-GET    /v1/retrieval/traces/{traceId}
+GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 ```
 
 SSE 事件至少包括：
@@ -186,7 +187,7 @@ turn.canceled
 turn.failed
 ```
 
-每个事件包含单调递增 `eventId`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；事件重放不能触发新的模型或检索调用。正式 DTO 和状态约束见 [Knowledge Chat Contract](contracts.md#9-knowledge-chat-contract)。
+每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。正式 DTO 和状态约束见 [Knowledge Chat Contract](contracts.md#9-knowledge-chat-contract)。
 
 ## 7. 前端实现基线
 
@@ -195,6 +196,24 @@ turn.failed
 - REST 承担 mutation，SSE 承担单向事件和 answer delta；断线恢复依赖持久事件游标。
 - 消息、引用、queue 与运行状态按服务端事实归并，不在浏览器猜测最终状态。
 - 可访问性覆盖键盘、焦点管理、屏幕阅读器和非颜色状态提示。
+
+### 7.1 状态与渲染架构
+
+- **REST server state**：Project、Chat page、Turn snapshot、Citation/Trace page，用带 cursor 的 query cache 管理。
+- **SSE 高频状态**：独立 event buffer/store，以 `(turnId, sequence)` 幂等归并；不能把整条 Chat 放入一个 Context/Redux object 并在每个 delta 广播。
+- **本地 UI 状态**：composer、选中引用、面板宽度、未提交 queue 编辑，不冒充服务端事实。
+- 实体按 chat/turn/message/citation/trace 规范化，完成消息 memoize；Turn 完成后用 final answer 替换热 delta buffer，只保留 snapshot 与最后 cursor。
+- Markdown 流式阶段只解析未闭合尾块，完成段落缓存；代码高亮、source preview、完整 Trace 在展开后懒加载。历史 Chat 与 Trace 都用 cursor 分页，长列表采用动态高度虚拟化并保持滚动锚点。
+
+### 7.2 首轮性能预算
+
+以下数值用于首轮压测和代码评审，不是生产 SLO：
+
+- Event Projection 以 `50–100ms` 或 `32–128` 字符合并模型 delta，目标不超过 `10–20 events/s/turn`，单 event 不超过 `16KiB`；浏览器按 animation frame 或最多约 `50ms` 批量提交一次。
+- BFF 每连接缓冲初始上限 `64–128 events` 或 `256KiB`；慢消费者断开后续传，不建立无界内存队列。Heartbeat 初始 `15–25s`，代理 idle timeout 至少是其 `2–3` 倍。
+- REST snapshot + SSE tail 的单次追尾初始上限 `500 events` 或 `1MiB`；超限执行明确的 `stream_reset_required`/snapshot 协议。
+- Chat 初载建议只取最近 `40 turns`，旧历史每页 `20 turns`；Trace 候选每页 `50`、服务端最多返回 `100` 条摘要，候选正文点击后重新授权并单独获取。数值根据真实回答长度和浏览器 profiling 调整。
+- 重点测量 event receive-to-paint、React commit、主线程 long task、DOM/heap、SSE 重连重复率；禁止每个 token 都 `setState`、重新 sanitize/parse 全回答或写一条数据库事务。
 
 ```mermaid
 stateDiagram-v2

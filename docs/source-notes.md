@@ -27,6 +27,8 @@
 
 2026-08-21 的最新问题要求补充本阶段完整架构，并评估在后台嵌入 Codex CLI 作为 Agent Runtime。当前工程结论是：Phase 1 保持确定性 RAG/Chat 主链；Phase 1.5 可增加服务端 Codex SDK Adapter 作为可选、隔离的 Research/Knowledge Enrichment Specialist。Test IR/代码生成等到 Phase 2 基础契约就绪后接入。Codex 不掌握 ACL、索引发布或生产 Git，只通过 TAP Retrieval/Tool Gateway 产生候选 Artifact。
 
+2026-08-21 的应用技术栈进一步确认为：前端 React + TypeScript，后端 Python + FastAPI/ASGI。整体架构要求同时覆盖最初的 Test Automation Platform 能力与当前 RAG 前后端，并明确 RAG 是未来平台共享的 Knowledge Plane，而非独立 Demo。工程决策是保持一个代码库/共享契约，按 API/SSE、Turn、Ingestion、Embedding、Index Writer、Agent 与 Execution 角色隔离部署。
+
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM
@@ -123,9 +125,23 @@ Core = Test IR + Git versioning + unified execution evidence
 - [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 - [Workload identity federation](https://learn.chatgpt.com/docs/enterprise/workload-identity)
 
-采用的事实：Codex SDK 可在服务端启动、继续和恢复本地 coding thread，并用于 CI/CD、内部工具、工作流和应用；`codex exec` 面向脚本与 CI；App Server 协议面向认证、会话历史、审批和流式 Agent 事件等深度集成，但其 command/WebSocket transport 当前为 experimental/unsupported for production。Codex 支持 API key 程序化认证，并明确不应把执行能力暴露在不可信或公开环境；managed ChatGPT Workspace 自动化可评估 access token 或当前为 Beta 且需 Workspace 开通/映射的 workload identity。自定义 model provider 的公开 wire protocol 是 Responses API。官方也明确 command network proxy 不覆盖 web search、connectors/plugins、MCP、Browser/Computer Use、cloud task 或 model/auth 流量，必须分别治理。
+采用的事实：Codex SDK 可在服务端启动、继续和恢复本地 coding thread，并用于 CI/CD、内部工具、工作流和应用；官方稳定 Python 包为 `openai-codex`，要求 Python 3.10+、包含 pinned Codex CLI runtime，并提供 `AsyncCodex`。`codex exec` 面向脚本与 CI；App Server 协议面向认证、会话历史、审批和流式 Agent 事件等深度集成，但其 command/WebSocket transport 当前为 experimental/unsupported for production。Codex 支持 API key 程序化认证，并明确不应把执行能力暴露在不可信或公开环境；managed ChatGPT Workspace 自动化可评估 access token 或当前为 Beta 且需 Workspace 开通/映射的 workload identity。自定义 model provider 的公开 wire protocol 是 Responses API。官方也明确 command network proxy 不覆盖 web search、connectors/plugins、MCP、Browser/Computer Use、cloud task 或 model/auth 流量，必须分别治理。
 
 TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential sidecar、Codex 不直连 AI Search、Test IR 优先、候选 patch、Git 审批、多租户隔离、LiteLLM 兼容性门禁和 Phase 1.5 分期均为本次工程设计，不是 OpenAI 产品内部架构。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+
+### React/Python 应用运行时
+
+- [FastAPI async and concurrency](https://fastapi.tiangolo.com/async/)
+- [FastAPI deployment in containers](https://fastapi.tiangolo.com/deployment/docker/)
+- [FastAPI background tasks](https://fastapi.tiangolo.com/tutorial/background-tasks/)
+- [Uvicorn settings](https://www.uvicorn.org/settings/)
+- [Python threading and the GIL](https://docs.python.org/3/library/threading.html)
+- [React `useDeferredValue`](https://react.dev/reference/react/useDeferredValue)
+- [React Profiler](https://react.dev/reference/react/Profiler)
+- [Azure AI Search performance tips](https://learn.microsoft.com/en-us/azure/search/search-performance-tips)
+- [Azure AI Search query monitoring](https://learn.microsoft.com/en-us/azure/search/search-monitor-queries)
+
+采用的事实：FastAPI/ASGI 适合大量 I/O 等待的在线 API，CPU 重任务需要进程/Worker 隔离；Kubernetes 中可以一个 Uvicorn process/Pod 并由集群复制。React 提供延迟非关键更新与性能测量能力，但 TAP 的 delta 合并、增量 Markdown、规范化状态和虚拟化属于应用层设计。Azure AI Search 的查询形态、容量、延迟、QPS 和 throttling 必须持续监控。由此得出的“Python/React 足以支持既定规模、热点按 profiler 局部拆分”是 TAP 工程决策，不是厂商吞吐承诺。
 
 ### LiteLLM
 

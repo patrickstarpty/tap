@@ -4,7 +4,7 @@
 | --- | --- |
 | 状态 | Phase 1 delivery baseline |
 | 目标 | 构建可评测、权限安全、可追溯、可增量更新，并能通过聊天完成知识问答的企业 RAG 垂直切片 |
-| 核心技术 | Git、Entra ID、AKS、Azure AI Search、MySQL、Redis、Blob、Key Vault、LiteLLM、React/TypeScript |
+| 核心技术 | React/TypeScript、Python + FastAPI/ASGI、Git、Entra ID、AKS、Azure AI Search、MySQL、Redis、Blob、Key Vault、LiteLLM |
 | 主要用户面 | TAP Knowledge Chat、Retrieval API、Citation/Trace Inspector |
 
 ## 1. 阶段目标
@@ -43,7 +43,7 @@ flowchart LR
     end
 
     subgraph AKS[AKS - RAG Foundation]
-      BFF[Knowledge Chat BFF]
+      BFF[Python FastAPI BFF / SSE]
       Detect[Change Detection]
       Fetch[Fetch + Verify Revision]
       Classify[Classify + ACL + Redact]
@@ -52,8 +52,6 @@ flowchart LR
       Enrich[Summary / Symbol / Dependency Enrichment]
       Embed[Embedding Client]
       Write[Index Writer]
-      Ledger[Ingestion Ledger / Checkpoint]
-
       API[Retrieval API]
       ContextBuilder[Conversation Context Builder]
       Query[Versioned QueryPlan<br/>Classifier / Decomposer]
@@ -66,37 +64,44 @@ flowchart LR
       Answer[Grounded Answer / Abstain]
       Resolver[Citation Resolver]
       TracePolicy[Restricted Trace Policy]
-      Turn[Turn Orchestrator / Event Projection]
+      TurnAPI[Turn API / Event Projection]
+      TurnWorker[Turn Worker<br/>Context / Retrieval / Answer]
+      Relay[Outbox Relay / Reconciler]
     end
 
     Web[TAP Knowledge Chat Web] -->|REST + SSE| BFF
-    BFF --> Turn --> API
-    Turn --> ChatDB[(MySQL<br/>Chats / Turns / Append-only Events<br/>QueryPlan / Context Snapshot)]
+    BFF --> TurnAPI
+    TurnAPI --> ChatDB[(MySQL<br/>Chats / Turns / Queue / Snapshot<br/>Append-only Events + Outbox)]
+    IngestDB[(MySQL<br/>Ingestion Ledger / Checkpoint / Outbox)]
+    ChatDB --> Relay --> Redis[(Redis<br/>Distribution / Lease / Live Fanout<br/>Locks / Short Cache)]
+    Redis --> TurnWorker --> API
     ChatDB --> ContextBuilder
 
     Git --> Detect
     Blob --> Detect
     MySQL --> Detect
-    Detect --> Fetch --> Classify --> Parse --> Chunk --> Enrich --> Embed --> Write
+    Detect --> IngestDB --> Relay
+    Redis --> Fetch --> Classify --> Parse --> Chunk --> Enrich --> Embed --> Write
     Write --> Search[(Azure AI Search<br/>4 versioned indexes)]
-    Search -->|Upsert ACK| Ledger
-    Ledger --> MySQL
+    Search -->|Upsert ACK| IngestDB
 
     Embed -->|Model call| LiteLLM[Stateless LiteLLM Gateway]
     Rerank -->|Model call| LiteLLM
     Answer -->|Model call with context| LiteLLM
     KeyVault[Key Vault] --> LiteLLM
-    Redis[(Redis<br/>Queue / Locks / Short Cache)] --> API
-    Redis --> Turn
-    Identity[Entra ID / Trusted Policy] --> Turn
+    Redis --> API
+    Identity[Entra ID / Trusted Policy] --> TurnAPI
+    Identity --> TurnWorker
     Identity --> API
     Identity --> Filter
 
     API --> ContextBuilder --> Query --> Filter --> Hybrid
     Filter --> Search
     Search --> Hybrid --> Fuse --> Rerank --> Context --> Cite
-    Cite --> Answer -->|Answer deltas + citations| Turn
-    Turn -->|persisted SSE projection| BFF
+    Cite --> Answer -->|Answer deltas + citations| TurnWorker
+    TurnWorker -->|coalesced event + snapshot| ChatDB
+    Redis -->|live notification| BFF
+    ChatDB -->|REST snapshot read + SSE event tail read| BFF
     Cite --> Resolver --> BFF
     Cite --> TracePolicy --> BFF
     BFF -->|SSE / citation response| Web
@@ -126,6 +131,20 @@ QueryPlan 至少固定：原始问题与 raw request hash、standalone query、i
 ### 3.2 预留的 Codex Agent 旁路
 
 Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 和 Ingestion 验收。Phase 1.5 可在同一 BFF 后增加显式 Research/Knowledge Enrichment Job：它通过 `AgentRuntime` 端口启动隔离 Codex SDK Worker，只能调用 TAP Retrieval/Citation/Enrichment 窄工具，并输出 report 或 staging Derivation Artifact。Codex 不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。Test IR/代码生成待 Phase 2 Schema/compiler/validator 就绪后接入。详见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+
+### 3.3 前后端与运行角色边界
+
+| 角色 | Phase 1 职责 |
+| --- | --- |
+| React/TypeScript Web | Project/Conversation、composer/queue、SSE 增量投影、Sources/Claims/Trace；不保存权威状态或构造 ACL |
+| FastAPI `api-sse` | Entra/Policy、公共 DTO、幂等、Turn/Queue API、REST snapshot + SSE tail、Citation/Trace 重授权 |
+| `turn-worker` | Context Snapshot、QueryPlan、Retrieval、Answer、Citation validation；与浏览器连接解耦 |
+| `ingestion-worker` | fetch、typed parser/chunker、ACL/lineage、redaction；CPU/内存池与 API 分离 |
+| `embedding-worker` | content-hash 去重、batch/cache、受治理模型调用 |
+| `index-writer` | AI Search batch/upsert/tombstone、ACK 后 checkpoint、alias/corpus 发布 |
+| `relay-reconciler` | MySQL Outbox、Redis distribution/lease、至少一次投递、幂等和故障对账 |
+
+首版可以共享一个 Python package 和数据库迁移，但使用独立 entrypoint/Deployment。FastAPI 在线 handler 只做异步 I/O；parser/OCR/AST、本地模型和大对象处理不在 event loop 或进程内 Background Task 运行。完整性能、容量与 AKS 边界见 [总体技术架构](architecture.md#11-可靠性性能与容量)。
 
 ## 4. 四索引设计
 
@@ -309,6 +328,7 @@ Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL dige
 ### P1.3：Knowledge Chat 与生产化
 
 - 实现 Project/Conversation、REST + SSE、流式回答、停止、队列追问、`@resource`、Sources/Claims drawer 和反馈。
+- 按角色拆 `api-sse` 与 Turn/Ingestion/Embedding/Index Writer Worker；实现 delta 合并、REST snapshot + SSE tail、慢消费者背压、分页和 React 增量渲染。
 - 离线回归、Chat E2E、ACL/删除/重建演练、恶意 Markdown/citation IDOR、容量和故障注入。
 - OTel trace、dashboard、告警、Runbook、成本与配额。
 - 通过出口标准后冻结 Retrieval Contract，供 Phase 2 使用。

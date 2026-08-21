@@ -4,13 +4,14 @@ TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化�
 
 ## 一句话架构
 
-TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心。Phase 1 先在 AKS 上交付基于 Azure AI Search 的确定性 RAG 与参考 Codex/Claude Code 交互模式的 Knowledge Chat；Phase 1.5 再以可拔掉的 `CodexRuntimeAdapter` 验证只读 Research 与受控 Knowledge Enrichment；Test IR/代码生成在 Phase 2 基础契约就绪后接入。在线问答不依赖 Agent，模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
+TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。Phase 1 先在 AKS 上交付基于 Azure AI Search 的确定性 RAG 与参考 Codex/Claude Code 交互模式的 Knowledge Chat；Phase 1.5 再以可拔掉的 `CodexRuntimeAdapter` 验证只读 Research 与受控 Knowledge Enrichment；Test IR/代码生成在 Phase 2 基础契约就绪后接入。在线问答不依赖 Agent，模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
 
 已确认的企业技术栈：
 
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM
++ React/TypeScript + Python/FastAPI
 ```
 
 ## 目标
@@ -58,7 +59,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 ## 当前状态
 
-- 架构状态：`v0.2 baseline / review-ready`
+- 架构状态：`v0.3 integrated platform + RAG baseline / review-ready`
 - 实现状态：`not started`
 - 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
 - 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`

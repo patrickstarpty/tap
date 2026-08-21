@@ -4,7 +4,7 @@
 | --- | --- |
 | 状态 | Phase 1.5 Research/Enrichment proposed baseline；不作为 Phase 1 RAG 出口条件 |
 | 结论 | 可以在 TAP 后台嵌入 Codex，但只能作为可替换、隔离、异步的 Specialist Runtime |
-| 首选接入 | 服务端 Codex SDK + 固定版本 runtime，置于 TAP `AgentRuntime` 端口之后 |
+| 首选接入 | 隔离 `agent-worker` 内使用稳定版 Python `openai-codex` / `AsyncCodex` + pinned runtime，置于 TAP `AgentRuntime` 端口之后 |
 | 核心边界 | 在线知识问答不依赖 Codex；所有检索仍经 TAP Retrieval API；Phase 1.5 只做 Research/Enrichment，Test IR/代码生成待 Phase 2 |
 
 ## 1. 决策摘要
@@ -40,10 +40,11 @@ flowchart TB
       JobAPI[Agent Job Service]
       Policy[Runtime Policy + Capability Grant]
       State[(MySQL<br/>Job / Task / Attempt / Event / Approval)]
+      Relay[Outbox Relay / Reconciler]
       Queue[(Redis<br/>Queue / Lease / Rate Limit)]
       Dispatch[Agent Dispatcher]
       JobAPI --> Policy --> State
-      Policy --> Queue --> Dispatch
+      State --> Relay --> Queue --> Dispatch
     end
 
     subgraph RuntimePod[Ephemeral Runtime Pod]
@@ -101,12 +102,14 @@ flowchart TB
 
 | 接入方式 | 适用范围 | TAP 决策 |
 | --- | --- | --- |
-| Codex SDK | 服务端启动、继续和恢复 coding thread；内部工具与工作流集成 | **首选**。封装为 `CodexRuntimeAdapter`，固定 Adapter/SDK/CLI image；Phase 1.5 以 headless、fail-closed 能力为准 |
+| Codex SDK | 服务端启动、继续和恢复 coding thread；内部工具与工作流集成 | **首选**。Python TAP Worker 使用稳定版 `openai-codex`/`AsyncCodex`，封装为 `CodexRuntimeAdapter` 并固定 Adapter/package/CLI image digest；Phase 1.5 以 headless、fail-closed 能力为准 |
 | `codex exec` | 一次性脚本、CI、定时任务和本地 PoC | 只用于 POC、离线评测与简单批处理，不作为长期多租户服务协议 |
 | Codex App Server | 需要完整会话、审批、steer/fork 和细粒度流式事件的深度客户端 | 仅列为后续 POC。官方目前将 app-server command 与 WebSocket transport 标记为 experimental/unsupported for production；若试验只在 Worker 内用 stdio/Unix socket，不形成生产承诺，也不让前端直连 |
 | Codex MCP Server | Codex 只是更大 Agent 编排中的一个 Specialist | 作为后续互操作选项；Phase 1.5 不为引入 MCP 而重写 Orchestrator |
 
 OpenAI 官方将 Codex SDK 定位为把本地 Codex Agent 集成进 CI/CD、内部工具、工作流和应用的服务端接口；非交互模式 `codex exec` 定位于脚本与 CI；App Server 则用于认证、会话历史、审批和流式 Agent 事件等深度集成。TAP 采用这些公开边界，但自行负责多租户、状态、审计和领域契约。
+
+当前官方 Python SDK 要求 Python 3.10+，稳定包名为 `openai-codex`，发布包带 pinned Codex CLI runtime，并为异步应用提供 `AsyncCodex`。TAP 因此不需要在 Python BFF 内手工管理 raw CLI/App Server；SDK 只运行在独立 `agent-worker`/Attempt Pod，BFF 继续通过 `AgentRuntime`/Job API 与它解耦。
 
 SDK 文档公开保证的核心是 thread start/continue/resume，不把 App Server 的 approval/steer/interrupt/event 能力自动归因于所有 SDK Adapter。Phase 1.5 先协商 Runtime feature set：headless SDK 使用 `approval_policy=never`、最小 sandbox 与越界 fail closed；只有未来经单独验证且声明 `interactiveResponses=true` 的 Adapter 才能接 TAP brokered interaction。Artifact 发布的人审属于 TAP Workflow，不依赖 Provider 内部 approval。
 
@@ -164,7 +167,7 @@ tap.propose_patch(diff, evidenceRefs)
 
 ## 6. Phase 2 代码与流程生成链路
 
-下面的链路回答“能否用 Codex 生成流程和代码”：可以，但它依赖 Phase 2 先冻结 Test IR v1、compiler/validator、Git layout 和语义 diff，不属于 Phase 1.5 的交付。
+下面的链路回答“能否用 Codex 生成流程和代码”：可以，但它依赖 Phase 2 先冻结 Test IR v1、compiler/validator、Git layout 和语义 diff，不属于 Phase 1.5 的交付。Phase 2 只在本地 Git/worktree 或受控测试远端验证；正式生产 Commit Service/GitHub App/PR 副作用在 Phase 3 开放。
 
 ```text
 用户目标 / BDD
@@ -177,10 +180,11 @@ tap.propose_patch(diff, evidenceRefs)
 → Schema / compiler / lint / unit / affected-test 确定性验证
 → 保存 patch、日志、引用、模型与工具版本到 Evidence Manifest
 → 人工审批
-→ Commit Service 才能发布 branch 并创建/更新 PR
+→ Phase 2：保留批准的 local/test ChangeSet，不使用生产 Git 凭据
+→ Phase 3：Commit Service 才能发布远端 branch 并创建/更新 PR
 ```
 
-失败或取消时不发布远端分支。重试创建新的 Attempt 和新 worktree，不能复用可变 workspace；验证失败只返回候选和证据，不能把失败代码写入权威资产。
+失败或取消时不发布远端分支。重试创建新的 Attempt 和新 worktree，不能复用可变 workspace；验证失败只返回候选和证据，不能把失败代码写入权威资产。Phase 2 的 local/test facade 不持有生产 Git credential，也不计为团队 PR 流程验收。
 
 ## 7. Phase 1.5 Agent Job 契约映射
 
@@ -234,6 +238,7 @@ Runtime-specific thread/session ID 只作为外部引用写入 Attempt。TAP 至
 - 知识调查与 enrichment 使用 `read_only`；Phase 2 生成候选 patch 才允许 `workspace_write`。服务模式禁止 `full_access`。
 - Rootless、只读基础镜像、seccomp/AppArmor、无宿主挂载、无 Docker socket、有限 CPU/内存/PID/磁盘/时间。
 - Codex 使用平台生成的干净、只读 runtime home 与固定 config/image；不加载个人 auth/config、用户 plugins/connectors/skills。repo `.codex`/plugin 配置被隔离，项目说明仅作为不可信任务内容，不能覆盖 RuntimePolicy。
+- 若未来 POC raw App Server，Adapter 使用显式 method allowlist，并禁止可在 sandbox 外执行的 `thread/shellCommand`、experimental `process/spawn` 及任何未协商方法；浏览器永不直连 App Server。
 - Shell 子进程显式使用 `shell_environment_policy.inherit="none"`、最小 include allowlist、`ignore_default_excludes=false`、不加载 shell profile；只注入 `PATH/LANG/TMPDIR` 等非秘密。Provider key/access token 只存在于可信 controller/credential broker 的不可读位置，不进入子进程 env、workspace、命令行或 Artifact。
 - 模型控制的 Shell 默认无公网（`commandNetworkAllowlist=[]`）；依赖下载使用预构建镜像，或由独立、固定 profile 的 Dependency Proxy Job 完成。
 - Command network proxy 只约束脚本/子进程，不能代替其他通道策略。Phase 1.5 分别禁用 web search、Apps/connectors/plugins、非 TAP MCP、Browser/Computer Use 和 cloud tasks；唯一允许的 MCP/Tool endpoint 是平台注册的 TAP Tool Gateway。
@@ -243,6 +248,8 @@ Runtime-specific thread/session ID 只作为外部引用写入 Attempt。TAP 至
 - 并发、token、费用和工具调用按 tenant/project/runtime 分桶限流；队列使用公平调度与超时。
 
 控制进程访问模型/auth 端点不等于给模型生成的 Shell 开公网。两者使用不同 mount、环境、进程/网络策略和审计；安全测试必须验证仓库脚本无法读取 controller 环境、`/proc`、projected token、auth socket 或 sidecar credential。
+
+上述凭据隔离是必须由 POC 证明的安全门，而不是由配置文字自动保证。Direct WIF 路线要求 controller 与模型命令位于不同 container/PID/filesystem 边界；若无法做到，则使用 Credential Broker/本地代理，由 broker 持有上游凭据，Agent 只得到 job-scoped、audience-bound 能力，且 command sandbox 看不到代理 socket/token。
 
 ## 9. 认证与模型路由
 
@@ -300,7 +307,8 @@ Codex CLI 支持配置自定义 model provider，但公开配置要求 provider 
 
 ### Phase 2+
 
-- 先交付 Test IR v1、validator/compiler、Git layout 与语义 diff，再增加 `code-edit` Profile，生成 Draft Test IR、local validation commit、patch 与 Evidence Manifest；人工批准后 Commit Service 才能发布 branch/PR。
+- Phase 2 先交付 Test IR v1、validator/compiler、Git layout 与语义 diff，再增加 `code-edit` Profile，生成 Draft Test IR、local validation commit、patch 与 Evidence Manifest；只在 local/test facade 完成审批与验证。
+- Phase 3 才由正式 Commit Service 使用生产 Git credential 发布 remote branch/PR，并接入 GitHub App、Check、Outbox 与 Reconciler。
 - 在 Retrieval 与 AgentRuntime Contract 不变的前提下，可 POC App Server 深度事件、Codex MCP Specialist、多 Runtime 路由和受控 Agentic Loop；App Server 当前不形成生产承诺。
 - 任何测试执行或外部写操作都单独做权限、幂等、安全和评测门禁。
 
@@ -313,7 +321,7 @@ Codex CLI 支持配置自定义 model provider，但公开配置要求 provider 
 - 取消、超时、Pod 丢失、SDK 升级和模型失败均得到可审计终态；对已定义外部副作用做 Reconciler 对账，测试窗口内无未解释孤儿副作用。
 - Enrichment 未经 Validator 和管理员审批不进入 active corpus；Agent 没有 Index Writer/publish 权限。
 - 相比确定性 Deep Retrieval 基线，Research 任务完成率提升足以覆盖新增时延、费用和运维复杂度；Enrichment 通过独立 off/on ablation 验收。
-- Phase 2 另设代码门禁：未经确定性验证和人工审批不得进入远端 Git，Agent 不具备 merge 权限。
+- Phase 2 候选即使通过确定性验证和人工审批，也只保留在 local Git/worktree 或受控测试远端，不得进入生产远端 Git；Phase 3 启用正式 Commit Service 后才可按发布门禁创建/更新 remote branch/PR，Agent 始终不具备 merge 权限。
 
 ## 13. 官方依据与事实边界
 
