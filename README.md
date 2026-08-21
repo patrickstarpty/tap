@@ -36,6 +36,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 文档导航
 
 - [总体技术架构](docs/architecture.md)：边界、组件、数据、流程、安全、可靠性与部署。
+- [整体架构评审](docs/architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。
 - [Phase 1：RAG 基础](docs/rag-phase-1.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
 - [数据切片与溯源](docs/chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
 - [Azure AI Search 索引设计](docs/ai-search-index-design.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
