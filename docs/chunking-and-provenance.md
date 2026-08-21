@@ -143,14 +143,20 @@ LLM summary 可能在相同输入下产生不同文本，因此不能一边实�
 derivationKey = hashId(
   orderedDerivedFromChunkIds
   | sourceRevision
+  | generatorKind
+  | runtimeVersion
   | modelSnapshot
   | promptVersion
+  | toolsetVersion
+  | outputSchemaVersion
   | decodingProfile
   | redactionPolicyVersion
 )
 ```
 
-首次成功生成后，把 summary 文本、`chunkContentHash`、模型 snapshot、prompt、解码参数与输入 chunk IDs 固化到 Blob/MySQL manifest；同一 `derivationKey` 的重建只复用该 artifact，不再次调用模型。要重新生成必须显式升级 prompt/model/decoding/policy 版本并产生新的 derivation artifact 和 `chunkId`。如果 artifact 遗失，重建标记失败，不能悄然生成一份不同内容冒充历史摘要。
+首次成功生成后，把 summary 文本、`chunkContentHash`、generator/runtime/model/prompt/tool/output-schema、解码参数与输入 chunk IDs 固化到 Blob/MySQL manifest；同一 `derivationKey` 的重建只复用该 artifact，不再次调用模型。要重新生成必须显式升级任一生成/模型/工具/Schema/策略版本并产生新的 derivation artifact 和 `chunkId`。如果 artifact 遗失，重建标记失败，不能悄然生成一份不同内容冒充历史摘要。
+
+若使用 Codex Runtime 做 enrichment，它只能产出 staging Derivation Artifact。Phase 1.5 的 parser/data-quality、关系、分类或摘要都只是建议 Artifact，不生成代码或 patch，也不进入 Git；它们必须先通过类型、ACL、来源覆盖和质量 Validator。只有批准的 `generated_summary` 才能由标准 Indexer 进入索引，其他报告留在 Blob，不伪装成 source chunk，也不能直接写 active corpus。代码/patch 生成待 Phase 2 Test IR/Git 契约就绪后启用。
 
 ## 5. Ingestion 与发布链路
 

@@ -13,6 +13,8 @@
 
 Phase 1 不把它扩展为通用 Agent：没有工具执行、多 Agent 规划、Test IR 编辑、Git 写入、测试运行或审批流。后续阶段在同一会话外壳中增加这些能力，但不能改变 Phase 1 已冻结的 Retrieval 与 Citation 契约。
 
+Phase 1.5 的 Codex Research（以及受限管理员发起的 Knowledge Enrichment）是显式异步 Agent Job，不是聊天回答背后的隐藏路径。普通 `quick/deep` 问答都由确定性 Retrieval Pipeline 完成；关闭 Codex Runtime 不影响本页面。Test IR/代码生成在 Phase 2 工作台接入。
+
 ## 2. 页面布局
 
 ```text
@@ -34,7 +36,7 @@ Phase 1 不把它扩展为通用 Agent：没有工具执行、多 Agent 规划�
 - 只列出当前 Entra 身份可访问的 Project 和会话。
 - Project 保存默认 `environment`、source families 与 corpus scope；客户端选择只能收窄范围，不能扩大权限。
 - 支持新建、搜索、置顶和恢复会话。一个独立问题目标建议使用一个会话，避免上下文无界增长。
-- 每个 turn 固化 `corpusVersion`、`retrievalProfileId`、`traceId` 和回答模型版本。
+- 每个 turn 固化 `queryPlanId`、`contextSnapshotId`、`corpusVersion`、`retrievalProfileId`、`traceId` 和回答模型版本。
 
 ### 中栏：问答工作区
 
@@ -43,6 +45,7 @@ Phase 1 不把它扩展为通用 Agent：没有工具执行、多 Agent 规划�
 - 阶段只展示可审计事件、命中数量、降级状态和耗时；不展示模型隐藏思维链、系统提示词或内部推理文本。
 - 回答以 Markdown 流式呈现；每个实质 claim 后显示可点击的 `[1]`、`[2]` 引用。
 - Composer 固定在底部，支持键盘操作、`@resource`、`/command`、发送与停止。
+- Composer 提供 `Quick / Deep` AnswerMode：Quick 优先低延迟 exact/hybrid；Deep 使用有界问题拆解、跨索引融合与冲突检查。服务端将 AnswerMode 映射到版本化 RetrievalProfile；二者都不自动启动 Agent。
 
 ### 右栏：证据与诊断
 
@@ -80,6 +83,9 @@ Phase 1 支持：
 | `/trace` | 打开当前 turn 的证据摘要；完整诊断受角色限制 |
 | `/debug` | 诊断角色临时请求可审计 debug 信息，不改变生产 profile |
 | `/feedback` | 打开结构化反馈表单 |
+| `/quick` | 当前 turn 请求低延迟 AnswerMode；服务端选择版本化 RetrievalProfile |
+| `/deep` | 当前 turn 请求有界多查询、跨索引和冲突检查 AnswerMode |
+| `/fork` | 从选定 turn 创建新会话分支，不改写原 QueryPlan/Trace |
 | `/clear` | 清空未发送 composer 内容，不删除审计历史 |
 
 命令由前端解析为显式 API 操作，不能作为自然语言拼接给模型。
@@ -95,11 +101,12 @@ Phase 1 支持：
 @failure:payment-timeout
 ```
 
-选中后生成稳定 resource chip，发送 `sourceId + requestedRevision + anchor`，而不是只把展示文本塞进 prompt。BFF 重新授权后才把它转为检索约束；无权限、revision 已删除或越出当前 Project 的引用必须 fail closed。
+选中后生成稳定 resource chip，发送 `sourceId + requestedRevision + anchor + mode`，而不是只把展示文本塞进 prompt。`required` 要求答案必须依据该资源，`preferred` 表示优先但允许补充，`scope` 把搜索限制在该资源/结构子树。BFF 重新授权后才把它转为检索约束；无权限、revision 已删除或越出当前 Project 的引用必须 fail closed。
 
 ### 3.6 编辑、重试与反馈
 
 - “编辑并重试”从被编辑消息创建新 turn，并保留原 turn 作为不可变历史；不能覆盖旧 trace。
+- “分支会话”保存 `parentChatId + branchedFromTurnId`，可尝试不同问题、scope 或 AnswerMode；服务端据此选择新 RetrievalProfile，原回答、QueryPlan、Context Snapshot 与 Trace 保持不可变。
 - 回答下方提供 👍/👎。负反馈原因至少包括：答案错误、缺少/错误引用、来源过期、敏感信息、检索遗漏、速度慢。
 - 反馈绑定 `turnId + traceId + corpusVersion + retrievalProfileId`，可进入 Golden Dataset 候选；不得直接在线改变排序权重。
 
@@ -148,6 +155,7 @@ POST   /v1/chats
 GET    /v1/projects/{projectId}/chats
 GET    /v1/chats/{chatId}
 POST   /v1/chats/{chatId}/turns
+POST   /v1/turns/{turnId}/fork
 POST   /v1/turns/{turnId}/cancel
 GET    /v1/chats/{chatId}/queue
 POST   /v1/chats/{chatId}/queue
@@ -163,6 +171,8 @@ SSE 事件至少包括：
 
 ```text
 turn.started
+context.assembled
+query.plan_ready
 stage.started
 stage.completed
 retrieval.hits_ready

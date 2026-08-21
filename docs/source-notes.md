@@ -25,6 +25,8 @@
 
 2026-08-21 的进一步要求确认：Phase 1 基于 **Azure AI Search**，必须写清分型数据切片、端到端溯源和可重复检索调优，并交付一个参考 Codex/Claude Code 交互模式的 Knowledge Chat。这里参考的是 Project/Conversation、流式状态、中断、排队追问、资源引用和证据侧栏，不复制品牌或隐藏推理展示。
 
+2026-08-21 的最新问题要求补充本阶段完整架构，并评估在后台嵌入 Codex CLI 作为 Agent Runtime。当前工程结论是：Phase 1 保持确定性 RAG/Chat 主链；Phase 1.5 可增加服务端 Codex SDK Adapter 作为可选、隔离的 Research/Knowledge Enrichment Specialist。Test IR/代码生成等到 Phase 2 基础契约就绪后接入。Codex 不掌握 ACL、索引发布或生产 Git，只通过 TAP Retrieval/Tool Gateway 产生候选 Artifact。
+
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM
@@ -110,6 +112,20 @@ Core = Test IR + Git versioning + unified execution evidence
 - [Anthropic Claude Code interactive mode](https://code.claude.com/docs/en/interactive-mode)
 
 采用的事实：Project/Conversation 可组织相关来源和独立目标；交互式编码会话支持恢复、流式进度、中断与运行中排队消息。TAP 将这些模式用于知识问答，并自行定义身份、ACL、Citation、Trace、视觉与 API；不声称复刻任一产品。
+
+### Codex 后台 Runtime
+
+- [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)
+- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
+- [Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
+- [Codex authentication](https://learn.chatgpt.com/docs/auth)
+- [Agent approvals and security](https://learn.chatgpt.com/docs/agent-approvals-security)
+- [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+- [Workload identity federation](https://learn.chatgpt.com/docs/enterprise/workload-identity)
+
+采用的事实：Codex SDK 可在服务端启动、继续和恢复本地 coding thread，并用于 CI/CD、内部工具、工作流和应用；`codex exec` 面向脚本与 CI；App Server 协议面向认证、会话历史、审批和流式 Agent 事件等深度集成，但其 command/WebSocket transport 当前为 experimental/unsupported for production。Codex 支持 API key 程序化认证，并明确不应把执行能力暴露在不可信或公开环境；managed ChatGPT Workspace 自动化可评估 access token 或当前为 Beta 且需 Workspace 开通/映射的 workload identity。自定义 model provider 的公开 wire protocol 是 Responses API。官方也明确 command network proxy 不覆盖 web search、connectors/plugins、MCP、Browser/Computer Use、cloud task 或 model/auth 流量，必须分别治理。
+
+TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential sidecar、Codex 不直连 AI Search、Test IR 优先、候选 patch、Git 审批、多租户隔离、LiteLLM 兼容性门禁和 Phase 1.5 分期均为本次工程设计，不是 OpenAI 产品内部架构。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
 
 ### LiteLLM
 

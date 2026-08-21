@@ -96,6 +96,15 @@
 - **原因**：API/离线指标不足以验证真实用户是否能理解范围、发现降级、追查证据并反馈检索遗漏；Chat 是 Phase 1 的正式验收面。
 - **后果**：浏览器只连接 BFF，不直连 AI Search/LiteLLM；公共 DTO 不接受 ACL 字段。历史答案、Citation 和 Trace 每次按当前身份重授权。Phase 3 在这一外壳上增加 Test IR editor、Run、审批，而不是重新建设另一套 Chat。
 
+### ADR-014：Codex 作为可选、隔离的 Specialist Runtime
+
+- **状态**：拟议，建议作为 Phase 1.5 Research/Enrichment POC 采纳；不扩大 Phase 1 出口范围。Test IR/代码生成待 Phase 2 前置契约就绪。
+- **决策**：在 TAP `AgentRuntime` 端口之后增加 `CodexRuntimeAdapter`。后台长期集成首选服务端 Codex SDK；`codex exec` 只用于本地 POC、CI 和一次性批处理；只有需要完整会话、steer/fork、审批和细粒度流式事件时才 POC App Server，且在其 command/transport 仍被官方标为 experimental/unsupported for production 时不形成生产承诺。普通 Knowledge Chat、Ingestion、ACL、QueryPlan、Azure AI Search 写入和 Citation 不依赖 Codex。
+- **用途**：Phase 1.5 只读 Research、跨代码/知识分析与 staging parser/enrichment 建议；Phase 2 再增加 Draft Test IR、最小语义 patch 和候选 Framework Code。Codex 只能通过 TAP Tool Gateway 调用阶段内已批准的窄接口，不能直接持有 AI Search、MySQL、Blob、Key Vault 或生产 Git 凭据。
+- **原因**：Codex SDK 官方支持把 coding-focused Agent 集成进内部工具、工作流和应用，但 Agent Runtime 的线程、工具和 workspace 能力与 LiteLLM 模型路由、确定性 RAG 是不同层次。把它放在可替换 Provider 后面可以复用其代码理解与生成能力，同时保持供应商可替换、权限安全和 RAG 独立可用。
+- **后果**：一 Attempt 一隔离 Worker；Phase 1.5 仅 `read_only`，Phase 2 候选 patch 才允许 `workspace_write`，始终禁止 `full_access`。命令网络及 web search/connectors/plugins/非 TAP MCP/Browser/Computer Use 分别默认关闭。Phase 1.5 enrichment 经 Validator/管理员审批后才交给标准 Indexer；Phase 2 代码先形成 local immutable validation commit 并通过确定性检查与人工审批，Commit Service 才能发布 branch/PR。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+- **模型与认证门禁**：个人 Lab 可用受保护的 API key POC；共享后台不使用个人 ChatGPT 登录。企业优先评估短期 access token/workload identity。Codex 自定义 provider 需完整兼容 Responses API；LiteLLM 接入必须先通过 streaming/tool/cancel/usage 契约测试，否则作为显式、受审计的 direct-provider 例外。
+
 ## 被后续讨论覆盖的旧方案
 
 | 早期方案 | 最终状态 |
@@ -125,3 +134,5 @@
 10. 质量门禁、RPO/RTO、结果收敛延迟、单 Run 成本等目标值需基线测量后审批。
 11. LiteLLM 是否只采用无状态 Gateway；若需要其 Virtual Keys/预算/Admin 持久化能力，必须先验证 MySQL/Redis 兼容性，不能静默新增 PostgreSQL。
 12. Knowledge Chat 最终采用组织现有 React Design System 还是独立 Next.js shell；选择不得改变 REST/SSE、Entra/BFF 与 Citation 安全契约。
+13. Codex Runtime POC 使用 Platform API key、ChatGPT Enterprise access token 还是已开通的 workload identity；数据区域、保留、预算和并发由谁批准？
+14. LiteLLM 当前部署是否完整兼容 Codex 所需 Responses streaming、tool、reasoning、compaction、取消与用量语义；若不兼容，是否批准受治理的 direct OpenAI egress？

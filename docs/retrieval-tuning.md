@@ -163,6 +163,7 @@ Profile 存入 Git，发布记录进入 MySQL。Retrieval Trace 必须记录实�
 | Freshness | change/delete/revoke 到生效的 P50/P95/P100 |
 | Performance | Search、rerank、首 token、完整回答 P50/P95、token/cost |
 | Security | unauthorized candidate/context/citation/trace/history/facet count |
+| Planning | intent/source-family accuracy、standalone-query correctness、required-resource hit/abstain、subquery usefulness |
 
 首轮候选门槛：
 
@@ -189,7 +190,9 @@ Profile 存入 Git，发布记录进入 MySQL。Retrieval Trace 必须记录实�
 
 `debug` 增加开销，只允许诊断请求临时启用；Trace 读取每次重新授权，不能展示隐藏思维链、原始 group IDs、秘密或未授权候选正文。
 
-复现一个线上 query 时固定：source/corpus/index aliases resolution、RetrievalProfile、query class output、Embedding/reranker/prompt version、Policy Context digest 和输入 conversation window。
+复现一个线上 query 时固定：source/corpus/index aliases resolution、QueryPlan/Context Snapshot、RetrievalProfile、planner/classifier output、Embedding/reranker/prompt version、Policy Context digest 和 conversation summary lineage。
+
+若启用 Codex enrichment，必须做 `enrichment off/on` 独立 ablation，并报告派生 summary/关系对 Recall、nDCG、citation、unsupported claim、ACL、时延与成本的增益或回退。Codex Research Agent 的任务完成率不能混入基础 Retrieval 指标；应与确定性 Deep Retrieval 在相同 query/corpus/policy 下单独对比。
 
 ## 9. 反馈闭环
 

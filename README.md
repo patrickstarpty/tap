@@ -4,7 +4,7 @@ TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化�
 
 ## 一句话架构
 
-TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心。Phase 1 先在 AKS 上交付基于 Azure AI Search 的 RAG 与参考 Codex/Claude Code 交互模式的 Knowledge Chat；后续逐步加入 BrowserStack 式测试资产管理和 Git 式可审查可编辑代码。模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
+TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心。Phase 1 先在 AKS 上交付基于 Azure AI Search 的确定性 RAG 与参考 Codex/Claude Code 交互模式的 Knowledge Chat；Phase 1.5 再以可拔掉的 `CodexRuntimeAdapter` 验证只读 Research 与受控 Knowledge Enrichment；Test IR/代码生成在 Phase 2 基础契约就绪后接入。在线问答不依赖 Agent，模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
 
 已确认的企业技术栈：
 
@@ -22,6 +22,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - 通过 LiteLLM 统一路由 Chat、Coder、Embedding、Reranker、Vision 模型。
 - 默认隔离不可信代码，限制凭证、网络和高风险工具调用。
 - 第一阶段提供可持续使用的 Project/Conversation 知识问答页面，并用逐条引用、Trace 与反馈闭环验收 RAG。
+- 在不改变 Retrieval/Citation Contract 的前提下，以隔离异步 Worker 验证 Codex Agent Runtime；所有检索走 TAP API，所有生成只形成可验证、可审批的候选 Artifact。
 
 ## 非目标
 
@@ -29,6 +30,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - 不把 DeepSeek Harness、LangGraph 或 BrowserStack 的内部对象直接暴露为 TAP 公共契约。
 - 不在 MVP 阶段构建通用低代码编排器或多云调度平台。
 - 不让非确定性的 Agent 判断替代确定性的测试门禁。
+- 不把 Codex CLI/SDK 变成 Knowledge Chat、ACL、Ingestion 或 Azure AI Search 写入的必需依赖。
 
 ## 文档导航
 
@@ -38,6 +40,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - [Azure AI Search 索引设计](docs/ai-search-index-design.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
 - [检索调优方案](docs/retrieval-tuning.md)：BM25/Vector/Hybrid/RRF/Rerank 的可复现实验阶梯。
 - [TAP Knowledge Chat](docs/knowledge-chat-ui.md)：Codex/Claude Code 式会话、流式状态、引用与 Trace 交互。
+- [受控 Codex Agent Runtime](docs/codex-agent-runtime.md)：后台 SDK/CLI/App Server 选择、异步 Job、沙箱、工具、凭证、生成与审批边界。
 - [核心契约](docs/contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
 - [架构决策](docs/decisions.md)：已经采纳的决策、取舍与待确认项。
 - [交付路线图](docs/roadmap.md)：从架构基线到可用 MVP 的阶段计划。
@@ -55,8 +58,9 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 ## 当前状态
 
-- 架构状态：`v0.1 baseline / review-ready`
+- 架构状态：`v0.2 baseline / review-ready`
 - 实现状态：`not started`
 - 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
+- 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [架构决策](docs/decisions.md#待确认项)

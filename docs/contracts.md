@@ -140,15 +140,249 @@ stateDiagram-v2
 ### AgentRuntime
 
 ```typescript
+type AgentPurpose =
+  | "knowledge_research"
+  | "knowledge_enrichment"
+  | "generate_test_ir"
+  | "generate_candidate_patch"
+  | "failure_analysis";
+
+type AgentCapability =
+  | "knowledge.read"
+  | "knowledge.enrich"
+  | "workspace.read"
+  | "workspace.write"
+  | "test_ir.generate"
+  | "candidate_patch.generate";
+
+interface AgentRuntimeCapabilitySet {
+  runtimeProvider: string;
+  purposes: AgentPurpose[];
+  capabilities: AgentCapability[];
+  features: {
+    eventStream: boolean;
+    interactiveResponses: boolean;
+    cooperativeCancel: boolean;
+    threadResume: boolean;
+  };
+}
+
+interface AgentTask {
+  taskId: string;
+  attemptId: string;
+  tenantId: string;
+  projectId: string;
+  actorId: string;
+  purpose: AgentPurpose;
+  instruction: string;
+  inputRefs: Array<{ kind: string; id: string; revision: string; contentHash: string }>;
+  requestedCapabilities: AgentCapability[];
+  outputSchemaVersion: string;
+  idempotencyKey: string;
+}
+
+interface RuntimePolicy {
+  policyId: string;
+  policyVersion: string;
+  runtimeConfigRef: string;         // platform-owned, immutable; never user/repo config
+  credentialBrokerRef: string;      // reference only; no secret value reaches the task
+  modelRouteRef: string;            // separately governed model/auth egress
+  sandbox: "read_only" | "workspace_write"; // service mode excludes full_access
+  allowedCapabilities: AgentCapability[];
+  allowedTools: string[];
+  commandNetworkAllowlist: string[]; // applies only to model-controlled commands; model egress is separately governed
+  webSearch: "disabled";
+  allowedMcpServers: string[];       // Phase 1.5 only permits the named TAP Tool Gateway
+  allowedSkills: string[];           // platform-pinned only
+  allowedApps: string[];             // empty in service mode
+  allowedPlugins: string[];          // empty in service mode
+  allowedConnectors: string[];       // empty in service mode
+  browserEnabled: false;
+  computerUseEnabled: false;
+  cloudTasksEnabled: false;
+  shellEnvironmentPolicy: {
+    inherit: "none";
+    includeOnly: string[];
+    ignoreDefaultExcludes: false;
+    useShellProfile: false;
+  };
+  interactionMode: "headless_fail_closed" | "tap_brokered";
+  budgets: {
+    deadlineSeconds: number;
+    maxTurns: number;
+    maxTokens: number;
+    maxToolCalls: number;
+  };
+  inputManifestHash: string;         // binds the immutable, authorized AgentTask.inputRefs
+  retrievalProfileId?: string;
+  corpusVersion?: string;
+}
+
+interface RuntimeHandle {
+  runtimeProvider: string;
+  externalThreadId?: string;
+  externalTurnId?: string;
+  attemptId: string;
+  negotiated: AgentRuntimeCapabilitySet["features"];
+}
+
+interface InteractionResponse {
+  interactionId: string;
+  decision: "allow_once" | "deny";
+  respondedBy: string;
+  reason?: string;
+}
+
+interface AgentEvent {
+  eventId: string;
+  attemptId: string;
+  traceId: string;
+  sequence: number;
+  occurredAt: string;
+  schemaVersion: string;
+  type: "started" | "progress" | "tool_requested" | "tool_completed" | "approval_requested" | "artifact_ready" | "cancel_requested" | "completed" | "failed" | "canceled" | "timed_out" | "unavailable";
+  data: Record<string, unknown>; // normalized and redacted; never hidden reasoning
+}
+
+interface GeneratedArtifactEnvelope {
+  artifactId: string;
+  kind: "report" | "draft_test_ir" | "patch" | "code" | "enrichment" | "evidence_manifest";
+  uri: string;
+  contentHash: string;
+  classification: string;
+  inputRefs: Array<{ id: string; revision: string; contentHash: string }>;
+  generator: {
+    runtimeProvider: string;
+    runtimeVersion: string;
+    model: string;
+    promptVersion: string;
+    toolsetVersion: string;
+    policyVersion: string;
+  };
+  validation: { status: "pending" | "passed" | "failed"; validatorVersion?: string; evidenceRefs: string[] };
+}
+
+interface AgentResult {
+  status: "succeeded" | "failed" | "canceled" | "timed_out" | "unavailable";
+  artifacts: GeneratedArtifactEnvelope[];
+  findings: string[];
+  usage: { inputTokens?: number; outputTokens?: number; costAmount?: number; currency?: string };
+  externalThreadId?: string;
+}
+
 interface AgentRuntime {
-  capabilities(): Promise<CapabilitySet>;
+  capabilities(): Promise<AgentRuntimeCapabilitySet>;
   start(task: AgentTask, policy: RuntimePolicy): Promise<RuntimeHandle>;
-  events(handle: RuntimeHandle, cursor?: string): AsyncIterable<AgentEvent>;
-  respond(handle: RuntimeHandle, response: InteractionResponse): Promise<void>;
-  cancel(handle: RuntimeHandle, reason: string): Promise<void>;
+  events?(handle: RuntimeHandle, cursor?: string): AsyncIterable<AgentEvent>;
+  respond?(handle: RuntimeHandle, response: InteractionResponse): Promise<void>;
+  cancel?(handle: RuntimeHandle, reason: string): Promise<void>;
   result(handle: RuntimeHandle): Promise<AgentResult>;
 }
 ```
+
+约束：
+
+- `AgentTask`、`RuntimePolicy`、Task/Attempt 必须在启动外部 Runtime 前持久化；Runtime thread/turn ID 只是 Provider 引用。
+- Runtime 只能得到 `requestedCapabilities ∩ allowedCapabilities`，工具再与 `allowedTools` 求交；Capability 与工具名是两个独立维度，内容、Prompt 或 Provider 事件不能扩权。
+- Adapter 必须先协商 `features`。Phase 1.5 的 headless SDK 路径使用 `interactionMode=headless_fail_closed`，对应 `approval_policy=never` 与最小 sandbox；越界请求直接失败。只有经验证且声明 `interactiveResponses=true` 的 Adapter 才能使用 `tap_brokered/respond`，发布 Artifact 的人工审批仍在 Runtime 之外完成。
+- 服务模式禁止 `full_access`。凭据由可信 wrapper、workload identity 或 credential broker 持有，不能进入 Agent workspace、Prompt、Artifact 或模型控制的 Shell 环境。
+- Runtime Pod 禁用自动 ServiceAccount token；projected identity 只显式挂入可信 sidecar。Agent/command 容器使用干净 runtime home 和平台固定配置，不加载个人 auth/config、repo `.codex` capability 配置或未批准插件。Artifact 上传和 TAP Tool 调用由可信 Broker/Gateway 完成。
+- 每个输出先落 `GeneratedArtifactEnvelope` 并经过 Schema/Compiler/Test/Policy 验证；Agent 的 completed 事件不能替代 TAP validator 的 passed 结论。
+- 未知 Provider 事件只保存为脱敏诊断信息，不能乐观映射为 `succeeded`。
+- Codex 的具体接入与隔离规则见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+
+### Phase 1.5 Agent Job API
+
+Phase 1.5 的公共 API 只开放只读 Research 与受控 Knowledge Enrichment；Test IR/代码生成在 Phase 2 具备相应 Schema、compiler 与 validator 后扩展，不复用 Chat turn 状态机。
+
+```typescript
+type Phase15AgentPurpose = "knowledge_research" | "knowledge_enrichment";
+type AgentJobState =
+  | "queued"
+  | "running"
+  | "cancel_requested"
+  | "succeeded"
+  | "failed"
+  | "canceled"
+  | "timed_out"
+  | "unavailable";
+
+interface AgentJobRequest {
+  clientRequestId: string;
+  purpose: Phase15AgentPurpose;
+  instruction: string;
+  resourceRefs: ResourceRef[];
+  requestedCorpusVersion?: string;
+  outputSchemaVersion: string;
+}
+
+interface AgentJobSummary {
+  jobId: string;
+  projectId: string;
+  purpose: Phase15AgentPurpose;
+  state: AgentJobState;
+  activeAttemptId?: string;
+  artifactRefs: string[];
+  createdAt: string;
+  completedAt?: string;
+}
+
+interface AgentJobEventEnvelope {
+  eventId: string;
+  sequence: number;
+  jobId: string;
+  attemptId?: string;
+  traceId: string;
+  occurredAt: string;
+  schemaVersion: number;
+  type: "job.queued" | "attempt.started" | "tool.completed" | "artifact.ready" | "job.cancel_requested" | "job.succeeded" | "job.failed" | "job.canceled" | "job.timed_out" | "job.unavailable";
+  data: Record<string, unknown>;
+}
+
+interface EnrichmentReviewRequest {
+  clientRequestId: string;
+  expectedContentHash: string;
+  decision: "approve_for_indexing" | "reject";
+  reason?: string;
+}
+```
+
+```text
+POST /v1/projects/{projectId}/agent-jobs
+GET  /v1/projects/{projectId}/agent-jobs
+GET  /v1/agent-jobs/{jobId}
+POST /v1/agent-jobs/{jobId}/cancel
+GET  /v1/agent-jobs/{jobId}/events
+POST /v1/agent-artifacts/{artifactId}/review
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> running
+    queued --> canceled
+    queued --> unavailable
+    running --> cancel_requested
+    running --> succeeded
+    running --> failed
+    running --> timed_out
+    running --> unavailable
+    cancel_requested --> canceled
+    cancel_requested --> failed
+    cancel_requested --> timed_out
+    succeeded --> [*]
+    failed --> [*]
+    canceled --> [*]
+    timed_out --> [*]
+    unavailable --> [*]
+```
+
+- 公共请求不能选择 Runtime、sandbox、工具、网络、tenant/group/ACL 或物理索引；BFF 从身份、Project Policy 和 purpose 生成内部 `AgentTask + RuntimePolicy`。
+- Job `clientRequestId` 在同一 Project 内幂等；Review `clientRequestId` 在同一 Artifact 内幂等且相反决定产生冲突。浏览器断线不取消 Job；事件持久化并支持 `Last-Event-ID`，重放事件不重放副作用。
+- cancel 先进入 `cancel_requested` 并停止新工具调用；若 Adapter 无 cooperative cancel，Dispatcher 终止隔离 Worker。Retry 创建新 Attempt，不覆盖旧事件或 Artifact。
+- Enrichment 仅允许受限管理员/Indexer 服务角色创建，结果进入 staging Derivation Artifact；它不能直接发布 active corpus。
+- `job.succeeded` 只表示 required Artifact 已由 Broker 封存且通过该 purpose 的确定性 Schema/Enrichment Validator；不表示 Artifact 已获管理员批准或已经进入 active corpus。
+- Review 只接受已通过 Enrichment Validator 且 content hash 匹配的不可变 Artifact，并按当前 ACL/角色重新授权；`approve_for_indexing` 只向标准 Indexer 写入幂等 publish intent，不直接调用 AI Search。决定、actor、时间与 reason 进入 MySQL Audit。
 
 ### ExecutionProvider
 
@@ -220,10 +454,13 @@ Agent Finding 必须显式标记 `generated_by_agent=true`，且引用支持其�
 
 ```typescript
 type SourceFamily = "doc" | "code" | "bdd" | "failure";
+type ResourceMode = "required" | "preferred" | "scope";
+type AnswerMode = "quick" | "deep";
 
 interface ResourceRef {
   family: SourceFamily;
   sourceId: string;
+  mode?: ResourceMode;             // defaults to preferred
   requestedRevision?: string;
   anchor?: StructuralAnchor;
 }
@@ -231,12 +468,68 @@ interface ResourceRef {
 // 浏览器、Agent 和其他消费者只允许提交检索意图与更窄的 scope。
 interface PublicRetrievalQuery {
   query: string;
+  answerMode?: AnswerMode;
   sources?: SourceFamily[];
   resourceRefs?: ResourceRef[];
   requestedEnvironment?: string;
   requestedCorpusVersion?: string;
-  requestedRevision?: string;
   topK?: number;
+}
+
+interface ResolvedResourceRef {
+  family: SourceFamily;
+  sourceId: string;
+  mode: ResourceMode;
+  revision: string;
+  sourceContentHash: string;
+  anchor?: StructuralAnchor;
+  aclDecisionId: string;
+}
+
+interface QueryPlan {
+  queryPlanId: string;
+  operationId: string;
+  tenantId: string;
+  projectId: string;
+  plannerVersion: string;
+  originalQuery: string;
+  standaloneQuery: string;
+  intent: "exact_lookup" | "qa" | "compare" | "explain" | "cross_source" | "follow_up";
+  confidence: number;
+  answerMode: AnswerMode;
+  retrievalProfileId: string;       // server-selected versioned profile for this AnswerMode
+  effectiveSourceFamilies: SourceFamily[];
+  exactIdentifiers: Array<{ kind: string; value: string }>;
+  effectiveResourceRefs: ResolvedResourceRef[];
+  effectiveEnvironment?: string;
+  effectiveCorpusVersion: string;
+  candidateLimit: number;           // server-capped effective topK
+  policyDecisionId: string;
+  policyVersion: string;
+  aclDigest: string;
+  rawRequestHash: string;
+  subqueries: Array<{ id: string; query: string; sourceFamilies: SourceFamily[] }>;
+  createdAt: string;
+}
+
+interface ContextSnapshot {
+  contextSnapshotId: string;
+  operationId: string;
+  tenantId: string;
+  chatId?: string;
+  turnId?: string;
+  projectId: string;
+  policyDecisionId: string;
+  policyVersion: string;
+  aclDigest: string;
+  layers: Array<{
+    kind: "project_policy" | "project_context" | "recent_turns" | "conversation_summary" | "current_turn";
+    refIds: string[];
+    contentHash: string;
+    tokenCount: number;
+  }>;
+  summaryLineage?: { summaryId: string; sourceTurnIds: string[]; sourceContentHashes: string[]; summarizerVersion: string; authorizedAt: string };
+  createdAt: string;
 }
 
 // 只能由 BFF/Policy 层依据 Entra 身份和服务端事实构造。
@@ -253,9 +546,9 @@ interface RetrievalPolicyContext {
 
 // 仅在服务内部传递，不能作为公共 HTTP DTO 反序列化。
 interface InternalRetrievalRequest {
-  query: PublicRetrievalQuery;
   policy: RetrievalPolicyContext;
-  retrievalProfileId: string;
+  queryPlan: QueryPlan;
+  contextSnapshot: ContextSnapshot;
 }
 
 type StructuralAnchor =
@@ -286,8 +579,12 @@ interface ChunkRecord {
   derivedFromChunkIds?: string[];
   derivation?: {
     derivationKey: string;
+    generatorKind: string;
+    runtimeVersion?: string;
     modelSnapshot: string;
     promptVersion: string;
+    toolsetVersion?: string;
+    outputSchemaVersion: string;
     decodingProfile: string;
     redactionPolicyVersion: string;
   };
@@ -312,6 +609,8 @@ interface Citation {
 
 interface RetrievalResponse {
   traceId: string;
+  queryPlanId: string;
+  contextSnapshotId: string;
   corpusVersion: string;
   retrievalProfileId: string;
   degradedMode: boolean;
@@ -338,6 +637,8 @@ interface RetrievalResponse {
 
 interface RetrievalAnswerResponse {
   traceId: string;
+  queryPlanId: string;
+  contextSnapshotId: string;
   corpusVersion: string;
   retrievalProfileId: string;
   degradedMode: boolean;
@@ -355,6 +656,11 @@ interface RetrievalAnswerResponse {
 ```
 
 - 公共请求中不得出现 `tenantId`、`projectId`、group IDs、classification、任意 ACL/filter 表达式或物理索引名。BFF 从 Entra 与 Policy 服务构造 `RetrievalPolicyContext`；`requested*` 只能与服务端允许范围取交集，不能扩大权限。
+- `ResourceRef.mode` 的语义固定为：所有 `required` 资源采用 AND coverage，每个都必须贡献至少一条最终 Citation，否则拒答；多个 `scope` 资源采用授权结构子树的 union 作为搜索边界；`preferred` 独立加权但允许补充其他授权来源。默认 `preferred`。资源搜索建议、revision 解析和最终读取都先执行 ACL。
+- QueryPlan 是 Policy 求交与 Planner 之后的唯一有效、不可变执行计划，不是浏览器可提交的权限对象。它保存已解析的 immutable revision/hash、effective scope/corpus/environment、server-capped candidate limit、profile、bounded subqueries、Policy/ACL digest 与 raw request hash；Internal Retrieval 不再同时消费可能冲突的原始 DTO。重新规划创建新的 QueryPlan ID，不覆盖旧 Trace。
+- 执行前必须满足 `policy.decisionId == queryPlan.policyDecisionId == contextSnapshot.policyDecisionId`，且三者的 tenant/project、policyVersion、aclDigest 完全一致，`queryPlan.operationId == contextSnapshot.operationId`。任何缺失、失配或过期都在访问 Search 前 fail closed，并基于当前 Policy 生成新的 QueryPlan/Context Snapshot；禁止就地改写旧对象。所有 Retrieval/Answer 响应必须返回本次两个 ID。
+- `quick/deep` 是 `AnswerMode`，只表示用户期望；服务端把它映射到版本化 `retrievalProfileId` 并固化在 QueryPlan，浏览器不能指定物理 Profile。
+- Context Snapshot 绑定一次 retrieval operation；Chat 路径额外绑定 `chatId/turnId`，Agent/API 路径无需伪造会话。它只保存分层上下文的 refs/hash/token 与 summary lineage，不把秘密、完整 Prompt 或未经授权原文复制到元数据。每个 turn 按当前 Policy 重新授权 summary lineage；若来源撤权、删除或 hash 变化，就排除失效输入并生成新 summary/snapshot。Conversation summary 只能帮助连续性和指代消解，不能作为事实 Citation。
 - `topK`、resource 数量、query 长度、分解次数和 context budget 均由服务端 profile 限幅；公共字段是请求偏好，不是资源或排名控制权。
 - classification 由策略层转换为明确的允许集合，不能做字符串大小比较；environment 的默认语义是 `global OR requested environment`，且 requested environment 必须在允许集合中。
 - 每个命中返回稳定 index family、实际 physical index、chunk/logical ID、不可变 `SourceRevisionRef`、score components、ACL decision、corpus/schema/profile/model version。物理索引从 `*-v1` 蓝绿升级到 `*-v2` 不破坏公共契约。
@@ -373,6 +679,8 @@ interface RetrievalAnswerResponse {
 interface ChatSession {
   chatId: string;
   projectId: string;               // route + current authorization decide visibility
+  parentChatId?: string;
+  branchedFromTurnId?: string;
   title: string;
   defaultSourceScope: SourceFamily[];
   defaultEnvironment?: string;
@@ -384,6 +692,7 @@ interface ChatSession {
 interface ChatTurnRequest {
   clientRequestId: string;
   message: string;
+  answerMode?: AnswerMode;          // defaults to quick
   sourceScope?: SourceFamily[];
   resourceRefs?: ResourceRef[];
   requestedEnvironment?: string;
@@ -396,6 +705,7 @@ interface QueuedChatMessage {
   afterTurnId: string;
   position: number;
   message: string;
+  answerMode?: AnswerMode;
   sourceScope?: SourceFamily[];
   resourceRefs?: ResourceRef[];
   requestedEnvironment?: string;
@@ -412,6 +722,8 @@ interface ChatTurnSummary {
   degradationReasons?: string[];
   corpusVersion: string;
   retrievalProfileId: string;
+  queryPlanId?: string;
+  contextSnapshotId?: string;
   traceId?: string;
   createdAt: string;
   completedAt?: string;
@@ -428,6 +740,8 @@ type ChatTurnState =
 
 type ChatStreamEvent =
   | { type: "turn.started"; payload: { state: "running" } }
+  | { type: "context.assembled"; payload: { contextSnapshotId: string; tokenCount: number } }
+  | { type: "query.plan_ready"; payload: { queryPlanId: string; answerMode: AnswerMode; sourceFamilies: SourceFamily[] } }
   | { type: "stage.started"; payload: { stage: string } }
   | { type: "stage.completed"; payload: { stage: string; durationMs: number } }
   | { type: "retrieval.hits_ready"; payload: { traceId: string; authorizedHitCount: number } }
@@ -457,6 +771,7 @@ POST   /v1/chats
 GET    /v1/projects/{projectId}/chats
 GET    /v1/chats/{chatId}
 POST   /v1/chats/{chatId}/turns
+POST   /v1/turns/{turnId}/fork
 POST   /v1/turns/{turnId}/cancel
 GET    /v1/chats/{chatId}/queue
 POST   /v1/chats/{chatId}/queue
@@ -472,6 +787,8 @@ GET    /v1/retrieval/traces/{traceId}
 - `clientRequestId` 在同一 chat 内幂等；重复提交返回同一 `turnId`。SSE 事件持久化并支持 `Last-Event-ID`，重放事件不得重放检索、模型或其他副作用。
 - cancel 是显式状态迁移：客户端先请求停止，收到 `turn.canceled` 后才能立即发送纠偏 turn。部分文本必须标记为已中断。
 - 运行中的排队消息通过 chat-scoped Queue API 创建和列出，并用 `afterTurnId` 固定依赖；保持独立 ID、顺序和内容，不得静默拼入当前 query。编辑旧消息会创建新 turn，旧 turn/trace 保持不可变。
+- Fork 从一个不可变 turn 创建新的 `ChatSession`，记录 `parentChatId/branchedFromTurnId`；它可以更改问题、scope 或 AnswerMode，由服务端产生新的 Retrieval Profile/QueryPlan，但不能改写原 session、answer、QueryPlan、Context Snapshot 或 Trace。
+- Project policy、近期 turns、conversation summary 与本轮 evidence 分层组装。上下文达到阈值时，服务端生成带 source turn lineage 的新 summary 派生物并重新授权输入；这不是 Phase 1 用户命令，也不删除原始消息。权限、强制规则和事实 Citation 不能只存在于 summary。
 - `turn.degraded` 是运行中的非终态告警；最终仍必须收到 completed/abstained/canceled/failed 之一，且 `turn.completed` 中的 `degradedMode` 与 reasons 固化本次降级事实。
 - `turn.completed` 的 answer 必须 `abstained=false`；`turn.abstained` 携带 `abstained=true` 的完整 AnswerResponse，保留冲突/证据不足的引用与结构化原因。
 - `stage.*` 只描述可观察的系统动作、数量、耗时和状态，不传输隐藏思维链、系统提示词或内部推理文本。

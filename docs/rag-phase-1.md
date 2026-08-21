@@ -55,21 +55,24 @@ flowchart LR
       Ledger[Ingestion Ledger / Checkpoint]
 
       API[Retrieval API]
-      Query[Query Classifier / Decomposer]
+      ContextBuilder[Conversation Context Builder]
+      Query[Versioned QueryPlan<br/>Classifier / Decomposer]
       Filter[Trusted ACL Filter Builder]
       Hybrid[Parallel Hybrid Retrieval]
       Fuse[RRF / Cross-index Fusion]
       Rerank[Reranker]
-      Context[Parent / Graph Expansion + Context Budget]
+      Context[Evidence Packager<br/>Parent / Graph Expansion + Context Budget]
       Cite[Citations / Retrieval Trace]
       Answer[Grounded Answer / Abstain]
       Resolver[Citation Resolver]
       TracePolicy[Restricted Trace Policy]
+      Turn[Turn Orchestrator / Event Projection]
     end
 
     Web[TAP Knowledge Chat Web] -->|REST + SSE| BFF
-    BFF --> API
-    BFF --> ChatDB[(MySQL<br/>Chats / Turns / Events)]
+    BFF --> Turn --> API
+    Turn --> ChatDB[(MySQL<br/>Chats / Turns / Append-only Events<br/>QueryPlan / Context Snapshot)]
+    ChatDB --> ContextBuilder
 
     Git --> Detect
     Blob --> Detect
@@ -83,14 +86,17 @@ flowchart LR
     Rerank -->|Model call| LiteLLM
     Answer -->|Model call with context| LiteLLM
     KeyVault[Key Vault] --> LiteLLM
-    Redis[(Redis<br/>Locks / Short Cache)] --> API
-    Identity[Entra ID / Trusted Policy] --> API
+    Redis[(Redis<br/>Queue / Locks / Short Cache)] --> API
+    Redis --> Turn
+    Identity[Entra ID / Trusted Policy] --> Turn
+    Identity --> API
     Identity --> Filter
 
-    API --> Query --> Filter --> Hybrid
+    API --> ContextBuilder --> Query --> Filter --> Hybrid
     Filter --> Search
     Search --> Hybrid --> Fuse --> Rerank --> Context --> Cite
-    Cite --> Answer -->|Answer deltas + citations| BFF
+    Cite --> Answer -->|Answer deltas + citations| Turn
+    Turn -->|persisted SSE projection| BFF
     Cite --> Resolver --> BFF
     Cite --> TracePolicy --> BFF
     BFF -->|SSE / citation response| Web
@@ -105,6 +111,21 @@ Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP
 - [Azure AI Search 索引设计](ai-search-index-design.md)
 - [检索调优方案](retrieval-tuning.md)
 - [TAP Knowledge Chat](knowledge-chat-ui.md)
+
+### 3.1 在线问答的两种 AnswerMode
+
+| AnswerMode | 用途 | 约束 |
+| --- | --- | --- |
+| `quick` | 普通知识问答、精确 ID/symbol/fingerprint 查询 | 单个有界 QueryPlan；exact/filter fast path 后执行必要的 hybrid，不启动 Agent |
+| `deep` | 跨文档、跨索引、跨章节比较与解释 | 有界子问题、并行索引检索、跨索引融合、parent/依赖扩展与冲突检查；仍是确定性检索流程 |
+
+每轮先由 Context Builder 组装 `Policy Context → Project Context → recent turns → versioned conversation summary → current message/@resource`，再生成不可变、可审计的 QueryPlan。`quick/deep` 是用户 AnswerMode，服务端把它映射到版本化 RetrievalProfile。历史答案和 conversation summary 只用于指代消解与连续性，不能成为事实证据；最终 claim 只能引用本轮重新授权并检索到的 source revision。
+
+QueryPlan 至少固定：原始问题与 raw request hash、standalone query、intent/置信度、effective source families、exact identifiers、已授权并解析到 immutable revision/hash 的 `@resource`、effective environment/corpus、server-capped candidate limit、Retrieval Profile、Policy/ACL digest、子问题上限和 planner version。Context Snapshot 绑定 retrieval operation/current Policy；Chat 路径额外绑定 chat/turn，记录每层输入的 ID/hash/token 数与摘要 lineage；每轮重新授权摘要来源，不复制秘密或未经授权原文。
+
+### 3.2 预留的 Codex Agent 旁路
+
+Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 和 Ingestion 验收。Phase 1.5 可在同一 BFF 后增加显式 Research/Knowledge Enrichment Job：它通过 `AgentRuntime` 端口启动隔离 Codex SDK Worker，只能调用 TAP Retrieval/Citation/Enrichment 窄工具，并输出 report 或 staging Derivation Artifact。Codex 不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。Test IR/代码生成待 Phase 2 Schema/compiler/validator 就绪后接入。详见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
 
 ## 4. 四索引设计
 
@@ -176,14 +197,14 @@ OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必�
 ## 6. Retrieval Pipeline
 
 1. API 从可信身份上下文注入 tenant、project、groups、classification ceiling 和 environment；模型不能传入或放宽这些字段。Policy 将 classification ceiling 转换为明确的允许集合，不进行字符串大小比较；environment 只允许 `global OR requested environment`。
-2. Query Classifier 判断 doc/code/bdd/failure 单索引或多索引检索。
-3. ID、stable Test ID、symbol 和 fingerprint 查询先走 exact/filter fast path；复杂或跨章节问题再拆成有上限的子问题，禁止无界 Agentic search loop。
+2. Context Builder 使用 Project 配置、近期 turns、带 lineage 的 conversation summary 和结构化 `@resource` 做指代消解；服务端生成版本化 QueryPlan，记录 standalone query、intent/confidence、目标索引、exact identifiers、resource mode、profile、子问题与 planner version。
+3. QueryPlan 判断 doc/code/bdd/failure 单索引或多索引检索。ID、stable Test ID、symbol 和 fingerprint 查询先走 exact/filter fast path；复杂或跨章节问题再拆成有上限的子问题，禁止无界 Agentic search loop。
 4. 每个目标索引执行 BM25 + Vector hybrid query；代码额外使用 symbol/path/signature 信号，BDD/Failure 使用结构化字段和 fingerprint。
 5. Azure AI Search 在单索引内做 hybrid/RRF；TAP Retrieval Service 按 per-index rank 做跨索引 RRF，不直接比较不同索引的原始 score。
 6. Reranker 对候选重排；记录模型、输入格式和分数，不将其与 embedding 版本混淆。
 7. 根据 Parent/Child 和轻量代码—测试依赖边补充必要上下文；parent、依赖边、facet/count 和补充 chunk 均再次应用同一 ACL。
 8. 去重、控制 token budget，并生成带不可变 `source revision + structured anchor + sourceContentHash + chunkContentHash + chunkId` 的 Citation；内部 URI 经 resolver 重新授权后才可打开。
-9. Retrieval Trace 保存 tenant/project/actor、ACL digest、query plan、filters、候选、分数、丢弃原因、最终 context、版本与耗时；内容按 trace retention/redaction policy 保存。
+9. Retrieval Trace 保存 tenant/project/actor、ACL digest、QueryPlan/Context Snapshot ID、filters、候选、分数、丢弃原因、最终 context、版本与耗时；内容按 trace retention/redaction policy 保存。
 
 Phase 1 默认不缓存检索结果；若评测后启用，cache key 必须包含 tenant、project、ACL digest、classification、environment、corpus/index/model version，撤权与删除必须同步失效。
 

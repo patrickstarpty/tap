@@ -1,6 +1,6 @@
 # TAP 交付路线图
 
-TAP 采用 **RAG 先行** 的交付顺序：第一阶段构建可独立验收的知识检索底座，并以正式的 Knowledge Chat 完成端到端用户验收；Test IR、Agent 编排、测试执行和智能增强在 Retrieval/Citation Contract 稳定后逐步接入。每阶段用可重复的验收证据退出，不以日期代替完成标准。
+TAP 采用 **RAG 先行** 的交付顺序：第一阶段构建可独立验收的知识检索底座，并以正式的 Knowledge Chat 完成端到端用户验收；随后用不阻塞主链的 Phase 1.5 验证受控 Codex Runtime，再逐步接入 Test IR、Agent 编排、测试执行和智能增强。每阶段用可重复的验收证据退出，不以日期代替完成标准。
 
 Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundation](rag-phase-1.md)。
 
@@ -59,13 +59,37 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 - Self-Healing、RCA 自动闭环、自动代码或 Locator 修改。
 - 通用 Agent 工具执行、Shell、Git 写入和测试工作台；Phase 1 Chat 只做知识问答。
 
+## Phase 1.5：受控 Codex Runtime POC（可选旁路）
+
+这一阶段只能在 Phase 1 Retrieval/Citation/ACL Contract 冻结后开始；它不改变 Phase 1 出口条件，关闭 Codex Runtime 时 RAG、Ingestion 和 Knowledge Chat 必须完整工作。专项设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+
+### 交付
+
+- 在通用 `AgentRuntime` 端口后实现服务端 `CodexRuntimeAdapter`；首选固定版本 Codex SDK，一次性实验可用 `codex exec`。
+- `rag-read` Profile：一 Job 一隔离 Pod，只开放 TAP `search/resolve/read snapshot` 工具，用于显式 Research 和跨代码/知识调查。
+- `knowledge-enrichment` Profile：对固定、已授权、已脱敏的 source snapshot 生成分类、摘要、关系或 parser/data-quality 建议，只形成 staging Derivation Artifact。
+- Tool Gateway 每次调用重新执行 tenant/project/ACL/capability 校验；Codex 不直连 AI Search、MySQL、Blob、Key Vault 或生产 Git。
+- MySQL 保存 Job/Task/Attempt、Policy、事件、审批和 runtime lineage；Redis 保存 queue/lease；可信 Artifact Broker 将 report/enrichment/log/Evidence Manifest 上传 Blob。
+- 确定性 Enrichment Validator；通过并经管理员审批后，只有标准 Indexer 能把批准的派生内容发布到 active corpus。
+- 认证、子进程环境过滤、各工具/网络 surface deny-by-default、sandbox、Prompt injection、取消、Pod 丢失、SDK 升级、成本和 LiteLLM Responses 兼容性 POC。
+
+### 出口标准
+
+- Codex 关闭或故障时 Phase 1 全套回归通过；Agent Job 明确返回 unavailable/failed，不影响在线回答。
+- 在批准的安全测试集与观测窗口内，unauthorized retrieval、跨 tenant workspace/Artifact 暴露和凭据读取检测数为 **0**；所有 POC Agent 检索均带 TAP Trace/Citation/ACL decision。
+- POC 样本中 100% report/enrichment 固定 input revision/hash，并记录 runtime/model/prompt/tool/policy/output-schema version。
+- 服务模式没有 `full_access`；命令公网及 web search/connectors/plugins/非 TAP MCP/Browser/Computer Use 默认关闭；取消、超时和 Worker 丢失得到可审计终态并完成副作用对账。
+- 未经 Validator 和管理员审批的 enrichment 不进入 active corpus；Codex 无 Index Writer/publish 权限。
+- 与非 Agent Deep Retrieval 和 enrichment-off 基线相比，质量收益足以覆盖新增时延、费用和运维复杂度。
+
 ## Phase 2：Test IR 与 Agentic Test Lab
 
 ### 交付
 
 - 定义 Test IR v1、stable Test ID、Git layout、schema migration 和语义 diff。
 - 固化 Run/Task/Attempt、Evidence Manifest、Finding、Approval 与幂等契约。
-- LangGraph + FastAPI：主 Agent、检索/执行/审查子 Agent，支持固定 DAG 与受控 Agentic Loop。
+- LangGraph + FastAPI 可作为主 Orchestrator 实验基线；Codex SDK 作为可替换 Code/Workflow Specialist，检索/执行/审查子 Agent 支持固定 DAG 与受控 Agentic Loop。
+- 在 Test IR Schema、validator/compiler 就绪后增加 `code-edit` Profile：固定 source revision 与独立 worktree，生成 Draft Test IR、最小语义 patch、local validation commit 和候选代码；人工审批后才允许 Commit Service 发布 branch/PR。
 - 通过 Phase 1 Retrieval API 检索、复用和更新已有测试资产，不在 Agent 内复制私有检索链路。
 - Ollama 起步并通过 LiteLLM 保持模型契约；高并发时再评估 vLLM。
 - Selenium Grid 4 + Docker、Allure + OpenTelemetry + Jaeger；Web 闭环稳定后再接 Appium Device Farm。
@@ -131,6 +155,7 @@ Phase 1 的完整范围、数据契约和评测方法见 [Phase 1：RAG Foundati
 | Phase 1 | Knowledge Chat | Project/Conversation、REST/SSE、停止/队列、@resource、claim citation、反馈与安全重授权 |
 | Phase 1 | Evaluation | Golden Dataset、baseline、质量/权限/新鲜度/成本回归 |
 | Phase 1 | RAG Operations | OTel、dashboard、告警、Runbook、Key Vault、配额和审计 |
+| Phase 1.5 | Codex Runtime POC | SDK Adapter、隔离 Worker、Tool Gateway、research/enrichment profiles、Artifact、验证、审批与安全评测 |
 | Phase 2+ | Test IR & Git Assets | Schema、stable ID、compiler、migration、semantic diff、branch/PR |
 | Phase 2+ | Agent & Execution | Intent Router、DAG/Loop、provider ports、scheduler、lease、cancel |
 | Phase 2+ | Evidence & RCA | manifest、collector、Blob layout、redaction、failure analysis |

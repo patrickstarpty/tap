@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 文档状态 | Architecture Baseline v0.1，待正式评审 |
+| 文档状态 | Architecture Baseline v0.2，待正式评审 |
 | 更新时间 | 2026-08-21 |
 | 核心主线 | Test IR + Git 版本化 + 统一执行证据 |
 | 部署基线 | AKS + PaaS MySQL + PaaS Redis + Azure AI Search + Blob Storage + Key Vault + LiteLLM |
@@ -58,6 +58,12 @@ flowchart TB
       AgentOrch --> RCA[Self-Healing & RCA]
       AgentOrch --> ModelPolicy[Model Policy / Budget Ledger]
       Plan --> Agents[Retrieval / Execution / Review Agents]
+      AgentOrch --> RuntimePort[AgentRuntime Port]
+      RuntimePort --> CodexWorker[Optional Codex SDK Workers]
+      RuntimePort --> OtherRuntime[Other Runtime Adapters]
+      CodexWorker --> ToolGateway[TAP Tool Gateway]
+      ToolGateway --> Knowledge
+      ToolGateway --> Authoring
       ExecOrch --> Stream[Queue / Event Stream]
       Stream --> BrowserWorker[Browser Workers]
       Stream --> DeviceWorker[Device Workers]
@@ -150,9 +156,11 @@ flowchart LR
 
 ### 4.3 Agent Runtime 边界
 
-Agentic Test Lab 可用 LangGraph + FastAPI 作为实验基线，企业阶段的 Agent Runtime 尚未正式选型；DeepSeek Harness 作为参考实现或可选 Runtime 适配器验证。TAP 自有端口不暴露任何框架内部对象，完整签名以 [AgentRuntime 契约](contracts.md#agentruntime) 为准。
+Agentic Test Lab 可用 LangGraph + FastAPI 作为实验基线；企业阶段保持 Runtime 可替换。候选包括服务端 Codex SDK Adapter、DeepSeek Harness Adapter 或其他实现。TAP 自有端口不暴露任何框架内部对象，完整签名以 [AgentRuntime 契约](contracts.md#agentruntime) 为准。
 
 若接入 DeepSeek Harness：固定版本、独立进程/sidecar、契约测试、feature flag；Harness session 只是外部引用。Harness 的插件/事件设计可复用思想，但文件、进程和网络隔离仍由 TAP Worker/容器策略负责。
+
+若接入 Codex：后台长期任务首选 Codex SDK，`codex exec` 仅用于本地 POC/CI；Codex 是异步 Specialist Runtime，一 Attempt 一隔离 Worker。Phase 1.5 只验证 Research 与 staging Knowledge Enrichment；普通 Knowledge Chat 与确定性 Ingestion 不依赖它。Phase 2 在 Test IR Schema/compiler/validator 就绪后，才增加 Draft IR 与候选 patch。所有能力通过 TAP Tool Gateway/Artifact Broker，线程、工具、sandbox 和 workspace 属于 Agent Runtime，不能把 Codex 简化成 LiteLLM 后的一个 Coder Model。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
 
 ## 5. Test Authoring 与 Test IR
 
@@ -274,6 +282,7 @@ Azure AI Search 是最终企业选型。首期使用四个独立索引，避免�
 - OpenAPI/AsyncAPI 按 Endpoint/Operation 切片；失败记录按 Incident 切片并携带 fingerprint、Test ID、环境、revision、证据和修复结果。
 - 使用 BM25、Vector、AST/Symbol 和轻量代码—测试依赖图多路召回，经 RRF 融合后由 reranker 排序。
 - 跨章节问题先拆为子问题并执行多跳检索；Context Enhancer 只补充必要 parent、邻接 symbol、相关 Test IR 与最新失败，防止上下文膨胀。
+- 可选 Agent enrichment 只能读取固定、已授权且已脱敏的 source snapshot，输出带输入 hash 与 runtime/model/prompt/tool version 的派生候选；typed parser/chunker、ACL、稳定身份、删除传播、Index Writer 和 active corpus 发布仍是确定性 TAP Pipeline 的职责。
 
 AI Search 是可重建投影。原文与大文件来自 Git/Blob，结构化运行事实来自 MySQL。
 
@@ -283,6 +292,7 @@ Phase 1 的完整实现规格拆分为：
 - [Azure AI Search 索引设计](ai-search-index-design.md)
 - [检索调优方案](retrieval-tuning.md)
 - [TAP Knowledge Chat](knowledge-chat-ui.md)
+- [受控 Codex Agent Runtime](codex-agent-runtime.md)
 
 TAP 自行解析、切片、计算稳定身份、附加 ACL/lineage 并通过 Push API 写入物理索引；AI Search 负责倒排/向量索引、filter、单索引 hybrid/RRF 与可选 semantic ranker。查询默认使用服务端可信 ACL `preFilter`，客户端和模型不能提交或覆盖安全 filter。
 
@@ -332,6 +342,8 @@ LiteLLM 以无状态/配置驱动的 Gateway 方式部署，负责模型协议�
 Embedding 的向量维度、索引 Schema 与模型版本必须绑定；升级时新建索引版本并后台重建，不能原地混用不同向量空间。Reranker 单独版本化模型、输入格式与评分策略，不与向量维度绑定。
 
 若需要 LiteLLM Virtual Keys、Admin UI、精细 spend tracking 等依赖其持久化后端的功能，必须先验证其与已选 MySQL/Redis 的兼容性；验证前不把这些内建功能列为 MVP 依赖，也不额外引入 PostgreSQL。
+
+Codex Runtime 与 LiteLLM 的集成必须单独做契约验证。Codex 自定义 model provider 要求 Responses API 兼容，不能仅凭“OpenAI-compatible”就假设 streaming、tool、reasoning、compaction、取消和用量语义可用。验证通过才纳入 LiteLLM route；否则 Codex 使用受治理的 direct provider egress，并继续由 TAP Model Policy/MySQL 记录预算、用量与审计。
 
 ## 10. 关键流程
 
@@ -418,7 +430,7 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 建议使用逻辑隔离的 namespace/node pool：
 
 - `tap-control`：API/BFF、Authoring、Orchestrator、RCA、Indexer。
-- `tap-agent-workers`：LangGraph/可选 Harness Runtime、Tool Gateway、临时工作区。
+- `tap-agent-workers`：LangGraph/可选 Harness Runtime、Codex SDK Adapter、Tool Gateway、临时工作区；Codex Attempt 使用独立短生命周期 Pod、ServiceAccount、卷、沙箱和 egress profile，不共享 tenant workspace 或 runtime home。
 - `tap-browser-grid`：Selenium Grid Router/nodes；若采用 Playwright，使用独立 ephemeral worker pool，不混用 Selenium Grid 协议。两者分别由 KEDA/HPA 扩缩。
 - `tap-device-gateway`：管理外部 Appium device hosts；物理设备不假设运行在 AKS Pod 内。
 - `tap-api-workers`：API/Contract ephemeral jobs。
@@ -429,10 +441,11 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 ## 15. 演进路径
 
 1. **RAG Foundation + Knowledge Chat**：先完成 Azure AI Search 四索引、typed ingestion、权限过滤、hybrid retrieval、引用、离线评测，以及可流式问答/中断/排队追问/打开证据的 Chat 页面；不以前置 Agent 或执行网格为目标。详见 [Phase 1 专项设计](rag-phase-1.md)。
-2. **Agentic Test Lab**：复用已验证的 RAG，加入本地 Agent、Test IR、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，打通 NL/BDD 到证据闭环。
-3. **团队 MVP**：Git Test IR、MySQL、Redis、Blob、受控 MCP 工具、GitHub PR；自建 Grid 优先覆盖内网。
-4. **企业平台扩展**：AKS/KEDA、Key Vault、LiteLLM 多模型、BrowserStack Adapter、多租户权限与审计。
-5. **智能增强与规模化**：失败聚类、RCA、自愈候选、Vision、风险选测；按真实瓶颈拆分组件。
+2. **受控 Agent Runtime POC**：在不改变 Phase 1 出口条件的前提下，以 Codex SDK Adapter 验证只读 Research 与 staging Knowledge Enrichment；关闭 Runtime 时 RAG/Chat 必须完整工作。
+3. **Agentic Test Lab**：复用已验证的 RAG，先定义 Test IR/validator/compiler，再加入 Codex code-edit Specialist、本地 Agent、Selenium Grid 4 + Docker、Appium、Allure + OTel/Jaeger，打通 NL/BDD 到证据闭环。
+4. **团队 MVP**：Git Test IR、MySQL、Redis、Blob、受控 MCP 工具、GitHub PR；自建 Grid 优先覆盖内网。
+5. **企业平台扩展**：AKS/KEDA、Key Vault、LiteLLM 多模型、BrowserStack Adapter、多租户权限与审计。
+6. **智能增强与规模化**：失败聚类、RCA、自愈候选、Vision、风险选测；按真实瓶颈拆分组件。
 
 ## 16. 需要进一步细化的设计
 
@@ -441,5 +454,5 @@ GitHub Webhook 验签和幂等 → 冻结 RunSpec 与 Git revision → 变更/�
 - MySQL 逻辑模型与 Run/Task/Attempt 单调状态机。
 - 四个 AI Search 索引的容量/SKU、embedding/rerank 模型与真实 Golden Dataset 参数校准；逻辑 Schema、权限过滤与调优流程已在 Phase 1 专项文档定义。
 - BrowserStack Local、自建 Browser Grid、Appium Device Farm 的网络与容量设计。
-- Agent Runtime 选型验证：LangGraph 基线与 DeepSeek Harness Adapter POC。
+- Agent Runtime 选型验证：Codex SDK Adapter、LangGraph 基线与 DeepSeek Harness Adapter POC；同时验证认证、Responses provider、sandbox、事件、取消、成本和隔离。
 - 统一 Evidence Manifest、脱敏规则、Blob 生命周期与法律保留策略。
