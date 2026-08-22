@@ -1,8 +1,9 @@
 ---
 id: RFC-002
-status: in-review
+status: accepted
 date: 2026-08-22
-related-adrs: []
+related-adrs:
+  - ADR-016
 ---
 
 # RFC-002：TAP 文档信息架构
