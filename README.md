@@ -44,7 +44,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - [TAP Knowledge Chat](docs/architecture/2026-08-21-knowledge-chat-ui.md)：Codex/Claude Code 式会话、流式状态、引用与 Trace 交互。
 - [受控 Codex Agent Runtime](docs/proposals/2026-08-21-rfc-001-codex-agent-runtime.md)：后台 SDK/CLI/App Server 选择、异步 Job、沙箱、工具、凭证、生成与审批边界。
 - [核心契约](docs/reference/2026-08-20-contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
-- [架构决策](docs/decisions/index.md)：已经采纳的决策、取舍与待确认项。
+- [架构决策](docs/decisions/index.md)：架构决策、取舍与被覆盖的历史方案。
 - [交付路线图](docs/plans/2026-08-20-roadmap.md)：从架构基线到可用 MVP 的阶段计划。
 - [来源与可追溯性](docs/reference/2026-08-20-source-notes.md)：`engprod` 会话索引、官方资料和推断边界。
 
