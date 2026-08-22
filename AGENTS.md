@@ -2,7 +2,11 @@
 
 ## Project Structure & Module Organization
 
-TAP is currently a documentation-only architecture repository; implementation has not started. `README.md` provides the project overview, status, and document index. Treat `docs/architecture.md` as the integrated baseline. `docs/contracts.md`, `docs/decisions.md`, and `docs/roadmap.md` define domain contracts, adopted decisions, and delivery phases. Topic-specific designs cover RAG, indexing, retrieval, the Knowledge Chat UI, and the controlled Codex runtime. Put new design documents in `docs/` using lower kebab-case names, such as `retrieval-tuning.md`. No source, test, or asset directories exist yet.
+TAP is currently a documentation-only architecture repository; implementation has not started. `README.md` provides the project overview and status, while `docs/index.md` is the documentation entry point. The documentation tree uses six responsibility directories: `docs/architecture/` for the current baseline and domain designs, `docs/proposals/` for RFCs and unresolved inputs, `docs/decisions/` for ADRs, `docs/plans/` for roadmaps and implementation plans, `docs/reviews/` for time-point assessments, and `docs/reference/` for contracts, sources, and governance. Except for indexes and reusable templates, content filenames use `YYYY-MM-DD-<lower-kebab-case>.md`. No source, test, or asset directories exist yet.
+
+## Documentation Governance
+
+Before creating, moving, or materially changing content under `docs/`, read `docs/reference/2026-08-22-document-governance.md`. Use `docs/proposals/rfc-template.md` and `docs/decisions/adr-template.md` before creating or materially changing RFCs and ADRs, respectively.
 
 ## Build, Test, and Development Commands
 

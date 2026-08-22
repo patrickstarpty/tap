@@ -291,7 +291,7 @@ interface AgentRuntime {
 - Runtime Pod 禁用自动 ServiceAccount token；projected identity 只显式挂入可信 sidecar。Agent/command 容器使用干净 runtime home 和平台固定配置，不加载个人 auth/config、repo `.codex` capability 配置或未批准插件。Artifact 上传和 TAP Tool 调用由可信 Broker/Gateway 完成。
 - 每个输出先落 `GeneratedArtifactEnvelope` 并经过 Schema/Compiler/Test/Policy 验证；Agent 的 completed 事件不能替代 TAP validator 的 passed 结论。
 - 未知 Provider 事件只保存为脱敏诊断信息，不能乐观映射为 `succeeded`。
-- Codex 的具体接入与隔离规则见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+- Codex 的具体接入与隔离规则见 [受控 Codex Agent Runtime](../proposals/2026-08-21-rfc-001-codex-agent-runtime.md)。
 
 ### Phase 1.5 Agent Job API
 
@@ -741,7 +741,7 @@ interface RetrievalAnswerResponse {
 - `topK`、resource 数量、query 长度、分解次数和 context budget 均由服务端 profile 限幅；公共字段是请求偏好，不是资源或排名控制权。
 - classification 由策略层转换为明确的允许集合，不能做字符串大小比较；environment 的默认语义是 `global OR requested environment`，且 requested environment 必须在允许集合中。
 - 每个命中返回稳定 index family、实际 physical index、chunk/logical ID、不可变 `SourceRevisionRef`、score components、ACL decision、corpus/schema/profile/model version。物理索引从 `*-v1` 蓝绿升级到 `*-v2` 不破坏公共契约。
-- `logicalChunkId` 在同一结构位置跨 revision 稳定；`chunkId` 随 source revision/content/chunker version 变化。完整生成规则见 [切片与溯源设计](chunking-and-provenance.md)。
+- `logicalChunkId` 在同一结构位置跨 revision 稳定；`chunkId` 随 source revision/content/chunker version 变化。完整生成规则见 [切片与溯源设计](../architecture/rag/2026-08-21-chunking-and-provenance.md)。
 - `chunkId` 作为 Azure AI Search document key 使用 `h_` + SHA-256 lowercase hex；不得把带冒号的 digest、URI 或路径直接作为 key。
 - 非拒答结果中的每个实质 claim 必须引用至少一个当前 context 中的 `citationId`。Citation Resolver 将其解析到不可变 revision、structured anchor、`sourceContentHash` 与 `chunkContentHash`；浏览器不直接使用内部 `sourceUri`。证据不足、来源冲突或 revision 不一致时返回结构化拒答原因。
 - 代码命中返回原语言 symbol/AST chunk；不得为了统一格式把源码转成 Markdown。
@@ -895,4 +895,4 @@ GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 - `citationId`、`traceId`、`chatId` 和 `turnId` 都不是访问凭证。恢复会话、展开历史答案、解析引用或读取 Trace 时，按当前身份/ACL 重新授权并审计；撤权后 fail closed。
 - Markdown、代码块、链接和 source preview 必须经过 allowlist sanitizer 与安全 URL resolver；禁止模型生成的任意 URL 直接成为可点击引用。
 
-页面行为与验收标准见 [TAP Knowledge Chat](knowledge-chat-ui.md)。
+页面行为与验收标准见 [TAP Knowledge Chat](../architecture/2026-08-21-knowledge-chat-ui.md)。

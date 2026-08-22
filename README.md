@@ -35,18 +35,18 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 ## 文档导航
 
-- [总体技术架构](docs/architecture.md)：边界、组件、数据、流程、安全、可靠性与部署。
-- [整体架构评审](docs/architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。
-- [Phase 1：RAG 基础](docs/rag-phase-1.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
-- [数据切片与溯源](docs/chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
-- [Azure AI Search 索引设计](docs/ai-search-index-design.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
-- [检索调优方案](docs/retrieval-tuning.md)：BM25/Vector/Hybrid/RRF/Rerank 的可复现实验阶梯。
-- [TAP Knowledge Chat](docs/knowledge-chat-ui.md)：Codex/Claude Code 式会话、流式状态、引用与 Trace 交互。
-- [受控 Codex Agent Runtime](docs/codex-agent-runtime.md)：后台 SDK/CLI/App Server 选择、异步 Job、沙箱、工具、凭证、生成与审批边界。
-- [核心契约](docs/contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
-- [架构决策](docs/decisions.md)：已经采纳的决策、取舍与待确认项。
-- [交付路线图](docs/roadmap.md)：从架构基线到可用 MVP 的阶段计划。
-- [来源与可追溯性](docs/source-notes.md)：`engprod` 会话索引、官方资料和推断边界。
+- [总体技术架构](docs/architecture/2026-08-20-overview.md)：边界、组件、数据、流程、安全、可靠性与部署。
+- [整体架构评审](docs/reviews/2026-08-21-architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。
+- [Phase 1：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
+- [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
+- [Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
+- [检索调优方案](docs/architecture/rag/2026-08-21-retrieval-tuning.md)：BM25/Vector/Hybrid/RRF/Rerank 的可复现实验阶梯。
+- [TAP Knowledge Chat](docs/architecture/2026-08-21-knowledge-chat-ui.md)：Codex/Claude Code 式会话、流式状态、引用与 Trace 交互。
+- [受控 Codex Agent Runtime](docs/proposals/2026-08-21-rfc-001-codex-agent-runtime.md)：后台 SDK/CLI/App Server 选择、异步 Job、沙箱、工具、凭证、生成与审批边界。
+- [核心契约](docs/reference/2026-08-20-contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
+- [架构决策](docs/decisions/index.md)：已经采纳的决策、取舍与待确认项。
+- [交付路线图](docs/plans/2026-08-20-roadmap.md)：从架构基线到可用 MVP 的阶段计划。
+- [来源与可追溯性](docs/reference/2026-08-20-source-notes.md)：`engprod` 会话索引、官方资料和推断边界。
 
 ## 核心原则
 
@@ -65,4 +65,4 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
 - 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
 - 默认仓库可见性：建议 `private`
-- 下一决策点：见 [架构决策](docs/decisions.md#待确认项)
+- 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)

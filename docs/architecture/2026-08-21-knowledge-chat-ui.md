@@ -187,7 +187,7 @@ turn.canceled
 turn.failed
 ```
 
-每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。正式 DTO 和状态约束见 [Knowledge Chat Contract](contracts.md#9-knowledge-chat-contract)。
+每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。正式 DTO 和状态约束见 [Knowledge Chat Contract](../reference/2026-08-20-contracts.md#9-knowledge-chat-contract)。
 
 ## 7. 前端实现基线
 

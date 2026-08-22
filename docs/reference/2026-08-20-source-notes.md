@@ -15,7 +15,7 @@
 - 本机 Codex 数据库只有标题、项目归属和 Thread ID；正文来自远端只读 thread 接口。
 - 部分长 assistant message 在源接口中约 2,000 字后标记为 truncated，无法继续取得同一条消息的尾部。
 - 用户历次要求、约束演进、最终技术栈、两张架构图的核心结构与主要取舍均已恢复。
-- 本仓库是结构化架构基线，不是聊天记录逐字导出；无法验证的细节保留在 [待确认项](decisions.md#待确认项)。
+- 本仓库是结构化架构基线，不是聊天记录逐字导出；无法验证的细节保留在 [待确认项](../proposals/2026-08-20-open-questions.md)。
 
 ## 从会话确认的最终主线
 
@@ -127,7 +127,7 @@ Core = Test IR + Git versioning + unified execution evidence
 
 采用的事实：Codex SDK 可在服务端启动、继续和恢复本地 coding thread，并用于 CI/CD、内部工具、工作流和应用；官方稳定 Python 包为 `openai-codex`，要求 Python 3.10+、包含 pinned Codex CLI runtime，并提供 `AsyncCodex`。`codex exec` 面向脚本与 CI；App Server 协议面向认证、会话历史、审批和流式 Agent 事件等深度集成，但其 command/WebSocket transport 当前为 experimental/unsupported for production。Codex 支持 API key 程序化认证，并明确不应把执行能力暴露在不可信或公开环境；managed ChatGPT Workspace 自动化可评估 access token 或当前为 Beta 且需 Workspace 开通/映射的 workload identity。自定义 model provider 的公开 wire protocol 是 Responses API。官方也明确 command network proxy 不覆盖 web search、connectors/plugins、MCP、Browser/Computer Use、cloud task 或 model/auth 流量，必须分别治理。
 
-TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential sidecar、Codex 不直连 AI Search、Test IR 优先、候选 patch、Git 审批、多租户隔离、LiteLLM 兼容性门禁和 Phase 1.5 分期均为本次工程设计，不是 OpenAI 产品内部架构。详细设计见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential sidecar、Codex 不直连 AI Search、Test IR 优先、候选 patch、Git 审批、多租户隔离、LiteLLM 兼容性门禁和 Phase 1.5 分期均为本次工程设计，不是 OpenAI 产品内部架构。详细设计见 [受控 Codex Agent Runtime](../proposals/2026-08-21-rfc-001-codex-agent-runtime.md)。
 
 ### React/Python 应用运行时
 

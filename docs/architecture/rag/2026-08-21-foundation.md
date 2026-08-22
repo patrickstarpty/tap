@@ -112,10 +112,10 @@ Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP
 
 专项实现设计：
 
-- [数据切片与端到端溯源](chunking-and-provenance.md)
-- [Azure AI Search 索引设计](ai-search-index-design.md)
-- [检索调优方案](retrieval-tuning.md)
-- [TAP Knowledge Chat](knowledge-chat-ui.md)
+- [数据切片与端到端溯源](2026-08-21-chunking-and-provenance.md)
+- [Azure AI Search 索引设计](2026-08-21-ai-search-index.md)
+- [检索调优方案](2026-08-21-retrieval-tuning.md)
+- [TAP Knowledge Chat](../2026-08-21-knowledge-chat-ui.md)
 
 ### 3.1 在线问答的两种 AnswerMode
 
@@ -130,7 +130,7 @@ QueryPlan 至少固定：原始问题与 raw request hash、standalone query、i
 
 ### 3.2 预留的 Codex Agent 旁路
 
-Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 和 Ingestion 验收。Phase 1.5 可在同一 BFF 后增加显式 Research/Knowledge Enrichment Job：它通过 `AgentRuntime` 端口启动隔离 Codex SDK Worker，只能调用 TAP Retrieval/Citation/Enrichment 窄工具，并输出 report 或 staging Derivation Artifact。Codex 不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。Test IR/代码生成待 Phase 2 Schema/compiler/validator 就绪后接入。详见 [受控 Codex Agent Runtime](codex-agent-runtime.md)。
+Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 和 Ingestion 验收。Phase 1.5 可在同一 BFF 后增加显式 Research/Knowledge Enrichment Job：它通过 `AgentRuntime` 端口启动隔离 Codex SDK Worker，只能调用 TAP Retrieval/Citation/Enrichment 窄工具，并输出 report 或 staging Derivation Artifact。Codex 不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。Test IR/代码生成待 Phase 2 Schema/compiler/validator 就绪后接入。详见 [受控 Codex Agent Runtime](../../proposals/2026-08-21-rfc-001-codex-agent-runtime.md)。
 
 ### 3.3 前后端与运行角色边界
 
@@ -144,7 +144,7 @@ Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 
 | `index-writer` | AI Search batch/upsert/tombstone、ACK 后 checkpoint、alias/corpus 发布 |
 | `relay-reconciler` | MySQL Outbox、Redis distribution/lease、至少一次投递、幂等和故障对账 |
 
-首版可以共享一个 Python package 和数据库迁移，但使用独立 entrypoint/Deployment。FastAPI 在线 handler 只做异步 I/O；parser/OCR/AST、本地模型和大对象处理不在 event loop 或进程内 Background Task 运行。完整性能、容量与 AKS 边界见 [总体技术架构](architecture.md#11-可靠性性能与容量)。
+首版可以共享一个 Python package 和数据库迁移，但使用独立 entrypoint/Deployment。FastAPI 在线 handler 只做异步 I/O；parser/OCR/AST、本地模型和大对象处理不在 event loop 或进程内 Background Task 运行。完整性能、容量与 AKS 边界见 [总体技术架构](../2026-08-20-overview.md#11-可靠性性能与容量)。
 
 ## 4. 四索引设计
 
@@ -244,9 +244,9 @@ GET /v1/retrieval/traces/{id}
 
 `answer` 是 Knowledge Chat 的正式回答接口；`search` 是后续 Agent、Test Authoring 和 RCA 依赖的稳定检索契约。两者共享同一可信 Policy Context、Retrieval Profile、Trace 和 Citation 模型。
 
-Answer 服务只能使用返回的 context；证据不足、来源冲突或 revision 不一致时必须拒答或显式提示冲突。正式请求/响应字段见 [Retrieval Contract](contracts.md#8-retrieval-contract)。
+Answer 服务只能使用返回的 context；证据不足、来源冲突或 revision 不一致时必须拒答或显式提示冲突。正式请求/响应字段见 [Retrieval Contract](../../reference/2026-08-20-contracts.md#8-retrieval-contract)。
 
-Knowledge Chat 通过 BFF 提供 Project/Conversation、流式回答、中断、排队追问、`@resource`、逐条引用和反馈。浏览器不得直连 AI Search 或 LiteLLM；公开请求不能携带 tenant/group/classification/filter。正式 Chat/SSE 契约见 [Knowledge Chat Contract](contracts.md#9-knowledge-chat-contract)，页面行为见 [TAP Knowledge Chat](knowledge-chat-ui.md)。
+Knowledge Chat 通过 BFF 提供 Project/Conversation、流式回答、中断、排队追问、`@resource`、逐条引用和反馈。浏览器不得直连 AI Search 或 LiteLLM；公开请求不能携带 tenant/group/classification/filter。正式 Chat/SSE 契约见 [Knowledge Chat Contract](../../reference/2026-08-20-contracts.md#9-knowledge-chat-contract)，页面行为见 [TAP Knowledge Chat](../2026-08-21-knowledge-chat-ui.md)。
 
 Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL digest、各检索通道 rank/score、RRF/rerank 前后顺序、parent expansion、最终 context 和引用跳转。普通用户只看 Sources/Claims；完整 Trace 仅限诊断角色。
 

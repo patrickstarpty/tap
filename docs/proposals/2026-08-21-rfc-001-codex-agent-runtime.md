@@ -1,3 +1,11 @@
+---
+id: RFC-001
+status: in-review
+date: 2026-08-21
+related-adrs:
+  - ADR-014
+---
+
 # TAP 受控 Codex Agent Runtime
 
 | 字段 | 值 |
@@ -227,7 +235,7 @@ Runtime-specific thread/session ID 只作为外部引用写入 Attempt。TAP 至
 
 不默认保存隐藏推理；日志中的 Prompt、源内容、命令输出和秘密按角色脱敏与分级保留。
 
-浏览器/BFF 的创建、查询、取消、SSE 恢复、幂等和状态机见 [Phase 1.5 Agent Job API](contracts.md#phase-15-agent-job-api)。公共请求不能选择 Runtime、sandbox、工具或网络。
+浏览器/BFF 的创建、查询、取消、SSE 恢复、幂等和状态机见 [Phase 1.5 Agent Job API](../reference/2026-08-20-contracts.md#phase-15-agent-job-api)。公共请求不能选择 Runtime、sandbox、工具或网络。
 
 ## 8. 沙箱、多租户与网络
 
