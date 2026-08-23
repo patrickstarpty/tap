@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tap.modules.chat.adapters.mysql import MysqlTurnRepository, OutboxStore
-from tap.modules.chat.application.ports import CreateTurnCommand, DispatchMessage
+from tap.modules.chat.application.ports import CreateTurnCommand, DispatchMessage, LeaseLost
 from tap.modules.chat.domain.models import ChatId, CommandId, TurnId
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_dispatch import RedisDispatchPublisher, Relay
@@ -71,6 +73,42 @@ class RecordingRedis:
     async def eval(self, script: str, number_of_keys: int, *values: object) -> int:
         self.calls.append((script, number_of_keys, values))
         return self.result
+
+
+class RedisLuaEmulator:
+    """Execute the adapter's small Redis command subset with Redis error semantics."""
+
+    def __init__(
+        self,
+        *,
+        stream: list[str] | None = None,
+        fail_next_xadd: bool = False,
+    ) -> None:
+        self.stream = stream if stream is not None else []
+        self.fail_next_xadd = fail_next_xadd
+        self.dedup_keys: set[str] = set()
+
+    async def eval(self, script: str, number_of_keys: int, *values: object) -> int:
+        assert number_of_keys == 2
+        dedup_key = str(values[0])
+        capacity = int(values[-2]) if len(values) == 5 else 100_000
+        payload = str(values[-1])
+        commands = re.findall(r"redis\.call\('([A-Z]+)'", script)
+        for command in commands:
+            if command == "EXISTS" and dedup_key in self.dedup_keys:
+                return 0
+            if command == "XLEN" and len(self.stream) >= capacity:
+                return -1
+            if command == "SET":
+                if dedup_key in self.dedup_keys:
+                    return 0
+                self.dedup_keys.add(dedup_key)
+            if command == "XADD":
+                if self.fail_next_xadd:
+                    self.fail_next_xadd = False
+                    raise RuntimeError("injected XADD failure")
+                self.stream.append(payload)
+        return 1
 
 
 async def _clean_owned_tables(engine: AsyncEngine) -> None:
@@ -262,6 +300,226 @@ def test_expired_claim_replays_the_same_command_without_duplicate_delivery() -> 
     _run_with_clean_database(scenario)
 
 
+def test_xadd_failure_cannot_leave_a_marker_that_suppresses_retry() -> None:
+    async def scenario() -> None:
+        redis = RedisLuaEmulator(fail_next_xadd=True)
+        publisher = RedisDispatchPublisher(
+            redis=redis,
+            stream_name="tap:commands",
+            dedup_ttl=timedelta(hours=1),
+        )
+        message = DispatchMessage(
+            command_id=CommandId("retryable-command"),
+            outbox_id="retryable-outbox",
+            aggregate_type="chat_turn",
+            aggregate_id="retryable-turn",
+            sequence=4,
+        )
+
+        with pytest.raises(RuntimeError, match="injected XADD failure"):
+            await publisher.publish_once(message)
+        assert await publisher.publish_once(message) is True
+
+        assert len(redis.stream) == 1
+        assert json.loads(redis.stream[0])["commandId"] == "retryable-command"
+
+    asyncio.run(scenario())
+
+
+def test_full_redis_stream_keeps_outbox_pending_for_retry() -> None:
+    async def scenario(
+        engine: AsyncEngine,
+        repository: MysqlTurnRepository,
+        outbox: OutboxStore,
+    ) -> None:
+        now = datetime(2026, 8, 23, 12, 30, 0)
+        await repository.create_with_outbox(_command(30, now))
+        redis = RedisLuaEmulator(stream=['{"commandId":"unseen-command"}'])
+        publisher = RedisDispatchPublisher(
+            redis=redis,
+            stream_name="tap:commands",
+            dedup_ttl=timedelta(hours=1),
+            max_stream_length=1,
+        )
+        relay = Relay(
+            outbox=outbox,
+            publisher=publisher,
+            clock=MutableClock(now),
+            worker_id="relay-capacity",
+            lease_duration=timedelta(seconds=30),
+            retry_delay=timedelta(seconds=5),
+        )
+
+        assert await relay.publish_pending(batch_size=1) == 0
+
+        async with engine.connect() as connection:
+            row = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT status, attempt_count, next_attempt_at, last_error FROM outbox "
+                            "WHERE command_id = 'relay-command-30'"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert len(redis.stream) == 1
+        assert row["status"] == "pending"
+        assert row["attempt_count"] == 1
+        assert row["next_attempt_at"] == datetime(2026, 8, 23, 12, 30, 5)
+        assert row["last_error"] == "Redis command stream reached capacity 1"
+
+    _run_with_clean_database(scenario)
+
+
+def test_maximum_attempt_failure_becomes_a_durable_terminal_fact() -> None:
+    async def scenario(
+        engine: AsyncEngine,
+        repository: MysqlTurnRepository,
+        outbox: OutboxStore,
+    ) -> None:
+        now = datetime(2026, 8, 23, 13, 0, 0)
+        await repository.create_with_outbox(_command(40, now))
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE outbox SET attempt_count = 9 WHERE command_id = 'relay-command-40'")
+            )
+        relay = Relay(
+            outbox=outbox,
+            publisher=AtomicMemoryPublisher(fail_with=RuntimeError("permanent outage")),
+            clock=MutableClock(now),
+            worker_id="relay-terminal",
+            lease_duration=timedelta(seconds=30),
+            retry_delay=timedelta(seconds=5),
+        )
+
+        assert await relay.publish_pending(batch_size=1) == 0
+
+        async with engine.connect() as connection:
+            row = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT status, attempt_count, last_error FROM outbox "
+                            "WHERE command_id = 'relay-command-40'"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert dict(row) == {
+            "status": "delivery_failed",
+            "attempt_count": 10,
+            "last_error": "permanent outage",
+        }
+
+    _run_with_clean_database(scenario)
+
+
+def test_stale_same_worker_claim_cannot_settle_a_newer_claim() -> None:
+    async def scenario(
+        engine: AsyncEngine,
+        repository: MysqlTurnRepository,
+        outbox: OutboxStore,
+    ) -> None:
+        now = datetime(2026, 8, 23, 13, 30, 0)
+        await repository.create_with_outbox(_command(50, now))
+        first = (
+            await outbox.claim_pending(
+                worker_id="shared-worker",
+                now=now,
+                lease_duration=timedelta(seconds=30),
+                limit=1,
+            )
+        )[0]
+        reclaimed_at = now + timedelta(seconds=30)
+        assert await outbox.reconcile_expired(reclaimed_at, 1) == 1
+        second = (
+            await outbox.claim_pending(
+                worker_id="shared-worker",
+                now=reclaimed_at,
+                lease_duration=timedelta(seconds=30),
+                limit=1,
+            )
+        )[0]
+
+        assert first.claim_token != second.claim_token
+        with pytest.raises(LeaseLost):
+            await outbox.mark_published(
+                outbox_id=first.message.outbox_id,
+                claim_token=first.claim_token,
+                published_at=reclaimed_at,
+            )
+
+        async with engine.connect() as connection:
+            row = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT status, claimed_by FROM outbox "
+                            "WHERE command_id = 'relay-command-50'"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert dict(row) == {"status": "publishing", "claimed_by": "shared-worker"}
+
+        await outbox.mark_published(
+            outbox_id=second.message.outbox_id,
+            claim_token=second.claim_token,
+            published_at=reclaimed_at,
+        )
+
+    _run_with_clean_database(scenario)
+
+
+@pytest.mark.parametrize("batch_size", [0, -1, 501])
+def test_relay_rejects_batch_sizes_outside_its_hard_bound(batch_size: int) -> None:
+    async def scenario(
+        engine: AsyncEngine,
+        repository: MysqlTurnRepository,
+        outbox: OutboxStore,
+    ) -> None:
+        relay = Relay(
+            outbox=outbox,
+            publisher=AtomicMemoryPublisher(),
+            clock=MutableClock(datetime(2026, 8, 23, 14, 0, 0)),
+            worker_id="relay-invalid-batch",
+            lease_duration=timedelta(seconds=30),
+            retry_delay=timedelta(seconds=5),
+        )
+
+        with pytest.raises(ValueError, match="batch_size must be between 1 and 500"):
+            await relay.publish_pending(batch_size=batch_size)
+
+    _run_with_clean_database(scenario)
+
+
+def test_relay_rejects_attempt_limit_above_its_hard_bound() -> None:
+    async def scenario(
+        engine: AsyncEngine,
+        repository: MysqlTurnRepository,
+        outbox: OutboxStore,
+    ) -> None:
+        with pytest.raises(ValueError, match="maximum_attempts must be between 1 and 100"):
+            Relay(
+                outbox=outbox,
+                publisher=AtomicMemoryPublisher(),
+                clock=MutableClock(datetime(2026, 8, 23, 14, 30, 0)),
+                worker_id="relay-invalid-attempt-limit",
+                lease_duration=timedelta(seconds=30),
+                retry_delay=timedelta(seconds=5),
+                maximum_attempts=101,
+            )
+
+    _run_with_clean_database(scenario)
+
+
 def test_redis_adapter_atomically_deduplicates_a_lookup_only_message() -> None:
     async def scenario() -> None:
         redis = RecordingRedis(result=1)
@@ -269,6 +527,7 @@ def test_redis_adapter_atomically_deduplicates_a_lookup_only_message() -> None:
             redis=redis,
             stream_name="tap:commands",
             dedup_ttl=timedelta(hours=1),
+            max_stream_length=10_000,
         )
         message = DispatchMessage(
             command_id=CommandId("safe-command"),
@@ -281,14 +540,14 @@ def test_redis_adapter_atomically_deduplicates_a_lookup_only_message() -> None:
         assert await publisher.publish_once(message) is True
 
         script, number_of_keys, values = redis.calls[0]
-        payload = json.loads(str(values[3]))
+        payload = json.loads(str(values[4]))
         assert number_of_keys == 2
-        assert "SET" in script and "NX" in script and "XADD" in script
         assert values[:3] == (
             "tap:dispatch-dedup:safe-command",
             "tap:commands",
             3600,
         )
+        assert values[3] == 10_000
         assert payload == {
             "aggregateId": "safe-turn",
             "aggregateType": "chat_turn",

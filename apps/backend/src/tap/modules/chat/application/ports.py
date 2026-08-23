@@ -48,6 +48,7 @@ class DispatchMessage:
 class ClaimedOutbox:
     message: DispatchMessage
     attempt_count: int
+    claim_token: str
 
 
 class TurnRepository(Protocol):
@@ -77,7 +78,7 @@ class OutboxRepository(Protocol):
         self,
         *,
         outbox_id: str,
-        worker_id: str,
+        claim_token: str,
         published_at: datetime,
     ) -> None: ...
 
@@ -85,8 +86,16 @@ class OutboxRepository(Protocol):
         self,
         *,
         outbox_id: str,
-        worker_id: str,
+        claim_token: str,
         next_attempt_at: datetime,
+        error: str,
+    ) -> None: ...
+
+    async def mark_terminal(
+        self,
+        *,
+        outbox_id: str,
+        claim_token: str,
         error: str,
     ) -> None: ...
 

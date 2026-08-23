@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import NoReturn, cast
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -98,6 +99,7 @@ outbox = Table(
     Column("attempt_count", Integer, nullable=False, server_default="0"),
     Column("next_attempt_at", DATETIME(fsp=6), nullable=False),
     Column("claimed_by", String(128)),
+    Column("claim_token", String(64)),
     Column("lease_until", DATETIME(fsp=6)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("published_at", DATETIME(fsp=6)),
@@ -306,6 +308,7 @@ class OutboxStore:
                 .values(
                     status="pending",
                     claimed_by=None,
+                    claim_token=None,
                     lease_until=None,
                     next_attempt_at=_utc_naive(now),
                 )
@@ -340,17 +343,20 @@ class OutboxStore:
             )
             if not pending_ids:
                 return []
-            await session.execute(
-                update(outbox)
-                .where(outbox.c.outbox_id.in_(pending_ids))
-                .values(
-                    status="publishing",
-                    claimed_by=worker_id,
-                    lease_until=claim_time + lease_duration,
-                    attempt_count=outbox.c.attempt_count + 1,
-                    last_error=None,
+            claim_tokens = {outbox_id: uuid4().hex for outbox_id in pending_ids}
+            for outbox_id, claim_token in claim_tokens.items():
+                await session.execute(
+                    update(outbox)
+                    .where(outbox.c.outbox_id == outbox_id)
+                    .values(
+                        status="publishing",
+                        claimed_by=worker_id,
+                        claim_token=claim_token,
+                        lease_until=claim_time + lease_duration,
+                        attempt_count=outbox.c.attempt_count + 1,
+                        last_error=None,
+                    )
                 )
-            )
             rows = (
                 await session.execute(select(outbox).where(outbox.c.outbox_id.in_(pending_ids)))
             ).mappings()
@@ -364,6 +370,7 @@ class OutboxStore:
                         sequence=cast(int | None, row["sequence"]),
                     ),
                     attempt_count=cast(int, row["attempt_count"]),
+                    claim_token=cast(str, row["claim_token"]),
                 )
                 for row in rows
             ]
@@ -372,7 +379,7 @@ class OutboxStore:
         self,
         *,
         outbox_id: str,
-        worker_id: str,
+        claim_token: str,
         published_at: datetime,
     ) -> None:
         async with self._sessions() as session, session.begin():
@@ -381,12 +388,13 @@ class OutboxStore:
                 .where(
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
-                    outbox.c.claimed_by == worker_id,
+                    outbox.c.claim_token == claim_token,
                 )
                 .values(
                     status="published",
                     published_at=_utc_naive(published_at),
                     claimed_by=None,
+                    claim_token=None,
                     lease_until=None,
                     last_error=None,
                 )
@@ -398,7 +406,7 @@ class OutboxStore:
         self,
         *,
         outbox_id: str,
-        worker_id: str,
+        claim_token: str,
         next_attempt_at: datetime,
         error: str,
     ) -> None:
@@ -408,12 +416,39 @@ class OutboxStore:
                 .where(
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
-                    outbox.c.claimed_by == worker_id,
+                    outbox.c.claim_token == claim_token,
                 )
                 .values(
                     status="pending",
                     next_attempt_at=_utc_naive(next_attempt_at),
                     claimed_by=None,
+                    claim_token=None,
+                    lease_until=None,
+                    last_error=error[:2048],
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_lease_lost(outbox_id)
+
+    async def mark_terminal(
+        self,
+        *,
+        outbox_id: str,
+        claim_token: str,
+        error: str,
+    ) -> None:
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(outbox)
+                .where(
+                    outbox.c.outbox_id == outbox_id,
+                    outbox.c.status == "publishing",
+                    outbox.c.claim_token == claim_token,
+                )
+                .values(
+                    status="delivery_failed",
+                    claimed_by=None,
+                    claim_token=None,
                     lease_until=None,
                     last_error=error[:2048],
                 )
