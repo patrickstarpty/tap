@@ -1,6 +1,6 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库当前保存可评审、可演进的技术架构基线；实现代码尚未开始。
+TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库当前保存可评审、可演进的技术架构基线；Phase 1 workspace、公共 HTTP/SSE 契约和其确定性生成链路已经建立，业务模块、持久化与 Web 应用仍未开始。
 
 ## 一句话架构
 
@@ -61,7 +61,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 当前状态
 
 - 架构状态：`v0.3 integrated platform + RAG baseline / review-ready`
-- 实现状态：`not started`
+- 实现状态：`Phase 1 workspace and contract generation active`
 - 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
 - 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
 - 默认仓库可见性：建议 `private`
@@ -101,3 +101,18 @@ docker compose down
 ```sh
 docker compose down -v
 ```
+
+## 开发工作区与契约
+
+运行时和依赖图固定为 Python 3.13、Node 22、pnpm 10、`uv.lock` 与 `pnpm-lock.yaml`。从仓库根目录执行：
+
+```sh
+make bootstrap
+make contracts
+make check
+make test
+```
+
+`make contracts` 从 FastAPI 路由元数据和公共 Pydantic 模型确定性导出并检查 `contracts/openapi/api.json` 与 `contracts/events/chat-stream.schema.json`：JSON 使用排序键、两空格缩进、一个末尾换行，且不写入时间戳。HTTP DTO 与 SSE event models 是彼此独立的模型图；浏览器可见的 SSE schema 不描述 `text/event-stream` framing。
+
+当前工作区尚未建立 `apps/web/`，因此本阶段只导出和校验上述 OpenAPI/SSE artifacts；Task 6 在其拥有的 `apps/web/src/shared/api/generated/` 目录中连接 TypeScript 生成。冻结安装使用 `uv sync --frozen --all-groups` 和 `corepack pnpm install --frozen-lockfile`，不依赖全局 pnpm。

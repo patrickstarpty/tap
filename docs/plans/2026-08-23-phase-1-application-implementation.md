@@ -1,5 +1,5 @@
 ---
-status: planned
+status: active
 date: 2026-08-23
 ---
 
@@ -122,11 +122,11 @@ git commit -m "build: add local phase 1 middleware"
 - Consumes: RFC-003 contract-generation rules and the Knowledge Chat DTO/event baseline in `docs/reference/2026-08-20-contracts.md`.
 - Produces: `tap.interfaces.http.app:create_app()`, public Pydantic event models, deterministic `make contracts`, pinned workspace commands, and committed schema artifacts used by every later task.
 
-- [ ] **Step 1: Accept RFC-003 and mark this plan active**
+- [x] **Step 1: Accept RFC-003 and mark this plan active**
 
 Change RFC-003 `status: in-review` to `status: accepted` and this plan `status: planned` to `status: active`. Do not change architecture/reference semantics in this step.
 
-- [ ] **Step 2: Write failing deterministic-generation tests**
+- [x] **Step 2: Write failing deterministic-generation tests**
 
 Create tests that call `scripts/export_contracts.py --check` twice in clean temporary directories, assert byte-identical output, assert stable `operationId: chat_create_turn`, and assert the SSE envelope requires `eventId`, `sequence`, `turnId`, `occurredAt`, `schemaVersion`, and `event`.
 
@@ -138,7 +138,7 @@ uv run --project apps/backend pytest apps/backend/tests/contract/test_generated_
 
 Expected: FAIL because the exporter and contract models do not exist.
 
-- [ ] **Step 3: Scaffold the pinned workspace and minimal contracts**
+- [x] **Step 3: Scaffold the pinned workspace and minimal contracts**
 
 Pin Python `3.13` in `.python-version`, Node `22` in `package.json#engines`, pnpm `10` in `packageManager`, and commit both lockfiles. Implement `create_app()` without startup side effects; define separate HTTP and SSE model graphs; make the exporter sort JSON keys, use two-space indentation, end files with one newline, and omit timestamps.
 
@@ -151,7 +151,7 @@ test: ## unit, integration, and contract tests
 contracts: ## export OpenAPI/SSE schema and generate TypeScript
 ```
 
-- [ ] **Step 4: Generate and verify committed artifacts**
+- [x] **Step 4: Generate and verify committed artifacts**
 
 Run:
 
@@ -166,7 +166,7 @@ git diff --check
 
 Expected: all commands exit `0`; a second generation produces no contract diff.
 
-- [ ] **Step 5: Commit the workspace slice**
+- [x] **Step 5: Commit the workspace slice**
 
 ```sh
 git add .python-version .gitignore .env.example Makefile package.json pnpm-workspace.yaml pnpm-lock.yaml uv.lock apps/backend contracts scripts README.md docs/proposals/2026-08-23-rfc-003-phase-1-application-structure.md docs/plans/2026-08-23-phase-1-application-implementation.md

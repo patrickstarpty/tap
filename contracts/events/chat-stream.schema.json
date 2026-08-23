@@ -1,0 +1,288 @@
+{
+  "$defs": {
+    "AnswerDeltaEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/AnswerDeltaPayload"
+        },
+        "type": {
+          "const": "answer.delta",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "AnswerDeltaEvent",
+      "type": "object"
+    },
+    "AnswerDeltaPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AnswerDeltaPayload",
+      "type": "object"
+    },
+    "TurnAbstainedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TurnAbstainedPayload"
+        },
+        "type": {
+          "const": "turn.abstained",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TurnAbstainedEvent",
+      "type": "object"
+    },
+    "TurnAbstainedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "TurnAbstainedPayload",
+      "type": "object"
+    },
+    "TurnCanceledEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TurnCanceledPayload"
+        },
+        "type": {
+          "const": "turn.canceled",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TurnCanceledEvent",
+      "type": "object"
+    },
+    "TurnCanceledPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "partialAnswerRetained": {
+          "title": "Partialanswerretained",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "partialAnswerRetained"
+      ],
+      "title": "TurnCanceledPayload",
+      "type": "object"
+    },
+    "TurnCompletedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TurnCompletedPayload"
+        },
+        "type": {
+          "const": "turn.completed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TurnCompletedEvent",
+      "type": "object"
+    },
+    "TurnCompletedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "answer": {
+          "title": "Answer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "answer"
+      ],
+      "title": "TurnCompletedPayload",
+      "type": "object"
+    },
+    "TurnFailedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TurnFailedPayload"
+        },
+        "type": {
+          "const": "turn.failed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TurnFailedEvent",
+      "type": "object"
+    },
+    "TurnFailedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "retryable"
+      ],
+      "title": "TurnFailedPayload",
+      "type": "object"
+    },
+    "TurnStartedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TurnStartedPayload"
+        },
+        "type": {
+          "const": "turn.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TurnStartedEvent",
+      "type": "object"
+    },
+    "TurnStartedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "running",
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "TurnStartedPayload",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A recoverable, ordered event persisted for one chat turn.",
+  "properties": {
+    "chatId": {
+      "minLength": 1,
+      "title": "Chatid",
+      "type": "string"
+    },
+    "event": {
+      "discriminator": {
+        "mapping": {
+          "answer.delta": "#/$defs/AnswerDeltaEvent",
+          "turn.abstained": "#/$defs/TurnAbstainedEvent",
+          "turn.canceled": "#/$defs/TurnCanceledEvent",
+          "turn.completed": "#/$defs/TurnCompletedEvent",
+          "turn.failed": "#/$defs/TurnFailedEvent",
+          "turn.started": "#/$defs/TurnStartedEvent"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TurnStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/AnswerDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/TurnCompletedEvent"
+        },
+        {
+          "$ref": "#/$defs/TurnAbstainedEvent"
+        },
+        {
+          "$ref": "#/$defs/TurnCanceledEvent"
+        },
+        {
+          "$ref": "#/$defs/TurnFailedEvent"
+        }
+      ],
+      "title": "Event"
+    },
+    "eventId": {
+      "minLength": 1,
+      "title": "Eventid",
+      "type": "string"
+    },
+    "occurredAt": {
+      "minLength": 1,
+      "title": "Occurredat",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "minimum": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "turnId": {
+      "minLength": 1,
+      "title": "Turnid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "eventId",
+    "sequence",
+    "chatId",
+    "turnId",
+    "occurredAt",
+    "schemaVersion",
+    "event"
+  ],
+  "title": "ChatEventEnvelope",
+  "type": "object"
+}

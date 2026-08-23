@@ -1,0 +1,8 @@
+{
+  "name": "tap",
+  "private": true,
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "packageManager": "pnpm@10.15.1"
+}
