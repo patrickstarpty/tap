@@ -1,6 +1,15 @@
 {
   "components": {
     "schemas": {
+      "AbstentionReason": {
+        "enum": [
+          "insufficient_evidence",
+          "conflicting_sources",
+          "revision_mismatch"
+        ],
+        "title": "AbstentionReason",
+        "type": "string"
+      },
       "AnswerMode": {
         "enum": [
           "quick",
@@ -26,6 +35,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Scenarioid"
           },
           "stepId": {
@@ -37,6 +47,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Stepid"
           },
           "type": {
@@ -158,12 +169,12 @@
         "additionalProperties": false,
         "properties": {
           "lineEnd": {
-            "minimum": 1.0,
+            "minimum": 1,
             "title": "Lineend",
             "type": "integer"
           },
           "lineStart": {
-            "minimum": 1.0,
+            "minimum": 1,
             "title": "Linestart",
             "type": "integer"
           },
@@ -186,6 +197,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Symbol"
           },
           "type": {
@@ -204,6 +216,14 @@
         "title": "CodeAnchor",
         "type": "object"
       },
+      "ContentRole": {
+        "enum": [
+          "source",
+          "generated_summary"
+        ],
+        "title": "ContentRole",
+        "type": "string"
+      },
       "DocumentAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -219,6 +239,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Bbox"
           },
           "endOffset": {
@@ -230,6 +251,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Endoffset"
           },
           "headingPath": {
@@ -244,6 +266,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Headingpath"
           },
           "page": {
@@ -255,6 +278,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Page"
           },
           "startOffset": {
@@ -266,6 +290,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Startoffset"
           },
           "type": {
@@ -297,6 +322,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Runid"
           },
           "timeEnd": {
@@ -308,6 +334,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Timeend"
           },
           "timeStart": {
@@ -319,6 +346,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Timestart"
           },
           "type": {
@@ -388,7 +416,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "default": null
           },
           "family": {
             "$ref": "#/components/schemas/SourceFamily"
@@ -406,6 +435,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Requestedrevision"
           },
           "sourceId": {
@@ -420,6 +450,657 @@
         ],
         "title": "ResourceRef",
         "type": "object"
+      },
+      "RetrievalAnswerRequest": {
+        "additionalProperties": false,
+        "description": "Grounded-answer intent with the same narrowing-only search fields.",
+        "properties": {
+          "answerMode": {
+            "$ref": "#/components/schemas/AnswerMode",
+            "default": "quick"
+          },
+          "query": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "requestedCorpusVersion": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestedcorpusversion"
+          },
+          "requestedEnvironment": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestedenvironment"
+          },
+          "resourceRefs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ResourceRef"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resourcerefs"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SourceFamily"
+                },
+                "maxItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources"
+          },
+          "topK": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Topk"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "RetrievalAnswerRequest",
+        "type": "object"
+      },
+      "RetrievalAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "abstentionReason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbstentionReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalCitation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "corpusVersion": {
+            "minLength": 1,
+            "title": "Corpusversion",
+            "type": "string"
+          },
+          "degradationReasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Degradationreasons"
+          },
+          "degradedMode": {
+            "title": "Degradedmode",
+            "type": "boolean"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "retrievalProfileId": {
+            "minLength": 1,
+            "title": "Retrievalprofileid",
+            "type": "string"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "queryPlanId",
+          "contextSnapshotId",
+          "corpusVersion",
+          "retrievalProfileId",
+          "degradedMode",
+          "answer",
+          "abstained",
+          "claims",
+          "citations"
+        ],
+        "title": "RetrievalAnswerResponse",
+        "type": "object"
+      },
+      "RetrievalCitation": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkContentHash": {
+            "minLength": 1,
+            "title": "Chunkcontenthash",
+            "type": "string"
+          },
+          "chunkId": {
+            "minLength": 1,
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "citationId": {
+            "minLength": 1,
+            "title": "Citationid",
+            "type": "string"
+          },
+          "contentRole": {
+            "$ref": "#/components/schemas/ContentRole"
+          },
+          "derivedFromChunkIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Derivedfromchunkids"
+          },
+          "evidenceLabel": {
+            "minLength": 1,
+            "title": "Evidencelabel",
+            "type": "string"
+          },
+          "logicalChunkId": {
+            "minLength": 1,
+            "title": "Logicalchunkid",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RetrievalSourceRevision"
+          }
+        },
+        "required": [
+          "citationId",
+          "evidenceLabel",
+          "chunkId",
+          "logicalChunkId",
+          "source",
+          "chunkContentHash",
+          "contentRole"
+        ],
+        "title": "RetrievalCitation",
+        "type": "object"
+      },
+      "RetrievalClaim": {
+        "additionalProperties": false,
+        "properties": {
+          "citationIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Citationids",
+            "type": "array"
+          },
+          "claimId": {
+            "minLength": 1,
+            "title": "Claimid",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "text",
+          "citationIds"
+        ],
+        "title": "RetrievalClaim",
+        "type": "object"
+      },
+      "RetrievalHit": {
+        "additionalProperties": false,
+        "properties": {
+          "aclDecisionId": {
+            "minLength": 1,
+            "title": "Acldecisionid",
+            "type": "string"
+          },
+          "chunkContentHash": {
+            "minLength": 1,
+            "title": "Chunkcontenthash",
+            "type": "string"
+          },
+          "chunkId": {
+            "minLength": 1,
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "citationId": {
+            "minLength": 1,
+            "title": "Citationid",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "contentRole": {
+            "$ref": "#/components/schemas/ContentRole"
+          },
+          "embeddingModelVersion": {
+            "minLength": 1,
+            "title": "Embeddingmodelversion",
+            "type": "string"
+          },
+          "evidenceLabel": {
+            "minLength": 1,
+            "title": "Evidencelabel",
+            "type": "string"
+          },
+          "indexFamily": {
+            "$ref": "#/components/schemas/SourceFamily"
+          },
+          "logicalChunkId": {
+            "minLength": 1,
+            "title": "Logicalchunkid",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "minLength": 1,
+            "title": "Schemaversion",
+            "type": "string"
+          },
+          "scores": {
+            "$ref": "#/components/schemas/RetrievalScores"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RetrievalSourceRevision"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          }
+        },
+        "required": [
+          "indexFamily",
+          "chunkId",
+          "logicalChunkId",
+          "content",
+          "source",
+          "chunkContentHash",
+          "contentRole",
+          "citationId",
+          "evidenceLabel",
+          "scores",
+          "aclDecisionId",
+          "schemaVersion",
+          "embeddingModelVersion"
+        ],
+        "title": "RetrievalHit",
+        "type": "object"
+      },
+      "RetrievalScores": {
+        "additionalProperties": false,
+        "properties": {
+          "bm25": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bm25"
+          },
+          "exact": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Exact"
+          },
+          "rerank": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rerank"
+          },
+          "rrf": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rrf"
+          },
+          "vector": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vector"
+          }
+        },
+        "title": "RetrievalScores",
+        "type": "object"
+      },
+      "RetrievalSearchRequest": {
+        "additionalProperties": false,
+        "description": "Browser-visible retrieval intent; all authoritative scope is omitted.",
+        "properties": {
+          "answerMode": {
+            "$ref": "#/components/schemas/AnswerMode",
+            "default": "quick"
+          },
+          "query": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "requestedCorpusVersion": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestedcorpusversion"
+          },
+          "requestedEnvironment": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestedenvironment"
+          },
+          "resourceRefs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ResourceRef"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resourcerefs"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SourceFamily"
+                },
+                "maxItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sources"
+          },
+          "topK": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Topk"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "RetrievalSearchRequest",
+        "type": "object"
+      },
+      "RetrievalSearchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "corpusVersion": {
+            "minLength": 1,
+            "title": "Corpusversion",
+            "type": "string"
+          },
+          "degradationReasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Degradationreasons"
+          },
+          "degradedMode": {
+            "title": "Degradedmode",
+            "type": "boolean"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalHit"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "retrievalProfileId": {
+            "minLength": 1,
+            "title": "Retrievalprofileid",
+            "type": "string"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "queryPlanId",
+          "contextSnapshotId",
+          "corpusVersion",
+          "retrievalProfileId",
+          "degradedMode",
+          "hits"
+        ],
+        "title": "RetrievalSearchResponse",
+        "type": "object"
+      },
+      "RetrievalSourceRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/StructuralAnchor"
+          },
+          "revision": {
+            "minLength": 1,
+            "title": "Revision",
+            "type": "string"
+          },
+          "revisionKind": {
+            "$ref": "#/components/schemas/RevisionKind"
+          },
+          "sourceContentHash": {
+            "minLength": 1,
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "sourceId": {
+            "minLength": 1,
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "sourceType": {
+            "minLength": 1,
+            "title": "Sourcetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "sourceType",
+          "revisionKind",
+          "revision",
+          "sourceContentHash",
+          "anchor"
+        ],
+        "title": "RetrievalSourceRevision",
+        "type": "object"
+      },
+      "RevisionKind": {
+        "enum": [
+          "git_commit",
+          "blob_version",
+          "mysql_version"
+        ],
+        "title": "RevisionKind",
+        "type": "string"
       },
       "SourceFamily": {
         "enum": [

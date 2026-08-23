@@ -57,14 +57,17 @@ def load_settings(environment: Mapping[str, str] | None = None) -> RelaySettings
 
 
 def create_redis_client(redis_url: str) -> Redis:
-    return Redis.from_url(
-        redis_url,
-        decode_responses=True,
-        max_connections=20,
-        socket_connect_timeout=5.0,
-        socket_timeout=5.0,
-        socket_keepalive=True,
-        health_check_interval=30,
+    return cast(
+        Redis,
+        Redis.from_url(
+            redis_url,
+            decode_responses=True,
+            max_connections=20,
+            socket_connect_timeout=5.0,
+            socket_timeout=5.0,
+            socket_keepalive=True,
+            health_check_interval=30,
+        ),
     )
 
 

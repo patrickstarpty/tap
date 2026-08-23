@@ -6,7 +6,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel
+from pydantic.json_schema import models_json_schema
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +19,22 @@ if str(BACKEND_SOURCE) not in sys.path:
     sys.path.insert(0, str(BACKEND_SOURCE))
 
 from tap.contracts.chat_stream import ChatEventEnvelope  # noqa: E402
+from tap.contracts.http import (  # noqa: E402
+    RetrievalAnswerRequest,
+    RetrievalAnswerResponse,
+    RetrievalSearchRequest,
+    RetrievalSearchResponse,
+)
 from tap.interfaces.http.app import create_app  # noqa: E402
+
+KNOWLEDGE_HTTP_MODELS: tuple[
+    tuple[type[BaseModel], Literal["validation", "serialization"]], ...
+] = (
+    (RetrievalSearchRequest, "validation"),
+    (RetrievalSearchResponse, "serialization"),
+    (RetrievalAnswerRequest, "validation"),
+    (RetrievalAnswerResponse, "serialization"),
+)
 
 
 def canonical_json(value: object) -> bytes:
@@ -30,8 +48,15 @@ def generated_contracts() -> dict[Path, bytes]:
     """Return the two public contract artifacts without writing to disk."""
     event_schema: dict[str, Any] = ChatEventEnvelope.model_json_schema(by_alias=True)
     event_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    openapi = create_app().openapi()
+    _, knowledge_schema = models_json_schema(
+        KNOWLEDGE_HTTP_MODELS,
+        by_alias=True,
+        ref_template="#/components/schemas/{model}",
+    )
+    openapi["components"]["schemas"].update(knowledge_schema["$defs"])
     return {
-        Path("openapi/api.json"): canonical_json(create_app().openapi()),
+        Path("openapi/api.json"): canonical_json(openapi),
         Path("events/chat-stream.schema.json"): canonical_json(event_schema),
     }
 

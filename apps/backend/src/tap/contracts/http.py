@@ -33,6 +33,23 @@ class AnswerMode(str, Enum):
     DEEP = "deep"
 
 
+class RevisionKind(str, Enum):
+    GIT_COMMIT = "git_commit"
+    BLOB_VERSION = "blob_version"
+    MYSQL_VERSION = "mysql_version"
+
+
+class ContentRole(str, Enum):
+    SOURCE = "source"
+    GENERATED_SUMMARY = "generated_summary"
+
+
+class AbstentionReason(str, Enum):
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    CONFLICTING_SOURCES = "conflicting_sources"
+    REVISION_MISMATCH = "revision_mismatch"
+
+
 class DocumentAnchor(ContractModel):
     type: Literal["document"]
     heading_path: list[str] | None = None
@@ -103,6 +120,99 @@ class ChatTurnRequest(ContractModel):
     resource_refs: list[ResourceRef] | None = None
     requested_environment: str | None = None
     requested_corpus_version: str | None = None
+
+
+class RetrievalSearchRequest(ContractModel):
+    """Browser-visible retrieval intent; all authoritative scope is omitted."""
+
+    query: str = Field(min_length=1, max_length=8_000)
+    answer_mode: AnswerMode = AnswerMode.QUICK
+    sources: list[SourceFamily] | None = Field(default=None, max_length=4)
+    resource_refs: list[ResourceRef] | None = Field(default=None, max_length=20)
+    requested_environment: str | None = Field(default=None, min_length=1, max_length=128)
+    requested_corpus_version: str | None = Field(default=None, min_length=1, max_length=128)
+    top_k: int | None = Field(default=None, ge=1, le=100)
+
+
+class RetrievalAnswerRequest(RetrievalSearchRequest):
+    """Grounded-answer intent with the same narrowing-only search fields."""
+
+
+class RetrievalSourceRevision(ContractModel):
+    source_id: str = Field(min_length=1)
+    source_type: str = Field(min_length=1)
+    revision_kind: RevisionKind
+    revision: str = Field(min_length=1)
+    source_content_hash: str = Field(min_length=1)
+    anchor: StructuralAnchor
+
+
+class RetrievalScores(ContractModel):
+    exact: float | None = None
+    bm25: float | None = None
+    vector: float | None = None
+    rrf: float | None = None
+    rerank: float | None = None
+
+
+class RetrievalHit(ContractModel):
+    index_family: SourceFamily
+    chunk_id: str = Field(min_length=1)
+    logical_chunk_id: str = Field(min_length=1)
+    title: str | None = None
+    content: str
+    source: RetrievalSourceRevision
+    chunk_content_hash: str = Field(min_length=1)
+    content_role: ContentRole
+    citation_id: str = Field(min_length=1)
+    evidence_label: str = Field(min_length=1)
+    scores: RetrievalScores
+    acl_decision_id: str = Field(min_length=1)
+    schema_version: str = Field(min_length=1)
+    embedding_model_version: str = Field(min_length=1)
+
+
+class RetrievalCitation(ContractModel):
+    citation_id: str = Field(min_length=1)
+    evidence_label: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+    logical_chunk_id: str = Field(min_length=1)
+    source: RetrievalSourceRevision
+    chunk_content_hash: str = Field(min_length=1)
+    content_role: ContentRole
+    derived_from_chunk_ids: list[str] | None = None
+
+
+class RetrievalClaim(ContractModel):
+    claim_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    citation_ids: list[str]
+
+
+class RetrievalSearchResponse(ContractModel):
+    trace_id: str = Field(min_length=1)
+    query_plan_id: str = Field(min_length=1)
+    context_snapshot_id: str = Field(min_length=1)
+    corpus_version: str = Field(min_length=1)
+    retrieval_profile_id: str = Field(min_length=1)
+    degraded_mode: bool
+    degradation_reasons: list[str] | None = None
+    hits: list[RetrievalHit]
+
+
+class RetrievalAnswerResponse(ContractModel):
+    trace_id: str = Field(min_length=1)
+    query_plan_id: str = Field(min_length=1)
+    context_snapshot_id: str = Field(min_length=1)
+    corpus_version: str = Field(min_length=1)
+    retrieval_profile_id: str = Field(min_length=1)
+    degraded_mode: bool
+    degradation_reasons: list[str] | None = None
+    answer: str
+    abstained: bool
+    abstention_reason: AbstentionReason | None = None
+    claims: list[RetrievalClaim]
+    citations: list[RetrievalCitation]
 
 
 class ChatTurnAccepted(ContractModel):
