@@ -4,8 +4,13 @@ version = "0.1.0"
 description = "TAP Phase 1 backend contracts"
 requires-python = "==3.13.12"
 dependencies = [
+  "alembic==1.16.5",
+  "asyncmy==0.2.10",
   "fastapi==0.116.1",
+  "pymysql==1.1.2",
   "pydantic==2.11.7",
+  "redis==6.4.0",
+  "sqlalchemy[asyncio]==2.0.43",
 ]
 
 [dependency-groups]
