@@ -57,6 +57,27 @@ tap/
 
 首版不建立 `packages/`。只有出现第二个 TypeScript 消费者或独立发布需求时，才把生成客户端或 UI 抽成 package。`deploy/` 只保存实际存在角色的部署定义，禁止以空目录模拟未来架构。
 
+### Phase 1 运行时与基础设施依赖
+
+应用脚手架和部署定义必须显式覆盖下列 Phase 1 依赖，不能只在 adapter、环境变量或 SDK 名称中隐含服务边界：
+
+| 服务 | Phase 1 职责 | 依赖级别与开发边界 |
+| --- | --- | --- |
+| Azure AI Search | 承载文档、代码、BDD 与失败知识四个可重建的 hybrid/vector 索引 | 必需；本地单元测试可使用 fake，集成、契约和容量验收必须连接受控 Azure 资源 |
+| PaaS MySQL | Project/Policy、Chat/Turn/Queue、materialized snapshot、domain event/Outbox、ingestion ledger/checkpoint 与审计的 operational SoR | 必需；本地开发可使用与目标版本一致的容器，迁移由 Backend 单一链路管理 |
+| PaaS Redis | command/worker 分发、lease、SSE live fanout、短锁、限流与可丢弃短期缓存 | 必需；本地开发可使用与目标版本一致的容器，不保存唯一业务事实 |
+| Azure Blob Storage | 原始文档及大型 Trace/Eval Artifact | 必需；开发替代必须通过同一 Blob port，不能改变对象 identity、hash、retention 和授权语义 |
+| LiteLLM Gateway | 统一 Chat、Embedding 与 Reranker 的协议、路由、超时、重试和 fallback | 必需；保持无状态，不为管理功能额外引入未决 PostgreSQL 依赖 |
+| 受治理的模型 endpoint | 提供固定版本的 LLM、Embedding 与 Reranker 能力 | 必需；具体 provider、模型和区域由实施计划及评测确定，调用必须经过 LiteLLM 与 TAP Model Policy |
+| Microsoft Entra ID + Project Policy | 提供身份起点，并由服务端构造 tenant、project、group、classification 与 environment 范围 | 必需；测试身份或 stub 只能用于本地/自动化测试，安全验收必须覆盖真实 token、group 与撤权路径 |
+| Azure Key Vault + Workload Identity | 保存和轮换模型、数据库及外部服务凭据，向工作负载提供短期身份 | 必需；不得把生产秘密写入仓库、镜像、前端配置或 `.env` 示例 |
+| AKS + Ingress/API Gateway | 运行 Web、API/SSE 和 worker；提供 REST/SSE 入口、TLS、认证衔接、超时及禁用响应缓冲 | Phase 1 部署基线；本地进程或容器编排用于开发，不替代 AKS 网络和 SSE 行为验收 |
+| OpenTelemetry Collector + 可观测性后端 | 汇聚跨 API、worker、Knowledge、Search 和模型调用的 trace、metric 与 log，并支撑 dashboard 和告警 | Phase 1 出口依赖；后端产品可替换，但 OTel 语义、关联字段和告警验收不能省略 |
+
+Git、Blob 和 MySQL 可以是 ingestion 的权威输入来源，但 Git 托管产品不是本 RFC 新增的中间件选择。Azure Document Intelligence 或 Content Understanding 只可作为 PDF/Office 结构提取 adapter，不是所有 Phase 1 部署的硬依赖。Phase 1 不引入 Azure Service Bus、Event Hubs 或 PostgreSQL；异步可靠性使用 MySQL transactional Outbox、Relay/Reconciler 与 Redis 分发。Codex Runtime、Selenium/Appium Grid、KEDA、多可用区和完整 DR 分别属于后续阶段或生产硬化，不得成为首个 Phase 1 纵向切片的前置条件。
+
+`deploy/` 必须按实际环境声明上述资源的连接、identity、network policy、health check、容量和可观测性配置，但不得提交 tenant 数据或凭据。具体 SKU、区域、模型版本、生产 SLO 与容量参数仍由实施计划和基准测试确定；这些未决参数不改变上述服务职责和信任边界。
+
 ### Web：功能优先，Athena 可嵌入
 
 ```text
@@ -82,9 +103,9 @@ apps/web/
 └── tests/e2e/
 ```
 
-依赖只能沿 `app/pages → widgets → features → shared` 向下。`features` 之间不得读取彼此内部文件；跨功能复用通过公开入口或后端契约完成。Ant Design 负责表单、抽屉、弹窗等复杂交互，Tailwind 负责布局、间距和少量视觉组合；仅在需要统一 TAP 语义时封装 `shared/ui`，不批量包装整个组件库。
+依赖只能沿 `app/pages → widgets → features → shared` 向下，`features` 之间禁止直接导入，包括彼此的公开入口。跨功能编排上移到 `widgets`、`pages` 或 `app`；不含业务语义且确需复用的能力下沉到 `shared`，跨业务协作则通过后端契约完成。architecture tests 必须同时阻止跨层逆向依赖、`feature → feature` 导入和对模块内部文件的绕过访问。Ant Design 负责表单、抽屉、弹窗等复杂交互，Tailwind 负责布局、间距和少量视觉组合；仅在需要统一 TAP 语义时封装 `shared/ui`，不批量包装整个组件库。
 
-Phase 1 先提供 Athena 独立页面。`AthenaPanel` 不读取路由、DOM 或宿主页面内部状态；宿主通过类型化 props 传入上下文和打开状态。以后应用壳层可全局挂载 `AthenaLauncher`，各页面仍复用同一 Panel 与 Chat feature。
+Phase 1 提供 Athena 独立页面，并在测试宿主中验证 `AthenaPanel` 的可嵌入契约。`AthenaPanel` 不读取路由、DOM 或宿主页面内部状态；宿主通过类型化 props 传入上下文和打开状态。真实业务宿主页或应用壳层的全局挂载不作为 Phase 1 出口条件；后续挂载 `AthenaLauncher` 时，各页面仍复用同一 Panel 与 Chat feature。
 
 REST 服务端状态由 TanStack Query 管理；SSE 高频事件进入独立、可按 `(turnId, sequence)` 幂等归并的 store/buffer；面板开关、选中 citation 等瞬时 UI 状态留在组件附近。禁止每个 token 更新整棵 Chat 状态树。
 
@@ -137,7 +158,7 @@ apps/backend/
     └── architecture/
 ```
 
-`entrypoints` 只装配依赖和启动进程。`api-sse`、`turn-worker`、`ingestion-worker`、`embedding-worker`、`index-writer` 与 `relay-reconciler` 共享代码和迁移，但以独立命令及 Pod 运行。`api-sse` request handler 只执行非阻塞异步 I/O；解析、Embedding、本地 rerank 等 CPU/内存密集任务不得进入 API event loop。
+`entrypoints` 只装配依赖和启动进程。`api-sse`、`turn-worker`、`ingestion-worker`、`embedding-worker`、`index-writer` 与 `relay-reconciler` 共享代码和迁移，但必须具有独立命令和 image target，以便按角色独立扩缩容和排障。`api-sse` 与承载解析、Embedding、本地 rerank 等 CPU/内存密集任务的角色必须使用独立 Pod 并保持资源隔离；其他低吞吐角色在初期可合并部署，但不能合并 entrypoint、职责或扩缩容指标。`api-sse` request handler 只执行非阻塞异步 I/O，CPU/内存密集任务不得进入 API event loop。
 
 领域层不依赖 FastAPI、数据库、Azure SDK 或 HTTP Pydantic DTO。`platform` 提供低层技术能力，业务语义转换留在模块 adapter；不得新增 `common`、`utils`、`services` 等无所有权的全局杂物目录。
 
@@ -256,11 +277,12 @@ CI 使用相同命令和 frozen lockfile；`make contracts` 后必须 `git diff 
 ## 验收标准
 
 - 实际目录和依赖方向符合本 RFC，且没有未来功能的空模块。
-- Athena 可作为独立页面运行，也能通过稳定 props 在宿主页挂载。
+- Athena 可作为独立页面运行；`AthenaPanel` 通过稳定 props 在测试宿主中完成嵌入、上下文切换和状态隔离验证，真实业务宿主页或全局 Launcher 挂载不作为 Phase 1 出口条件。
 - Chat 与其他业务只能通过 Knowledge 公开应用接口使用 RAG。
 - OpenAPI、SSE schema 和 TypeScript 类型可从同一模型确定性再生，CI 能发现漂移和 breaking change。
 - REST Problem Details、SSE resume/reset/终态和 ContextAnchor 安全规则均有契约测试。
 - 单元、集成、架构、E2E 和容量测试覆盖已列出的关键故障场景。
+- `deploy/` 与环境配置显式覆盖 Phase 1 的必需服务、身份、网络、健康检查和可观测性边界，且不引入本 RFC 排除的中间件。
 - README 与贡献指南记录真实可运行命令，不把规划中的目录或工具描述为已实现。
 
 ## 未决问题
