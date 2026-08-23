@@ -66,3 +66,38 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
+
+## 本地中间件预置
+
+Phase 1 在本地仅预置确实存在替身的中间件：MySQL、Redis、Azurite Blob 和 LiteLLM Proxy。Azure AI Search、Entra ID 与 Key Vault 没有本地替身；单元测试应使用 fake/stub，集成测试与安全验收应连接受控 Azure 测试资源，而不是引入 Elasticsearch/OpenSearch、假身份服务或秘密库模拟器。
+
+首次启动前复制环境模板并按需填入 LiteLLM provider 凭据：
+
+```sh
+cp .env.example .env
+docker compose config
+docker compose up -d --wait --wait-timeout 120
+bash scripts/check-local-services.sh
+docker compose ps
+```
+
+默认端口与用途：
+
+| 服务 | 默认宿主端口 | 用途 |
+| --- | --- | --- |
+| MySQL 8.4 LTS | `3306` | Phase 1 业务事实、Outbox、权限与运行元数据 |
+| Redis 7.4 | `6379` | 可重建分发、短时 fanout、非权威 live 状态 |
+| Azurite Blob | `10000` | 本地 Blob 兼容接口与开发期对象读写 |
+| LiteLLM Proxy | `4000` | 本地模型路由代理与统一 API 面 |
+
+停止并保留数据卷：
+
+```sh
+docker compose down
+```
+
+清理包含持久卷的本地状态：
+
+```sh
+docker compose down -v
+```

@@ -1,0 +1,130 @@
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.4.6}
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-tap-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-tap}
+      MYSQL_USER: ${MYSQL_USER:-tap}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tap}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7.4.7}
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  azurite:
+    image: ${AZURITE_IMAGE:-mcr.microsoft.com/azure-storage/azurite:3.35.0}
+    restart: unless-stopped
+    command:
+      - azurite-blob
+      - --blobHost
+      - 0.0.0.0
+      - --blobPort
+      - "10000"
+      - --location
+      - /data
+      - --debug
+      - /data/debug.log
+    ports:
+      - "${AZURITE_BLOB_PORT:-10000}:10000"
+    volumes:
+      - azurite-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          const http = require("http");
+          const req = http.get(
+            "http://127.0.0.1:10000/devstoreaccount1?comp=list&maxresults=1",
+            (res) => process.exit(/azurite-blob/i.test(String(res.headers.server || "")) ? 0 : 1),
+          );
+          req.on("error", () => process.exit(1));
+          req.on("timeout", () => {
+            req.destroy();
+            process.exit(1);
+          });
+          req.setTimeout(5000);
+      interval: 10s
+      timeout: 6s
+      retries: 10
+      start_period: 10s
+
+  litellm:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-v1.76.1-stable}
+    restart: unless-stopped
+    command:
+      - --config
+      - /app/config.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4000"
+      - --num_workers
+      - "1"
+      - --telemetry
+      - "False"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-tap-local-master-key}
+      LITELLM_MODEL: ${LITELLM_MODEL:-openai/gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./deploy/local/litellm/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys
+          import urllib.request
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=5) as response:
+                  sys.exit(0 if response.status == 200 else 1)
+          except Exception:
+              sys.exit(1)
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  mysql-data:
+  redis-data:
+  azurite-data:

@@ -46,6 +46,57 @@ date: 2026-08-23
 
 ---
 
+### Task 0: Local Middleware Bootstrap
+
+**Files:**
+- Create: `compose.yaml`
+- Create: `deploy/local/litellm/config.yaml`
+- Create: `scripts/check-local-services.sh`
+- Modify: `.env.example`
+- Modify: `README.md`
+- Modify: `docs/plans/2026-08-23-phase-1-application-implementation.md`
+
+**Interfaces:**
+- Consumes: Phase 1 middleware baseline in `README.md` and RFC-003 runtime assumptions about MySQL, Redis, Blob Storage, and LiteLLM.
+- Produces: a reproducible local preflight stack for MySQL 8.4 LTS, Redis 7.4, Azurite Blob, and LiteLLM Proxy before any application scaffolding starts.
+
+- [ ] **Step 1: Write the failing behavior check first**
+
+Create `scripts/check-local-services.sh` before any Compose file. The script must use真实协议探测：MySQL `mysqladmin ping` + `SELECT 1`、Redis `PING`、Azurite Blob HTTP 响应、LiteLLM 健康/就绪端点。先在没有 `compose.yaml` 的状态下运行并记录预期 RED，失败输出需要明确点名不可用服务。
+
+- [ ] **Step 2: Add the minimal local middleware stack**
+
+新增 `compose.yaml`、LiteLLM 只读挂载配置与 `.env.example` 默认值。要求：
+  - MySQL 8.4 LTS、Redis 7.4、Azurite Blob、LiteLLM 都使用固定镜像版本。
+  - MySQL、Redis、Azurite 使用持久命名卷；Redis 开启 append-only。
+  - LiteLLM 只从环境变量读取 provider credential，不引入 PostgreSQL。
+  - 默认 `docker compose up -d` 必须一次拉起全部四个服务。
+
+- [ ] **Step 3: 明确本地边界与测试策略**
+
+在 `README.md` 和本计划中写明：Azure AI Search、Entra ID、Key Vault 没有本地替身；单元测试使用 fake/stub，集成与安全验收连接受控 Azure 测试资源。不要引入 Elasticsearch/OpenSearch、假身份服务器或 secret-store emulator。
+
+- [ ] **Step 4: Verify compose and service health**
+
+运行并记录：
+
+```sh
+docker compose config
+docker compose up -d --wait --wait-timeout 120
+bash scripts/check-local-services.sh
+docker compose ps
+git diff --check
+```
+
+Expected: all four services become healthy, the check script exits `0`, and the resolved compose config contains no committed provider credential beyond clearly local development defaults.
+
+- [ ] **Step 5: Commit the local bootstrap**
+
+```sh
+git add compose.yaml deploy/local/litellm/config.yaml scripts/check-local-services.sh .env.example README.md docs/plans/2026-08-23-phase-1-application-implementation.md
+git commit -m "build: add local phase 1 middleware"
+```
+
 ### Task 1: Reproducible Workspace and Contract Generation
 
 **Files:**
