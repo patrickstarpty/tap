@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictInt, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -50,44 +50,96 @@ class AbstentionReason(str, Enum):
     REVISION_MISMATCH = "revision_mismatch"
 
 
+ShortIdentifier = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=256),
+]
+SourceIdentifier = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=1_024),
+]
+RevisionIdentifier = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=512),
+]
+PathValue = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=2_048),
+]
+JsonPointerValue = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=4_096),
+]
+TimestampValue = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=128),
+]
+PositiveAnchorInteger = Annotated[
+    StrictInt,
+    Field(ge=1, le=2_147_483_647),
+]
+NonNegativeAnchorInteger = Annotated[
+    StrictInt,
+    Field(ge=0, le=2_147_483_647),
+]
+TopK = Annotated[StrictInt, Field(ge=1, le=100)]
+BoundingBoxCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+
 class DocumentAnchor(ContractModel):
     type: Literal["document"]
-    heading_path: list[str] | None = None
-    page: int | None = None
-    bbox: list[float] | None = None
-    start_offset: int | None = None
-    end_offset: int | None = None
+    heading_path: Annotated[list[ShortIdentifier], Field(max_length=32)] | None = None
+    page: PositiveAnchorInteger | None = None
+    bbox: Annotated[list[BoundingBoxCoordinate], Field(min_length=4, max_length=4)] | None = None
+    start_offset: NonNegativeAnchorInteger | None = None
+    end_offset: NonNegativeAnchorInteger | None = None
+
+    @model_validator(mode="after")
+    def validate_ordered_offsets(self) -> Self:
+        if (
+            self.start_offset is not None
+            and self.end_offset is not None
+            and self.end_offset < self.start_offset
+        ):
+            raise ValueError("document anchor offsets must be ordered")
+        return self
 
 
 class CodeAnchor(ContractModel):
     type: Literal["code"]
-    repo: str = Field(min_length=1)
-    path: str = Field(min_length=1)
-    symbol: str | None = None
-    line_start: int = Field(ge=1)
-    line_end: int = Field(ge=1)
+    repo: ShortIdentifier
+    path: PathValue
+    symbol: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
+    line_start: PositiveAnchorInteger
+    line_end: PositiveAnchorInteger
+
+    @model_validator(mode="after")
+    def validate_ordered_lines(self) -> Self:
+        if self.line_end < self.line_start:
+            raise ValueError("code anchor lines must be ordered")
+        return self
 
 
 class BddAnchor(ContractModel):
     type: Literal["bdd"]
-    feature_id: str = Field(min_length=1)
-    scenario_id: str | None = None
-    step_id: str | None = None
+    feature_id: ShortIdentifier
+    scenario_id: ShortIdentifier | None = None
+    step_id: ShortIdentifier | None = None
 
 
 class OpenApiAnchor(ContractModel):
     type: Literal["openapi"]
-    method: str = Field(min_length=1)
-    path: str = Field(min_length=1)
-    json_pointer: str = Field(min_length=1)
+    method: Annotated[str, Field(strict=True, min_length=1, max_length=16)]
+    path: PathValue
+    json_pointer: JsonPointerValue
 
 
 class FailureAnchor(ContractModel):
     type: Literal["failure"]
-    incident_id: str = Field(min_length=1)
-    run_id: str | None = None
-    time_start: str | None = None
-    time_end: str | None = None
+    incident_id: ShortIdentifier
+    run_id: ShortIdentifier | None = None
+    time_start: TimestampValue | None = None
+    time_end: TimestampValue | None = None
 
 
 StructuralAnchorValue = Annotated[
@@ -104,34 +156,42 @@ class ResourceRef(ContractModel):
     """Browser-provided retrieval intent; it cannot contain policy or ACL facts."""
 
     family: SourceFamily
-    source_id: str = Field(min_length=1)
+    source_id: SourceIdentifier
     mode: ResourceMode = ResourceMode.PREFERRED
-    requested_revision: str | None = None
+    requested_revision: RevisionIdentifier | None = None
     anchor: StructuralAnchor | None = None
 
 
 class ChatTurnRequest(ContractModel):
     """A browser request to create one turn in an existing chat."""
 
-    client_request_id: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+    client_request_id: ShortIdentifier
+    message: Annotated[str, Field(strict=True, min_length=1, max_length=8_000)]
     answer_mode: AnswerMode = AnswerMode.QUICK
-    source_scope: list[SourceFamily] | None = None
-    resource_refs: list[ResourceRef] | None = None
-    requested_environment: str | None = None
-    requested_corpus_version: str | None = None
+    source_scope: Annotated[list[SourceFamily], Field(max_length=4)] | None = None
+    resource_refs: Annotated[list[ResourceRef], Field(max_length=20)] | None = None
+    requested_environment: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None
+    ) = None
+    requested_corpus_version: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None
+    ) = None
 
 
 class RetrievalSearchRequest(ContractModel):
     """Browser-visible retrieval intent; all authoritative scope is omitted."""
 
-    query: str = Field(min_length=1, max_length=8_000)
+    query: Annotated[str, Field(strict=True, min_length=1, max_length=8_000)]
     answer_mode: AnswerMode = AnswerMode.QUICK
     sources: list[SourceFamily] | None = Field(default=None, max_length=4)
     resource_refs: list[ResourceRef] | None = Field(default=None, max_length=20)
-    requested_environment: str | None = Field(default=None, min_length=1, max_length=128)
-    requested_corpus_version: str | None = Field(default=None, min_length=1, max_length=128)
-    top_k: int | None = Field(default=None, ge=1, le=100)
+    requested_environment: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None
+    ) = None
+    requested_corpus_version: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None
+    ) = None
+    top_k: TopK | None = None
 
 
 class RetrievalAnswerRequest(RetrievalSearchRequest):

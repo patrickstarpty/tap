@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -28,10 +30,13 @@ from tap.modules.access.domain.policy import (
     Classification,
     ProjectPolicy,
     ResourceGrant,
+    ResourceSubtreeGrant,
+    RetrievalPolicyContext,
     VerifiedSubjectFacts,
 )
 from tap.modules.knowledge.adapters.azure_ai_search import (
     AzureAISearchAdapter,
+    AzureIndexTarget,
     AzureSearchConfig,
     SearchBoundsExceeded,
     SearchUnavailable,
@@ -51,11 +56,18 @@ from tap.modules.knowledge.domain.models import (
     Claim,
     CodeAnchor,
     ContentRole,
+    ContextLayer,
+    ContextLayerKind,
+    ContextSnapshot,
+    DocumentAnchor,
     Evidence,
+    FilterableSubtree,
     IndexRevision,
+    QueryPlan,
     ResolvedResourceRef,
     ResourceMode,
     ResourceRef,
+    RetrievalProfileId,
     RevisionKind,
     SearchRequest,
     SourceFamily,
@@ -65,6 +77,7 @@ from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
     GeneratedClaim,
+    RedactionResult,
     SearchExecution,
     SearchHit,
 )
@@ -139,7 +152,7 @@ def search_hit() -> SearchHit:
             schema_version="search-schema-v1",
             corpus_version="corpus-17",
         ),
-        embedding_model_version="embed-v1",
+        embedding_model_version="tap-embedding-v1",
         score=0.91,
     )
 
@@ -155,6 +168,9 @@ class FakeSearchPort:
 
 
 class FakeModelPort:
+    embedding_model_id = "tap-embedding-v1"
+    embedding_dimension = 2
+
     def __init__(self) -> None:
         self.embedding_queries: list[str] = []
         self.answer_evidence: list[tuple[Evidence, ...]] = []
@@ -163,7 +179,7 @@ class FakeModelPort:
         self.embedding_queries.append(query)
         return Embedding(
             vector=(0.25, 0.5),
-            model_id="tap-embedding-v1",
+            model_id=self.embedding_model_id,
             provider_request_id="embedding-request-1",
         )
 
@@ -186,18 +202,35 @@ class FakeModelPort:
         )
 
 
+class CurrentPolicyVerifier:
+    async def verify_current(self, expected: RetrievalPolicyContext) -> RetrievalPolicyContext:
+        return expected
+
+
+class PassthroughRedactor:
+    async def redact(self, text: str) -> RedactionResult:
+        return RedactionResult(sanitized_text=text, redaction_version="redaction-v1")
+
+
 def api(search: FakeSearchPort, model: FakeModelPort) -> KnowledgeAPI:
     ids = iter(
         (
-            "trace-1",
+            "operation-1",
             "query-plan-1",
             "context-snapshot-1",
+            "trace-1",
             "citation-1",
             "claim-1",
             *(f"generated-{index}" for index in range(100)),
         )
     )
-    return KnowledgeAPI(search=search, model=model, id_factory=lambda: next(ids))
+    return KnowledgeAPI(
+        search=search,
+        model=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=lambda: next(ids),
+    )
 
 
 @pytest.mark.asyncio
@@ -283,17 +316,17 @@ async def test_knowledge_search_resolves_revision_caps_and_preserves_provenance(
     response = await knowledge.search(request, policy_context(resource_grants=(grant,)))
 
     execution = search.executions[0]
-    assert execution.candidate_limit == 20
-    assert execution.profile_id == "quick-hybrid-v1"
-    assert execution.resources[0].revision == "a" * 40
-    assert execution.resources[0].source_content_hash == "sha256:source"
+    assert execution.plan.candidate_limit == 20
+    assert execution.plan.retrieval_profile_id.value == "quick-hybrid-v1"
+    assert execution.plan.resources[0].revision == "a" * 40
+    assert execution.plan.resources[0].source_content_hash == "sha256:source"
     assert execution.query_vector == (0.25, 0.5)
     assert response.trace_id == "trace-1"
     assert response.query_plan_id == "query-plan-1"
     assert response.context_snapshot_id == "context-snapshot-1"
     assert response.evidence[0].source.revision == "a" * 40
     assert response.evidence[0].index_revision.physical_index == "kb-code-v1-20260823"
-    assert response.evidence[0].embedding_model_version == "embed-v1"
+    assert response.evidence[0].embedding_model_version == "tap-embedding-v1"
     assert response.evidence[0].citation_id == "citation-1"
 
 
@@ -384,6 +417,77 @@ def test_internal_search_request_rejects_non_integer_or_out_of_bounds_top_k(
     """Bypassing Pydantic must not create an unbounded or bool candidate preference."""
     with pytest.raises((TypeError, ValueError)):
         SearchRequest(query="authorization", top_k=top_k)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"answer_mode": "quick"},
+        {"source_families": [SourceFamily.CODE]},
+        {"source_families": ("code",)},
+        {"resource_refs": []},
+        {"resource_refs": ("code",)},
+        {"requested_environment": 17},
+        {"requested_environment": "x" * 129},
+        {"requested_corpus_version": 17},
+        {"requested_corpus_version": "x" * 129},
+    ],
+)
+def test_internal_retrieval_intent_rejects_runtime_type_and_size_bypasses(
+    changes: dict[str, object],
+) -> None:
+    """Framework-free callers must fail before redaction/model/Search ports."""
+    with pytest.raises((TypeError, ValueError)):
+        SearchRequest(query="authorization", **changes)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("model", "values"),
+    [
+        (
+            CodeAnchor,
+            {
+                "repo": "tap",
+                "path": "a.py",
+                "symbol": None,
+                "line_start": True,
+                "line_end": 2,
+            },
+        ),
+        (DocumentAnchor, {"page": True}),
+        (DocumentAnchor, {"start_offset": True}),
+        (DocumentAnchor, {"bbox": (0.0, 0.0, float("nan"), 1.0)}),
+        (DocumentAnchor, {"bbox": (0.0,) * 5}),
+    ],
+)
+def test_internal_anchor_numeric_bounds_are_strict(
+    model: type[Any], values: dict[str, object]
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        model(**values)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"family": "code"},
+        {"source_id": 17},
+        {"source_id": "x" * 1_025},
+        {"mode": "scope"},
+        {"requested_revision": 17},
+        {"requested_revision": "x" * 513},
+        {"anchor": "code:tap:a.py"},
+    ],
+)
+def test_internal_resource_ref_is_closed_and_bounded(changes: dict[str, object]) -> None:
+    values: dict[str, object] = {
+        "family": SourceFamily.CODE,
+        "source_id": "repo:tap:a.py",
+        "mode": ResourceMode.PREFERRED,
+    }
+    values.update(changes)
+    with pytest.raises((TypeError, ValueError)):
+        ResourceRef(**values)  # type: ignore[arg-type]
 
 
 def ranked_hit(
@@ -491,7 +595,7 @@ async def test_http_mapping_is_explicit_and_drops_internal_index_provenance() ->
     assert dumped["hits"][0]["scores"]["rrf"] == pytest.approx(1 / 61)
     assert dumped["hits"][0]["aclDecisionId"] == "decision-17"
     assert dumped["hits"][0]["schemaVersion"] == "search-schema-v1"
-    assert dumped["hits"][0]["embeddingModelVersion"] == "embed-v1"
+    assert dumped["hits"][0]["embeddingModelVersion"] == "tap-embedding-v1"
     assert "physicalIndex" not in json.dumps(dumped)
 
     answer_request = answer_request_from_http(HttpAnswerRequest(query="authorization"))
@@ -541,11 +645,19 @@ class FakeAzureClient:
         return None
 
 
-def azure_row(*, anchor: dict[str, Any]) -> dict[str, Any]:
+def azure_row(
+    *,
+    anchor: dict[str, Any],
+    root_id: str | None = None,
+    parent_id: str | None = None,
+) -> dict[str, Any]:
     return {
         "@search.score": 0.91,
+        "indexFamily": "code",
         "chunkId": "h_" + "1" * 64,
         "logicalChunkId": "h_" + "2" * 64,
+        "rootId": root_id,
+        "parentId": parent_id,
         "title": "authorize",
         "content": "Authorization requires the verified project policy.",
         "sourceId": "repo:checkout:payment.py",
@@ -558,21 +670,93 @@ def azure_row(*, anchor: dict[str, Any]) -> dict[str, Any]:
         "derivedFromChunkIds": [],
         "corpusVersion": "corpus-17",
         "schemaVersion": "search-schema-v1",
-        "embeddingModelVersion": "embed-v1",
+        "embeddingModelVersion": "tap-embed-fixed-v1",
     }
 
 
-def azure_execution(*, families: tuple[SourceFamily, ...] = (SourceFamily.CODE,)):
-    return SearchExecution(
-        query="authorization",
-        query_vector=(0.25, 0.5),
+def azure_target(family: SourceFamily) -> AzureIndexTarget:
+    return AzureIndexTarget(
+        query_index=f"kb-{family.value}-read",
+        physical_index=f"kb-{family.value}-v1-20260823",
+        schema_version="search-schema-v1",
+        embedding_model_id="tap-embed-fixed-v1",
+        vector_dimension=2,
+    )
+
+
+def azure_config(
+    *,
+    families: tuple[SourceFamily, ...] = (SourceFamily.CODE,),
+    **changes: object,
+) -> AzureSearchConfig:
+    values: dict[str, object] = {
+        "endpoint": "https://search.example",
+        "indexes": {family: azure_target(family) for family in families},
+        "query_api_key": "not-a-real-key",
+        "allow_query_key_auth": True,
+        "max_fan_out": len(families),
+        "per_index_candidates": 10,
+        "max_connections": 1,
+        "deadline_seconds": 1,
+        "max_retries": 0,
+    }
+    values.update(changes)
+    return AzureSearchConfig(**values)  # type: ignore[arg-type]
+
+
+def azure_execution(
+    *,
+    families: tuple[SourceFamily, ...] = (SourceFamily.CODE,),
+    policy: RetrievalPolicyContext | None = None,
+    resources: tuple[ResolvedResourceRef, ...] = (),
+) -> SearchExecution:
+    current = policy or policy_context(tenant_id="tenant'o", groups=frozenset({"group'one"}))
+    sanitized_query = "authorization"
+    sanitized_hash = "sha256:" + hashlib.sha256(sanitized_query.encode()).hexdigest()
+    plan = QueryPlan(
+        query_plan_id="query-plan-azure-1",
+        operation_id="operation-azure-1",
+        tenant_id=current.tenant_id,
+        project_id=current.project_id,
+        policy_decision_id=current.decision_id,
+        policy_version=current.policy_version,
+        acl_digest=current.acl_digest,
+        answer_mode=AnswerMode.QUICK,
+        retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
         source_families=families,
-        resources=(),
+        resources=resources,
         effective_environment="production",
         corpus_version="corpus-17",
         candidate_limit=30,
-        profile_id="quick-hybrid-v1",
-        policy=policy_context(tenant_id="tenant'o", groups=frozenset({"group'one"})),
+        raw_request_hash="sha256:" + "a" * 64,
+        sanitized_query=sanitized_query,
+        sanitized_query_hash=sanitized_hash,
+        redaction_version="redaction-v1",
+        embedding_model_id="tap-embed-fixed-v1",
+        embedding_dimension=2,
+    )
+    snapshot = ContextSnapshot(
+        context_snapshot_id="context-snapshot-azure-1",
+        operation_id=plan.operation_id,
+        tenant_id=current.tenant_id,
+        project_id=current.project_id,
+        policy_decision_id=current.decision_id,
+        policy_version=current.policy_version,
+        acl_digest=current.acl_digest,
+        layers=(
+            ContextLayer(
+                kind=ContextLayerKind.CURRENT_TURN,
+                ref_ids=(),
+                content_hash=sanitized_hash,
+                token_count=1,
+            ),
+        ),
+    )
+    return SearchExecution(
+        policy=current,
+        plan=plan,
+        context_snapshot=snapshot,
+        query_vector=(0.25, 0.5),
     )
 
 
@@ -581,11 +765,7 @@ async def test_azure_adapter_builds_escaped_mandatory_prefilter_and_caps_candida
     """Dropping/overriding an ACL clause or top cap must change this hand-derived request."""
     client = FakeAzureClient()
     adapter = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.CODE: "kb-code-read"},
-            physical_indexes={SourceFamily.CODE: "kb-code-v1-20260823"},
+        azure_config(
             max_fan_out=1,
             per_index_candidates=7,
             max_connections=1,
@@ -632,8 +812,9 @@ def test_azure_config_rejects_bool_fractional_or_non_finite_bounds(
     """Runtime annotation bypasses must not disable Azure resource bounds."""
     values: dict[str, object] = {
         "endpoint": "https://search.example",
-        "api_key": "not-a-real-key",
-        "index_aliases": {SourceFamily.CODE: "kb-code-read"},
+        "indexes": {SourceFamily.CODE: azure_target(SourceFamily.CODE)},
+        "query_api_key": "not-a-real-key",
+        "allow_query_key_auth": True,
         field: value,
     }
     with pytest.raises((TypeError, ValueError)):
@@ -644,8 +825,9 @@ def test_azure_config_repr_does_not_reveal_credential() -> None:
     """Dataclass diagnostics must not render the Azure Search secret."""
     config = AzureSearchConfig(
         endpoint="https://search.example",
-        api_key="secret-value-must-not-appear",
-        index_aliases={SourceFamily.CODE: "kb-code-read"},
+        indexes={SourceFamily.CODE: azure_target(SourceFamily.CODE)},
+        query_api_key="secret-value-must-not-appear",
+        allow_query_key_auth=True,
     )
     assert "secret-value-must-not-appear" not in repr(config)
 
@@ -658,6 +840,9 @@ def test_litellm_config_repr_does_not_reveal_credential() -> None:
         embedding_model_id="tap-embed-fixed-v1",
         answer_model_id="tap-answer-fixed-v1",
         answer_profile_id="grounded-answer-v1",
+        embedding_dimension=2,
+        allowed_model_labels=frozenset({"tap-embed-fixed-v1", "tap-answer-fixed-v1"}),
+        allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
     )
     assert "gateway-secret-must-not-appear" not in repr(config)
 
@@ -669,12 +854,9 @@ async def test_azure_adapter_bounds_fanout_retries_and_deadline() -> None:
         SourceFamily.DOC: FakeAzureClient(),
         SourceFamily.CODE: FakeAzureClient(),
     }
-    aliases = {SourceFamily.DOC: "kb-doc-read", SourceFamily.CODE: "kb-code-read"}
     bounded = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases=aliases,
+        azure_config(
+            families=(SourceFamily.DOC, SourceFamily.CODE),
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -692,11 +874,7 @@ async def test_azure_adapter_bounds_fanout_retries_and_deadline() -> None:
 
     retrying_client = FakeAzureClient(failures=[TimeoutError("first attempt")])
     retrying = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.CODE: "kb-code-read"},
-            physical_indexes={SourceFamily.CODE: "kb-code-v1-20260823"},
+        azure_config(
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -707,13 +885,14 @@ async def test_azure_adapter_bounds_fanout_retries_and_deadline() -> None:
     )
     await retrying.search(azure_execution())
     assert len(retrying_client.calls) == 2
+    assert (
+        retrying_client.calls[0]["client_request_id"]
+        == retrying_client.calls[1]["client_request_id"]
+    )
 
     slow_client = FakeAzureClient(delay=0.05)
     deadline = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.CODE: "kb-code-read"},
+        azure_config(
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -732,10 +911,7 @@ async def test_azure_adapter_rejects_invalid_direct_execution_numbers_before_que
     """Internal callers must not bypass candidate/vector resource bounds."""
     client = FakeAzureClient()
     adapter = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.CODE: "kb-code-read"},
+        azure_config(
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -745,30 +921,14 @@ async def test_azure_adapter_rejects_invalid_direct_execution_numbers_before_que
         client_factory=lambda _index: client,
     )
     base = azure_execution()
-    invalid_candidate = SearchExecution(
-        query=base.query,
-        query_vector=base.query_vector,
-        source_families=base.source_families,
-        resources=base.resources,
-        effective_environment=base.effective_environment,
-        corpus_version=base.corpus_version,
-        candidate_limit=True,  # type: ignore[arg-type]
-        profile_id=base.profile_id,
-        policy=base.policy,
-    )
-    with pytest.raises(SearchBoundsExceeded):
-        await adapter.search(invalid_candidate)
+    with pytest.raises((TypeError, ValueError)):
+        replace(base.plan, candidate_limit=True)  # type: ignore[arg-type]
 
     invalid_vector = SearchExecution(
-        query=base.query,
-        query_vector=(float("nan"),),
-        source_families=base.source_families,
-        resources=base.resources,
-        effective_environment=base.effective_environment,
-        corpus_version=base.corpus_version,
-        candidate_limit=base.candidate_limit,
-        profile_id=base.profile_id,
         policy=base.policy,
+        plan=base.plan,
+        context_snapshot=base.context_snapshot,
+        query_vector=(float("nan"),),
     )
     with pytest.raises(SearchBoundsExceeded):
         await adapter.search(invalid_vector)
@@ -781,10 +941,8 @@ async def test_azure_adapter_rejects_policy_family_bypass_and_trims_sibling_anch
     """Direct port calls and broad source filters must not widen the authorized scope."""
     bypass_client = FakeAzureClient()
     bypass = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.BDD: "kb-bdd-read"},
+        azure_config(
+            families=(SourceFamily.BDD,),
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -812,10 +970,7 @@ async def test_azure_adapter_rejects_policy_family_bypass_and_trims_sibling_anch
         ]
     )
     scoped = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.CODE: "kb-code-read"},
+        azure_config(
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -824,11 +979,24 @@ async def test_azure_adapter_rejects_policy_family_bypass_and_trims_sibling_anch
         ),
         client_factory=lambda _index: sibling_client,
     )
-    execution = azure_execution()
-    execution = SearchExecution(
-        query=execution.query,
-        query_vector=execution.query_vector,
-        source_families=execution.source_families,
+    subtree = FilterableSubtree(root_ids=("root-authorize",))
+    grant = ResourceGrant(
+        family="code",
+        source_id="repo:checkout:payment.py",
+        revision_kind="git_commit",
+        revision="a" * 40,
+        source_content_hash="sha256:source",
+        allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
+        subtree_grants=(
+            ResourceSubtreeGrant(
+                anchor_key="code:checkout:payment.py:authorize:10:25",
+                root_ids=subtree.root_ids,
+            ),
+        ),
+    )
+    current = policy_context(resource_grants=(grant,))
+    execution = azure_execution(
+        policy=current,
         resources=(
             ResolvedResourceRef(
                 family=SourceFamily.CODE,
@@ -838,16 +1006,13 @@ async def test_azure_adapter_rejects_policy_family_bypass_and_trims_sibling_anch
                 revision="a" * 40,
                 source_content_hash="sha256:source",
                 anchor=source_revision().anchor,
+                subtree=subtree,
             ),
         ),
-        effective_environment=execution.effective_environment,
-        corpus_version=execution.corpus_version,
-        candidate_limit=execution.candidate_limit,
-        profile_id=execution.profile_id,
-        policy=execution.policy,
     )
 
-    assert await scoped.search(execution) == ()
+    with pytest.raises(SearchUnavailable):
+        await scoped.search(execution)
 
 
 @pytest.mark.asyncio
@@ -869,11 +1034,7 @@ async def test_azure_adapter_preserves_only_allowlisted_search_request_id() -> N
         request_id="azure-request-17",
     )
     adapter = AzureAISearchAdapter(
-        AzureSearchConfig(
-            endpoint="https://search.example",
-            api_key="not-a-real-key",
-            index_aliases={SourceFamily.CODE: "kb-code-read"},
-            physical_indexes={SourceFamily.CODE: "kb-code-v1-20260823"},
+        azure_config(
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,
@@ -937,6 +1098,16 @@ async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds
                 embedding_model_id="tap-embed-fixed-v1",
                 answer_model_id="tap-answer-fixed-v1",
                 answer_profile_id="grounded-answer-v1",
+                embedding_dimension=2,
+                allowed_model_labels=frozenset(
+                    {
+                        "tap-embed-fixed-v1",
+                        "tap-answer-fixed-v1",
+                        "gateway-model-17",
+                        "provider-model-17",
+                    }
+                ),
+                allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
                 deadline_seconds=1,
                 max_retries=1,
                 max_connections=1,

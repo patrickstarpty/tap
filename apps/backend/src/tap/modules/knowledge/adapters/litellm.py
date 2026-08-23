@@ -6,10 +6,12 @@ import asyncio
 import json
 import math
 from dataclasses import dataclass, field
+from typing import Any
+from uuid import uuid4
 
 import httpx
 
-from tap.modules.knowledge.domain.models import Evidence
+from tap.modules.knowledge.domain.models import Evidence, SourceRevisionRef
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
@@ -28,33 +30,99 @@ class LiteLLMConfig:
     embedding_model_id: str
     answer_model_id: str
     answer_profile_id: str
+    embedding_dimension: int
+    allowed_model_labels: frozenset[str]
+    allowed_retrieval_profile_ids: frozenset[str]
     deadline_seconds: float = 15
     max_retries: int = 1
     max_connections: int = 4
     connect_timeout_seconds: float = 2
     read_timeout_seconds: float = 10
+    max_request_bytes: int = 262_144
+    max_response_bytes: int = 1_048_576
+    max_evidence_count: int = 20
+    max_evidence_content_chars: int = 100_000
+    max_total_evidence_chars: int = 500_000
+    max_output_tokens: int = 2_048
+    max_answer_chars: int = 16_000
+    max_claims: int = 64
+    max_claim_chars: int = 4_000
+    max_labels_per_claim: int = 16
 
     def __post_init__(self) -> None:
         if not isinstance(self.base_url, str) or not self.base_url.startswith("https://"):
             raise ValueError("LiteLLM URL must use HTTPS")
-        if not all(
-            (
-                self.api_key,
+        for name in (
+            "api_key",
+            "embedding_model_id",
+            "answer_model_id",
+            "answer_profile_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or len(value) > 256:
+                raise ValueError(f"{name} must be a bounded fixed-route identifier")
+        _strict_string_set("allowed_model_labels", self.allowed_model_labels, maximum_items=32)
+        _strict_string_set(
+            "allowed_retrieval_profile_ids",
+            self.allowed_retrieval_profile_ids,
+            maximum_items=8,
+        )
+        if (
+            not {
                 self.embedding_model_id,
                 self.answer_model_id,
-                self.answer_profile_id,
-            )
+            }
+            <= self.allowed_model_labels
         ):
-            raise ValueError("LiteLLM fixed route identifiers must not be empty")
+            raise ValueError("fixed model aliases must be included in the model-label allowlist")
+        _strict_int("embedding_dimension", self.embedding_dimension, minimum=1, maximum=4_096)
         _strict_int("max_retries", self.max_retries, minimum=0, maximum=2)
         _strict_int("max_connections", self.max_connections, minimum=1, maximum=16)
+        _strict_int("max_request_bytes", self.max_request_bytes, minimum=256, maximum=2_097_152)
+        _strict_int(
+            "max_response_bytes",
+            self.max_response_bytes,
+            minimum=256,
+            maximum=16_777_216,
+        )
+        _strict_int("max_evidence_count", self.max_evidence_count, minimum=1, maximum=100)
+        _strict_int(
+            "max_evidence_content_chars",
+            self.max_evidence_content_chars,
+            minimum=1,
+            maximum=1_000_000,
+        )
+        _strict_int(
+            "max_total_evidence_chars",
+            self.max_total_evidence_chars,
+            minimum=1,
+            maximum=2_000_000,
+        )
+        _strict_int("max_output_tokens", self.max_output_tokens, minimum=1, maximum=16_384)
+        _strict_int("max_answer_chars", self.max_answer_chars, minimum=1, maximum=100_000)
+        _strict_int("max_claims", self.max_claims, minimum=1, maximum=256)
+        _strict_int("max_claim_chars", self.max_claim_chars, minimum=1, maximum=16_000)
+        _strict_int(
+            "max_labels_per_claim",
+            self.max_labels_per_claim,
+            minimum=1,
+            maximum=64,
+        )
         _finite_duration("deadline_seconds", self.deadline_seconds, maximum=60)
         _finite_duration("connect_timeout_seconds", self.connect_timeout_seconds, maximum=10)
         _finite_duration("read_timeout_seconds", self.read_timeout_seconds, maximum=60)
 
 
+@dataclass(frozen=True, slots=True)
+class _GatewayResponse:
+    body: dict[str, Any]
+    provider_request_id: str | None
+    gateway_call_id: str | None
+    gateway_model_id: str | None
+
+
 class LiteLLMAdapter:
-    """Normalize LiteLLM responses without leaking HTTP/provider types to the port."""
+    """Normalize bounded LiteLLM responses without leaking provider transport types."""
 
     def __init__(
         self,
@@ -66,7 +134,6 @@ class LiteLLMAdapter:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             base_url=config.base_url.rstrip("/") + "/",
-            headers={"authorization": f"Bearer {config.api_key}"},
             timeout=httpx.Timeout(
                 connect=min(config.connect_timeout_seconds, config.deadline_seconds),
                 read=min(config.read_timeout_seconds, config.deadline_seconds),
@@ -81,27 +148,31 @@ class LiteLLMAdapter:
         )
         self._connection_slots = asyncio.Semaphore(config.max_connections)
 
+    @property
+    def embedding_model_id(self) -> str:
+        return self._config.embedding_model_id
+
+    @property
+    def embedding_dimension(self) -> int:
+        return self._config.embedding_dimension
+
     async def embed(self, query: str) -> Embedding:
-        response = await self._post(
-            "v1/embeddings",
-            {"model": self._config.embedding_model_id, "input": query},
-        )
+        loop = asyncio.get_running_loop()
+        deadline_at = loop.time() + self._config.deadline_seconds
         try:
-            body = response.json()
-            vector = tuple(float(value) for value in body["data"][0]["embedding"])
-            if not vector:
-                raise ValueError("embedding is empty")
-            return Embedding(
-                vector=vector,
-                model_id=self._config.embedding_model_id,
-                provider_request_id=_provider_request_id(response),
-                gateway_call_id=response.headers.get("x-litellm-call-id"),
-                gateway_model_id=response.headers.get("x-litellm-model-id"),
-                provider_model_id=_optional_string(body.get("model")),
-                completion_id=_optional_string(body.get("id")),
-            )
-        except (KeyError, IndexError, TypeError, ValueError) as error:
-            raise ModelUnavailable("LiteLLM returned a malformed embedding") from error
+            async with asyncio.timeout_at(deadline_at):
+                _bounded_string("embedding query", query, maximum=8_000)
+                response = await self._post(
+                    "v1/embeddings",
+                    {"model": self._config.embedding_model_id, "input": query},
+                    deadline_at=deadline_at,
+                )
+                result = self._parse_embedding(response)
+                if loop.time() >= deadline_at:
+                    raise TimeoutError
+                return result
+        except TimeoutError as error:
+            raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
 
     async def answer(
         self,
@@ -109,63 +180,288 @@ class LiteLLMAdapter:
         evidence: tuple[Evidence, ...],
         profile_id: str,
     ) -> AnswerGeneration:
-        del profile_id
-        evidence_payload = [
-            {
-                "label": item.evidence_label,
-                "content": item.content,
-                "sourceRevision": item.source.revision,
-                "chunkContentHash": item.chunk_content_hash,
-            }
-            for item in evidence
-        ]
-        response = await self._post(
-            "v1/chat/completions",
-            {
-                "model": self._config.answer_model_id,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Answer only from the supplied evidence. Return JSON with answer and "
-                            "claims; every claim must contain one or more supplied evidenceLabels."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {"query": query, "evidence": evidence_payload},
-                            separators=(",", ":"),
-                        ),
-                    },
-                ],
-                "response_format": {"type": "json_object"},
-            },
-        )
+        loop = asyncio.get_running_loop()
+        deadline_at = loop.time() + self._config.deadline_seconds
         try:
-            body = response.json()
-            content = body["choices"][0]["message"]["content"]
-            generated = json.loads(content)
-            claims_value = generated["claims"]
-            if not isinstance(claims_value, list):
-                raise TypeError("claims must be a list")
-            claims = tuple(
-                GeneratedClaim(
-                    text=str(item["text"]),
-                    evidence_labels=tuple(str(label) for label in item["evidenceLabels"]),
+            async with asyncio.timeout_at(deadline_at):
+                _bounded_string("answer query", query, maximum=8_000)
+                _bounded_string("retrieval profile", profile_id, maximum=128)
+                if profile_id not in self._config.allowed_retrieval_profile_ids:
+                    raise ModelUnavailable("retrieval profile is not allowed on the fixed route")
+                evidence_payload = self._bounded_evidence(evidence)
+                response = await self._post(
+                    "v1/chat/completions",
+                    {
+                        "model": self._config.answer_model_id,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Answer only from supplied evidence. Return JSON with exactly "
+                                    "answer and claims; every claim must contain current "
+                                    "evidenceLabels."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": json.dumps(
+                                    {"query": query, "evidence": evidence_payload},
+                                    ensure_ascii=False,
+                                    allow_nan=False,
+                                    separators=(",", ":"),
+                                ),
+                            },
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "max_tokens": self._config.max_output_tokens,
+                        "metadata": {
+                            "tapAnswerProfile": self._config.answer_profile_id,
+                        },
+                    },
+                    deadline_at=deadline_at,
                 )
-                for item in claims_value
+                result = self._parse_answer(response, evidence)
+                if loop.time() >= deadline_at:
+                    raise TimeoutError
+                return result
+        except TimeoutError as error:
+            raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
+
+    async def close(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    def _bounded_evidence(self, evidence: tuple[Evidence, ...]) -> list[dict[str, str]]:
+        if (
+            not isinstance(evidence, tuple)
+            or not 1 <= len(evidence) <= self._config.max_evidence_count
+            or not all(isinstance(item, Evidence) for item in evidence)
+        ):
+            raise ModelUnavailable("evidence count exceeds the fixed-route bound")
+        total = 0
+        labels: set[str] = set()
+        result: list[dict[str, str]] = []
+        for item in evidence:
+            label = _bounded_string("evidence label", item.evidence_label, maximum=64)
+            if label in labels:
+                raise ModelUnavailable("evidence labels must be unique")
+            labels.add(label)
+            content = _bounded_string(
+                "evidence content",
+                item.content,
+                maximum=self._config.max_evidence_content_chars,
             )
+            if not isinstance(item.source, SourceRevisionRef):
+                raise ModelUnavailable("evidence source provenance is malformed")
+            source_revision = _bounded_string(
+                "evidence source revision",
+                item.source.revision,
+                maximum=512,
+            )
+            source_hash = _bounded_string(
+                "evidence source content hash",
+                item.source.source_content_hash,
+                maximum=512,
+            )
+            chunk_hash = _bounded_string(
+                "evidence chunk content hash",
+                item.chunk_content_hash,
+                maximum=512,
+            )
+            total += len(content)
+            if total > self._config.max_total_evidence_chars:
+                raise ModelUnavailable("total evidence exceeds the content bound")
+            result.append(
+                {
+                    "label": label,
+                    "content": content,
+                    "sourceRevision": source_revision,
+                    "sourceContentHash": source_hash,
+                    "chunkContentHash": chunk_hash,
+                }
+            )
+        return result
+
+    async def _post(
+        self,
+        path: str,
+        payload: dict[str, object],
+        *,
+        deadline_at: float,
+    ) -> _GatewayResponse:
+        try:
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise ModelUnavailable("LiteLLM request is not safely serializable") from error
+        if len(encoded) > self._config.max_request_bytes:
+            raise ModelUnavailable("LiteLLM request exceeds the byte bound")
+        loop = asyncio.get_running_loop()
+        if loop.time() >= deadline_at:
+            raise TimeoutError
+
+        request_id = str(uuid4())
+        for attempt in range(self._config.max_retries + 1):
+            if loop.time() >= deadline_at:
+                raise TimeoutError
+            try:
+                async with self._connection_slots:
+                    if loop.time() >= deadline_at:
+                        raise TimeoutError
+                    async with self._client.stream(
+                        "POST",
+                        self._config.base_url.rstrip("/") + "/" + path,
+                        headers={
+                            "authorization": f"Bearer {self._config.api_key}",
+                            "content-type": "application/json",
+                            "x-tap-request-id": request_id,
+                        },
+                        content=encoded,
+                    ) as response:
+                        if response.status_code in {408, 429} or response.status_code >= 500:
+                            if attempt == self._config.max_retries:
+                                raise ModelUnavailable("LiteLLM status retry budget exhausted")
+                            continue
+                        if response.is_error:
+                            raise ModelUnavailable(
+                                f"LiteLLM rejected the fixed route with HTTP {response.status_code}"
+                            )
+                        raw = await _read_bounded(response, self._config.max_response_bytes)
+                        provider_request_id = _first_header(
+                            response,
+                            ("x-request-id", "x-provider-request-id", "x-openai-request-id"),
+                        )
+                        gateway_call_id = _first_header(response, ("x-litellm-call-id",))
+                        gateway_model_id = _first_header(response, ("x-litellm-model-id",))
+            except httpx.TransportError as error:
+                if attempt == self._config.max_retries:
+                    raise ModelUnavailable("LiteLLM transport retry budget exhausted") from error
+                continue
+            try:
+                body = json.loads(raw, parse_constant=_reject_json_constant)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
+                raise ModelUnavailable("LiteLLM returned malformed JSON") from error
+            if not isinstance(body, dict):
+                raise ModelUnavailable("LiteLLM response must be a JSON object")
+            if loop.time() >= deadline_at:
+                raise TimeoutError
+            if gateway_model_id is not None:
+                self._validate_model_label(gateway_model_id)
+            return _GatewayResponse(
+                body=body,
+                provider_request_id=provider_request_id,
+                gateway_call_id=gateway_call_id,
+                gateway_model_id=gateway_model_id,
+            )
+        raise ModelUnavailable("LiteLLM retry budget exhausted")
+
+    def _parse_embedding(self, response: _GatewayResponse) -> Embedding:
+        try:
+            body = response.body
+            model = _required_body_string(body, "model", maximum=256)
+            self._validate_model_label(model)
+            data = body.get("data")
+            if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+                raise ValueError("embedding data must contain exactly one item")
+            raw_vector = data[0].get("embedding")
+            if not isinstance(raw_vector, list) or len(raw_vector) != self.embedding_dimension:
+                raise ValueError("embedding dimension does not match the fixed route")
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in raw_vector
+            ):
+                raise ValueError("embedding values must be finite numbers")
+            return Embedding(
+                vector=tuple(float(value) for value in raw_vector),
+                model_id=self.embedding_model_id,
+                provider_request_id=response.provider_request_id,
+                gateway_call_id=response.gateway_call_id,
+                gateway_model_id=response.gateway_model_id,
+                provider_model_id=model,
+                completion_id=_optional_body_string(body, "id", maximum=256),
+            )
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            raise ModelUnavailable("LiteLLM returned a malformed embedding") from error
+
+    def _parse_answer(
+        self,
+        response: _GatewayResponse,
+        evidence: tuple[Evidence, ...],
+    ) -> AnswerGeneration:
+        try:
+            body = response.body
+            model = _required_body_string(body, "model", maximum=256)
+            self._validate_model_label(model)
+            choices = body.get("choices")
+            if (
+                not isinstance(choices, list)
+                or len(choices) != 1
+                or not isinstance(choices[0], dict)
+                or not isinstance(choices[0].get("message"), dict)
+            ):
+                raise ValueError("answer response must contain exactly one choice")
+            content = choices[0]["message"].get("content")
+            if (
+                not isinstance(content, str)
+                or len(content.encode("utf-8")) > self._config.max_response_bytes
+            ):
+                raise ValueError("answer content is not a bounded JSON string")
+            generated = json.loads(content, parse_constant=_reject_json_constant)
+            if not isinstance(generated, dict) or set(generated) != {"answer", "claims"}:
+                raise ValueError("grounded answer output must use the closed schema")
+            answer = generated["answer"]
+            if (
+                not isinstance(answer, str)
+                or not answer.strip()
+                or len(answer) > self._config.max_answer_chars
+            ):
+                raise ValueError("non-abstained answer must be a bounded non-empty string")
+            claims_value = generated["claims"]
+            if (
+                not isinstance(claims_value, list)
+                or not 1 <= len(claims_value) <= self._config.max_claims
+            ):
+                raise ValueError("claim count exceeds the output bound")
+            allowed_labels = {item.evidence_label for item in evidence}
+            claims: list[GeneratedClaim] = []
+            for item in claims_value:
+                if not isinstance(item, dict) or set(item) != {"text", "evidenceLabels"}:
+                    raise ValueError("claim must use the closed output schema")
+                text = item["text"]
+                labels = item["evidenceLabels"]
+                if (
+                    not isinstance(text, str)
+                    or not text.strip()
+                    or len(text) > self._config.max_claim_chars
+                    or not isinstance(labels, list)
+                    or not 1 <= len(labels) <= self._config.max_labels_per_claim
+                    or any(
+                        not isinstance(label, str)
+                        or not label
+                        or len(label) > 64
+                        or label not in allowed_labels
+                        for label in labels
+                    )
+                    or len(set(labels)) != len(labels)
+                ):
+                    raise ValueError("claim text or evidence labels exceed the output bound")
+                claims.append(GeneratedClaim(text=text, evidence_labels=tuple(labels)))
             return AnswerGeneration(
-                text=str(generated["answer"]),
-                claims=claims,
+                text=answer,
+                claims=tuple(claims),
                 model_id=self._config.answer_model_id,
                 profile_id=self._config.answer_profile_id,
-                provider_request_id=_provider_request_id(response),
-                gateway_call_id=response.headers.get("x-litellm-call-id"),
-                gateway_model_id=response.headers.get("x-litellm-model-id"),
-                provider_model_id=_optional_string(body.get("model")),
-                completion_id=_optional_string(body.get("id")),
+                provider_request_id=response.provider_request_id,
+                gateway_call_id=response.gateway_call_id,
+                gateway_model_id=response.gateway_model_id,
+                provider_model_id=model,
+                completion_id=_optional_body_string(body, "id", maximum=256),
             )
         except (
             json.JSONDecodeError,
@@ -176,44 +472,24 @@ class LiteLLMAdapter:
         ) as error:
             raise ModelUnavailable("LiteLLM returned a malformed grounded answer") from error
 
-    async def close(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
-
-    async def _post(self, path: str, payload: dict[str, object]) -> httpx.Response:
-        try:
-            async with asyncio.timeout(self._config.deadline_seconds):
-                for attempt in range(self._config.max_retries + 1):
-                    try:
-                        async with self._connection_slots:
-                            response = await self._client.post(
-                                self._config.base_url.rstrip("/") + "/" + path,
-                                json=payload,
-                            )
-                    except httpx.TransportError as error:
-                        if attempt == self._config.max_retries:
-                            raise ModelUnavailable(
-                                "LiteLLM transport retry budget exhausted"
-                            ) from error
-                        continue
-                    if response.status_code in {408, 429} or response.status_code >= 500:
-                        if attempt == self._config.max_retries:
-                            raise ModelUnavailable("LiteLLM status retry budget exhausted")
-                        continue
-                    if response.is_error:
-                        raise ModelUnavailable(
-                            f"LiteLLM rejected the fixed route with HTTP {response.status_code}"
-                        )
-                    return response
-        except TimeoutError as error:
-            raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
-        raise ModelUnavailable("LiteLLM retry budget exhausted")
+    def _validate_model_label(self, value: str) -> None:
+        if value not in self._config.allowed_model_labels:
+            raise ValueError("LiteLLM returned an unknown model label")
 
 
-def _provider_request_id(response: httpx.Response) -> str | None:
-    for name in ("x-request-id", "x-provider-request-id", "x-openai-request-id"):
-        value = _optional_string(response.headers.get(name))
-        if value:
+async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(body) + len(chunk) > maximum:
+            raise ModelUnavailable("LiteLLM response exceeds the byte bound")
+        body.extend(chunk)
+    return bytes(body)
+
+
+def _first_header(response: httpx.Response, names: tuple[str, ...]) -> str | None:
+    for name in names:
+        value = response.headers.get(name)
+        if isinstance(value, str) and value and len(value) <= 256:
             return value
     return None
 
@@ -233,5 +509,35 @@ def _finite_duration(name: str, value: object, *, maximum: float) -> None:
         raise ValueError(f"{name} must be finite, positive, and at most {maximum} seconds")
 
 
-def _optional_string(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
+def _strict_string_set(name: str, value: object, *, maximum_items: int) -> None:
+    if (
+        not isinstance(value, frozenset)
+        or not value
+        or len(value) > maximum_items
+        or any(not isinstance(item, str) or not item or len(item) > 256 for item in value)
+    ):
+        raise ValueError(f"{name} must be a bounded frozenset of identifiers")
+
+
+def _bounded_string(name: str, value: object, *, maximum: int) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise ModelUnavailable(f"{name} must be a bounded non-empty string")
+    return value
+
+
+def _required_body_string(body: dict[str, Any], name: str, *, maximum: int) -> str:
+    value = body.get(name)
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise ValueError(f"response {name} must be a bounded string")
+    return value
+
+
+def _optional_body_string(body: dict[str, Any], name: str, *, maximum: int) -> str | None:
+    value = body.get(name)
+    if value is None:
+        return None
+    return _required_body_string(body, name, maximum=maximum)
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant {value} is forbidden")

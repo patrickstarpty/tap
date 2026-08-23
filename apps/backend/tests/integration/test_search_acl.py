@@ -7,6 +7,9 @@ missing configuration then fails instead of being reported as a skip.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 import os
 
 import pytest
@@ -19,9 +22,18 @@ from tap.modules.access.domain.policy import (
 )
 from tap.modules.knowledge.adapters.azure_ai_search import (
     AzureAISearchAdapter,
+    AzureIndexTarget,
     AzureSearchConfig,
 )
-from tap.modules.knowledge.domain.models import SourceFamily
+from tap.modules.knowledge.domain.models import (
+    AnswerMode,
+    ContextLayer,
+    ContextLayerKind,
+    ContextSnapshot,
+    QueryPlan,
+    RetrievalProfileId,
+    SourceFamily,
+)
 from tap.modules.knowledge.ports.models import SearchExecution
 
 RUN_GATE = "TAP_RUN_AZURE_INTEGRATION"
@@ -29,6 +41,10 @@ REQUIRED_ENVIRONMENT = (
     "TAP_AZURE_SEARCH_ENDPOINT",
     "TAP_AZURE_SEARCH_API_KEY",
     "TAP_AZURE_SEARCH_INDEX",
+    "TAP_AZURE_SEARCH_PHYSICAL_INDEX",
+    "TAP_AZURE_SEARCH_SCHEMA_VERSION",
+    "TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID",
+    "TAP_AZURE_SEARCH_VECTOR_DIMENSION",
     "TAP_AZURE_TEST_TENANT_ID",
     "TAP_AZURE_TEST_PROJECT_ID",
     "TAP_AZURE_TEST_ALLOWED_GROUP_ID",
@@ -37,6 +53,7 @@ REQUIRED_ENVIRONMENT = (
     "TAP_AZURE_TEST_ENVIRONMENT",
     "TAP_AZURE_TEST_CORPUS_VERSION",
     "TAP_AZURE_TEST_EXPECTED_SOURCE_ID",
+    "TAP_AZURE_TEST_QUERY_VECTOR_JSON",
     "TAP_AZURE_TEST_DATASET_MARKER",
 )
 
@@ -54,6 +71,29 @@ def required_configuration() -> dict[str, str]:
         )
     if values["TAP_AZURE_TEST_ALLOWED_GROUP_ID"] == values["TAP_AZURE_TEST_DENIED_GROUP_ID"]:
         pytest.fail("Azure ACL fixture requires distinct allowed and denied group IDs")
+    try:
+        dimension = int(values["TAP_AZURE_SEARCH_VECTOR_DIMENSION"])
+    except ValueError:
+        pytest.fail("TAP_AZURE_SEARCH_VECTOR_DIMENSION must be a strict positive integer")
+    if str(dimension) != values["TAP_AZURE_SEARCH_VECTOR_DIMENSION"] or not 1 <= dimension <= 4_096:
+        pytest.fail("TAP_AZURE_SEARCH_VECTOR_DIMENSION must be a strict positive integer")
+    try:
+        vector = json.loads(values["TAP_AZURE_TEST_QUERY_VECTOR_JSON"])
+    except json.JSONDecodeError:
+        pytest.fail("TAP_AZURE_TEST_QUERY_VECTOR_JSON must be a finite JSON number array")
+    if (
+        not isinstance(vector, list)
+        or len(vector) != dimension
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in vector
+        )
+    ):
+        pytest.fail(
+            "TAP_AZURE_TEST_QUERY_VECTOR_JSON must match the configured finite vector space"
+        )
     return values
 
 
@@ -88,16 +128,54 @@ def policy_for(config: dict[str, str], group_id: str):
 
 
 def execution(config: dict[str, str], group_id: str) -> SearchExecution:
-    return SearchExecution(
-        query="*",
-        query_vector=(),
+    policy = policy_for(config, group_id)
+    sanitized_query = "sanitized authorization fixture"
+    query_hash = "sha256:" + hashlib.sha256(sanitized_query.encode("utf-8")).hexdigest()
+    plan = QueryPlan(
+        query_plan_id=f"azure-acl-plan:{group_id}",
+        operation_id=f"azure-acl-operation:{group_id}",
+        tenant_id=policy.tenant_id,
+        project_id=policy.project_id,
+        policy_decision_id=policy.decision_id,
+        policy_version=policy.policy_version,
+        acl_digest=policy.acl_digest,
+        answer_mode=AnswerMode.QUICK,
+        retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
         source_families=(SourceFamily.DOC,),
         resources=(),
         effective_environment=config["TAP_AZURE_TEST_ENVIRONMENT"],
         corpus_version=config["TAP_AZURE_TEST_CORPUS_VERSION"],
         candidate_limit=10,
-        profile_id="azure-acl-integration-v1",
-        policy=policy_for(config, group_id),
+        raw_request_hash="sha256:" + hashlib.sha256(b"azure-acl-probe").hexdigest(),
+        sanitized_query=sanitized_query,
+        sanitized_query_hash=query_hash,
+        redaction_version="integration-sanitized-v1",
+        embedding_model_id=config["TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID"],
+        embedding_dimension=int(config["TAP_AZURE_SEARCH_VECTOR_DIMENSION"]),
+    )
+    return SearchExecution(
+        policy=policy,
+        plan=plan,
+        context_snapshot=ContextSnapshot(
+            context_snapshot_id=f"azure-acl-snapshot:{group_id}",
+            operation_id=plan.operation_id,
+            tenant_id=policy.tenant_id,
+            project_id=policy.project_id,
+            policy_decision_id=policy.decision_id,
+            policy_version=policy.policy_version,
+            acl_digest=policy.acl_digest,
+            layers=(
+                ContextLayer(
+                    kind=ContextLayerKind.CURRENT_TURN,
+                    ref_ids=(),
+                    content_hash=query_hash,
+                    token_count=3,
+                ),
+            ),
+        ),
+        query_vector=tuple(
+            float(value) for value in json.loads(config["TAP_AZURE_TEST_QUERY_VECTOR_JSON"])
+        ),
     )
 
 
@@ -111,8 +189,17 @@ async def test_real_azure_search_returns_zero_unauthorized_hits() -> None:
     adapter = AzureAISearchAdapter(
         AzureSearchConfig(
             endpoint=config["TAP_AZURE_SEARCH_ENDPOINT"],
-            api_key=config["TAP_AZURE_SEARCH_API_KEY"],
-            index_aliases={SourceFamily.DOC: config["TAP_AZURE_SEARCH_INDEX"]},
+            indexes={
+                SourceFamily.DOC: AzureIndexTarget(
+                    query_index=config["TAP_AZURE_SEARCH_INDEX"],
+                    physical_index=config["TAP_AZURE_SEARCH_PHYSICAL_INDEX"],
+                    schema_version=config["TAP_AZURE_SEARCH_SCHEMA_VERSION"],
+                    embedding_model_id=config["TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID"],
+                    vector_dimension=int(config["TAP_AZURE_SEARCH_VECTOR_DIMENSION"]),
+                )
+            },
+            query_api_key=config["TAP_AZURE_SEARCH_API_KEY"],
+            allow_query_key_auth=True,
             max_fan_out=1,
             per_index_candidates=10,
             max_connections=1,

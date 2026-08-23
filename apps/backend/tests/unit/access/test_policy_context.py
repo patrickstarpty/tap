@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tap.modules.access.application.authorize import build_retrieval_policy_context
@@ -164,3 +166,30 @@ def test_policy_context_fails_closed_when_policy_is_unavailable_or_permission_re
             requested_tenant_id="tenant-a",
             requested_project_id="project-a",
         )
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1])
+def test_policy_runtime_boolean_fields_reject_coercible_non_booleans(value: object) -> None:
+    """Treating truthy strings or integer booleans as verified facts must fail closed."""
+    with pytest.raises((TypeError, ValueError)):
+        subject(token_verified=value)  # type: ignore[arg-type]
+
+    with pytest.raises((TypeError, ValueError)):
+        project_policy(permission_granted=value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "tenant_id",
+        "project_id",
+        "active_corpus_version",
+        "acl_digest",
+        "policy_version",
+        "decision_id",
+    ),
+)
+def test_project_policy_required_string_facts_reject_truthy_non_strings(field: str) -> None:
+    """A truthy runtime value must not become part of a current policy binding."""
+    with pytest.raises((TypeError, ValueError)):
+        replace(project_policy(), **{field: 1})

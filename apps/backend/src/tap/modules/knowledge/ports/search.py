@@ -18,6 +18,12 @@ class SearchPort(Protocol):
 
 
 class ModelPort(Protocol):
+    @property
+    def embedding_model_id(self) -> str: ...
+
+    @property
+    def embedding_dimension(self) -> int: ...
+
     async def embed(self, query: str) -> Embedding: ...
 
     async def answer(

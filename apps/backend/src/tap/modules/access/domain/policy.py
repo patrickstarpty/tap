@@ -45,6 +45,41 @@ class VerifiedSubjectFacts:
     roles: frozenset[str]
     token_verified: bool
 
+    def __post_init__(self) -> None:
+        _required_string("tenant_id", self.tenant_id)
+        _required_string("user_id", self.user_id)
+        _string_set("group_ids", self.group_ids, allow_empty=True)
+        _string_set("roles", self.roles, allow_empty=True)
+        _strict_bool("token_verified", self.token_verified)
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceSubtreeGrant:
+    """Server-resolved filterable subtree for one authorized structural anchor."""
+
+    anchor_key: str
+    root_ids: tuple[str, ...] = ()
+    parent_ids: tuple[str, ...] = ()
+    logical_chunk_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _required_string("anchor_key", self.anchor_key)
+        for name, values in (
+            ("root_ids", self.root_ids),
+            ("parent_ids", self.parent_ids),
+            ("logical_chunk_ids", self.logical_chunk_ids),
+        ):
+            if (
+                not isinstance(values, tuple)
+                or len(values) > 32
+                or any(
+                    not isinstance(value, str) or not value or len(value) > 256 for value in values
+                )
+            ):
+                raise ValueError(f"{name} must be a bounded immutable identifier tuple")
+        if not (self.root_ids or self.parent_ids or self.logical_chunk_ids):
+            raise ValueError("resource subtree must contain a filterable locator")
+
 
 @dataclass(frozen=True, slots=True)
 class ResourceGrant:
@@ -57,12 +92,28 @@ class ResourceGrant:
     source_content_hash: str
     allowed_anchor_keys: frozenset[str] = frozenset()
     allow_all_anchors: bool = False
+    subtree_grants: tuple[ResourceSubtreeGrant, ...] = ()
 
     def __post_init__(self) -> None:
+        _required_string("family", self.family)
+        _required_string("source_id", self.source_id)
+        _required_string("revision_kind", self.revision_kind)
+        _required_string("revision", self.revision)
+        _required_string("source_content_hash", self.source_content_hash)
+        _string_set("allowed_anchor_keys", self.allowed_anchor_keys, allow_empty=True)
+        _strict_bool("allow_all_anchors", self.allow_all_anchors)
+        if (
+            not isinstance(self.subtree_grants, tuple)
+            or len(self.subtree_grants) > 32
+            or not all(isinstance(subtree, ResourceSubtreeGrant) for subtree in self.subtree_grants)
+        ):
+            raise TypeError("subtree_grants must be a bounded immutable grant tuple")
+        if not self.allow_all_anchors and any(
+            subtree.anchor_key not in self.allowed_anchor_keys for subtree in self.subtree_grants
+        ):
+            raise ValueError("resource subtree must belong to an allowed anchor")
         if self.family not in {"doc", "code", "bdd", "failure"}:
             raise ValueError("resource grant has an unsupported source family")
-        if not all((self.source_id, self.revision_kind, self.revision, self.source_content_hash)):
-            raise ValueError("resource grants require immutable source revision facts")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,20 +134,29 @@ class ProjectPolicy:
     resource_grants: tuple[ResourceGrant, ...] = ()
 
     def __post_init__(self) -> None:
-        required = (
-            self.tenant_id,
-            self.project_id,
-            self.active_corpus_version,
-            self.acl_digest,
-            self.policy_version,
-            self.decision_id,
+        for name in (
+            "tenant_id",
+            "project_id",
+            "active_corpus_version",
+            "acl_digest",
+            "policy_version",
+            "decision_id",
+        ):
+            _required_string(name, getattr(self, name))
+        _strict_bool("permission_granted", self.permission_granted)
+        if not isinstance(self.classification_ceiling, Classification):
+            raise TypeError("classification_ceiling must be a Classification")
+        _string_set("allowed_group_ids", self.allowed_group_ids, allow_empty=True)
+        _string_set("allowed_environments", self.allowed_environments, allow_empty=False)
+        _string_set(
+            "allowed_source_families",
+            self.allowed_source_families,
+            allow_empty=False,
         )
-        if not all(required):
-            raise ValueError("Project Policy facts must be non-empty")
-        if not self.allowed_environments:
-            raise ValueError("Project Policy must authorize at least one environment")
-        if not self.allowed_source_families:
-            raise ValueError("Project Policy must authorize at least one source family")
+        if not isinstance(self.resource_grants, tuple) or not all(
+            isinstance(grant, ResourceGrant) for grant in self.resource_grants
+        ):
+            raise TypeError("resource_grants must be an immutable ResourceGrant tuple")
         if not self.allowed_source_families <= {"doc", "code", "bdd", "failure"}:
             raise ValueError("Project Policy has an unsupported source family")
 
@@ -106,6 +166,11 @@ class AuthorizedActor:
     user_id: str
     allowed_group_ids: frozenset[str]
     roles: frozenset[str]
+
+    def __post_init__(self) -> None:
+        _required_string("user_id", self.user_id)
+        _string_set("allowed_group_ids", self.allowed_group_ids, allow_empty=False)
+        _string_set("roles", self.roles, allow_empty=True)
 
 
 _CONSTRUCTION_TOKEN = object()
@@ -190,3 +255,22 @@ def _new_retrieval_policy_context(
         resource_grants=resource_grants,
         _construction_token=_CONSTRUCTION_TOKEN,
     )
+
+
+def _strict_bool(name: str, value: object) -> None:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be a boolean")
+
+
+def _required_string(name: str, value: object) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+
+
+def _string_set(name: str, value: object, *, allow_empty: bool) -> None:
+    if not isinstance(value, frozenset) or not all(
+        isinstance(item, str) and item for item in value
+    ):
+        raise TypeError(f"{name} must be a frozenset of non-empty strings")
+    if not allow_empty and not value:
+        raise ValueError(f"{name} must not be empty")

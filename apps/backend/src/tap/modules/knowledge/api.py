@@ -51,6 +51,7 @@ from tap.contracts.http import (
     RetrievalSourceRevision as HttpSourceRevision,
 )
 from tap.contracts.http import SourceFamily as HttpSourceFamily
+from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.models import (
@@ -72,6 +73,7 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
     StructuralAnchor,
 )
+from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import ModelPort, SearchPort
 
 __all__ = [
@@ -92,11 +94,15 @@ class KnowledgeAPI:
         *,
         search: SearchPort,
         model: ModelPort,
+        policy_verifier: CurrentPolicyVerificationPort,
+        redactor: EgressRedactionPort,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._retrieval = AuthorizedRetrieval(
             search=search,
             model=model,
+            policy_verifier=policy_verifier,
+            redactor=redactor,
             id_factory=id_factory or (lambda: str(uuid4())),
         )
 
