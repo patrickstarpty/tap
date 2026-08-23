@@ -20,6 +20,8 @@ jobs:
       - run: corepack enable
       - run: make bootstrap
       - run: make contracts
-      - run: git diff --exit-code -- contracts/
+      - run: |
+          git diff --exit-code -- contracts/openapi/api.json contracts/events/chat-stream.schema.json &&
+          test -z "$(git ls-files --others --exclude-standard -- contracts/openapi/api.json contracts/events/chat-stream.schema.json)"
       - run: make check
       - run: make test
