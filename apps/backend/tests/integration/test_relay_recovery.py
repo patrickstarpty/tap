@@ -478,8 +478,8 @@ def test_stale_same_worker_claim_cannot_settle_a_newer_claim() -> None:
     _run_with_clean_database(scenario)
 
 
-@pytest.mark.parametrize("batch_size", [0, -1, 501])
-def test_relay_rejects_batch_sizes_outside_its_hard_bound(batch_size: int) -> None:
+@pytest.mark.parametrize("batch_size", [0, -1, 501, 1.5, True])
+def test_relay_rejects_non_integer_or_out_of_range_batch_size(batch_size: object) -> None:
     async def scenario(
         engine: AsyncEngine,
         repository: MysqlTurnRepository,
@@ -500,7 +500,10 @@ def test_relay_rejects_batch_sizes_outside_its_hard_bound(batch_size: int) -> No
     _run_with_clean_database(scenario)
 
 
-def test_relay_rejects_attempt_limit_above_its_hard_bound() -> None:
+@pytest.mark.parametrize("maximum_attempts", [101, 1.5, True])
+def test_relay_rejects_non_integer_or_out_of_range_attempt_limit(
+    maximum_attempts: object,
+) -> None:
     async def scenario(
         engine: AsyncEngine,
         repository: MysqlTurnRepository,
@@ -514,7 +517,7 @@ def test_relay_rejects_attempt_limit_above_its_hard_bound() -> None:
                 worker_id="relay-invalid-attempt-limit",
                 lease_duration=timedelta(seconds=30),
                 retry_delay=timedelta(seconds=5),
-                maximum_attempts=101,
+                maximum_attempts=maximum_attempts,
             )
 
     _run_with_clean_database(scenario)

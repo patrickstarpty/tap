@@ -104,7 +104,7 @@ class Relay:
             raise ValueError("lease_duration must be positive")
         if retry_delay.total_seconds() < 0:
             raise ValueError("retry_delay cannot be negative")
-        if not 1 <= maximum_attempts <= 100:
+        if type(maximum_attempts) is not int or not 1 <= maximum_attempts <= 100:
             raise ValueError("maximum_attempts must be between 1 and 100")
         self._outbox = outbox
         self._publisher = publisher
@@ -115,7 +115,10 @@ class Relay:
         self._maximum_attempts = maximum_attempts
 
     async def publish_pending(self, batch_size: int) -> int:
-        if not MIN_RELAY_BATCH_SIZE <= batch_size <= MAX_RELAY_BATCH_SIZE:
+        if (
+            type(batch_size) is not int
+            or not MIN_RELAY_BATCH_SIZE <= batch_size <= MAX_RELAY_BATCH_SIZE
+        ):
             raise ValueError("batch_size must be between 1 and 500")
         now = self._clock.now()
         await self._outbox.reconcile_expired(now, batch_size)
