@@ -2,7 +2,7 @@
 name = "tap-backend"
 version = "0.1.0"
 description = "TAP Phase 1 backend contracts"
-requires-python = ">=3.13,<3.14"
+requires-python = "==3.13.12"
 dependencies = [
   "fastapi==0.116.1",
   "pydantic==2.11.7",
@@ -10,6 +10,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "httpx==0.28.1",
   "mypy==1.17.1",
   "pytest==8.4.1",
   "ruff==0.12.10",

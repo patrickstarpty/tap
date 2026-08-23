@@ -1,5 +1,43 @@
 {
   "$defs": {
+    "AbstentionReason": {
+      "enum": [
+        "insufficient_evidence",
+        "conflicting_sources",
+        "revision_mismatch"
+      ],
+      "title": "AbstentionReason",
+      "type": "string"
+    },
+    "AnswerClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "citationIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Citationids",
+          "type": "array"
+        },
+        "claimId": {
+          "minLength": 1,
+          "title": "Claimid",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claimId",
+        "text",
+        "citationIds"
+      ],
+      "title": "AnswerClaim",
+      "type": "object"
+    },
     "AnswerDeltaEvent": {
       "additionalProperties": false,
       "properties": {
@@ -33,6 +71,810 @@
       "title": "AnswerDeltaPayload",
       "type": "object"
     },
+    "AnswerMode": {
+      "enum": [
+        "quick",
+        "deep"
+      ],
+      "title": "AnswerMode",
+      "type": "string"
+    },
+    "BddAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "featureId": {
+          "minLength": 1,
+          "title": "Featureid",
+          "type": "string"
+        },
+        "scenarioId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scenarioid"
+        },
+        "stepId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stepid"
+        },
+        "type": {
+          "const": "bdd",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "featureId"
+      ],
+      "title": "BddAnchor",
+      "type": "object"
+    },
+    "Citation": {
+      "additionalProperties": false,
+      "properties": {
+        "chunkContentHash": {
+          "minLength": 1,
+          "title": "Chunkcontenthash",
+          "type": "string"
+        },
+        "chunkId": {
+          "minLength": 1,
+          "title": "Chunkid",
+          "type": "string"
+        },
+        "citationId": {
+          "minLength": 1,
+          "title": "Citationid",
+          "type": "string"
+        },
+        "contentRole": {
+          "$ref": "#/$defs/ContentRole"
+        },
+        "derivedFromChunkIds": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derivedfromchunkids"
+        },
+        "evidenceLabel": {
+          "minLength": 1,
+          "title": "Evidencelabel",
+          "type": "string"
+        },
+        "logicalChunkId": {
+          "minLength": 1,
+          "title": "Logicalchunkid",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRevisionRef"
+        }
+      },
+      "required": [
+        "citationId",
+        "evidenceLabel",
+        "chunkId",
+        "logicalChunkId",
+        "source",
+        "chunkContentHash",
+        "contentRole"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "CitationResolvedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/CitationResolvedPayload"
+        },
+        "type": {
+          "const": "citation.resolved",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "CitationResolvedEvent",
+      "type": "object"
+    },
+    "CitationResolvedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "$ref": "#/$defs/Citation"
+        }
+      },
+      "required": [
+        "citation"
+      ],
+      "title": "CitationResolvedPayload",
+      "type": "object"
+    },
+    "CodeAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "lineEnd": {
+          "minimum": 1,
+          "title": "Lineend",
+          "type": "integer"
+        },
+        "lineStart": {
+          "minimum": 1,
+          "title": "Linestart",
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "repo": {
+          "minLength": 1,
+          "title": "Repo",
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        },
+        "type": {
+          "const": "code",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repo",
+        "path",
+        "lineStart",
+        "lineEnd"
+      ],
+      "title": "CodeAnchor",
+      "type": "object"
+    },
+    "ContentRole": {
+      "enum": [
+        "source",
+        "generated_summary"
+      ],
+      "title": "ContentRole",
+      "type": "string"
+    },
+    "ContextAssembledEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/ContextAssembledPayload"
+        },
+        "type": {
+          "const": "context.assembled",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "ContextAssembledEvent",
+      "type": "object"
+    },
+    "ContextAssembledPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "contextSnapshotId": {
+          "minLength": 1,
+          "title": "Contextsnapshotid",
+          "type": "string"
+        },
+        "tokenCount": {
+          "minimum": 0,
+          "title": "Tokencount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contextSnapshotId",
+        "tokenCount"
+      ],
+      "title": "ContextAssembledPayload",
+      "type": "object"
+    },
+    "DocumentAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "endOffset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endoffset"
+        },
+        "headingPath": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headingpath"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "startOffset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startoffset"
+        },
+        "type": {
+          "const": "document",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "DocumentAnchor",
+      "type": "object"
+    },
+    "FailureAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "incidentId": {
+          "minLength": 1,
+          "title": "Incidentid",
+          "type": "string"
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runid"
+        },
+        "timeEnd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeend"
+        },
+        "timeStart": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timestart"
+        },
+        "type": {
+          "const": "failure",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "incidentId"
+      ],
+      "title": "FailureAnchor",
+      "type": "object"
+    },
+    "OpenApiAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "jsonPointer": {
+          "minLength": 1,
+          "title": "Jsonpointer",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "type": {
+          "const": "openapi",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "method",
+        "path",
+        "jsonPointer"
+      ],
+      "title": "OpenApiAnchor",
+      "type": "object"
+    },
+    "QueryPlanReadyEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/QueryPlanReadyPayload"
+        },
+        "type": {
+          "const": "query.plan_ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "QueryPlanReadyEvent",
+      "type": "object"
+    },
+    "QueryPlanReadyPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "answerMode": {
+          "$ref": "#/$defs/AnswerMode"
+        },
+        "queryPlanId": {
+          "minLength": 1,
+          "title": "Queryplanid",
+          "type": "string"
+        },
+        "sourceFamilies": {
+          "items": {
+            "$ref": "#/$defs/SourceFamily"
+          },
+          "title": "Sourcefamilies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "queryPlanId",
+        "answerMode",
+        "sourceFamilies"
+      ],
+      "title": "QueryPlanReadyPayload",
+      "type": "object"
+    },
+    "RerankCompletedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/RerankCompletedPayload"
+        },
+        "type": {
+          "const": "rerank.completed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "RerankCompletedEvent",
+      "type": "object"
+    },
+    "RerankCompletedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateCount": {
+          "minimum": 0,
+          "title": "Candidatecount",
+          "type": "integer"
+        },
+        "durationMs": {
+          "minimum": 0,
+          "title": "Durationms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidateCount",
+        "durationMs"
+      ],
+      "title": "RerankCompletedPayload",
+      "type": "object"
+    },
+    "RetrievalAnswerResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "abstained": {
+          "title": "Abstained",
+          "type": "boolean"
+        },
+        "abstentionReason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AbstentionReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "answer": {
+          "title": "Answer",
+          "type": "string"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/AnswerClaim"
+          },
+          "title": "Claims",
+          "type": "array"
+        },
+        "contextSnapshotId": {
+          "minLength": 1,
+          "title": "Contextsnapshotid",
+          "type": "string"
+        },
+        "corpusVersion": {
+          "minLength": 1,
+          "title": "Corpusversion",
+          "type": "string"
+        },
+        "degradationReasons": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Degradationreasons"
+        },
+        "degradedMode": {
+          "title": "Degradedmode",
+          "type": "boolean"
+        },
+        "queryPlanId": {
+          "minLength": 1,
+          "title": "Queryplanid",
+          "type": "string"
+        },
+        "retrievalProfileId": {
+          "minLength": 1,
+          "title": "Retrievalprofileid",
+          "type": "string"
+        },
+        "traceId": {
+          "minLength": 1,
+          "title": "Traceid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "traceId",
+        "queryPlanId",
+        "contextSnapshotId",
+        "corpusVersion",
+        "retrievalProfileId",
+        "degradedMode",
+        "answer",
+        "abstained",
+        "claims",
+        "citations"
+      ],
+      "title": "RetrievalAnswerResponse",
+      "type": "object"
+    },
+    "RetrievalHitsReadyEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/RetrievalHitsReadyPayload"
+        },
+        "type": {
+          "const": "retrieval.hits_ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "RetrievalHitsReadyEvent",
+      "type": "object"
+    },
+    "RetrievalHitsReadyPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "authorizedHitCount": {
+          "minimum": 0,
+          "title": "Authorizedhitcount",
+          "type": "integer"
+        },
+        "traceId": {
+          "minLength": 1,
+          "title": "Traceid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "traceId",
+        "authorizedHitCount"
+      ],
+      "title": "RetrievalHitsReadyPayload",
+      "type": "object"
+    },
+    "RevisionKind": {
+      "enum": [
+        "git_commit",
+        "blob_version",
+        "mysql_version"
+      ],
+      "title": "RevisionKind",
+      "type": "string"
+    },
+    "SourceFamily": {
+      "enum": [
+        "doc",
+        "code",
+        "bdd",
+        "failure"
+      ],
+      "title": "SourceFamily",
+      "type": "string"
+    },
+    "SourceRevisionRef": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/StructuralAnchor"
+        },
+        "revision": {
+          "minLength": 1,
+          "title": "Revision",
+          "type": "string"
+        },
+        "revisionKind": {
+          "$ref": "#/$defs/RevisionKind"
+        },
+        "sourceContentHash": {
+          "minLength": 1,
+          "title": "Sourcecontenthash",
+          "type": "string"
+        },
+        "sourceId": {
+          "minLength": 1,
+          "title": "Sourceid",
+          "type": "string"
+        },
+        "sourceType": {
+          "minLength": 1,
+          "title": "Sourcetype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceId",
+        "sourceType",
+        "revisionKind",
+        "revision",
+        "sourceContentHash",
+        "anchor"
+      ],
+      "title": "SourceRevisionRef",
+      "type": "object"
+    },
+    "StageCompletedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/StageCompletedPayload"
+        },
+        "type": {
+          "const": "stage.completed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "StageCompletedEvent",
+      "type": "object"
+    },
+    "StageCompletedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": {
+          "minimum": 0,
+          "title": "Durationms",
+          "type": "integer"
+        },
+        "stage": {
+          "minLength": 1,
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "durationMs"
+      ],
+      "title": "StageCompletedPayload",
+      "type": "object"
+    },
+    "StageStartedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/StageStartedPayload"
+        },
+        "type": {
+          "const": "stage.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "StageStartedEvent",
+      "type": "object"
+    },
+    "StageStartedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "stage": {
+          "minLength": 1,
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage"
+      ],
+      "title": "StageStartedPayload",
+      "type": "object"
+    },
+    "StructuralAnchor": {
+      "description": "A closed source location retained in a browser-visible citation.",
+      "discriminator": {
+        "mapping": {
+          "bdd": "#/$defs/BddAnchor",
+          "code": "#/$defs/CodeAnchor",
+          "document": "#/$defs/DocumentAnchor",
+          "failure": "#/$defs/FailureAnchor",
+          "openapi": "#/$defs/OpenApiAnchor"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DocumentAnchor"
+        },
+        {
+          "$ref": "#/$defs/CodeAnchor"
+        },
+        {
+          "$ref": "#/$defs/BddAnchor"
+        },
+        {
+          "$ref": "#/$defs/OpenApiAnchor"
+        },
+        {
+          "$ref": "#/$defs/FailureAnchor"
+        }
+      ],
+      "title": "StructuralAnchor"
+    },
     "TurnAbstainedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -55,13 +897,12 @@
     "TurnAbstainedPayload": {
       "additionalProperties": false,
       "properties": {
-        "reason": {
-          "title": "Reason",
-          "type": "string"
+        "answer": {
+          "$ref": "#/$defs/RetrievalAnswerResponse"
         }
       },
       "required": [
-        "reason"
+        "answer"
       ],
       "title": "TurnAbstainedPayload",
       "type": "object"
@@ -122,14 +963,55 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "title": "Answer",
-          "type": "string"
+          "$ref": "#/$defs/RetrievalAnswerResponse"
         }
       },
       "required": [
         "answer"
       ],
       "title": "TurnCompletedPayload",
+      "type": "object"
+    },
+    "TurnDegradedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TurnDegradedPayload"
+        },
+        "type": {
+          "const": "turn.degraded",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TurnDegradedEvent",
+      "type": "object"
+    },
+    "TurnDegradedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "availableStages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Availablestages",
+          "type": "array"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "availableStages"
+      ],
+      "title": "TurnDegradedPayload",
       "type": "object"
     },
     "TurnFailedEvent": {
@@ -155,6 +1037,7 @@
       "additionalProperties": false,
       "properties": {
         "code": {
+          "minLength": 1,
           "title": "Code",
           "type": "string"
         },
@@ -218,9 +1101,17 @@
       "discriminator": {
         "mapping": {
           "answer.delta": "#/$defs/AnswerDeltaEvent",
+          "citation.resolved": "#/$defs/CitationResolvedEvent",
+          "context.assembled": "#/$defs/ContextAssembledEvent",
+          "query.plan_ready": "#/$defs/QueryPlanReadyEvent",
+          "rerank.completed": "#/$defs/RerankCompletedEvent",
+          "retrieval.hits_ready": "#/$defs/RetrievalHitsReadyEvent",
+          "stage.completed": "#/$defs/StageCompletedEvent",
+          "stage.started": "#/$defs/StageStartedEvent",
           "turn.abstained": "#/$defs/TurnAbstainedEvent",
           "turn.canceled": "#/$defs/TurnCanceledEvent",
           "turn.completed": "#/$defs/TurnCompletedEvent",
+          "turn.degraded": "#/$defs/TurnDegradedEvent",
           "turn.failed": "#/$defs/TurnFailedEvent",
           "turn.started": "#/$defs/TurnStartedEvent"
         },
@@ -231,13 +1122,37 @@
           "$ref": "#/$defs/TurnStartedEvent"
         },
         {
+          "$ref": "#/$defs/ContextAssembledEvent"
+        },
+        {
+          "$ref": "#/$defs/QueryPlanReadyEvent"
+        },
+        {
+          "$ref": "#/$defs/StageStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/StageCompletedEvent"
+        },
+        {
+          "$ref": "#/$defs/RetrievalHitsReadyEvent"
+        },
+        {
+          "$ref": "#/$defs/RerankCompletedEvent"
+        },
+        {
           "$ref": "#/$defs/AnswerDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/CitationResolvedEvent"
         },
         {
           "$ref": "#/$defs/TurnCompletedEvent"
         },
         {
           "$ref": "#/$defs/TurnAbstainedEvent"
+        },
+        {
+          "$ref": "#/$defs/TurnDegradedEvent"
         },
         {
           "$ref": "#/$defs/TurnCanceledEvent"

@@ -1,6 +1,57 @@
 {
   "components": {
     "schemas": {
+      "AnswerMode": {
+        "enum": [
+          "quick",
+          "deep"
+        ],
+        "title": "AnswerMode",
+        "type": "string"
+      },
+      "BddAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
       "ChatTurnAccepted": {
         "additionalProperties": false,
         "description": "The durable identity returned after a turn has been accepted for processing.",
@@ -32,13 +83,8 @@
         "description": "A browser request to create one turn in an existing chat.",
         "properties": {
           "answerMode": {
-            "default": "quick",
-            "enum": [
-              "quick",
-              "deep"
-            ],
-            "title": "Answermode",
-            "type": "string"
+            "$ref": "#/components/schemas/AnswerMode",
+            "default": "quick"
           },
           "clientRequestId": {
             "minLength": 1,
@@ -76,7 +122,7 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ResourceRef"
                 },
                 "type": "array"
               },
@@ -90,7 +136,7 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/SourceFamily"
                 },
                 "type": "array"
               },
@@ -108,51 +154,313 @@
         "title": "ChatTurnRequest",
         "type": "object"
       },
-      "HTTPValidationError": {
+      "CodeAnchor": {
+        "additionalProperties": false,
         "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
-        "type": "object"
-      },
-      "ValidationError": {
-        "properties": {
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
+          "lineEnd": {
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
           },
-          "msg": {
-            "title": "Message",
+          "lineStart": {
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
             "type": "string"
           },
+          "repo": {
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
           "type": {
-            "title": "Error Type",
+            "const": "code",
+            "title": "Type",
             "type": "string"
           }
         },
         "required": [
-          "loc",
-          "msg",
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
+      "DocumentAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
           "type"
         ],
-        "title": "ValidationError",
+        "title": "DocumentAnchor",
         "type": "object"
+      },
+      "FailureAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
+      "OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "ResourceMode": {
+        "enum": [
+          "required",
+          "preferred",
+          "scope"
+        ],
+        "title": "ResourceMode",
+        "type": "string"
+      },
+      "ResourceRef": {
+        "additionalProperties": false,
+        "description": "Browser-provided retrieval intent; it cannot contain policy or ACL facts.",
+        "properties": {
+          "anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StructuralAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "family": {
+            "$ref": "#/components/schemas/SourceFamily"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ResourceMode",
+            "default": "preferred"
+          },
+          "requestedRevision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requestedrevision"
+          },
+          "sourceId": {
+            "minLength": 1,
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "family",
+          "sourceId"
+        ],
+        "title": "ResourceRef",
+        "type": "object"
+      },
+      "SourceFamily": {
+        "enum": [
+          "doc",
+          "code",
+          "bdd",
+          "failure"
+        ],
+        "title": "SourceFamily",
+        "type": "string"
+      },
+      "StructuralAnchor": {
+        "description": "A closed, structural location inside one authorized source family.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/BddAnchor",
+            "code": "#/components/schemas/CodeAnchor",
+            "document": "#/components/schemas/DocumentAnchor",
+            "failure": "#/components/schemas/FailureAnchor",
+            "openapi": "#/components/schemas/OpenApiAnchor"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DocumentAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/CodeAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/BddAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/OpenApiAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/FailureAnchor"
+          }
+        ],
+        "title": "StructuralAnchor"
       }
     }
   },
@@ -200,13 +508,109 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Request validation failed"
+          },
+          "501": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Turn workflow not implemented"
           }
         },
         "summary": "Create Chat Turn"

@@ -1,2 +1,5 @@
 [tool.uv.workspace]
 members = ["apps/backend"]
+
+[tool.uv]
+required-version = "==0.10.8"

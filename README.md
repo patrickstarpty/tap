@@ -104,7 +104,7 @@ docker compose down -v
 
 ## 开发工作区与契约
 
-运行时和依赖图固定为 Python 3.13、Node 22、pnpm 10、`uv.lock` 与 `pnpm-lock.yaml`。从仓库根目录执行：
+运行时和依赖图固定为 Python 3.13.12、uv 0.10.8、Node 22.22.0、pnpm 10.15.1、`uv.lock` 与 `pnpm-lock.yaml`。从仓库根目录执行：
 
 ```sh
 make bootstrap
