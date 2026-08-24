@@ -58,7 +58,10 @@ def test_search_unavailable_is_redacted_as_a_service_unavailable_problem() -> No
     """Returning a provider exception detail would expose credentials or filter internals."""
 
     async def fail_search() -> None:
-        raise SearchUnavailable("milvus://reader:secret@127.0.0.1 raw-filter")
+        raise SearchUnavailable(
+            "milvus://reader:secret@127.0.0.1 raw-filter "
+            "query=where-is-policy-verified group_ids=group-one,group-two vector=[0.25,0.5]"
+        )
 
     app = create_app()
     app.add_api_route("/_test/search-unavailable", fail_search, methods=["GET"])
@@ -66,16 +69,22 @@ def test_search_unavailable_is_redacted_as_a_service_unavailable_problem() -> No
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["type"].endswith("/search-unavailable")
-    assert "secret" not in response.text
-    assert "raw-filter" not in response.text
+    assert response.json() == {
+        "type": "https://tap.example/problems/search-unavailable",
+        "title": "Search unavailable",
+        "status": 503,
+        "detail": "The search provider is currently unavailable.",
+    }
 
 
 def test_search_bounds_error_is_redacted_as_a_service_unavailable_problem() -> None:
     """Exposing a rejected execution detail would reveal provider-specific execution data."""
 
     async def fail_search() -> None:
-        raise SearchBoundsExceeded("milvus://reader:secret@127.0.0.1 raw-filter")
+        raise SearchBoundsExceeded(
+            "milvus://reader:secret@127.0.0.1 raw-filter "
+            "query=where-is-policy-verified group_ids=group-one,group-two vector=[0.25,0.5]"
+        )
 
     app = create_app()
     app.add_api_route("/_test/search-execution-rejected", fail_search, methods=["GET"])
@@ -83,6 +92,9 @@ def test_search_bounds_error_is_redacted_as_a_service_unavailable_problem() -> N
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["type"].endswith("/search-execution-rejected")
-    assert "secret" not in response.text
-    assert "raw-filter" not in response.text
+    assert response.json() == {
+        "type": "https://tap.example/problems/search-execution-rejected",
+        "title": "Search execution rejected",
+        "status": 503,
+        "detail": "The search execution exceeded a safety bound.",
+    }
