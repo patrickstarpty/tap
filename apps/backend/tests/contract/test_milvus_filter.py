@@ -267,7 +267,20 @@ def test_milvus_filter_unions_only_current_family_scope_resources() -> None:
     assert 'parent_id in ["parent-refunds"]' in expression
     assert 'source_id == "blob:refund-policy"' in expression
     assert 'logical_chunk_id in ["h_' + "1" * 64 + '"]' in expression
-    assert " or " in expression
+    expected_scope_suffix = (
+        ' and ((source_id == "blob:payment-policy" '
+        'and source_revision == "blob-version-v1" '
+        'and source_content_hash == "sha256:' + "f" * 64 + '" and (root_id in ["root-payments"] '
+        'or parent_id in ["parent-refunds"])) '
+        'or (source_id == "blob:refund-policy" '
+        'and source_revision == "blob-version-v1" '
+        'and source_content_hash == "sha256:'
+        + "f" * 64
+        + '" and (logical_chunk_id in ["h_'
+        + "1" * 64
+        + '"])))'
+    )
+    assert expression.endswith(expected_scope_suffix)
     assert "blob:required" not in expression
     assert "blob:preferred" not in expression
     assert "repo:checkout:payment.py" not in expression
