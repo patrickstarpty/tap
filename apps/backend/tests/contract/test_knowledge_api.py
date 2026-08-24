@@ -38,8 +38,6 @@ from tap.modules.knowledge.adapters.azure_ai_search import (
     AzureAISearchAdapter,
     AzureIndexTarget,
     AzureSearchConfig,
-    SearchBoundsExceeded,
-    SearchUnavailable,
 )
 from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.api import (
@@ -73,6 +71,7 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tap.modules.knowledge.ports.errors import SearchBoundsExceeded, SearchUnavailable
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
@@ -161,12 +160,20 @@ def search_hit() -> SearchHit:
 
 
 class FakeSearchPort:
-    def __init__(self, hits: tuple[SearchHit, ...] = ()) -> None:
+    def __init__(
+        self,
+        hits: tuple[SearchHit, ...] = (),
+        *,
+        error: Exception | None = None,
+    ) -> None:
         self.hits = hits
+        self.error = error
         self.executions: list[SearchExecution] = []
 
     async def search(self, execution: SearchExecution) -> tuple[SearchHit, ...]:
         self.executions.append(execution)
+        if self.error is not None:
+            raise self.error
         return self.hits
 
 
@@ -362,6 +369,24 @@ async def test_knowledge_answer_cites_each_claim_and_abstains_without_evidence()
     assert no_evidence.abstained is True
     assert no_evidence.abstention_reason is AbstentionReason.INSUFFICIENT_EVIDENCE
     assert no_evidence_model.answer_evidence == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [SearchUnavailable("provider unavailable"), SearchBoundsExceeded("bound")],
+)
+async def test_knowledge_answer_propagates_search_errors_without_generating_an_answer(
+    error: Exception,
+) -> None:
+    """Catching a provider failure as abstention would hide an unavailable search backend."""
+    model = FakeModelPort()
+    knowledge = api(FakeSearchPort(error=error), model)
+
+    with pytest.raises(type(error)):
+        await knowledge.answer(AnswerRequest(query="Where is policy verified?"), policy_context())
+
+    assert model.answer_evidence == []
 
 
 def schema_property_names(value: Any) -> set[str]:

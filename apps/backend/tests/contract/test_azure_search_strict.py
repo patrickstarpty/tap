@@ -24,8 +24,6 @@ from tap.modules.knowledge.adapters.azure_ai_search import (
     AzureAISearchAdapter,
     AzureIndexTarget,
     AzureSearchConfig,
-    SearchBoundsExceeded,
-    SearchUnavailable,
 )
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
@@ -41,6 +39,7 @@ from tap.modules.knowledge.domain.models import (
     RevisionKind,
     SourceFamily,
 )
+from tap.modules.knowledge.ports.errors import SearchBoundsExceeded, SearchUnavailable
 from tap.modules.knowledge.ports.models import SearchExecution
 
 CANONICAL_HASH = "sha256:" + "a" * 64

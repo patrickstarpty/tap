@@ -7,6 +7,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from tap.contracts.http import ChatTurnAccepted, ChatTurnRequest, ProblemDetails
+from tap.modules.knowledge.ports.errors import (
+    SEARCH_EXECUTION_REJECTED_TYPE,
+    SEARCH_UNAVAILABLE_TYPE,
+    SearchBoundsExceeded,
+    SearchUnavailable,
+)
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 VALIDATION_PROBLEM = ProblemDetails(
@@ -20,6 +26,18 @@ NOT_IMPLEMENTED_PROBLEM = ProblemDetails(
     title="Turn workflow not implemented",
     status=status.HTTP_501_NOT_IMPLEMENTED,
     detail="The durable chat turn workflow is not available yet.",
+)
+SEARCH_UNAVAILABLE_PROBLEM = ProblemDetails(
+    type=SEARCH_UNAVAILABLE_TYPE,
+    title="Search unavailable",
+    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    detail="The search provider is currently unavailable.",
+)
+SEARCH_EXECUTION_REJECTED_PROBLEM = ProblemDetails(
+    type=SEARCH_EXECUTION_REJECTED_TYPE,
+    title="Search execution rejected",
+    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    detail="The search execution exceeded a safety bound.",
 )
 
 
@@ -51,6 +69,18 @@ def create_app() -> FastAPI:
         _request: Request, _error: RequestValidationError
     ) -> JSONResponse:
         return problem_response(VALIDATION_PROBLEM)
+
+    @app.exception_handler(SearchUnavailable)
+    async def search_unavailable_problem(
+        _request: Request, _error: SearchUnavailable
+    ) -> JSONResponse:
+        return problem_response(SEARCH_UNAVAILABLE_PROBLEM)
+
+    @app.exception_handler(SearchBoundsExceeded)
+    async def search_execution_rejected_problem(
+        _request: Request, _error: SearchBoundsExceeded
+    ) -> JSONResponse:
+        return problem_response(SEARCH_EXECUTION_REJECTED_PROBLEM)
 
     @app.post(
         "/v1/chats/{chat_id}/turns",

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from tap.interfaces.http.app import create_app
+from tap.modules.knowledge.ports.errors import SearchBoundsExceeded, SearchUnavailable
 
 
 def test_turn_endpoint_returns_rfc_9457_problem_details_for_validation_and_placeholder() -> None:
@@ -51,3 +52,37 @@ def test_openapi_documents_problem_details_for_validation_and_placeholder_failur
             "title": "Status",
             "type": "integer",
         }
+
+
+def test_search_unavailable_is_redacted_as_a_service_unavailable_problem() -> None:
+    """Returning a provider exception detail would expose credentials or filter internals."""
+
+    async def fail_search() -> None:
+        raise SearchUnavailable("milvus://reader:secret@127.0.0.1 raw-filter")
+
+    app = create_app()
+    app.add_api_route("/_test/search-unavailable", fail_search, methods=["GET"])
+    response = TestClient(app).get("/_test/search-unavailable")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"].endswith("/search-unavailable")
+    assert "secret" not in response.text
+    assert "raw-filter" not in response.text
+
+
+def test_search_bounds_error_is_redacted_as_a_service_unavailable_problem() -> None:
+    """Exposing a rejected execution detail would reveal provider-specific execution data."""
+
+    async def fail_search() -> None:
+        raise SearchBoundsExceeded("milvus://reader:secret@127.0.0.1 raw-filter")
+
+    app = create_app()
+    app.add_api_route("/_test/search-execution-rejected", fail_search, methods=["GET"])
+    response = TestClient(app).get("/_test/search-execution-rejected")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"].endswith("/search-execution-rejected")
+    assert "secret" not in response.text
+    assert "raw-filter" not in response.text

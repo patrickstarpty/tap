@@ -36,6 +36,7 @@ from tap.modules.knowledge.domain.models import (
     anchor_authorization_key,
     context_snapshot_binds_query_plan,
 )
+from tap.modules.knowledge.ports.errors import SearchBoundsExceeded, SearchUnavailable
 from tap.modules.knowledge.ports.models import SearchExecution, SearchHit
 
 AZURE_SEARCH_API_VERSION = "2026-04-01"
@@ -52,14 +53,6 @@ CLASSIFICATION_ORDER = (
 )
 CHUNK_ID_PATTERN = re.compile(r"^h_[0-9a-f]{64}$")
 SAFE_INDEX_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
-
-
-class SearchBoundsExceeded(Exception):
-    """The selected execution would exceed a configured search bound."""
-
-
-class SearchUnavailable(Exception):
-    """A selected index could not return one complete, authorized result page."""
 
 
 class AzureBearerTokenProvider(Protocol):
