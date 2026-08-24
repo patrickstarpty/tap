@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import httpx
 
-from tap.modules.knowledge.domain.models import Evidence, SourceRevisionRef
+from tap.modules.knowledge.domain.models import Evidence, RevisionKind, SourceRevisionRef
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
@@ -263,20 +263,17 @@ class LiteLLMAdapter:
             )
             if not isinstance(item.source, SourceRevisionRef):
                 raise ModelUnavailable("evidence source provenance is malformed")
-            source_revision = _bounded_string(
-                "evidence source revision",
+            source_revision = _canonical_revision(
+                item.source.revision_kind,
                 item.source.revision,
-                maximum=512,
             )
-            source_hash = _bounded_string(
+            source_hash = _canonical_sha256(
                 "evidence source content hash",
                 item.source.source_content_hash,
-                maximum=512,
             )
-            chunk_hash = _bounded_string(
+            chunk_hash = _canonical_sha256(
                 "evidence chunk content hash",
                 item.chunk_content_hash,
-                maximum=512,
             )
             total += len(content)
             if total > self._config.max_total_evidence_chars:
@@ -543,6 +540,29 @@ def _strict_string_set(name: str, value: object, *, maximum_items: int) -> None:
 def _bounded_string(name: str, value: object, *, maximum: int) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ModelUnavailable(f"{name} must be a bounded non-empty string")
+    return value
+
+
+def _canonical_revision(kind: object, value: object) -> str:
+    if not isinstance(kind, RevisionKind):
+        raise ModelUnavailable("evidence revision kind is outside the closed model")
+    revision = _bounded_string("evidence source revision", value, maximum=512)
+    if kind is RevisionKind.GIT_COMMIT and (
+        len(revision) not in {40, 64}
+        or any(character not in "0123456789abcdef" for character in revision)
+    ):
+        raise ModelUnavailable("evidence source revision is not a canonical Git commit ID")
+    return revision
+
+
+def _canonical_sha256(name: str, value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 71
+        or not value.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in value[7:])
+    ):
+        raise ModelUnavailable(f"{name} is not a canonical sha256 digest")
     return value
 
 

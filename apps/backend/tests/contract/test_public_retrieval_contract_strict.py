@@ -27,6 +27,65 @@ from tap.contracts.http import (
     StructuralAnchor,
 )
 
+SOURCE_HASH = "sha256:" + "a" * 64
+CHUNK_HASH = "sha256:" + "b" * 64
+
+
+def public_source_revision_payload(**changes: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "sourceId": "repo:tap:authorization.py",
+        "sourceType": "code",
+        "revisionKind": "git_commit",
+        "revision": "a" * 40,
+        "sourceContentHash": SOURCE_HASH,
+        "anchor": {
+            "type": "code",
+            "repo": "tap",
+            "path": "authorization.py",
+            "symbol": "authorize",
+            "lineStart": 1,
+            "lineEnd": 10,
+        },
+    }
+    payload.update(changes)
+    return payload
+
+
+def public_hit_payload(**changes: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "indexFamily": "code",
+        "chunkId": "h_" + "1" * 64,
+        "logicalChunkId": "h_" + "2" * 64,
+        "title": "authorize",
+        "content": "Authorization uses current policy.",
+        "source": public_source_revision_payload(),
+        "chunkContentHash": CHUNK_HASH,
+        "contentRole": "source",
+        "citationId": "citation-17",
+        "evidenceLabel": "S1",
+        "scores": {"rrf": 1 / 61},
+        "aclDecisionId": "decision-17",
+        "schemaVersion": "search-schema-v1",
+        "embeddingModelVersion": "tap-embed-fixed-v1",
+    }
+    payload.update(changes)
+    return payload
+
+
+def public_citation_payload(**changes: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "citationId": "citation-17",
+        "evidenceLabel": "S1",
+        "chunkId": "h_" + "1" * 64,
+        "logicalChunkId": "h_" + "2" * 64,
+        "source": public_source_revision_payload(),
+        "chunkContentHash": CHUNK_HASH,
+        "contentRole": "source",
+    }
+    payload.update(changes)
+    return payload
+
+
 PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
     (
         ChatTurnRequest,
@@ -363,6 +422,118 @@ def test_every_public_score_is_a_strict_finite_number(
     """Coercion or non-finite serialization must fail for every public score slot."""
     with pytest.raises(ValidationError):
         RetrievalScores.model_validate({field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("revision", "A" * 40),
+        ("revision", "g" * 40),
+        ("revision", "a" * 39),
+        ("sourceContentHash", "sha256:" + "A" * 64),
+        ("sourceContentHash", "sha256:" + "g" * 64),
+        ("sourceContentHash", "sha256:" + "a" * 63),
+    ],
+    ids=(
+        "git-uppercase",
+        "git-non-hex",
+        "git-wrong-length",
+        "source-hash-uppercase",
+        "source-hash-non-hex",
+        "source-hash-wrong-length",
+    ),
+)
+def test_public_source_revision_rejects_noncanonical_git_and_hash_values(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        RetrievalSourceRevision.model_validate(public_source_revision_payload(**{field: value}))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sourceId", "x" * 1_025),
+        ("sourceType", "x" * 129),
+        ("revision", "x" * 513),
+        ("sourceId", 17),
+        ("sourceType", 17),
+        ("revision", 17),
+    ],
+    ids=(
+        "source-id-length",
+        "source-type-length",
+        "revision-length",
+        "source-id-type",
+        "source-type-type",
+        "revision-type",
+    ),
+)
+def test_public_source_provenance_strings_are_strict_and_bounded(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        RetrievalSourceRevision.model_validate(public_source_revision_payload(**{field: value}))
+
+
+@pytest.mark.parametrize(
+    ("revision_kind", "revision", "anchor"),
+    [
+        (
+            "blob_version",
+            "etag:opaque-blob-version-17",
+            {"type": "document", "headingPath": ["Authorization"], "page": 1},
+        ),
+        (
+            "mysql_version",
+            "mysql-bin.000017:42",
+            {"type": "failure", "incidentId": "incident-17"},
+        ),
+    ],
+)
+def test_public_source_revision_preserves_bounded_opaque_non_git_formats(
+    revision_kind: str,
+    revision: str,
+    anchor: dict[str, object],
+) -> None:
+    result = RetrievalSourceRevision.model_validate(
+        public_source_revision_payload(
+            revisionKind=revision_kind,
+            revision=revision,
+            anchor=anchor,
+        )
+    )
+
+    assert result.revision == revision
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (RetrievalHit, public_hit_payload(chunkContentHash="sha256:" + "A" * 64)),
+        (RetrievalHit, public_hit_payload(chunkContentHash="sha256:" + "g" * 64)),
+        (RetrievalHit, public_hit_payload(chunkContentHash="sha256:" + "b" * 63)),
+        (RetrievalCitation, public_citation_payload(chunkContentHash="sha256:" + "A" * 64)),
+        (RetrievalCitation, public_citation_payload(chunkContentHash="sha256:" + "g" * 64)),
+        (RetrievalCitation, public_citation_payload(chunkContentHash="sha256:" + "b" * 63)),
+    ],
+    ids=(
+        "hit-uppercase",
+        "hit-non-hex",
+        "hit-wrong-length",
+        "citation-uppercase",
+        "citation-non-hex",
+        "citation-wrong-length",
+    ),
+)
+def test_every_public_chunk_hash_is_canonical(
+    model: type[Any],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
 
 
 def _assert_objects_closed(value: object) -> None:

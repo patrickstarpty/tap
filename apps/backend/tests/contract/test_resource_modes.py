@@ -22,6 +22,7 @@ from tap.modules.knowledge.domain.models import (
     AnswerRequest,
     CodeAnchor,
     ContentRole,
+    DocumentAnchor,
     FilterableSubtree,
     IndexRevision,
     ResourceMode,
@@ -30,6 +31,7 @@ from tap.modules.knowledge.domain.models import (
     SearchRequest,
     SourceFamily,
     SourceRevisionRef,
+    StructuralAnchor,
 )
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
@@ -207,7 +209,7 @@ def hit(
     revision_kind: RevisionKind = RevisionKind.GIT_COMMIT,
     revision: str = "a" * 40,
     source_hash: str = SOURCE_HASH,
-    anchor: CodeAnchor = AUTHORIZED_ANCHOR,
+    anchor: StructuralAnchor = AUTHORIZED_ANCHOR,
     local_rank: int = 1,
     chunk_suffix: str = "1",
     logical_chunk_id: str = "h_" + "9" * 64,
@@ -260,8 +262,13 @@ def required_request() -> AnswerRequest:
 @pytest.mark.parametrize(
     "mismatched_hit",
     [
-        hit(family=SourceFamily.DOC),
-        hit(revision_kind=RevisionKind.BLOB_VERSION),
+        hit(
+            family=SourceFamily.DOC,
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision="blob-version-17",
+            anchor=DocumentAnchor(heading_path=("Authorization",), page=1),
+        ),
+        hit(revision="b" * 40),
         hit(source_hash=OTHER_SOURCE_HASH),
         hit(
             anchor=replace(
@@ -272,7 +279,7 @@ def required_request() -> AnswerRequest:
             )
         ),
     ],
-    ids=("family", "revision-kind", "source-hash", "anchor"),
+    ids=("family", "revision", "source-hash", "anchor"),
 )
 async def test_required_coverage_matches_every_resolved_immutable_fact(
     mismatched_hit: SearchHit,

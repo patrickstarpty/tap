@@ -689,7 +689,9 @@
         "additionalProperties": false,
         "properties": {
           "chunkContentHash": {
-            "minLength": 1,
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Chunkcontenthash",
             "type": "string"
           },
@@ -785,7 +787,9 @@
             "type": "string"
           },
           "chunkContentHash": {
-            "minLength": 1,
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Chunkcontenthash",
             "type": "string"
           },
@@ -1102,6 +1106,7 @@
             "$ref": "#/components/schemas/StructuralAnchor"
           },
           "revision": {
+            "maxLength": 512,
             "minLength": 1,
             "title": "Revision",
             "type": "string"
@@ -1110,16 +1115,20 @@
             "$ref": "#/components/schemas/RevisionKind"
           },
           "sourceContentHash": {
-            "minLength": 1,
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Sourcecontenthash",
             "type": "string"
           },
           "sourceId": {
+            "maxLength": 1024,
             "minLength": 1,
             "title": "Sourceid",
             "type": "string"
           },
           "sourceType": {
+            "maxLength": 128,
             "minLength": 1,
             "title": "Sourcetype",
             "type": "string"

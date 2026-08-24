@@ -503,3 +503,123 @@ Therefore the real Azure authorized-positive/unauthorized-hit-zero contract and 
 - Confirmed the ignored controller ledger and Fix Round 2 brief were neither modified nor staged.
 
 Remaining concerns are operational only: Azure and Entra behavior still require controlled sanitized external fixtures, and later tasks must supply runtime configuration/wiring for the already-required verifier, redactor, auth, index routes, and model routes. Those items remain deliberately outside Task 3.
+
+## Fix Round 3
+
+### Status and Accepted Findings
+
+Fix Round 3 closes all four accepted provenance-boundary findings without adding Task 4+ or Task 5 assembly.
+
+1. **Architecture source scanner:** the recursive dependency lint now recognizes root `tap` module objects, star imports, every private policy symbol (including `_CONSTRUCTION_TOKEN`), literal dynamic imports through module/aliased `importlib.import_module`, direct/aliased `__import__`, and aliased `builtins.__import__`. An unresolved target through a recognized dynamic-import facility emits a fail-closed sentinel. Real source snippets flow through `ast.parse` and the same scanner used against repository files. This remains accurately scoped as a conservative dependency lint, not a Python security capability.
+2. **Generic SearchPort provenance:** every hit is checked before evidence/citation materialization, whether or not resource scope exists. The closed mapping is `code -> git_commit + CodeAnchor`, `bdd -> git_commit + BddAnchor`, `doc -> blob_version + DocumentAnchor|OpenApiAnchor`, and `failure -> mysql_version + FailureAnchor`. Known source-type labels cannot contradict the family. Unknown DOC subtypes remain available to the Azure target's explicit server route allowlist, which is unchanged.
+3. **LiteLLM evidence egress:** `_bounded_evidence` revalidates the current runtime `RevisionKind`, conditional canonical Git commit, canonical source SHA-256, and canonical chunk SHA-256 immediately before payload serialization. Runtime-mutated uppercase, non-hex, wrong-length, and open-enum lookalikes fail before HTTP with stable, secret-safe `ModelUnavailable` errors.
+4. **Public citation provenance:** public source identifiers/types/revisions are strict and bounded; Git revisions receive conditional canonical validation; and source/chunk content hashes require exactly `sha256:` plus 64 lowercase hexadecimal characters. Both direct Pydantic DTO parsing and internal-to-HTTP mapping revalidate these facts. Opaque bounded Blob and MySQL revisions remain accepted.
+
+### Files and Dependencies
+
+Modified production/contract files:
+
+- `apps/backend/src/tap/contracts/http.py`
+- `apps/backend/src/tap/modules/knowledge/application/retrieve.py`
+- `apps/backend/src/tap/modules/knowledge/adapters/litellm.py`
+- `contracts/openapi/api.json`
+
+Modified behavior/architecture tests:
+
+- `apps/backend/tests/architecture/test_module_boundaries.py`
+- `apps/backend/tests/contract/test_authorized_execution.py`
+- `apps/backend/tests/contract/test_knowledge_api.py`
+- `apps/backend/tests/contract/test_litellm_strict.py`
+- `apps/backend/tests/contract/test_public_retrieval_contract_strict.py`
+- `apps/backend/tests/contract/test_resource_modes.py`
+
+The resource-mode and fusion fixtures were adjusted to carry family-compatible provenance, so they continue testing required-resource and cross-index RRF behavior after the new generic boundary moved incompatible family/revision combinations to an earlier fail-closed result. No dependency or lockfile change was needed.
+
+### TDD RED Evidence
+
+All accepted findings received mutation-sensitive tests before production changes:
+
+- Architecture real-source scanner selector: `21 failed, 27 deselected in 0.10s`. Root/star/private-token cases produced no forbidden reference, while dynamic calls were absent from the import set.
+- Generic SearchPort selector: `13 failed, 1 passed, 27 deselected in 0.20s`. The exact CODE + `document` + Blob + `DocumentAnchor` attack, eight family/revision/anchor mutations, and four known source-type contradictions all reported `DID NOT RAISE AuthorizationDenied`; only the deliberately unknown DOC subtype passed.
+- LiteLLM runtime canonical selector: `10 failed, 29 deselected in 0.12s`. Every closed-kind/Git/source-hash/chunk-hash mutation reported `DID NOT RAISE ModelUnavailable`, proving it would reach the configured HTTP client.
+- Direct public DTO selector: `15 failed, 5 passed, 93 deselected in 0.14s`. All noncanonical Git/source/chunk hashes and the three overlength provenance values reported `DID NOT RAISE ValidationError`; strict wrong-type cases and opaque Blob/MySQL positive cases already behaved correctly.
+- Internal-to-HTTP mapping selector: `6 failed, 52 deselected in 0.18s`. Runtime-mutated source revisions, source hashes, hit chunk hashes, and citation chunk hashes all reported `DID NOT RAISE ValidationError`.
+
+The first complete focused run after production GREEN reported `3 failed, 371 passed, 2 skipped`. Root-cause tracing showed no production widening/regression: two resource-mode fixtures intentionally paired CODE metadata with DOC/Blob values, and the cross-index fixture paired a DOC family with CODE provenance. Replacing those fixtures with valid family-local provenance retained their original required-resource/RRF assertions; no production check was weakened.
+
+### GREEN and Repository Verification
+
+Focused GREEN evidence:
+
+```text
+architecture boundary suite: 48 passed in 0.10s
+generic SearchPort selector: 14 passed, 27 deselected in 0.11s
+LiteLLM canonical egress selector: 10 passed, 29 deselected in 0.08s
+public DTO + mapping selector: 26 passed, 145 deselected in 0.15s
+complete focused Task 3 + ordinary external gates: 374 passed, 2 skipped in 0.47s
+```
+
+Task 2 relay regressions:
+
+```text
+28 passed in 1.08s
+```
+
+Repository gates on the final code/test tree:
+
+```text
+make check
+  ruff check: All checks passed!
+  ruff format --check: 40 files already formatted
+  mypy: Success: no issues found in 25 source files
+  deterministic contract check: exit 0
+
+make test
+  408 passed, 2 skipped in 4.40s
+
+make bootstrap
+  uv sync --frozen --all-groups: Audited 32 packages
+  pnpm install --frozen-lockfile: Already up to date
+```
+
+Two consecutive `make contracts` runs produced identical checksums: OpenAPI `752896961/34857` and Chat stream schema `2876493190/27072`; the exporter `--check` exited `0`. Generated-schema inspection found the canonical SHA-256 pattern in source and both chunk-hash slots, both opaque response IDs in both Retrieval responses, and no public property named `tenantId`, `projectId`, `allowedGroupIds`, `classification`, `filter`, `rawFilter`, `physicalIndex`, or `queryIndex`. The diff secret scan and `git diff --check` exited `0`.
+
+### External Gates: Exact Unrun Status
+
+Ordinary local mode reported exactly `2 skipped in 0.05s`; these are limitations, not GREEN.
+
+With `TAP_RUN_AZURE_INTEGRATION=1`, the Azure ACL gate failed closed before a network call because all 18 sanitized settings were absent:
+
+```text
+TAP_AZURE_SEARCH_ENDPOINT, TAP_AZURE_SEARCH_API_KEY,
+TAP_AZURE_SEARCH_INDEX, TAP_AZURE_SEARCH_PHYSICAL_INDEX,
+TAP_AZURE_SEARCH_SCHEMA_VERSION, TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID,
+TAP_AZURE_SEARCH_VECTOR_DIMENSION, TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON,
+TAP_AZURE_TEST_TENANT_ID, TAP_AZURE_TEST_PROJECT_ID,
+TAP_AZURE_TEST_ALLOWED_GROUP_ID, TAP_AZURE_TEST_DENIED_GROUP_ID,
+TAP_AZURE_TEST_CLASSIFICATION_CEILING, TAP_AZURE_TEST_ENVIRONMENT,
+TAP_AZURE_TEST_CORPUS_VERSION, TAP_AZURE_TEST_EXPECTED_SOURCE_ID,
+TAP_AZURE_TEST_QUERY_VECTOR_JSON, TAP_AZURE_TEST_DATASET_MARKER
+```
+
+With `TAP_RUN_ENTRA_POLICY_INTEGRATION=1`, the current-policy gate failed closed before a network call because all eight sanitized settings were absent:
+
+```text
+TAP_POLICY_TEST_ACTIVE_URL, TAP_POLICY_TEST_REVOKED_URL,
+TAP_POLICY_TEST_BEARER_TOKEN, TAP_POLICY_TEST_TENANT_ID,
+TAP_POLICY_TEST_PROJECT_ID, TAP_POLICY_TEST_USER_ID,
+TAP_POLICY_TEST_ACTIVE_DECISION_ID, TAP_POLICY_TEST_DATASET_MARKER
+```
+
+Therefore the real Azure authorized-positive/unauthorized-hit-zero contract and the real Entra active-then-revoked contract remain **NOT RUN** on this machine and are not claimed as GREEN.
+
+### Fix-Round 3 Self-Review and Concerns
+
+- Re-read the binding disposition and reviewed each changed stable layer, adapter egress, public DTO, generated schema, and mutation test against the four accepted findings.
+- Confirmed the generic port mapping runs for every hit before any evidence/citation creation, while the Azure provider route still owns its exact immutable source-type allowlist. Cross-index fusion remains family-local rank/RRF and its final cap is unchanged.
+- Confirmed LiteLLM validates only current runtime values, never echoes malformed values or credentials, and performs zero transport calls on every new mutation.
+- Confirmed architecture tests execute source snippets through the real AST scanner, root/star/private/dynamic paths fail closed, and unrelated public policy imports remain permitted. The scanner documentation states its conservative lint-only threat model.
+- Confirmed the public schema still exposes neither authorization facts nor physical indexes, and public mapping cannot serialize a post-construction canonical lookalike.
+- The ignored controller ledger and Fix Round 3 brief were not modified or staged.
+
+Remaining concerns are operational only: Azure and Entra/Project-Policy behavior still requires controlled sanitized external fixtures, and later tasks must provide runtime wiring for the already-defined verifier, redactor, credentials, index routes, and model routes. Those are deliberately outside Task 3.

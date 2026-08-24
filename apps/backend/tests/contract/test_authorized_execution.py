@@ -20,8 +20,11 @@ from tap.modules.access.domain.policy import (
 from tap.modules.knowledge.api import KnowledgeAPI
 from tap.modules.knowledge.domain.models import (
     AnswerRequest,
+    BddAnchor,
     CodeAnchor,
     ContentRole,
+    DocumentAnchor,
+    FailureAnchor,
     IndexRevision,
     ResourceMode,
     ResourceRef,
@@ -249,6 +252,29 @@ def search_hit() -> SearchHit:
         ),
         embedding_model_version="tap-embed-fixed-v1",
         score=0.9,
+    )
+
+
+def provenance_hit(
+    *,
+    family: SourceFamily,
+    source_type: str,
+    revision_kind: RevisionKind,
+    revision: str,
+    anchor: object,
+) -> SearchHit:
+    base = search_hit()
+    return replace(
+        base,
+        family=family,
+        source=SourceRevisionRef(
+            source_id=f"source:{family.value}:17",
+            source_type=source_type,
+            revision_kind=revision_kind,
+            revision=revision,
+            source_content_hash=SOURCE_HASH,
+            anchor=anchor,  # type: ignore[arg-type]
+        ),
     )
 
 
@@ -511,6 +537,238 @@ async def test_search_result_vector_space_mismatch_fails_before_evidence() -> No
             model=RecordingModel(),
             search=RecordingSearch((mismatched,)),
         ).search(SearchRequest(query="authorization"), current)
+
+
+@pytest.mark.asyncio
+async def test_generic_search_port_rejects_the_exact_cross_family_provenance_attack() -> None:
+    """A provider-neutral port must not materialize a document row as CODE evidence."""
+    current = policy_context(source_families=frozenset({"code"}))
+    adversarial = provenance_hit(
+        family=SourceFamily.CODE,
+        source_type="document",
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision="blob-version-17",
+        anchor=DocumentAnchor(heading_path=("Authorization",), page=1),
+    )
+
+    with pytest.raises(AuthorizationDenied, match="outside bound execution"):
+        await knowledge_api(
+            verifier=CurrentPolicyVerifier(current),
+            redactor=RecordingRedactor(
+                RedactionResult(
+                    sanitized_text="authorization",
+                    redaction_version="redaction-v3",
+                )
+            ),
+            model=RecordingModel(),
+            search=RecordingSearch((adversarial,)),
+        ).search(
+            SearchRequest(query="authorization", source_families=(SourceFamily.CODE,)),
+            current,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("family", "source_type", "revision_kind", "revision", "anchor"),
+    [
+        (
+            SourceFamily.CODE,
+            "code",
+            RevisionKind.BLOB_VERSION,
+            "blob-version-17",
+            CodeAnchor(repo="tap", path="a.py", symbol=None, line_start=1, line_end=2),
+        ),
+        (
+            SourceFamily.CODE,
+            "code",
+            RevisionKind.GIT_COMMIT,
+            "a" * 40,
+            BddAnchor(feature_id="feature-17"),
+        ),
+        (
+            SourceFamily.BDD,
+            "bdd",
+            RevisionKind.BLOB_VERSION,
+            "blob-version-17",
+            BddAnchor(feature_id="feature-17"),
+        ),
+        (
+            SourceFamily.BDD,
+            "bdd",
+            RevisionKind.GIT_COMMIT,
+            "a" * 40,
+            CodeAnchor(repo="tap", path="a.py", symbol=None, line_start=1, line_end=2),
+        ),
+        (
+            SourceFamily.DOC,
+            "document",
+            RevisionKind.GIT_COMMIT,
+            "a" * 40,
+            DocumentAnchor(heading_path=("Authorization",), page=1),
+        ),
+        (
+            SourceFamily.DOC,
+            "document",
+            RevisionKind.BLOB_VERSION,
+            "blob-version-17",
+            FailureAnchor(incident_id="incident-17"),
+        ),
+        (
+            SourceFamily.FAILURE,
+            "failure",
+            RevisionKind.BLOB_VERSION,
+            "blob-version-17",
+            FailureAnchor(incident_id="incident-17"),
+        ),
+        (
+            SourceFamily.FAILURE,
+            "failure",
+            RevisionKind.MYSQL_VERSION,
+            "mysql-bin.000017:42",
+            DocumentAnchor(heading_path=("Authorization",), page=1),
+        ),
+    ],
+    ids=(
+        "code-revision",
+        "code-anchor",
+        "bdd-revision",
+        "bdd-anchor",
+        "doc-revision",
+        "doc-anchor",
+        "failure-revision",
+        "failure-anchor",
+    ),
+)
+async def test_generic_search_port_rejects_each_family_revision_and_anchor_mismatch(
+    family: SourceFamily,
+    source_type: str,
+    revision_kind: RevisionKind,
+    revision: str,
+    anchor: object,
+) -> None:
+    current = policy_context(source_families=frozenset({family.value}))
+    mismatched = provenance_hit(
+        family=family,
+        source_type=source_type,
+        revision_kind=revision_kind,
+        revision=revision,
+        anchor=anchor,
+    )
+
+    with pytest.raises(AuthorizationDenied, match="outside bound execution"):
+        await knowledge_api(
+            verifier=CurrentPolicyVerifier(current),
+            redactor=RecordingRedactor(
+                RedactionResult(
+                    sanitized_text="authorization",
+                    redaction_version="redaction-v3",
+                )
+            ),
+            model=RecordingModel(),
+            search=RecordingSearch((mismatched,)),
+        ).search(
+            SearchRequest(query="authorization", source_families=(family,)),
+            current,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("family", "source_type", "revision_kind", "revision", "anchor"),
+    [
+        (
+            SourceFamily.CODE,
+            "bdd",
+            RevisionKind.GIT_COMMIT,
+            "a" * 40,
+            CodeAnchor(repo="tap", path="a.py", symbol=None, line_start=1, line_end=2),
+        ),
+        (
+            SourceFamily.BDD,
+            "failure",
+            RevisionKind.GIT_COMMIT,
+            "a" * 40,
+            BddAnchor(feature_id="feature-17"),
+        ),
+        (
+            SourceFamily.DOC,
+            "code",
+            RevisionKind.BLOB_VERSION,
+            "blob-version-17",
+            DocumentAnchor(heading_path=("Authorization",), page=1),
+        ),
+        (
+            SourceFamily.FAILURE,
+            "document",
+            RevisionKind.MYSQL_VERSION,
+            "mysql-bin.000017:42",
+            FailureAnchor(incident_id="incident-17"),
+        ),
+    ],
+    ids=("code-as-bdd", "bdd-as-failure", "doc-as-code", "failure-as-document"),
+)
+async def test_generic_search_port_rejects_known_cross_family_source_type_labels(
+    family: SourceFamily,
+    source_type: str,
+    revision_kind: RevisionKind,
+    revision: str,
+    anchor: object,
+) -> None:
+    current = policy_context(source_families=frozenset({family.value}))
+    mismatched = provenance_hit(
+        family=family,
+        source_type=source_type,
+        revision_kind=revision_kind,
+        revision=revision,
+        anchor=anchor,
+    )
+
+    with pytest.raises(AuthorizationDenied, match="outside bound execution"):
+        await knowledge_api(
+            verifier=CurrentPolicyVerifier(current),
+            redactor=RecordingRedactor(
+                RedactionResult(
+                    sanitized_text="authorization",
+                    redaction_version="redaction-v3",
+                )
+            ),
+            model=RecordingModel(),
+            search=RecordingSearch((mismatched,)),
+        ).search(
+            SearchRequest(query="authorization", source_families=(family,)),
+            current,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generic_search_port_allows_an_unknown_doc_subtype_for_route_validation() -> None:
+    """Only the Azure route allowlist, not the generic port, owns provider subtypes."""
+    current = policy_context(source_families=frozenset({"doc"}))
+    document = provenance_hit(
+        family=SourceFamily.DOC,
+        source_type="policy_manual_v2",
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision="blob-version-17",
+        anchor=DocumentAnchor(heading_path=("Authorization",), page=1),
+    )
+
+    response = await knowledge_api(
+        verifier=CurrentPolicyVerifier(current),
+        redactor=RecordingRedactor(
+            RedactionResult(
+                sanitized_text="authorization",
+                redaction_version="redaction-v3",
+            )
+        ),
+        model=RecordingModel(),
+        search=RecordingSearch((document,)),
+    ).search(
+        SearchRequest(query="authorization", source_families=(SourceFamily.DOC,)),
+        current,
+    )
+
+    assert response.evidence[0].source.source_type == "policy_manual_v2"
 
 
 class ProviderResultThatMustBeDiscarded:

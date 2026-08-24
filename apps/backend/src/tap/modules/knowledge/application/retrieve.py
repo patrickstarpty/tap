@@ -29,6 +29,7 @@ from tap.modules.knowledge.domain.models import (
     ContextSnapshot,
     DocumentAnchor,
     Evidence,
+    FailureAnchor,
     FilterableSubtree,
     ModelCallProvenance,
     OpenApiAnchor,
@@ -41,6 +42,7 @@ from tap.modules.knowledge.domain.models import (
     SearchRequest,
     SearchResponse,
     SourceFamily,
+    SourceRevisionRef,
     StructuralAnchor,
     anchor_authorization_key,
     context_snapshot_binds_query_plan,
@@ -76,6 +78,25 @@ PROFILES: dict[AnswerMode, RetrievalProfile] = {
         final_result_limit=20,
         preferred_resource_boost=0.01,
     ),
+}
+
+_FAMILY_PROVENANCE: dict[
+    SourceFamily,
+    tuple[RevisionKind, tuple[type[StructuralAnchor], ...]],
+] = {
+    SourceFamily.CODE: (RevisionKind.GIT_COMMIT, (CodeAnchor,)),
+    SourceFamily.BDD: (RevisionKind.GIT_COMMIT, (BddAnchor,)),
+    SourceFamily.DOC: (RevisionKind.BLOB_VERSION, (DocumentAnchor, OpenApiAnchor)),
+    SourceFamily.FAILURE: (RevisionKind.MYSQL_VERSION, (FailureAnchor,)),
+}
+_KNOWN_SOURCE_TYPE_FAMILY = {
+    "code": SourceFamily.CODE,
+    "code_summary": SourceFamily.CODE,
+    "bdd": SourceFamily.BDD,
+    "doc": SourceFamily.DOC,
+    "document": SourceFamily.DOC,
+    "openapi": SourceFamily.DOC,
+    "failure": SourceFamily.FAILURE,
 }
 
 
@@ -479,7 +500,8 @@ class AuthorizedRetrieval:
         plan: QueryPlan,
     ) -> bool:
         if (
-            hit.family not in plan.source_families
+            not AuthorizedRetrieval._hit_has_compatible_provenance(hit)
+            or hit.family not in plan.source_families
             or hit.index_revision.corpus_version != plan.corpus_version
             or hit.embedding_model_version != plan.embedding_model_id
         ):
@@ -506,6 +528,27 @@ class AuthorizedRetrieval:
             ):
                 return True
         return False
+
+    @staticmethod
+    def _hit_has_compatible_provenance(hit: SearchHit) -> bool:
+        """Reject provider-neutral hits whose provenance crosses source families."""
+        if (
+            not isinstance(hit, SearchHit)
+            or not isinstance(hit.family, SourceFamily)
+            or not isinstance(hit.source, SourceRevisionRef)
+            or not isinstance(hit.source.source_type, str)
+        ):
+            return False
+        expected = _FAMILY_PROVENANCE.get(hit.family)
+        if expected is None:
+            return False
+        revision_kind, anchor_types = expected
+        known_family = _KNOWN_SOURCE_TYPE_FAMILY.get(hit.source.source_type)
+        return (
+            hit.source.revision_kind is revision_kind
+            and isinstance(hit.source.anchor, anchor_types)
+            and (known_family is None or known_family is hit.family)
+        )
 
     @staticmethod
     def _rrf_score(local_rank: int) -> float:

@@ -62,6 +62,19 @@ RevisionIdentifier = Annotated[
     str,
     Field(strict=True, min_length=1, max_length=512),
 ]
+SourceTypeIdentifier = Annotated[
+    str,
+    Field(strict=True, min_length=1, max_length=128),
+]
+CanonicalSha256 = Annotated[
+    str,
+    Field(
+        strict=True,
+        min_length=71,
+        max_length=71,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    ),
+]
 PathValue = Annotated[
     str,
     Field(strict=True, min_length=1, max_length=2_048),
@@ -200,12 +213,21 @@ class RetrievalAnswerRequest(RetrievalSearchRequest):
 
 
 class RetrievalSourceRevision(ContractModel):
-    source_id: str = Field(min_length=1)
-    source_type: str = Field(min_length=1)
+    source_id: SourceIdentifier
+    source_type: SourceTypeIdentifier
     revision_kind: RevisionKind
-    revision: str = Field(min_length=1)
-    source_content_hash: str = Field(min_length=1)
+    revision: RevisionIdentifier
+    source_content_hash: CanonicalSha256
     anchor: StructuralAnchor
+
+    @model_validator(mode="after")
+    def validate_git_revision(self) -> Self:
+        if self.revision_kind is RevisionKind.GIT_COMMIT and (
+            len(self.revision) not in {40, 64}
+            or any(character not in "0123456789abcdef" for character in self.revision)
+        ):
+            raise ValueError("Git source revision must be a canonical commit ID")
+        return self
 
 
 class RetrievalScores(ContractModel):
@@ -223,7 +245,7 @@ class RetrievalHit(ContractModel):
     title: str | None = None
     content: str
     source: RetrievalSourceRevision
-    chunk_content_hash: str = Field(min_length=1)
+    chunk_content_hash: CanonicalSha256
     content_role: ContentRole
     citation_id: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
@@ -239,7 +261,7 @@ class RetrievalCitation(ContractModel):
     chunk_id: str = Field(min_length=1)
     logical_chunk_id: str = Field(min_length=1)
     source: RetrievalSourceRevision
-    chunk_content_hash: str = Field(min_length=1)
+    chunk_content_hash: CanonicalSha256
     content_role: ContentRole
     derived_from_chunk_ids: list[str] | None = None
 

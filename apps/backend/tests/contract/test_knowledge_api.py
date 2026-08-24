@@ -566,13 +566,23 @@ def ranked_hit(
     suffix: str,
 ) -> SearchHit:
     base = search_hit()
+    source = base.source
+    if family is SourceFamily.DOC:
+        source = SourceRevisionRef(
+            source_id="document:authorization",
+            source_type="document",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision="blob-version-17",
+            source_content_hash=SOURCE_HASH,
+            anchor=DocumentAnchor(heading_path=("Authorization",), page=1),
+        )
     return SearchHit(
         family=family,
         chunk_id="h_" + suffix * 64,
         logical_chunk_id="h_" + suffix * 64,
         title=base.title,
         content=base.content,
-        source=base.source,
+        source=source,
         chunk_content_hash="sha256:" + suffix * 64,
         content_role=base.content_role,
         index_revision=IndexRevision(
@@ -672,6 +682,58 @@ async def test_http_mapping_is_explicit_and_drops_internal_index_provenance() ->
     )
     mapped_answer = answer_response_to_http(answer)
     assert mapped_answer.claims[0].citation_ids == ["citation-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("source", "revision", "A" * 40),
+        ("source", "revision", "g" * 40),
+        ("source", "source_content_hash", "sha256:" + "A" * 64),
+        ("source", "source_content_hash", "sha256:" + "a" * 63),
+        ("evidence", "chunk_content_hash", "sha256:" + "g" * 64),
+    ],
+    ids=(
+        "git-uppercase",
+        "git-non-hex",
+        "source-hash-uppercase",
+        "source-hash-wrong-length",
+        "hit-chunk-hash-non-hex",
+    ),
+)
+async def test_internal_search_mapping_revalidates_runtime_mutated_public_provenance(
+    target: str,
+    field: str,
+    value: str,
+) -> None:
+    """Mapping must not trust frozen objects that were mutated after construction."""
+    response = await api(FakeSearchPort((search_hit(),)), FakeModelPort()).search(
+        SearchRequest(query="authorization", source_families=(SourceFamily.CODE,)),
+        policy_context(),
+    )
+    evidence = response.evidence[0]
+    mutated = evidence.source if target == "source" else evidence
+    object.__setattr__(mutated, field, value)
+
+    with pytest.raises(ValidationError):
+        search_response_to_http(response)
+
+
+@pytest.mark.asyncio
+async def test_internal_answer_mapping_revalidates_runtime_mutated_citation_hash() -> None:
+    answer = await api(FakeSearchPort((search_hit(),)), FakeModelPort()).answer(
+        AnswerRequest(query="authorization"),
+        policy_context(),
+    )
+    object.__setattr__(
+        answer.citations[0],
+        "chunk_content_hash",
+        "sha256:" + "B" * 64,
+    )
+
+    with pytest.raises(ValidationError):
+        answer_response_to_http(answer)
 
 
 class FakeAzureResults:

@@ -146,6 +146,14 @@ def malformed_evidence(field: str) -> Evidence:
     return item
 
 
+def runtime_mutated_evidence(*, field: str, value: object, source_field: bool) -> Evidence:
+    """Bypass frozen construction to exercise the immediate provider-egress boundary."""
+    item = evidence()
+    target = item.source if source_field else item
+    object.__setattr__(target, field, value)
+    return item
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body",
@@ -422,6 +430,66 @@ async def test_non_string_evidence_provenance_fails_before_egress(
             )
 
     assert calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "source_field"),
+    [
+        ("revision_kind", "git_commit", True),
+        ("revision", "A" * 40, True),
+        ("revision", "g" * 40, True),
+        ("revision", "a" * 39, True),
+        ("source_content_hash", "sha256:" + "A" * 64, True),
+        ("source_content_hash", "sha256:" + "g" * 64, True),
+        ("source_content_hash", "sha256:" + "a" * 63, True),
+        ("chunk_content_hash", "sha256:" + "A" * 64, False),
+        ("chunk_content_hash", "sha256:" + "g" * 64, False),
+        ("chunk_content_hash", "sha256:" + "b" * 63, False),
+    ],
+    ids=(
+        "open-revision-kind",
+        "git-uppercase",
+        "git-non-hex",
+        "git-wrong-length",
+        "source-hash-uppercase",
+        "source-hash-non-hex",
+        "source-hash-wrong-length",
+        "chunk-hash-uppercase",
+        "chunk-hash-non-hex",
+        "chunk-hash-wrong-length",
+    ),
+)
+async def test_runtime_canonical_provenance_lookalikes_fail_before_litellm_egress(
+    field: str,
+    value: object,
+    source_field: bool,
+) -> None:
+    """Constructor-time checks cannot authorize a later mutated provider payload."""
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=answer_response())
+
+    mutated = runtime_mutated_evidence(
+        field=field,
+        value=value,
+        source_field=source_field,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = LiteLLMAdapter(config(), client=client)
+        with pytest.raises(ModelUnavailable) as caught:
+            await adapter.answer(
+                "authorization",
+                (mutated,),
+                "quick-hybrid-v1",
+            )
+
+    assert calls == 0
+    assert "not-a-real-key" not in str(caught.value)
+    assert str(value) not in str(caught.value)
 
 
 class DelayedStream(httpx.AsyncByteStream):
