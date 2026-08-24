@@ -314,6 +314,54 @@ async def test_current_policy_failure_stops_before_redaction_embedding_or_search
 
 
 @pytest.mark.asyncio
+async def test_empty_source_request_uses_doc_only_policy_family() -> None:
+    """A blank source request preserves the policy's sole DOC family as the query plan."""
+    current = policy_context(source_families=frozenset({"doc"}))
+    redactor = RecordingRedactor(
+        RedactionResult(sanitized_text="authorization", redaction_version="redaction-v3")
+    )
+    model = RecordingModel()
+    search = RecordingSearch()
+
+    await knowledge_api(
+        verifier=CurrentPolicyVerifier(current),
+        redactor=redactor,
+        model=model,
+        search=search,
+    ).search(SearchRequest(query="authorization"), current)
+
+    assert search.executions[0].plan.source_families == (SourceFamily.DOC,)
+
+
+@pytest.mark.asyncio
+async def test_explicit_unauthorized_source_family_stops_before_retrieval_io() -> None:
+    """An explicit CODE request cannot be silently reduced to an authorized DOC search."""
+    current = policy_context(source_families=frozenset({"doc"}))
+    verifier = CurrentPolicyVerifier(current)
+    redactor = RecordingRedactor(
+        RedactionResult(sanitized_text="authorization", redaction_version="redaction-v3")
+    )
+    model = RecordingModel()
+    search = RecordingSearch()
+
+    with pytest.raises(AuthorizationDenied, match="requested source scope is not authorized"):
+        await knowledge_api(
+            verifier=verifier,
+            redactor=redactor,
+            model=model,
+            search=search,
+        ).search(
+            SearchRequest(query="authorization", source_families=(SourceFamily.CODE,)),
+            current,
+        )
+
+    assert verifier.calls == [current]
+    assert redactor.inputs == []
+    assert model.embedding_queries == []
+    assert search.executions == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "changes",
     [

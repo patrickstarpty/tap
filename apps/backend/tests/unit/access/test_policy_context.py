@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from tap.modules.access.application.authorize import build_retrieval_policy_context
 from tap.modules.access.domain.policy import (
     AuthorizationDenied,
+    AuthorizedActor,
     Classification,
     PolicyUnavailable,
     ProjectPolicy,
@@ -17,6 +19,7 @@ from tap.modules.access.domain.policy import (
 )
 
 SOURCE_HASH = "sha256:" + "a" * 64
+GroupSetBuilder = Callable[[frozenset[str]], object]
 
 
 def subject(
@@ -149,6 +152,85 @@ def test_policy_context_rejects_unverified_subject_or_empty_group_intersection()
             requested_tenant_id="tenant-a",
             requested_project_id="project-a",
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "build"),
+    (
+        ("group_ids", lambda groups: replace(subject(), group_ids=groups)),
+        ("allowed_group_ids", lambda groups: replace(project_policy(), allowed_group_ids=groups)),
+        (
+            "allowed_group_ids",
+            lambda groups: AuthorizedActor(
+                user_id="user-1",
+                allowed_group_ids=groups,
+                roles=frozenset({"reader"}),
+            ),
+        ),
+    ),
+)
+def test_policy_group_sets_allow_128_members_with_a_256_character_member(
+    field: str,
+    build: GroupSetBuilder,
+) -> None:
+    """A legal bounded group set must remain available to policy construction."""
+    groups = frozenset({*(f"group-{index:03d}" for index in range(127)), "g" * 256})
+
+    del field
+    build(groups)
+
+
+@pytest.mark.parametrize(
+    ("field", "build"),
+    (
+        ("group_ids", lambda groups: replace(subject(), group_ids=groups)),
+        ("allowed_group_ids", lambda groups: replace(project_policy(), allowed_group_ids=groups)),
+        (
+            "allowed_group_ids",
+            lambda groups: AuthorizedActor(
+                user_id="user-1",
+                allowed_group_ids=groups,
+                roles=frozenset({"reader"}),
+            ),
+        ),
+    ),
+)
+def test_policy_group_sets_reject_more_than_128_members_without_echoing_values(
+    field: str,
+    build: GroupSetBuilder,
+) -> None:
+    """Unbounded group expansion must fail without disclosing membership values."""
+    groups = frozenset(f"group-{index:03d}" for index in range(129))
+
+    with pytest.raises(ValueError, match=rf"^{field} must contain at most 128 values$") as error:
+        build(groups)
+
+    assert "group-000" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "build",
+    (
+        lambda groups: replace(subject(), group_ids=groups),
+        lambda groups: replace(project_policy(), allowed_group_ids=groups),
+        lambda groups: AuthorizedActor(
+            user_id="user-1",
+            allowed_group_ids=groups,
+            roles=frozenset({"reader"}),
+        ),
+    ),
+)
+@pytest.mark.parametrize("invalid_group", ("g" * 257, ""), ids=("too-long", "blank"))
+def test_policy_group_sets_reject_overlong_or_blank_members_without_echoing_values(
+    build: GroupSetBuilder,
+    invalid_group: str,
+) -> None:
+    """Invalid group identifiers must fail before they can become provider filters."""
+    with pytest.raises((TypeError, ValueError)) as error:
+        build(frozenset({invalid_group}))
+
+    if invalid_group:
+        assert invalid_group not in str(error.value)
 
 
 def test_policy_context_fails_closed_when_policy_is_unavailable_or_permission_revoked() -> None:

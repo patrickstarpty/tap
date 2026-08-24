@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+MAX_POLICY_GROUP_IDS = 128
+MAX_POLICY_STRING_LENGTH = 256
+
 
 class AuthorizationDenied(Exception):
     """Current verified facts do not authorize the requested operation."""
@@ -48,7 +51,13 @@ class VerifiedSubjectFacts:
     def __post_init__(self) -> None:
         _required_string("tenant_id", self.tenant_id)
         _required_string("user_id", self.user_id)
-        _string_set("group_ids", self.group_ids, allow_empty=True)
+        _string_set(
+            "group_ids",
+            self.group_ids,
+            allow_empty=True,
+            max_items=MAX_POLICY_GROUP_IDS,
+            max_item_length=MAX_POLICY_STRING_LENGTH,
+        )
         _string_set("roles", self.roles, allow_empty=True)
         _strict_bool("token_verified", self.token_verified)
 
@@ -150,7 +159,13 @@ class ProjectPolicy:
         _strict_bool("permission_granted", self.permission_granted)
         if not isinstance(self.classification_ceiling, Classification):
             raise TypeError("classification_ceiling must be a Classification")
-        _string_set("allowed_group_ids", self.allowed_group_ids, allow_empty=True)
+        _string_set(
+            "allowed_group_ids",
+            self.allowed_group_ids,
+            allow_empty=True,
+            max_items=MAX_POLICY_GROUP_IDS,
+            max_item_length=MAX_POLICY_STRING_LENGTH,
+        )
         _string_set("allowed_environments", self.allowed_environments, allow_empty=False)
         _string_set(
             "allowed_source_families",
@@ -173,7 +188,13 @@ class AuthorizedActor:
 
     def __post_init__(self) -> None:
         _required_string("user_id", self.user_id)
-        _string_set("allowed_group_ids", self.allowed_group_ids, allow_empty=False)
+        _string_set(
+            "allowed_group_ids",
+            self.allowed_group_ids,
+            allow_empty=False,
+            max_items=MAX_POLICY_GROUP_IDS,
+            max_item_length=MAX_POLICY_STRING_LENGTH,
+        )
         _string_set("roles", self.roles, allow_empty=True)
 
 
@@ -291,10 +312,21 @@ def _immutable_revision(name: str, kind: str, value: object) -> None:
         raise ValueError(f"{name} must be a canonical Git commit ID")
 
 
-def _string_set(name: str, value: object, *, allow_empty: bool) -> None:
+def _string_set(
+    name: str,
+    value: object,
+    *,
+    allow_empty: bool,
+    max_items: int | None = None,
+    max_item_length: int = MAX_POLICY_STRING_LENGTH,
+) -> None:
     if not isinstance(value, frozenset) or not all(
         isinstance(item, str) and item for item in value
     ):
         raise TypeError(f"{name} must be a frozenset of non-empty strings")
     if not allow_empty and not value:
         raise ValueError(f"{name} must not be empty")
+    if max_items is not None and len(value) > max_items:
+        raise ValueError(f"{name} must contain at most {max_items} values")
+    if any(len(item) > max_item_length for item in value):
+        raise ValueError(f"{name} values must contain at most {max_item_length} characters")
