@@ -16,6 +16,8 @@ from tap.modules.access.domain.policy import (
     VerifiedSubjectFacts,
 )
 
+SOURCE_HASH = "sha256:" + "a" * 64
+
 
 def subject(
     *,
@@ -56,7 +58,7 @@ def project_policy(
                 source_id="repo:checkout:payment.py",
                 revision_kind="git_commit",
                 revision="a" * 40,
-                source_content_hash="sha256:source",
+                source_content_hash=SOURCE_HASH,
                 allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
             ),
         ),
@@ -193,3 +195,62 @@ def test_project_policy_required_string_facts_reject_truthy_non_strings(field: s
     """A truthy runtime value must not become part of a current policy binding."""
     with pytest.raises((TypeError, ValueError)):
         replace(project_policy(), **{field: 1})
+
+
+@pytest.mark.parametrize(
+    ("revision", "source_hash"),
+    [
+        ("a" * 39, "sha256:" + "a" * 64),
+        ("a" * 41, "sha256:" + "a" * 64),
+        ("A" * 40, "sha256:" + "a" * 64),
+        ("g" * 40, "sha256:" + "a" * 64),
+        ("a" * 40, "sha256:" + "a" * 63),
+        ("a" * 40, "sha256:" + "A" * 64),
+        ("a" * 40, "sha256:" + "g" * 64),
+    ],
+    ids=(
+        "git-short",
+        "git-long",
+        "git-uppercase",
+        "git-non-hex",
+        "hash-short",
+        "hash-uppercase",
+        "hash-non-hex",
+    ),
+)
+def test_resource_policy_rejects_noncanonical_git_revision_or_source_hash(
+    revision: str,
+    source_hash: str,
+) -> None:
+    """Malformed immutable facts must fail before they can enter an ACL filter."""
+    with pytest.raises(ValueError):
+        ResourceGrant(
+            family="code",
+            source_id="repo:checkout:payment.py",
+            revision_kind="git_commit",
+            revision=revision,
+            source_content_hash=source_hash,
+        )
+
+
+@pytest.mark.parametrize(
+    ("family", "revision_kind", "revision"),
+    [
+        ("code", "git_commit", "a" * 40),
+        ("bdd", "git_commit", "b" * 64),
+        ("doc", "blob_version", "etag:blob-version-17"),
+        ("failure", "mysql_version", "mysql-bin.000017:42"),
+    ],
+)
+def test_resource_policy_accepts_explicit_supported_revision_shapes(
+    family: str,
+    revision_kind: str,
+    revision: str,
+) -> None:
+    ResourceGrant(
+        family=family,
+        source_id="source-17",
+        revision_kind=revision_kind,
+        revision=revision,
+        source_content_hash="sha256:" + "a" * 64,
+    )

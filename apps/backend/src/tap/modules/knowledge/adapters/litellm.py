@@ -31,7 +31,8 @@ class LiteLLMConfig:
     answer_model_id: str
     answer_profile_id: str
     embedding_dimension: int
-    allowed_model_labels: frozenset[str]
+    allowed_embedding_model_labels: frozenset[str]
+    allowed_answer_model_labels: frozenset[str]
     allowed_retrieval_profile_ids: frozenset[str]
     deadline_seconds: float = 15
     max_retries: int = 1
@@ -61,20 +62,27 @@ class LiteLLMConfig:
             value = getattr(self, name)
             if not isinstance(value, str) or not value or len(value) > 256:
                 raise ValueError(f"{name} must be a bounded fixed-route identifier")
-        _strict_string_set("allowed_model_labels", self.allowed_model_labels, maximum_items=32)
+        _strict_string_set(
+            "allowed_embedding_model_labels",
+            self.allowed_embedding_model_labels,
+            maximum_items=32,
+        )
+        _strict_string_set(
+            "allowed_answer_model_labels",
+            self.allowed_answer_model_labels,
+            maximum_items=32,
+        )
         _strict_string_set(
             "allowed_retrieval_profile_ids",
             self.allowed_retrieval_profile_ids,
             maximum_items=8,
         )
-        if (
-            not {
-                self.embedding_model_id,
-                self.answer_model_id,
-            }
-            <= self.allowed_model_labels
-        ):
-            raise ValueError("fixed model aliases must be included in the model-label allowlist")
+        if self.embedding_model_id not in self.allowed_embedding_model_labels:
+            raise ValueError("fixed embedding alias must be included in its route allowlist")
+        if self.answer_model_id not in self.allowed_answer_model_labels:
+            raise ValueError("fixed answer alias must be included in its route allowlist")
+        if self.allowed_embedding_model_labels & self.allowed_answer_model_labels:
+            raise ValueError("embedding and answer model-label allowlists must be disjoint")
         _strict_int("embedding_dimension", self.embedding_dimension, minimum=1, maximum=4_096)
         _strict_int("max_retries", self.max_retries, minimum=0, maximum=2)
         _strict_int("max_connections", self.max_connections, minimum=1, maximum=16)
@@ -166,6 +174,7 @@ class LiteLLMAdapter:
                     "v1/embeddings",
                     {"model": self._config.embedding_model_id, "input": query},
                     deadline_at=deadline_at,
+                    allowed_model_labels=self._config.allowed_embedding_model_labels,
                 )
                 result = self._parse_embedding(response)
                 if loop.time() >= deadline_at:
@@ -219,6 +228,7 @@ class LiteLLMAdapter:
                         },
                     },
                     deadline_at=deadline_at,
+                    allowed_model_labels=self._config.allowed_answer_model_labels,
                 )
                 result = self._parse_answer(response, evidence)
                 if loop.time() >= deadline_at:
@@ -288,6 +298,7 @@ class LiteLLMAdapter:
         payload: dict[str, object],
         *,
         deadline_at: float,
+        allowed_model_labels: frozenset[str],
     ) -> _GatewayResponse:
         try:
             encoded = json.dumps(
@@ -336,7 +347,7 @@ class LiteLLMAdapter:
                             ("x-request-id", "x-provider-request-id", "x-openai-request-id"),
                         )
                         gateway_call_id = _first_header(response, ("x-litellm-call-id",))
-                        gateway_model_id = _first_header(response, ("x-litellm-model-id",))
+                        gateway_model_id = _bounded_model_header(response)
             except httpx.TransportError as error:
                 if attempt == self._config.max_retries:
                     raise ModelUnavailable("LiteLLM transport retry budget exhausted") from error
@@ -350,7 +361,7 @@ class LiteLLMAdapter:
             if loop.time() >= deadline_at:
                 raise TimeoutError
             if gateway_model_id is not None:
-                self._validate_model_label(gateway_model_id)
+                self._validate_model_label(gateway_model_id, allowed_model_labels)
             return _GatewayResponse(
                 body=body,
                 provider_request_id=provider_request_id,
@@ -363,7 +374,7 @@ class LiteLLMAdapter:
         try:
             body = response.body
             model = _required_body_string(body, "model", maximum=256)
-            self._validate_model_label(model)
+            self._validate_model_label(model, self._config.allowed_embedding_model_labels)
             data = body.get("data")
             if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
                 raise ValueError("embedding data must contain exactly one item")
@@ -397,7 +408,7 @@ class LiteLLMAdapter:
         try:
             body = response.body
             model = _required_body_string(body, "model", maximum=256)
-            self._validate_model_label(model)
+            self._validate_model_label(model, self._config.allowed_answer_model_labels)
             choices = body.get("choices")
             if (
                 not isinstance(choices, list)
@@ -472,9 +483,10 @@ class LiteLLMAdapter:
         ) as error:
             raise ModelUnavailable("LiteLLM returned a malformed grounded answer") from error
 
-    def _validate_model_label(self, value: str) -> None:
-        if value not in self._config.allowed_model_labels:
-            raise ValueError("LiteLLM returned an unknown model label")
+    @staticmethod
+    def _validate_model_label(value: str, allowed: frozenset[str]) -> None:
+        if value not in allowed:
+            raise ModelUnavailable("LiteLLM returned model metadata outside the fixed route")
 
 
 async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
@@ -492,6 +504,15 @@ def _first_header(response: httpx.Response, names: tuple[str, ...]) -> str | Non
         if isinstance(value, str) and value and len(value) <= 256:
             return value
     return None
+
+
+def _bounded_model_header(response: httpx.Response) -> str | None:
+    value = response.headers.get("x-litellm-model-id")
+    if value is None:
+        return None
+    if not value or len(value) > 256:
+        raise ModelUnavailable("LiteLLM returned malformed fixed-route metadata")
+    return value
 
 
 def _strict_int(name: str, value: object, *, minimum: int, maximum: int) -> None:

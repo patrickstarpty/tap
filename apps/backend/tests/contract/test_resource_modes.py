@@ -47,6 +47,10 @@ AUTHORIZED_ANCHOR = CodeAnchor(
     line_start=10,
     line_end=25,
 )
+SOURCE_HASH = "sha256:" + "a" * 64
+OTHER_SOURCE_HASH = "sha256:" + "b" * 64
+FIRST_VERSION_HASH = "sha256:" + "c" * 64
+SECOND_VERSION_HASH = "sha256:" + "d" * 64
 
 
 def policy_context() -> RetrievalPolicyContext:
@@ -75,7 +79,7 @@ def policy_context() -> RetrievalPolicyContext:
                 source_id="repo:checkout:payment.py",
                 revision_kind="git_commit",
                 revision="a" * 40,
-                source_content_hash="sha256:source-code",
+                source_content_hash=SOURCE_HASH,
                 allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
             ),
         ),
@@ -202,7 +206,7 @@ def hit(
     source_id: str = "repo:checkout:payment.py",
     revision_kind: RevisionKind = RevisionKind.GIT_COMMIT,
     revision: str = "a" * 40,
-    source_hash: str = "sha256:source-code",
+    source_hash: str = SOURCE_HASH,
     anchor: CodeAnchor = AUTHORIZED_ANCHOR,
     local_rank: int = 1,
     chunk_suffix: str = "1",
@@ -223,7 +227,7 @@ def hit(
             source_content_hash=source_hash,
             anchor=anchor,
         ),
-        chunk_content_hash=chunk_hash or f"sha256:chunk-{chunk_suffix}",
+        chunk_content_hash=chunk_hash or "sha256:" + chunk_suffix * 64,
         content_role=ContentRole.SOURCE,
         index_revision=IndexRevision(
             physical_index=f"kb-{family.value}-v1-20260824",
@@ -258,7 +262,7 @@ def required_request() -> AnswerRequest:
     [
         hit(family=SourceFamily.DOC),
         hit(revision_kind=RevisionKind.BLOB_VERSION),
-        hit(source_hash="sha256:wrong-source"),
+        hit(source_hash=OTHER_SOURCE_HASH),
         hit(
             anchor=replace(
                 AUTHORIZED_ANCHOR,
@@ -313,7 +317,7 @@ async def test_preferred_resource_gets_fixed_profile_weight_without_raw_score_co
     preferred = hit(local_rank=2, chunk_suffix="2")
     unrelated = hit(
         source_id="repo:checkout:other.py",
-        source_hash="sha256:other-source",
+        source_hash=OTHER_SOURCE_HASH,
         local_rank=1,
         chunk_suffix="3",
     )
@@ -345,8 +349,8 @@ async def test_same_logical_chunk_with_different_hashes_abstains_as_conflicting(
     response = await knowledge(
         StaticSearch(
             (
-                hit(chunk_suffix="4", chunk_hash="sha256:version-one"),
-                hit(chunk_suffix="5", chunk_hash="sha256:version-two", local_rank=2),
+                hit(chunk_suffix="4", chunk_hash=FIRST_VERSION_HASH),
+                hit(chunk_suffix="5", chunk_hash=SECOND_VERSION_HASH, local_rank=2),
             )
         ),
         model,
@@ -391,7 +395,7 @@ async def test_one_global_scope_union_excludes_uncovered_families_and_binds_subt
 async def test_application_rejects_a_search_port_hit_outside_bound_scope() -> None:
     """Provider-side prefiltering remains mandatory, with application validation behind it."""
     outside = replace(
-        hit(source_id="repo:checkout:other.py", source_hash="sha256:other"),
+        hit(source_id="repo:checkout:other.py", source_hash=OTHER_SOURCE_HASH),
         root_id="root-other",
         parent_id="parent-other",
     )

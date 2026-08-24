@@ -98,8 +98,12 @@ class ResourceGrant:
         _required_string("family", self.family)
         _required_string("source_id", self.source_id)
         _required_string("revision_kind", self.revision_kind)
-        _required_string("revision", self.revision)
-        _required_string("source_content_hash", self.source_content_hash)
+        if self.revision_kind not in {"git_commit", "blob_version", "mysql_version"}:
+            raise ValueError("resource grant has an unsupported revision kind")
+        if self.family in {"code", "bdd"} and self.revision_kind != "git_commit":
+            raise ValueError("code and BDD resource grants require a Git revision")
+        _immutable_revision("revision", self.revision_kind, self.revision)
+        _canonical_sha256("source_content_hash", self.source_content_hash)
         _string_set("allowed_anchor_keys", self.allowed_anchor_keys, allow_empty=True)
         _strict_bool("allow_all_anchors", self.allow_all_anchors)
         if (
@@ -265,6 +269,26 @@ def _strict_bool(name: str, value: object) -> None:
 def _required_string(name: str, value: object) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string")
+
+
+def _canonical_sha256(name: str, value: object) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 71
+        or not value.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in value[7:])
+    ):
+        raise ValueError(f"{name} must be a canonical sha256 digest")
+
+
+def _immutable_revision(name: str, kind: str, value: object) -> None:
+    if not isinstance(value, str) or not value or len(value) > 512:
+        raise ValueError(f"{name} must be a bounded immutable revision")
+    if kind == "git_commit" and (
+        len(value) not in {40, 64}
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be a canonical Git commit ID")
 
 
 def _string_set(name: str, value: object, *, allow_empty: bool) -> None:

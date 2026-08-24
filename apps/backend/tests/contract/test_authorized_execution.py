@@ -23,6 +23,8 @@ from tap.modules.knowledge.domain.models import (
     CodeAnchor,
     ContentRole,
     IndexRevision,
+    ResourceMode,
+    ResourceRef,
     RevisionKind,
     SearchRequest,
     SourceFamily,
@@ -36,6 +38,9 @@ from tap.modules.knowledge.ports.models import (
     SearchExecution,
     SearchHit,
 )
+
+SOURCE_HASH = "sha256:" + "a" * 64
+CHUNK_HASH = "sha256:" + "b" * 64
 
 
 def policy_context(
@@ -226,7 +231,7 @@ def search_hit() -> SearchHit:
             source_type="code",
             revision_kind=RevisionKind.GIT_COMMIT,
             revision="a" * 40,
-            source_content_hash="sha256:source",
+            source_content_hash=SOURCE_HASH,
             anchor=CodeAnchor(
                 repo="checkout",
                 path="payment.py",
@@ -235,7 +240,7 @@ def search_hit() -> SearchHit:
                 line_end=25,
             ),
         ),
-        chunk_content_hash="sha256:chunk",
+        chunk_content_hash=CHUNK_HASH,
         content_role=ContentRole.SOURCE,
         index_revision=IndexRevision(
             physical_index="kb-code-v1-20260824",
@@ -305,7 +310,7 @@ async def test_current_policy_failure_stops_before_redaction_embedding_or_search
                     source_id="repo:checkout:payment.py",
                     revision_kind="git_commit",
                     revision="a" * 40,
-                    source_content_hash="sha256:source",
+                    source_content_hash=SOURCE_HASH,
                 ),
             )
         },
@@ -506,3 +511,151 @@ async def test_search_result_vector_space_mismatch_fails_before_evidence() -> No
             model=RecordingModel(),
             search=RecordingSearch((mismatched,)),
         ).search(SearchRequest(query="authorization"), current)
+
+
+class ProviderResultThatMustBeDiscarded:
+    @property
+    def family(self) -> SourceFamily:
+        raise AssertionError("revoked Search results must not be inspected")
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_search_discards_result_before_inspection() -> None:
+    """Deleting the post-Search refresh would inspect and expose a stale result."""
+    current = policy_context()
+    verifier = SequencedPolicyVerifier(
+        [
+            current,
+            current,
+            current,
+            AuthorizationDenied("permission revoked while Search ran"),
+        ]
+    )
+    model = RecordingModel()
+    search = RecordingSearch((ProviderResultThatMustBeDiscarded(),))  # type: ignore[arg-type]
+
+    with pytest.raises(AuthorizationDenied, match="permission revoked while Search ran"):
+        await knowledge_api(
+            verifier=verifier,
+            redactor=RecordingRedactor(
+                RedactionResult(
+                    sanitized_text="authorization",
+                    redaction_version="redaction-v3",
+                )
+            ),
+            model=model,
+            search=search,
+        ).search(SearchRequest(query="authorization"), current)
+
+    assert len(search.executions) == 1
+    assert model.embedding_queries == ["authorization"]
+    assert verifier.calls == [current, current, current, current]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("early_path", ["no-evidence", "required-missing", "conflict"])
+async def test_post_search_revocation_preempts_every_early_abstention(
+    early_path: str,
+) -> None:
+    """No abstention branch may return from a policy context stale after Search."""
+    current = policy_context()
+    request = AnswerRequest(query="authorization")
+    hits: tuple[SearchHit, ...] = ()
+    if early_path == "required-missing":
+        required_source = "repo:checkout:required.py"
+        current = policy_context(
+            resource_grants=(
+                ResourceGrant(
+                    family="code",
+                    source_id=required_source,
+                    revision_kind="git_commit",
+                    revision="b" * 40,
+                    source_content_hash="sha256:" + "b" * 64,
+                ),
+            )
+        )
+        request = AnswerRequest(
+            query="authorization",
+            resource_refs=(
+                ResourceRef(
+                    family=SourceFamily.CODE,
+                    source_id=required_source,
+                    mode=ResourceMode.REQUIRED,
+                ),
+            ),
+        )
+        hits = (search_hit(),)
+    elif early_path == "conflict":
+        hits = (
+            search_hit(),
+            replace(
+                search_hit(),
+                chunk_id="h_" + "3" * 64,
+                chunk_content_hash="sha256:" + "3" * 64,
+                local_rank=2,
+            ),
+        )
+
+    verifier = SequencedPolicyVerifier(
+        [
+            current,
+            current,
+            current,
+            AuthorizationDenied("permission revoked while Search ran"),
+        ]
+    )
+    model = RecordingModel()
+    search = RecordingSearch(hits)
+
+    with pytest.raises(AuthorizationDenied, match="permission revoked while Search ran"):
+        await knowledge_api(
+            verifier=verifier,
+            redactor=RecordingRedactor(
+                RedactionResult(
+                    sanitized_text="authorization",
+                    redaction_version="redaction-v3",
+                )
+            ),
+            model=model,
+            search=search,
+        ).answer(request, current)
+
+    assert len(search.executions) == 1
+    assert model.answer_queries == []
+    assert verifier.calls == [current, current, current, current]
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_answer_generation_discards_provider_output() -> None:
+    """Deleting the post-answer refresh would return stale text, claims, and citations."""
+    current = policy_context()
+    verifier = SequencedPolicyVerifier(
+        [
+            current,
+            current,
+            current,
+            current,
+            current,
+            AuthorizationDenied("permission revoked while answer generation ran"),
+        ]
+    )
+    model = RecordingModel()
+
+    with pytest.raises(
+        AuthorizationDenied,
+        match="permission revoked while answer generation ran",
+    ):
+        await knowledge_api(
+            verifier=verifier,
+            redactor=RecordingRedactor(
+                RedactionResult(
+                    sanitized_text="authorization",
+                    redaction_version="redaction-v3",
+                )
+            ),
+            model=model,
+            search=RecordingSearch((search_hit(),)),
+        ).answer(AnswerRequest(query="authorization"), current)
+
+    assert model.answer_queries == ["authorization"]
+    assert verifier.calls == [current, current, current, current, current, current]

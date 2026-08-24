@@ -45,6 +45,7 @@ REQUIRED_ENVIRONMENT = (
     "TAP_AZURE_SEARCH_SCHEMA_VERSION",
     "TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID",
     "TAP_AZURE_SEARCH_VECTOR_DIMENSION",
+    "TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON",
     "TAP_AZURE_TEST_TENANT_ID",
     "TAP_AZURE_TEST_PROJECT_ID",
     "TAP_AZURE_TEST_ALLOWED_GROUP_ID",
@@ -93,6 +94,21 @@ def required_configuration() -> dict[str, str]:
     ):
         pytest.fail(
             "TAP_AZURE_TEST_QUERY_VECTOR_JSON must match the configured finite vector space"
+        )
+    try:
+        source_types = json.loads(values["TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON"])
+    except json.JSONDecodeError:
+        pytest.fail("TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON must be a JSON string array")
+    if (
+        not isinstance(source_types, list)
+        or not 1 <= len(source_types) <= 32
+        or any(
+            not isinstance(value, str) or not value or len(value) > 128 for value in source_types
+        )
+        or len(set(source_types)) != len(source_types)
+    ):
+        pytest.fail(
+            "TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON must be a bounded unique string array"
         )
     return values
 
@@ -196,6 +212,9 @@ async def test_real_azure_search_returns_zero_unauthorized_hits() -> None:
                     schema_version=config["TAP_AZURE_SEARCH_SCHEMA_VERSION"],
                     embedding_model_id=config["TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID"],
                     vector_dimension=int(config["TAP_AZURE_SEARCH_VECTOR_DIMENSION"]),
+                    allowed_source_types=frozenset(
+                        json.loads(config["TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON"])
+                    ),
                 )
             },
             query_api_key=config["TAP_AZURE_SEARCH_API_KEY"],

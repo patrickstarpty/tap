@@ -44,6 +44,8 @@ from tap.modules.knowledge.domain.models import (
 from tap.modules.knowledge.ports.models import SearchExecution
 
 CANONICAL_HASH = "sha256:" + "a" * 64
+SOURCE_HASH = "sha256:" + "b" * 64
+CHUNK_HASH = "sha256:" + "c" * 64
 SANITIZED_HASH = "sha256:df53c004039afb4e356e07ed30b12b466e3a5f1067ed623d7d76d99101e0894e"
 ANCHOR = CodeAnchor(
     repo="checkout",
@@ -57,6 +59,12 @@ SUBTREE = FilterableSubtree(
     parent_ids=("parent-authorize",),
     logical_chunk_ids=("h_" + "9" * 64,),
 )
+SOURCE_TYPES = {
+    SourceFamily.DOC: frozenset({"document", "openapi"}),
+    SourceFamily.CODE: frozenset({"code", "code_summary"}),
+    SourceFamily.BDD: frozenset({"bdd"}),
+    SourceFamily.FAILURE: frozenset({"failure"}),
+}
 
 
 def current_policy(*, with_resource: bool = False) -> RetrievalPolicyContext:
@@ -69,7 +77,7 @@ def current_policy(*, with_resource: bool = False) -> RetrievalPolicyContext:
                 source_id="repo:checkout:payment.py",
                 revision_kind="git_commit",
                 revision="a" * 40,
-                source_content_hash="sha256:source-code",
+                source_content_hash=SOURCE_HASH,
                 allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
                 subtree_grants=(
                     ResourceSubtreeGrant(
@@ -186,6 +194,7 @@ def target(family: SourceFamily = SourceFamily.CODE) -> AzureIndexTarget:
         schema_version="search-schema-v1",
         embedding_model_id="tap-embed-fixed-v1",
         vector_dimension=2,
+        allowed_source_types=SOURCE_TYPES[family],
     )
 
 
@@ -274,8 +283,8 @@ def valid_row() -> dict[str, Any]:
                 "lineEnd": 25,
             }
         ),
-        "sourceContentHash": "sha256:source-code",
-        "chunkContentHash": "sha256:chunk-code",
+        "sourceContentHash": SOURCE_HASH,
+        "chunkContentHash": CHUNK_HASH,
         "contentRole": "source",
         "derivedFromChunkIds": [],
         "corpusVersion": "corpus-17",
@@ -317,7 +326,7 @@ async def test_direct_execution_rejects_forged_scope_and_uncovered_family() -> N
         mode=ResourceMode.SCOPE,
         revision_kind=RevisionKind.GIT_COMMIT,
         revision="a" * 40,
-        source_content_hash="sha256:source-code",
+        source_content_hash=SOURCE_HASH,
         anchor=ANCHOR,
         subtree=SUBTREE,
     )
@@ -367,7 +376,7 @@ async def test_scope_prefilter_contains_hash_and_filterable_subtree_before_query
         mode=ResourceMode.SCOPE,
         revision_kind=RevisionKind.GIT_COMMIT,
         revision="a" * 40,
-        source_content_hash="sha256:source-code",
+        source_content_hash=SOURCE_HASH,
         anchor=ANCHOR,
         subtree=SUBTREE,
     )
@@ -380,7 +389,7 @@ async def test_scope_prefilter_contains_hash_and_filterable_subtree_before_query
     )
 
     emitted = client.calls[0]["filter"]
-    assert "sourceContentHash eq 'sha256:source-code'" in emitted
+    assert f"sourceContentHash eq '{SOURCE_HASH}'" in emitted
     assert "rootId eq 'root-payment'" in emitted
     assert "parentId eq 'parent-authorize'" in emitted
     assert (
@@ -398,8 +407,11 @@ async def test_scope_prefilter_contains_hash_and_filterable_subtree_before_query
         ("chunkId", "not-a-chunk-key"),
         ("logicalChunkId", ""),
         ("sourceContentHash", None),
+        ("sourceContentHash", "sha256:" + "g" * 64),
         ("chunkContentHash", ""),
+        ("chunkContentHash", "sha256:" + "A" * 64),
         ("sourceRevision", None),
+        ("sourceRevision", "G" * 40),
         ("indexFamily", "doc"),
         ("corpusVersion", "corpus-old"),
         ("schemaVersion", "search-schema-old"),
@@ -437,6 +449,52 @@ async def test_any_malformed_or_mismatched_row_rejects_the_selected_page(
 
     with pytest.raises(SearchUnavailable):
         await adapter.search(execution())
+
+
+@pytest.mark.asyncio
+async def test_selected_index_rejects_source_type_outside_its_route_allowlist() -> None:
+    """A cross-family sourceType label must invalidate the whole selected page."""
+    row = valid_row()
+    row["sourceType"] = "openapi"
+
+    with pytest.raises(SearchUnavailable):
+        route = AzureIndexTarget(
+            query_index="kb-code-read",
+            physical_index="kb-code-v1-20260824",
+            schema_version="search-schema-v1",
+            embedding_model_id="tap-embed-fixed-v1",
+            vector_dimension=2,
+            allowed_source_types=frozenset({"code", "code_summary"}),
+        )
+        adapter = AzureAISearchAdapter(
+            config(indexes={SourceFamily.CODE: route}),
+            client_factory=lambda _index: FakeClient([row]),
+        )
+        await adapter.search(execution())
+
+
+@pytest.mark.parametrize(
+    ("allowed_source_types", "error", "message"),
+    [
+        (frozenset(), ValueError, "source type"),
+        ({"code"}, TypeError, "frozenset"),
+        (frozenset({""}), ValueError, "source type"),
+    ],
+)
+def test_index_target_requires_an_immutable_closed_source_type_allowlist(
+    allowed_source_types: object,
+    error: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error, match=message):
+        AzureIndexTarget(
+            query_index="kb-code-read",
+            physical_index="kb-code-v1-20260824",
+            schema_version="search-schema-v1",
+            embedding_model_id="tap-embed-fixed-v1",
+            vector_dimension=2,
+            allowed_source_types=allowed_source_types,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.asyncio
@@ -631,6 +689,7 @@ async def test_bearer_token_is_default_and_physical_identity_is_explicit() -> No
             schema_version="search-schema-v1",
             embedding_model_id="tap-embed-fixed-v1",
             vector_dimension=2,
+            allowed_source_types=frozenset({"code"}),
         )
 
 

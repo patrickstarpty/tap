@@ -374,3 +374,132 @@ Therefore the real Azure authorized-positive/unauthorized-zero contract and the 
 - No Task 4+ ingestion/index writer or Task 5 route/worker/runtime assembly was added. The controller-owned ignored `progress.md` and `task-3-fix-round-1.md` were not modified or staged.
 
 Remaining concerns are operational only: real Azure and Entra/Project-Policy behavior still requires the two sanitized opt-in environments above, and later runtime assembly must supply current-policy verification, redaction, bearer-token, fixed-model, and explicit physical-index configuration. Those wiring tasks are deliberately outside Task 3.
+
+## Fix Round 2
+
+### Status and Accepted Review Items
+
+Fix Round 2 closes all five accepted blockers in the controller disposition. Search and answer provider results are now consumed only after a fresh authoritative policy verification; immutable provenance is canonical and bound to an explicit Azure index route; architecture guards reject parent-module-object bypasses; every public score is strict and finite; and LiteLLM response labels are bound to disjoint embedding/answer routes. No Task 4+ runtime wiring was added.
+
+1. **Post-provider revocation:** `AuthorizedRetrieval` refreshes current policy immediately after `SearchPort.search`, validates the existing immutable `QueryPlan`/`ContextSnapshot`, and only then inspects or materializes hits. The refreshed context is persisted in `_RetrievalRun`, so empty-evidence, missing-required, conflict, and normal answer paths all derive from the post-Search decision. It refreshes and revalidates again immediately after `ModelPort.answer`, before reading generated claims or text. A revoked, unavailable, or changed decision discards the provider result and fails closed.
+2. **Canonical Azure provenance:** policy grants, resolved resources, source revisions, evidence, and citations require exactly `sha256:` plus 64 lowercase hexadecimal characters. Git revisions require a 40- or 64-character lowercase hexadecimal commit ID; blob/MySQL revisions remain explicit non-empty bounded strings. `AzureIndexTarget` now owns an immutable, non-empty, bounded source-type allowlist, and every selected row must match it. A malformed hash/revision or cross-route source type rejects the entire selected page.
+3. **Architecture parent packages:** recursive AST checks now reject Chat access through `tap`, `tap.modules`, `tap.modules.knowledge`, the Knowledge API module object, non-allowlisted API symbols, and non-private aliases. The Access construction lint similarly recognizes policy-domain/access/module parent objects and permits the private factory only in `access/application/authorize.py`. Literal expectations are independent of repository import discovery.
+4. **Strict public scores:** `exact`, `bm25`, `vector`, `rrf`, and `rerank` use one strict finite Pydantic numeric type. Booleans, numeric strings, `NaN`, and both infinities are rejected rather than coerced or serialized as null.
+5. **LiteLLM route labels:** configuration now has separate, required, disjoint embedding-route and answer-route label sets. Both the response body `model` and the bounded `x-litellm-model-id` header are checked against the active route. Unknown/cross-route metadata produces a stable `ModelUnavailable` message without echoing credentials or untrusted values, while configured, gateway, provider, completion, and request identities remain separate.
+
+### Files and Dependencies
+
+Modified production/contract files:
+
+- `apps/backend/src/tap/contracts/http.py`
+- `apps/backend/src/tap/modules/access/domain/policy.py`
+- `apps/backend/src/tap/modules/knowledge/domain/models.py`
+- `apps/backend/src/tap/modules/knowledge/application/retrieve.py`
+- `apps/backend/src/tap/modules/knowledge/adapters/azure_ai_search.py`
+- `apps/backend/src/tap/modules/knowledge/adapters/litellm.py`
+
+Modified behavior/architecture/external-gate tests:
+
+- `apps/backend/tests/unit/access/test_policy_context.py`
+- `apps/backend/tests/contract/test_authorized_execution.py`
+- `apps/backend/tests/contract/test_azure_search_strict.py`
+- `apps/backend/tests/contract/test_knowledge_api.py`
+- `apps/backend/tests/contract/test_litellm_strict.py`
+- `apps/backend/tests/contract/test_public_retrieval_contract_strict.py`
+- `apps/backend/tests/contract/test_resource_modes.py`
+- `apps/backend/tests/architecture/test_module_boundaries.py`
+- `apps/backend/tests/integration/test_search_acl.py`
+
+The resource/LiteLLM/Azure test fixtures were migrated from descriptive hash placeholders to fixed canonical SHA-256 values so constructor validation cannot mask behavior assertions. The real Azure fixture now requires a sanitized `TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON` route allowlist. There was no dependency or lockfile change, and regenerated public contracts remained byte-identical.
+
+### TDD RED Evidence
+
+Each accepted finding received focused behavior tests before its production change:
+
+- Post-provider sequencing (`test_authorized_execution.py`, selector covering Search/answer-generation revocation and all early abstentions): `5 failed, 22 deselected`. Search inspected the poison result (`AssertionError: revoked Search results must not be inspected`); three early paths and answer generation reported `DID NOT RAISE AuthorizationDenied`.
+- Canonical policy grants (`test_policy_context.py`, resource-policy selector): `7 failed, 4 passed, 17 deselected`; each noncanonical Git/hash mutation reported `DID NOT RAISE`.
+- Canonical framework-free provenance (`test_knowledge_api.py`, revision/hash selector): `7 failed, 45 deselected`; invalid source revisions, source hashes, resolved-resource facts, and evidence hash all reported `DID NOT RAISE`.
+- Azure selected-page provenance/route tests (`test_azure_search_strict.py`, malformed/hash/revision/source-type selector): `7 failed, 16 passed, 94 deselected`. Three non-empty malformed fields reported `DID NOT RAISE`, and the route allowlist did not yet exist (`unexpected keyword argument 'allowed_source_types'`).
+- Parent-package architecture literals (`test_module_boundaries.py`, new Chat/policy literal selectors): `19 failed, 5 deselected`, because both decision helpers were absent (`NameError`).
+- Strict public scores (`test_public_retrieval_contract_strict.py -k every_public_score`): `30 failed, 63 deselected`; all five fields accepted every boolean/string/non-finite mutation and reported `DID NOT RAISE ValidationError`.
+- LiteLLM route labels (`test_litellm_strict.py`, cross-route/allowlist selector): `7 failed, 22 deselected`. Cross-route body/header labels were accepted, an unknown gateway label escaped as raw `ValueError`, and route-specific configuration fields did not yet exist.
+
+After the canonical constructors became strict, one existing adapter test fixture that used `dataclasses.replace` to create invalid domain values failed during collection at the new constructor boundary. It was changed to an explicit post-construction `object.__setattr__` runtime-annotation bypass, preserving the original adapter fail-before-egress mutation rather than weakening production validation.
+
+### GREEN and Repository Verification
+
+Focused GREEN evidence:
+
+```text
+post-provider sequencing: 5 passed, 22 deselected
+canonical policy/domain/Azure/resource suites: 127 passed
+architecture boundary suite: 27 passed
+strict public-score selector: 30 passed, 63 deselected
+LiteLLM/Knowledge route selector: 31 passed, 50 deselected
+complete focused Task 3 plus ordinary external gates: 303 passed, 2 skipped in 0.41s
+```
+
+Task 2 relay regressions:
+
+```text
+28 passed in 0.97s
+```
+
+Repository gates on the final code/test tree:
+
+```text
+make check
+  ruff check: All checks passed!
+  ruff format --check: 40 files already formatted
+  mypy: Success: no issues found in 25 source files
+  deterministic contract check: exit 0
+
+make test
+  337 passed, 2 skipped in 3.99s
+
+make bootstrap
+  uv sync --frozen --all-groups: Audited 32 packages
+  pnpm install --frozen-lockfile: Already up to date
+```
+
+Three consecutive contract exports were stable. The final before/after checksums were identical: OpenAPI `1443310812/34532` and Chat stream schema `2876493190/27072`. The exporter `--check`, `git diff --exit-code -- contracts`, and `git diff --check` all exited `0`. Generated-schema inspection found both `queryPlanId` and `contextSnapshotId` in both Retrieval responses and zero public properties named `tenantId`, `projectId`, `allowedGroupIds`, `classification`, `filter`, `rawFilter`, `physicalIndex`, or `queryIndex`.
+
+### External Gates: Exact Unrun Status
+
+Ordinary local mode reported exactly `2 skipped`; these are limitations, not GREEN.
+
+With `TAP_RUN_AZURE_INTEGRATION=1`, the Azure ACL gate failed closed before network access because all 18 sanitized settings were absent:
+
+```text
+TAP_AZURE_SEARCH_ENDPOINT, TAP_AZURE_SEARCH_API_KEY,
+TAP_AZURE_SEARCH_INDEX, TAP_AZURE_SEARCH_PHYSICAL_INDEX,
+TAP_AZURE_SEARCH_SCHEMA_VERSION, TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID,
+TAP_AZURE_SEARCH_VECTOR_DIMENSION, TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON,
+TAP_AZURE_TEST_TENANT_ID, TAP_AZURE_TEST_PROJECT_ID,
+TAP_AZURE_TEST_ALLOWED_GROUP_ID, TAP_AZURE_TEST_DENIED_GROUP_ID,
+TAP_AZURE_TEST_CLASSIFICATION_CEILING, TAP_AZURE_TEST_ENVIRONMENT,
+TAP_AZURE_TEST_CORPUS_VERSION, TAP_AZURE_TEST_EXPECTED_SOURCE_ID,
+TAP_AZURE_TEST_QUERY_VECTOR_JSON, TAP_AZURE_TEST_DATASET_MARKER
+```
+
+With `TAP_RUN_ENTRA_POLICY_INTEGRATION=1`, the current-policy gate failed closed before network access because all eight sanitized settings were absent:
+
+```text
+TAP_POLICY_TEST_ACTIVE_URL, TAP_POLICY_TEST_REVOKED_URL,
+TAP_POLICY_TEST_BEARER_TOKEN, TAP_POLICY_TEST_TENANT_ID,
+TAP_POLICY_TEST_PROJECT_ID, TAP_POLICY_TEST_USER_ID,
+TAP_POLICY_TEST_ACTIVE_DECISION_ID, TAP_POLICY_TEST_DATASET_MARKER
+```
+
+Therefore the real Azure authorized-positive/unauthorized-hit-zero contract and real Entra active-then-revoked contract remain **NOT RUN** on this machine.
+
+### Fix-Round 2 Self-Review and Concerns
+
+- Rechecked the five accepted findings against code and mutation assertions. Provider outputs have no inspection/response path before their post-call current-policy refresh and immutable binding check.
+- Confirmed canonical hashes/revisions are enforced independently at policy, domain, adapter-row, evidence, and citation boundaries; source-type acceptance is per explicit server route, not inferred from a browser field.
+- Confirmed cross-index order still uses family-local rank/RRF, final result caps are unchanged, and raw Azure scores never merge indexes.
+- Confirmed LiteLLM route identities are disjoint, fixed configured IDs remain caller-inaccessible, only allowlisted metadata crosses the port, and failure messages contain neither credentials nor untrusted label values.
+- Confirmed recursive architecture checks retain relative-import canonicalization and detect the accepted parent-package/module-object paths.
+- Confirmed the ignored controller ledger and Fix Round 2 brief were neither modified nor staged.
+
+Remaining concerns are operational only: Azure and Entra behavior still require controlled sanitized external fixtures, and later tasks must supply runtime configuration/wiring for the already-required verifier, redactor, auth, index routes, and model routes. Those items remain deliberately outside Task 3.

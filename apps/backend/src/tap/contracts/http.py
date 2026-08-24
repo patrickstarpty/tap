@@ -84,6 +84,7 @@ NonNegativeAnchorInteger = Annotated[
 ]
 TopK = Annotated[StrictInt, Field(ge=1, le=100)]
 BoundingBoxCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+FiniteScore = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 
 
 class DocumentAnchor(ContractModel):
@@ -208,11 +209,11 @@ class RetrievalSourceRevision(ContractModel):
 
 
 class RetrievalScores(ContractModel):
-    exact: float | None = None
-    bm25: float | None = None
-    vector: float | None = None
-    rrf: float | None = None
-    rerank: float | None = None
+    exact: FiniteScore | None = None
+    bm25: FiniteScore | None = None
+    vector: FiniteScore | None = None
+    rrf: FiniteScore | None = None
+    rerank: FiniteScore | None = None
 
 
 class RetrievalHit(ContractModel):

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import replace
 
 import httpx
 import pytest
@@ -25,6 +24,9 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
 )
 
+SOURCE_HASH = "sha256:" + "a" * 64
+CHUNK_HASH = "sha256:" + "b" * 64
+
 
 def config(**changes: object) -> LiteLLMConfig:
     values: dict[str, object] = {
@@ -34,13 +36,17 @@ def config(**changes: object) -> LiteLLMConfig:
         "answer_model_id": "tap-answer-fixed-v1",
         "answer_profile_id": "grounded-answer-v2",
         "embedding_dimension": 2,
-        "allowed_model_labels": frozenset(
+        "allowed_embedding_model_labels": frozenset(
             {
                 "tap-embed-fixed-v1",
-                "tap-answer-fixed-v1",
                 "provider-embed-v1",
-                "provider-answer-v1",
                 "gateway-embed-v1",
+            }
+        ),
+        "allowed_answer_model_labels": frozenset(
+            {
+                "tap-answer-fixed-v1",
+                "provider-answer-v1",
                 "gateway-answer-v1",
             }
         ),
@@ -75,7 +81,7 @@ def evidence(*, label: str = "S1", content: str = "Current policy is required.")
             source_type="code",
             revision_kind=RevisionKind.GIT_COMMIT,
             revision="a" * 40,
-            source_content_hash="sha256:source",
+            source_content_hash=SOURCE_HASH,
             anchor=CodeAnchor(
                 repo="checkout",
                 path="payment.py",
@@ -84,7 +90,7 @@ def evidence(*, label: str = "S1", content: str = "Current policy is required.")
                 line_end=25,
             ),
         ),
-        chunk_content_hash="sha256:chunk",
+        chunk_content_hash=CHUNK_HASH,
         content_role=ContentRole.SOURCE,
         citation_id="citation-1",
         evidence_label=label,
@@ -132,6 +138,14 @@ def answer_response(
     }
 
 
+def malformed_evidence(field: str) -> Evidence:
+    """Simulate a runtime annotation bypass after domain construction."""
+    item = evidence()
+    target = item.source if field == "revision" else item
+    object.__setattr__(target, field, 17)
+    return item
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body",
@@ -161,6 +175,93 @@ async def test_embedding_rejects_wrong_vector_space_or_unknown_model(
         adapter = LiteLLMAdapter(config(), client=client)
         with pytest.raises(ModelUnavailable):
             await adapter.embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body_model", "gateway_model"),
+    [
+        ("provider-answer-v1", "gateway-embed-v1"),
+        ("provider-embed-v1", "gateway-answer-v1"),
+        ("provider-embed-v1", "unknown-gateway-model"),
+    ],
+    ids=("answer-body-on-embedding", "answer-gateway-on-embedding", "unknown-gateway"),
+)
+async def test_embedding_rejects_cross_route_body_and_gateway_model_labels(
+    body_model: str,
+    gateway_model: str,
+) -> None:
+    """A same-dimension vector from the wrong route must not be relabeled as configured."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-id": gateway_model},
+            json=embedding_response(model=body_model),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = LiteLLMAdapter(config(), client=client)
+        with pytest.raises(ModelUnavailable) as caught:
+            await adapter.embed("authorization [REDACTED]")
+
+    assert "not-a-real-key" not in str(caught.value)
+    assert body_model not in str(caught.value)
+    assert gateway_model not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body_model", "gateway_model"),
+    [
+        ("provider-embed-v1", "gateway-answer-v1"),
+        ("provider-answer-v1", "gateway-embed-v1"),
+        ("provider-answer-v1", "unknown-gateway-model"),
+    ],
+    ids=("embedding-body-on-answer", "embedding-gateway-on-answer", "unknown-gateway"),
+)
+async def test_answer_rejects_cross_route_body_and_gateway_model_labels(
+    body_model: str,
+    gateway_model: str,
+) -> None:
+    """Answer parsing must bind both provider and gateway identities to its route."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-id": gateway_model},
+            json=answer_response(model=body_model),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = LiteLLMAdapter(config(), client=client)
+        with pytest.raises(ModelUnavailable) as caught:
+            await adapter.answer(
+                "authorization [REDACTED]",
+                (evidence(),),
+                "quick-hybrid-v1",
+            )
+
+    assert "not-a-real-key" not in str(caught.value)
+    assert body_model not in str(caught.value)
+    assert gateway_model not in str(caught.value)
+
+
+def test_embedding_and_answer_route_model_allowlists_must_be_disjoint() -> None:
+    with pytest.raises(ValueError, match="disjoint"):
+        LiteLLMConfig(
+            base_url="https://litellm.example",
+            api_key="not-a-real-key",
+            embedding_model_id="tap-embed-fixed-v1",
+            answer_model_id="tap-answer-fixed-v1",
+            answer_profile_id="grounded-answer-v2",
+            embedding_dimension=2,
+            allowed_embedding_model_labels=frozenset(
+                {"tap-embed-fixed-v1", "shared-provider-model"}
+            ),
+            allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1", "shared-provider-model"}),
+            allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
+        )
 
 
 @pytest.mark.asyncio
@@ -295,9 +396,9 @@ async def test_empty_answer_evidence_and_request_payload_bounds_fail_before_or_d
 @pytest.mark.parametrize(
     "invalid_evidence",
     [
-        replace(evidence(), content=17),
-        replace(evidence(), source=replace(evidence().source, revision=17)),
-        replace(evidence(), chunk_content_hash=17),
+        malformed_evidence("content"),
+        malformed_evidence("revision"),
+        malformed_evidence("chunk_content_hash"),
     ],
 )
 async def test_non_string_evidence_provenance_fails_before_egress(

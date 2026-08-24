@@ -350,6 +350,21 @@ def test_retrieval_request_fields_reject_wrong_json_types(field: str, value: obj
         RetrievalAnswerRequest.model_validate({"query": "authorization", field: value})
 
 
+@pytest.mark.parametrize("field", ["exact", "bm25", "vector", "rrf", "rerank"])
+@pytest.mark.parametrize(
+    "value",
+    [True, False, "0.5", float("nan"), float("inf"), float("-inf")],
+    ids=("true", "false", "numeric-string", "nan", "positive-inf", "negative-inf"),
+)
+def test_every_public_score_is_a_strict_finite_number(
+    field: str,
+    value: object,
+) -> None:
+    """Coercion or non-finite serialization must fail for every public score slot."""
+    with pytest.raises(ValidationError):
+        RetrievalScores.model_validate({field: value})
+
+
 def _assert_objects_closed(value: object) -> None:
     if isinstance(value, dict):
         if "properties" in value:

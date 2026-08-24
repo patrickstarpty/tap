@@ -6,6 +6,8 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 BACKEND_SOURCE = Path(__file__).resolve().parents[2] / "src" / "tap"
 KNOWLEDGE = BACKEND_SOURCE / "modules" / "knowledge"
 ACCESS = BACKEND_SOURCE / "modules" / "access"
@@ -77,6 +79,36 @@ def _canonical_import_from(node: ast.ImportFrom, *, package: str) -> str:
     return ".".join(base)
 
 
+def chat_import_is_forbidden(reference: ImportReference) -> bool:
+    """Require Chat to import Knowledge only through private, allowlisted API names."""
+    if reference.module == "tap.modules.knowledge.api":
+        return not (
+            reference.symbol in CHAT_API_SYMBOLS
+            and reference.alias is not None
+            and reference.alias.startswith("_")
+        )
+    if reference.module == "tap" and reference.symbol == "modules":
+        return True
+    if reference.module == "tap.modules":
+        return True
+    return reference.module == "tap.modules.knowledge" or reference.module.startswith(
+        "tap.modules.knowledge."
+    )
+
+
+def policy_import_exposes_construction(reference: ImportReference) -> bool:
+    """Identify direct and parent-module paths to the private policy constructor."""
+    if reference.module == POLICY_MODULE:
+        return reference.symbol in {None, "*", POLICY_FACTORY}
+    if reference.module == "tap.modules.access.domain":
+        return reference.symbol in {None, "*", "policy"}
+    if reference.module == "tap.modules.access":
+        return reference.symbol in {None, "*", "domain"}
+    if reference.module == "tap.modules":
+        return reference.symbol in {None, "*", "access"}
+    return reference.module == "tap" and reference.symbol == "modules"
+
+
 def test_framework_free_knowledge_layers_do_not_import_framework_or_provider_sdks() -> None:
     """Moving Pydantic, HTTP, or provider types into a stable layer must fail."""
     forbidden = ("fastapi", "pydantic", "httpx", "azure", "litellm")
@@ -111,19 +143,8 @@ def test_knowledge_adapters_never_import_chat_and_chat_uses_only_knowledge_api()
 
     chat_files = recursive_python_files(BACKEND_SOURCE / "modules" / "chat")
     for path in chat_files:
-        knowledge_imports = {
-            reference
-            for reference in _imports(path)
-            if reference.module == "tap.modules.knowledge"
-            or reference.module.startswith("tap.modules.knowledge.")
-        }
         forbidden_imports = {
-            reference
-            for reference in knowledge_imports
-            if reference.module != "tap.modules.knowledge.api"
-            or reference.symbol not in CHAT_API_SYMBOLS
-            or reference.alias is None
-            or not reference.alias.startswith("_")
+            reference for reference in _imports(path) if chat_import_is_forbidden(reference)
         }
         assert not forbidden_imports, (path, forbidden_imports)
 
@@ -131,20 +152,13 @@ def test_knowledge_adapters_never_import_chat_and_chat_uses_only_knowledge_api()
 def test_only_access_authorization_imports_the_private_policy_factory() -> None:
     """The private constructor is a lint boundary, not a caller security capability."""
     authorize = ACCESS / "application" / "authorize.py"
-    direct_consumers: set[Path] = set()
-    module_object_consumers: set[Path] = set()
+    construction_consumers: set[Path] = set()
 
     for path in recursive_python_files(BACKEND_SOURCE / "modules"):
-        for reference in _imports(path):
-            if reference.module == POLICY_MODULE and reference.symbol == POLICY_FACTORY:
-                direct_consumers.add(path)
-            if (reference.module == POLICY_MODULE and reference.symbol in {None, "*"}) or (
-                reference.module == "tap.modules.access.domain" and reference.symbol == "policy"
-            ):
-                module_object_consumers.add(path)
+        if any(policy_import_exposes_construction(reference) for reference in _imports(path)):
+            construction_consumers.add(path)
 
-    assert direct_consumers == {authorize}
-    assert not (module_object_consumers - {authorize})
+    assert construction_consumers == {authorize}
 
 
 def test_import_parser_canonicalizes_relative_imports_and_preserves_symbols(
@@ -184,3 +198,67 @@ def test_python_layer_discovery_is_recursive(tmp_path: Path) -> None:
         nested,
         tmp_path / "top.py",
     )
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        ImportReference("tap.modules", "knowledge", "_knowledge"),
+        ImportReference("tap.modules", "knowledge", "knowledge_alias"),
+        ImportReference("tap.modules", None, "_modules"),
+        ImportReference("tap", "modules", "_modules"),
+        ImportReference("tap.modules.knowledge", None, "_knowledge"),
+        ImportReference("tap.modules.knowledge", "api", "_api"),
+        ImportReference("tap.modules.knowledge.api", None, "_api"),
+        ImportReference("tap.modules.knowledge.api", "KnowledgeAPI", "KnowledgeAPI"),
+        ImportReference("tap.modules.knowledge.api", "AuthorizedRetrieval", "_Internal"),
+    ],
+)
+def test_chat_parent_package_and_non_exact_api_imports_are_forbidden(
+    reference: ImportReference,
+) -> None:
+    """Every literal bypass must violate the exact public API import form."""
+    assert chat_import_is_forbidden(reference) is True
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        ImportReference("tap.modules.knowledge.api", "KnowledgeAPI", "_KnowledgeAPI"),
+        ImportReference("tap.modules.knowledge.api", "SearchRequest", "_SearchRequest"),
+        ImportReference("tap.modules.chat.domain", "Chat", "_Chat"),
+    ],
+)
+def test_chat_exact_private_api_imports_and_unrelated_modules_remain_allowed(
+    reference: ImportReference,
+) -> None:
+    assert chat_import_is_forbidden(reference) is False
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        ImportReference("tap.modules.access", "domain", "_domain"),
+        ImportReference("tap.modules.access", None, "_access"),
+        ImportReference("tap.modules", "access", "_access"),
+        ImportReference("tap.modules", None, "_modules"),
+        ImportReference("tap", "modules", "_modules"),
+        ImportReference("tap.modules.access.domain", None, "_domain"),
+        ImportReference("tap.modules.access.domain", "policy", "_policy"),
+        ImportReference("tap.modules.access.domain.policy", None, "_policy"),
+        ImportReference(POLICY_MODULE, POLICY_FACTORY, "_factory"),
+    ],
+)
+def test_policy_parent_package_imports_expose_the_private_construction_path(
+    reference: ImportReference,
+) -> None:
+    assert policy_import_exposes_construction(reference) is True
+
+
+def test_unrelated_access_import_does_not_expose_policy_construction() -> None:
+    reference = ImportReference(
+        "tap.modules.access.application.ports",
+        "CurrentPolicyVerificationPort",
+        "_Verifier",
+    )
+    assert policy_import_exposes_construction(reference) is False

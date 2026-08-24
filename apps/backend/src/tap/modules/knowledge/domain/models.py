@@ -253,12 +253,12 @@ class ResolvedResourceRef:
         ):
             raise TypeError("resolved resource uses values outside the closed model")
         _bounded_string("resolved source ID", self.source_id, maximum=1_024)
-        _bounded_string("resolved source revision", self.revision, maximum=512)
-        _bounded_string(
-            "resolved source content hash",
-            self.source_content_hash,
-            maximum=512,
+        _immutable_revision(
+            "resolved source revision",
+            self.revision_kind,
+            self.revision,
         )
+        _digest("resolved source content hash", self.source_content_hash)
         if self.anchor is not None and not isinstance(self.anchor, STRUCTURAL_ANCHOR_TYPES):
             raise TypeError("resolved resource anchor must be a closed structural anchor")
         if self.subtree is not None and not isinstance(self.subtree, FilterableSubtree):
@@ -468,6 +468,16 @@ class SourceRevisionRef:
     source_content_hash: str
     anchor: StructuralAnchor
 
+    def __post_init__(self) -> None:
+        _bounded_string("source revision source ID", self.source_id, maximum=1_024)
+        _bounded_string("source revision source type", self.source_type, maximum=128)
+        if not isinstance(self.revision_kind, RevisionKind):
+            raise TypeError("source revision kind must be closed")
+        _immutable_revision("source revision", self.revision_kind, self.revision)
+        _digest("source content hash", self.source_content_hash)
+        if not isinstance(self.anchor, STRUCTURAL_ANCHOR_TYPES):
+            raise TypeError("source revision anchor must be a closed structural anchor")
+
 
 @dataclass(frozen=True, slots=True)
 class IndexRevision:
@@ -499,6 +509,9 @@ class Evidence:
     root_id: str | None = None
     parent_id: str | None = None
 
+    def __post_init__(self) -> None:
+        _digest("evidence chunk content hash", self.chunk_content_hash)
+
 
 @dataclass(frozen=True, slots=True)
 class ModelCallProvenance:
@@ -520,6 +533,9 @@ class Citation:
     chunk_content_hash: str
     content_role: ContentRole
     derived_from_chunk_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _digest("citation chunk content hash", self.chunk_content_hash)
 
 
 @dataclass(frozen=True, slots=True)
@@ -629,3 +645,12 @@ def _digest(name: str, value: object) -> None:
         or any(character not in "0123456789abcdef" for character in value[7:])
     ):
         raise ValueError(f"{name} must be a canonical sha256 digest")
+
+
+def _immutable_revision(name: str, kind: RevisionKind, value: str) -> None:
+    _bounded_string(name, value, maximum=512)
+    if kind is RevisionKind.GIT_COMMIT and (
+        len(value) not in {40, 64}
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be a canonical Git commit ID")

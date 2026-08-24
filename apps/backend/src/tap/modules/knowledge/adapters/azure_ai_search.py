@@ -94,6 +94,7 @@ class AzureIndexTarget:
     schema_version: str
     embedding_model_id: str
     vector_dimension: int
+    allowed_source_types: frozenset[str]
 
     def __post_init__(self) -> None:
         for name in ("query_index", "physical_index"):
@@ -105,6 +106,17 @@ class AzureIndexTarget:
             if not isinstance(value, str) or not value or len(value) > 128:
                 raise ValueError(f"{name} must be a bounded server identifier")
         _strict_int("vector_dimension", self.vector_dimension, minimum=1, maximum=4_096)
+        if not isinstance(self.allowed_source_types, frozenset):
+            raise TypeError("allowed source types must be a frozenset")
+        if (
+            not self.allowed_source_types
+            or len(self.allowed_source_types) > 32
+            or any(
+                not isinstance(value, str) or not value or len(value) > 128
+                for value in self.allowed_source_types
+            )
+        ):
+            raise ValueError("allowed source types must be a bounded closed set")
 
 
 @dataclass(frozen=True, slots=True)
@@ -671,20 +683,22 @@ class AzureAISearchAdapter:
                 maximum=self._config.max_identifier_chars,
             )
             source_type = _required_string(row, "sourceType", maximum=128)
-            source_revision = _required_string(
+            if source_type not in target.allowed_source_types:
+                raise ValueError("row source type does not match selected index route")
+            revision_kind = _revision_kind(family)
+            source_revision = _required_revision(
                 row,
                 "sourceRevision",
+                revision_kind,
                 maximum=self._config.max_identifier_chars,
             )
-            source_hash = _required_string(
+            source_hash = _required_sha256(
                 row,
                 "sourceContentHash",
-                maximum=self._config.max_identifier_chars,
             )
-            chunk_hash = _required_string(
+            chunk_hash = _required_sha256(
                 row,
                 "chunkContentHash",
-                maximum=self._config.max_identifier_chars,
             )
             corpus_version = _required_string(row, "corpusVersion", maximum=128)
             schema_version = _required_string(row, "schemaVersion", maximum=128)
@@ -717,7 +731,7 @@ class AzureAISearchAdapter:
             source = SourceRevisionRef(
                 source_id=source_id,
                 source_type=source_type,
-                revision_kind=_revision_kind(family),
+                revision_kind=revision_kind,
                 revision=source_revision,
                 source_content_hash=source_hash,
                 anchor=anchor,
@@ -813,6 +827,34 @@ def _optional_string(row: Mapping[str, Any], name: str, *, maximum: int) -> str 
         return None
     if not isinstance(value, str) or not value or len(value) > maximum:
         raise ValueError(f"{name} must be null or a bounded non-empty string")
+    return value
+
+
+def _required_sha256(row: Mapping[str, Any], name: str) -> str:
+    value = row.get(name)
+    if (
+        not isinstance(value, str)
+        or len(value) != 71
+        or not value.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in value[7:])
+    ):
+        raise ValueError(f"{name} must be a canonical sha256 digest")
+    return value
+
+
+def _required_revision(
+    row: Mapping[str, Any],
+    name: str,
+    kind: RevisionKind,
+    *,
+    maximum: int,
+) -> str:
+    value = _required_string(row, name, maximum=maximum)
+    if kind is RevisionKind.GIT_COMMIT and (
+        len(value) not in {40, 64}
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be a canonical Git commit ID")
     return value
 
 

@@ -82,6 +82,9 @@ from tap.modules.knowledge.ports.models import (
     SearchHit,
 )
 
+SOURCE_HASH = "sha256:" + "a" * 64
+CHUNK_HASH = "sha256:" + "b" * 64
+
 
 def policy_context(
     *,
@@ -126,7 +129,7 @@ def source_revision() -> SourceRevisionRef:
         source_type="code",
         revision_kind=RevisionKind.GIT_COMMIT,
         revision="a" * 40,
-        source_content_hash="sha256:source",
+        source_content_hash=SOURCE_HASH,
         anchor=CodeAnchor(
             repo="checkout",
             path="payment.py",
@@ -145,7 +148,7 @@ def search_hit() -> SearchHit:
         title="authorize",
         content="Authorization requires the verified project policy.",
         source=source_revision(),
-        chunk_content_hash="sha256:chunk",
+        chunk_content_hash=CHUNK_HASH,
         content_role=ContentRole.SOURCE,
         index_revision=IndexRevision(
             physical_index="kb-code-v1-20260823",
@@ -241,7 +244,7 @@ async def test_knowledge_search_rejects_environment_and_resource_anchor_before_s
         source_id="repo:checkout:payment.py",
         revision_kind="git_commit",
         revision="a" * 40,
-        source_content_hash="sha256:source",
+        source_content_hash=SOURCE_HASH,
         allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
     )
     policy = policy_context(resource_grants=(grant,))
@@ -289,7 +292,7 @@ async def test_knowledge_search_resolves_revision_caps_and_preserves_provenance(
         source_id="repo:checkout:payment.py",
         revision_kind="git_commit",
         revision="a" * 40,
-        source_content_hash="sha256:source",
+        source_content_hash=SOURCE_HASH,
         allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
     )
     search = FakeSearchPort((search_hit(),))
@@ -319,7 +322,7 @@ async def test_knowledge_search_resolves_revision_caps_and_preserves_provenance(
     assert execution.plan.candidate_limit == 20
     assert execution.plan.retrieval_profile_id.value == "quick-hybrid-v1"
     assert execution.plan.resources[0].revision == "a" * 40
-    assert execution.plan.resources[0].source_content_hash == "sha256:source"
+    assert execution.plan.resources[0].source_content_hash == SOURCE_HASH
     assert execution.query_vector == (0.25, 0.5)
     assert response.trace_id == "trace-1"
     assert response.query_plan_id == "query-plan-1"
@@ -490,6 +493,71 @@ def test_internal_resource_ref_is_closed_and_bounded(changes: dict[str, object])
         ResourceRef(**values)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"revision": "G" * 40},
+        {"revision": "a" * 39},
+        {"source_content_hash": "sha256:" + "g" * 64},
+        {"source_content_hash": "sha256:" + "A" * 64},
+    ],
+)
+def test_domain_source_revision_rejects_noncanonical_immutable_values(
+    changes: dict[str, object],
+) -> None:
+    """Malformed citation provenance must fail at the framework-free model boundary."""
+    with pytest.raises(ValueError):
+        replace(source_revision(), **changes)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"revision": "a" * 41},
+        {"source_content_hash": "sha256:" + "0" * 63},
+    ],
+)
+def test_resolved_resource_rejects_noncanonical_filter_values(
+    changes: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "family": SourceFamily.CODE,
+        "source_id": "repo:checkout:payment.py",
+        "mode": ResourceMode.SCOPE,
+        "revision_kind": RevisionKind.GIT_COMMIT,
+        "revision": "a" * 40,
+        "source_content_hash": SOURCE_HASH,
+        "anchor": None,
+    }
+    values.update(changes)
+    with pytest.raises(ValueError):
+        ResolvedResourceRef(**values)  # type: ignore[arg-type]
+
+
+def test_evidence_rejects_noncanonical_chunk_hash_before_citation_mapping() -> None:
+    with pytest.raises(ValueError):
+        Evidence(
+            family=SourceFamily.CODE,
+            chunk_id="h_" + "1" * 64,
+            logical_chunk_id="h_" + "2" * 64,
+            title="authorize",
+            content="Authorized content.",
+            source=source_revision(),
+            chunk_content_hash="sha256:" + "z" * 64,
+            content_role=ContentRole.SOURCE,
+            citation_id="citation-1",
+            evidence_label="S1",
+            index_revision=IndexRevision(
+                physical_index="kb-code-v1-20260824",
+                schema_version="search-schema-v1",
+                corpus_version="corpus-17",
+            ),
+            embedding_model_version="tap-embedding-v1",
+            acl_decision_id="decision-17",
+            score=1 / 61,
+        )
+
+
 def ranked_hit(
     *,
     family: SourceFamily,
@@ -505,7 +573,7 @@ def ranked_hit(
         title=base.title,
         content=base.content,
         source=base.source,
-        chunk_content_hash=f"sha256:chunk-{suffix}",
+        chunk_content_hash="sha256:" + suffix * 64,
         content_role=base.content_role,
         index_revision=IndexRevision(
             physical_index=f"kb-{family.value}-v1-20260823",
@@ -664,8 +732,8 @@ def azure_row(
         "sourceType": "code",
         "sourceRevision": "a" * 40,
         "anchorJson": json.dumps(anchor),
-        "sourceContentHash": "sha256:source",
-        "chunkContentHash": "sha256:chunk",
+        "sourceContentHash": SOURCE_HASH,
+        "chunkContentHash": CHUNK_HASH,
         "contentRole": "source",
         "derivedFromChunkIds": [],
         "corpusVersion": "corpus-17",
@@ -675,12 +743,19 @@ def azure_row(
 
 
 def azure_target(family: SourceFamily) -> AzureIndexTarget:
+    source_types = {
+        SourceFamily.DOC: frozenset({"document", "openapi"}),
+        SourceFamily.CODE: frozenset({"code", "code_summary"}),
+        SourceFamily.BDD: frozenset({"bdd"}),
+        SourceFamily.FAILURE: frozenset({"failure"}),
+    }
     return AzureIndexTarget(
         query_index=f"kb-{family.value}-read",
         physical_index=f"kb-{family.value}-v1-20260823",
         schema_version="search-schema-v1",
         embedding_model_id="tap-embed-fixed-v1",
         vector_dimension=2,
+        allowed_source_types=source_types[family],
     )
 
 
@@ -841,7 +916,8 @@ def test_litellm_config_repr_does_not_reveal_credential() -> None:
         answer_model_id="tap-answer-fixed-v1",
         answer_profile_id="grounded-answer-v1",
         embedding_dimension=2,
-        allowed_model_labels=frozenset({"tap-embed-fixed-v1", "tap-answer-fixed-v1"}),
+        allowed_embedding_model_labels=frozenset({"tap-embed-fixed-v1"}),
+        allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1"}),
         allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
     )
     assert "gateway-secret-must-not-appear" not in repr(config)
@@ -985,7 +1061,7 @@ async def test_azure_adapter_rejects_policy_family_bypass_and_trims_sibling_anch
         source_id="repo:checkout:payment.py",
         revision_kind="git_commit",
         revision="a" * 40,
-        source_content_hash="sha256:source",
+        source_content_hash=SOURCE_HASH,
         allowed_anchor_keys=frozenset({"code:checkout:payment.py:authorize:10:25"}),
         subtree_grants=(
             ResourceSubtreeGrant(
@@ -1004,7 +1080,7 @@ async def test_azure_adapter_rejects_policy_family_bypass_and_trims_sibling_anch
                 mode=ResourceMode.SCOPE,
                 revision_kind=RevisionKind.GIT_COMMIT,
                 revision="a" * 40,
-                source_content_hash="sha256:source",
+                source_content_hash=SOURCE_HASH,
                 anchor=source_revision().anchor,
                 subtree=subtree,
             ),
@@ -1099,9 +1175,13 @@ async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds
                 answer_model_id="tap-answer-fixed-v1",
                 answer_profile_id="grounded-answer-v1",
                 embedding_dimension=2,
-                allowed_model_labels=frozenset(
+                allowed_embedding_model_labels=frozenset(
                     {
                         "tap-embed-fixed-v1",
+                    }
+                ),
+                allowed_answer_model_labels=frozenset(
+                    {
                         "tap-answer-fixed-v1",
                         "gateway-model-17",
                         "provider-model-17",
@@ -1124,7 +1204,7 @@ async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds
                     title="authorize",
                     content="Policy facts are verified server-side.",
                     source=source_revision(),
-                    chunk_content_hash="sha256:chunk",
+                    chunk_content_hash=CHUNK_HASH,
                     content_role=ContentRole.SOURCE,
                     citation_id="citation-1",
                     evidence_label="S1",

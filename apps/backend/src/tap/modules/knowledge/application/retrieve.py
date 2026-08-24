@@ -133,6 +133,8 @@ class AuthorizedRetrieval:
             run.response.evidence,
             run.response.retrieval_profile_id.value,
         )
+        current = await self._verify_current(current)
+        self._validate_binding(current, run.plan, run.context_snapshot)
         citations_by_label = {
             item.evidence_label: item.citation_id for item in run.response.evidence
         }
@@ -242,6 +244,8 @@ class AuthorizedRetrieval:
                 query_vector=embedding.vector,
             )
         )
+        current = await self._verify_current(current)
+        self._validate_binding(current, plan, context_snapshot)
         if not all(self._hit_is_in_execution(hit, plan) for hit in hits):
             raise AuthorizationDenied("Search returned evidence outside bound execution")
         authorized_hits = hits
