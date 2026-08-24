@@ -151,6 +151,22 @@ TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential side
 
 采用的事实：LiteLLM 提供统一模型接口、Gateway、路由、预算、限流与多类模型端点；当前内建 key/team/budget/spend 持久化数据模型使用 PostgreSQL。TAP 在已确认的 MySQL/Redis 栈中先采用无状态协议/路由能力，并由 TAP MySQL 保存预算账本和审计；LiteLLM 内建持久化能力需单独 POC，不能静默引入 PostgreSQL。
 
+### Milvus 本地检索实验
+
+以下固定版本官方资料用于本地 Milvus 实验的兼容性门禁与后续 transport/Compose 设计（访问日期：2026-08-25）。
+
+- [Milvus v2.6.22 release](https://github.com/milvus-io/milvus/releases/tag/v2.6.22)
+- [PyMilvus 2.6.17](https://pypi.org/project/pymilvus/2.6.17/)
+- [Standalone Compose](https://milvus.io/docs/v2.6.x/install_standalone-docker-compose.md)
+- [Docker prerequisites](https://milvus.io/docs/v2.6.x/prerequisite-docker.md)
+- [full-text search](https://milvus.io/docs/v2.6.x/full-text-search.md)
+- [language identifier](https://milvus.io/docs/v2.6.x/language-identifier.md)
+- [FLAT](https://milvus.io/docs/v2.6.x/flat.md)
+- [INVERTED](https://milvus.io/docs/v2.6.x/inverted.md)
+- [GrantPrivilegeV2](https://milvus.io/api-reference/pymilvus/v2.6.x/MilvusClient/Authentication/grant_privilege_v2.md)
+
+采用的事实：Milvus `v2.6.22` release 的兼容表将其 Python SDK 列为 `2.6.17`；PyPI 将 Milvus `2.6.*` 对应到 PyMilvus `2.6.X`，且该 SDK 支持 Python 3.8+。本仓库将本地实验矩阵进一步固定为 Milvus `2.6.22`、PyMilvus `2.6.17`、etcd `3.5.25` 与 MinIO `RELEASE.2024-12-18T13-15-44Z`，并以 Python `3.13.12` 的 import/API surface 合约作为 transport 开发前的硬门禁。Compose 指南提供 `v2.6.22` 的 standalone 配置下载和启动方式；前置条件列出 standalone 至少 8 GB RAM（建议 16 GB）、Docker Desktop 的 2 vCPU/8 GB 初始内存要求，以及 MinIO `RELEASE.2024-12-18T13-15-44Z`。`FLAT` 文档说明其穷举比较、100% recall 及不需附加 index/search 参数；`GrantPrivilegeV2` 文档确认 `MilvusClient.grant_privilege_v2()` 的角色、权限与 collection 参数。全文、语言识别和 INVERTED 文档为后续 schema/index 设计的限定资料，不在本次兼容性门禁中实现其功能。
+
 ## 事实、决策与补充的标识
 
 | 类型 | 示例 | 文档处理 |
