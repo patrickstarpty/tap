@@ -5,7 +5,15 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StrictInt,
+    ValidationInfo,
+    model_validator,
+)
 from pydantic.alias_generators import to_camel
 
 
@@ -166,6 +174,47 @@ class StructuralAnchor(RootModel[StructuralAnchorValue]):
     """A closed, structural location inside one authorized source family."""
 
 
+_KNOWN_SOURCE_TYPE_FAMILY = {
+    "code": SourceFamily.CODE,
+    "code_summary": SourceFamily.CODE,
+    "bdd": SourceFamily.BDD,
+    "doc": SourceFamily.DOC,
+    "document": SourceFamily.DOC,
+    "openapi": SourceFamily.DOC,
+    "failure": SourceFamily.FAILURE,
+}
+
+
+def _source_family_for_provenance(
+    *,
+    source_type: str,
+    revision_kind: RevisionKind,
+    anchor: StructuralAnchor,
+) -> SourceFamily:
+    value = anchor.root
+    if isinstance(value, CodeAnchor):
+        family = SourceFamily.CODE
+        expected_revision = RevisionKind.GIT_COMMIT
+    elif isinstance(value, BddAnchor):
+        family = SourceFamily.BDD
+        expected_revision = RevisionKind.GIT_COMMIT
+    elif isinstance(value, (DocumentAnchor, OpenApiAnchor)):
+        family = SourceFamily.DOC
+        expected_revision = RevisionKind.BLOB_VERSION
+    elif isinstance(value, FailureAnchor):
+        family = SourceFamily.FAILURE
+        expected_revision = RevisionKind.MYSQL_VERSION
+    else:  # pragma: no cover - the discriminated closed union is exhaustive
+        raise ValueError("source provenance uses an unknown structural anchor")
+
+    known_family = _KNOWN_SOURCE_TYPE_FAMILY.get(source_type)
+    if revision_kind is not expected_revision or (
+        known_family is not None and known_family is not family
+    ):
+        raise ValueError("source provenance does not resolve to one compatible family")
+    return family
+
+
 class ResourceRef(ContractModel):
     """Browser-provided retrieval intent; it cannot contain policy or ACL facts."""
 
@@ -221,13 +270,26 @@ class RetrievalSourceRevision(ContractModel):
     anchor: StructuralAnchor
 
     @model_validator(mode="after")
-    def validate_git_revision(self) -> Self:
+    def validate_provenance(self) -> Self:
+        _source_family_for_provenance(
+            source_type=self.source_type,
+            revision_kind=self.revision_kind,
+            anchor=self.anchor,
+        )
         if self.revision_kind is RevisionKind.GIT_COMMIT and (
             len(self.revision) not in {40, 64}
             or any(character not in "0123456789abcdef" for character in self.revision)
         ):
             raise ValueError("Git source revision must be a canonical commit ID")
         return self
+
+    @property
+    def derived_family(self) -> SourceFamily:
+        return _source_family_for_provenance(
+            source_type=self.source_type,
+            revision_kind=self.revision_kind,
+            anchor=self.anchor,
+        )
 
 
 class RetrievalScores(ContractModel):
@@ -254,6 +316,12 @@ class RetrievalHit(ContractModel):
     schema_version: str = Field(min_length=1)
     embedding_model_version: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_index_family(self) -> Self:
+        if self.index_family is not self.source.derived_family:
+            raise ValueError("hit index family does not match source provenance")
+        return self
+
 
 class RetrievalCitation(ContractModel):
     citation_id: str = Field(min_length=1)
@@ -264,6 +332,16 @@ class RetrievalCitation(ContractModel):
     chunk_content_hash: CanonicalSha256
     content_role: ContentRole
     derived_from_chunk_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_internal_source_family(self, info: ValidationInfo) -> Self:
+        context = info.context
+        if not isinstance(context, dict) or "source_family" not in context:
+            return self
+        expected = context["source_family"]
+        if not isinstance(expected, SourceFamily) or expected is not self.source.derived_family:
+            raise ValueError("citation family does not match source provenance")
+        return self
 
 
 class RetrievalClaim(ContractModel):

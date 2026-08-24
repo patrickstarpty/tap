@@ -623,3 +623,118 @@ Therefore the real Azure authorized-positive/unauthorized-hit-zero contract and 
 - The ignored controller ledger and Fix Round 3 brief were not modified or staged.
 
 Remaining concerns are operational only: Azure and Entra/Project-Policy behavior still requires controlled sanitized external fixtures, and later tasks must provide runtime wiring for the already-defined verifier, redactor, credentials, index routes, and model routes. Those are deliberately outside Task 3.
+
+## Fix Round 4
+
+### Status and Accepted Findings
+
+Fix Round 4 closes both accepted boundary bypass groups without adding Task 4+ or Task 5 assembly.
+
+1. **Conservative dynamic-import and authorizer lint:** the real AST scanner now follows simple and annotated assignment aliases of recognized `importlib.import_module` and `builtins.__import__` callables to a fixed point, including alias-to-alias chains. Literal relative `import_module` targets are resolved with a statically known keyword or second positional package; missing, conflicting, nonliteral, invalid, and built-in-relative targets emit the fail-closed sentinel. Ordinary modules cannot import the Access application/authorizer module object, dynamically reach those parents, or statically/dynamically re-export the private factory, while the exact public `build_retrieval_policy_context` symbol remains allowed. The test documentation continues to describe this as conservative dependency lint rather than a Python sandbox.
+2. **Family-compatible public/internal provenance:** one shared public compatibility rule derives a single family from each closed anchor and requires its revision kind to agree: Code/BDD use Git, Document/OpenAPI use Blob, and Failure uses MySQL. Known source-type labels must match that family; unknown route-specific labels remain allowed only with compatible revision/anchor facts and the outer hit family. `RetrievalHit.indexFamily` is bound to the derived source family. Internal `Citation` retains its family without exposing a new public property, and both Evidence and Citation mapping reconstruct and revalidate their current runtime values before HTTP serialization.
+
+### Files and Dependencies
+
+Modified production/contract files:
+
+- `apps/backend/src/tap/contracts/http.py`
+- `apps/backend/src/tap/modules/knowledge/api.py`
+- `apps/backend/src/tap/modules/knowledge/application/retrieve.py`
+- `apps/backend/src/tap/modules/knowledge/domain/models.py`
+
+Modified behavior/architecture tests:
+
+- `apps/backend/tests/architecture/test_module_boundaries.py`
+- `apps/backend/tests/contract/test_knowledge_api.py`
+- `apps/backend/tests/contract/test_public_retrieval_contract_strict.py`
+
+Two legacy positive public fixtures were corrected to pair their Blob/MySQL revision and anchor facts with the matching `document`/`failure` source-type labels. Their bounded opaque-revision assertions were retained; the production rule was not weakened. There was no dependency or lockfile change, and regenerated public contracts remained byte-identical.
+
+### TDD RED Evidence
+
+Both accepted groups received mutation-sensitive tests before production changes:
+
+- Assignment aliases, unresolved targets, and Access authorizer re-export selector: `15 failed, 1 passed, 51 deselected in 0.10s`. Assigned dynamic calls were absent from the discovered references, unresolved assigned targets did not emit the sentinel, and the authorizer paths were not classified as construction exposure; only the explicit public builder positive control passed.
+- Relative dynamic-import resolution selector: `3 failed, 64 deselected in 0.03s`. The scanner retained the relative dotted targets instead of producing the hand-derived guarded absolute module names.
+- Direct public provenance selector: `19 failed, 1 passed, 113 deselected in 0.17s`. Every revision/anchor mismatch, known source-type contradiction, outer hit-family mismatch, and incompatible nested Citation source reported `DID NOT RAISE ValidationError`; the deliberately unknown DOC subtype positive control passed.
+- Internal mapping selector: `6 failed, 58 deselected in 0.20s`. Runtime-mutated Evidence family/revision/anchor/source combinations and Citation family/source combinations all reported `DID NOT RAISE ValidationError`.
+
+The first combined public DTO/Knowledge mapping run after production GREEN reported `2 failed, 195 passed`. Root-cause tracing showed both failures were the legacy positive fixtures described above: they inherited `sourceType=code` while explicitly constructing valid DOC/Blob and FAILURE/MySQL provenance. Correcting only those hand-derived fixtures produced `197 passed in 0.23s`.
+
+### GREEN and Repository Verification
+
+Focused GREEN evidence:
+
+```text
+new architecture selector: 19 passed, 48 deselected in 0.03s
+complete architecture boundary suite: 67 passed in 0.12s
+direct public provenance selector: 20 passed, 113 deselected in 0.09s
+internal mapping selector: 6 passed, 58 deselected in 0.13s
+complete public DTO + Knowledge mapping suites: 197 passed in 0.23s
+complete focused Task 3 + ordinary external gates: 419 passed, 2 skipped in 0.55s
+```
+
+Task 2 relay regressions:
+
+```text
+28 passed in 1.06s
+```
+
+Repository gates on the final code/test tree:
+
+```text
+make check
+  ruff check: All checks passed!
+  ruff format --check: 40 files already formatted
+  mypy: Success: no issues found in 25 source files
+  deterministic contract check: exit 0
+
+make test
+  453 passed, 2 skipped in 4.50s
+
+make bootstrap
+  uv sync --frozen --all-groups: Audited 32 packages
+  pnpm install --frozen-lockfile: Already up to date
+```
+
+Two consecutive contract generations were stable. The final generated checksums remained OpenAPI `752896961/34857` and Chat stream schema `2876493190/27072`; the exporter `--check` and `git diff --exit-code -- contracts` both exited `0`. Generated-schema property inspection found zero public properties named `tenantId`, `projectId`, `allowedGroupIds`, `classification`, `filter`, `rawFilter`, `physicalIndex`, or `queryIndex`. The added-line private-key/bearer/credential scan and `git diff --check` exited `0`.
+
+### External Gates: Exact Unrun Status
+
+Ordinary local mode reported exactly `2 skipped in 0.05s`; these are limitations, not GREEN.
+
+With `TAP_RUN_AZURE_INTEGRATION=1`, the Azure ACL gate failed closed before a network call because all 18 sanitized settings were absent:
+
+```text
+TAP_AZURE_SEARCH_ENDPOINT, TAP_AZURE_SEARCH_API_KEY,
+TAP_AZURE_SEARCH_INDEX, TAP_AZURE_SEARCH_PHYSICAL_INDEX,
+TAP_AZURE_SEARCH_SCHEMA_VERSION, TAP_AZURE_SEARCH_EMBEDDING_MODEL_ID,
+TAP_AZURE_SEARCH_VECTOR_DIMENSION, TAP_AZURE_SEARCH_ALLOWED_SOURCE_TYPES_JSON,
+TAP_AZURE_TEST_TENANT_ID, TAP_AZURE_TEST_PROJECT_ID,
+TAP_AZURE_TEST_ALLOWED_GROUP_ID, TAP_AZURE_TEST_DENIED_GROUP_ID,
+TAP_AZURE_TEST_CLASSIFICATION_CEILING, TAP_AZURE_TEST_ENVIRONMENT,
+TAP_AZURE_TEST_CORPUS_VERSION, TAP_AZURE_TEST_EXPECTED_SOURCE_ID,
+TAP_AZURE_TEST_QUERY_VECTOR_JSON, TAP_AZURE_TEST_DATASET_MARKER
+```
+
+With `TAP_RUN_ENTRA_POLICY_INTEGRATION=1`, the current-policy gate failed closed before a network call because all eight sanitized settings were absent:
+
+```text
+TAP_POLICY_TEST_ACTIVE_URL, TAP_POLICY_TEST_REVOKED_URL,
+TAP_POLICY_TEST_BEARER_TOKEN, TAP_POLICY_TEST_TENANT_ID,
+TAP_POLICY_TEST_PROJECT_ID, TAP_POLICY_TEST_USER_ID,
+TAP_POLICY_TEST_ACTIVE_DECISION_ID, TAP_POLICY_TEST_DATASET_MARKER
+```
+
+Therefore the real Azure authorized-positive/unauthorized-hit-zero contract and real Entra active-then-revoked contract remain **NOT RUN** on this machine and are not claimed as GREEN.
+
+### Fix-Round 4 Self-Review and Concerns
+
+- Re-read the binding disposition and reviewed every changed source, behavior test, architecture snippet, generated schema, and mapping boundary against both accepted findings.
+- Confirmed scanner tests feed executable source snippets through `ast.parse` and the repository scanner. Direct aliases, alias chains, keyword/positional relative packages, missing/nonliteral packages, static module imports, and dynamic parent/authorizer imports have independent assertions. The exact public builder remains a positive control.
+- Confirmed public validation derives family independently from the closed anchor, then checks revision kind, known source type, and outer hit family. Unknown DOC subtypes remain possible for Azure's explicit route allowlist; this change does not widen the adapter route.
+- Confirmed runtime-mutated Evidence and Citation values are reconstructed at the HTTP boundary. Citation's retained family is internal only and does not alter the closed public DTO or generated schema.
+- Confirmed all earlier-round policy refresh, immutable bindings, generic SearchPort checks, finite scores, Azure route/canonical provenance, LiteLLM route labels/canonical egress, cross-index RRF, and architecture selectors remain GREEN through the focused and full suites.
+- Confirmed the ignored controller ledger and Fix Round 4 brief were neither modified nor staged.
+
+Remaining concerns are operational only: Azure and Entra/Project-Policy behavior still requires controlled sanitized external fixtures, and later tasks must supply runtime configuration/wiring for the already-defined verifier, redactor, credentials, index routes, and model routes. Those items remain deliberately outside Task 3.

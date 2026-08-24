@@ -736,6 +736,79 @@ async def test_internal_answer_mapping_revalidates_runtime_mutated_citation_hash
         answer_response_to_http(answer)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("family", "source_changes"),
+    [
+        (SourceFamily.DOC, {}),
+        (None, {"revision_kind": RevisionKind.BLOB_VERSION}),
+        (
+            None,
+            {"anchor": DocumentAnchor(heading_path=("Authorization",), page=1)},
+        ),
+        (
+            None,
+            {
+                "source_type": "document",
+                "revision_kind": RevisionKind.BLOB_VERSION,
+                "revision": "etag:blob-version-17",
+                "anchor": DocumentAnchor(heading_path=("Authorization",), page=1),
+            },
+        ),
+    ],
+    ids=("outer-family", "revision-kind", "anchor", "code-with-document-source"),
+)
+async def test_internal_search_mapping_revalidates_family_compatible_provenance(
+    family: SourceFamily | None,
+    source_changes: dict[str, object],
+) -> None:
+    response = await api(FakeSearchPort((search_hit(),)), FakeModelPort()).search(
+        SearchRequest(query="authorization", source_families=(SourceFamily.CODE,)),
+        policy_context(),
+    )
+    evidence = response.evidence[0]
+    if family is not None:
+        object.__setattr__(evidence, "family", family)
+    for field, value in source_changes.items():
+        object.__setattr__(evidence.source, field, value)
+
+    with pytest.raises(ValidationError):
+        search_response_to_http(response)
+
+
+@pytest.mark.asyncio
+async def test_internal_answer_mapping_retains_and_revalidates_citation_family() -> None:
+    answer = await api(FakeSearchPort((search_hit(),)), FakeModelPort()).answer(
+        AnswerRequest(query="authorization"),
+        policy_context(),
+    )
+    citation = answer.citations[0]
+    assert hasattr(citation, "family"), "internal Citation must retain its source family"
+    object.__setattr__(citation, "family", SourceFamily.DOC)
+
+    with pytest.raises(ValidationError):
+        answer_response_to_http(answer)
+
+
+@pytest.mark.asyncio
+async def test_internal_answer_mapping_rejects_mutated_citation_source_family() -> None:
+    answer = await api(FakeSearchPort((search_hit(),)), FakeModelPort()).answer(
+        AnswerRequest(query="authorization"),
+        policy_context(),
+    )
+    source = answer.citations[0].source
+    for field, value in {
+        "source_type": "document",
+        "revision_kind": RevisionKind.BLOB_VERSION,
+        "revision": "etag:blob-version-17",
+        "anchor": DocumentAnchor(heading_path=("Authorization",), page=1),
+    }.items():
+        object.__setattr__(source, field, value)
+
+    with pytest.raises(ValidationError):
+        answer_response_to_http(answer)
+
+
 class FakeAzureResults:
     def __init__(self, rows: list[dict[str, Any]], request_id: str | None = None) -> None:
         self.rows = rows

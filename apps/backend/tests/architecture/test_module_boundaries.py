@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,13 @@ CHAT_API_SYMBOLS = {
 }
 POLICY_MODULE = "tap.modules.access.domain.policy"
 POLICY_FACTORY = "_new_retrieval_policy_context"
+ACCESS_APPLICATION_MODULE = "tap.modules.access.application"
+AUTHORIZER_MODULE = f"{ACCESS_APPLICATION_MODULE}.authorize"
 _DYNAMIC_IMPORT_ALIAS = "<dynamic-import>"
 _UNRESOLVED_DYNAMIC_IMPORT = "<unresolved-dynamic-import>"
+_IMPORT_MODULE_CALL = "import-module"
+_BUILTIN_IMPORT_CALL = "builtin-import"
+_AMBIGUOUS_IMPORT_CALL = "ambiguous-import"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +51,7 @@ def parsed_imports(path: Path, *, package: str) -> set[ImportReference]:
     builtins_modules = {"builtins"}
     import_module_functions: set[str] = set()
     builtin_import_functions = {"__import__"}
+    assignments: list[tuple[str, ast.expr]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.update(
@@ -69,24 +76,47 @@ def parsed_imports(path: Path, *, package: str) -> set[ImportReference]:
                     import_module_functions.add(local_name)
                 elif module == "builtins" and alias.name == "__import__":
                     builtin_import_functions.add(local_name)
+        elif isinstance(node, ast.Assign):
+            assignments.extend(
+                (target.id, node.value) for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                assignments.append((node.target.id, node.value))
+
+    changed = True
+    while changed:
+        changed = False
+        for target, value in assignments:
+            call_kind = _dynamic_import_kind(
+                value,
+                importlib_modules=importlib_modules,
+                builtins_modules=builtins_modules,
+                import_module_functions=import_module_functions,
+                builtin_import_functions=builtin_import_functions,
+            )
+            if call_kind in {_IMPORT_MODULE_CALL, _AMBIGUOUS_IMPORT_CALL}:
+                before = len(import_module_functions)
+                import_module_functions.add(target)
+                changed = changed or len(import_module_functions) != before
+            if call_kind in {_BUILTIN_IMPORT_CALL, _AMBIGUOUS_IMPORT_CALL}:
+                before = len(builtin_import_functions)
+                builtin_import_functions.add(target)
+                changed = changed or len(builtin_import_functions) != before
 
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not _is_dynamic_import_call(
+        if not isinstance(node, ast.Call):
+            continue
+        call_kind = _dynamic_import_kind(
             node.func,
             importlib_modules=importlib_modules,
             builtins_modules=builtins_modules,
             import_module_functions=import_module_functions,
             builtin_import_functions=builtin_import_functions,
-        ):
-            continue
-        target = (
-            node.args[0].value
-            if node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-            and node.args[0].value
-            else _UNRESOLVED_DYNAMIC_IMPORT
         )
+        if call_kind is None:
+            continue
+        target = _dynamic_import_target(node, call_kind=call_kind)
         imports.add(
             ImportReference(
                 module=target,
@@ -97,24 +127,64 @@ def parsed_imports(path: Path, *, package: str) -> set[ImportReference]:
     return imports
 
 
-def _is_dynamic_import_call(
+def _dynamic_import_kind(
     function: ast.expr,
     *,
     importlib_modules: set[str],
     builtins_modules: set[str],
     import_module_functions: set[str],
     builtin_import_functions: set[str],
-) -> bool:
+) -> str | None:
     if isinstance(function, ast.Name):
-        return function.id in import_module_functions or function.id in builtin_import_functions
-    return (
-        isinstance(function, ast.Attribute)
-        and isinstance(function.value, ast.Name)
-        and (
-            (function.attr == "import_module" and function.value.id in importlib_modules)
-            or (function.attr == "__import__" and function.value.id in builtins_modules)
-        )
-    )
+        is_import_module = function.id in import_module_functions
+        is_builtin_import = function.id in builtin_import_functions
+        if is_import_module and is_builtin_import:
+            return _AMBIGUOUS_IMPORT_CALL
+        if is_import_module:
+            return _IMPORT_MODULE_CALL
+        if is_builtin_import:
+            return _BUILTIN_IMPORT_CALL
+        return None
+    if not isinstance(function, ast.Attribute) or not isinstance(function.value, ast.Name):
+        return None
+    if function.attr == "import_module" and function.value.id in importlib_modules:
+        return _IMPORT_MODULE_CALL
+    if function.attr == "__import__" and function.value.id in builtins_modules:
+        return _BUILTIN_IMPORT_CALL
+    return None
+
+
+def _dynamic_import_target(call: ast.Call, *, call_kind: str) -> str:
+    target = _literal_call_argument(call, position=0, keyword="name")
+    if target is None:
+        return _UNRESOLVED_DYNAMIC_IMPORT
+    if not target.startswith("."):
+        return target
+    if call_kind != _IMPORT_MODULE_CALL:
+        return _UNRESOLVED_DYNAMIC_IMPORT
+    package = _literal_call_argument(call, position=1, keyword="package")
+    if package is None:
+        return _UNRESOLVED_DYNAMIC_IMPORT
+    try:
+        return resolve_name(target, package)
+    except (ImportError, ValueError):
+        return _UNRESOLVED_DYNAMIC_IMPORT
+
+
+def _literal_call_argument(
+    call: ast.Call,
+    *,
+    position: int,
+    keyword: str,
+) -> str | None:
+    positional = call.args[position] if len(call.args) > position else None
+    keywords = [item.value for item in call.keywords if item.arg == keyword]
+    if positional is not None and keywords:
+        return None
+    value = positional if positional is not None else (keywords[0] if len(keywords) == 1 else None)
+    if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value:
+        return value.value
+    return None
 
 
 def recursive_python_files(root: Path) -> tuple[Path, ...]:
@@ -179,10 +249,20 @@ def policy_import_exposes_construction(reference: ImportReference) -> bool:
         )
     if reference.module.startswith(f"{POLICY_MODULE}."):
         return reference.alias == _DYNAMIC_IMPORT_ALIAS or reference.symbol is None
+    if reference.module == AUTHORIZER_MODULE:
+        return (
+            reference.symbol in {None, "*"}
+            or (isinstance(reference.symbol, str) and reference.symbol.startswith("_"))
+            or reference.alias == _DYNAMIC_IMPORT_ALIAS
+        )
+    if reference.module.startswith(f"{AUTHORIZER_MODULE}."):
+        return reference.alias == _DYNAMIC_IMPORT_ALIAS or reference.symbol is None
+    if reference.module == ACCESS_APPLICATION_MODULE:
+        return reference.symbol in {None, "*", "authorize"}
     if reference.module == "tap.modules.access.domain":
         return reference.symbol in {None, "*", "policy"}
     if reference.module == "tap.modules.access":
-        return reference.symbol in {None, "*", "domain"}
+        return reference.symbol in {None, "*", "application", "domain"}
     if reference.module == "tap.modules":
         return reference.symbol in {None, "*", "access"}
     return reference.module == "tap" and reference.symbol in {None, "*", "modules"}
@@ -438,5 +518,171 @@ def test_policy_source_scanner_rejects_root_star_private_and_dynamic_bypasses(
     references = _parsed_source(tmp_path, source_text)
 
     assert any(policy_import_exposes_construction(reference) for reference in references), (
+        references
+    )
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        ("import importlib\nload = importlib.import_module\nload('tap.modules.knowledge.api')\n"),
+        (
+            "import importlib as imports\n"
+            "first = imports.import_module\n"
+            "load = first\n"
+            "load('tap.modules.knowledge.domain.models')\n"
+        ),
+        (
+            "import builtins\n"
+            "load = builtins.__import__\n"
+            "load('tap.modules.knowledge.ports.search')\n"
+        ),
+        (
+            "import builtins as runtime\n"
+            "first = runtime.__import__\n"
+            "load = first\n"
+            "load('tap.modules.knowledge.application.retrieve')\n"
+        ),
+        ("import importlib\nload = importlib.import_module\ntarget = get_target()\nload(target)\n"),
+        ("import builtins\nload = builtins.__import__\ntarget = get_target()\nload(target)\n"),
+    ],
+    ids=(
+        "assigned-import-module",
+        "assigned-import-module-alias-chain",
+        "assigned-builtin-import",
+        "assigned-builtin-import-alias-chain",
+        "assigned-import-module-unresolved",
+        "assigned-builtin-import-unresolved",
+    ),
+)
+def test_chat_source_scanner_tracks_assigned_dynamic_import_callables(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    """Dropping assignment tracking must reopen a callable-alias dependency bypass."""
+    references = _parsed_source(tmp_path, source_text)
+
+    assert any(chat_import_is_forbidden(reference) for reference in references), references
+
+
+@pytest.mark.parametrize(
+    ("source_text", "expected_module"),
+    [
+        (
+            "import importlib\n"
+            "importlib.import_module('..knowledge.api', package='tap.modules.chat')\n",
+            "tap.modules.knowledge.api",
+        ),
+        (
+            "from importlib import import_module as load\n"
+            "load('..knowledge.api', 'tap.modules.chat')\n",
+            "tap.modules.knowledge.api",
+        ),
+        (
+            "import importlib\n"
+            "first = importlib.import_module\n"
+            "load = first\n"
+            "load('.policy', package='tap.modules.access.domain')\n",
+            "tap.modules.access.domain.policy",
+        ),
+    ],
+    ids=("module-keyword-package", "function-positional-package", "assigned-alias-package"),
+)
+def test_dynamic_import_relative_literals_resolve_to_guarded_absolute_modules(
+    tmp_path: Path,
+    source_text: str,
+    expected_module: str,
+) -> None:
+    """A relative target must be resolved, not compared as an inert dotted string."""
+    references = _parsed_source(tmp_path, source_text)
+
+    assert (
+        ImportReference(
+            module=expected_module,
+            symbol=None,
+            alias=_DYNAMIC_IMPORT_ALIAS,
+        )
+        in references
+    )
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        ("from importlib import import_module as load\nload('..knowledge.api')\n"),
+        (
+            "import importlib\n"
+            "load = importlib.import_module\n"
+            "package = get_package()\n"
+            "load('.policy', package=package)\n"
+        ),
+    ],
+    ids=("missing-package", "unresolved-package"),
+)
+def test_relative_dynamic_import_without_static_package_fails_closed(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    references = _parsed_source(tmp_path, source_text)
+
+    assert (
+        ImportReference(
+            module=_UNRESOLVED_DYNAMIC_IMPORT,
+            symbol=None,
+            alias=_DYNAMIC_IMPORT_ALIAS,
+        )
+        in references
+    )
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        (
+            "from tap.modules.access.application.authorize import "
+            "_new_retrieval_policy_context as factory\n"
+        ),
+        "import tap.modules.access.application.authorize as authorization\n",
+        "from tap.modules.access.application import authorize as authorization\n",
+        "import tap.modules.access.application as application\n",
+        ("import importlib\nimportlib.import_module('tap.modules.access.application.authorize')\n"),
+        ("from importlib import import_module as load\nload('tap.modules.access.application')\n"),
+        (
+            "import importlib\n"
+            "load = importlib.import_module\n"
+            "load('.authorize', package='tap.modules.access.application')\n"
+        ),
+    ],
+    ids=(
+        "private-factory-reexport",
+        "authorizer-module-object",
+        "application-parent-symbol",
+        "application-parent-module",
+        "dynamic-authorizer-module",
+        "dynamic-application-parent",
+        "assigned-relative-authorizer-module",
+    ),
+)
+def test_policy_scanner_rejects_authorizer_reexport_paths(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    references = _parsed_source(tmp_path, source_text)
+
+    assert any(policy_import_exposes_construction(reference) for reference in references), (
+        references
+    )
+
+
+def test_policy_scanner_allows_the_explicit_public_authorizer_builder(tmp_path: Path) -> None:
+    references = _parsed_source(
+        tmp_path,
+        (
+            "from tap.modules.access.application.authorize import "
+            "build_retrieval_policy_context as build\n"
+        ),
+    )
+
+    assert not any(policy_import_exposes_construction(reference) for reference in references), (
         references
     )

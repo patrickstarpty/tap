@@ -525,6 +525,7 @@ class ModelCallProvenance:
 
 @dataclass(frozen=True, slots=True)
 class Citation:
+    family: SourceFamily
     citation_id: str
     evidence_label: str
     chunk_id: str
@@ -535,6 +536,8 @@ class Citation:
     derived_from_chunk_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.family, SourceFamily):
+            raise TypeError("citation family must be closed")
         _digest("citation chunk content hash", self.chunk_content_hash)
 
 

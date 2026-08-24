@@ -575,6 +575,7 @@ class AuthorizedRetrieval:
     @staticmethod
     def _citation(evidence: Evidence) -> Citation:
         return Citation(
+            family=evidence.family,
             citation_id=evidence.citation_id,
             evidence_label=evidence.evidence_label,
             chunk_id=evidence.chunk_id,

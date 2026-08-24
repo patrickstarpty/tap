@@ -479,14 +479,16 @@ def test_public_source_provenance_strings_are_strict_and_bounded(
 
 
 @pytest.mark.parametrize(
-    ("revision_kind", "revision", "anchor"),
+    ("source_type", "revision_kind", "revision", "anchor"),
     [
         (
+            "document",
             "blob_version",
             "etag:opaque-blob-version-17",
             {"type": "document", "headingPath": ["Authorization"], "page": 1},
         ),
         (
+            "failure",
             "mysql_version",
             "mysql-bin.000017:42",
             {"type": "failure", "incidentId": "incident-17"},
@@ -494,12 +496,14 @@ def test_public_source_provenance_strings_are_strict_and_bounded(
     ],
 )
 def test_public_source_revision_preserves_bounded_opaque_non_git_formats(
+    source_type: str,
     revision_kind: str,
     revision: str,
     anchor: dict[str, object],
 ) -> None:
     result = RetrievalSourceRevision.model_validate(
         public_source_revision_payload(
+            sourceType=source_type,
             revisionKind=revision_kind,
             revision=revision,
             anchor=anchor,
@@ -534,6 +538,246 @@ def test_every_public_chunk_hash_is_canonical(
 ) -> None:
     with pytest.raises(ValidationError):
         model.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("revision_kind", "revision", "anchor"),
+    [
+        (
+            "blob_version",
+            "etag:blob-version-17",
+            {
+                "type": "code",
+                "repo": "tap",
+                "path": "authorization.py",
+                "lineStart": 1,
+                "lineEnd": 10,
+            },
+        ),
+        (
+            "mysql_version",
+            "mysql-bin.000017:42",
+            {
+                "type": "code",
+                "repo": "tap",
+                "path": "authorization.py",
+                "lineStart": 1,
+                "lineEnd": 10,
+            },
+        ),
+        (
+            "blob_version",
+            "etag:blob-version-17",
+            {"type": "bdd", "featureId": "authorization"},
+        ),
+        (
+            "mysql_version",
+            "mysql-bin.000017:42",
+            {"type": "bdd", "featureId": "authorization"},
+        ),
+        (
+            "git_commit",
+            "a" * 40,
+            {"type": "document", "headingPath": ["Authorization"], "page": 1},
+        ),
+        (
+            "mysql_version",
+            "mysql-bin.000017:42",
+            {"type": "document", "headingPath": ["Authorization"], "page": 1},
+        ),
+        (
+            "git_commit",
+            "a" * 40,
+            {
+                "type": "openapi",
+                "method": "GET",
+                "path": "/authorization",
+                "jsonPointer": "/paths/~1authorization/get",
+            },
+        ),
+        (
+            "mysql_version",
+            "mysql-bin.000017:42",
+            {
+                "type": "openapi",
+                "method": "GET",
+                "path": "/authorization",
+                "jsonPointer": "/paths/~1authorization/get",
+            },
+        ),
+        (
+            "git_commit",
+            "a" * 40,
+            {"type": "failure", "incidentId": "incident-17"},
+        ),
+        (
+            "blob_version",
+            "etag:blob-version-17",
+            {"type": "failure", "incidentId": "incident-17"},
+        ),
+    ],
+    ids=(
+        "code-blob",
+        "code-mysql",
+        "bdd-blob",
+        "bdd-mysql",
+        "document-git",
+        "document-mysql",
+        "openapi-git",
+        "openapi-mysql",
+        "failure-git",
+        "failure-blob",
+    ),
+)
+def test_public_source_revision_rejects_every_revision_anchor_mismatch(
+    revision_kind: str,
+    revision: str,
+    anchor: dict[str, object],
+) -> None:
+    """Removing any anchor/kind branch must authorize one incompatible source shape."""
+    with pytest.raises(ValidationError):
+        RetrievalSourceRevision.model_validate(
+            public_source_revision_payload(
+                sourceType="route_specific_subtype",
+                revisionKind=revision_kind,
+                revision=revision,
+                anchor=anchor,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("source_type", "revision_kind", "revision", "anchor"),
+    [
+        (
+            "bdd",
+            "git_commit",
+            "a" * 40,
+            {
+                "type": "code",
+                "repo": "tap",
+                "path": "authorization.py",
+                "lineStart": 1,
+                "lineEnd": 10,
+            },
+        ),
+        (
+            "failure",
+            "git_commit",
+            "a" * 40,
+            {"type": "bdd", "featureId": "authorization"},
+        ),
+        (
+            "code",
+            "blob_version",
+            "etag:blob-version-17",
+            {"type": "document", "headingPath": ["Authorization"], "page": 1},
+        ),
+        (
+            "document",
+            "mysql_version",
+            "mysql-bin.000017:42",
+            {"type": "failure", "incidentId": "incident-17"},
+        ),
+    ],
+    ids=("code-as-bdd", "bdd-as-failure", "doc-as-code", "failure-as-document"),
+)
+def test_public_source_revision_rejects_known_source_type_contradictions(
+    source_type: str,
+    revision_kind: str,
+    revision: str,
+    anchor: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        RetrievalSourceRevision.model_validate(
+            public_source_revision_payload(
+                sourceType=source_type,
+                revisionKind=revision_kind,
+                revision=revision,
+                anchor=anchor,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("index_family", "source"),
+    [
+        (
+            "code",
+            public_source_revision_payload(
+                sourceType="document",
+                revisionKind="blob_version",
+                revision="etag:blob-version-17",
+                anchor={
+                    "type": "document",
+                    "headingPath": ["Authorization"],
+                    "page": 1,
+                },
+            ),
+        ),
+        ("doc", public_source_revision_payload()),
+        (
+            "failure",
+            public_source_revision_payload(
+                sourceType="bdd",
+                revisionKind="git_commit",
+                revision="b" * 40,
+                anchor={"type": "bdd", "featureId": "authorization"},
+            ),
+        ),
+        (
+            "bdd",
+            public_source_revision_payload(
+                sourceType="failure",
+                revisionKind="mysql_version",
+                revision="mysql-bin.000017:42",
+                anchor={"type": "failure", "incidentId": "incident-17"},
+            ),
+        ),
+    ],
+    ids=("code-with-document", "doc-with-code", "failure-with-bdd", "bdd-with-failure"),
+)
+def test_public_hit_index_family_must_match_source_provenance(
+    index_family: str,
+    source: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        RetrievalHit.model_validate(public_hit_payload(indexFamily=index_family, source=source))
+
+
+def test_public_unknown_doc_subtype_remains_valid_when_family_and_provenance_agree() -> None:
+    source = public_source_revision_payload(
+        sourceType="policy_manual_v2",
+        revisionKind="blob_version",
+        revision="etag:blob-version-17",
+        anchor={"type": "document", "headingPath": ["Authorization"], "page": 1},
+    )
+
+    validated_source = RetrievalSourceRevision.model_validate(source)
+    validated_hit = RetrievalHit.model_validate(
+        public_hit_payload(indexFamily="doc", source=source)
+    )
+
+    assert validated_source.source_type == "policy_manual_v2"
+    assert validated_hit.index_family.value == "doc"
+
+
+def test_public_citation_revalidates_nested_source_compatibility() -> None:
+    with pytest.raises(ValidationError):
+        RetrievalCitation.model_validate(
+            public_citation_payload(
+                source=public_source_revision_payload(
+                    sourceType="code",
+                    revisionKind="blob_version",
+                    revision="etag:blob-version-17",
+                    anchor={
+                        "type": "document",
+                        "headingPath": ["Authorization"],
+                        "page": 1,
+                    },
+                )
+            )
+        )
 
 
 def _assert_objects_closed(value: object) -> None:

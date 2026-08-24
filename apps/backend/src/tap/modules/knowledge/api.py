@@ -318,13 +318,16 @@ def _evidence_to_http(evidence: Evidence) -> HttpHit:
 
 
 def _citation_to_http(citation: Citation) -> HttpCitation:
-    return HttpCitation(
-        citation_id=citation.citation_id,
-        evidence_label=citation.evidence_label,
-        chunk_id=citation.chunk_id,
-        logical_chunk_id=citation.logical_chunk_id,
-        source=_source_to_http(citation.source),
-        chunk_content_hash=citation.chunk_content_hash,
-        content_role=HttpContentRole(citation.content_role.value),
-        derived_from_chunk_ids=list(citation.derived_from_chunk_ids) or None,
+    return HttpCitation.model_validate(
+        {
+            "citationId": citation.citation_id,
+            "evidenceLabel": citation.evidence_label,
+            "chunkId": citation.chunk_id,
+            "logicalChunkId": citation.logical_chunk_id,
+            "source": _source_to_http(citation.source),
+            "chunkContentHash": citation.chunk_content_hash,
+            "contentRole": citation.content_role.value,
+            "derivedFromChunkIds": list(citation.derived_from_chunk_ids) or None,
+        },
+        context={"source_family": HttpSourceFamily(citation.family.value)},
     )
