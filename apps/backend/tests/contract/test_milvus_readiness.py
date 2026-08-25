@@ -84,15 +84,39 @@ async def test_readiness_binds_once_then_runs_one_closed_acl_canary_query() -> N
     assert request.collection_name == "kb_doc_v1_corpus_fixture_v1"
     assert request.output_fields == ("chunk_id",)
     assert request.limit == 2
-    for clause in (
-        f'chunk_id == "{CANARY_CHUNK}"',
-        'tenant_id == "tenant-canary"',
-        'project_id == "project-canary"',
-        'ARRAY_CONTAINS(allowed_group_ids, "group-canary")',
-        'corpus_version == "corpus-fixture-v1"',
-        "deleted == false",
-    ):
-        assert clause in request.filter_expression
+    assert request.filter_expression == (
+        f'chunk_id == "{CANARY_CHUNK}" '
+        'and tenant_id == "tenant-canary" '
+        'and project_id == "project-canary" '
+        'and ARRAY_CONTAINS(allowed_group_ids, "group-canary") '
+        'and corpus_version == "corpus-fixture-v1" '
+        "and deleted == false"
+    )
+
+
+@pytest.mark.asyncio
+async def test_readiness_canary_filter_is_exact_and_safely_escaped() -> None:
+    """Concatenation or appended widening would change the complete observed expression."""
+    reader = ReadinessReader()
+    escaped = MilvusReadinessCanary(
+        chunk_id=CANARY_CHUNK,
+        tenant_id='tenant-"quoted"\\路径',
+        project_id="project-付款",
+        group_id='group-"reader"\\值',
+        corpus_version="corpus-版本-v1",
+    )
+
+    await MilvusReadinessProbe(doc_target(), reader, escaped).check()
+
+    assert len(reader.query_calls) == 1
+    assert reader.query_calls[0].filter_expression == (
+        f'chunk_id == "{CANARY_CHUNK}" '
+        'and tenant_id == "tenant-\\"quoted\\"\\\\路径" '
+        'and project_id == "project-付款" '
+        'and ARRAY_CONTAINS(allowed_group_ids, "group-\\"reader\\"\\\\值") '
+        'and corpus_version == "corpus-版本-v1" '
+        "and deleted == false"
+    )
 
 
 @pytest.mark.parametrize(
