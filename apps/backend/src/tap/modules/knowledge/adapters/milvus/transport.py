@@ -15,7 +15,7 @@ from typing import Literal, Protocol, cast
 
 from pymilvus import AnnSearchRequest, MilvusClient, RRFRanker  # type: ignore[import-untyped]
 
-from tap.modules.knowledge.adapters.milvus.config import MilvusSearchConfig
+from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget, MilvusSearchConfig
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.modules.knowledge.ports.errors import SearchError, SearchUnavailable
 
@@ -56,6 +56,9 @@ _INDEX_FIELDS = (
 )
 _SAFE_COLLECTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}\Z")
 _METADATA_PREFIX = "tap-collection-metadata-v1:"
+_MAX_NORMALIZATION_DEPTH = 16
+_MAX_NORMALIZATION_ITEMS = 20_000
+_MAX_NORMALIZATION_BYTES = 4 * 1024 * 1024
 _METADATA_FIELDS = frozenset(
     {
         "family",
@@ -252,6 +255,10 @@ class _SyncMilvusClient(Protocol):
     def close(self) -> None: ...
 
 
+class _ResolvedCollectionName(str):
+    """Opaque reader-owned capability for one resolved physical collection."""
+
+
 class PyMilvusReader:
     """Async, deadline-bounded wrapper around the synchronous PyMilvus client."""
 
@@ -266,8 +273,15 @@ class PyMilvusReader:
         self._config = config
         self._client = cast(_SyncMilvusClient | None, client)
         self._client_lock = threading.Lock()
+        self._binding_lock = threading.Lock()
+        self._resolved_collections: dict[
+            int,
+            tuple[_ResolvedCollectionName, MilvusIndexTarget],
+        ] = {}
+        self._validated_collections: dict[int, _ResolvedCollectionName] = {}
 
     async def describe_alias(self, alias: str) -> str:
+        target = self._target_for_alias(alias)
         raw = await self._sdk_call(
             lambda: self._sync_client().describe_alias(
                 alias,
@@ -282,18 +296,25 @@ class PyMilvusReader:
                 raise ValueError("alias identity does not match")
             physical_collection = value.get("collection_name")
             _collection_name(physical_collection)
-            return cast(str, physical_collection)
-        except (TypeError, ValueError) as error:
-            raise SearchUnavailable("search provider returned an invalid alias") from error
+            if not cast(str, physical_collection).startswith(target.physical_name_prefix):
+                raise ValueError("alias target is outside the configured prefix")
+            resolved = _ResolvedCollectionName(cast(str, physical_collection))
+            with self._binding_lock:
+                self._resolved_collections[id(resolved)] = (resolved, target)
+            return resolved
+        except SearchError:
+            raise
+        except Exception:
+            raise SearchUnavailable("search provider returned an invalid alias") from None
 
     async def describe_collection(
         self,
         collection_name: str,
     ) -> MilvusCollectionDescriptor:
-        _collection_name(collection_name)
+        resolved, target = self._resolved_target(collection_name)
         raw_collection = await self._sdk_call(
             lambda: self._sync_client().describe_collection(
-                collection_name,
+                resolved,
                 timeout=self._config.timeout_seconds,
             )
         )
@@ -302,22 +323,29 @@ class PyMilvusReader:
 
             def describe_index(index_name: str = index_name) -> object:
                 return self._sync_client().describe_index(
-                    collection_name,
+                    resolved,
                     index_name,
                     timeout=self._config.timeout_seconds,
                 )
 
             raw_indexes.append(await self._sdk_call(describe_index))
         try:
-            return _collection_descriptor(
+            descriptor = _collection_descriptor(
                 raw_collection,
                 tuple(raw_indexes),
-                expected_collection=collection_name,
+                expected_collection=resolved,
             )
-        except SearchUnavailable:
+        except SearchError:
             raise
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            raise SearchUnavailable("search provider returned an invalid collection") from error
+        except Exception:
+            self._discard_resolved(resolved)
+            raise SearchUnavailable("search provider returned an invalid collection") from None
+        if not _descriptor_matches_target(descriptor, target):
+            self._discard_resolved(resolved)
+            raise SearchUnavailable("Milvus collection does not match configured target")
+        with self._binding_lock:
+            self._validated_collections[id(resolved)] = resolved
+        return descriptor
 
     async def hybrid_search(
         self,
@@ -325,6 +353,7 @@ class PyMilvusReader:
     ) -> tuple[Mapping[str, object], ...]:
         if not isinstance(request, MilvusHybridRequest):
             raise SearchUnavailable("search provider request is invalid")
+        physical_collection = self._validated_collection(request.collection_name)
 
         def call() -> object:
             sdk_requests = [
@@ -344,7 +373,7 @@ class PyMilvusReader:
                 ),
             ]
             return self._sync_client().hybrid_search(
-                collection_name=request.collection_name,
+                collection_name=physical_collection,
                 reqs=sdk_requests,
                 ranker=RRFRanker(),
                 limit=request.limit,
@@ -355,9 +384,15 @@ class PyMilvusReader:
 
         raw = await self._sdk_call(call)
         try:
-            return _hybrid_rows(raw, allowed_fields=frozenset(request.output_fields))
-        except (KeyError, TypeError, ValueError) as error:
-            raise SearchUnavailable("search provider returned invalid hybrid rows") from error
+            return _hybrid_rows(
+                raw,
+                allowed_fields=frozenset(request.output_fields),
+                limit=request.limit,
+            )
+        except SearchError:
+            raise
+        except Exception:
+            raise SearchUnavailable("search provider returned invalid hybrid rows") from None
 
     async def query(
         self,
@@ -365,9 +400,10 @@ class PyMilvusReader:
     ) -> tuple[Mapping[str, object], ...]:
         if not isinstance(request, MilvusQueryRequest):
             raise SearchUnavailable("search provider request is invalid")
+        physical_collection = self._validated_collection(request.collection_name)
         raw = await self._sdk_call(
             lambda: self._sync_client().query(
-                collection_name=request.collection_name,
+                collection_name=physical_collection,
                 filter=request.filter_expression,
                 output_fields=list(request.output_fields),
                 limit=request.limit,
@@ -376,9 +412,15 @@ class PyMilvusReader:
             )
         )
         try:
-            return _query_rows(raw, allowed_fields=frozenset(request.output_fields))
-        except (TypeError, ValueError) as error:
-            raise SearchUnavailable("search provider returned invalid query rows") from error
+            return _query_rows(
+                raw,
+                allowed_fields=frozenset(request.output_fields),
+                limit=request.limit,
+            )
+        except SearchError:
+            raise
+        except Exception:
+            raise SearchUnavailable("search provider returned invalid query rows") from None
 
     async def close(self) -> None:
         if self._client is None:
@@ -393,6 +435,9 @@ class PyMilvusReader:
                 self._client = None
 
         await self._sdk_call(call)
+        with self._binding_lock:
+            self._resolved_collections.clear()
+            self._validated_collections.clear()
 
     async def _sdk_call[T](self, call: Callable[[], T]) -> T:
         return await _bounded_call(self._config.timeout_seconds, call)
@@ -412,6 +457,34 @@ class PyMilvusReader:
                 )
             return self._client
 
+    def _target_for_alias(self, alias: str) -> MilvusIndexTarget:
+        targets = tuple(target for target in self._config.targets.values() if target.alias == alias)
+        if len(targets) != 1:
+            raise SearchUnavailable("search provider alias is not configured")
+        return targets[0]
+
+    def _resolved_target(
+        self,
+        collection_name: str,
+    ) -> tuple[_ResolvedCollectionName, MilvusIndexTarget]:
+        with self._binding_lock:
+            resolved = self._resolved_collections.get(id(collection_name))
+        if resolved is None or resolved[0] is not collection_name:
+            raise SearchUnavailable("Milvus physical collection is not resolved")
+        return resolved
+
+    def _validated_collection(self, collection_name: str) -> _ResolvedCollectionName:
+        with self._binding_lock:
+            validated = self._validated_collections.get(id(collection_name))
+        if validated is None or validated is not collection_name:
+            raise SearchUnavailable("Milvus physical collection is not bound")
+        return validated
+
+    def _discard_resolved(self, collection_name: _ResolvedCollectionName) -> None:
+        with self._binding_lock:
+            self._resolved_collections.pop(id(collection_name), None)
+            self._validated_collections.pop(id(collection_name), None)
+
 
 async def _bounded_call[T](timeout_seconds: float, call: Callable[[], T]) -> T:
     try:
@@ -423,6 +496,22 @@ async def _bounded_call[T](timeout_seconds: float, call: Callable[[], T]) -> T:
         raise
     except Exception:
         raise SearchUnavailable("search provider call failed") from None
+
+
+def _descriptor_matches_target(
+    descriptor: MilvusCollectionDescriptor,
+    target: MilvusIndexTarget,
+) -> bool:
+    return (
+        descriptor.family is target.family
+        and descriptor.schema_version == target.schema_version
+        and descriptor.schema_sha256 == target.schema_sha256
+        and descriptor.corpus_version == target.corpus_version
+        and descriptor.embedding_model_version == target.embedding_model_version
+        and descriptor.vector_dimension == target.vector_dimension
+        and descriptor.dynamic_fields_enabled is False
+        and descriptor.consistency_level == "Strong"
+    )
 
 
 def _collection_descriptor(
@@ -606,15 +695,21 @@ def _hybrid_rows(
     raw: object,
     *,
     allowed_fields: frozenset[str],
+    limit: int,
 ) -> tuple[Mapping[str, object], ...]:
     if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], list):
         raise ValueError("hybrid result must contain one query result")
+    if len(raw[0]) > limit:
+        raise ValueError("hybrid result exceeds the request limit")
+    normalizer = _PlainNormalizer()
     rows = []
     for raw_hit in raw[0]:
-        hit = _mapping(raw_hit)
+        hit = _plain_mapping(raw_hit, normalizer=normalizer)
         if set(hit) - {"id", "distance", "entity"}:
             raise ValueError("hybrid hit is widened")
-        entity = _plain_mapping(hit.get("entity"))
+        entity = hit.get("entity")
+        if not isinstance(entity, dict):
+            raise ValueError("hybrid hit entity is malformed")
         if not set(entity) <= allowed_fields:
             raise ValueError("hybrid entity returned unrequested fields")
         if entity.get("chunk_id") != hit.get("id"):
@@ -640,38 +735,123 @@ def _query_rows(
     raw: object,
     *,
     allowed_fields: frozenset[str],
+    limit: int,
 ) -> tuple[Mapping[str, object], ...]:
     if not isinstance(raw, list):
         raise ValueError("query result must be a list")
-    rows = tuple(_plain_mapping(row) for row in raw)
+    if len(raw) > limit:
+        raise ValueError("query result exceeds the request limit")
+    normalizer = _PlainNormalizer()
+    rows = tuple(_plain_mapping(row, normalizer=normalizer) for row in raw)
     if any(not set(row) <= allowed_fields for row in rows):
         raise ValueError("query returned unrequested fields")
     return rows
 
 
-def _plain_mapping(raw: object) -> dict[str, object]:
-    value = _mapping(raw)
-    return {key: _plain_value(item) for key, item in value.items()}
+class _PlainNormalizer:
+    def __init__(self) -> None:
+        self._items = 0
+        self._bytes = 0
+        self._active_containers: set[int] = set()
+
+    def value(self, value: object, *, depth: int = 0) -> object:
+        self._consume_item()
+        if depth > _MAX_NORMALIZATION_DEPTH:
+            raise ValueError("provider value exceeds the nesting bound")
+        if value is None or isinstance(value, bool):
+            self._consume_bytes(1)
+            return value
+        if isinstance(value, int):
+            self._consume_bytes(8)
+            return value
+        if isinstance(value, str):
+            self._consume_bytes(len(value.encode("utf-8")))
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError("provider value is not finite")
+            self._consume_bytes(8)
+            return value
+        if isinstance(value, list):
+            return self._sequence(value, depth=depth, as_tuple=False)
+        if isinstance(value, tuple):
+            return self._sequence(value, depth=depth, as_tuple=True)
+        if isinstance(value, Mapping):
+            return self.mapping(value, depth=depth)
+        raise ValueError("provider returned an SDK-specific value")
+
+    def mapping(self, raw: object, *, depth: int = 0) -> dict[str, object]:
+        value = _mapping(raw, validate_keys=False)
+        identity = self._enter_container(value)
+        try:
+            normalized = {}
+            for key, item in value.items():
+                plain_key = self.key(key)
+                normalized[plain_key] = self.value(item, depth=depth + 1)
+            return normalized
+        finally:
+            self._active_containers.remove(identity)
+
+    def key(self, value: object) -> str:
+        key = _plain_key(value)
+        self._consume_item()
+        self._consume_bytes(len(key.encode("utf-8")))
+        return key
+
+    def _sequence(
+        self,
+        value: list[object] | tuple[object, ...],
+        *,
+        depth: int,
+        as_tuple: bool,
+    ) -> object:
+        identity = self._enter_container(value)
+        try:
+            normalized = [self.value(item, depth=depth + 1) for item in value]
+            return tuple(normalized) if as_tuple else normalized
+        finally:
+            self._active_containers.remove(identity)
+
+    def _enter_container(self, value: object) -> int:
+        identity = id(value)
+        if identity in self._active_containers:
+            raise ValueError("provider value contains a cycle")
+        self._active_containers.add(identity)
+        return identity
+
+    def _consume_item(self) -> None:
+        self._items += 1
+        if self._items > _MAX_NORMALIZATION_ITEMS:
+            raise ValueError("provider value exceeds the item bound")
+
+    def _consume_bytes(self, size: int) -> None:
+        self._bytes += size
+        if self._bytes > _MAX_NORMALIZATION_BYTES:
+            raise ValueError("provider value exceeds the byte bound")
+
+
+def _plain_mapping(
+    raw: object,
+    *,
+    normalizer: _PlainNormalizer | None = None,
+) -> dict[str, object]:
+    bounded = normalizer or _PlainNormalizer()
+    bounded._consume_item()
+    return bounded.mapping(raw)
 
 
 def _plain_value(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("provider value is not finite")
-        return value
-    if isinstance(value, list):
-        return [_plain_value(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_plain_value(item) for item in value)
-    if isinstance(value, Mapping):
-        return {_plain_key(key): _plain_value(item) for key, item in value.items()}
-    raise ValueError("provider returned an SDK-specific value")
+    return _PlainNormalizer().value(value)
 
 
-def _mapping(raw: object) -> Mapping[str, object]:
-    if not isinstance(raw, Mapping) or any(not isinstance(key, str) for key in raw):
+def _mapping(
+    raw: object,
+    *,
+    validate_keys: bool = True,
+) -> Mapping[str, object]:
+    if not isinstance(raw, Mapping):
+        raise TypeError("provider value must be a string-keyed mapping")
+    if validate_keys and any(not isinstance(key, str) for key in raw):
         raise TypeError("provider value must be a string-keyed mapping")
     return cast(Mapping[str, object], raw)
 

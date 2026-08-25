@@ -260,7 +260,11 @@ def _target(*, schema_sha256: str | None = None) -> MilvusIndexTarget:
     )
 
 
-def _hybrid_request(collection_name: str = "kb_doc_v1_corpus_fixture_v1") -> MilvusHybridRequest:
+def _hybrid_request(
+    collection_name: str = "kb_doc_v1_corpus_fixture_v1",
+    *,
+    limit: int = 5,
+) -> MilvusHybridRequest:
     expression = (
         'tenant_id == "tenant-a" and ARRAY_CONTAINS_ANY(allowed_group_ids, ["group-secret"])'
     )
@@ -271,17 +275,31 @@ def _hybrid_request(collection_name: str = "kb_doc_v1_corpus_fixture_v1") -> Mil
                 kind="bm25",
                 query="refund policy",
                 filter_expression=expression,
-                limit=5,
+                limit=limit,
             ),
             MilvusChannelRequest(
                 kind="dense",
                 query=(0.1, 0.2, 0.3),
                 filter_expression=expression,
-                limit=5,
+                limit=limit,
             ),
         ),
         output_fields=MILVUS_OUTPUT_FIELDS,
-        limit=5,
+        limit=limit,
+    )
+
+
+def _query_request(
+    collection_name: str,
+    *,
+    output_fields: tuple[str, ...] = ("chunk_id",),
+    limit: int = 1,
+) -> MilvusQueryRequest:
+    return MilvusQueryRequest(
+        collection_name=collection_name,
+        filter_expression='tenant_id == "tenant-a"',
+        output_fields=output_fields,
+        limit=limit,
     )
 
 
@@ -291,6 +309,19 @@ class RecordingSDKClient:
         self.indexes = _raw_indexes()
         self.calls: list[tuple[str, object]] = []
         self.alias_target = "kb_doc_v1_corpus_fixture_v1"
+        self.hybrid_result: list[list[dict[str, object]]] = [
+            [
+                {
+                    "id": "h_" + "1" * 64,
+                    "distance": 0.75,
+                    "entity": {
+                        "chunk_id": "h_" + "1" * 64,
+                        "content": "Refunds require approval.",
+                    },
+                }
+            ]
+        ]
+        self.query_result: list[dict[str, object]] = [{"chunk_id": "h_" + "1" * 64}]
 
     def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
         self.calls.append(("describe_alias", {"alias": alias, **kwargs}))
@@ -320,22 +351,11 @@ class RecordingSDKClient:
 
     def hybrid_search(self, **kwargs: object) -> list[list[dict[str, object]]]:
         self.calls.append(("hybrid_search", kwargs))
-        return [
-            [
-                {
-                    "id": "h_" + "1" * 64,
-                    "distance": 0.75,
-                    "entity": {
-                        "chunk_id": "h_" + "1" * 64,
-                        "content": "Refunds require approval.",
-                    },
-                }
-            ]
-        ]
+        return self.hybrid_result
 
     def query(self, **kwargs: object) -> list[dict[str, object]]:
         self.calls.append(("query", kwargs))
-        return [{"chunk_id": "h_" + "1" * 64}]
+        return self.query_result
 
     def close(self) -> None:
         self.calls.append(("close", {}))
@@ -361,8 +381,9 @@ class RepeatedNames(Sequence[str]):
 async def test_transport_computes_schema_digest_from_closed_fields_functions_and_indexes() -> None:
     client = RecordingSDKClient()
     reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
 
-    descriptor = await reader.describe_collection("kb_doc_v1_corpus_fixture_v1")
+    descriptor = await reader.describe_collection(resolved)
 
     assert descriptor.schema_sha256 == _schema_digest()
     assert descriptor.family is SourceFamily.DOC
@@ -378,8 +399,9 @@ async def test_transport_accepts_pymilvus_repeated_function_name_containers() ->
     function["input_field_names"] = RepeatedNames(("content",))
     function["output_field_names"] = RepeatedNames(("bm25_sparse",))
     reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
 
-    descriptor = await reader.describe_collection("kb_doc_v1_corpus_fixture_v1")
+    descriptor = await reader.describe_collection(resolved)
 
     assert descriptor.schema_sha256 == _schema_digest()
 
@@ -401,9 +423,10 @@ async def test_transport_rejects_undigested_field_semantics(
     client = RecordingSDKClient()
     client.collection["fields"][0][field] = forged  # type: ignore[index]
     reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
 
     with pytest.raises(SearchUnavailable, match="invalid collection"):
-        await reader.describe_collection("kb_doc_v1_corpus_fixture_v1")
+        await reader.describe_collection(resolved)
 
 
 @pytest.mark.parametrize("field", ("auto_id", "enable_namespace"))
@@ -412,9 +435,10 @@ async def test_transport_rejects_widened_collection_semantics(field: str) -> Non
     client = RecordingSDKClient()
     client.collection[field] = True
     reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
 
     with pytest.raises(SearchUnavailable, match="invalid collection"):
-        await reader.describe_collection("kb_doc_v1_corpus_fixture_v1")
+        await reader.describe_collection(resolved)
 
 
 @pytest.mark.asyncio
@@ -428,8 +452,9 @@ async def test_declared_computed_and_configured_schema_digests_must_all_match() 
         _config(),
         client=RecordingSDKClient(claimed_digest=declared_forgery),
     )
+    forged_resolved = await forged_reader.describe_alias("kb_doc_active")
     with pytest.raises(SearchUnavailable, match="schema declaration does not match description"):
-        await forged_reader.describe_collection("kb_doc_v1_corpus_fixture_v1")
+        await forged_reader.describe_collection(forged_resolved)
 
     with pytest.raises(SearchUnavailable, match="collection does not match configured target"):
         await bind_target(valid_reader, _target(schema_sha256="sha256:" + "e" * 64))
@@ -457,11 +482,160 @@ async def test_alias_switch_after_binding_cannot_retarget_the_hybrid_request() -
     assert search_call["collection_name"] == "kb_doc_v1_corpus_fixture_v1"  # type: ignore[index]
 
 
+@pytest.mark.parametrize(
+    ("operation", "collection_name"),
+    (
+        ("query", "kb_doc_active"),
+        ("query", "kb_doc_v1_unvalidated"),
+        ("hybrid_search", "kb_doc_active"),
+        ("hybrid_search", "kb_doc_v1_unvalidated"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_aliases_and_unvalidated_physical_collections_before_sdk_io(
+    operation: str,
+    collection_name: str,
+) -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+
+    with pytest.raises(SearchUnavailable, match="physical collection is not bound"):
+        if operation == "query":
+            await reader.query(_query_request(collection_name))
+        else:
+            await reader.hybrid_search(_hybrid_request(collection_name))
+
+    assert operation not in [call[0] for call in client.calls]
+
+
+@pytest.mark.asyncio
+async def test_physical_capability_is_valid_only_after_alias_and_description_validation() -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="physical collection is not bound"):
+        await reader.query(_query_request(resolved))
+
+    await reader.describe_collection(resolved)
+    rows = await reader.query(_query_request(resolved))
+    assert len(rows) == 1
+
+
+@pytest.mark.parametrize("operation", ("query", "hybrid_search"))
+@pytest.mark.asyncio
+async def test_provider_rows_cannot_exceed_the_request_limit(operation: str) -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    client.query_result = [
+        {"chunk_id": "h_" + "1" * 64},
+        {"chunk_id": "h_" + "2" * 64},
+    ]
+    client.hybrid_result[0].append(
+        {
+            "id": "h_" + "2" * 64,
+            "distance": 0.5,
+            "entity": {"chunk_id": "h_" + "2" * 64},
+        }
+    )
+
+    with pytest.raises(SearchUnavailable, match=f"invalid {operation.split('_')[0]} rows"):
+        if operation == "query":
+            await reader.query(_query_request(bound.physical_collection, limit=1))
+        else:
+            await reader.hybrid_search(_hybrid_request(bound.physical_collection, limit=1))
+
+
+def _nested_list(depth: int) -> list[object]:
+    value: list[object] = []
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize(
+    ("case", "value"),
+    (
+        ("depth", _nested_list(100)),
+        ("elements", ["value"] * 20_000),
+        ("bytes", "sensitive-provider-value" * 500_000),
+    ),
+    ids=("depth", "elements", "bytes"),
+)
+@pytest.mark.asyncio
+async def test_query_result_normalization_has_finite_resource_budgets(
+    case: str,
+    value: object,
+) -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    client.query_result = [{"content": value}]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    rendered = str(caught.value) + repr(caught.value)
+    assert case not in rendered
+    assert "sensitive-provider-value" not in rendered
+
+
+class MeteredProviderMapping(Mapping[str, object]):
+    """Provider mapping that records how far the reader traverses it."""
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+        self.iterated = 0
+
+    def __getitem__(self, key: str) -> object:
+        return "sensitive-provider-value"
+
+    def __iter__(self) -> Iterator[str]:
+        for index in range(self.count):
+            self.iterated += 1
+            yield f"provider_field_{index}"
+
+    def __len__(self) -> int:
+        return self.count
+
+
+@pytest.mark.asyncio
+async def test_query_normalization_does_not_eagerly_traverse_oversized_provider_mappings() -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    oversized = MeteredProviderMapping(20_001)
+    client.query_result = [oversized]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    assert oversized.iterated <= 20_000
+    assert "sensitive-provider-value" not in str(caught.value) + repr(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_cyclic_query_result_is_sanitized_as_shared_search_unavailable() -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    cyclic: dict[str, object] = {}
+    cyclic["cycle"] = cyclic
+    client.query_result = [{"content": cyclic}]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    assert "cycle" not in str(caught.value) + repr(caught.value)
+
+
 @pytest.mark.asyncio
 async def test_hybrid_and_query_emit_only_bounded_physical_requests() -> None:
     client = RecordingSDKClient()
     reader = PyMilvusReader(_config(), client=client)
-    request = _hybrid_request()
+    bound = await bind_target(reader, _target())
+    request = _hybrid_request(bound.physical_collection)
 
     await reader.hybrid_search(request)
     await reader.query(
@@ -572,13 +746,16 @@ async def test_every_sdk_failure_is_normalized_without_echoing_sensitive_values(
         if operation == "describe_alias":
             return await reader.describe_alias("kb_doc_active")
         if operation in {"describe_collection", "describe_index"}:
-            return await reader.describe_collection("kb_doc_v1_corpus_fixture_v1")
+            resolved = await reader.describe_alias("kb_doc_active")
+            return await reader.describe_collection(resolved)
         if operation == "hybrid_search":
-            return await reader.hybrid_search(_hybrid_request())
+            bound = await bind_target(reader, _target())
+            return await reader.hybrid_search(_hybrid_request(bound.physical_collection))
         if operation == "query":
+            bound = await bind_target(reader, _target())
             return await reader.query(
                 MilvusQueryRequest(
-                    collection_name="kb_doc_v1_corpus_fixture_v1",
+                    collection_name=bound.physical_collection,
                     filter_expression="raw-filter group-secret",
                     output_fields=("chunk_id",),
                     limit=1,
