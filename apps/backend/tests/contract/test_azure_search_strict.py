@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
+from search_provider_conformance import expected_azure_filter
 
 from tap.modules.access.application.authorize import build_retrieval_policy_context
 from tap.modules.access.domain.policy import (
@@ -396,6 +397,23 @@ async def test_scope_prefilter_contains_hash_and_filterable_subtree_before_query
         in emitted
     )
     assert client.calls[0]["search_text"] == "authorization [REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_request_uses_the_hand_derived_security_filter_for_both_channels() -> None:
+    """Changing the single prefilter would let keyword and dense retrieval diverge."""
+    client = FakeClient([])
+    bound_execution = execution()
+    adapter = AzureAISearchAdapter(config(), client_factory=lambda _index: client)
+
+    await adapter.search(bound_execution)
+
+    assert len(client.calls) == 1
+    request = client.calls[0]
+    assert request["search_text"] == bound_execution.plan.sanitized_query
+    assert request["vector_queries"]
+    assert request["vector_filter_mode"] == "preFilter"
+    assert request["filter"] == expected_azure_filter(bound_execution)
 
 
 @pytest.mark.asyncio

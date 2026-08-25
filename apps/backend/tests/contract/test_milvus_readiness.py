@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+from collections.abc import Mapping
+
+import pytest
+from test_milvus_mapping import doc_target
+from test_milvus_search_strict import descriptor
+
+from tap.interfaces.http.app import create_app
+from tap.modules.knowledge.adapters.milvus.readiness import (
+    MilvusReadinessCanary,
+    MilvusReadinessProbe,
+)
+from tap.modules.knowledge.adapters.milvus.transport import (
+    MilvusCollectionDescriptor,
+    MilvusHybridRequest,
+    MilvusQueryRequest,
+)
+from tap.modules.knowledge.ports.errors import SearchUnavailable
+
+CANARY_CHUNK = "h_" + "7" * 64
+
+
+def canary() -> MilvusReadinessCanary:
+    return MilvusReadinessCanary(
+        chunk_id=CANARY_CHUNK,
+        tenant_id="tenant-canary",
+        project_id="project-canary",
+        group_id="group-canary",
+        corpus_version="corpus-fixture-v1",
+    )
+
+
+class ReadinessReader:
+    def __init__(
+        self,
+        rows: tuple[Mapping[str, object], ...] = ({"chunk_id": CANARY_CHUNK},),
+        *,
+        delay: float = 0,
+    ) -> None:
+        self.rows = rows
+        self.delay = delay
+        self.alias_calls: list[str] = []
+        self.collection_calls: list[str] = []
+        self.query_calls: list[MilvusQueryRequest] = []
+        self.hybrid_calls: list[MilvusHybridRequest] = []
+
+    async def describe_alias(self, alias: str) -> str:
+        self.alias_calls.append(alias)
+        return "kb_doc_v1_corpus_fixture_v1"
+
+    async def describe_collection(self, collection_name: str) -> MilvusCollectionDescriptor:
+        self.collection_calls.append(collection_name)
+        return descriptor()
+
+    async def hybrid_search(self, request: MilvusHybridRequest) -> tuple[Mapping[str, object], ...]:
+        self.hybrid_calls.append(request)
+        return ()
+
+    async def query(self, request: MilvusQueryRequest) -> tuple[Mapping[str, object], ...]:
+        self.query_calls.append(request)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        return self.rows
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_readiness_binds_once_then_runs_one_closed_acl_canary_query() -> None:
+    """Dropping any canary predicate or widening output would make readiness non-authoritative."""
+    reader = ReadinessReader()
+
+    await MilvusReadinessProbe(doc_target(), reader, canary()).check()
+
+    assert reader.alias_calls == ["kb_doc_active"]
+    assert reader.collection_calls == ["kb_doc_v1_corpus_fixture_v1"]
+    assert len(reader.query_calls) == 1
+    assert reader.hybrid_calls == []
+    request = reader.query_calls[0]
+    assert request.collection_name == "kb_doc_v1_corpus_fixture_v1"
+    assert request.output_fields == ("chunk_id",)
+    assert request.limit == 2
+    for clause in (
+        f'chunk_id == "{CANARY_CHUNK}"',
+        'tenant_id == "tenant-canary"',
+        'project_id == "project-canary"',
+        'ARRAY_CONTAINS(allowed_group_ids, "group-canary")',
+        'corpus_version == "corpus-fixture-v1"',
+        "deleted == false",
+    ):
+        assert clause in request.filter_expression
+
+
+@pytest.mark.parametrize(
+    "rows",
+    (
+        (),
+        ({"chunk_id": CANARY_CHUNK}, {"chunk_id": CANARY_CHUNK}),
+        ({"chunk_id": "h_" + "8" * 64},),
+        ({"wrong": CANARY_CHUNK},),
+        ({"chunk_id": CANARY_CHUNK, "tenant_id": "tenant-canary"},),
+    ),
+    ids=("missing", "multiple", "wrong-chunk", "missing-field", "widened-row"),
+)
+@pytest.mark.asyncio
+async def test_readiness_rejects_any_non_exact_canary_result(
+    rows: tuple[Mapping[str, object], ...],
+) -> None:
+    """Accepting a non-exact scalar result would report readiness without the canary contract."""
+    with pytest.raises(SearchUnavailable, match="readiness canary failed"):
+        await MilvusReadinessProbe(doc_target(), ReadinessReader(rows), canary()).check()
+
+
+@pytest.mark.asyncio
+async def test_readiness_timeout_is_bounded_and_provider_neutral() -> None:
+    """Missing the outer timeout would let readiness hang behind a nonconforming reader."""
+    reader = ReadinessReader(delay=0.05)
+
+    with pytest.raises(SearchUnavailable, match="readiness check timed out") as raised:
+        await MilvusReadinessProbe(doc_target(), reader, canary(), timeout_seconds=0.01).check()
+
+    assert raised.value.__cause__ is None
+
+
+def test_http_liveness_construction_has_no_milvus_dependency() -> None:
+    """Adding a provider parameter would couple process liveness to search readiness."""
+    assert tuple(inspect.signature(create_app).parameters) == ()
+    assert create_app().title == "TAP API"

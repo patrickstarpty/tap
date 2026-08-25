@@ -270,7 +270,7 @@ def policy_import_exposes_construction(reference: ImportReference) -> bool:
 
 def test_framework_free_knowledge_layers_do_not_import_framework_or_provider_sdks() -> None:
     """Moving Pydantic, HTTP, or provider types into a stable layer must fail."""
-    forbidden = ("fastapi", "pydantic", "httpx", "azure", "litellm")
+    forbidden = ("fastapi", "pydantic", "httpx", "azure", "litellm", "pymilvus")
     layer_roots = (
         KNOWLEDGE / "domain",
         KNOWLEDGE / "application",
@@ -287,6 +287,53 @@ def test_framework_free_knowledge_layers_do_not_import_framework_or_provider_sdk
             for reference in _imports(path)
             for prefix in forbidden
         ), path
+
+
+def test_only_milvus_transport_imports_pymilvus() -> None:
+    """Importing SDK objects outside transport would leak capabilities across the adapter."""
+    transport = KNOWLEDGE / "adapters" / "milvus" / "transport.py"
+    consumers = {
+        path
+        for path in recursive_python_files(BACKEND_SOURCE)
+        if any(
+            reference.module == "pymilvus" or reference.module.startswith("pymilvus.")
+            for reference in _imports(path)
+        )
+    }
+
+    assert consumers == {transport}
+
+
+def test_stable_layers_do_not_import_milvus_adapter_modules() -> None:
+    """A provider adapter import in domain, application, or contracts would change public DTOs."""
+    stable_roots = (
+        BACKEND_SOURCE / "contracts",
+        KNOWLEDGE / "domain",
+        KNOWLEDGE / "application",
+        KNOWLEDGE / "ports",
+    )
+    for root in stable_roots:
+        for path in recursive_python_files(root):
+            assert not any(
+                reference.module == "tap.modules.knowledge.adapters.milvus"
+                or reference.module.startswith("tap.modules.knowledge.adapters.milvus.")
+                for reference in _imports(path)
+            ), path
+
+
+def test_search_provider_selection_exists_only_in_knowledge_bootstrap() -> None:
+    """Reading the selector elsewhere would create multiple composition roots."""
+    bootstrap = BACKEND_SOURCE / "entrypoints" / "knowledge_bootstrap.py"
+    selector_consumers: set[Path] = set()
+    for path in recursive_python_files(BACKEND_SOURCE):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if any(
+            isinstance(node, ast.Constant) and node.value == "TAP_SEARCH_BACKEND"
+            for node in ast.walk(tree)
+        ):
+            selector_consumers.add(path)
+
+    assert selector_consumers == {bootstrap}
 
 
 def test_knowledge_adapters_never_import_chat_and_chat_uses_only_knowledge_api() -> None:
