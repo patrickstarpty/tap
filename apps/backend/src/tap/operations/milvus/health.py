@@ -11,7 +11,6 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
 )
 from tap.operations.milvus.contracts import (
-    MilvusDeniedProbe,
     MilvusHealthReport,
     MilvusProbeClients,
 )
@@ -56,10 +55,11 @@ async def run_health_probe(
         collection_created = True
         await clients.provisioner.create_indexes(collection_name)
         for role_name in _ROLE_NAMES:
-            await clients.provisioner.grant_collection(collection_name, role_name)
             granted_roles.append(role_name)
-        await clients.provisioner.alter_alias(alias, collection_name)
+            await clients.provisioner.grant_collection(collection_name, role_name)
+        await clients.provisioner.create_alias(alias, collection_name)
         alias_created = True
+        await clients.provisioner.alter_alias(alias, collection_name)
         if await clients.provisioner.describe_alias(alias) != collection_name:
             raise RuntimeError("Milvus provisioner alias probe failed")
 
@@ -75,8 +75,7 @@ async def run_health_probe(
         await clients.reader.describe_collection(resolved)
         allowed = await clients.reader.hybrid_search(_hybrid_request(resolved))
         denied = await clients.reader.query(_denied_request(resolved))
-        if isinstance(clients.admin, MilvusDeniedProbe):
-            await clients.admin.verify(collection_name)
+        await clients.denied_probe.verify(collection_name)
 
         await clients.writer.delete(collection_name, (_DENIED_CHUNK_ID,))
         await clients.writer.flush(collection_name)

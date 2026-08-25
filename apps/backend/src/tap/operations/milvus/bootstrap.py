@@ -35,6 +35,7 @@ async def bootstrap_local_rbac(
     for role_name, username, password in users:
         await admin.ensure_user(username, password)
         await admin.ensure_role(role_name)
+        await admin.replace_user_roles(username, frozenset({role_name}))
 
     for role_name, privileges in _ROLE_PRIVILEGES:
         await admin.replace_role_grants(

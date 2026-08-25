@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol
 
 from pydantic import SecretStr
 
@@ -20,6 +20,19 @@ class MilvusRoleCredentials:
     writer_password: SecretStr = field(repr=False)
     provisioner_username: str
     provisioner_password: SecretStr = field(repr=False)
+
+    def __post_init__(self) -> None:
+        usernames = (
+            self.reader_username,
+            self.writer_username,
+            self.provisioner_username,
+        )
+        normalized = tuple(username.casefold() for username in usernames)
+        if (
+            any(not username or username == "root" for username in normalized)
+            or len(set(normalized)) != 3
+        ):
+            raise ValueError("Milvus RBAC requires three unique non-root identities")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +67,12 @@ class MilvusAdmin(Protocol):
 
     async def ensure_role(self, role_name: str) -> None: ...
 
+    async def replace_user_roles(
+        self,
+        username: str,
+        role_names: frozenset[str],
+    ) -> None: ...
+
     async def replace_role_grants(
         self,
         role_name: str,
@@ -71,6 +90,8 @@ class MilvusProvisioner(Protocol):
     async def grant_collection(self, name: str, role_name: str) -> None: ...
 
     async def revoke_collection(self, name: str, role_name: str) -> None: ...
+
+    async def create_alias(self, alias: str, collection_name: str) -> None: ...
 
     async def alter_alias(self, alias: str, collection_name: str) -> None: ...
 
@@ -91,7 +112,6 @@ class MilvusWriter(Protocol):
     async def flush(self, name: str) -> None: ...
 
 
-@runtime_checkable
 class MilvusDeniedProbe(Protocol):
     async def verify(self, collection_name: str) -> None: ...
 
@@ -102,6 +122,7 @@ class MilvusProbeClients:
     provisioner: MilvusProvisioner
     writer: MilvusWriter
     reader: MilvusReader
+    denied_probe: MilvusDeniedProbe
 
 
 @dataclass(frozen=True, slots=True)

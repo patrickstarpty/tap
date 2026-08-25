@@ -151,6 +151,8 @@ services:
     environment:
       ETCD_ENDPOINTS: milvus-etcd:2379
       MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: ${MILVUS_MINIO_ROOT_USER:-tap-local-minio}
+      MINIO_SECRET_ACCESS_KEY: ${MILVUS_MINIO_ROOT_PASSWORD:-tap-local-minio-password}
       MQ_TYPE: woodpecker
     depends_on: [milvus-etcd, milvus-minio]
     ports:

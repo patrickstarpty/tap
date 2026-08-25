@@ -51,6 +51,8 @@ class _SyncClient(Protocol):
 
     def create_user(self, user_name: str, password: str, **kwargs: object) -> object: ...
 
+    def drop_user(self, user_name: str, **kwargs: object) -> object: ...
+
     def describe_user(self, user_name: str, **kwargs: object) -> object: ...
 
     def create_role(self, role_name: str, **kwargs: object) -> object: ...
@@ -58,6 +60,8 @@ class _SyncClient(Protocol):
     def list_roles(self, **kwargs: object) -> object: ...
 
     def grant_role(self, user_name: str, role_name: str, **kwargs: object) -> object: ...
+
+    def revoke_role(self, user_name: str, role_name: str, **kwargs: object) -> object: ...
 
     def describe_role(self, role_name: str, **kwargs: object) -> object: ...
 
@@ -109,6 +113,8 @@ class _SyncClient(Protocol):
 
     def get_load_state(self, collection_name: str, **kwargs: object) -> object: ...
 
+    def create_alias(self, collection_name: str, alias: str, **kwargs: object) -> object: ...
+
     def alter_alias(self, collection_name: str, alias: str, **kwargs: object) -> object: ...
 
     def describe_alias(self, alias: str, **kwargs: object) -> object: ...
@@ -144,38 +150,65 @@ class PyMilvusAdmin:
     ) -> None:
         self._client = client
         self._current_root_password = current_root_password
-        self._pending_username: str | None = None
         self.authenticated_with_initial_root = authenticated_with_initial_root
 
     async def ensure_user(self, username: str, password: SecretStr) -> None:
         users = await _call(lambda: self._client.list_users(timeout=_TIMEOUT_SECONDS))
-        if username not in _string_items(users):
-            await _call(
-                lambda: self._client.create_user(
-                    username,
-                    password.get_secret_value(),
-                    timeout=_TIMEOUT_SECONDS,
-                )
+        if username in _string_items(users):
+            raw = await _call(
+                lambda: self._client.describe_user(username, timeout=_TIMEOUT_SECONDS)
             )
-        self._pending_username = username
+            for role_name in sorted(_user_roles(raw)):
+
+                def revoke_existing_role(role_name: str = role_name) -> object:
+                    return self._client.revoke_role(
+                        username,
+                        role_name,
+                        timeout=_TIMEOUT_SECONDS,
+                    )
+
+                await _call(revoke_existing_role)
+            await _call(lambda: self._client.drop_user(username, timeout=_TIMEOUT_SECONDS))
+        await _call(
+            lambda: self._client.create_user(
+                username,
+                password.get_secret_value(),
+                timeout=_TIMEOUT_SECONDS,
+            )
+        )
 
     async def ensure_role(self, role_name: str) -> None:
         roles = await _call(lambda: self._client.list_roles(timeout=_TIMEOUT_SECONDS))
         if role_name not in _role_names(roles):
             await _call(lambda: self._client.create_role(role_name, timeout=_TIMEOUT_SECONDS))
-        username = self._pending_username
-        if username is None:
-            raise RuntimeError("Milvus role bootstrap ordering is invalid")
+
+    async def replace_user_roles(
+        self,
+        username: str,
+        role_names: frozenset[str],
+    ) -> None:
         user = await _call(lambda: self._client.describe_user(username, timeout=_TIMEOUT_SECONDS))
-        if role_name not in _user_roles(user):
-            await _call(
-                lambda: self._client.grant_role(
+        current = _user_roles(user)
+        for role_name in sorted(current - role_names):
+
+            def revoke_role(role_name: str = role_name) -> object:
+                return self._client.revoke_role(
                     username,
                     role_name,
                     timeout=_TIMEOUT_SECONDS,
                 )
-            )
-        self._pending_username = None
+
+            await _call(revoke_role)
+        for role_name in sorted(role_names - current):
+
+            def grant_role(role_name: str = role_name) -> object:
+                return self._client.grant_role(
+                    username,
+                    role_name,
+                    timeout=_TIMEOUT_SECONDS,
+                )
+
+            await _call(grant_role)
 
     async def replace_role_grants(
         self,
@@ -372,6 +405,15 @@ class PyMilvusProvisioner:
                 )
 
             await _call(revoke_privilege)
+
+    async def create_alias(self, alias: str, collection_name: str) -> None:
+        await _call(
+            lambda: self._client.create_alias(
+                collection_name,
+                alias,
+                timeout=_TIMEOUT_SECONDS,
+            )
+        )
 
     async def alter_alias(self, alias: str, collection_name: str) -> None:
         await _call(
@@ -591,13 +633,17 @@ class PyMilvusDeniedProbe:
 
 
 class _HealthAdminUnavailable:
-    def __init__(self, denied_probe: PyMilvusDeniedProbe) -> None:
-        self._denied_probe = denied_probe
-
     async def ensure_user(self, username: str, password: SecretStr) -> None:
         raise RuntimeError("Milvus health does not have admin authority")
 
     async def ensure_role(self, role_name: str) -> None:
+        raise RuntimeError("Milvus health does not have admin authority")
+
+    async def replace_user_roles(
+        self,
+        username: str,
+        role_names: frozenset[str],
+    ) -> None:
         raise RuntimeError("Milvus health does not have admin authority")
 
     async def replace_role_grants(
@@ -609,9 +655,6 @@ class _HealthAdminUnavailable:
 
     async def rotate_root_password(self, password: SecretStr) -> None:
         raise RuntimeError("Milvus health does not have admin authority")
-
-    async def verify(self, collection_name: str) -> None:
-        await self._denied_probe.verify(collection_name)
 
 
 async def connect_local_admin(
@@ -664,10 +707,39 @@ async def connect_local_admin(
     except Exception:
         await _close_quietly(initial_client)
         raise RuntimeError("Milvus initial root authentication failed") from None
+    try:
+        await _call(
+            lambda: initial_client.update_password(
+                "root",
+                initial,
+                rotated,
+                reset_connection=True,
+                timeout=_TIMEOUT_SECONDS,
+            )
+        )
+    except Exception:
+        await _close_quietly(initial_client)
+        raise RuntimeError("Milvus initial root rotation failed") from None
+    await _close_quietly(initial_client)
+    reconnected_client = cast(
+        _SyncClient,
+        client_factory(
+            uri=uri,
+            user="root",
+            password=rotated,
+            db_name=database,
+            timeout=_TIMEOUT_SECONDS,
+        ),
+    )
+    try:
+        await _call(lambda: reconnected_client.list_users(timeout=_TIMEOUT_SECONDS))
+    except Exception:
+        await _close_quietly(reconnected_client)
+        raise RuntimeError("Milvus rotated root reconnect failed") from None
     return PyMilvusAdmin(
-        initial_client,
-        SecretStr(initial),
-        authenticated_with_initial_root=True,
+        reconnected_client,
+        SecretStr(rotated),
+        authenticated_with_initial_root=False,
     )
 
 
@@ -744,10 +816,11 @@ def build_probe_clients(
         sdk=sdk,
     )
     return MilvusProbeClients(
-        admin=cast(MilvusAdmin, _HealthAdminUnavailable(denied_probe)),
+        admin=cast(MilvusAdmin, _HealthAdminUnavailable()),
         provisioner=PyMilvusProvisioner(provisioner_client, sdk),
         writer=PyMilvusWriter(writer_client),
         reader=PyMilvusProbeReader(reader_client, sdk),
+        denied_probe=denied_probe,
     )
 
 

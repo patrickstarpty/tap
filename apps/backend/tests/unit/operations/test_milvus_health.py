@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -12,6 +16,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.contracts import (
+    MilvusDeniedProbe,
     MilvusGrant,
     MilvusHealthReport,
     MilvusProbeClients,
@@ -24,13 +29,19 @@ pytestmark = pytest.mark.asyncio
 class RecordingAdmin:
     def __init__(self) -> None:
         self.dropped_collections: list[str] = []
-        self.denied_collections: list[str] = []
 
     async def ensure_user(self, username: str, password: SecretStr) -> None:
         raise AssertionError("health must not bootstrap users")
 
     async def ensure_role(self, role_name: str) -> None:
         raise AssertionError("health must not bootstrap roles")
+
+    async def replace_user_roles(
+        self,
+        username: str,
+        role_names: frozenset[str],
+    ) -> None:
+        raise AssertionError("health must not replace user roles")
 
     async def replace_role_grants(
         self,
@@ -42,15 +53,13 @@ class RecordingAdmin:
     async def rotate_root_password(self, password: SecretStr) -> None:
         raise AssertionError("health must not rotate root")
 
-    async def verify(self, collection_name: str) -> None:
-        self.denied_collections.append(collection_name)
-
 
 class RecordingProvisioner:
     def __init__(self, admin: RecordingAdmin) -> None:
         self.admin = admin
         self.calls: list[tuple[object, ...]] = []
         self.fail_drop_alias = False
+        self.fail_grant_role: str | None = None
 
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
         self.calls.append(("create_collection", name, dict(schema)))
@@ -60,9 +69,14 @@ class RecordingProvisioner:
 
     async def grant_collection(self, name: str, role_name: str) -> None:
         self.calls.append(("grant_collection", name, role_name))
+        if role_name == self.fail_grant_role:
+            raise RuntimeError("collection grant failed")
 
     async def revoke_collection(self, name: str, role_name: str) -> None:
         self.calls.append(("revoke_collection", name, role_name))
+
+    async def create_alias(self, alias: str, collection_name: str) -> None:
+        self.calls.append(("create_alias", alias, collection_name))
 
     async def alter_alias(self, alias: str, collection_name: str) -> None:
         self.calls.append(("alter_alias", alias, collection_name))
@@ -138,33 +152,45 @@ class RecordingReader:
         self.calls.append(("close",))
 
 
+class RecordingDeniedProbe(MilvusDeniedProbe):
+    def __init__(self) -> None:
+        self.collections: list[str] = []
+
+    async def verify(self, collection_name: str) -> None:
+        self.collections.append(collection_name)
+
+
 def probe_clients() -> tuple[
     MilvusProbeClients,
     RecordingAdmin,
     RecordingProvisioner,
     RecordingWriter,
     RecordingReader,
+    RecordingDeniedProbe,
 ]:
     admin = RecordingAdmin()
     provisioner = RecordingProvisioner(admin)
     writer = RecordingWriter()
     reader = RecordingReader()
+    denied_probe = RecordingDeniedProbe()
     return (
         MilvusProbeClients(
             admin=admin,
             provisioner=provisioner,
             writer=writer,
             reader=reader,
+            denied_probe=denied_probe,
         ),
         admin,
         provisioner,
         writer,
         reader,
+        denied_probe,
     )
 
 
 async def test_health_probe_exercises_roles_and_cleans_only_its_collection() -> None:
-    clients, admin, provisioner, writer, reader = probe_clients()
+    clients, admin, provisioner, writer, reader, denied_probe = probe_clients()
 
     report = await run_health_probe(clients, "probe_20260824_001")
 
@@ -176,7 +202,18 @@ async def test_health_probe_exercises_roles_and_cleans_only_its_collection() -> 
     )
     assert all(name.startswith("tap_health_probe_") for name in admin.dropped_collections)
     assert len(admin.dropped_collections) == 1
-    assert admin.denied_collections == ["tap_health_probe_probe_20260824_001"]
+    assert denied_probe.collections == ["tap_health_probe_probe_20260824_001"]
+    create_alias = (
+        "create_alias",
+        "tap_health_alias_probe_20260824_001",
+        "tap_health_probe_probe_20260824_001",
+    )
+    alter_alias = (
+        "alter_alias",
+        "tap_health_alias_probe_20260824_001",
+        "tap_health_probe_probe_20260824_001",
+    )
+    assert provisioner.calls.index(create_alias) < provisioner.calls.index(alter_alias)
     assert ("describe_alias", "tap_health_alias_probe_20260824_001") in provisioner.calls
     assert [call[0] for call in writer.calls] == [
         "insert",
@@ -201,7 +238,7 @@ async def test_health_probe_exercises_roles_and_cleans_only_its_collection() -> 
 
 
 async def test_health_probe_cleans_its_collection_when_reader_fails() -> None:
-    clients, admin, _, _, reader = probe_clients()
+    clients, admin, _, _, reader, _ = probe_clients()
 
     async def fail_query(request: MilvusQueryRequest) -> tuple[Mapping[str, object], ...]:
         raise RuntimeError("provider detail must not be returned")
@@ -219,10 +256,50 @@ async def test_health_probe_cleans_its_collection_when_reader_fails() -> None:
 
 
 async def test_health_cleanup_still_drops_collection_after_alias_cleanup_failure() -> None:
-    clients, admin, provisioner, _, _ = probe_clients()
+    clients, admin, provisioner, _, _, _ = probe_clients()
     provisioner.fail_drop_alias = True
 
     with pytest.raises(RuntimeError, match="Milvus health cleanup failed"):
         await run_health_probe(clients, "probe_20260824_001")
 
     assert admin.dropped_collections == ["tap_health_probe_probe_20260824_001"]
+
+
+async def test_health_cleanup_tracks_a_role_before_a_partial_grant_failure() -> None:
+    clients, admin, provisioner, _, _, denied_probe = probe_clients()
+    provisioner.fail_grant_role = "tap_writer"
+
+    with pytest.raises(RuntimeError, match="collection grant failed"):
+        await run_health_probe(clients, "probe_20260824_001")
+
+    revoked_roles = [call[2] for call in provisioner.calls if call[0] == "revoke_collection"]
+    assert revoked_roles == ["tap_reader", "tap_writer"]
+    assert admin.dropped_collections == ["tap_health_probe_probe_20260824_001"]
+    assert denied_probe.collections == []
+
+
+async def test_rendered_compose_supplies_the_same_minio_credentials_to_milvus() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    environment = {
+        **os.environ,
+        "MILVUS_MINIO_ROOT_USER": "rendered-minio-user",
+        "MILVUS_MINIO_ROOT_PASSWORD": "rendered-minio-password",
+    }
+
+    completed = subprocess.run(
+        ["docker", "compose", "--profile", "milvus", "config", "--format", "json"],
+        cwd=repository,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    services = json.loads(completed.stdout)["services"]
+
+    assert services["milvus-minio"]["environment"]["MINIO_ROOT_USER"] == "rendered-minio-user"
+    assert (
+        services["milvus-minio"]["environment"]["MINIO_ROOT_PASSWORD"] == "rendered-minio-password"
+    )
+    assert services["milvus"]["environment"]["MINIO_ACCESS_KEY_ID"] == "rendered-minio-user"
+    assert services["milvus"]["environment"]["MINIO_SECRET_ACCESS_KEY"] == "rendered-minio-password"
