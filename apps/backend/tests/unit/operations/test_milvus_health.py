@@ -303,3 +303,26 @@ async def test_rendered_compose_supplies_the_same_minio_credentials_to_milvus() 
     )
     assert services["milvus"]["environment"]["MINIO_ACCESS_KEY_ID"] == "rendered-minio-user"
     assert services["milvus"]["environment"]["MINIO_SECRET_ACCESS_KEY"] == "rendered-minio-password"
+
+
+async def test_mounted_milvus_config_keeps_proxy_listeners_distinct() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    lines = (repository / "deploy/local/milvus/milvus.yaml").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    proxy_settings: dict[str, str] = {}
+    in_proxy = False
+    for line in lines:
+        if line and not line.startswith(" "):
+            in_proxy = line == "proxy:"
+            continue
+        if in_proxy and line.startswith("  ") and not line.startswith("    "):
+            key, separator, value = line.strip().partition(":")
+            if separator:
+                proxy_settings[key] = value.strip()
+
+    external_port = int(proxy_settings.get("port", "19530"))
+    internal_port = int(proxy_settings.get("internalPort", "19530"))
+    assert external_port == 19530
+    assert internal_port == 19529
+    assert external_port != internal_port
