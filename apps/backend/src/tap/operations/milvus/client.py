@@ -664,7 +664,7 @@ async def connect_local_admin(
 ) -> PyMilvusAdmin:
     uri = _setting(settings, "MILVUS_URI", "http://127.0.0.1:19530")
     database = _setting(settings, "MILVUS_DATABASE", "default")
-    rotated = _setting(settings, "MILVUS_ROOT_PASSWORD", "tap-local-rotated-root")
+    rotated = _setting(settings, "MILVUS_ROOT_PASSWORD", "tap-local-Root1!")
     initial = _setting(settings, "MILVUS_INITIAL_ROOT_PASSWORD", "Milvus")
     allow_initial = _setting(settings, "TAP_ALLOW_INITIAL_MILVUS_ROOT", "0")
     if allow_initial not in {"0", "1"}:
@@ -746,15 +746,15 @@ async def connect_local_admin(
 def local_role_credentials(settings: Mapping[str, str]) -> MilvusRoleCredentials:
     return MilvusRoleCredentials(
         rotated_root_password=SecretStr(
-            _setting(settings, "MILVUS_ROOT_PASSWORD", "tap-local-rotated-root")
+            _setting(settings, "MILVUS_ROOT_PASSWORD", "tap-local-Root1!")
         ),
         reader_username=_setting(settings, "MILVUS_READER_USERNAME", "tap_reader"),
         reader_password=SecretStr(
-            _setting(settings, "MILVUS_READER_PASSWORD", "tap-local-reader-password")
+            _setting(settings, "MILVUS_READER_PASSWORD", "tap-local-Reader1!")
         ),
         writer_username=_setting(settings, "MILVUS_WRITER_USERNAME", "tap_writer"),
         writer_password=SecretStr(
-            _setting(settings, "MILVUS_WRITER_PASSWORD", "tap-local-writer-password")
+            _setting(settings, "MILVUS_WRITER_PASSWORD", "tap-local-Writer1!")
         ),
         provisioner_username=_setting(
             settings,
@@ -765,7 +765,7 @@ def local_role_credentials(settings: Mapping[str, str]) -> MilvusRoleCredentials
             _setting(
                 settings,
                 "MILVUS_PROVISIONER_PASSWORD",
-                "tap-local-provisioner-password",
+                "tap-local-Provisioner1!",
             )
         ),
     )
@@ -797,17 +797,17 @@ def build_probe_clients(
             _setting(
                 settings,
                 "MILVUS_PROVISIONER_PASSWORD",
-                "tap-local-provisioner-password",
+                "tap-local-Provisioner1!",
             )
         ),
     )
     writer_client = connect(
         _setting(settings, "MILVUS_WRITER_USERNAME", "tap_writer"),
-        SecretStr(_setting(settings, "MILVUS_WRITER_PASSWORD", "tap-local-writer-password")),
+        SecretStr(_setting(settings, "MILVUS_WRITER_PASSWORD", "tap-local-Writer1!")),
     )
     reader_client = connect(
         _setting(settings, "MILVUS_READER_USERNAME", "tap_reader"),
-        SecretStr(_setting(settings, "MILVUS_READER_PASSWORD", "tap-local-reader-password")),
+        SecretStr(_setting(settings, "MILVUS_READER_PASSWORD", "tap-local-Reader1!")),
     )
     denied_probe = PyMilvusDeniedProbe(
         reader=reader_client,
@@ -837,7 +837,7 @@ def build_reader_client(
             password=_setting(
                 settings,
                 "MILVUS_READER_PASSWORD",
-                "tap-local-reader-password",
+                "tap-local-Reader1!",
             ),
             db_name=_setting(settings, "MILVUS_DATABASE", "default"),
             timeout=_TIMEOUT_SECONDS,

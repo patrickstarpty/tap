@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import secrets
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
 
 from tap.operations.milvus.bootstrap import bootstrap_local_rbac
-from tap.operations.milvus.client import PyMilvusAdmin, connect_local_admin
+from tap.operations.milvus.client import (
+    MilvusSdk,
+    PyMilvusAdmin,
+    build_probe_clients,
+    build_reader_client,
+    connect_local_admin,
+)
+from tap.operations.milvus.client import (
+    local_role_credentials as load_local_role_credentials,
+)
 from tap.operations.milvus.contracts import (
     PROVISIONER_PRIVILEGES,
     READER_PRIVILEGES,
@@ -55,14 +66,92 @@ class RecordingAdmin:
 
 def local_role_credentials() -> MilvusRoleCredentials:
     return MilvusRoleCredentials(
-        rotated_root_password=SecretStr("tap-local-rotated-root"),
+        rotated_root_password=SecretStr("tap-local-Root1!"),
         reader_username="tap_reader",
-        reader_password=SecretStr("tap-local-reader-password"),
+        reader_password=SecretStr("tap-local-Reader1!"),
         writer_username="tap_writer",
-        writer_password=SecretStr("tap-local-writer-password"),
+        writer_password=SecretStr("tap-local-Writer1!"),
         provisioner_username="tap_provisioner",
-        provisioner_password=SecretStr("tap-local-provisioner-password"),
+        provisioner_password=SecretStr("tap-local-Provisioner1!"),
     )
+
+
+def _env_example() -> dict[str, str]:
+    repository = Path(__file__).resolve().parents[5]
+    return {
+        key: value
+        for line in (repository / ".env.example").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+        for key, separator, value in (line.partition("="),)
+        if separator
+    }
+
+
+def _milvus_password_is_compliant(password: str) -> bool:
+    character_classes = (
+        any(character.islower() for character in password),
+        any(character.isupper() for character in password),
+        any(character.isdigit() for character in password),
+        any(not character.isalnum() for character in password),
+    )
+    return len(password) >= 8 and sum(character_classes) >= 3
+
+
+async def test_local_password_defaults_match_consumers_and_pinned_server_policy() -> None:
+    environment = _env_example()
+    credentials = load_local_role_credentials({})
+    configured = {
+        "MILVUS_ROOT_PASSWORD": credentials.rotated_root_password,
+        "MILVUS_READER_PASSWORD": credentials.reader_password,
+        "MILVUS_WRITER_PASSWORD": credentials.writer_password,
+        "MILVUS_PROVISIONER_PASSWORD": credentials.provisioner_password,
+    }
+    for setting_name, secret in configured.items():
+        password = secret.get_secret_value()
+        if not secrets.compare_digest(password, environment[setting_name]):
+            raise AssertionError(f"{setting_name} default is inconsistent")
+        if not _milvus_password_is_compliant(password):
+            raise AssertionError(f"{setting_name} default violates the pinned Milvus policy")
+
+    connections: list[tuple[str, str]] = []
+
+    def client_factory(**kwargs: object) -> object:
+        username = kwargs.get("user")
+        password = kwargs.get("password")
+        if not isinstance(username, str) or not isinstance(password, str):
+            raise AssertionError("Milvus client credentials are malformed")
+        connections.append((username, password))
+        return object()
+
+    sdk = MilvusSdk(
+        client_factory=client_factory,
+        create_schema=lambda **kwargs: object(),
+        function_factory=lambda **kwargs: object(),
+        ann_search_request_factory=lambda **kwargs: object(),
+        ranker_factory=object,
+        varchar_type=object(),
+        sparse_vector_type=object(),
+        float_vector_type=object(),
+        array_type=object(),
+        int64_type=object(),
+        bool_type=object(),
+        bm25_function_type=object(),
+        permission_error=RuntimeError,
+    )
+    build_probe_clients({}, sdk=sdk)
+    build_reader_client({}, sdk=sdk)
+    expected_connections = [
+        (environment["MILVUS_PROVISIONER_USERNAME"], environment["MILVUS_PROVISIONER_PASSWORD"]),
+        (environment["MILVUS_WRITER_USERNAME"], environment["MILVUS_WRITER_PASSWORD"]),
+        (environment["MILVUS_READER_USERNAME"], environment["MILVUS_READER_PASSWORD"]),
+        (environment["MILVUS_READER_USERNAME"], environment["MILVUS_READER_PASSWORD"]),
+    ]
+    if connections != expected_connections:
+        raise AssertionError("Milvus role client defaults are inconsistent")
+
+    minio_password = environment["MILVUS_MINIO_ROOT_PASSWORD"]
+    if len(minio_password) < 8:
+        raise AssertionError("MILVUS_MINIO_ROOT_PASSWORD violates the MinIO minimum length")
 
 
 async def test_bootstrap_replaces_three_non_overlapping_least_privilege_roles() -> None:
@@ -84,7 +173,7 @@ async def test_bootstrap_replaces_three_non_overlapping_least_privilege_roles() 
     assert "Insert" not in admin.role_privileges("tap_reader")
     assert not (READER_PRIVILEGES & WRITER_PRIVILEGES)
     assert not (WRITER_PRIVILEGES & PROVISIONER_PRIVILEGES)
-    assert admin.password_rotations == [("root", "tap-local-rotated-root")]
+    assert admin.password_rotations == [("root", "tap-local-Root1!")]
 
 
 async def test_bootstrap_second_run_converges_to_the_same_final_grants() -> None:
@@ -100,11 +189,11 @@ async def test_bootstrap_second_run_converges_to_the_same_final_grants() -> None
     await bootstrap_local_rbac(admin, credentials)
 
     assert admin.grants == first_grants
-    assert admin.users["tap_reader"] == "tap-local-reader-password"
+    assert admin.users["tap_reader"] == "tap-local-Reader1!"
     assert admin.memberships["tap_reader"] == frozenset({"tap_reader"})
     assert admin.password_rotations == [
-        ("root", "tap-local-rotated-root"),
-        ("root", "tap-local-rotated-root"),
+        ("root", "tap-local-Root1!"),
+        ("root", "tap-local-Root1!"),
     ]
 
 
@@ -289,16 +378,16 @@ async def test_sdk_admin_recreates_existing_user_and_converges_exact_role_member
         authenticated_with_initial_root=False,
     )
 
-    await admin.ensure_user("tap_reader", SecretStr("tap-local-reader-password"))
+    await admin.ensure_user("tap_reader", SecretStr("tap-local-Reader1!"))
     await admin.ensure_role("tap_reader")
     await admin.replace_user_roles("tap_reader", frozenset({"tap_reader"}))
 
-    assert client.passwords == {"tap_reader": "tap-local-reader-password"}
+    assert client.passwords == {"tap_reader": "tap-local-Reader1!"}
     assert client.memberships == {"tap_reader": {"tap_reader"}}
 
-    await admin.ensure_user("tap_reader", SecretStr("tap-local-reader-password"))
+    await admin.ensure_user("tap_reader", SecretStr("tap-local-Reader1!"))
     await admin.ensure_role("tap_reader")
     await admin.replace_user_roles("tap_reader", frozenset({"tap_reader"}))
 
-    assert client.passwords == {"tap_reader": "tap-local-reader-password"}
+    assert client.passwords == {"tap_reader": "tap-local-Reader1!"}
     assert client.memberships == {"tap_reader": {"tap_reader"}}
