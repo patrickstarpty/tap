@@ -664,6 +664,58 @@ async def test_query_normalization_counts_utf8_incrementally_without_full_copy(
 
 
 @pytest.mark.asyncio
+async def test_query_normalization_rejects_surrogate_string_values_without_full_copy() -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    surrogate = NoEncodeString("sensitive-provider-value\ud800")
+    client.query_result = [{"content": surrogate}]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    assert surrogate.encode_calls == 0
+    assert "sensitive-provider-value" not in str(caught.value) + repr(caught.value)
+
+
+class UnreadableProviderMapping(Mapping[str, object]):
+    """Records whether normalization reaches a value after a rejected mapping key."""
+
+    def __init__(self) -> None:
+        self.items_read = False
+
+    def __getitem__(self, key: str) -> object:
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def items(self) -> Iterator[tuple[str, object]]:
+        self.items_read = True
+        return iter(())
+
+
+@pytest.mark.asyncio
+async def test_query_normalization_rejects_surrogate_mapping_keys_before_values() -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    surrogate_key = NoEncodeString("content\ud800")
+    unreadable = UnreadableProviderMapping()
+    client.query_result = [{surrogate_key: unreadable}]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    assert surrogate_key.encode_calls == 0
+    assert unreadable.items_read is False
+    assert "content" not in str(caught.value) + repr(caught.value)
+
+
+@pytest.mark.asyncio
 async def test_cyclic_query_result_is_sanitized_as_shared_search_unavailable() -> None:
     client = RecordingSDKClient()
     reader = PyMilvusReader(_config(), client=client)

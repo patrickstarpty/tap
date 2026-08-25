@@ -920,6 +920,8 @@ class _PlainNormalizer:
                 self._consume_bytes(1)
             elif code_point < 0x800:
                 self._consume_bytes(2)
+            elif 0xD800 <= code_point <= 0xDFFF:
+                raise ValueError("provider string is not valid UTF-8")
             elif code_point < 0x10000:
                 self._consume_bytes(3)
             else:
