@@ -24,6 +24,18 @@ REDIS_IMAGE=${REDIS_IMAGE:-redis:7.4.7}
 AZURITE_BLOB_PORT=${AZURITE_BLOB_PORT:-10000}
 LITELLM_PORT=${LITELLM_PORT:-4000}
 DOCKER_CHECK_TIMEOUT_SECONDS=${DOCKER_CHECK_TIMEOUT_SECONDS:-30}
+CHECK_MILVUS=0
+
+for argument in "$@"; do
+  case "$argument" in
+    --milvus) CHECK_MILVUS=1 ;;
+    *) printf 'Unknown argument: %s\n' "$argument" >&2; exit 2 ;;
+  esac
+done
+
+if [[ ${TAP_SEARCH_BACKEND:-} == "milvus" ]]; then
+  CHECK_MILVUS=1
+fi
 
 failed_services=()
 
@@ -127,10 +139,18 @@ check_litellm() {
     > /dev/null
 }
 
+check_milvus() {
+  run_with_timeout "$DOCKER_CHECK_TIMEOUT_SECONDS" \
+    uv run --project apps/backend python scripts/milvus_health_probe.py --reader-canary
+}
+
 run_or_capture "mysql" check_mysql || true
 run_or_capture "redis" check_redis || true
 run_or_capture "azurite" check_azurite || true
 run_or_capture "litellm" check_litellm || true
+if ((CHECK_MILVUS == 1)); then
+  run_or_capture "milvus-reader" check_milvus || true
+fi
 
 if ((${#failed_services[@]} > 0)); then
   printf 'Unavailable services: %s\n' "${failed_services[*]}" >&2
