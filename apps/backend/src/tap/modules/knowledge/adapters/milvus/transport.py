@@ -8,6 +8,7 @@ import json
 import math
 import re
 import threading
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -259,6 +260,14 @@ class _ResolvedCollectionName(str):
     """Opaque reader-owned capability for one resolved physical collection."""
 
 
+@dataclass(frozen=True, slots=True)
+class _CollectionCapability:
+    reference: weakref.ReferenceType[_ResolvedCollectionName]
+    target: MilvusIndexTarget
+    generation: int
+    validated: bool = False
+
+
 class PyMilvusReader:
     """Async, deadline-bounded wrapper around the synchronous PyMilvus client."""
 
@@ -272,13 +281,11 @@ class PyMilvusReader:
             raise TypeError("Milvus reader requires validated configuration")
         self._config = config
         self._client = cast(_SyncMilvusClient | None, client)
-        self._client_lock = threading.Lock()
+        self._client_lock = threading.RLock()
         self._binding_lock = threading.Lock()
-        self._resolved_collections: dict[
-            int,
-            tuple[_ResolvedCollectionName, MilvusIndexTarget],
-        ] = {}
-        self._validated_collections: dict[int, _ResolvedCollectionName] = {}
+        self._capabilities: dict[int, _CollectionCapability] = {}
+        self._closed = False
+        self._generation = 0
 
     async def describe_alias(self, alias: str) -> str:
         target = self._target_for_alias(alias)
@@ -298,10 +305,7 @@ class PyMilvusReader:
             _collection_name(physical_collection)
             if not cast(str, physical_collection).startswith(target.physical_name_prefix):
                 raise ValueError("alias target is outside the configured prefix")
-            resolved = _ResolvedCollectionName(cast(str, physical_collection))
-            with self._binding_lock:
-                self._resolved_collections[id(resolved)] = (resolved, target)
-            return resolved
+            return self._register_resolved(cast(str, physical_collection), target)
         except SearchError:
             raise
         except Exception:
@@ -312,9 +316,10 @@ class PyMilvusReader:
         collection_name: str,
     ) -> MilvusCollectionDescriptor:
         resolved, target = self._resolved_target(collection_name)
+        physical_collection = str(resolved)
         raw_collection = await self._sdk_call(
             lambda: self._sync_client().describe_collection(
-                resolved,
+                physical_collection,
                 timeout=self._config.timeout_seconds,
             )
         )
@@ -323,7 +328,7 @@ class PyMilvusReader:
 
             def describe_index(index_name: str = index_name) -> object:
                 return self._sync_client().describe_index(
-                    resolved,
+                    physical_collection,
                     index_name,
                     timeout=self._config.timeout_seconds,
                 )
@@ -333,7 +338,7 @@ class PyMilvusReader:
             descriptor = _collection_descriptor(
                 raw_collection,
                 tuple(raw_indexes),
-                expected_collection=resolved,
+                expected_collection=physical_collection,
             )
         except SearchError:
             raise
@@ -343,8 +348,7 @@ class PyMilvusReader:
         if not _descriptor_matches_target(descriptor, target):
             self._discard_resolved(resolved)
             raise SearchUnavailable("Milvus collection does not match configured target")
-        with self._binding_lock:
-            self._validated_collections[id(resolved)] = resolved
+        self._mark_validated(resolved)
         return descriptor
 
     async def hybrid_search(
@@ -354,6 +358,7 @@ class PyMilvusReader:
         if not isinstance(request, MilvusHybridRequest):
             raise SearchUnavailable("search provider request is invalid")
         physical_collection = self._validated_collection(request.collection_name)
+        collection_name = str(physical_collection)
 
         def call() -> object:
             sdk_requests = [
@@ -373,7 +378,7 @@ class PyMilvusReader:
                 ),
             ]
             return self._sync_client().hybrid_search(
-                collection_name=physical_collection,
+                collection_name=collection_name,
                 reqs=sdk_requests,
                 ranker=RRFRanker(),
                 limit=request.limit,
@@ -383,6 +388,7 @@ class PyMilvusReader:
             )
 
         raw = await self._sdk_call(call)
+        self._ensure_open()
         try:
             return _hybrid_rows(
                 raw,
@@ -401,9 +407,10 @@ class PyMilvusReader:
         if not isinstance(request, MilvusQueryRequest):
             raise SearchUnavailable("search provider request is invalid")
         physical_collection = self._validated_collection(request.collection_name)
+        collection_name = str(physical_collection)
         raw = await self._sdk_call(
             lambda: self._sync_client().query(
-                collection_name=physical_collection,
+                collection_name=collection_name,
                 filter=request.filter_expression,
                 output_fields=list(request.output_fields),
                 limit=request.limit,
@@ -411,6 +418,7 @@ class PyMilvusReader:
                 consistency_level="Strong",
             )
         )
+        self._ensure_open()
         try:
             return _query_rows(
                 raw,
@@ -423,8 +431,12 @@ class PyMilvusReader:
             raise SearchUnavailable("search provider returned invalid query rows") from None
 
     async def close(self) -> None:
-        if self._client is None:
-            return
+        with self._binding_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._generation += 1
+            self._capabilities.clear()
 
         def call() -> None:
             with self._client_lock:
@@ -434,13 +446,15 @@ class PyMilvusReader:
                 client.close()
                 self._client = None
 
-        await self._sdk_call(call)
-        with self._binding_lock:
-            self._resolved_collections.clear()
-            self._validated_collections.clear()
+        await _bounded_call(self._config.timeout_seconds, call)
 
     async def _sdk_call[T](self, call: Callable[[], T]) -> T:
-        return await _bounded_call(self._config.timeout_seconds, call)
+        def guarded_call() -> T:
+            with self._client_lock:
+                self._ensure_open()
+                return call()
+
+        return await _bounded_call(self._config.timeout_seconds, guarded_call)
 
     def _sync_client(self) -> _SyncMilvusClient:
         with self._client_lock:
@@ -463,27 +477,96 @@ class PyMilvusReader:
             raise SearchUnavailable("search provider alias is not configured")
         return targets[0]
 
+    def _register_resolved(
+        self,
+        physical_collection: str,
+        target: MilvusIndexTarget,
+    ) -> _ResolvedCollectionName:
+        resolved = _ResolvedCollectionName(physical_collection)
+        identity = id(resolved)
+
+        def discard(reference: weakref.ReferenceType[_ResolvedCollectionName]) -> None:
+            with self._binding_lock:
+                capability = self._capabilities.get(identity)
+                if capability is not None and capability.reference is reference:
+                    self._capabilities.pop(identity, None)
+
+        reference = weakref.ref(resolved, discard)
+        with self._binding_lock:
+            self._ensure_open_locked()
+            self._capabilities[identity] = _CollectionCapability(
+                reference=reference,
+                target=target,
+                generation=self._generation,
+            )
+        return resolved
+
     def _resolved_target(
         self,
         collection_name: str,
     ) -> tuple[_ResolvedCollectionName, MilvusIndexTarget]:
+        return self._capability_for(collection_name, require_validated=False)
+
+    def _capability_for(
+        self,
+        collection_name: str,
+        *,
+        require_validated: bool,
+    ) -> tuple[_ResolvedCollectionName, MilvusIndexTarget]:
+        unavailable_message = (
+            "Milvus physical collection is not bound"
+            if require_validated
+            else "Milvus physical collection is not resolved"
+        )
         with self._binding_lock:
-            resolved = self._resolved_collections.get(id(collection_name))
-        if resolved is None or resolved[0] is not collection_name:
-            raise SearchUnavailable("Milvus physical collection is not resolved")
-        return resolved
+            self._ensure_open_locked()
+            capability = self._capabilities.get(id(collection_name))
+            if capability is None or capability.generation != self._generation:
+                raise SearchUnavailable(unavailable_message)
+            resolved = capability.reference()
+            if resolved is None:
+                self._capabilities.pop(id(collection_name), None)
+                raise SearchUnavailable(unavailable_message)
+            if resolved is not collection_name:
+                raise SearchUnavailable(unavailable_message)
+            if require_validated and not capability.validated:
+                raise SearchUnavailable("Milvus physical collection is not bound")
+            return resolved, capability.target
 
     def _validated_collection(self, collection_name: str) -> _ResolvedCollectionName:
+        resolved, _ = self._capability_for(collection_name, require_validated=True)
+        return resolved
+
+    def _mark_validated(self, collection_name: _ResolvedCollectionName) -> None:
         with self._binding_lock:
-            validated = self._validated_collections.get(id(collection_name))
-        if validated is None or validated is not collection_name:
-            raise SearchUnavailable("Milvus physical collection is not bound")
-        return validated
+            self._ensure_open_locked()
+            capability = self._capabilities.get(id(collection_name))
+            if (
+                capability is None
+                or capability.generation != self._generation
+                or capability.reference() is not collection_name
+            ):
+                raise SearchUnavailable("Milvus physical collection is not resolved")
+            self._capabilities[id(collection_name)] = _CollectionCapability(
+                reference=capability.reference,
+                target=capability.target,
+                generation=capability.generation,
+                validated=True,
+            )
 
     def _discard_resolved(self, collection_name: _ResolvedCollectionName) -> None:
         with self._binding_lock:
-            self._resolved_collections.pop(id(collection_name), None)
-            self._validated_collections.pop(id(collection_name), None)
+            capability = self._capabilities.get(id(collection_name))
+            if capability is not None and capability.reference() is collection_name:
+                self._capabilities.pop(id(collection_name), None)
+
+    def _ensure_open(self) -> None:
+        with self._binding_lock:
+            self._ensure_open_locked()
+
+    def _ensure_open_locked(self) -> None:
+        if self._closed:
+            raise SearchUnavailable("search provider reader is closed")
 
 
 async def _bounded_call[T](timeout_seconds: float, call: Callable[[], T]) -> T:
@@ -762,10 +845,10 @@ class _PlainNormalizer:
             self._consume_bytes(1)
             return value
         if isinstance(value, int):
-            self._consume_bytes(8)
+            self._consume_bytes(int.__sizeof__(value))
             return value
         if isinstance(value, str):
-            self._consume_bytes(len(value.encode("utf-8")))
+            self._consume_utf8_bytes(value)
             return value
         if isinstance(value, float):
             if not math.isfinite(value):
@@ -795,7 +878,7 @@ class _PlainNormalizer:
     def key(self, value: object) -> str:
         key = _plain_key(value)
         self._consume_item()
-        self._consume_bytes(len(key.encode("utf-8")))
+        self._consume_utf8_bytes(key)
         return key
 
     def _sequence(
@@ -828,6 +911,19 @@ class _PlainNormalizer:
         self._bytes += size
         if self._bytes > _MAX_NORMALIZATION_BYTES:
             raise ValueError("provider value exceeds the byte bound")
+
+    def _consume_utf8_bytes(self, value: str) -> None:
+        """Account UTF-8 bytes incrementally without allocating an encoded copy."""
+        for character in value:
+            code_point = ord(character)
+            if code_point < 0x80:
+                self._consume_bytes(1)
+            elif code_point < 0x800:
+                self._consume_bytes(2)
+            elif code_point < 0x10000:
+                self._consume_bytes(3)
+            else:
+                self._consume_bytes(4)
 
 
 def _plain_mapping(

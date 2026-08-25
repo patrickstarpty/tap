@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
 import threading
 import time
+import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
 
 import pytest
@@ -616,6 +618,52 @@ async def test_query_normalization_does_not_eagerly_traverse_oversized_provider_
 
 
 @pytest.mark.asyncio
+async def test_query_normalization_counts_arbitrary_precision_integer_bytes() -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    client.query_result = [{"content": 1 << (5 * 1024 * 1024 * 8)}]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    assert "41943040" not in str(caught.value) + repr(caught.value)
+
+
+class NoEncodeString(str):
+    """Fails if transport allocates a complete UTF-8 byte copy to count it."""
+
+    encode_calls: int
+
+    def __new__(cls, value: str) -> NoEncodeString:
+        instance = super().__new__(cls, value)
+        instance.encode_calls = 0
+        return instance
+
+    def encode(self, *args: object, **kwargs: object) -> bytes:
+        self.encode_calls += 1
+        raise AssertionError("normalization must not allocate a full UTF-8 copy")
+
+
+@pytest.mark.parametrize("as_key", (False, True), ids=("value", "key"))
+@pytest.mark.asyncio
+async def test_query_normalization_counts_utf8_incrementally_without_full_copy(
+    as_key: bool,
+) -> None:
+    client = RecordingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    oversized = NoEncodeString("sensitive-provider-value" * 250_000)
+    client.query_result = [{oversized: "safe"} if as_key else {"content": oversized}]
+
+    with pytest.raises(SearchUnavailable, match="invalid query rows") as caught:
+        await reader.query(_query_request(bound.physical_collection, output_fields=("content",)))
+
+    assert oversized.encode_calls == 0
+    assert "sensitive-provider-value" not in str(caught.value) + repr(caught.value)
+
+
+@pytest.mark.asyncio
 async def test_cyclic_query_result_is_sanitized_as_shared_search_unavailable() -> None:
     client = RecordingSDKClient()
     reader = PyMilvusReader(_config(), client=client)
@@ -803,6 +851,70 @@ class BlockingSDKClient(RecordingSDKClient):
         self.started.set()
         self.release.wait(timeout=1)
         return super().describe_alias(alias, **kwargs)
+
+
+class BlockingQuerySDKClient(RecordingSDKClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def query(self, **kwargs: object) -> list[dict[str, object]]:
+        self.started.set()
+        self.release.wait(timeout=1)
+        return super().query(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_released_bound_targets_do_not_accumulate_reader_capabilities() -> None:
+    reader = PyMilvusReader(_config(), client=RecordingSDKClient())
+
+    for _ in range(8):
+        bound = await bind_target(reader, _target())
+        capability = bound.physical_collection
+        capability_ref = weakref.ref(capability)
+        del bound
+        del capability
+        gc.collect()
+        assert capability_ref() is None
+
+
+@pytest.mark.asyncio
+async def test_close_invalidates_overlapping_alias_work_without_repopulating_capabilities() -> None:
+    client = BlockingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    alias_task = asyncio.create_task(reader.describe_alias("kb_doc_active"))
+    while not client.started.is_set():
+        await asyncio.sleep(0)
+
+    close_task = asyncio.create_task(reader.close())
+    await asyncio.sleep(0)
+    client.release.set()
+
+    with pytest.raises(SearchUnavailable, match="reader is closed"):
+        await alias_task
+    await close_task
+
+    with pytest.raises(SearchUnavailable, match="reader is closed"):
+        await reader.describe_alias("kb_doc_active")
+
+
+@pytest.mark.asyncio
+async def test_close_discards_an_overlapping_bound_query_result() -> None:
+    client = BlockingQuerySDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+    query_task = asyncio.create_task(reader.query(_query_request(bound.physical_collection)))
+    while not client.started.is_set():
+        await asyncio.sleep(0)
+
+    close_task = asyncio.create_task(reader.close())
+    await asyncio.sleep(0)
+    client.release.set()
+
+    with pytest.raises(SearchUnavailable, match="reader is closed"):
+        await query_task
+    await close_task
 
 
 @pytest.mark.asyncio
