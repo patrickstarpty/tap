@@ -6,6 +6,7 @@ import logging
 import secrets
 import subprocess
 import sys
+import time
 import traceback
 from contextlib import nullcontext
 from dataclasses import replace
@@ -15,6 +16,7 @@ from typing import ContextManager
 import grpc
 import pytest
 from pydantic import SecretStr
+from pymilvus.decorators import _log_rpc_error
 from pymilvus.exceptions import MilvusException
 
 from tap.operations.milvus import client as milvus_client
@@ -55,8 +57,65 @@ def _provider_log_scope() -> ContextManager[None]:
     return factory()
 
 
-def _synthetic_provider_message() -> str:
-    return "provider RPC request failed\nTraceback:\n" + " ".join(_SYNTHETIC_PROVIDER_MARKERS)
+def _emit_provider_rpc_error(details: str) -> None:
+    try:
+        raise RuntimeError(details)
+    except RuntimeError:
+        _log_rpc_error("synthetic_call", "RPC error", details, time.monotonic())
+
+
+async def test_pinned_rpc_error_records_have_the_filter_call_site_metadata() -> None:
+    provider_logger = logging.getLogger("pymilvus.decorators")
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = Capture()
+    original_propagate = provider_logger.propagate
+    provider_logger.addHandler(handler)
+    provider_logger.propagate = False
+    try:
+        _emit_provider_rpc_error("SAFE_METADATA_MARKER")
+    finally:
+        provider_logger.removeHandler(handler)
+        provider_logger.propagate = original_propagate
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.name == "pymilvus.decorators"
+    assert record.module == "decorators"
+    assert record.funcName == "_log_rpc_error"
+    assert record.pathname.replace("\\", "/").endswith("/pymilvus/decorators.py")
+
+
+async def test_provider_log_scope_preserves_same_logger_non_rpc_records() -> None:
+    provider_logger = logging.getLogger("pymilvus.decorators")
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    original_level = provider_logger.level
+    original_propagate = provider_logger.propagate
+    provider_logger.addHandler(handler)
+    provider_logger.setLevel(logging.DEBUG)
+    provider_logger.propagate = False
+    try:
+        with _provider_log_scope():
+            provider_logger.debug("SAME_LOGGER_RETRY_DEBUG_VISIBLE")
+            provider_logger.info("SAME_LOGGER_RETRY_INFO_VISIBLE")
+            provider_logger.warning("SAME_LOGGER_STATUS_WARNING_VISIBLE")
+            provider_logger.error("SAME_LOGGER_STATUS_ERROR_VISIBLE")
+    finally:
+        provider_logger.removeHandler(handler)
+        provider_logger.setLevel(original_level)
+        provider_logger.propagate = original_propagate
+
+    assert output.getvalue().splitlines() == [
+        "SAME_LOGGER_RETRY_DEBUG_VISIBLE",
+        "SAME_LOGGER_RETRY_INFO_VISIBLE",
+        "SAME_LOGGER_STATUS_WARNING_VISIBLE",
+        "SAME_LOGGER_STATUS_ERROR_VISIBLE",
+    ]
 
 
 async def test_provider_log_scope_suppresses_worker_thread_details_and_preserves_tap_logs() -> None:
@@ -74,7 +133,10 @@ async def test_provider_log_scope_suppresses_worker_thread_details_and_preserves
     tap_logger.propagate = False
     try:
         with _provider_log_scope():
-            await asyncio.to_thread(provider_logger.error, _synthetic_provider_message())
+            await asyncio.to_thread(
+                _emit_provider_rpc_error,
+                " ".join(_SYNTHETIC_PROVIDER_MARKERS),
+            )
             tap_logger.error("TAP_LOG_REMAINS_VISIBLE")
     finally:
         provider_logger.removeHandler(handler)
@@ -108,7 +170,7 @@ async def test_overlapping_provider_log_scopes_do_not_suppress_unrelated_context
         with _provider_log_scope():
             second_entered.set()
             await release_second.wait()
-            provider_logger.error("SECOND_SCOPE_PRIVATE_MARKER")
+            _emit_provider_rpc_error("SECOND_SCOPE_PRIVATE_MARKER")
 
     provider_logger.addHandler(handler)
     provider_logger.setLevel(logging.ERROR)
@@ -158,15 +220,19 @@ async def test_provider_log_scope_restores_filters_after_success_and_failure() -
 async def test_bootstrap_cli_suppresses_provider_rpc_details_before_generic_failure() -> None:
     repository = Path(__file__).resolve().parents[5]
     program = """
-import logging
+import time
 import scripts.milvus_bootstrap as cli
+from pymilvus.decorators import _log_rpc_error
 
 async def fail():
-    logging.getLogger("pymilvus.decorators").error(
-        "provider RPC failed\\nTraceback:\\n"
+    details = (
         "SYNTHETIC_CREDENTIAL_MARKER SYNTHETIC_FILTER_MARKER "
         "SYNTHETIC_GROUP_MARKER SYNTHETIC_VECTOR_MARKER"
     )
+    try:
+        raise RuntimeError(details)
+    except RuntimeError:
+        _log_rpc_error("synthetic_call", "RPC error", details, time.monotonic())
     raise RuntimeError("synthetic provider failure")
 
 cli._run = fail

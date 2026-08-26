@@ -33,6 +33,9 @@ from tap.operations.milvus.contracts import (
 _TIMEOUT_SECONDS = 10.0
 _PERMISSION_DENIED_COMPATIBLE_CODE = 3
 _PYMILVUS_RPC_LOGGER_NAME = "pymilvus.decorators"
+_PYMILVUS_RPC_LOG_MODULE = "decorators"
+_PYMILVUS_RPC_LOG_FUNCTION = "_log_rpc_error"
+_PYMILVUS_RPC_LOG_PATH_SUFFIX = "/pymilvus/decorators.py"
 _PYMILVUS_RPC_LOGGING_SUPPRESSED = contextvars.ContextVar(
     "pymilvus_rpc_logging_suppressed",
     default=False,
@@ -43,7 +46,13 @@ _PYMILVUS_RPC_FILTER_USERS = 0
 
 class _PyMilvusRpcLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        return not _PYMILVUS_RPC_LOGGING_SUPPRESSED.get()
+        is_rpc_detail = (
+            record.name == _PYMILVUS_RPC_LOGGER_NAME
+            and record.module == _PYMILVUS_RPC_LOG_MODULE
+            and record.funcName == _PYMILVUS_RPC_LOG_FUNCTION
+            and record.pathname.replace("\\", "/").endswith(_PYMILVUS_RPC_LOG_PATH_SUFFIX)
+        )
+        return not (_PYMILVUS_RPC_LOGGING_SUPPRESSED.get() and is_rpc_detail)
 
 
 _PYMILVUS_RPC_LOG_FILTER = _PyMilvusRpcLogFilter()

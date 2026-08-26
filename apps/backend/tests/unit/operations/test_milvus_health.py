@@ -62,15 +62,19 @@ async def test_provider_log_scope_restores_filters_after_cancellation() -> None:
 async def test_health_cli_suppresses_provider_rpc_details_before_generic_success() -> None:
     repository = Path(__file__).resolve().parents[5]
     program = """
-import logging
+import time
 import scripts.milvus_health_probe as cli
+from pymilvus.decorators import _log_rpc_error
 
 async def pass_health(settings):
-    logging.getLogger("pymilvus.decorators").error(
-        "provider RPC failed\\nTraceback:\\n"
+    details = (
         "SYNTHETIC_CREDENTIAL_MARKER SYNTHETIC_FILTER_MARKER "
         "SYNTHETIC_GROUP_MARKER SYNTHETIC_VECTOR_MARKER"
     )
+    try:
+        raise RuntimeError(details)
+    except RuntimeError:
+        _log_rpc_error("synthetic_call", "RPC error", details, time.monotonic())
 
 cli._run_health = pass_health
 raise SystemExit(cli.main())
