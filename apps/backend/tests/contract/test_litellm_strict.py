@@ -230,7 +230,10 @@ async def test_embedding_rejects_cross_route_body_and_gateway_model_labels(
 
 @pytest.mark.asyncio
 async def test_embedding_parses_standard_usage_and_exact_decimal_response_cost() -> None:
-    async def handler(_request: httpx.Request) -> httpx.Response:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(
             200,
             headers={
@@ -247,6 +250,32 @@ async def test_embedding_parses_standard_usage_and_exact_decimal_response_cost()
     assert result.usage.input_tokens == 4
     assert result.usage.total_tokens == 4
     assert result.usage.response_cost_usd == Decimal("0.000001")
+    assert json.loads(requests[0].content) == {
+        "model": "tap-embed-fixed-v1",
+        "input": "authorization [REDACTED]",
+        "dimensions": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_research_embedding_requests_1536_and_rejects_provider_default_1024() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"x-litellm-response-cost": "0.000001"},
+            json=embedding_response_with_usage(usage={"prompt_tokens": 4, "total_tokens": 4})
+            | {"data": [{"embedding": [0.001] * 1024}]},
+        )
+
+    research_config = config(embedding_dimension=1536)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(research_config, client=client).embed("authorization [REDACTED]")
+
+    assert json.loads(requests[0].content)["dimensions"] == 1536
 
 
 @pytest.mark.asyncio
@@ -480,6 +509,7 @@ async def test_fixed_profiles_output_tokens_and_retry_identity_cannot_be_caller_
     assert attempts == 2
     assert all(payload["model"] == "tap-answer-fixed-v1" for payload in payloads)
     assert all(payload["max_tokens"] == 512 for payload in payloads)
+    assert all("dimensions" not in payload for payload in payloads)
     assert all(
         payload["metadata"] == {"tapAnswerProfile": "grounded-answer-v2"} for payload in payloads
     )

@@ -7,6 +7,7 @@ model_list:
     litellm_params:
       model: os.environ/LITELLM_EMBEDDING_MODEL
       api_key: os.environ/LITELLM_EMBEDDING_API_KEY
+      api_base: os.environ/LITELLM_EMBEDDING_API_BASE
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

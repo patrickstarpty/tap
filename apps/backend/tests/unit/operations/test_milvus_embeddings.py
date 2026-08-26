@@ -12,8 +12,10 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
+from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
 from tap.modules.knowledge.ports.models import Embedding, EmbeddingUsage
 from tap.operations.milvus import embeddings as embedding_module
 from tap.operations.milvus.embeddings import (
@@ -131,7 +133,9 @@ def cli_settings() -> dict[str, str]:
     return {
         "LITELLM_BASE_URL": "http://127.0.0.1:4000",
         "LITELLM_MASTER_KEY": "sanitized-test-key",
-        "LITELLM_EMBEDDING_MODEL": "provider/research-embed-1536",
+        "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-v4",
+        "LITELLM_EMBEDDING_API_KEY": "sanitized-provider-key",
+        "LITELLM_EMBEDDING_API_BASE": ("https://workspace.example/compatible-mode/v1"),
     }
 
 
@@ -611,6 +615,49 @@ async def test_default_task8_inputs_account_for_unique_content_without_losing_ca
 
 
 @pytest.mark.asyncio
+async def test_cli_runner_sends_fixed_alias_and_1536_dimensions_on_every_embedding_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={
+                "x-request-id": f"request-{len(requests)}",
+                "x-litellm-response-cost": "0.000001",
+            },
+            json={
+                "id": f"embedding-{len(requests)}",
+                "model": "text-embedding-v4",
+                "data": [{"embedding": [0.001] * EMBEDDING_DIMENSION}],
+                "usage": {"prompt_tokens": 4, "total_tokens": 4},
+            },
+        )
+
+    class RecordingAdapter(LiteLLMAdapter):
+        def __init__(self, config: object) -> None:
+            self._recording_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            super().__init__(config, client=self._recording_client)  # type: ignore[arg-type]
+
+        async def close(self) -> None:
+            await self._recording_client.aclose()
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", RecordingAdapter)
+
+    await research_cli._run(cli_args(), cli_settings())
+
+    assert len(requests) == 18
+    assert all(json.loads(request.content)["model"] == EMBEDDING_ALIAS for request in requests)
+    assert all(json.loads(request.content)["dimensions"] == 1536 for request in requests)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["provider", "cancel", "candidate", "report"])
 async def test_cli_run_revokes_completion_marker_and_never_restores_it_on_failure(
     tmp_path: Path,
@@ -1066,19 +1113,107 @@ def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() ->
     settings = {
         "LITELLM_BASE_URL": "http://127.0.0.1:4000",
         "LITELLM_MASTER_KEY": "PRIVATE_GATEWAY_SECRET",
-        "LITELLM_EMBEDDING_MODEL": "provider/research-embed-1536",
+        "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-v4",
+        "LITELLM_EMBEDDING_API_KEY": "PRIVATE_PROVIDER_SECRET",
+        "LITELLM_EMBEDDING_API_BASE": ("https://private-workspace.example/compatible-mode/v1"),
     }
     config = research_litellm_config(settings)
 
     assert config.embedding_model_id == EMBEDDING_ALIAS
     assert config.embedding_dimension == EMBEDDING_DIMENSION
     assert config.allowed_embedding_model_labels == frozenset(
-        {EMBEDDING_ALIAS, "provider/research-embed-1536"}
+        {EMBEDDING_ALIAS, "openai/text-embedding-v4", "text-embedding-v4"}
     )
     assert "PRIVATE_GATEWAY_SECRET" not in repr(config)
+    assert "PRIVATE_PROVIDER_SECRET" not in repr(config)
+    assert "private-workspace.example" not in repr(config)
 
 
-def test_env_example_contains_only_empty_embedding_provider_placeholders() -> None:
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("LITELLM_EMBEDDING_API_BASE", ""),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "http://workspace.example/compatible-mode/v1",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://user@workspace.example/compatible-mode/v1",
+        ),
+        ("LITELLM_EMBEDDING_API_BASE", "https://workspace.example/v1"),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://workspace.example/compatible-mode/v1/extra",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://workspace.example/compatible-mode/v1?key=PRIVATE_QUERY_SECRET",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://workspace.example/compatible-mode/v1#PRIVATE_FRAGMENT_SECRET",
+        ),
+        ("LITELLM_EMBEDDING_API_KEY", ""),
+        ("LITELLM_EMBEDDING_MODEL", "provider/caller-selected-model"),
+    ],
+    ids=(
+        "missing-base",
+        "http",
+        "userinfo",
+        "wrong-path",
+        "extra-path",
+        "query",
+        "fragment",
+        "missing-key",
+        "wrong-model",
+    ),
+)
+def test_research_provider_route_rejects_incomplete_or_widened_settings_without_leak(
+    name: str,
+    value: str,
+) -> None:
+    settings = cli_settings()
+    settings[name] = value
+
+    with pytest.raises(EmbeddingResearchRejected) as caught:
+        research_litellm_config(settings)
+
+    message = str(caught.value)
+    assert "workspace.example" not in message
+    assert "PRIVATE_" not in message
+    assert "sanitized-provider-key" not in message
+
+
+@pytest.mark.asyncio
+async def test_invalid_provider_route_fails_before_marker_removal_or_adapter_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    report_path = repository / ".local/milvus-research/report.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text('{"old":"completion"}\n', encoding="utf-8")
+    constructed = False
+
+    class ForbiddenAdapter:
+        def __init__(self, _config: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    settings = cli_settings()
+    settings["LITELLM_EMBEDDING_API_BASE"] = "http://workspace.example/compatible-mode/v1"
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+
+    with pytest.raises(EmbeddingResearchRejected):
+        await research_cli._run(cli_args(), settings)
+
+    assert not constructed
+    assert report_path.read_text(encoding="utf-8") == '{"old":"completion"}\n'
+
+
+def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholders() -> None:
     repository = Path(__file__).resolve().parents[5]
     environment = {
         key: value
@@ -1089,8 +1224,18 @@ def test_env_example_contains_only_empty_embedding_provider_placeholders() -> No
     }
 
     assert environment["LITELLM_BASE_URL"] == "http://127.0.0.1:4000"
-    assert environment["LITELLM_EMBEDDING_MODEL"] == ""
+    assert environment["LITELLM_EMBEDDING_MODEL"] == "openai/text-embedding-v4"
     assert environment["LITELLM_EMBEDDING_API_KEY"] == ""
+    assert environment["LITELLM_EMBEDDING_API_BASE"] == ""
+
+    compose = (repository / "compose.yaml").read_text(encoding="utf-8")
+    gateway = (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
+    assert "LITELLM_EMBEDDING_API_BASE: ${LITELLM_EMBEDDING_API_BASE:-}" in compose
+    assert "api_base: os.environ/LITELLM_EMBEDDING_API_BASE" in gateway
+    # The pinned LiteLLM cost map has no text-embedding-v4 entry. Claiming a
+    # base model or numeric override would fabricate USD cost metadata.
+    assert "base_model:" not in gateway
+    assert "input_cost_per_token" not in gateway
 
 
 def test_make_paid_target_fails_explicitly_instead_of_skipping() -> None:

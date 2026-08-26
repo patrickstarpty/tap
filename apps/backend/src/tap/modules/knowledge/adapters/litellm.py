@@ -179,7 +179,11 @@ class LiteLLMAdapter:
                 _bounded_string("embedding query", query, maximum=8_000)
                 response = await self._post(
                     "v1/embeddings",
-                    {"model": self._config.embedding_model_id, "input": query},
+                    {
+                        "model": self._config.embedding_model_id,
+                        "input": query,
+                        "dimensions": self._config.embedding_dimension,
+                    },
                     deadline_at=deadline_at,
                     allowed_model_labels=self._config.allowed_embedding_model_labels,
                 )

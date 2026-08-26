@@ -51,11 +51,12 @@ class _OutputDirectories:
 
 
 async def _run(args: argparse.Namespace, settings: Mapping[str, str]) -> None:
+    config = research_litellm_config(settings)
     with _open_output_directories(args) as outputs:
         _revoke_completion_marker(outputs.research_fd)
         try:
             chunks, queries = load_fixture_inputs(args.doc_fixture, args.query_fixture)
-            adapter = LiteLLMAdapter(research_litellm_config(settings))
+            adapter = LiteLLMAdapter(config)
             try:
                 snapshot, report = await generate_snapshot(
                     adapter,

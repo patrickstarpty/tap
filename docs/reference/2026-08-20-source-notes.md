@@ -148,8 +148,23 @@ TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential side
 - [LiteLLM repository](https://github.com/BerriAI/litellm)
 - [LiteLLM documentation](https://docs.litellm.ai/docs/)
 - [LiteLLM Prisma data model](https://github.com/BerriAI/litellm/blob/main/schema.prisma)
+- [LiteLLM v1.76.1 custom pricing](https://github.com/BerriAI/litellm/blob/v1.76.1-stable/docs/my-website/docs/proxy/custom_pricing.md)
+- [LiteLLM v1.76.1 model cost map](https://github.com/BerriAI/litellm/blob/v1.76.1-stable/model_prices_and_context_window.json)
 
 采用的事实：LiteLLM 提供统一模型接口、Gateway、路由、预算、限流与多类模型端点；当前内建 key/team/budget/spend 持久化数据模型使用 PostgreSQL。TAP 在已确认的 MySQL/Redis 栈中先采用无状态协议/路由能力，并由 TAP MySQL 保存预算账本和审计；LiteLLM 内建持久化能力需单独 POC，不能静默引入 PostgreSQL。
+
+2026-08-26 固定版本源码/配置资料核对：`v1.76.1-stable` 的 model config 支持 `api_base`，custom pricing 文档支持 `model_info.base_model` 与显式 token price override；但该 tag 的 model cost map 没有 `text-embedding-v4`。仓库据此只配置 provider route/key/api base，不把未知模型伪装成已知 `base_model`，也不写未经同币种证明的 USD token price。这是对固定仓库 artifact 的检查与 TAP fail-closed 选择，不代表 LiteLLM 永久不支持该模型。
+
+### 百炼 embedding research route
+
+以下百炼官方资料用于 Task 9 provider 选择与真实探针门禁（访问日期：2026-08-26）。
+
+- [文本向量同步 API](https://help.aliyun.com/zh/model-studio/text-embedding-synchronous-api/)
+- [文本向量模型与价格](https://help.aliyun.com/zh/model-studio/embedding?disableWebsiteRedirect=true)
+
+官方事实：百炼提供 OpenAI-compatible embedding 调用，workspace base URL 模板以 `/compatible-mode/v1` 结尾；`text-embedding-v4` 支持请求参数 `dimensions`，可选维度包括 `1536`，默认维度为 `1024`。官方价格表以人民币列示，不能直接填入仓库的 USD cost 字段。
+
+TAP 设计：2026-08-26 用户选择 `text-embedding-v4`，LiteLLM provider route 固定为 `openai/text-embedding-v4`，应用侧 alias 仍为 `research-embedding-v1`，canonical model/dimension/cache/schema digest 语义不变。endpoint/key 只通过未跟踪环境或 secret store 注入；每个 embedding request 显式发送 `dimensions=1536`，并对实际 vector length、usage 与 LiteLLM cost header fail closed。尚未执行真实 provider probe，不能把此静态适配记为质量或计费 GREEN。
 
 ### Milvus 本地检索实验
 

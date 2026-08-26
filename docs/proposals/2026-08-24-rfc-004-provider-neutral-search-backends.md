@@ -226,6 +226,10 @@ fixture ingestion 与 query embedding 都通过现有 LiteLLM `ModelPort`，Milv
 
 embedding cache 只是成本优化，不是内容、权限或 ingestion checkpoint 的权威源。删除 cache 后必须可以重新生成；ACL 变化不能因复用向量而跳过 metadata 更新与可见性验证。
 
+2026-08-26 用户为本次有界研究选择百炼 `text-embedding-v4`。百炼官方同步 embedding 文档确认该模型提供 OpenAI-compatible endpoint，并允许在请求中显式选择 `1536` 维；这只确定 provider route，不改变仓库固定 alias `research-embedding-v1`、1536 维 vector space、fixture manifest、cache key 或 schema digest 语义。LiteLLM research alias 从环境读取固定的 `openai/text-embedding-v4` route、provider key 与 workspace-specific HTTPS API base，应用发往 alias 的每个 embedding 请求都显式携带 `dimensions=1536`。API base 只接受无 userinfo、query、fragment 的精确 `/compatible-mode/v1` path，endpoint 与 key 不进入报告、repr 或文档。
+
+固定 LiteLLM `v1.76.1-stable` 支持 `api_base` 与自定义 cost metadata，但其该版本 model cost map 不包含 `text-embedding-v4`，百炼官方价格又以人民币计价。因此本 RFC 不猜测 `base_model` 映射、美元换算或 `input_cost_per_token`；research run 继续严格要求 LiteLLM 实际返回 canonical `x-litellm-response-cost` 和 usage，缺失或异常即失败。真实 provider/LiteLLM probe、成本 header 与 1536 维返回仍待 Task 9 Step 7 验证，不能以静态配置冒充完成。
+
 日常 CI 不调用付费 embedding API。仓库保存一组最小、脱敏、版本化的预计算 fixture/query vectors，并绑定 model ID、dimension 与内容 hash；这些向量是 conformance test input，不是运行时 cache。真实 Milvus CI 门禁使用它们验证数据库、hybrid 与 ACL。完成本次实验报告前必须另外运行一次真实 LiteLLM embedding research profile，重新生成本地 ignored cache，并验证维度、版本、正向检索和成本记录；该外部模型探针不因日常 CI 重复计费。
 
 ### 删除、重建与 alias 发布
@@ -352,7 +356,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 ## 未决问题
 
 - **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport、reader Describe grants 的 `Global` inventory 层级、provisioner 六项既有 `Global/*`/六项 `Collection/*` inventory 二分，以及 `describe_role` 对 `PrivilegeSelectOwnership` 的明确要求；闭合 provisioner base 因而是七项 `Global/*` 与六项 `Collection/*`。Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
-- **Embedding route**：从现有 LiteLLM 允许列表选择一个固定 embedding model，fixture manifest 保存 model ID 与 dimension；若没有可用的脱敏非生产 route，真实 embedding 子实验保持阻塞，不退化为未标注的 fake GREEN。
+- **Embedding route（provider 已选择，真实探针待执行）**：2026-08-26 已选择百炼 `text-embedding-v4` 的 OpenAI-compatible route，并固定显式请求 1536 维；仓库 alias/digest schema 保持不变。Task 9 Step 7 仍须在脱敏非生产 workspace 上验证真实 LiteLLM/provider 响应、usage/cost header、1536 维和 top-10 质量；探针完成前保持 pending，不退化为未标注的 fake GREEN。
 - **中文 analyzer**：由首轮脱敏 fixture 的实际语言分布选择并固化；若包含中文，必须对默认与中文 analyzer 输出做可复现对比后选择，选择结果进入 schema version。
 - **共享非生产部署**：本 RFC 提议的首轮批准范围只有本地 Docker。是否把 Standalone 放到共享 VM/容器环境，在本地资源、恢复和安全 review 后另行批准，并强制 TLS 与 secret 注入。
 - **生产形态**：Standalone、Distributed 或 Azure AI Search 的生产选择推迟到真实 corpus 容量、SLO/RPO/RTO 和运维成本具备后，由实施计划的 [Task 8 容量与部署门禁](../plans/2026-08-23-phase-1-application-implementation.md#task-8-deployment-observability-and-capacity-gates) 处理。
