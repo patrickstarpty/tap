@@ -229,12 +229,19 @@ async def test_health_probe_exercises_roles_and_cleans_only_its_collection() -> 
         "hybrid_search",
         "query",
     ]
-    assert [call[0] for call in provisioner.calls][-5:] == [
+    assert [call[2] for call in provisioner.calls if call[0] == "grant_collection"] == [
+        "tap_reader",
+        "tap_writer",
+    ]
+    assert [call[0] for call in provisioner.calls][-4:] == [
         "drop_alias",
         "revoke_collection",
         "revoke_collection",
-        "revoke_collection",
         "drop_collection",
+    ]
+    assert [call[2] for call in provisioner.calls if call[0] == "revoke_collection"] == [
+        "tap_reader",
+        "tap_writer",
     ]
 
 

@@ -16,7 +16,7 @@ from tap.operations.milvus.contracts import (
 )
 
 _PROBE_ID = re.compile(r"[A-Za-z0-9_]{1,80}\Z")
-_ROLE_NAMES = ("tap_reader", "tap_writer", "tap_provisioner")
+_SCOPED_ROLE_NAMES = ("tap_reader", "tap_writer")
 _ALLOWED_CHUNK_ID = "h_" + "1" * 64
 _DENIED_CHUNK_ID = "h_" + "2" * 64
 _ALLOWED_FILTER = (
@@ -54,7 +54,7 @@ async def run_health_probe(
         await clients.provisioner.create_collection(collection_name, HEALTH_SCHEMA)
         collection_created = True
         await clients.provisioner.create_indexes(collection_name)
-        for role_name in _ROLE_NAMES:
+        for role_name in _SCOPED_ROLE_NAMES:
             granted_roles.append(role_name)
             await clients.provisioner.grant_collection(collection_name, role_name)
         await clients.provisioner.create_alias(alias, collection_name)
