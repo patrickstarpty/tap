@@ -7,6 +7,8 @@ import json
 import math
 import os
 import re
+import secrets
+import stat
 import tempfile
 import unicodedata
 from collections.abc import Callable, Mapping
@@ -39,6 +41,8 @@ _ITEM_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _PROVIDER_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\Z")
 _CACHE_KEYS = frozenset({"cacheKey", "dimension", "modelId", "vector"})
+_OUTPUT_NAME = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
+_ATOMIC_TEMP_ATTEMPTS = 8
 
 
 class EmbeddingResearchRejected(Exception):
@@ -136,6 +140,74 @@ class FileEmbeddingCache:
         if not isinstance(key, str) or _CACHE_KEY.fullmatch(key) is None:
             raise EmbeddingResearchRejected("embedding cache key is malformed")
         return self.root / f"{key}.json"
+
+
+@dataclass(frozen=True, slots=True)
+class DirectoryFdEmbeddingCache:
+    directory_fd: int = field(repr=False)
+    model_id: str = EMBEDDING_ALIAS
+    dimension: int = EMBEDDING_DIMENSION
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.directory_fd) is not int
+            or self.directory_fd < 0
+            or self.model_id != EMBEDDING_ALIAS
+            or self.dimension != EMBEDDING_DIMENSION
+        ):
+            raise EmbeddingResearchRejected(
+                "cache directory capability does not match the research route"
+            )
+        try:
+            status = os.fstat(self.directory_fd)
+        except OSError as error:
+            raise EmbeddingResearchRejected("cache directory capability is unavailable") from error
+        if not stat.S_ISDIR(status.st_mode):
+            raise EmbeddingResearchRejected("cache directory capability is not a directory")
+
+    def get(self, key: str) -> tuple[float, ...] | None:
+        name = self._name(key)
+        try:
+            raw = _read_json_at(self.directory_fd, name)
+            if raw is None:
+                return None
+            if not isinstance(raw, dict) or set(raw) != _CACHE_KEYS:
+                raise ValueError("widened cache schema")
+            if (
+                raw["cacheKey"] != key
+                or raw["modelId"] != self.model_id
+                or type(raw["dimension"]) is not int
+                or raw["dimension"] != self.dimension
+            ):
+                raise ValueError("cache identity mismatch")
+            raw_vector = raw["vector"]
+            if not isinstance(raw_vector, list):
+                raise ValueError("cache vector is not a list")
+            vector = tuple(raw_vector)
+            _validate_vector(vector)
+            return vector
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise EmbeddingResearchRejected("embedding cache entry is malformed") from error
+
+    def put(self, key: str, vector: tuple[float, ...]) -> None:
+        name = self._name(key)
+        _validate_vector(vector)
+        _atomic_json_write_at(
+            self.directory_fd,
+            name,
+            {
+                "cacheKey": key,
+                "dimension": self.dimension,
+                "modelId": self.model_id,
+                "vector": list(vector),
+            },
+        )
+
+    @staticmethod
+    def _name(key: str) -> str:
+        if not isinstance(key, str) or _CACHE_KEY.fullmatch(key) is None:
+            raise EmbeddingResearchRejected("embedding cache key is malformed")
+        return f"{key}.json"
 
 
 def embedding_cache_key(model_id: str, dimension: int, input_hash: str) -> str:
@@ -301,36 +373,32 @@ def research_litellm_config(settings: Mapping[str, str]) -> LiteLLMConfig:
 
 def write_research_report(path: Path, report: EmbeddingResearchReport) -> None:
     _validate_report(report)
-    _atomic_json_write(
-        path,
-        {
-            "cacheHits": report.cache_hits,
-            "cacheMisses": report.cache_misses,
-            "chunkCount": report.chunk_count,
-            "dimension": report.dimension,
-            "finishedAt": report.finished_at,
-            "inputTokens": report.input_tokens,
-            "modelId": report.model_id,
-            "providerRequestIds": list(report.provider_request_ids),
-            "queryCount": report.query_count,
-            "responseCostUsd": format(report.response_cost_usd, "f"),
-            "startedAt": report.started_at,
-        },
-    )
+    _atomic_json_write(path, _report_payload(report))
+
+
+def write_research_report_at(
+    directory_fd: int,
+    name: str,
+    report: EmbeddingResearchReport,
+) -> None:
+    _validate_report(report)
+    _atomic_json_write_at(directory_fd, name, _report_payload(report))
 
 
 def write_vector_snapshot(path: Path, snapshot: VectorSnapshot) -> None:
     if snapshot.model_id != EMBEDDING_ALIAS or snapshot.dimension != EMBEDDING_DIMENSION:
         raise EmbeddingResearchRejected("vector snapshot space is malformed")
-    _atomic_json_write(
-        path,
-        {
-            "chunks": _snapshot_records(snapshot.chunks),
-            "dimension": snapshot.dimension,
-            "modelId": snapshot.model_id,
-            "queries": _snapshot_records(snapshot.queries),
-        },
-    )
+    _atomic_json_write(path, _snapshot_payload(snapshot))
+
+
+def write_vector_snapshot_at(
+    directory_fd: int,
+    name: str,
+    snapshot: VectorSnapshot,
+) -> None:
+    if snapshot.model_id != EMBEDDING_ALIAS or snapshot.dimension != EMBEDDING_DIMENSION:
+        raise EmbeddingResearchRejected("vector snapshot space is malformed")
+    _atomic_json_write_at(directory_fd, name, _snapshot_payload(snapshot))
 
 
 def _preflight(
@@ -491,20 +559,33 @@ def _validate_report(report: EmbeddingResearchReport) -> None:
         raise EmbeddingResearchRejected("embedding research report is malformed")
 
 
+def _report_payload(report: EmbeddingResearchReport) -> dict[str, object]:
+    return {
+        "cacheHits": report.cache_hits,
+        "cacheMisses": report.cache_misses,
+        "chunkCount": report.chunk_count,
+        "dimension": report.dimension,
+        "finishedAt": report.finished_at,
+        "inputTokens": report.input_tokens,
+        "modelId": report.model_id,
+        "providerRequestIds": list(report.provider_request_ids),
+        "queryCount": report.query_count,
+        "responseCostUsd": format(report.response_cost_usd, "f"),
+        "startedAt": report.started_at,
+    }
+
+
+def _snapshot_payload(snapshot: VectorSnapshot) -> dict[str, object]:
+    return {
+        "chunks": _snapshot_records(snapshot.chunks),
+        "dimension": snapshot.dimension,
+        "modelId": snapshot.model_id,
+        "queries": _snapshot_records(snapshot.queries),
+    }
+
+
 def _atomic_json_write(path: Path, payload: object) -> None:
-    try:
-        encoded = (
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-    except (TypeError, ValueError) as error:
-        raise EmbeddingResearchRejected("research output is not safely serializable") from error
+    encoded = _encode_json(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -525,6 +606,91 @@ def _atomic_json_write(path: Path, payload: object) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def _atomic_json_write_at(directory_fd: int, name: str, payload: object) -> None:
+    if (
+        type(directory_fd) is not int
+        or directory_fd < 0
+        or not isinstance(name, str)
+        or _OUTPUT_NAME.fullmatch(name) is None
+    ):
+        raise EmbeddingResearchRejected("research output capability is malformed")
+    encoded = _encode_json(payload)
+    temporary_name: str | None = None
+    descriptor: int | None = None
+    try:
+        for _attempt in range(_ATOMIC_TEMP_ATTEMPTS):
+            candidate = f".{name}.{secrets.token_hex(16)}.tmp"
+            try:
+                descriptor = os.open(
+                    candidate,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=directory_fd,
+                )
+            except FileExistsError:
+                continue
+            temporary_name = candidate
+            break
+        if descriptor is None or temporary_name is None:
+            raise EmbeddingResearchRejected("research output temporary name is unavailable")
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        temporary_name = None
+        os.fsync(directory_fd)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+
+
+def _read_json_at(directory_fd: int, name: str) -> object | None:
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory_fd,
+        )
+    except FileNotFoundError:
+        return None
+    try:
+        stream = os.fdopen(descriptor, "r", encoding="utf-8")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with stream:
+        value: object = json.load(stream, object_pairs_hook=_closed_pairs)
+        return value
+
+
+def _encode_json(payload: object) -> bytes:
+    try:
+        return (
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise EmbeddingResearchRejected("research output is not safely serializable") from error
 
 
 def _closed_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:

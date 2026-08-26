@@ -41,6 +41,7 @@ _CLI_SPEC = importlib.util.spec_from_file_location(
 )
 assert _CLI_SPEC is not None and _CLI_SPEC.loader is not None
 research_cli = importlib.util.module_from_spec(_CLI_SPEC)
+sys.modules[_CLI_SPEC.name] = research_cli
 _CLI_SPEC.loader.exec_module(research_cli)
 
 
@@ -639,24 +640,24 @@ async def test_cli_run_revokes_completion_marker_and_never_restores_it_on_failur
         async def close(self) -> None:
             return None
 
-    original_snapshot_writer = research_cli.write_vector_snapshot
-    original_report_writer = research_cli.write_research_report
+    original_snapshot_writer = research_cli.write_vector_snapshot_at
+    original_report_writer = research_cli.write_research_report_at
 
-    def candidate_writer(path: Path, snapshot: object) -> None:
-        original_snapshot_writer(path, snapshot)  # type: ignore[arg-type]
+    def candidate_writer(directory_fd: int, name: str, snapshot: object) -> None:
+        original_snapshot_writer(directory_fd, name, snapshot)  # type: ignore[arg-type]
         if failure == "candidate":
             raise OSError("candidate durability fault")
 
-    def report_writer(path: Path, report: object) -> None:
+    def report_writer(directory_fd: int, name: str, report: object) -> None:
         assert candidate_path.is_file()
-        original_report_writer(path, report)  # type: ignore[arg-type]
+        original_report_writer(directory_fd, name, report)  # type: ignore[arg-type]
         if failure == "report":
             raise OSError("report durability fault")
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
     monkeypatch.setattr(research_cli, "LiteLLMAdapter", LifecycleAdapter)
-    monkeypatch.setattr(research_cli, "write_vector_snapshot", candidate_writer)
-    monkeypatch.setattr(research_cli, "write_research_report", report_writer)
+    monkeypatch.setattr(research_cli, "write_vector_snapshot_at", candidate_writer)
+    monkeypatch.setattr(research_cli, "write_research_report_at", report_writer)
 
     expected = asyncio.CancelledError if failure == "cancel" else (RuntimeError, OSError)
     with pytest.raises(expected):
@@ -762,6 +763,248 @@ async def test_cli_rejects_symlinked_output_path_components_before_provider_call
         await research_cli._run(cli_args(), cli_settings())
 
     assert not constructed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("report_fault", [False, True])
+async def test_cli_held_directory_fds_prevent_rename_symlink_output_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report_fault: bool,
+) -> None:
+    repository = tmp_path / "repository"
+    local = repository / ".local"
+    cache = local / "milvus-embedding-cache"
+    research = local / "milvus-research"
+    outside_cache = tmp_path / "outside-cache"
+    outside_research = tmp_path / "outside-research"
+    cache.mkdir(parents=True)
+    research.mkdir()
+    outside_cache.mkdir()
+    outside_research.mkdir()
+    (research / "report.json").write_text("old completion\n", encoding="utf-8")
+    switched = False
+
+    class SwitchingAdapter(FakeEmbeddingModel):
+        def __init__(self, _config: object) -> None:
+            super().__init__()
+
+        async def embed(self, query: str) -> Embedding:
+            nonlocal switched
+            if not switched:
+                switched = True
+                cache.rename(local / "held-cache")
+                cache.symlink_to(outside_cache, target_is_directory=True)
+                research.rename(local / "held-research")
+                research.symlink_to(outside_research, target_is_directory=True)
+            return await super().embed(query)
+
+        async def close(self) -> None:
+            return None
+
+    original_report_writer = getattr(research_cli, "write_research_report_at", None)
+
+    def fail_after_report_replace(
+        directory_fd: int,
+        name: str,
+        report: object,
+    ) -> None:
+        assert original_report_writer is not None
+        original_report_writer(directory_fd, name, report)
+        raise OSError("post-replace report fault")
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", SwitchingAdapter)
+    if report_fault:
+        monkeypatch.setattr(
+            research_cli,
+            "write_research_report_at",
+            fail_after_report_replace,
+            raising=False,
+        )
+
+    if report_fault:
+        with pytest.raises(OSError, match="report fault"):
+            await research_cli._run(cli_args(), cli_settings())
+    else:
+        await research_cli._run(cli_args(), cli_settings())
+
+    assert list(outside_cache.iterdir()) == []
+    assert list(outside_research.iterdir()) == []
+    assert len(list((local / "held-cache").glob("h_*.json"))) == 18
+    held_research = local / "held-research"
+    assert (held_research / "vectors-research-embedding-v1.json").is_file()
+    assert (held_research / "report.json").is_file() is not report_fault
+    assert list(held_research.glob(".*.tmp")) == []
+
+
+@pytest.mark.asyncio
+async def test_cli_closes_every_held_directory_fd_when_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    opened_directory_fds: list[int] = []
+    active_directory_fds: set[int] = set()
+    real_open = os.open
+    real_close = os.close
+
+    def tracked_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        descriptor = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+        if flags & getattr(os, "O_DIRECTORY", 0):
+            opened_directory_fds.append(descriptor)
+            active_directory_fds.add(descriptor)
+        return descriptor
+
+    def tracked_close(descriptor: int) -> None:
+        active_directory_fds.discard(descriptor)
+        real_close(descriptor)
+
+    class CancellingAdapter(FakeEmbeddingModel):
+        def __init__(self, _config: object) -> None:
+            super().__init__()
+
+        async def embed(self, query: str) -> Embedding:
+            raise asyncio.CancelledError
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", CancellingAdapter)
+    monkeypatch.setattr(research_cli.os, "open", tracked_open)
+    monkeypatch.setattr(research_cli.os, "close", tracked_close)
+    monkeypatch.setattr(research_cli, "_dirfd_capabilities_available", lambda: True)
+
+    task = asyncio.create_task(research_cli._run(cli_args(), cli_settings()))
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert task.cancelled()
+    assert len(opened_directory_fds) >= 4
+    assert active_directory_fds == set()
+
+
+@pytest.mark.asyncio
+async def test_cli_fails_before_marker_or_provider_when_dirfd_api_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    report = repository / ".local/milvus-research/report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text("old completion\n", encoding="utf-8")
+    constructed = False
+
+    class ForbiddenAdapter:
+        def __init__(self, _config: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(
+        research_cli,
+        "_dirfd_capabilities_available",
+        lambda: False,
+        raising=False,
+    )
+
+    with pytest.raises(EmbeddingResearchRejected, match="directory capability"):
+        await research_cli._run(cli_args(), cli_settings())
+
+    assert not constructed
+    assert report.read_text(encoding="utf-8") == "old completion\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary_kind", ["ordinary", "cancel"])
+async def test_cli_cleanup_failure_preserves_primary_exception_and_records_incomplete_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    primary_kind: str,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    primary: BaseException = (
+        asyncio.CancelledError("primary cancellation")
+        if primary_kind == "cancel"
+        else RuntimeError("primary provider failure")
+    )
+    remove_calls = 0
+
+    class FailingAdapter(FakeEmbeddingModel):
+        def __init__(self, _config: object) -> None:
+            super().__init__()
+
+        async def embed(self, query: str) -> Embedding:
+            raise primary
+
+        async def close(self) -> None:
+            return None
+
+    def fail_repeated_cleanup(_directory_fd: int, _name: str) -> None:
+        nonlocal remove_calls
+        remove_calls += 1
+        if remove_calls > 1:
+            raise OSError("PRIVATE cleanup sink detail")
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", FailingAdapter)
+    monkeypatch.setattr(
+        research_cli,
+        "_remove_completion_marker_at",
+        fail_repeated_cleanup,
+        raising=False,
+    )
+
+    task = asyncio.create_task(research_cli._run(cli_args(), cli_settings()))
+    with pytest.raises(type(primary)) as caught:
+        await task
+
+    assert caught.value is primary
+    assert task.cancelled() is (primary_kind == "cancel")
+    assert remove_calls == 3
+    assert getattr(primary, "__notes__", []) == [
+        "embedding research completion marker cleanup was incomplete"
+    ]
+    assert isinstance(primary.__cause__, EmbeddingResearchRejected)
+    assert str(primary.__cause__) == "embedding research completion marker cleanup was incomplete"
+    assert "PRIVATE" not in " ".join(getattr(primary, "__notes__", []))
+
+
+@pytest.mark.asyncio
+async def test_cli_initial_marker_revoke_failure_stops_before_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    constructed = False
+
+    class ForbiddenAdapter:
+        def __init__(self, _config: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    def fail_revoke(_directory_fd: int, _name: str) -> None:
+        raise OSError("PRIVATE marker detail")
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(
+        research_cli,
+        "_remove_completion_marker_at",
+        fail_revoke,
+        raising=False,
+    )
+
+    with pytest.raises(EmbeddingResearchRejected, match="could not be revoked") as caught:
+        await research_cli._run(cli_args(), cli_settings())
+
+    assert not constructed
+    assert "PRIVATE" not in str(caught.value)
 
 
 @pytest.mark.parametrize("flag", [None, "", "true", "yes", "0", "2"])
