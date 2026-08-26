@@ -18,6 +18,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     _collection_descriptor,
 )
 from tap.operations.milvus.activation import LocalCorpusActivator
+from tap.operations.milvus.async_call import cancellation_safe_bounded_call
 from tap.operations.milvus.client import (
     PyMilvusWriter,
     local_role_credentials,
@@ -28,6 +29,7 @@ from tap.operations.milvus.contracts import (
     WRITER_PRIVILEGES,
     MilvusProvisioner,
     MilvusPublishClients,
+    MilvusScopedGrant,
 )
 from tap.operations.milvus.fixtures import (
     BM25_FUNCTION,
@@ -56,8 +58,11 @@ _ANALYZER_TOKENS = (
 
 
 class _FixtureProvisioner:
-    def __init__(self, client: MilvusClient) -> None:
+    def __init__(self, client: MilvusClient, database_name: str) -> None:
+        if not database_name:
+            raise ValueError("Milvus database name is required")
         self._client = client
+        self._database_name = database_name
 
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
         await _call(lambda: self._create_collection(name, schema))
@@ -79,28 +84,53 @@ class _FixtureProvisioner:
         self,
         name: str,
         role_name: str,
-    ) -> frozenset[str]:
+    ) -> frozenset[MilvusScopedGrant]:
         raw = await _call(
             lambda: self._client.describe_role(
                 role_name,
+                db_name=self._database_name,
                 timeout=_TIMEOUT_SECONDS,
             )
         )
-        if not isinstance(raw, Mapping):
+        if not isinstance(raw, Mapping) or raw.get("role") != role_name:
             raise RuntimeError("Milvus returned malformed grant metadata")
         privileges = raw.get("privileges", raw.get("grants", ()))
         if isinstance(privileges, (str, bytes)) or not isinstance(privileges, Sequence):
             raise RuntimeError("Milvus returned malformed grant metadata")
-        scoped = set()
+        scoped: set[MilvusScopedGrant] = set()
         for item in privileges:
             if not isinstance(item, Mapping):
                 raise RuntimeError("Milvus returned malformed grant metadata")
-            resource_name = item.get("object_name") or item.get("collection_name")
-            privilege = item.get("privilege") or item.get("privilege_name")
-            if not isinstance(resource_name, str) or not isinstance(privilege, str):
+            object_type = item.get("object_type")
+            resource_name = item.get("object_name")
+            database_name = item.get("db_name")
+            grant_role = item.get("role_name")
+            privilege = item.get("privilege")
+            dimensions = (
+                object_type,
+                resource_name,
+                database_name,
+                grant_role,
+                privilege,
+            )
+            if any(type(value) is not str or not value for value in dimensions):
                 raise RuntimeError("Milvus returned malformed grant metadata")
             if resource_name == name:
-                scoped.add(privilege)
+                if (
+                    object_type != "Collection"
+                    or database_name != self._database_name
+                    or grant_role != role_name
+                ):
+                    raise RuntimeError("Milvus returned ambiguous scoped grant metadata")
+                scoped.add(
+                    MilvusScopedGrant(
+                        role_name=grant_role,
+                        object_type="Collection",
+                        db_name=database_name,
+                        object_name=resource_name,
+                        privilege=cast(str, privilege),
+                    )
+                )
         return frozenset(scoped)
 
     def _create_collection(self, name: str, schema: Mapping[str, object]) -> object:
@@ -343,7 +373,10 @@ async def _run(args: argparse.Namespace) -> None:
         credentials.reader_username,
         credentials.reader_password.get_secret_value(),
     )
-    provisioner = _FixtureProvisioner(provisioner_client)
+    provisioner = _FixtureProvisioner(
+        provisioner_client,
+        settings.get("MILVUS_DATABASE", "default"),
+    )
     writer = PyMilvusWriter(writer_client)
     reader = _FixtureReader(reader_client)
     clients = MilvusPublishClients(
@@ -436,8 +469,10 @@ def _alias_names(raw: object) -> frozenset[str]:
 
 
 async def _call[T](operation: Callable[[], T]) -> T:
-    async with asyncio.timeout(_TIMEOUT_SECONDS):
-        return await asyncio.to_thread(operation)
+    return await cancellation_safe_bounded_call(
+        operation,
+        timeout_seconds=_TIMEOUT_SECONDS,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

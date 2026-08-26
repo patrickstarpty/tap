@@ -20,6 +20,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
+from tap.operations.milvus.async_call import cancellation_safe_bounded_call
 from tap.operations.milvus.contracts import (
     PROVISIONER_PRIVILEGES,
     READER_PRIVILEGES,
@@ -915,8 +916,10 @@ async def close_probe_clients(clients: MilvusProbeClients) -> None:
 
 async def _call[T](operation: Callable[[], T]) -> T:
     try:
-        async with asyncio.timeout(_TIMEOUT_SECONDS):
-            return await asyncio.to_thread(operation)
+        return await cancellation_safe_bounded_call(
+            operation,
+            timeout_seconds=_TIMEOUT_SECONDS,
+        )
     except TimeoutError:
         raise RuntimeError("Milvus operation timed out") from None
 

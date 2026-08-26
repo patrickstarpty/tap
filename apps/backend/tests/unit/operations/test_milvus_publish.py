@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
@@ -16,11 +17,13 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
+from tap.operations.milvus import client as milvus_client
 from tap.operations.milvus.activation import CorpusActivationState, LocalCorpusActivator
 from tap.operations.milvus.contracts import (
     READER_PRIVILEGES,
     WRITER_PRIVILEGES,
     MilvusPublishClients,
+    MilvusScopedGrant,
 )
 from tap.operations.milvus.fixtures import load_doc_fixture, manifest_sha256
 from tap.operations.milvus.publish import (
@@ -51,8 +54,21 @@ class RecordingProvisioner:
     async def has_collection_grant(self, name: str, role_name: str) -> bool:
         return bool(self.grants.get((name, role_name)))
 
-    async def collection_grants(self, name: str, role_name: str) -> frozenset[str]:
-        return frozenset(self.grants.get((name, role_name), set()))
+    async def collection_grants(
+        self,
+        name: str,
+        role_name: str,
+    ) -> frozenset[MilvusScopedGrant]:
+        return frozenset(
+            MilvusScopedGrant(
+                role_name=role_name,
+                object_type="Collection",
+                db_name="default",
+                object_name=name,
+                privilege=privilege,
+            )
+            for privilege in self.grants.get((name, role_name), set())
+        )
 
     async def create_collection(self, name: str, schema: dict[str, object]) -> None:
         self.events.append("create_collection")
@@ -104,6 +120,47 @@ class RecordingProvisioner:
         if self.fail_after == event:
             self.fail_after = None
             raise TimeoutError("partial side effect")
+
+
+class DelayedAliasProvisioner(RecordingProvisioner):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.alias_started = threading.Event()
+        self.alias_release = threading.Event()
+        self.alias_finished = threading.Event()
+        self.drop_alias_targets: list[str | None] = []
+
+    async def alter_alias(self, alias: str, collection_name: str) -> None:
+        if collection_name.endswith("_old"):
+            await super().alter_alias(alias, collection_name)
+            return
+        self.events.append("alter_alias")
+
+        def mutate_alias() -> None:
+            self.alias_started.set()
+            self.alias_release.wait()
+            self.alias_target = collection_name
+            self.alias_finished.set()
+
+        await milvus_client._call(mutate_alias)
+
+    async def drop_collection(self, name: str) -> None:
+        self.drop_alias_targets.append(self.alias_target)
+        await super().drop_collection(name)
+
+
+class DelayedDropProvisioner(RecordingProvisioner):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.drop_started = asyncio.Event()
+        self.drop_release = asyncio.Event()
+        self.drop_finished = False
+
+    async def drop_collection(self, name: str) -> None:
+        self.drop_started.set()
+        await self.drop_release.wait()
+        await super().drop_collection(name)
+        self.drop_finished = True
 
 
 class RecordingWriter:
@@ -264,6 +321,24 @@ class BlockingActivator(RecordingActivator):
 
 
 @dataclass
+class DelayedRestoreActivator(BlockingActivator):
+    restore_started: asyncio.Event = field(init=False)
+    restore_release: asyncio.Event = field(init=False)
+    restore_finished: bool = False
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.restore_started = asyncio.Event()
+        self.restore_release = asyncio.Event()
+
+    async def restore(self, state: CorpusActivationState | None) -> None:
+        self.restore_started.set()
+        await self.restore_release.wait()
+        await super().restore(state)
+        self.restore_finished = True
+
+
+@dataclass
 class RecordingCleanupSink:
     issues: list[tuple[str, ...]]
 
@@ -271,8 +346,26 @@ class RecordingCleanupSink:
         self.issues.append(issues)
 
 
+class CancellingCleanupSink:
+    def record_cleanup(self, issues: tuple[str, ...]) -> None:
+        raise asyncio.CancelledError
+
+
 def clients(events: list[str], *, fail_negative_probe: bool = False) -> MilvusPublishClients:
     provisioner = RecordingProvisioner(events)
+    return clients_with_provisioner(
+        events,
+        provisioner,
+        fail_negative_probe=fail_negative_probe,
+    )
+
+
+def clients_with_provisioner(
+    events: list[str],
+    provisioner: RecordingProvisioner,
+    *,
+    fail_negative_probe: bool = False,
+) -> MilvusPublishClients:
     writer = RecordingWriter(events)
     return MilvusPublishClients(
         provisioner=cast(object, provisioner),
@@ -479,14 +572,16 @@ async def test_preexisting_exact_target_converges_reader_and_partial_writer_gran
 
     await publish_fixture(publish_clients, manifest, unit_vectors(), activator)
 
-    assert (
-        await provisioner.collection_grants(manifest.physical_collection, "tap_reader")
-        == READER_PRIVILEGES
+    reader_grants = await provisioner.collection_grants(
+        manifest.physical_collection,
+        "tap_reader",
     )
-    assert (
-        await provisioner.collection_grants(manifest.physical_collection, "tap_writer")
-        == frozenset()
+    writer_grants = await provisioner.collection_grants(
+        manifest.physical_collection,
+        "tap_writer",
     )
+    assert {grant.privilege for grant in reader_grants} == READER_PRIVILEGES
+    assert writer_grants == frozenset()
     assert events == [
         "reconcile",
         "positive_probe",
@@ -905,6 +1000,127 @@ async def test_task_cancellation_stays_cancelled_when_rollback_is_incomplete() -
     assert "drop_collection" not in events
 
 
+async def test_cancelled_delayed_alias_settles_before_rollback_can_drop_target() -> None:
+    events: list[str] = []
+    provisioner = DelayedAliasProvisioner(events)
+    publish_clients = clients_with_provisioner(events, provisioner)
+    provisioner.alias_target = "kb_doc_v1_corpus_fixture_old"
+    provisioner.collections.add("kb_doc_v1_corpus_fixture_old")
+    manifest = load_doc_fixture(FIXTURE)
+    task = asyncio.create_task(
+        publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            RecordingActivator(events),
+        )
+    )
+    assert await asyncio.to_thread(provisioner.alias_started.wait, 1.0)
+
+    task.cancel()
+    await asyncio.sleep(0.01)
+    returned_before_provider = task.done()
+    provisioner.alias_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(provisioner.alias_finished.wait, 1.0)
+
+    assert not returned_before_provider
+    assert task.cancelled()
+    assert provisioner.alias_target == "kb_doc_v1_corpus_fixture_old"
+    assert provisioner.drop_alias_targets == ["kb_doc_v1_corpus_fixture_old"]
+    assert manifest.physical_collection not in provisioner.collections
+
+
+async def test_repeated_cancellation_waits_for_rollback_terminal_result() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    provisioner.alias_target = "kb_doc_v1_corpus_fixture_old"
+    provisioner.collections.add("kb_doc_v1_corpus_fixture_old")
+    activator = DelayedRestoreActivator(events)
+    sink = RecordingCleanupSink([])
+    task = asyncio.create_task(
+        publish_fixture(
+            publish_clients,
+            load_doc_fixture(FIXTURE),
+            unit_vectors(),
+            activator,
+            cleanup_status_sink=sink,
+        )
+    )
+    await activator.entered.wait()
+    task.cancel()
+    await activator.restore_started.wait()
+
+    task.cancel()
+    task.cancel()
+    await asyncio.sleep(0)
+    returned_before_rollback = task.done()
+    activator.restore_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not returned_before_rollback
+    assert task.cancelled()
+    assert task.cancelling() == 3
+    assert activator.restore_finished
+    assert sink.issues == [()]
+
+
+async def test_ordinary_failure_then_repeated_cancellation_finishes_rollback() -> None:
+    events: list[str] = []
+    provisioner = DelayedDropProvisioner(events)
+    publish_clients = clients_with_provisioner(
+        events,
+        provisioner,
+        fail_negative_probe=True,
+    )
+    sink = RecordingCleanupSink([])
+    manifest = load_doc_fixture(FIXTURE)
+    task = asyncio.create_task(
+        publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            RecordingActivator(events),
+            cleanup_status_sink=sink,
+        )
+    )
+    await provisioner.drop_started.wait()
+
+    task.cancel()
+    task.cancel()
+    await asyncio.sleep(0)
+    returned_before_rollback = task.done()
+    provisioner.drop_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not returned_before_rollback
+    assert task.cancelled()
+    assert task.cancelling() == 2
+    assert provisioner.drop_finished
+    assert manifest.physical_collection not in provisioner.collections
+    assert sink.issues == [()]
+
+
+async def test_cleanup_sink_cancellation_never_replaces_ordinary_failure() -> None:
+    events: list[str] = []
+    publish_clients = clients(events, fail_negative_probe=True)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    provisioner.fail_persistently = "drop_collection"
+
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
+        await publish_fixture(
+            publish_clients,
+            load_doc_fixture(FIXTURE),
+            unit_vectors(),
+            RecordingActivator(events),
+            cleanup_status_sink=CancellingCleanupSink(),
+        )
+
+
 async def test_local_activation_uses_replace_and_writes_closed_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1051,24 +1267,41 @@ import asyncio
 import scripts.milvus_fixture as cli
 
 class GrantClient:
+    requested = None
     def describe_role(self, role_name, **kwargs):
+        self.requested = (role_name, kwargs.get('db_name'))
         return {
+            'role': 'tap_reader',
             'privileges': [
-                {'object_name': '*', 'privilege': 'Query'},
-                {'object_name': 'kb_doc_v1_corpus_fixture_v1', 'privilege': 'Search'},
                 {
-                    'collection_name': 'kb_doc_v1_corpus_fixture_v1',
-                    'privilege_name': 'DescribeCollection',
+                    'object_type': 'Global', 'object_name': '*', 'db_name': 'default',
+                    'role_name': 'tap_reader', 'privilege': 'Query',
+                },
+                {
+                    'object_type': 'Collection',
+                    'object_name': 'kb_doc_v1_corpus_fixture_v1',
+                    'db_name': 'default', 'role_name': 'tap_reader', 'privilege': 'Search',
+                },
+                {
+                    'object_type': 'Collection',
+                    'object_name': 'kb_doc_v1_corpus_fixture_v1',
+                    'db_name': 'default', 'role_name': 'tap_reader',
+                    'privilege': 'DescribeCollection',
                 },
             ]
         }
 
-provisioner = cli._FixtureProvisioner(GrantClient())
+client = GrantClient()
+provisioner = cli._FixtureProvisioner(client, 'default')
 grants = asyncio.run(provisioner.collection_grants(
     'kb_doc_v1_corpus_fixture_v1',
     'tap_reader',
 ))
-print(','.join(sorted(grants)))
+print(client.requested)
+for grant in sorted(grants, key=lambda item: item.privilege):
+    print((grant.role_name, grant.object_type, grant.resource_level,
+           grant.db_name, grant.database_name, grant.object_name,
+           grant.resource_name, grant.privilege))
 """
     completed = subprocess.run(
         [sys.executable, "-c", program],
@@ -1080,4 +1313,58 @@ print(','.join(sorted(grants)))
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == "DescribeCollection,Search\n"
+    assert completed.stdout == (
+        "('tap_reader', 'default')\n"
+        "('tap_reader', 'Collection', 'collection', 'default', 'default', "
+        "'kb_doc_v1_corpus_fixture_v1', 'kb_doc_v1_corpus_fixture_v1', "
+        "'DescribeCollection')\n"
+        "('tap_reader', 'Collection', 'collection', 'default', 'default', "
+        "'kb_doc_v1_corpus_fixture_v1', 'kb_doc_v1_corpus_fixture_v1', 'Search')\n"
+    )
+
+
+async def test_fixture_provisioner_rejects_conflicting_same_name_grant_dimensions() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import asyncio
+import scripts.milvus_fixture as cli
+
+target = 'kb_doc_v1_corpus_fixture_v1'
+base = {
+    'object_type': 'Collection', 'object_name': target, 'db_name': 'default',
+    'role_name': 'tap_reader', 'privilege': 'Search',
+}
+conflicts = (
+    {**base, 'db_name': 'other'},
+    {**base, 'object_type': 'Global'},
+    {**base, 'role_name': 'tap_writer'},
+)
+
+class GrantClient:
+    def __init__(self, item, top_role='tap_reader'):
+        self.item = item
+        self.top_role = top_role
+    def describe_role(self, role_name, **kwargs):
+        return {'role': self.top_role, 'privileges': [self.item]}
+
+cases = [(item, 'tap_reader') for item in conflicts] + [(base, 'tap_writer')]
+for item, top_role in cases:
+    try:
+        provisioner = cli._FixtureProvisioner(GrantClient(item, top_role), 'default')
+        asyncio.run(provisioner.collection_grants(target, 'tap_reader'))
+    except RuntimeError:
+        print('rejected')
+        continue
+    raise AssertionError('ambiguous grant dimension accepted')
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "rejected\n" * 4

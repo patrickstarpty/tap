@@ -6,15 +6,17 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from dataclasses import asdict, dataclass
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from tap.operations.milvus.activation import CorpusActivationState
+from tap.operations.milvus.async_call import await_task_terminal
 from tap.operations.milvus.contracts import (
     READER_PRIVILEGES,
     WRITER_PRIVILEGES,
     MilvusPublishClients,
+    MilvusScopedGrant,
 )
 from tap.operations.milvus.fixtures import (
     DocFixtureChunk,
@@ -235,7 +237,7 @@ async def publish_fixture(
             READER_PRIVILEGES,
         )
     except asyncio.CancelledError as cancellation:
-        cleanup_task = asyncio.create_task(
+        await _settle_rollback(
             _rollback(
                 clients,
                 manifest,
@@ -248,32 +250,29 @@ async def publish_fixture(
                 reader_grant_attempted=reader_grant_attempted,
                 alias_attempted=alias_attempted,
                 activation_attempted=activation_attempted,
-            )
+            ),
+            cleanup_status_sink,
+            initial_cancellations=(cancellation,),
         )
-        try:
-            cleanup_issues = await asyncio.shield(cleanup_task)
-        except asyncio.CancelledError:
-            cleanup_issues = ("cleanup_cancelled",)
-        _record_cleanup_status(cleanup_status_sink, cleanup_issues)
-        if cleanup_issues:
-            cancellation.add_note("Milvus publication cleanup incomplete")
-        raise
+        raise cancellation
     except Exception as error:
-        cleanup_issues = await _rollback(
-            clients,
-            manifest,
-            activator,
-            previous_target=previous_target,
-            previous_marker=previous_marker,
-            preexisting=preexisting,
-            create_attempted=create_attempted,
-            writer_grant_attempted=writer_grant_attempted,
-            reader_grant_attempted=reader_grant_attempted,
-            alias_attempted=alias_attempted,
-            activation_attempted=activation_attempted,
+        cleanup_issues = await _settle_rollback(
+            _rollback(
+                clients,
+                manifest,
+                activator,
+                previous_target=previous_target,
+                previous_marker=previous_marker,
+                preexisting=preexisting,
+                create_attempted=create_attempted,
+                writer_grant_attempted=writer_grant_attempted,
+                reader_grant_attempted=reader_grant_attempted,
+                alias_attempted=alias_attempted,
+                activation_attempted=activation_attempted,
+            ),
+            cleanup_status_sink,
         )
         if cleanup_issues:
-            _record_cleanup_status(cleanup_status_sink, cleanup_issues)
             raise PublishRejected("Milvus publication cleanup incomplete") from None
         if isinstance(error, PublishRejected):
             raise error from None
@@ -293,12 +292,39 @@ def _record_cleanup_status(
     sink: CleanupStatusSink | None,
     issues: tuple[str, ...],
 ) -> None:
-    if sink is None or not issues:
+    if sink is None:
         return
     try:
         sink.record_cleanup(issues)
+    except asyncio.CancelledError:
+        pass
     except Exception:
         pass
+
+
+async def _settle_rollback(
+    rollback: Coroutine[Any, Any, tuple[str, ...]],
+    sink: CleanupStatusSink | None,
+    *,
+    initial_cancellations: tuple[asyncio.CancelledError, ...] = (),
+) -> tuple[str, ...]:
+    cleanup_task = asyncio.create_task(rollback)
+    outcome = await await_task_terminal(
+        cleanup_task,
+        initial_cancellations=initial_cancellations,
+    )
+    cleanup_issues = (
+        outcome.value
+        if outcome.error is None and outcome.value is not None
+        else ("cleanup_failed",)
+    )
+    _record_cleanup_status(sink, cleanup_issues)
+    if outcome.cancellations:
+        cancellation = outcome.cancellations[0]
+        if cleanup_issues:
+            cancellation.add_note("Milvus publication cleanup incomplete")
+        raise cancellation
+    return cleanup_issues
 
 
 async def tighten_fixture_acl(
@@ -516,10 +542,18 @@ async def _collection_grants(
         raise PublishRejected("Milvus scoped-grant inventory is unavailable")
     result = await operation(physical, role_name)
     if not isinstance(result, frozenset) or any(
-        type(privilege) is not str or not privilege for privilege in result
+        not isinstance(grant, MilvusScopedGrant)
+        or grant.role_name != role_name
+        or grant.object_type != "Collection"
+        or grant.resource_level != "collection"
+        or not grant.db_name
+        or grant.object_name != physical
+        or not grant.privilege
+        for grant in result
     ):
         raise PublishRejected("Milvus scoped-grant inventory is malformed")
-    return cast(frozenset[str], result)
+    grants = cast(frozenset[MilvusScopedGrant], result)
+    return frozenset(grant.privilege for grant in grants)
 
 
 async def _require_exact_collection_grants(

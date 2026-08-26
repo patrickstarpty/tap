@@ -42,6 +42,29 @@ class MilvusGrant:
     privilege: str
 
 
+@dataclass(frozen=True, slots=True)
+class MilvusScopedGrant:
+    """One fully qualified privilege returned by scoped grant inventory."""
+
+    role_name: str
+    object_type: Literal["Collection"]
+    db_name: str
+    object_name: str
+    privilege: str
+
+    @property
+    def resource_level(self) -> Literal["collection"]:
+        return "collection"
+
+    @property
+    def database_name(self) -> str:
+        return self.db_name
+
+    @property
+    def resource_name(self) -> str:
+        return self.object_name
+
+
 READER_PRIVILEGES = frozenset({"DescribeAlias", "DescribeCollection", "Search", "Query"})
 WRITER_PRIVILEGES = frozenset({"Insert", "Upsert", "Delete", "Flush", "GetFlushState"})
 PROVISIONER_PRIVILEGES = frozenset(
