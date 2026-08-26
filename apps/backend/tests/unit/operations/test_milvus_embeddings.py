@@ -133,7 +133,7 @@ def cli_settings() -> dict[str, str]:
     return {
         "LITELLM_BASE_URL": "http://127.0.0.1:4000",
         "LITELLM_MASTER_KEY": "sanitized-test-key",
-        "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-v4",
+        "LITELLM_EMBEDDING_MODEL": "text-embedding-v4",
         "LITELLM_EMBEDDING_API_KEY": "sanitized-provider-key",
         "LITELLM_EMBEDDING_API_BASE": ("https://workspace.example/compatible-mode/v1"),
     }
@@ -1113,7 +1113,7 @@ def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() ->
     settings = {
         "LITELLM_BASE_URL": "http://127.0.0.1:4000",
         "LITELLM_MASTER_KEY": "PRIVATE_GATEWAY_SECRET",
-        "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-v4",
+        "LITELLM_EMBEDDING_MODEL": "text-embedding-v4",
         "LITELLM_EMBEDDING_API_KEY": "PRIVATE_PROVIDER_SECRET",
         "LITELLM_EMBEDDING_API_BASE": ("https://private-workspace.example/compatible-mode/v1"),
     }
@@ -1122,7 +1122,7 @@ def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() ->
     assert config.embedding_model_id == EMBEDDING_ALIAS
     assert config.embedding_dimension == EMBEDDING_DIMENSION
     assert config.allowed_embedding_model_labels == frozenset(
-        {EMBEDDING_ALIAS, "openai/text-embedding-v4", "text-embedding-v4"}
+        {EMBEDDING_ALIAS, "text-embedding-v4"}
     )
     assert "PRIVATE_GATEWAY_SECRET" not in repr(config)
     assert "PRIVATE_PROVIDER_SECRET" not in repr(config)
@@ -1155,7 +1155,7 @@ def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() ->
             "https://workspace.example/compatible-mode/v1#PRIVATE_FRAGMENT_SECRET",
         ),
         ("LITELLM_EMBEDDING_API_KEY", ""),
-        ("LITELLM_EMBEDDING_MODEL", "provider/caller-selected-model"),
+        ("LITELLM_EMBEDDING_MODEL", "openai/text-embedding-v4"),
     ],
     ids=(
         "missing-base",
@@ -1166,7 +1166,7 @@ def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() ->
         "query",
         "fragment",
         "missing-key",
-        "wrong-model",
+        "provider-prefix-must-not-be-in-model",
     ),
 )
 def test_research_provider_route_rejects_incomplete_or_widened_settings_without_leak(
@@ -1224,7 +1224,7 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     }
 
     assert environment["LITELLM_BASE_URL"] == "http://127.0.0.1:4000"
-    assert environment["LITELLM_EMBEDDING_MODEL"] == "openai/text-embedding-v4"
+    assert environment["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert environment["LITELLM_EMBEDDING_API_KEY"] == ""
     assert environment["LITELLM_EMBEDDING_API_BASE"] == ""
 
@@ -1232,6 +1232,9 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     gateway = (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
     assert "LITELLM_EMBEDDING_API_BASE: ${LITELLM_EMBEDDING_API_BASE:-}" in compose
     assert "api_base: os.environ/LITELLM_EMBEDDING_API_BASE" in gateway
+    assert "model: os.environ/LITELLM_EMBEDDING_MODEL" in gateway
+    assert "custom_llm_provider: openai" in gateway
+    assert "openai/text-embedding-v4" not in gateway
     # The pinned LiteLLM cost map has no text-embedding-v4 entry. Claiming a
     # base model or numeric override would fabricate USD cost metadata.
     assert "base_model:" not in gateway

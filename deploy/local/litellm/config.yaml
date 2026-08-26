@@ -6,6 +6,7 @@ model_list:
   - model_name: research-embedding-v1
     litellm_params:
       model: os.environ/LITELLM_EMBEDDING_MODEL
+      custom_llm_provider: openai
       api_key: os.environ/LITELLM_EMBEDDING_API_KEY
       api_base: os.environ/LITELLM_EMBEDDING_API_BASE
 

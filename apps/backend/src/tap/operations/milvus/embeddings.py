@@ -27,7 +27,6 @@ from tap.operations.milvus.fixtures import content_hash, load_doc_fixture, load_
 
 EMBEDDING_ALIAS: Literal["research-embedding-v1"] = "research-embedding-v1"
 EMBEDDING_DIMENSION: Literal[1536] = 1536
-EMBEDDING_PROVIDER_ROUTE = "openai/text-embedding-v4"
 EMBEDDING_PROVIDER_MODEL = "text-embedding-v4"
 DEFAULT_MAX_CHUNKS = 100
 DEFAULT_MAX_QUERIES = 20
@@ -366,7 +365,7 @@ def research_litellm_config(settings: Mapping[str, str]) -> LiteLLMConfig:
         "LITELLM_EMBEDDING_API_BASE",
         maximum=2048,
     )
-    if provider_model != EMBEDDING_PROVIDER_ROUTE or not _valid_provider_api_base(
+    if provider_model != EMBEDDING_PROVIDER_MODEL or not _valid_provider_api_base(
         provider_api_base
     ):
         raise EmbeddingResearchRejected("embedding research provider route is invalid")
@@ -378,9 +377,7 @@ def research_litellm_config(settings: Mapping[str, str]) -> LiteLLMConfig:
         answer_model_id=unused_answer_model,
         answer_profile_id="unused-answer-profile-v1",
         embedding_dimension=EMBEDDING_DIMENSION,
-        allowed_embedding_model_labels=frozenset(
-            {EMBEDDING_ALIAS, provider_model, EMBEDDING_PROVIDER_MODEL}
-        ),
+        allowed_embedding_model_labels=frozenset({EMBEDDING_ALIAS, provider_model}),
         allowed_answer_model_labels=frozenset({unused_answer_model}),
         allowed_retrieval_profile_ids=frozenset({"unused-research-profile-v1"}),
     )

@@ -1552,7 +1552,7 @@ async def generate_snapshot(
   }
   ```
 - [ ] **Step 3:** 在 LiteLLM strict test 增加 standard `usage.prompt_tokens/total_tokens` 与 non-streaming `x-litellm-response-cost` header 的解析测试；负数、NaN、超大值、缺 usage 均 fail closed。`Embedding` 新增可选 `usage: EmbeddingUsage | None = None`，现有调用保持兼容；真实 research profile 要求每次调用 usage 与 cost 均存在。配置同时只新增对 `http://127.0.0.1:<port>` 与 `http://localhost:<port>` 的本地例外，其他 HTTP URL 继续拒绝。百炼适配的 TDD 必须另外证明 embedding request（包括 runner 的全部调用）使用固定 alias 并显式发送 `dimensions=1536`，provider 返回默认 1024 维时拒绝；answer/其他 model call 的 request body 不得被泛化修改。运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_embeddings.py apps/backend/tests/contract/test_litellm_strict.py -v`，预期 FAIL 为 embeddings module/usage 字段、loopback rule 或显式维度缺失。
-- [ ] **Step 4:** 在 LiteLLM 增加以下固定 alias。2026-08-26 用户选择百炼 `text-embedding-v4`：route 固定为 `openai/text-embedding-v4`，provider key 与 workspace API base 只从环境读取；Compose 透传三项 provider 环境变量。API base 必须使用 HTTPS、无 userinfo/query/fragment 且 path 精确为 `/compatible-mode/v1`；missing、HTTP、错误 path 或 secret-bearing URL 在 marker/model side effect 前失败，异常/repr 不回显 endpoint/key。实际 provider model 必须返回 1536 维。
+- [ ] **Step 4:** 在 LiteLLM 增加以下固定 alias。2026-08-26 用户选择百炼 `text-embedding-v4`：环境中的 model 必须是百炼官方原始值 `text-embedding-v4`，OpenAI-compatible transport 由独立的 `custom_llm_provider: openai` 选择；不得用 `openai/text-embedding-v4` 伪造 provider model。provider key 与 workspace API base 只从环境读取，Compose 透传三项 provider 环境变量。API base 必须使用 HTTPS、无 userinfo/query/fragment 且 path 精确为 `/compatible-mode/v1`；missing、HTTP、错误 path 或 secret-bearing URL 在 marker/model side effect 前失败，异常/repr 不回显 endpoint/key。实际 provider model 必须返回 1536 维。
 
   ```yaml
   model_list:
@@ -1563,11 +1563,12 @@ async def generate_snapshot(
     - model_name: research-embedding-v1
       litellm_params:
         model: os.environ/LITELLM_EMBEDDING_MODEL
+        custom_llm_provider: openai
         api_key: os.environ/LITELLM_EMBEDDING_API_KEY
         api_base: os.environ/LITELLM_EMBEDDING_API_BASE
   ```
 
-  `.env.example` 增加 `LITELLM_BASE_URL=http://127.0.0.1:4000`、非 secret 固定 route `LITELLM_EMBEDDING_MODEL=openai/text-embedding-v4`、空的 `LITELLM_EMBEDDING_API_KEY=` 与 `LITELLM_EMBEDDING_API_BASE=`；workspace endpoint/key 只写未跟踪的 `.env` 或 secret store。固定 LiteLLM `v1.76.1-stable` 的 cost map 没有 `text-embedding-v4`，且百炼官方价格不是美元，故不得猜测 `base_model`、USD 换算或自定义 `input_cost_per_token`；cost 仅接受真实响应的严格 header。
+  `.env.example` 增加 `LITELLM_BASE_URL=http://127.0.0.1:4000`、非 secret 原始 model `LITELLM_EMBEDDING_MODEL=text-embedding-v4`、空的 `LITELLM_EMBEDDING_API_KEY=` 与 `LITELLM_EMBEDDING_API_BASE=`；workspace endpoint/key 只写未跟踪的 `.env` 或 secret store。固定 LiteLLM `v1.76.1-stable` 的 `get_llm_provider` 在显式 `custom_llm_provider=openai` 时选择 OpenAI embedding transport，并在上游 handler 前恢复 raw model，因此 TDD 必须拒绝 env provider prefix、固定独立 routing 字段并对账上游 body model 仍为 `text-embedding-v4`。该版本 cost map 没有 `text-embedding-v4`，且百炼官方价格不是美元，故不得猜测 `base_model`、USD 换算或自定义 `input_cost_per_token`；cost 仅接受真实响应的严格 header。
 - [ ] **Step 5:** 实现 research runner，默认读取 Task 8 的 12 chunks/8 queries；cache/report 分别写入 `.local/milvus-embedding-cache/` 与 `.local/milvus-research/` 并加入 `.gitignore`。
 - [ ] **Step 6:** 增加 `research-embeddings` Make target，要求显式 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1`；未设置时失败而不是 skip。
 - [ ] **Step 7:** 在未跟踪配置中注入百炼 workspace-specific `/compatible-mode/v1` HTTPS endpoint 与 key，使用真实 LiteLLM 运行一次 profile。先验证 gateway route 确为 `research-embedding-v1`、请求显式为 1536 维、provider 返回 `text-embedding-v4` 的 1536 维 vectors，且 standard usage 与 canonical `x-litellm-response-cost` 均存在；任一缺失、1024 默认维、route label 漂移或成本单位无法证明都停止，不伪造 metadata。验证正向 query 的预期 source 进入 top 10 后，把仅含脱敏 input hash、模型/维度和 vectors 的 snapshot 写入仓库；不得提交本地 cache、cost report、workspace endpoint 或 provider secret。
