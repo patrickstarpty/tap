@@ -821,9 +821,9 @@ def _canonical_bm25_number(raw: object, *, expected: str) -> float:
         except InvalidOperation:
             raise ValueError("BM25 numeric setting is invalid") from None
     elif type(raw) is int:
-        value = Decimal(cast(int, raw))
+        value = Decimal(raw)
     elif type(raw) is float:
-        provider_float = cast(float, raw)
+        provider_float = raw
         if not math.isfinite(provider_float):
             raise ValueError("BM25 numeric setting is not finite")
         value = Decimal(str(provider_float))
