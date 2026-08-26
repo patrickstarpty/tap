@@ -1232,9 +1232,15 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     gateway = (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
     assert "LITELLM_EMBEDDING_API_BASE: ${LITELLM_EMBEDDING_API_BASE:-}" in compose
     assert "api_base: os.environ/LITELLM_EMBEDDING_API_BASE" in gateway
-    assert "model: os.environ/LITELLM_EMBEDDING_MODEL" in gateway
-    assert "custom_llm_provider: openai" in gateway
-    assert "openai/text-embedding-v4" not in gateway
+    assert "model: openai/text-embedding-v4" in gateway
+    assert "model: os.environ/LITELLM_EMBEDDING_MODEL" not in gateway
+    assert "custom_llm_provider:" not in gateway
+    internal_provider, separator, upstream_model = "openai/text-embedding-v4".partition("/")
+    assert (internal_provider, separator, upstream_model) == (
+        "openai",
+        "/",
+        environment["LITELLM_EMBEDDING_MODEL"],
+    )
     # The pinned LiteLLM cost map has no text-embedding-v4 entry. Claiming a
     # base model or numeric override would fabricate USD cost metadata.
     assert "base_model:" not in gateway
