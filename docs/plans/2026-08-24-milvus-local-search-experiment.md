@@ -1,6 +1,6 @@
 ---
 id: PLAN-MILVUS-LOCAL-SEARCH-EXPERIMENT
-status: planned
+status: active
 date: 2026-08-24
 related-rfcs:
   - RFC-004
