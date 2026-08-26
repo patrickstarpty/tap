@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -305,24 +306,59 @@ async def test_rendered_compose_supplies_the_same_minio_credentials_to_milvus() 
     assert services["milvus"]["environment"]["MINIO_SECRET_ACCESS_KEY"] == "rendered-minio-password"
 
 
-async def test_mounted_milvus_config_keeps_proxy_listeners_distinct() -> None:
+async def test_mounted_milvus_config_retains_pinned_standalone_component_ports() -> None:
     repository = Path(__file__).resolve().parents[5]
-    lines = (repository / "deploy/local/milvus/milvus.yaml").read_text(
-        encoding="utf-8"
-    ).splitlines()
-    proxy_settings: dict[str, str] = {}
-    in_proxy = False
+    lines = (
+        (repository / "deploy/local/milvus/milvus.yaml").read_text(encoding="utf-8").splitlines()
+    )
+    settings: dict[str, dict[str, str]] = {}
+    section = ""
     for line in lines:
         if line and not line.startswith(" "):
-            in_proxy = line == "proxy:"
+            section = line[:-1] if line.endswith(":") else ""
+            if section:
+                settings.setdefault(section, {})
             continue
-        if in_proxy and line.startswith("  ") and not line.startswith("    "):
+        if section and line.startswith("  ") and not line.startswith("    "):
             key, separator, value = line.strip().partition(":")
             if separator:
-                proxy_settings[key] = value.strip()
+                settings[section][key] = value.partition(" #")[0].strip()
 
-    external_port = int(proxy_settings.get("port", "19530"))
-    internal_port = int(proxy_settings.get("internalPort", "19530"))
-    assert external_port == 19530
-    assert internal_port == 19529
-    assert external_port != internal_port
+    assert "mixCoord" in settings
+    assert {
+        section: settings[section].get("port")
+        for section in (
+            "rootCoord",
+            "proxy",
+            "queryCoord",
+            "queryNode",
+            "dataCoord",
+            "dataNode",
+            "streamingNode",
+        )
+    } == {
+        "rootCoord": "22125",
+        "proxy": "19530",
+        "queryCoord": "19531",
+        "queryNode": "21123",
+        "dataCoord": "13333",
+        "dataNode": "21124",
+        "streamingNode": "22222",
+    }
+    assert settings["proxy"].get("internalPort") == "19529"
+
+
+async def test_mounted_milvus_config_differs_from_pinned_default_only_by_authorization() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    config = (repository / "deploy/local/milvus/milvus.yaml").read_text(encoding="utf-8")
+    enabled = "    authorizationEnabled: true"
+    disabled = "    authorizationEnabled: false"
+
+    assert config.count(enabled) == 1
+    assert disabled not in config
+    canonical_config = "\n".join(line.rstrip() for line in config.splitlines()) + "\n"
+    assert config == canonical_config
+    reconstructed_upstream = config.replace(enabled, disabled)
+    assert hashlib.sha256(reconstructed_upstream.encode()).hexdigest() == (
+        "e5cc17cec69d037881e4b638641b3bf9bc8dda48e12e71a798ed022ed1596bd7"
+    )
