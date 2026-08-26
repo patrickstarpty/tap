@@ -62,7 +62,7 @@ from tap.modules.knowledge.ports.models import (
     SearchExecution,
     SearchHit,
 )
-from tap.operations.milvus.client import PyMilvusWriter
+from tap.operations.milvus.client import PyMilvusWriter, suppress_pymilvus_rpc_logging
 from tap.operations.milvus.contracts import MilvusPublishClients
 from tap.operations.milvus.embeddings import (
     EMBEDDING_ALIAS,
@@ -114,6 +114,8 @@ _REBUILD_FIELDS = (
     "derived_from_chunk_ids",
 )
 _REBUILD_SOURCE_ONLY_FIELDS = frozenset({"title", "content", "content_role", "dense_vector"})
+_RESTART_MAX_ATTEMPTS = 90
+_RESTART_RETRY_DELAY_SECONDS = 1.0
 _CASE_SCOPE = {
     "payment-wrong-group": "blob:fixture/payment/refund",
     "payment-wrong-project": "blob:fixture/payment/refund",
@@ -318,8 +320,13 @@ class PublishedFixture:
     def expected_source_ids(self, case_id: str) -> tuple[str, ...]:
         return self._case_spec(case_id).case.expected_source_ids
 
-    async def run_case(self, case_id: str) -> MilvusCaseResult:
-        spec = self._case_spec(case_id)
+    async def run_case(
+        self,
+        case_id: str,
+        *,
+        scope_source_id: str | None = None,
+    ) -> MilvusCaseResult:
+        spec = self._case_spec(case_id, scope_source_id=scope_source_id)
         policy, request = self._policy_and_request(spec)
         reader = _RecordingReader(PyMilvusReader(self._search_config()))
         adapter = MilvusSearchAdapter(self._search_config(), reader, _AuditSink())
@@ -443,7 +450,7 @@ class PublishedFixture:
                 tightened,
                 self.snapshot.chunks[original.chunk_id].vector,
             )
-            return await self.run_case(case_id)
+            return await self.run_case(case_id, scope_source_id=source_id)
         finally:
             await writer.upsert(self.manifest.physical_collection, (row,))
             await writer.flush(self.manifest.physical_collection)
@@ -495,22 +502,50 @@ class PublishedFixture:
                 "milvus",
             )
         )
-        for _attempt in range(90):
-            client = self._raw_client(
-                self.settings.reader_username,
-                self.settings.reader_password,
-            )
-            try:
-                await asyncio.to_thread(client.list_collections, timeout=3.0)
-                return
-            except Exception:
-                await asyncio.sleep(1)
-            finally:
+        await self._wait_for_restart_readiness()
+
+    async def _wait_for_restart_readiness(self) -> None:
+        chunk_id = self.manifest.chunks[0].chunk_id
+        expression = f"chunk_id == {json.dumps(chunk_id)}"
+        with suppress_pymilvus_rpc_logging():
+            for attempt in range(1, _RESTART_MAX_ATTEMPTS + 1):
+                client: MilvusClient | None = None
                 try:
-                    await asyncio.to_thread(client.close)
+                    client = self._raw_client(
+                        self.settings.reader_username,
+                        self.settings.reader_password,
+                    )
+                    raw = await asyncio.to_thread(
+                        client.query,
+                        self.manifest.physical_collection,
+                        filter=expression,
+                        output_fields=["chunk_id"],
+                        limit=1,
+                        consistency_level="Strong",
+                        timeout=3.0,
+                    )
+                    if (
+                        not isinstance(raw, list)
+                        or len(raw) != 1
+                        or not isinstance(raw[0], Mapping)
+                        or set(raw[0]) != {"chunk_id"}
+                        or raw[0]["chunk_id"] != chunk_id
+                    ):
+                        raise RuntimeError("Milvus restart canary returned invalid rows")
                 except Exception:
-                    pass
-        raise RuntimeError("Milvus did not become ready after scoped restart")
+                    if attempt == _RESTART_MAX_ATTEMPTS:
+                        raise RuntimeError(
+                            "Milvus did not become queryable after scoped restart"
+                        ) from None
+                    await asyncio.sleep(_RESTART_RETRY_DELAY_SECONDS)
+                else:
+                    return
+                finally:
+                    if client is not None:
+                        try:
+                            await asyncio.to_thread(client.close)
+                        except Exception:
+                            pass
 
     async def run_alias_switch_race(
         self,
@@ -598,7 +633,12 @@ class PublishedFixture:
             ),
         )
 
-    def _case_spec(self, case_id: str) -> _CaseSpec:
+    def _case_spec(
+        self,
+        case_id: str,
+        *,
+        scope_source_id: str | None = None,
+    ) -> _CaseSpec:
         case = self._cases_by_id.get(case_id)
         corpus = self.manifest.corpus_version
         if case_id == "wrong-corpus":
@@ -619,7 +659,7 @@ class PublishedFixture:
         return _CaseSpec(
             case=case,
             corpus_version=corpus,
-            scope_source_id=_CASE_SCOPE.get(case_id),
+            scope_source_id=scope_source_id or _CASE_SCOPE.get(case_id),
             subtree=case_id == "payment-subtree-card-only",
         )
 

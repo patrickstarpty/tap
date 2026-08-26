@@ -57,3 +57,43 @@ def test_rebuild_rows_reject_fields_outside_each_closed_contract() -> None:
         runtime._rebuild_row({**canonical, "unexpected_field": None})
     with pytest.raises(AssertionError, match="widened or incomplete"):
         runtime._expected_rebuild_row({**rows[0], "unexpected_field": None})
+
+
+def test_temporary_revocation_can_force_the_query_to_the_revoked_resource() -> None:
+    fixture = _published_fixture()
+    source_id = "blob:fixture/payment/refund"
+
+    spec = fixture._case_spec("refund-allowed", scope_source_id=source_id)
+
+    assert spec.scope_source_id == source_id
+
+
+class _RestartProbeClient:
+    def __init__(self, outcomes: list[object]) -> None:
+        self.outcomes = outcomes
+        self.closed = False
+
+    def query(self, *args: object, **kwargs: object) -> object:
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_restart_readiness_waits_for_a_real_collection_query() -> None:
+    fixture = _published_fixture()
+    chunk_id = fixture.manifest.chunks[0].chunk_id
+    first = _RestartProbeClient([RuntimeError("collection is not serviceable")])
+    second = _RestartProbeClient([[{"chunk_id": chunk_id}]])
+    clients = iter((first, second))
+    fixture._raw_client = lambda *_args: next(clients)
+    runtime._RESTART_RETRY_DELAY_SECONDS = 0
+
+    await fixture._wait_for_restart_readiness()
+
+    assert first.closed is True
+    assert second.closed is True
