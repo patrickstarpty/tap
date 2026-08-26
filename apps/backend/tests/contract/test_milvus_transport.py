@@ -11,6 +11,9 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 
 import pytest
 from pydantic import SecretStr
+from pymilvus.client.search_result import SearchResult  # type: ignore[import-untyped]
+from pymilvus.client.types import DataType  # type: ignore[import-untyped]
+from pymilvus.grpc_gen import schema_pb2  # type: ignore[import-untyped]
 
 from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget, MilvusSearchConfig
 from tap.modules.knowledge.adapters.milvus.targets import bind_target
@@ -337,10 +340,9 @@ class RecordingSDKClient:
         self.hybrid_result: list[list[dict[str, object]]] = [
             [
                 {
-                    "id": "h_" + "1" * 64,
+                    "chunk_id": "h_" + "1" * 64,
                     "distance": 0.75,
                     "entity": {
-                        "chunk_id": "h_" + "1" * 64,
                         "content": "Refunds require approval.",
                     },
                 }
@@ -384,6 +386,40 @@ class RecordingSDKClient:
 
     def close(self) -> None:
         self.calls.append(("close", {}))
+
+
+def _pinned_named_primary_hybrid_result(*, duplicate_primary: bool) -> SearchResult:
+    result = schema_pb2.SearchResultData(
+        num_queries=1,
+        top_k=1,
+        scores=[0.75],
+        topks=[1],
+        primary_field_name="chunk_id",
+        output_fields=["chunk_id", "content"],
+    )
+    result.ids.str_id.data.append("h_" + "1" * 64)
+    content = result.fields_data.add()
+    content.type = DataType.VARCHAR
+    content.field_name = "content"
+    content.scalars.string_data.data.append("Refunds require approval.")
+    if duplicate_primary:
+        primary = result.fields_data.add()
+        primary.type = DataType.VARCHAR
+        primary.field_name = "chunk_id"
+        primary.scalars.string_data.data.append("h_" + "1" * 64)
+    return SearchResult(result)
+
+
+class PinnedHybridShapeSDKClient(RecordingSDKClient):
+    def __init__(self, *, duplicate_primary: bool) -> None:
+        super().__init__()
+        self.duplicate_primary = duplicate_primary
+
+    def hybrid_search(self, **kwargs: object) -> SearchResult:
+        self.calls.append(("hybrid_search", kwargs))
+        return _pinned_named_primary_hybrid_result(
+            duplicate_primary=self.duplicate_primary
+        )
 
 
 class RepeatedNames(Sequence[str]):
@@ -772,6 +808,83 @@ async def test_alias_switch_after_binding_cannot_retarget_the_hybrid_request() -
     assert search_call["collection_name"] == "kb_doc_v1_corpus_fixture_v1"  # type: ignore[index]
 
 
+@pytest.mark.parametrize("duplicate_primary", (False, True), ids=("primary-once", "duplicated"))
+@pytest.mark.asyncio
+async def test_transport_accepts_pinned_pymilvus_named_primary_hybrid_shape(
+    duplicate_primary: bool,
+) -> None:
+    client = PinnedHybridShapeSDKClient(duplicate_primary=duplicate_primary)
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+
+    rows = await reader.hybrid_search(_hybrid_request(bound.physical_collection))
+
+    assert rows == (
+        {
+            "chunk_id": "h_" + "1" * 64,
+            "content": "Refunds require approval.",
+            "score": 0.75,
+            "provider_request_id": None,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "hit"),
+    (
+        (
+            "generic-id",
+            {
+                "id": "h_" + "1" * 64,
+                "distance": 0.75,
+                "entity": {"chunk_id": "h_" + "1" * 64},
+            },
+        ),
+        (
+            "extra-key",
+            {
+                "chunk_id": "h_" + "1" * 64,
+                "distance": 0.75,
+                "entity": {},
+                "provider_extra": "sensitive-provider-value",
+            },
+        ),
+        (
+            "missing-entity",
+            {"chunk_id": "h_" + "1" * 64, "distance": 0.75},
+        ),
+        (
+            "wrong-primary-type",
+            {"chunk_id": 1, "distance": 0.75, "entity": {}},
+        ),
+        (
+            "conflicting-entity-primary",
+            {
+                "chunk_id": "h_" + "1" * 64,
+                "distance": 0.75,
+                "entity": {"chunk_id": "h_" + "2" * 64},
+            },
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_noncanonical_pymilvus_hybrid_hit_shapes(
+    case: str,
+    hit: dict[str, object],
+) -> None:
+    client = RecordingSDKClient()
+    client.hybrid_result = [[hit]]
+    reader = PyMilvusReader(_config(), client=client)
+    bound = await bind_target(reader, _target())
+
+    with pytest.raises(SearchUnavailable, match="invalid hybrid rows") as caught:
+        await reader.hybrid_search(_hybrid_request(bound.physical_collection))
+
+    rendered = str(caught.value) + repr(caught.value)
+    assert case not in rendered
+    assert "sensitive-provider-value" not in rendered
+
+
 @pytest.mark.parametrize(
     ("operation", "collection_name"),
     (
@@ -824,9 +937,9 @@ async def test_provider_rows_cannot_exceed_the_request_limit(operation: str) -> 
     ]
     client.hybrid_result[0].append(
         {
-            "id": "h_" + "2" * 64,
+            "chunk_id": "h_" + "2" * 64,
             "distance": 0.5,
-            "entity": {"chunk_id": "h_" + "2" * 64},
+            "entity": {},
         }
     )
 

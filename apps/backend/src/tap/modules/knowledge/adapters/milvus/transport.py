@@ -851,14 +851,17 @@ def _hybrid_rows(
     rows = []
     for raw_hit in raw[0]:
         hit = _plain_mapping(raw_hit, normalizer=normalizer)
-        if set(hit) - {"id", "distance", "entity"}:
-            raise ValueError("hybrid hit is widened")
+        if set(hit) != {"chunk_id", "distance", "entity"}:
+            raise ValueError("hybrid hit shape is malformed")
+        primary = hit["chunk_id"]
+        if not isinstance(primary, str) or not primary:
+            raise ValueError("hybrid primary identity is malformed")
         entity = hit.get("entity")
         if not isinstance(entity, dict):
             raise ValueError("hybrid hit entity is malformed")
         if not set(entity) <= allowed_fields:
             raise ValueError("hybrid entity returned unrequested fields")
-        if entity.get("chunk_id") != hit.get("id"):
+        if "chunk_id" in entity and entity["chunk_id"] != primary:
             raise ValueError("hybrid primary identity does not match entity")
         score = hit.get("distance")
         if (
@@ -870,6 +873,7 @@ def _hybrid_rows(
         rows.append(
             {
                 **entity,
+                "chunk_id": primary,
                 "score": float(score),
                 "provider_request_id": None,
             }
