@@ -13,6 +13,7 @@ dependencies = [
   "redis==6.4.0",
   "sqlalchemy[asyncio]==2.0.43",
   "pymilvus==2.6.17",
+  "cryptography==50.0.0",
 ]
 
 [dependency-groups]
