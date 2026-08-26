@@ -73,6 +73,13 @@ class _FixtureProvisioner:
         return name in raw
 
     async def has_collection_grant(self, name: str, role_name: str) -> bool:
+        return bool(await self.collection_grants(name, role_name))
+
+    async def collection_grants(
+        self,
+        name: str,
+        role_name: str,
+    ) -> frozenset[str]:
         raw = await _call(
             lambda: self._client.describe_role(
                 role_name,
@@ -84,6 +91,7 @@ class _FixtureProvisioner:
         privileges = raw.get("privileges", raw.get("grants", ()))
         if isinstance(privileges, (str, bytes)) or not isinstance(privileges, Sequence):
             raise RuntimeError("Milvus returned malformed grant metadata")
+        scoped = set()
         for item in privileges:
             if not isinstance(item, Mapping):
                 raise RuntimeError("Milvus returned malformed grant metadata")
@@ -92,8 +100,8 @@ class _FixtureProvisioner:
             if not isinstance(resource_name, str) or not isinstance(privilege, str):
                 raise RuntimeError("Milvus returned malformed grant metadata")
             if resource_name == name:
-                return True
-        return False
+                scoped.add(privilege)
+        return frozenset(scoped)
 
     def _create_collection(self, name: str, schema: Mapping[str, object]) -> object:
         sdk_schema = MilvusClient.create_schema(

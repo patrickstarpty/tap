@@ -194,6 +194,8 @@ def test_rows_reject_extra_vectors_mixed_dimensions_and_non_finite_values() -> N
         fixture_rows(manifest, {**vectors, manifest.chunks[0].chunk_id: (0.0,) * 2})
     with pytest.raises(ValueError):
         fixture_rows(manifest, {**vectors, manifest.chunks[0].chunk_id: (float("nan"),) * 1536})
+    with pytest.raises(ValueError):
+        fixture_rows(manifest, {**vectors, manifest.chunks[0].chunk_id: (0,) * 1536})
 
 
 def test_description_and_descriptor_reconciliation_are_closed() -> None:

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
@@ -16,7 +17,11 @@ from tap.modules.knowledge.adapters.milvus.transport import (
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.activation import CorpusActivationState, LocalCorpusActivator
-from tap.operations.milvus.contracts import MilvusPublishClients
+from tap.operations.milvus.contracts import (
+    READER_PRIVILEGES,
+    WRITER_PRIVILEGES,
+    MilvusPublishClients,
+)
 from tap.operations.milvus.fixtures import load_doc_fixture, manifest_sha256
 from tap.operations.milvus.publish import (
     PublishRejected,
@@ -34,16 +39,20 @@ class RecordingProvisioner:
         self.events = events
         self.alias_target: str | None = None
         self.collections: set[str] = set()
-        self.grants: set[tuple[str, str]] = set()
+        self.grants: dict[tuple[str, str], set[str]] = {}
         self.fail_after: str | None = None
         self.fail_persistently: str | None = None
+        self.fail_alias_restore = False
         self.describe_alias_calls = 0
 
     async def collection_exists(self, name: str) -> bool:
         return name in self.collections
 
     async def has_collection_grant(self, name: str, role_name: str) -> bool:
-        return (name, role_name) in self.grants
+        return bool(self.grants.get((name, role_name)))
+
+    async def collection_grants(self, name: str, role_name: str) -> frozenset[str]:
+        return frozenset(self.grants.get((name, role_name), set()))
 
     async def create_collection(self, name: str, schema: dict[str, object]) -> None:
         self.events.append("create_collection")
@@ -57,12 +66,13 @@ class RecordingProvisioner:
 
     async def grant_collection(self, name: str, role_name: str) -> None:
         self.events.append("grant_writer" if role_name == "tap_writer" else "grant_reader")
-        self.grants.add((name, role_name))
+        expected = WRITER_PRIVILEGES if role_name == "tap_writer" else READER_PRIVILEGES
+        self.grants[(name, role_name)] = set(expected)
         self._fail_after("grant_writer" if role_name == "tap_writer" else "grant_reader")
 
     async def revoke_collection(self, name: str, role_name: str) -> None:
         self.events.append("revoke_writer" if role_name == "tap_writer" else "revoke_reader")
-        self.grants.discard((name, role_name))
+        self.grants.pop((name, role_name), None)
         self._fail_after("revoke_writer" if role_name == "tap_writer" else "revoke_reader")
 
     async def create_alias(self, alias: str, collection_name: str) -> None:
@@ -70,6 +80,8 @@ class RecordingProvisioner:
 
     async def alter_alias(self, alias: str, collection_name: str) -> None:
         self.events.append("alter_alias")
+        if self.fail_alias_restore and collection_name.endswith("_old"):
+            raise TimeoutError("alias restoration unavailable")
         self.alias_target = collection_name
         self._fail_after("alter_alias")
 
@@ -127,6 +139,7 @@ class RecordingReader:
         self.fail_negative_probe = fail_negative_probe
         self.manifest = load_doc_fixture(FIXTURE)
         self.corrupt_field: str | None = None
+        self.row_overrides: dict[str, object] = {}
         self.widen_rows = False
         self.revoked_rows: tuple[dict[str, object], ...] = ()
         self.last_revoked_filter: str | None = None
@@ -183,6 +196,7 @@ class RecordingReader:
                 self.corrupt_field,
                 result[0][self.corrupt_field],
             )
+        result[0].update(self.row_overrides)
         if self.widen_rows:
             result[0]["unexpected"] = "widened"
         return tuple(result)
@@ -227,6 +241,34 @@ class RecordingActivator:
     async def restore(self, state: CorpusActivationState | None) -> None:
         self.events.append("restore_corpus")
         self.state = state
+
+
+@dataclass
+class BlockingActivator(RecordingActivator):
+    entered: asyncio.Event = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.entered = asyncio.Event()
+
+    async def activate(
+        self, corpus_version: str, physical_collection: str, manifest_sha256: str
+    ) -> str:
+        activation_id = await super().activate(
+            corpus_version,
+            physical_collection,
+            manifest_sha256,
+        )
+        self.entered.set()
+        await asyncio.Future()
+        return activation_id
+
+
+@dataclass
+class RecordingCleanupSink:
+    issues: list[tuple[str, ...]]
+
+    def record_cleanup(self, issues: tuple[str, ...]) -> None:
+        self.issues.append(issues)
 
 
 def clients(events: list[str], *, fail_negative_probe: bool = False) -> MilvusPublishClients:
@@ -355,6 +397,29 @@ async def test_marker_and_alias_restore_after_activation_or_writer_revoke_failur
         assert "restore_corpus" in events
 
 
+async def test_alias_restore_failure_preserves_new_physical_and_reports_incomplete() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    provisioner.alias_target = "kb_doc_v1_corpus_fixture_old"
+    provisioner.collections.add("kb_doc_v1_corpus_fixture_old")
+    provisioner.fail_after = "revoke_writer"
+    provisioner.fail_alias_restore = True
+    manifest = load_doc_fixture(FIXTURE)
+
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
+        await publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            RecordingActivator(events),
+        )
+
+    assert provisioner.alias_target == manifest.physical_collection
+    assert manifest.physical_collection in provisioner.collections
+    assert "drop_collection" not in events
+
+
 async def test_cleanup_incomplete_is_surfaced_without_deleting_other_collection() -> None:
     events: list[str] = []
     publish_clients = clients(events, fail_negative_probe=True)
@@ -393,6 +458,67 @@ async def test_same_manifest_second_publish_converges_without_recreate_or_reinse
     assert "insert" not in events
     assert events == ["reconcile", "positive_probe", "negative_probe"]
     assert provisioner.describe_alias_calls == alias_calls + 2
+
+
+async def test_preexisting_exact_target_converges_reader_and_partial_writer_grants() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    manifest = load_doc_fixture(FIXTURE)
+    activator = RecordingActivator(events)
+    await publish_fixture(publish_clients, manifest, unit_vectors(), activator)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    provisioner.grants[(manifest.physical_collection, "tap_reader")] = {
+        "Query",
+        "Search",
+    }
+    provisioner.grants[(manifest.physical_collection, "tap_writer")] = {
+        "Insert",
+        "Flush",
+    }
+    events.clear()
+
+    await publish_fixture(publish_clients, manifest, unit_vectors(), activator)
+
+    assert (
+        await provisioner.collection_grants(manifest.physical_collection, "tap_reader")
+        == READER_PRIVILEGES
+    )
+    assert (
+        await provisioner.collection_grants(manifest.physical_collection, "tap_writer")
+        == frozenset()
+    )
+    assert events == [
+        "reconcile",
+        "positive_probe",
+        "negative_probe",
+        "grant_reader",
+        "revoke_writer",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("role_name", "unexpected"),
+    (("tap_reader", "Insert"), ("tap_writer", "Search")),
+)
+async def test_preexisting_target_rejects_unexpected_scoped_privilege(
+    role_name: str,
+    unexpected: str,
+) -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    manifest = load_doc_fixture(FIXTURE)
+    activator = RecordingActivator(events)
+    await publish_fixture(publish_clients, manifest, unit_vectors(), activator)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    provisioner.grants.setdefault((manifest.physical_collection, role_name), set()).add(unexpected)
+    events.clear()
+
+    with pytest.raises(PublishRejected, match="scoped grant"):
+        await publish_fixture(publish_clients, manifest, unit_vectors(), activator)
+
+    assert "grant_reader" not in events
+    assert "revoke_writer" not in events
+    assert manifest.physical_collection in provisioner.collections
 
 
 async def test_mismatched_preexisting_target_fails_without_dropping_active_data() -> None:
@@ -498,6 +624,73 @@ async def test_widened_persisted_row_rejects_before_alias() -> None:
     assert "alter_alias" not in events
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "deleted-int",
+        "classification-bool",
+        "classification-float",
+        "classification-range",
+        "groups-tuple",
+        "groups-non-string",
+        "vector-int",
+        "vector-bool",
+        "vector-non-finite",
+        "anchor-object",
+        "derived-tuple",
+        "derived-non-string",
+    ),
+)
+async def test_persisted_rows_reject_type_coercions_and_nested_shape_drift(
+    mutation: str,
+) -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    reader = cast(RecordingReader, publish_clients.reader)
+    dimension = load_doc_fixture(FIXTURE).vector_dimension
+    reader.row_overrides = {
+        "deleted-int": {"deleted": 0},
+        "classification-bool": {"classification_rank": True},
+        "classification-float": {"classification_rank": 1.0},
+        "classification-range": {"classification_rank": 4},
+        "groups-tuple": {"allowed_group_ids": ("group-payments",)},
+        "groups-non-string": {"allowed_group_ids": [1]},
+        "vector-int": {"dense_vector": [0] * dimension},
+        "vector-bool": {"dense_vector": [False] * dimension},
+        "vector-non-finite": {"dense_vector": [float("nan")] * dimension},
+        "anchor-object": {"anchor_json": {"page": 1}},
+        "derived-tuple": {"derived_from_chunk_ids": ()},
+        "derived-non-string": {"derived_from_chunk_ids": [1]},
+    }[mutation]
+
+    with pytest.raises(PublishRejected):
+        await publish_fixture(
+            publish_clients,
+            load_doc_fixture(FIXTURE),
+            unit_vectors(),
+            RecordingActivator(events),
+        )
+
+    assert "alter_alias" not in events
+
+
+async def test_persisted_float_vector_accepts_tuple_provider_shape() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    reader = cast(RecordingReader, publish_clients.reader)
+    dimension = load_doc_fixture(FIXTURE).vector_dimension
+    reader.row_overrides = {"dense_vector": (0.0,) * dimension}
+
+    receipt = await publish_fixture(
+        publish_clients,
+        load_doc_fixture(FIXTURE),
+        unit_vectors(),
+        RecordingActivator(events),
+    )
+
+    assert receipt.row_count == 12
+
+
 async def test_acl_tightening_upserts_and_proves_revoked_subject_zero_before_receipt() -> None:
     events: list[str] = []
     publish_clients = clients(events)
@@ -595,6 +788,121 @@ async def test_acl_tightening_derives_removed_group_proof_and_rejects_caller_fil
             unit_vectors()[original.chunk_id],
             revoked_filter='chunk_id == "anything"',
         )
+
+
+async def test_acl_tightening_proof_covers_every_removed_group_with_safe_escaping() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    manifest = load_doc_fixture(FIXTURE)
+    fixture_original = manifest.chunks[0]
+    original = replace(
+        fixture_original,
+        allowed_group_ids=("group-retained", 'group-removed"quote', "group-removed\\slash"),
+    )
+    manifest = replace(
+        manifest,
+        chunks=(original, *manifest.chunks[1:]),
+    )
+    tightened = replace(original, allowed_group_ids=("group-retained",))
+
+    receipt = await tighten_fixture_acl(
+        publish_clients,
+        manifest,
+        tightened,
+        unit_vectors()[original.chunk_id],
+    )
+
+    assert receipt.proof_kind == "removed_group"
+    proof = cast(RecordingReader, publish_clients.reader).last_revoked_filter
+    assert proof is not None
+    assert "ARRAY_CONTAINS_ANY" in proof
+    assert (
+        json.dumps(
+            ['group-removed"quote', "group-removed\\slash"],
+            separators=(",", ":"),
+        )
+        in proof
+    )
+    assert "group-retained" not in proof
+
+
+@pytest.mark.parametrize(
+    ("side", "classification_rank"),
+    (("original", True), ("original", 4), ("tightened", True), ("tightened", 4)),
+)
+async def test_acl_tightening_rejects_non_integer_or_out_of_range_classification(
+    side: str,
+    classification_rank: object,
+) -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    manifest = load_doc_fixture(FIXTURE)
+    original = manifest.chunks[0]
+    tightened = replace(original, deleted=True)
+    if side == "original":
+        original = replace(original, classification_rank=classification_rank)
+        manifest = replace(manifest, chunks=(original, *manifest.chunks[1:]))
+        tightened = replace(original, deleted=True)
+    else:
+        tightened = replace(tightened, classification_rank=classification_rank)
+
+    with pytest.raises(PublishRejected, match="classification"):
+        await tighten_fixture_acl(
+            publish_clients,
+            manifest,
+            tightened,
+            unit_vectors()[original.chunk_id],
+        )
+    assert events == []
+
+
+async def test_acl_tightening_rejects_integer_vector_before_write() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    manifest = load_doc_fixture(FIXTURE)
+    original = manifest.chunks[0]
+
+    with pytest.raises(PublishRejected, match="metadata is malformed"):
+        await tighten_fixture_acl(
+            publish_clients,
+            manifest,
+            replace(original, deleted=True),
+            cast(tuple[float, ...], (0,) * manifest.vector_dimension),
+        )
+
+    assert events == []
+
+
+async def test_task_cancellation_stays_cancelled_when_rollback_is_incomplete() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    provisioner.alias_target = "kb_doc_v1_corpus_fixture_old"
+    provisioner.collections.add("kb_doc_v1_corpus_fixture_old")
+    provisioner.fail_alias_restore = True
+    activator = BlockingActivator(events)
+    sink = RecordingCleanupSink([])
+    manifest = load_doc_fixture(FIXTURE)
+    task = asyncio.create_task(
+        publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            activator,
+            cleanup_status_sink=sink,
+        )
+    )
+    await activator.entered.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert task.cancelled()
+    assert sink.issues == [("alias",)]
+    assert provisioner.alias_target == manifest.physical_collection
+    assert manifest.physical_collection in provisioner.collections
+    assert "drop_collection" not in events
 
 
 async def test_local_activation_uses_replace_and_writes_closed_marker(
@@ -734,3 +1042,42 @@ print('validated-before-connect')
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == "validated-before-connect\n"
     assert completed.stderr == ""
+
+
+async def test_fixture_provisioner_reports_exact_scoped_privilege_inventory() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import asyncio
+import scripts.milvus_fixture as cli
+
+class GrantClient:
+    def describe_role(self, role_name, **kwargs):
+        return {
+            'privileges': [
+                {'object_name': '*', 'privilege': 'Query'},
+                {'object_name': 'kb_doc_v1_corpus_fixture_v1', 'privilege': 'Search'},
+                {
+                    'collection_name': 'kb_doc_v1_corpus_fixture_v1',
+                    'privilege_name': 'DescribeCollection',
+                },
+            ]
+        }
+
+provisioner = cli._FixtureProvisioner(GrantClient())
+grants = asyncio.run(provisioner.collection_grants(
+    'kb_doc_v1_corpus_fixture_v1',
+    'tap_reader',
+))
+print(','.join(sorted(grants)))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "DescribeCollection,Search\n"

@@ -11,7 +11,11 @@ from dataclasses import asdict, dataclass
 from typing import Protocol, cast
 
 from tap.operations.milvus.activation import CorpusActivationState
-from tap.operations.milvus.contracts import MilvusPublishClients
+from tap.operations.milvus.contracts import (
+    READER_PRIVILEGES,
+    WRITER_PRIVILEGES,
+    MilvusPublishClients,
+)
 from tap.operations.milvus.fixtures import (
     DocFixtureChunk,
     DocFixtureManifest,
@@ -51,6 +55,30 @@ _PERSISTED_FIELDS = (
     "derived_from_chunk_ids",
     "dense_vector",
 )
+_PERSISTED_REQUIRED_TEXT_FIELDS = frozenset(
+    {
+        "chunk_id",
+        "logical_chunk_id",
+        "root_id",
+        "content",
+        "content_role",
+        "tenant_id",
+        "project_id",
+        "environment",
+        "source_id",
+        "source_revision",
+        "source_content_hash",
+        "chunk_content_hash",
+        "anchor_json",
+        "index_family",
+        "physical_collection",
+        "corpus_version",
+        "schema_version",
+        "embedding_model_version",
+        "source_type",
+        "revision_kind",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,11 +116,17 @@ class CorpusActivator(Protocol):
     async def restore(self, state: CorpusActivationState | None) -> None: ...
 
 
+class CleanupStatusSink(Protocol):
+    def record_cleanup(self, issues: tuple[str, ...]) -> None: ...
+
+
 async def publish_fixture(
     clients: MilvusPublishClients,
     manifest: DocFixtureManifest,
     vectors_by_chunk_id: Mapping[str, tuple[float, ...]],
     activator: CorpusActivator,
+    *,
+    cleanup_status_sink: CleanupStatusSink | None = None,
 ) -> PublishReceipt:
     """Publish only after reconciliation and positive/negative probes pass."""
 
@@ -127,6 +161,18 @@ async def publish_fixture(
             await clients.provisioner.grant_collection(physical, "tap_writer")
             reader_grant_attempted = True
             await clients.provisioner.grant_collection(physical, "tap_reader")
+            await _require_exact_collection_grants(
+                clients,
+                physical,
+                "tap_writer",
+                WRITER_PRIVILEGES,
+            )
+            await _require_exact_collection_grants(
+                clients,
+                physical,
+                "tap_reader",
+                READER_PRIVILEGES,
+            )
             await clients.writer.insert(physical, rows)
             await clients.writer.flush(physical)
 
@@ -134,6 +180,29 @@ async def publish_fixture(
         validate_collection_descriptor(manifest, descriptor)
         await _positive_probe(clients, manifest, rows)
         await _negative_probe(clients, manifest)
+
+        if preexisting:
+            reader_grants = await _collection_grants(clients, physical, "tap_reader")
+            writer_grants = await _collection_grants(clients, physical, "tap_writer")
+            if not reader_grants <= READER_PRIVILEGES or not writer_grants <= WRITER_PRIVILEGES:
+                raise PublishRejected("Milvus scoped grant inventory is unexpected")
+            if reader_grants != READER_PRIVILEGES:
+                reader_grant_attempted = True
+                await clients.provisioner.grant_collection(physical, "tap_reader")
+                await _require_exact_collection_grants(
+                    clients,
+                    physical,
+                    "tap_reader",
+                    READER_PRIVILEGES,
+                )
+            if writer_grants:
+                await clients.provisioner.revoke_collection(physical, "tap_writer")
+                await _require_exact_collection_grants(
+                    clients,
+                    physical,
+                    "tap_writer",
+                    frozenset(),
+                )
 
         resolved = await clients.provisioner.describe_alias(manifest.alias)
         if resolved != physical:
@@ -148,24 +217,46 @@ async def publish_fixture(
         else:
             activation_attempted = True
             activation_id = await activator.activate(manifest.corpus_version, physical, digest)
-        if writer_grant_attempted:
+        writer_grants = await _collection_grants(clients, physical, "tap_writer")
+        if not writer_grants <= WRITER_PRIVILEGES:
+            raise PublishRejected("Milvus scoped grant inventory is unexpected")
+        if writer_grants:
             await clients.provisioner.revoke_collection(physical, "tap_writer")
-    except asyncio.CancelledError:
-        cleanup_issues = await _rollback(
+        await _require_exact_collection_grants(
             clients,
-            manifest,
-            activator,
-            previous_target=previous_target,
-            previous_marker=previous_marker,
-            preexisting=preexisting,
-            create_attempted=create_attempted,
-            writer_grant_attempted=writer_grant_attempted,
-            reader_grant_attempted=reader_grant_attempted,
-            alias_attempted=alias_attempted,
-            activation_attempted=activation_attempted,
+            physical,
+            "tap_writer",
+            frozenset(),
         )
+        await _require_exact_collection_grants(
+            clients,
+            physical,
+            "tap_reader",
+            READER_PRIVILEGES,
+        )
+    except asyncio.CancelledError as cancellation:
+        cleanup_task = asyncio.create_task(
+            _rollback(
+                clients,
+                manifest,
+                activator,
+                previous_target=previous_target,
+                previous_marker=previous_marker,
+                preexisting=preexisting,
+                create_attempted=create_attempted,
+                writer_grant_attempted=writer_grant_attempted,
+                reader_grant_attempted=reader_grant_attempted,
+                alias_attempted=alias_attempted,
+                activation_attempted=activation_attempted,
+            )
+        )
+        try:
+            cleanup_issues = await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            cleanup_issues = ("cleanup_cancelled",)
+        _record_cleanup_status(cleanup_status_sink, cleanup_issues)
         if cleanup_issues:
-            raise PublishRejected("Milvus publication cleanup incomplete") from None
+            cancellation.add_note("Milvus publication cleanup incomplete")
         raise
     except Exception as error:
         cleanup_issues = await _rollback(
@@ -182,6 +273,7 @@ async def publish_fixture(
             activation_attempted=activation_attempted,
         )
         if cleanup_issues:
+            _record_cleanup_status(cleanup_status_sink, cleanup_issues)
             raise PublishRejected("Milvus publication cleanup incomplete") from None
         if isinstance(error, PublishRejected):
             raise error from None
@@ -195,6 +287,18 @@ async def publish_fixture(
         corpus_version=manifest.corpus_version,
         activation_id=activation_id,
     )
+
+
+def _record_cleanup_status(
+    sink: CleanupStatusSink | None,
+    issues: tuple[str, ...],
+) -> None:
+    if sink is None or not issues:
+        return
+    try:
+        sink.record_cleanup(issues)
+    except Exception:
+        pass
 
 
 async def tighten_fixture_acl(
@@ -224,12 +328,7 @@ async def tighten_fixture_acl(
         or type(tightened.deleted) is not bool
         or not isinstance(vector, tuple)
         or len(vector) != manifest.vector_dimension
-        or any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            for value in vector
-        )
+        or any(type(value) is not float or not math.isfinite(value) for value in vector)
     ):
         raise PublishRejected("ACL tightening metadata is malformed")
     row = {
@@ -305,19 +404,54 @@ async def _positive_probe(
         _PERSISTED_FIELDS,
         len(expected_rows) + 1,
     )
-    expected_by_id = {cast(str, row["chunk_id"]): dict(row) for row in expected_rows}
     if len(rows) != len(expected_rows) or any(
         not isinstance(row, Mapping) or set(row) != set(_PERSISTED_FIELDS) for row in rows
     ):
         raise PublishRejected("Milvus positive reconciliation probe failed")
+    expected_by_id = {
+        cast(str, row["chunk_id"]): _canonical_persisted_row(row, manifest) for row in expected_rows
+    }
     actual_by_id: dict[str, dict[str, object]] = {}
     for row in rows:
         chunk_id = row.get("chunk_id")
         if not isinstance(chunk_id, str) or chunk_id in actual_by_id:
             raise PublishRejected("Milvus positive reconciliation probe failed")
-        actual_by_id[chunk_id] = dict(row)
+        actual_by_id[chunk_id] = _canonical_persisted_row(row, manifest)
     if actual_by_id != expected_by_id:
         raise PublishRejected("Milvus positive reconciliation probe failed")
+
+
+def _canonical_persisted_row(
+    row: Mapping[str, object],
+    manifest: DocFixtureManifest,
+) -> dict[str, object]:
+    if set(row) != set(_PERSISTED_FIELDS) or any(
+        type(row.get(field)) is not str for field in _PERSISTED_REQUIRED_TEXT_FIELDS
+    ):
+        raise PublishRejected("Milvus persisted row types are malformed")
+    if any(
+        value is not None and type(value) is not str
+        for value in (row.get("parent_id"), row.get("title"))
+    ):
+        raise PublishRejected("Milvus persisted row types are malformed")
+    groups = row.get("allowed_group_ids")
+    derived = row.get("derived_from_chunk_ids")
+    vector = row.get("dense_vector")
+    if (
+        type(groups) is not list
+        or any(type(value) is not str for value in cast(list[object], groups))
+        or not _classification_rank_is_valid(row.get("classification_rank"))
+        or type(row.get("deleted")) is not bool
+        or type(derived) is not list
+        or any(type(value) is not str for value in cast(list[object], derived))
+        or not isinstance(vector, (list, tuple))
+        or len(vector) != manifest.vector_dimension
+        or any(type(value) is not float or not math.isfinite(value) for value in vector)
+    ):
+        raise PublishRejected("Milvus persisted row types are malformed")
+    canonical = dict(row)
+    canonical["dense_vector"] = list(vector)
+    return canonical
 
 
 async def _negative_probe(
@@ -372,18 +506,30 @@ async def _collection_exists(clients: MilvusPublishClients, physical: str) -> bo
     return result
 
 
-async def _has_collection_grant(
+async def _collection_grants(
     clients: MilvusPublishClients,
     physical: str,
     role_name: str,
-) -> bool:
-    operation = getattr(clients.provisioner, "has_collection_grant", None)
+) -> frozenset[str]:
+    operation = getattr(clients.provisioner, "collection_grants", None)
     if not callable(operation):
         raise PublishRejected("Milvus scoped-grant inventory is unavailable")
     result = await operation(physical, role_name)
-    if type(result) is not bool:
+    if not isinstance(result, frozenset) or any(
+        type(privilege) is not str or not privilege for privilege in result
+    ):
         raise PublishRejected("Milvus scoped-grant inventory is malformed")
-    return result
+    return cast(frozenset[str], result)
+
+
+async def _require_exact_collection_grants(
+    clients: MilvusPublishClients,
+    physical: str,
+    role_name: str,
+    expected: frozenset[str],
+) -> None:
+    if await _collection_grants(clients, physical, role_name) != expected:
+        raise PublishRejected("Milvus scoped grant reconciliation failed")
 
 
 async def _rollback(
@@ -401,18 +547,23 @@ async def _rollback(
     activation_attempted: bool,
 ) -> tuple[str, ...]:
     issues: list[str] = []
-    if alias_attempted:
-        try:
-            current = await _current_alias_target(clients, manifest.alias)
-            if current == manifest.physical_collection and previous_target != current:
-                if previous_target is None:
-                    await clients.provisioner.drop_alias(manifest.alias)
-                else:
-                    await clients.provisioner.alter_alias(manifest.alias, previous_target)
-            if await _current_alias_target(clients, manifest.alias) != previous_target:
-                issues.append("alias")
-        except Exception:
+    alias_restored = False
+    try:
+        current = await _current_alias_target(clients, manifest.alias)
+        if (
+            alias_attempted
+            and current == manifest.physical_collection
+            and previous_target != current
+        ):
+            if previous_target is None:
+                await clients.provisioner.drop_alias(manifest.alias)
+            else:
+                await clients.provisioner.alter_alias(manifest.alias, previous_target)
+        alias_restored = await _current_alias_target(clients, manifest.alias) == previous_target
+        if not alias_restored:
             issues.append("alias")
+    except Exception:
+        issues.append("alias")
     if activation_attempted:
         try:
             await activator.restore(previous_marker)
@@ -427,16 +578,24 @@ async def _rollback(
         if not attempted or preexisting:
             continue
         try:
-            if await _has_collection_grant(clients, manifest.physical_collection, role_name):
+            if await _collection_grants(
+                clients,
+                manifest.physical_collection,
+                role_name,
+            ):
                 await clients.provisioner.revoke_collection(
                     manifest.physical_collection,
                     role_name,
                 )
-            if await _has_collection_grant(clients, manifest.physical_collection, role_name):
+            if await _collection_grants(
+                clients,
+                manifest.physical_collection,
+                role_name,
+            ):
                 issues.append(role_name)
         except Exception:
             issues.append(role_name)
-    if create_attempted and not preexisting:
+    if create_attempted and not preexisting and alias_restored:
         try:
             if await _collection_exists(clients, manifest.physical_collection):
                 await clients.provisioner.drop_collection(manifest.physical_collection)
@@ -475,6 +634,10 @@ def _acl_tightening_proof(
     original: DocFixtureChunk,
     tightened: DocFixtureChunk,
 ) -> tuple[str, str]:
+    if not _classification_rank_is_valid(
+        original.classification_rank
+    ) or not _classification_rank_is_valid(tightened.classification_rank):
+        raise PublishRejected("ACL classification rank must be an integer from 0 through 3")
     old_groups = set(original.allowed_group_ids)
     new_groups = set(tightened.allowed_group_ids)
     environment_narrows = tightened.environment == original.environment or (
@@ -492,10 +655,10 @@ def _acl_tightening_proof(
         return "deleted", f"chunk_id == {chunk} and deleted == false"
     removed_groups = sorted(old_groups - new_groups)
     if removed_groups:
-        removed = json.dumps(removed_groups[0])
+        removed = json.dumps(removed_groups, separators=(",", ":"))
         return (
             "removed_group",
-            f"chunk_id == {chunk} and array_contains(allowed_group_ids, {removed})",
+            f"chunk_id == {chunk} and ARRAY_CONTAINS_ANY(allowed_group_ids, {removed})",
         )
     if tightened.classification_rank > original.classification_rank:
         return (
@@ -505,3 +668,7 @@ def _acl_tightening_proof(
     if tightened.environment != original.environment:
         return "environment", f'chunk_id == {chunk} and environment == "global"'
     raise PublishRejected("ACL changes must remove at least one prior authorization")
+
+
+def _classification_rank_is_valid(value: object) -> bool:
+    return type(value) is int and 0 <= value <= 3

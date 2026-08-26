@@ -345,12 +345,7 @@ def fixture_rows(
         if (
             not isinstance(vector, tuple)
             or len(vector) != manifest.vector_dimension
-            or any(
-                isinstance(item, bool)
-                or not isinstance(item, (int, float))
-                or not math.isfinite(item)
-                for item in vector
-            )
+            or any(type(item) is not float or not math.isfinite(item) for item in vector)
         ):
             raise ValueError("fixture vector does not match the manifest model space")
         rows.append(
