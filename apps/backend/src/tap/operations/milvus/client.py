@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+import contextvars
+import logging
+import threading
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -28,6 +32,46 @@ from tap.operations.milvus.contracts import (
 
 _TIMEOUT_SECONDS = 10.0
 _PERMISSION_DENIED_COMPATIBLE_CODE = 3
+_PYMILVUS_RPC_LOGGER_NAME = "pymilvus.decorators"
+_PYMILVUS_RPC_LOGGING_SUPPRESSED = contextvars.ContextVar(
+    "pymilvus_rpc_logging_suppressed",
+    default=False,
+)
+_PYMILVUS_RPC_FILTER_LOCK = threading.Lock()
+_PYMILVUS_RPC_FILTER_USERS = 0
+
+
+class _PyMilvusRpcLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _PYMILVUS_RPC_LOGGING_SUPPRESSED.get()
+
+
+_PYMILVUS_RPC_LOG_FILTER = _PyMilvusRpcLogFilter()
+
+
+@contextmanager
+def suppress_pymilvus_rpc_logging() -> Iterator[None]:
+    """Suppress provider RPC details only for the current logical operation."""
+
+    global _PYMILVUS_RPC_FILTER_USERS
+
+    logger = logging.getLogger(_PYMILVUS_RPC_LOGGER_NAME)
+    token = _PYMILVUS_RPC_LOGGING_SUPPRESSED.set(True)
+    registered = False
+    try:
+        with _PYMILVUS_RPC_FILTER_LOCK:
+            if _PYMILVUS_RPC_FILTER_USERS == 0:
+                logger.addFilter(_PYMILVUS_RPC_LOG_FILTER)
+            _PYMILVUS_RPC_FILTER_USERS += 1
+            registered = True
+        yield
+    finally:
+        if registered:
+            with _PYMILVUS_RPC_FILTER_LOCK:
+                _PYMILVUS_RPC_FILTER_USERS -= 1
+                if _PYMILVUS_RPC_FILTER_USERS == 0:
+                    logger.removeFilter(_PYMILVUS_RPC_LOG_FILTER)
+        _PYMILVUS_RPC_LOGGING_SUPPRESSED.reset(token)
 
 
 @dataclass(frozen=True, slots=True)

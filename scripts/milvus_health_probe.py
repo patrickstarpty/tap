@@ -26,6 +26,7 @@ from tap.operations.milvus.client import (
     build_probe_clients,
     build_reader_client,
     close_probe_clients,
+    suppress_pymilvus_rpc_logging,
 )
 from tap.operations.milvus.health import run_health_probe
 
@@ -95,11 +96,12 @@ def main() -> int:
     parser.add_argument("--reader-canary", action="store_true")
     args = parser.parse_args()
     try:
-        settings = dict(os.environ)
-        if args.reader_canary:
-            asyncio.run(_run_reader_canary(settings))
-        else:
-            asyncio.run(_run_health(settings))
+        with suppress_pymilvus_rpc_logging():
+            settings = dict(os.environ)
+            if args.reader_canary:
+                asyncio.run(_run_reader_canary(settings))
+            else:
+                asyncio.run(_run_health(settings))
     except Exception:
         print("Milvus health probe failed.", file=sys.stderr)
         return 1

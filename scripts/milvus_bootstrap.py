@@ -10,7 +10,11 @@ import sys
 from pymilvus import MilvusClient  # type: ignore[import-untyped]
 
 from tap.operations.milvus.bootstrap import bootstrap_local_rbac
-from tap.operations.milvus.client import connect_local_admin, local_role_credentials
+from tap.operations.milvus.client import (
+    connect_local_admin,
+    local_role_credentials,
+    suppress_pymilvus_rpc_logging,
+)
 
 
 async def _run() -> None:
@@ -26,7 +30,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Bootstrap local Milvus RBAC")
     parser.parse_args()
     try:
-        asyncio.run(_run())
+        with suppress_pymilvus_rpc_logging():
+            asyncio.run(_run())
     except Exception:
         print("Milvus RBAC bootstrap failed.", file=sys.stderr)
         return 1

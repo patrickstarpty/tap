@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import os
 import subprocess
+import sys
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
+from typing import ContextManager
 
 import pytest
 from pydantic import SecretStr
@@ -16,6 +21,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
+from tap.operations.milvus import client as milvus_client
 from tap.operations.milvus.contracts import (
     MilvusDeniedProbe,
     MilvusGrant,
@@ -25,6 +31,63 @@ from tap.operations.milvus.contracts import (
 from tap.operations.milvus.health import run_health_probe
 
 pytestmark = pytest.mark.asyncio
+
+
+def _provider_log_scope() -> ContextManager[None]:
+    factory = getattr(milvus_client, "suppress_pymilvus_rpc_logging", None)
+    if factory is None:
+        return nullcontext()
+    return factory()
+
+
+async def test_provider_log_scope_restores_filters_after_cancellation() -> None:
+    provider_logger = logging.getLogger("pymilvus.decorators")
+    original_filters = tuple(provider_logger.filters)
+    entered = asyncio.Event()
+
+    async def wait_forever() -> None:
+        with _provider_log_scope():
+            entered.set()
+            await asyncio.Future()
+
+    task = asyncio.create_task(wait_forever())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert tuple(provider_logger.filters) == original_filters
+
+
+async def test_health_cli_suppresses_provider_rpc_details_before_generic_success() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import logging
+import scripts.milvus_health_probe as cli
+
+async def pass_health(settings):
+    logging.getLogger("pymilvus.decorators").error(
+        "provider RPC failed\\nTraceback:\\n"
+        "SYNTHETIC_CREDENTIAL_MARKER SYNTHETIC_FILTER_MARKER "
+        "SYNTHETIC_GROUP_MARKER SYNTHETIC_VECTOR_MARKER"
+    )
+
+cli._run_health = pass_health
+raise SystemExit(cli.main())
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "Milvus health probe passed.\n"
+    assert completed.stderr == ""
 
 
 class RecordingAdmin:

@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import logging
 import secrets
+import subprocess
+import sys
+import traceback
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from typing import ContextManager
 
 import grpc
 import pytest
 from pydantic import SecretStr
 from pymilvus.exceptions import MilvusException
 
+from tap.operations.milvus import client as milvus_client
 from tap.operations.milvus.bootstrap import bootstrap_local_rbac
 from tap.operations.milvus.client import (
     MilvusSdk,
@@ -31,6 +39,154 @@ from tap.operations.milvus.contracts import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+_SYNTHETIC_PROVIDER_MARKERS = (
+    "SYNTHETIC_CREDENTIAL_MARKER",
+    "SYNTHETIC_FILTER_MARKER",
+    "SYNTHETIC_GROUP_MARKER",
+    "SYNTHETIC_VECTOR_MARKER",
+)
+
+
+def _provider_log_scope() -> ContextManager[None]:
+    factory = getattr(milvus_client, "suppress_pymilvus_rpc_logging", None)
+    if factory is None:
+        return nullcontext()
+    return factory()
+
+
+def _synthetic_provider_message() -> str:
+    return "provider RPC request failed\nTraceback:\n" + " ".join(_SYNTHETIC_PROVIDER_MARKERS)
+
+
+async def test_provider_log_scope_suppresses_worker_thread_details_and_preserves_tap_logs() -> None:
+    provider_logger = logging.getLogger("pymilvus.decorators")
+    tap_logger = logging.getLogger("tap.operations.milvus.test")
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    provider_level = provider_logger.level
+    tap_level = tap_logger.level
+    tap_propagate = tap_logger.propagate
+    provider_logger.addHandler(handler)
+    tap_logger.addHandler(handler)
+    provider_logger.setLevel(logging.ERROR)
+    tap_logger.setLevel(logging.ERROR)
+    tap_logger.propagate = False
+    try:
+        with _provider_log_scope():
+            await asyncio.to_thread(provider_logger.error, _synthetic_provider_message())
+            tap_logger.error("TAP_LOG_REMAINS_VISIBLE")
+    finally:
+        provider_logger.removeHandler(handler)
+        tap_logger.removeHandler(handler)
+        provider_logger.setLevel(provider_level)
+        tap_logger.setLevel(tap_level)
+        tap_logger.propagate = tap_propagate
+
+    rendered = output.getvalue()
+    assert "TAP_LOG_REMAINS_VISIBLE" in rendered
+    for marker in _SYNTHETIC_PROVIDER_MARKERS:
+        assert marker not in rendered
+
+
+async def test_overlapping_provider_log_scopes_do_not_suppress_unrelated_contexts() -> None:
+    provider_logger = logging.getLogger("pymilvus.decorators")
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    original_level = provider_logger.level
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def first_scope() -> None:
+        with _provider_log_scope():
+            first_entered.set()
+            await release_first.wait()
+
+    async def second_scope() -> None:
+        with _provider_log_scope():
+            second_entered.set()
+            await release_second.wait()
+            provider_logger.error("SECOND_SCOPE_PRIVATE_MARKER")
+
+    provider_logger.addHandler(handler)
+    provider_logger.setLevel(logging.ERROR)
+    first = asyncio.create_task(first_scope())
+    second = asyncio.create_task(second_scope())
+    try:
+        await first_entered.wait()
+        await second_entered.wait()
+        provider_logger.error("OUTSIDE_CONTEXT_VISIBLE")
+        release_first.set()
+        await first
+        release_second.set()
+        await second
+        provider_logger.error("AFTER_CONTEXT_VISIBLE")
+    finally:
+        for task in (first, second):
+            if not task.done():
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+        provider_logger.removeHandler(handler)
+        provider_logger.setLevel(original_level)
+
+    rendered = output.getvalue()
+    assert "OUTSIDE_CONTEXT_VISIBLE" in rendered
+    assert "AFTER_CONTEXT_VISIBLE" in rendered
+    assert "SECOND_SCOPE_PRIVATE_MARKER" not in rendered
+
+
+async def test_provider_log_scope_restores_filters_after_success_and_failure() -> None:
+    provider_logger = logging.getLogger("pymilvus.decorators")
+    original_filters = tuple(provider_logger.filters)
+
+    with _provider_log_scope():
+        pass
+    assert tuple(provider_logger.filters) == original_filters
+
+    failure = RuntimeError("synthetic operation failure")
+    with pytest.raises(RuntimeError) as captured:
+        with _provider_log_scope():
+            raise failure
+
+    assert captured.value is failure
+    assert tuple(provider_logger.filters) == original_filters
+
+
+async def test_bootstrap_cli_suppresses_provider_rpc_details_before_generic_failure() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import logging
+import scripts.milvus_bootstrap as cli
+
+async def fail():
+    logging.getLogger("pymilvus.decorators").error(
+        "provider RPC failed\\nTraceback:\\n"
+        "SYNTHETIC_CREDENTIAL_MARKER SYNTHETIC_FILTER_MARKER "
+        "SYNTHETIC_GROUP_MARKER SYNTHETIC_VECTOR_MARKER"
+    )
+    raise RuntimeError("synthetic provider failure")
+
+cli._run = fail
+raise SystemExit(cli.main())
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert completed.stderr == "Milvus RBAC bootstrap failed.\n"
+    for marker in _SYNTHETIC_PROVIDER_MARKERS:
+        assert marker not in completed.stderr
 
 
 class StructuredRpcError(grpc.RpcError):
@@ -69,6 +225,9 @@ async def test_denial_classifier_rejects_and_sanitizes_other_grpc_statuses() -> 
         await _assert_denied(fail, MilvusException)
 
     assert "provider detail" not in str(captured.value)
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    assert "provider detail" not in "".join(traceback.format_exception(captured.value))
 
 
 async def test_denial_classifier_rejects_and_sanitizes_other_provider_errors() -> None:
@@ -82,6 +241,9 @@ async def test_denial_classifier_rejects_and_sanitizes_other_provider_errors() -
         await _assert_denied(fail, MilvusException)
 
     assert "provider detail" not in str(captured.value)
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    assert "provider detail" not in "".join(traceback.format_exception(captured.value))
 
 
 async def test_denial_classifier_preserves_cancellation() -> None:
