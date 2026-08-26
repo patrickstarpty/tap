@@ -1,0 +1,329 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1350" viewBox="0 0 2400 1350" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">TAP RAG 知识问答数据与业务流转详图</title>
+  <desc id="svg-desc">按知识入库、在线问答、治理与评测三条泳道展示 TAP RAG 的详细数据、业务与控制流。</desc>
+  <defs>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#17324D" flood-opacity="0.10" />
+    </filter>
+    <marker id="arrow-0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0C8F7A" />
+    </marker>
+    <marker id="arrow-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2F6FED" />
+    </marker>
+    <marker id="arrow-2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748B" />
+    </marker>
+    <marker id="arrow-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7C5CFC" />
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="2400" height="1350" fill="#FFFFFF" aria-hidden="true" />
+  <g id="containers">
+    <rect x="40" y="220" width="2320" height="350" rx="14" fill="#F7FBFF" stroke="#B7D3F4" stroke-width="1.5" />
+    <text x="1200" y="244" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" />
+    <rect x="40" y="590" width="2320" height="385" rx="14" fill="#F5FBFA" stroke="#B7DED7" stroke-width="1.5" />
+    <text x="1200" y="614" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" />
+    <rect x="40" y="995" width="2320" height="315" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
+    <text x="1200" y="1019" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" />
+    <rect x="1810" y="20" width="545" height="82" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
+    <text x="1827" y="43" text-anchor="start" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="700">状态</text>
+    <rect x="1780" y="242" width="315" height="168" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" />
+    <text x="1797" y="265" text-anchor="start" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="700">A8 Search Provider</text>
+  </g>
+  <g id="flows" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="405,325 430,325" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="630,325 655,325" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="845,325 870,325" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="1070,325 1095,325" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1325,325 1350,325" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1540,325 1565,325" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1755,325 1770,325 1770,305 1800,305" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="1755,325 1770,371 1770,371 1800,371" stroke="#7C5CFC" stroke-width="2.2" marker-end="url(#arrow-3)" stroke-dasharray="8 6" />
+    <polyline points="2075,305 2107,305 2107,325 2120,325" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="2225,375 2225,414 1552,414 1552,479 1540,479" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="862.5,425 862,400 1660,400 1660,375" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" />
+    <polyline points="1540,479 1565,479" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="535,692.5 560,692.5" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="880,692.5 905,692.5" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="1225,692.5 1250,692.5" stroke="#2F6FED" stroke-width="2.2" marker-end="url(#arrow-1)" />
+    <polyline points="1570,692.5 1595,692.5" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1915,692.5 1940,692.5" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="2135,753 2338,790 337.5,790 337.5,830" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="337.5,830 337.5,812 867.5,812 867.5,830" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="460,884 480,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="725,884 745,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="990,884 1010,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1255,884 1275,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1520,884 1540,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1785,884 1805,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="2050,884 2070,884" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="705,1082.5 730,1082.5" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" />
+    <polyline points="1220,1082.5 1245,1082.5" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" />
+    <polyline points="1735,1082.5 1760,1082.5" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="705,1215 730,1215" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="1220,1215 1245,1215" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" />
+    <polyline points="1735,1215 1760,1215" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" />
+    <polyline points="2200,944 2340,970 460,970 460,1145 460,1165" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" stroke-dasharray="8 6" />
+    <polyline points="460,1035 460,1010 205,1010 205,555 1210,555 1210,375" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" stroke-dasharray="8 6" />
+    <polyline points="460,1035 460,1000 200,1000 200,770 720,770 720,745" stroke="#64748B" stroke-width="2.2" marker-end="url(#arrow-2)" stroke-dasharray="8 6" />
+    <polyline points="1947.5,533 2338,545 2338,610 2135,610 2135,632" stroke="#0C8F7A" stroke-width="2.2" marker-end="url(#arrow-0)" stroke-dasharray="8 6" />
+  </g>
+  <g id="components">
+    <rect x="45" y="120" width="555" height="72" rx="12" fill="#FFFFFF" stroke="#B9C7D5" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="322.5" y="151.71" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.3" font-weight="700">权威源不变</text>
+    <text x="322.5" y="170.014" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.3">Git / Blob / MySQL 是 SoR；Search 只是可重建投影</text>
+    <rect x="620" y="120" width="555" height="72" rx="12" fill="#FFFFFF" stroke="#B9C7D5" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="897.5" y="151.77" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.1" font-weight="700">权限先于召回</text>
+    <text x="897.5" y="169.818" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.1">tenant / project / group / classification / environment / corpus 查询前过滤</text>
+    <rect x="1195" y="120" width="555" height="72" rx="12" fill="#FFFFFF" stroke="#B9C7D5" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1472.5" y="151.71" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.3" font-weight="700">证据绑定不可变版本</text>
+    <text x="1472.5" y="170.014" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.3">source revision + anchor + source/chunk hash + chunkId</text>
+    <rect x="1770" y="120" width="585" height="72" rx="12" fill="#FFFFFF" stroke="#B9C7D5" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="2062.5" y="151.77" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.1" font-weight="700">未来只复用契约</text>
+    <text x="2062.5" y="169.818" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14.1">Agent / Test IR / RCA 只调用同一 Search / Citation Contract</text>
+    <rect x="55" y="242" width="130" height="305" rx="12" fill="#17324D" stroke="#17324D" stroke-width="1.8" />
+    <text x="120" y="377.58" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700">A</text>
+    <text x="120" y="400.62" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">知识入库</text>
+    <text x="120" y="423.66" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">Data Ingestion</text>
+    <rect x="215" y="275" width="190" height="100" rx="12" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="310" y="312.216" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.6" font-weight="700">A1 权威来源</text>
+    <text x="310" y="329.624" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.6">Git · Blob · MySQL</text>
+    <text x="310" y="347.032" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.6">revision / object version / Outbox</text>
+    <rect x="430" y="275" width="200" height="100" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="530" y="312.028" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.8" font-weight="700">A2 变更发现</text>
+    <text x="530" y="329.692" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.8">Webhook / scan / event</text>
+    <text x="530" y="347.356" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.8">source change 去重</text>
+    <rect x="655" y="275" width="190" height="100" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="750" y="312.31" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5" font-weight="700">A3 Ledger + Outbox</text>
+    <text x="750" y="329.59" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">领域状态同事务</text>
+    <text x="750" y="346.87" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">Relay → Redis lease</text>
+    <rect x="870" y="275" width="200" height="100" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="970" y="312.31" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5" font-weight="700">A4 固定输入快照</text>
+    <text x="970" y="329.59" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">Fetch + verify revision / hash</text>
+    <text x="970" y="346.87" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">漂移即失败</text>
+    <rect x="1095" y="275" width="230" height="100" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1210" y="312.498" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.3" font-weight="700">A5 可信 ACL + 处理</text>
+    <text x="1210" y="329.522" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.3">Policy resolve → typed parse</text>
+    <text x="1210" y="346.546" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.3">redact before embed → chunk</text>
+    <rect x="1350" y="275" width="190" height="100" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1445" y="312.686" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1" font-weight="700">A6 Embed + Cache</text>
+    <text x="1445" y="329.454" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">chunkContentHash + modelVersion</text>
+    <text x="1445" y="346.222" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">batch / bounded / 去重</text>
+    <rect x="1565" y="275" width="190" height="100" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1660" y="313.062" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.7" font-weight="700">A7 KnowledgeSearchPort</text>
+    <text x="1660" y="329.318" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.7">Search contract 稳定</text>
+    <text x="1660" y="345.574" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.7">Writer 仍按已接受基线</text>
+    <rect x="1800" y="276" width="275" height="58" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1937.5" y="301.16" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8" font-weight="700">Azure AI Search</text>
+    <text x="1937.5" y="317.544" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8">已接受企业基线 · 4 family / aliases</text>
+    <rect x="1800" y="346" width="275" height="54" rx="12" fill="#F3EEFF" stroke="#7C5CFC" stroke-width="1.8" stroke-dasharray="8 6" filter="url(#card-shadow)" />
+    <text x="1937.5" y="362.848" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="10.8" font-weight="700">Milvus Standalone</text>
+    <text x="1937.5" y="376.672" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="10.8">RFC-004 draft · 本地 doc fixture</text>
+    <text x="1937.5" y="390.496" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="10.8">publish/result marker；不推进 checkpoint</text>
+    <rect x="2120" y="275" width="210" height="100" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="2225" y="311.75" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.5" font-weight="700">A9 Azure 基线 Writer ACK</text>
+    <text x="2225" y="327.75" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.5">逐条 success / retry / permanent failure</text>
+    <text x="2225" y="343.75" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.5">成功后才推进 ingestion checkpoint</text>
+    <rect x="215" y="425" width="415" height="108" rx="12" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="422.5" y="466.78" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="700">四类逻辑知识</text>
+    <text x="422.5" y="483.42" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">doc：文档层级 · code：symbol / AST</text>
+    <text x="422.5" y="500.06" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">bdd：Feature / Scenario · failure：incident / fingerprint</text>
+    <rect x="655" y="425" width="415" height="108" rx="12" fill="#F1F5F9" stroke="#64748B" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="862.5" y="466.78" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="700">A10 删除 / 撤权</text>
+    <text x="862.5" y="483.42" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">tombstone / metadata update / cache invalidation</text>
+    <text x="862.5" y="500.06" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">旧主体零命中后才能确认安全生效</text>
+    <rect x="1095" y="425" width="445" height="108" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1317.5" y="466.78" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="700">A11 Manifest / Checkpoint</text>
+    <text x="1317.5" y="483.42" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">source + parser/chunker/embed/schema 版本</text>
+    <text x="1317.5" y="500.06" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">count / hash / failure set / traceId 可重放对账</text>
+    <rect x="1565" y="425" width="765" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1947.5" y="466.592" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2" font-weight="700">A12 蓝绿发布</text>
+    <text x="1947.5" y="483.488" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">新 physical target → 全量重建 / ACL / hash / eval 对账 → family alias 逐个收敛</text>
+    <text x="1947.5" y="500.384" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">最后原子发布 activeCorpusVersion；传播期间不混合新旧 corpus</text>
+    <rect x="55" y="613" width="130" height="338" rx="12" fill="#17324D" stroke="#17324D" stroke-width="1.8" />
+    <text x="120" y="765.08" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700">Q</text>
+    <text x="120" y="788.12" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">在线问答</text>
+    <text x="120" y="811.16" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">Business Flow</text>
+    <rect x="215" y="640" width="320" height="105" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="375" y="679.34" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="700">Q1 提交问题</text>
+    <text x="375" y="697.26" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14">User → Knowledge Chat → BFF</text>
+    <text x="375" y="715.18" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14">@resource · Quick / Deep</text>
+    <rect x="560" y="640" width="320" height="105" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="720" y="679.528" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.8" font-weight="700">Q2 身份与 Project Policy</text>
+    <text x="720" y="697.192" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.8">Entra identity → trusted policy context</text>
+    <text x="720" y="714.856" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.8">客户端 scope 只能做交集</text>
+    <rect x="905" y="640" width="320" height="105" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1065" y="679.81" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5" font-weight="700">Q3 Turn + Outbox</text>
+    <text x="1065" y="697.09" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">MySQL 同事务创建 Turn / Event / Outbox</text>
+    <text x="1065" y="714.37" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">Worker lease 后执行前重新授权</text>
+    <rect x="1250" y="640" width="320" height="105" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1410" y="679.81" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5" font-weight="700">Q4 Context Snapshot</text>
+    <text x="1410" y="697.09" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">Project → recent turns → summary lineage</text>
+    <text x="1410" y="714.37" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">current message / immutable @resource</text>
+    <rect x="1595" y="640" width="320" height="105" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1755" y="679.81" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5" font-weight="700">Q5 不可变 QueryPlan</text>
+    <text x="1755" y="697.09" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">family / exact ID / bounded subqueries</text>
+    <text x="1755" y="714.37" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.5">profile + policy digest + corpus version</text>
+    <rect x="1940" y="632" width="390" height="121" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="2135" y="671.644" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2" font-weight="700">Q6 KnowledgeSearchPort</text>
+    <text x="2135" y="688.54" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">解析已发布 alias / physical target</text>
+    <text x="2135" y="705.436" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">绑定 schema · corpus · embedding model</text>
+    <text x="2135" y="722.332" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">所有 provider I/O 前编译可信 filter</text>
+    <rect x="215" y="830" width="245" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="337.5" y="871.592" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2" font-weight="700">Q7 Exact / Filter</text>
+    <text x="337.5" y="888.488" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">ID · symbol · fingerprint</text>
+    <text x="337.5" y="905.384" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">fast path</text>
+    <rect x="480" y="830" width="245" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="602.5" y="871.686" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1" font-weight="700">Q8 BM25 + Vector</text>
+    <text x="602.5" y="888.454" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">并行 hybrid</text>
+    <text x="602.5" y="905.222" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">同一 ACL preFilter</text>
+    <rect x="745" y="830" width="245" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="867.5" y="871.874" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9" font-weight="700">Q9 RRF 融合</text>
+    <text x="867.5" y="888.386" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">单 target / 单索引 RRF</text>
+    <text x="867.5" y="904.898" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">跨 family 只比较 local rank</text>
+    <rect x="1010" y="830" width="245" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1132.5" y="871.968" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8" font-weight="700">Q10 Rerank</text>
+    <text x="1132.5" y="888.352" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8">版本化模型 / 输入 / 分数</text>
+    <text x="1132.5" y="904.736" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8">semantic 或 external 需评测</text>
+    <rect x="1275" y="830" width="245" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1397.5" y="871.968" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8" font-weight="700">Q11 Context Expansion</text>
+    <text x="1397.5" y="888.352" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8">Parent / adjacent / dependency edge</text>
+    <text x="1397.5" y="904.736" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.8">再次 ACL + dedup</text>
+    <rect x="1540" y="830" width="245" height="108" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1662.5" y="871.874" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9" font-weight="700">Q12 Context Pack</text>
+    <text x="1662.5" y="888.386" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">token budget · order · hashes</text>
+    <text x="1662.5" y="904.898" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">裁剪原因 / evidence labels</text>
+    <rect x="1805" y="824" width="245" height="120" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1927.5" y="864.092" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6" font-weight="700">Q13 LLM + Citation</text>
+    <text x="1927.5" y="880.22" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6">只能使用 Context Pack</text>
+    <text x="1927.5" y="896.348" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6">claim-level citation</text>
+    <text x="1927.5" y="912.476" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6">证据不足 / 冲突 → abstain</text>
+    <rect x="2070" y="824" width="260" height="120" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="2200" y="864.092" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6" font-weight="700">Q14 持久化与呈现</text>
+    <text x="2200" y="880.22" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6">coalesced event + snapshot</text>
+    <text x="2200" y="896.348" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6">REST snapshot → SSE tail</text>
+    <text x="2200" y="912.476" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.6">UI Sources / Trace / Feedback</text>
+    <rect x="55" y="1018" width="130" height="268" rx="12" fill="#17324D" stroke="#17324D" stroke-width="1.8" />
+    <text x="120" y="1135.08" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700">G</text>
+    <text x="120" y="1158.12" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">治理 / 评测</text>
+    <text x="120" y="1181.16" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">Control Loop</text>
+    <rect x="215" y="1035" width="490" height="95" rx="12" fill="#F1F5F9" stroke="#64748B" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="460" y="1070.09" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2" font-weight="700">G1 Policy / ACL Decision</text>
+    <text x="460" y="1086.99" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">tenant · project · groups · classification</text>
+    <text x="460" y="1103.88" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.2">environment · corpus · fail closed · 每次读取重授权</text>
+    <rect x="730" y="1035" width="490" height="95" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="975" y="1070.19" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1" font-weight="700">G2 Ledger / Manifest / Checkpoint</text>
+    <text x="975" y="1086.95" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">至少一次分发 · 幂等 · retry budget · partial failure replay</text>
+    <text x="975" y="1103.72" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">索引可从 Git / Blob / MySQL 重建</text>
+    <rect x="1245" y="1035" width="490" height="95" rx="12" fill="#F1F5F9" stroke="#64748B" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1490" y="1070.19" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1" font-weight="700">G3 删除与撤权门禁</text>
+    <text x="1490" y="1086.95" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">Search / context / citation / trace / history 全链路零泄漏</text>
+    <text x="1490" y="1103.72" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">撤权新鲜度单独监控</text>
+    <rect x="1760" y="1035" width="570" height="95" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="2045" y="1070.19" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1" font-weight="700">G4 Alias / Corpus 发布门禁</text>
+    <text x="2045" y="1086.95" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">manifest + ACL + hash + quality 对账通过后发布</text>
+    <text x="2045" y="1103.72" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13.1">degraded 可见，禁止放宽 filter 混合版本</text>
+    <rect x="215" y="1165" width="490" height="100" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="460" y="1202.78" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="700">G5 Trace / OTel / Cost</text>
+    <text x="460" y="1219.42" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">QueryPlan · candidates · score · context · latency</text>
+    <text x="460" y="1236.06" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">model / tokens / cache / provider cost · 敏感字段脱敏</text>
+    <rect x="730" y="1165" width="490" height="100" rx="12" fill="#E8F7F4" stroke="#0C8F7A" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="975" y="1202.78" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="700">G6 Golden Dataset / Eval</text>
+    <text x="975" y="1219.42" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">Recall@K · MRR · nDCG · citation · faithfulness</text>
+    <text x="975" y="1236.06" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">abstain · freshness · latency · cost（分 family 报告）</text>
+    <rect x="1245" y="1165" width="490" height="100" rx="12" fill="#F1F5F9" stroke="#64748B" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1490" y="1202.78" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="700">G7 Security Regression</text>
+    <text x="1490" y="1219.42" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">至少 1,000 ACL negative probes</text>
+    <text x="1490" y="1236.06" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13">unauthorized hit / context / citation / trace / history = 0</text>
+    <rect x="1760" y="1158" width="570" height="114" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="2045" y="1194.62" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9" font-weight="700">G8 反馈与发布闭环</text>
+    <text x="2045" y="1211.13" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">Feedback → 人工复核 → Golden Dataset candidate</text>
+    <text x="2045" y="1227.64" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">offline ablation → shadow → gray → expand / rollback</text>
+    <text x="2045" y="1244.15" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12.9">线上点击绝不直接修改权重或 prompt</text>
+    <text x="62" y="55.2" text-anchor="start" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="30" font-weight="700">TAP RAG 知识问答｜数据与业务流转详图</text>
+    <text x="62" y="89.76" text-anchor="start" fill="#52667A" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14">三条泳道：知识入库、在线问答、治理与评测 · 每一步均绑定 Policy / revision / corpus / trace（架构基线不等同于全部已投产）</text>
+    <rect x="1835" y="54" width="165" height="30" rx="12" fill="#EAF3FF" stroke="#2F6FED" stroke-width="1.8" filter="url(#card-shadow)" />
+    <text x="1917.5" y="72.91" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="11.5">当前规范 / 已接受基线</text>
+    <rect x="2012" y="54" width="135" height="30" rx="12" fill="#F3EEFF" stroke="#7C5CFC" stroke-width="1.8" stroke-dasharray="8 6" filter="url(#card-shadow)" />
+    <text x="2079.5" y="72.91" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="11.5">实验 · RFC draft</text>
+    <rect x="2159" y="54" width="176" height="30" rx="12" fill="#FFF4E8" stroke="#D97706" stroke-width="1.8" stroke-dasharray="8 6" filter="url(#card-shadow)" />
+    <text x="2247" y="72.808" text-anchor="middle" fill="#102A43" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="11.2">未来复用 · Phase 1.5 / 2+</text>
+    <text x="72" y="1335.08" text-anchor="start" fill="#52667A" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12">当前企业已接受检索基线：Azure AI Search · Milvus 仅 RFC-004 draft 下的本地 Standalone / doc fixture 实验，不代表共享非生产或生产选型已变更。</text>
+  </g>
+  <g id="flow-labels">
+    <circle cx="417" cy="325" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="417" y="329" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">1</text>
+    <circle cx="642" cy="325" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="642" y="329" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">2</text>
+    <circle cx="857" cy="325" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="857" y="329" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">3</text>
+    <circle cx="1082" cy="325" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1082" y="329" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">4</text>
+    <circle cx="1337" cy="325" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1337" y="329" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">5</text>
+    <circle cx="1552" cy="325" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1552" y="329" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">6</text>
+    <circle cx="1770" cy="305" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="1770" y="309" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">7</text>
+    <rect x="1749" y="359" width="42" height="24" rx="12" fill="#FFFFFF" stroke="#7C5CFC" stroke-width="1.3" />
+    <text x="1770" y="375" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">实验</text>
+    <circle cx="2107" cy="305" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="2107" y="309" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">8</text>
+    <circle cx="2180" cy="414" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="2180" y="418" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">9</text>
+    <rect x="1161" y="388" width="198" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="1260" y="404" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">撤权 / tombstone</text>
+    <rect x="1518" y="467" width="68" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="1552" y="483" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">对账通过</text>
+    <circle cx="548" cy="692" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="548" y="696" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">1</text>
+    <circle cx="893" cy="692" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="893" y="696" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">2</text>
+    <circle cx="1238" cy="692" r="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.6" />
+    <text x="1238" y="696" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">3</text>
+    <circle cx="1583" cy="692" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1583" y="696" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">4</text>
+    <circle cx="1928" cy="692" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1928" y="696" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">5</text>
+    <circle cx="2300" cy="790" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="2300" y="794" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">6</text>
+    <rect x="404.5" y="872" width="131" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="470" y="888" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">7b 自然语言 / miss</text>
+    <rect x="549" y="800" width="107" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="602.5" y="816" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">7a exact hit</text>
+    <circle cx="735" cy="884" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="735" y="888" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">8</text>
+    <circle cx="1000" cy="884" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1000" y="888" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">9</text>
+    <circle cx="1265" cy="884" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1265" y="888" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">10</text>
+    <circle cx="1530" cy="884" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1530" y="888" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">11</text>
+    <circle cx="1795" cy="884" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="1795" y="888" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">12</text>
+    <circle cx="2060" cy="884" r="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.6" />
+    <text x="2060" y="888" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">13</text>
+    <rect x="606" y="1070" width="224" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="718" y="1086" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">Policy / lineage</text>
+    <rect x="1179.5" y="1070" width="107" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="1233" y="1086" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">删除 / 撤权</text>
+    <rect x="1714" y="1070" width="68" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="1748" y="1086" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">发布门禁</text>
+    <rect x="684" y="1203" width="68" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="718" y="1219" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">评测输入</text>
+    <rect x="1199" y="1203" width="68" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="1233" y="1219" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">安全回归</text>
+    <rect x="1694.5" y="1203" width="107" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="1748" y="1219" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">发布 / 回滚</text>
+    <rect x="1878" y="958" width="224" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="1990" y="974" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">trace + feedback</text>
+    <rect x="420.5" y="543" width="159" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="500" y="559" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">同一可信 Policy</text>
+    <rect x="441" y="758" width="68" height="24" rx="12" fill="#FFFFFF" stroke="#64748B" stroke-width="1.3" />
+    <text x="475" y="774" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">当前授权</text>
+    <rect x="2128" y="598" width="224" height="24" rx="12" fill="#FFFFFF" stroke="#0C8F7A" stroke-width="1.3" />
+    <text x="2240" y="614" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="12" font-weight="700" fill="#17324D">只读 active target</text>
+  </g>
+</svg>
