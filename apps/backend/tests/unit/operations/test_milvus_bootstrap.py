@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 from dataclasses import replace
 from pathlib import Path
 
+import grpc
 import pytest
 from pydantic import SecretStr
+from pymilvus.exceptions import MilvusException
 
 from tap.operations.milvus.bootstrap import bootstrap_local_rbac
 from tap.operations.milvus.client import (
     MilvusSdk,
     PyMilvusAdmin,
+    _assert_denied,
     build_probe_clients,
     build_reader_client,
     connect_local_admin,
@@ -27,6 +31,65 @@ from tap.operations.milvus.contracts import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+class StructuredRpcError(grpc.RpcError):
+    def __init__(self, status: grpc.StatusCode) -> None:
+        self._status = status
+
+    def code(self) -> grpc.StatusCode:
+        return self._status
+
+    def details(self) -> str:
+        return "provider detail must remain sanitized"
+
+
+async def test_denial_classifier_accepts_pinned_milvus_permission_code() -> None:
+    def deny() -> None:
+        raise MilvusException(compatible_code=3)
+
+    await _assert_denied(deny, MilvusException)
+
+
+async def test_denial_classifier_accepts_grpc_permission_denied_status() -> None:
+    def deny() -> None:
+        raise StructuredRpcError(grpc.StatusCode.PERMISSION_DENIED)
+
+    await _assert_denied(deny, MilvusException)
+
+
+async def test_denial_classifier_rejects_and_sanitizes_other_grpc_statuses() -> None:
+    def fail() -> None:
+        raise StructuredRpcError(grpc.StatusCode.UNAVAILABLE)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Milvus denial probe returned an unexpected provider error",
+    ) as captured:
+        await _assert_denied(fail, MilvusException)
+
+    assert "provider detail" not in str(captured.value)
+
+
+async def test_denial_classifier_rejects_and_sanitizes_other_provider_errors() -> None:
+    def fail() -> None:
+        raise MilvusException(compatible_code=1, message="provider detail must remain sanitized")
+
+    with pytest.raises(
+        RuntimeError,
+        match="Milvus denial probe returned an unexpected provider error",
+    ) as captured:
+        await _assert_denied(fail, MilvusException)
+
+    assert "provider detail" not in str(captured.value)
+
+
+async def test_denial_classifier_preserves_cancellation() -> None:
+    def cancel() -> None:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _assert_denied(cancel, MilvusException)
 
 
 class RecordingAdmin:

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+import grpc  # type: ignore[import-untyped]
 from pydantic import SecretStr
 
 from tap.modules.knowledge.adapters.milvus.transport import (
@@ -880,8 +881,19 @@ async def _assert_denied(
 ) -> None:
     try:
         await _call(operation)
-    except permission_error as error:
-        if getattr(error, "compatible_code", None) == _PERMISSION_DENIED_COMPATIBLE_CODE:
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        if isinstance(error, permission_error) and (
+            getattr(error, "compatible_code", None) == _PERMISSION_DENIED_COMPATIBLE_CODE
+        ):
+            return
+        code = getattr(error, "code", None)
+        if (
+            isinstance(error, grpc.RpcError)
+            and callable(code)
+            and code() is grpc.StatusCode.PERMISSION_DENIED
+        ):
             return
         raise RuntimeError("Milvus denial probe returned an unexpected provider error") from None
     raise RuntimeError("Milvus RBAC denial probe unexpectedly succeeded")
