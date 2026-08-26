@@ -32,9 +32,7 @@ def test_public_retrieval_hit_omits_provider_physical_target_everywhere() -> Non
     marker = "interface RetrievalResponse {"
     next_marker = "interface RetrievalAnswerResponse {"
     assert marker in reference
-    documented_response = reference.split(marker, maxsplit=1)[1].split(
-        next_marker, maxsplit=1
-    )[0]
+    documented_response = reference.split(marker, maxsplit=1)[1].split(next_marker, maxsplit=1)[0]
     assert "physicalIndex" not in documented_response
     assert "physicalCollection" not in documented_response
 

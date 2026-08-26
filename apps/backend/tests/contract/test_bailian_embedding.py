@@ -20,10 +20,7 @@ from tap.operations.milvus.embeddings import EMBEDDING_ALIAS, EMBEDDING_DIMENSIO
 
 def config(**changes: object) -> BailianEmbeddingConfig:
     values: dict[str, object] = {
-        "api_base": (
-            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com"
-            "/compatible-mode/v1"
-        ),
+        "api_base": ("https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
         "api_key": "PRIVATE_PROVIDER_KEY",
         "deadline_seconds": 1.0,
     }

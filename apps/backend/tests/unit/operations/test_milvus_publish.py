@@ -1433,10 +1433,7 @@ async def test_makefile_scopes_real_milvus_gate_and_uses_committed_snapshot() ->
         'MILVUS_WRITER_USERNAME="$${MILVUS_WRITER_USERNAME:-tap_writer}"',
         'MILVUS_WRITER_PASSWORD="$${MILVUS_WRITER_PASSWORD:-tap-local-Writer1!}"',
         'MILVUS_PROVISIONER_USERNAME="$${MILVUS_PROVISIONER_USERNAME:-tap_provisioner}"',
-        (
-            'MILVUS_PROVISIONER_PASSWORD="'
-            '$${MILVUS_PROVISIONER_PASSWORD:-tap-local-Provisioner1!}"'
-        ),
+        ('MILVUS_PROVISIONER_PASSWORD="$${MILVUS_PROVISIONER_PASSWORD:-tap-local-Provisioner1!}"'),
     ):
         assert setting in makefile
     assert "test-milvus-rebuild-empty:" in makefile

@@ -68,9 +68,7 @@ class EmbeddingUsage:
             raise ValueError("embedding usage cannot mix cost currencies")
         for cost in costs:
             exponent = (
-                cost.as_tuple().exponent
-                if type(cost) is Decimal and cost.is_finite()
-                else None
+                cost.as_tuple().exponent if type(cost) is Decimal and cost.is_finite() else None
             )
             if cost is not None and (
                 type(cost) is not Decimal

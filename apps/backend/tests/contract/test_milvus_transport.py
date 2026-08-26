@@ -417,9 +417,7 @@ class PinnedHybridShapeSDKClient(RecordingSDKClient):
 
     def hybrid_search(self, **kwargs: object) -> SearchResult:
         self.calls.append(("hybrid_search", kwargs))
-        return _pinned_named_primary_hybrid_result(
-            duplicate_primary=self.duplicate_primary
-        )
+        return _pinned_named_primary_hybrid_result(duplicate_primary=self.duplicate_primary)
 
 
 class RepeatedNames(Sequence[str]):

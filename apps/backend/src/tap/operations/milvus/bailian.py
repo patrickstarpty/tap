@@ -23,9 +23,7 @@ PROVIDER_MODEL = "text-embedding-v4"
 UNIT_PRICE_CNY_PER_1000_INPUT_TOKENS = Decimal("0.0005")
 PRICING_SOURCE = "official_rate_2026-08-27"
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
-_BEIJING_WORKSPACE_HOST = re.compile(
-    r"ws-[a-z0-9]{8,64}\.cn-beijing\.maas\.aliyuncs\.com\Z"
-)
+_BEIJING_WORKSPACE_HOST = re.compile(r"ws-[a-z0-9]{8,64}\.cn-beijing\.maas\.aliyuncs\.com\Z")
 _HTTP_CLIENT_LOGGER_NAMES = (
     "httpx",
     "httpcore.connection",
