@@ -26,6 +26,14 @@ _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
 _BEIJING_WORKSPACE_HOST = re.compile(
     r"ws-[a-z0-9]{8,64}\.cn-beijing\.maas\.aliyuncs\.com\Z"
 )
+_HTTP_CLIENT_LOGGER_NAMES = (
+    "httpx",
+    "httpcore.connection",
+    "httpcore.http11",
+    "httpcore.http2",
+    "httpcore.proxy",
+    "httpcore.socks",
+)
 
 
 class BailianEmbeddingUnavailable(Exception):
@@ -97,7 +105,7 @@ class BailianEmbeddingAdapter:
             "encoding_format": "float",
         }
         try:
-            with _redact_httpx_endpoint_logs(self._config.api_base):
+            with _redact_http_client_endpoint_logs(self._config.api_base):
                 async with asyncio.timeout(self._config.deadline_seconds):
                     async with self._client.stream(
                         "POST",
@@ -218,28 +226,36 @@ def _reject_constant(_value: str) -> None:
 class _EndpointRedactionFilter(logging.Filter):
     def __init__(self, api_base: str) -> None:
         super().__init__()
-        self._api_base = api_base
+        hostname = urlsplit(api_base).hostname
+        if hostname is None:
+            raise ValueError("Bailian research API base is invalid")
+        self._sensitive_values = (api_base, hostname)
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
         except (TypeError, ValueError):
             return True
-        if self._api_base in message:
-            record.msg = message.replace(self._api_base, "[redacted-bailian-endpoint]")
+        redacted = message
+        for sensitive in self._sensitive_values:
+            redacted = redacted.replace(sensitive, "[redacted-bailian-endpoint]")
+        if redacted != message:
+            record.msg = redacted
             record.args = ()
         return True
 
 
 @contextmanager
-def _redact_httpx_endpoint_logs(api_base: str) -> Iterator[None]:
-    logger = logging.getLogger("httpx")
+def _redact_http_client_endpoint_logs(api_base: str) -> Iterator[None]:
+    loggers = tuple(logging.getLogger(name) for name in _HTTP_CLIENT_LOGGER_NAMES)
     redaction_filter = _EndpointRedactionFilter(api_base)
-    logger.addFilter(redaction_filter)
+    for logger in loggers:
+        logger.addFilter(redaction_filter)
     try:
         yield
     finally:
-        logger.removeFilter(redaction_filter)
+        for logger in loggers:
+            logger.removeFilter(redaction_filter)
 
 
 def _valid_api_base(value: object) -> bool:

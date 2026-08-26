@@ -139,13 +139,18 @@ async def test_direct_httpx_info_log_redacts_the_workspace_endpoint(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
+        logging.getLogger("httpcore.connection").debug(
+            "connect_tcp.started host=%r server_hostname=%r",
+            "ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com",
+            "ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com",
+        )
         return httpx.Response(
             200,
             headers={"x-request-id": "request-17"},
             json=response_body(),
         )
 
-    caplog.set_level(logging.INFO, logger="httpx")
+    caplog.set_level(logging.DEBUG)
     direct_config = config()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         await BailianEmbeddingAdapter(direct_config, client=client).embed("sanitized text")
