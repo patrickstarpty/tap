@@ -102,6 +102,18 @@ docker compose down
 docker compose down -v
 ```
 
+### 实验性 Milvus 检索门禁
+
+Milvus 目前仅是本地、可回退的 `doc` 检索实验，不是共享非生产或生产默认后端，也不改变 Azure AI Search 的既有发布门禁。固定版本与脱敏预计算向量的可复现 correctness gate 为：
+
+```sh
+make milvus-preflight
+make test-milvus
+TAP_ALLOW_MILVUS_VOLUME_RESET=1 make test-milvus-rebuild-empty
+```
+
+真实 embedding profile 是显式授权的付费研究入口，只能在注入未跟踪 provider 配置并单独批准后运行 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1 make research-embeddings`。上述命令或单次 GREEN 都不表示 RFC 已接受、ADR 已变更或共享环境已获批准；生命周期建议必须以当次实验 review 的完整证据为准。
+
 ## 开发工作区与契约
 
 运行时和依赖图固定为 Python 3.13.12、uv 0.10.8、Node 22.22.0、pnpm 10.15.1、`uv.lock` 与 `pnpm-lock.yaml`。从仓库根目录执行：

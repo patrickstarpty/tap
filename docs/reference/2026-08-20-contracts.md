@@ -694,7 +694,6 @@ interface RetrievalResponse {
   degradationReasons?: string[];
   hits: Array<{
     indexFamily: SourceFamily;
-    physicalIndex: string;
     chunkId: string;
     logicalChunkId: string;
     parentId?: string;
@@ -740,14 +739,14 @@ interface RetrievalAnswerResponse {
 - Context Snapshot 绑定一次 retrieval operation；Chat 路径额外绑定 `chatId/turnId`，Agent/API 路径无需伪造会话。它只保存分层上下文的 refs/hash/token 与 summary lineage，不把秘密、完整 Prompt 或未经授权原文复制到元数据。每个 turn 按当前 Policy 重新授权 summary lineage；若来源撤权、删除或 hash 变化，就排除失效输入并生成新 summary/snapshot。Conversation summary 只能帮助连续性和指代消解，不能作为事实 Citation。
 - `topK`、resource 数量、query 长度、分解次数和 context budget 均由服务端 profile 限幅；公共字段是请求偏好，不是资源或排名控制权。
 - classification 由策略层转换为明确的允许集合，不能做字符串大小比较；environment 的默认语义是 `global OR requested environment`，且 requested environment 必须在允许集合中。
-- 每个命中返回稳定 index family、实际 physical index、chunk/logical ID、不可变 `SourceRevisionRef`、score components、ACL decision、corpus/schema/profile/model version。物理索引从 `*-v1` 蓝绿升级到 `*-v2` 不破坏公共契约。
+- 每个公开命中返回稳定 index family、chunk/logical ID、不可变 `SourceRevisionRef`、score components、ACL decision、corpus/schema/profile/model version；provider 的物理目标不属于公共响应。物理索引从 `*-v1` 蓝绿升级到 `*-v2` 不破坏公共契约。
 - `logicalChunkId` 在同一结构位置跨 revision 稳定；`chunkId` 随 source revision/content/chunker version 变化。完整生成规则见 [切片与溯源设计](../architecture/rag/2026-08-21-chunking-and-provenance.md)。
 - `chunkId` 作为 Azure AI Search document key 使用 `h_` + SHA-256 lowercase hex；不得把带冒号的 digest、URI 或路径直接作为 key。
 - 非拒答结果中的每个实质 claim 必须引用至少一个当前 context 中的 `citationId`。Citation Resolver 将其解析到不可变 revision、structured anchor、`sourceContentHash` 与 `chunkContentHash`；浏览器不直接使用内部 `sourceUri`。证据不足、来源冲突或 revision 不一致时返回结构化拒答原因。
 - 代码命中返回原语言 symbol/AST chunk；不得为了统一格式把源码转成 Markdown。
 - Parent/Child、依赖图、facet/count 和缓存均必须再次应用同一 ACL filter；不同 ACL 的 child 不得汇总进同一个 parent summary。
 - ACL/Policy 服务不可用时 fail closed；秘密/PII 必须在 Embedding 前脱敏。
-- Retrieval Trace 必须绑定 tenant/project/actor 与 ACL digest；`traceId` 不具有授权语义。Trace/Inspector 读取需要重新授权、必要脱敏和审计，撤权后不能借旧 trace 绕过当前 ACL。
+- Retrieval Trace 必须绑定 tenant/project/actor 与 ACL digest；`traceId` 不具有授权语义。alias、index、collection 等 provider 物理目标只允许记录在授权运维 Retrieval Trace，不得进入普通客户端的 Retrieval/Citation 响应。Trace/Inspector 读取需要重新授权、必要脱敏和审计，撤权后不能借旧 trace 绕过当前 ACL。
 - Index schema 与 embedding/reranker version 一起版本化；不同向量空间不混合查询。
 
 ## 9. Knowledge Chat Contract

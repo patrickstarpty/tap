@@ -7,8 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tap.contracts.http import RetrievalHit
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 EXPORTER = REPOSITORY_ROOT / "scripts" / "export_contracts.py"
+REFERENCE_CONTRACTS = REPOSITORY_ROOT / "docs" / "reference" / "2026-08-20-contracts.md"
 REQUIRED_ENVELOPE_FIELDS = {
     "eventId",
     "sequence",
@@ -17,6 +20,23 @@ REQUIRED_ENVELOPE_FIELDS = {
     "schemaVersion",
     "event",
 }
+
+
+def test_public_retrieval_hit_omits_provider_physical_target_everywhere() -> None:
+    """Reintroducing a provider target in either public contract must fail."""
+    properties = RetrievalHit.model_json_schema(by_alias=True)["properties"]
+    assert "physicalIndex" not in properties
+    assert "physicalCollection" not in properties
+
+    reference = REFERENCE_CONTRACTS.read_text(encoding="utf-8")
+    marker = "interface RetrievalResponse {"
+    next_marker = "interface RetrievalAnswerResponse {"
+    assert marker in reference
+    documented_response = reference.split(marker, maxsplit=1)[1].split(
+        next_marker, maxsplit=1
+    )[0]
+    assert "physicalIndex" not in documented_response
+    assert "physicalCollection" not in documented_response
 
 
 def export_contracts(
