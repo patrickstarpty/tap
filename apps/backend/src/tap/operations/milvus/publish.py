@@ -629,14 +629,24 @@ async def _rollback(
                 issues.append(role_name)
         except Exception:
             issues.append(role_name)
-    if create_attempted and not preexisting and alias_restored:
+    if create_attempted and not preexisting:
         try:
-            if await _collection_exists(clients, manifest.physical_collection):
-                await clients.provisioner.drop_collection(manifest.physical_collection)
-            if await _collection_exists(clients, manifest.physical_collection):
+            collection_exists = await _collection_exists(
+                clients,
+                manifest.physical_collection,
+            )
+            if collection_exists and alias_attempted:
                 issues.append("collection")
+            elif collection_exists:
+                await clients.provisioner.drop_collection(manifest.physical_collection)
+            if not alias_attempted and await _collection_exists(
+                clients, manifest.physical_collection
+            ):
+                if "collection" not in issues:
+                    issues.append("collection")
         except Exception:
-            issues.append("collection")
+            if "collection" not in issues:
+                issues.append("collection")
     return tuple(issues)
 
 

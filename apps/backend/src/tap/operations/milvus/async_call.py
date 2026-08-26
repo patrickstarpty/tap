@@ -1,4 +1,4 @@
-"""Cancellation-safe adapters for blocking Milvus provider calls."""
+"""Deadline-aware adapters that settle blocking Milvus provider side effects."""
 
 from __future__ import annotations
 
@@ -38,12 +38,17 @@ async def await_task_terminal[T](
         return TerminalOutcome(None, error, tuple(cancellations))
 
 
-async def cancellation_safe_bounded_call[T](
+async def deadline_then_settle_blocking_call[T](
     operation: Callable[[], T],
     *,
     timeout_seconds: float,
 ) -> T:
-    """Run a blocking call with a deadline and never abandon its worker thread."""
+    """Apply a result deadline, then settle the worker before timeout/cancel returns.
+
+    The deadline limits the normal wait for a result. It is deliberately not a hard
+    coroutine-return bound: after timeout or cancellation, the worker is awaited to
+    terminal state so provider side effects cannot complete after the caller returns.
+    """
 
     worker = asyncio.create_task(asyncio.to_thread(operation))
     try:

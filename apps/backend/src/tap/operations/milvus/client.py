@@ -1,4 +1,4 @@
-"""Thin, deadline-bounded PyMilvus clients for operational identities."""
+"""Thin, deadline-aware PyMilvus clients that settle provider side effects."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
-from tap.operations.milvus.async_call import cancellation_safe_bounded_call
+from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
 from tap.operations.milvus.contracts import (
     PROVISIONER_PRIVILEGES,
     READER_PRIVILEGES,
@@ -916,7 +916,7 @@ async def close_probe_clients(clients: MilvusProbeClients) -> None:
 
 async def _call[T](operation: Callable[[], T]) -> T:
     try:
-        return await cancellation_safe_bounded_call(
+        return await deadline_then_settle_blocking_call(
             operation,
             timeout_seconds=_TIMEOUT_SECONDS,
         )

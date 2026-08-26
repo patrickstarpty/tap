@@ -18,7 +18,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     _collection_descriptor,
 )
 from tap.operations.milvus.activation import LocalCorpusActivator
-from tap.operations.milvus.async_call import cancellation_safe_bounded_call
+from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
 from tap.operations.milvus.client import (
     PyMilvusWriter,
     local_role_credentials,
@@ -202,6 +202,7 @@ class _FixtureProvisioner:
                     role_name,
                     privilege,
                     name,
+                    db_name=self._database_name,
                     timeout=_TIMEOUT_SECONDS,
                 )
 
@@ -215,6 +216,7 @@ class _FixtureProvisioner:
                     role_name,
                     privilege,
                     name,
+                    db_name=self._database_name,
                     timeout=_TIMEOUT_SECONDS,
                 )
 
@@ -469,7 +471,7 @@ def _alias_names(raw: object) -> frozenset[str]:
 
 
 async def _call[T](operation: Callable[[], T]) -> T:
-    return await cancellation_safe_bounded_call(
+    return await deadline_then_settle_blocking_call(
         operation,
         timeout_seconds=_TIMEOUT_SECONDS,
     )

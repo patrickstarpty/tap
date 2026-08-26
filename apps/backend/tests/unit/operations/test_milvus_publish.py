@@ -17,6 +17,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
+from tap.operations.milvus import async_call as milvus_async_call
 from tap.operations.milvus import client as milvus_client
 from tap.operations.milvus.activation import CorpusActivationState, LocalCorpusActivator
 from tap.operations.milvus.contracts import (
@@ -437,7 +438,7 @@ async def test_negative_probe_failure_never_switches_alias_and_cleans_new_target
 
 @pytest.mark.parametrize(
     "partial_event",
-    ("create_collection", "grant_writer", "grant_reader", "alter_alias"),
+    ("create_collection", "grant_writer", "grant_reader"),
 )
 async def test_partial_side_effect_then_timeout_is_reconciled_without_orphans(
     partial_event: str,
@@ -456,6 +457,32 @@ async def test_partial_side_effect_then_timeout_is_reconciled_without_orphans(
     assert manifest.physical_collection not in provisioner.collections
     assert not {grant for grant in provisioner.grants if grant[0] == manifest.physical_collection}
     assert activator.state is None
+
+
+async def test_failed_alias_attempt_restores_alias_but_preserves_new_collection() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    previous = "kb_doc_v1_corpus_fixture_old"
+    provisioner.alias_target = previous
+    provisioner.collections.add(previous)
+    provisioner.fail_after = "alter_alias"
+    sink = RecordingCleanupSink([])
+    manifest = load_doc_fixture(FIXTURE)
+
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
+        await publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            RecordingActivator(events),
+            cleanup_status_sink=sink,
+        )
+
+    assert provisioner.alias_target == previous
+    assert manifest.physical_collection in provisioner.collections
+    assert sink.issues == [("collection",)]
+    assert "drop_collection" not in events
 
 
 async def test_marker_and_alias_restore_after_activation_or_writer_revoke_failure() -> None:
@@ -968,6 +995,39 @@ async def test_acl_tightening_rejects_integer_vector_before_write() -> None:
     assert events == []
 
 
+async def test_deadline_then_settle_waits_for_worker_before_timeout_is_observable() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    effects: list[str] = []
+
+    def delayed_effect() -> None:
+        started.set()
+        release.wait()
+        effects.append("finished")
+
+    task = asyncio.create_task(
+        milvus_async_call.deadline_then_settle_blocking_call(
+            delayed_effect,
+            timeout_seconds=0.01,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 1.0)
+        await asyncio.sleep(0.03)
+        returned_before_worker = task.done()
+    finally:
+        release.set()
+
+    with pytest.raises(TimeoutError):
+        await task
+    effects_at_return = list(effects)
+    await asyncio.sleep(0.01)
+
+    assert not returned_before_worker
+    assert effects_at_return == ["finished"]
+    assert effects == effects_at_return
+
+
 async def test_task_cancellation_stays_cancelled_when_rollback_is_incomplete() -> None:
     events: list[str] = []
     publish_clients = clients(events)
@@ -994,25 +1054,27 @@ async def test_task_cancellation_stays_cancelled_when_rollback_is_incomplete() -
         await task
 
     assert task.cancelled()
-    assert sink.issues == [("alias",)]
+    assert sink.issues == [("alias", "collection")]
     assert provisioner.alias_target == manifest.physical_collection
     assert manifest.physical_collection in provisioner.collections
     assert "drop_collection" not in events
 
 
-async def test_cancelled_delayed_alias_settles_before_rollback_can_drop_target() -> None:
+async def test_cancelled_delayed_alias_settles_then_preserves_new_target() -> None:
     events: list[str] = []
     provisioner = DelayedAliasProvisioner(events)
     publish_clients = clients_with_provisioner(events, provisioner)
     provisioner.alias_target = "kb_doc_v1_corpus_fixture_old"
     provisioner.collections.add("kb_doc_v1_corpus_fixture_old")
     manifest = load_doc_fixture(FIXTURE)
+    sink = RecordingCleanupSink([])
     task = asyncio.create_task(
         publish_fixture(
             publish_clients,
             manifest,
             unit_vectors(),
             RecordingActivator(events),
+            cleanup_status_sink=sink,
         )
     )
     assert await asyncio.to_thread(provisioner.alias_started.wait, 1.0)
@@ -1028,8 +1090,9 @@ async def test_cancelled_delayed_alias_settles_before_rollback_can_drop_target()
     assert not returned_before_provider
     assert task.cancelled()
     assert provisioner.alias_target == "kb_doc_v1_corpus_fixture_old"
-    assert provisioner.drop_alias_targets == ["kb_doc_v1_corpus_fixture_old"]
-    assert manifest.physical_collection not in provisioner.collections
+    assert provisioner.drop_alias_targets == []
+    assert manifest.physical_collection in provisioner.collections
+    assert sink.issues == [("collection",)]
 
 
 async def test_repeated_cancellation_waits_for_rollback_terminal_result() -> None:
@@ -1065,7 +1128,7 @@ async def test_repeated_cancellation_waits_for_rollback_terminal_result() -> Non
     assert task.cancelled()
     assert task.cancelling() == 3
     assert activator.restore_finished
-    assert sink.issues == [()]
+    assert sink.issues == [("collection",)]
 
 
 async def test_ordinary_failure_then_repeated_cancellation_finishes_rollback() -> None:
@@ -1368,3 +1431,47 @@ for item, top_role in cases:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == "rejected\n" * 4
+
+
+async def test_fixture_provisioner_mutates_grants_in_its_exact_database_scope() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import asyncio
+import scripts.milvus_fixture as cli
+
+class GrantClient:
+    def __init__(self):
+        self.calls = []
+    def grant_privilege_v2(
+        self, role_name, privilege, collection_name, db_name=None, timeout=None,
+    ):
+        self.calls.append(('grant', role_name, privilege, collection_name, db_name))
+    def revoke_privilege_v2(
+        self, role_name, privilege, collection_name, db_name=None, timeout=None,
+    ):
+        self.calls.append(('revoke', role_name, privilege, collection_name, db_name))
+
+client = GrantClient()
+provisioner = cli._FixtureProvisioner(client, 'fixture_database')
+asyncio.run(provisioner.grant_collection('kb_doc_v1_corpus_fixture_v1', 'tap_reader'))
+asyncio.run(provisioner.revoke_collection('kb_doc_v1_corpus_fixture_v1', 'tap_reader'))
+print(len(client.calls))
+print(sorted({(operation, role, collection, database)
+              for operation, role, _privilege, collection, database in client.calls}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == (
+        "8\n"
+        "[('grant', 'tap_reader', 'kb_doc_v1_corpus_fixture_v1', "
+        "'fixture_database'), ('revoke', 'tap_reader', "
+        "'kb_doc_v1_corpus_fixture_v1', 'fixture_database')]\n"
+    )
