@@ -269,6 +269,44 @@ async def test_admin_connection_uses_initial_root_only_with_explicit_opt_in() ->
     assert admin.authenticated_with_initial_root is False
 
 
+async def test_admin_connection_falls_back_when_client_constructor_rejects_rotated_root() -> None:
+    class RedactedCredential(str):
+        def __repr__(self) -> str:
+            return "<redacted>"
+
+    rotated = RedactedCredential(secrets.token_urlsafe(18))
+    initial = RedactedCredential(secrets.token_urlsafe(18))
+    server = AuthenticationServer(initial)
+    attempts: list[str] = []
+
+    def factory(**kwargs: object) -> AuthenticationClient:
+        password = kwargs["password"]
+        assert isinstance(password, str)
+        if secrets.compare_digest(password, rotated):
+            attempts.append("rotated")
+            if not secrets.compare_digest(server.password, rotated):
+                raise RuntimeError("constructor authentication failed")
+        elif secrets.compare_digest(password, initial):
+            attempts.append("initial")
+        else:
+            raise AssertionError("unexpected credential")
+        return AuthenticationClient(server, password)
+
+    admin = await connect_local_admin(
+        {
+            "MILVUS_URI": "http://127.0.0.1:19530",
+            "MILVUS_DATABASE": "default",
+            "MILVUS_ROOT_PASSWORD": rotated,
+            "MILVUS_INITIAL_ROOT_PASSWORD": initial,
+            "TAP_ALLOW_INITIAL_MILVUS_ROOT": "1",
+        },
+        client_factory=factory,
+    )
+
+    assert attempts == ["rotated", "initial", "rotated"]
+    assert admin.authenticated_with_initial_root is False
+
+
 async def test_admin_connection_refuses_implicit_initial_root_fallback() -> None:
     attempted_passwords: list[str] = []
     server = AuthenticationServer("initial-root-secret")

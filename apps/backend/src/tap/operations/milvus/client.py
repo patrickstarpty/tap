@@ -669,20 +669,22 @@ async def connect_local_admin(
     allow_initial = _setting(settings, "TAP_ALLOW_INITIAL_MILVUS_ROOT", "0")
     if allow_initial not in {"0", "1"}:
         raise ValueError("TAP_ALLOW_INITIAL_MILVUS_ROOT must be exactly 0 or 1")
-    rotated_client = cast(
-        _SyncClient,
-        client_factory(
-            uri=uri,
-            user="root",
-            password=rotated,
-            db_name=database,
-            timeout=_TIMEOUT_SECONDS,
-        ),
-    )
+    rotated_client: _SyncClient | None = None
     try:
+        rotated_client = cast(
+            _SyncClient,
+            client_factory(
+                uri=uri,
+                user="root",
+                password=rotated,
+                db_name=database,
+                timeout=_TIMEOUT_SECONDS,
+            ),
+        )
         await _call(lambda: rotated_client.list_users(timeout=_TIMEOUT_SECONDS))
     except Exception:
-        await _close_quietly(rotated_client)
+        if rotated_client is not None:
+            await _close_quietly(rotated_client)
         if allow_initial != "1":
             raise RuntimeError("Milvus rotated root authentication failed") from None
     else:
@@ -692,20 +694,22 @@ async def connect_local_admin(
             authenticated_with_initial_root=False,
         )
 
-    initial_client = cast(
-        _SyncClient,
-        client_factory(
-            uri=uri,
-            user="root",
-            password=initial,
-            db_name=database,
-            timeout=_TIMEOUT_SECONDS,
-        ),
-    )
+    initial_client: _SyncClient | None = None
     try:
+        initial_client = cast(
+            _SyncClient,
+            client_factory(
+                uri=uri,
+                user="root",
+                password=initial,
+                db_name=database,
+                timeout=_TIMEOUT_SECONDS,
+            ),
+        )
         await _call(lambda: initial_client.list_users(timeout=_TIMEOUT_SECONDS))
     except Exception:
-        await _close_quietly(initial_client)
+        if initial_client is not None:
+            await _close_quietly(initial_client)
         raise RuntimeError("Milvus initial root authentication failed") from None
     try:
         await _call(
@@ -721,20 +725,22 @@ async def connect_local_admin(
         await _close_quietly(initial_client)
         raise RuntimeError("Milvus initial root rotation failed") from None
     await _close_quietly(initial_client)
-    reconnected_client = cast(
-        _SyncClient,
-        client_factory(
-            uri=uri,
-            user="root",
-            password=rotated,
-            db_name=database,
-            timeout=_TIMEOUT_SECONDS,
-        ),
-    )
+    reconnected_client: _SyncClient | None = None
     try:
+        reconnected_client = cast(
+            _SyncClient,
+            client_factory(
+                uri=uri,
+                user="root",
+                password=rotated,
+                db_name=database,
+                timeout=_TIMEOUT_SECONDS,
+            ),
+        )
         await _call(lambda: reconnected_client.list_users(timeout=_TIMEOUT_SECONDS))
     except Exception:
-        await _close_quietly(reconnected_client)
+        if reconnected_client is not None:
+            await _close_quietly(reconnected_client)
         raise RuntimeError("Milvus rotated root reconnect failed") from None
     return PyMilvusAdmin(
         reconnected_client,
