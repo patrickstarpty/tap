@@ -84,6 +84,16 @@ PROVISIONER_PRIVILEGES = frozenset(
         "ManageOwnership",
     }
 )
+_PROVISIONER_INSTANCE_PRIVILEGES = frozenset(
+    {
+        "CreateAlias",
+        "CreateCollection",
+        "DescribeAlias",
+        "DropAlias",
+        "DropCollection",
+        "ManageOwnership",
+    }
+)
 READER_BASE_GRANTS = frozenset(
     MilvusGrant("instance", "*", privilege) for privilege in READER_BASE_PRIVILEGES
 )
@@ -92,7 +102,7 @@ WRITER_BASE_GRANTS = frozenset(
 )
 PROVISIONER_BASE_GRANTS = frozenset(
     MilvusGrant(
-        "instance" if privilege == "DescribeAlias" else "collection",
+        "instance" if privilege in _PROVISIONER_INSTANCE_PRIVILEGES else "collection",
         "*",
         privilege,
     )

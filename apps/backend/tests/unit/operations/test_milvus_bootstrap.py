@@ -51,6 +51,26 @@ _SYNTHETIC_PROVIDER_MARKERS = (
     "SYNTHETIC_GROUP_MARKER",
     "SYNTHETIC_VECTOR_MARKER",
 )
+_PROVISIONER_GLOBAL_PRIVILEGES = frozenset(
+    {
+        "CreateAlias",
+        "CreateCollection",
+        "DescribeAlias",
+        "DropAlias",
+        "DropCollection",
+        "ManageOwnership",
+    }
+)
+_PROVISIONER_COLLECTION_PRIVILEGES = frozenset(
+    {
+        "CreateIndex",
+        "GetLoadState",
+        "GetLoadingProgress",
+        "IndexDetail",
+        "Load",
+        "Release",
+    }
+)
 
 
 def _provider_log_scope() -> ContextManager[None]:
@@ -462,7 +482,9 @@ async def test_bootstrap_replaces_three_non_overlapping_least_privilege_roles() 
     }
     assert admin.role_privileges("tap_reader") == set(READER_BASE_PRIVILEGES)
     assert admin.role_privileges("tap_writer") == set(WRITER_PRIVILEGES)
-    assert admin.role_privileges("tap_provisioner") == set(PROVISIONER_PRIVILEGES)
+    assert admin.role_privileges("tap_provisioner") == (
+        _PROVISIONER_GLOBAL_PRIVILEGES | _PROVISIONER_COLLECTION_PRIVILEGES
+    )
     assert "Search" not in admin.role_privileges("tap_writer")
     assert "Insert" not in admin.role_privileges("tap_reader")
     assert not ((READER_BASE_PRIVILEGES | READER_TARGET_PRIVILEGES) & WRITER_PRIVILEGES)
@@ -485,12 +507,16 @@ async def test_bootstrap_reader_base_is_global_describe_only() -> None:
         MilvusGrant("collection", "*", privilege) for privilege in WRITER_PRIVILEGES
     )
     assert admin.grants["tap_provisioner"] == frozenset(
-        MilvusGrant(
-            "instance" if privilege == "DescribeAlias" else "collection",
-            "*",
-            privilege,
-        )
-        for privilege in PROVISIONER_PRIVILEGES
+        {
+            *(
+                MilvusGrant("instance", "*", privilege)
+                for privilege in _PROVISIONER_GLOBAL_PRIVILEGES
+            ),
+            *(
+                MilvusGrant("collection", "*", privilege)
+                for privilege in _PROVISIONER_COLLECTION_PRIVILEGES
+            ),
+        }
     )
 
 
@@ -553,6 +579,8 @@ async def test_sdk_provisioner_reader_target_mutations_exclude_base_describe_pri
 
 
 async def test_sdk_admin_preserves_global_describe_and_removes_wildcard_reader_search() -> None:
+    physical = "kb_doc_v1_corpus_fixture_v1"
+
     class GrantInventoryClient:
         def __init__(self) -> None:
             self.privileges = [
@@ -570,6 +598,16 @@ async def test_sdk_admin_preserves_global_describe_and_removes_wildcard_reader_s
                     ("Collection", "Search"),
                 )
             ]
+            self.privileges.extend(
+                {
+                    "object_type": "Collection",
+                    "object_name": physical,
+                    "db_name": "default",
+                    "role_name": "tap_reader",
+                    "privilege": privilege,
+                }
+                for privilege in ("Query", "Search")
+            )
             self.calls: list[tuple[str, str]] = []
 
         def describe_role(self, role_name: str, **kwargs: object) -> dict[str, object]:
@@ -632,7 +670,14 @@ async def test_sdk_admin_preserves_global_describe_and_removes_wildcard_reader_s
     assert {(item["object_type"], item["privilege"]) for item in client.privileges} == {
         ("Global", "DescribeAlias"),
         ("Global", "DescribeCollection"),
+        ("Collection", "Query"),
+        ("Collection", "Search"),
     }
+    assert {
+        (item["object_name"], item["privilege"])
+        for item in client.privileges
+        if item["object_name"] != "*"
+    } == {(physical, "Query"), (physical, "Search")}
 
 
 async def test_sdk_admin_rejects_duplicate_base_grant_inventory() -> None:
@@ -732,7 +777,7 @@ class RoleGrantInventoryClient:
         self.calls.append(("grant", privilege, object_name))
         global_privilege = (
             role_name == "tap_reader" and privilege in {"DescribeAlias", "DescribeCollection"}
-        ) or (role_name == "tap_provisioner" and privilege == "DescribeAlias")
+        ) or (role_name == "tap_provisioner" and privilege in _PROVISIONER_GLOBAL_PRIVILEGES)
         self.privileges.append(
             {
                 "object_type": "Global" if global_privilege else "Collection",
@@ -833,13 +878,12 @@ async def test_sdk_admin_provisioner_base_is_exact_and_repeated_reconciliation_i
     client = RoleGrantInventoryClient(
         "tap_provisioner",
         [
-            role_grant(
-                "tap_provisioner",
-                "Global" if privilege == "DescribeAlias" else "Collection",
-                "*",
-                privilege,
+            role_grant("tap_provisioner", scope, "*", privilege)
+            for scope, privileges in (
+                ("Global", _PROVISIONER_GLOBAL_PRIVILEGES),
+                ("Collection", _PROVISIONER_COLLECTION_PRIVILEGES),
             )
-            for privilege in PROVISIONER_PRIVILEGES
+            for privilege in sorted(privileges)
         ],
     )
     admin = sdk_admin(client)
@@ -910,7 +954,7 @@ async def test_sdk_admin_provisioner_concrete_fails_before_any_base_mutation() -
     client = RoleGrantInventoryClient(
         "tap_provisioner",
         [
-            role_grant("tap_provisioner", "Collection", "*", "CreateCollection"),
+            role_grant("tap_provisioner", "Collection", "*", "CreateAlias"),
             role_grant(
                 "tap_provisioner",
                 "Collection",
@@ -926,17 +970,38 @@ async def test_sdk_admin_provisioner_concrete_fails_before_any_base_mutation() -
     assert client.calls == []
 
 
-async def test_sdk_admin_corrects_provisioner_describe_alias_wildcard_then_idempotent() -> None:
+@pytest.mark.parametrize(
+    ("privilege", "expected_scope", "wrong_scope"),
+    (
+        *(
+            (privilege, "Global", "Collection")
+            for privilege in sorted(_PROVISIONER_GLOBAL_PRIVILEGES)
+        ),
+        *(
+            (privilege, "Collection", "Global")
+            for privilege in sorted(_PROVISIONER_COLLECTION_PRIVILEGES)
+        ),
+    ),
+)
+async def test_sdk_admin_corrects_each_wrong_provisioner_base_scope_then_idempotent(
+    privilege: str,
+    expected_scope: str,
+    wrong_scope: str,
+) -> None:
     client = RoleGrantInventoryClient(
         "tap_provisioner",
         [
             role_grant(
                 "tap_provisioner",
-                "Collection",
+                wrong_scope if item == privilege else scope,
                 "*",
-                privilege,
+                item,
             )
-            for privilege in PROVISIONER_PRIVILEGES
+            for scope, items in (
+                ("Global", _PROVISIONER_GLOBAL_PRIVILEGES),
+                ("Collection", _PROVISIONER_COLLECTION_PRIVILEGES),
+            )
+            for item in sorted(items)
         ],
     )
     admin = sdk_admin(client)
@@ -945,9 +1010,34 @@ async def test_sdk_admin_corrects_provisioner_describe_alias_wildcard_then_idemp
     await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
 
     assert client.calls == [
-        ("revoke", "DescribeAlias", "*"),
-        ("grant", "DescribeAlias", "*"),
+        ("revoke", privilege, "*"),
+        ("grant", privilege, "*"),
     ]
+    corrected = next(item for item in client.privileges if item["privilege"] == privilege)
+    assert corrected["object_type"] == expected_scope
+
+
+async def test_sdk_admin_removes_unknown_global_provisioner_base_then_idempotent() -> None:
+    client = RoleGrantInventoryClient(
+        "tap_provisioner",
+        [
+            *[
+                role_grant("tap_provisioner", scope, "*", privilege)
+                for scope, privileges in (
+                    ("Global", _PROVISIONER_GLOBAL_PRIVILEGES),
+                    ("Collection", _PROVISIONER_COLLECTION_PRIVILEGES),
+                )
+                for privilege in sorted(privileges)
+            ],
+            role_grant("tap_provisioner", "Global", "*", "UnknownPrivilege"),
+        ],
+    )
+    admin = sdk_admin(client)
+
+    await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+    await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+
+    assert client.calls == [("revoke", "UnknownPrivilege", "*")]
 
 
 class AuthenticationServer:
