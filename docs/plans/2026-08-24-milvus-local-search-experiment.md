@@ -1490,7 +1490,7 @@ async def generate_snapshot(
 
 **Steps:**
 
-- [ ] **Step 1:** 写 tests：在第一次 model call 前统计全部 cache misses；默认/绝对 cap、8000 字符、模型 ID、1536 维和内容 hash 任一不符即失败；cache key 精确绑定三项。
+- [x] **Step 1:** 写 tests：在第一次 model call 前统计全部 cache misses；默认/绝对 cap、8000 字符、模型 ID、1536 维和内容 hash 任一不符即失败；cache key 精确绑定三项。
 
   ```python
   def embedding_input(prefix: str, index: int) -> EmbeddingInput:
@@ -1509,7 +1509,7 @@ async def generate_snapshot(
       await generate_snapshot(model, oversized_chunks, oversized_queries, cache)
   assert model.calls == []
   ```
-- [ ] **Step 2:** 写 fake-model tests：相同输入命中 cache，模型/维度/hash 变化 miss；报告 schema 使用显式 allowlist。
+- [x] **Step 2:** 写 fake-model tests：相同输入命中 cache，模型/维度/hash 变化 miss；报告 schema 使用显式 allowlist。
 
   ```python
   class FakeEmbeddingModel:
@@ -1559,13 +1559,15 @@ async def generate_snapshot(
       "started_at", "finished_at",
   }
   ```
-- [ ] **Step 3:** 在 LiteLLM strict test 增加 standard `usage.prompt_tokens/total_tokens` 与 non-streaming `x-litellm-response-cost` header 的解析测试；负数、NaN、超大值、缺 usage 均 fail closed。`EmbeddingUsage` 保留可选 `response_cost_usd` 以兼容应用 LiteLLM adapter，并新增互斥的 `calculated_cost_cny`；direct research profile 要求每次调用都有严格 usage 与精确 CNY calculated cost。配置同时只新增对 `http://127.0.0.1:<port>` 与 `http://localhost:<port>` 的本地例外，其他 HTTP URL 继续拒绝。百炼适配的 TDD 必须另外证明全部 runner request 发送 raw model、`dimensions=1536` 与 float encoding，provider 返回默认 1024 维时拒绝；answer/其他 model call 不得被泛化修改。运行 focused LiteLLM、Bailian 和 research runner tests，预期 RED 为 direct module/CNY usage 字段或显式 request/response contract 缺失。
-- [ ] **Step 4:** 2026-08-27 pinned LiteLLM live execution 已依次证明 raw model 无法选择 provider、独立 `custom_llm_provider` 被该 execution path 忽略，内部 `openai/` prefix 路径也未完成本次调用。经用户批准，移除未工作的 gateway research deployment，只让 Task 9 runner 通过严格 direct adapter 调用百炼；default chat 与应用 runtime 的 LiteLLM 配置不变。runner 的 `LITELLM_EMBEDDING_MODEL` 固定为 raw `text-embedding-v4` 并拒绝 prefix；provider key 与 workspace API base 只从环境读取，不再注入 LiteLLM 容器。为绑定北京地域费率，API base hostname 必须精确匹配 canonical `ws-<lowercase-id>.cn-beijing.maas.aliyuncs.com`，并使用 HTTPS、无 userinfo/query/fragment/port且 path 精确为 `/compatible-mode/v1`。每个 request 固定 raw model、`dimensions=1536`、`encoding_format=float`；provider model、1536 个有限 float、`prompt_tokens == total_tokens`、body `id == x-request-id` 必须闭合验证。HTTP client 日志、timeout/cancel/错误不得泄露 endpoint、key、text 或 vector。
+- [x] **Step 3:** 在 LiteLLM strict test 增加 standard `usage.prompt_tokens/total_tokens` 与 non-streaming `x-litellm-response-cost` header 的解析测试；负数、NaN、超大值、缺 usage 均 fail closed。`EmbeddingUsage` 保留可选 `response_cost_usd` 以兼容应用 LiteLLM adapter，并新增互斥的 `calculated_cost_cny`；direct research profile 要求每次调用都有严格 usage 与精确 CNY calculated cost。配置同时只新增对 `http://127.0.0.1:<port>` 与 `http://localhost:<port>` 的本地例外，其他 HTTP URL 继续拒绝。百炼适配的 TDD 必须另外证明全部 runner request 发送 raw model、`dimensions=1536` 与 float encoding，provider 返回默认 1024 维时拒绝；answer/其他 model call 不得被泛化修改。运行 focused LiteLLM、Bailian 和 research runner tests，预期 RED 为 direct module/CNY usage 字段或显式 request/response contract 缺失。
+- [x] **Step 4:** 2026-08-27 pinned LiteLLM live execution 已依次证明 raw model 无法选择 provider、独立 `custom_llm_provider` 被该 execution path 忽略，内部 `openai/` prefix 路径也未完成本次调用。经用户批准，移除未工作的 gateway research deployment，只让 Task 9 runner 通过严格 direct adapter 调用百炼；default chat 与应用 runtime 的 LiteLLM 配置不变。runner 的 `LITELLM_EMBEDDING_MODEL` 固定为 raw `text-embedding-v4` 并拒绝 prefix；provider key 与 workspace API base 只从环境读取，不再注入 LiteLLM 容器。为绑定北京地域费率，API base hostname 必须精确匹配 canonical `ws-<lowercase-id>.cn-beijing.maas.aliyuncs.com`，并使用 HTTPS、无 userinfo/query/fragment/port且 path 精确为 `/compatible-mode/v1`。每个 request 固定 raw model、`dimensions=1536`、`encoding_format=float`；provider model、1536 个有限 float、`prompt_tokens == total_tokens`、body `id == x-request-id` 必须闭合验证。HTTP client 日志、timeout/cancel/错误不得泄露 endpoint、key、text 或 vector。
 
   `.env.example` 保留 runner 使用的非 secret raw model `LITELLM_EMBEDDING_MODEL=text-embedding-v4`、空的 `LITELLM_EMBEDDING_API_KEY=` 与 `LITELLM_EMBEDDING_API_BASE=`；workspace endpoint/key 只写未跟踪环境或 secret store。百炼北京同步调用官方价格固定为 `0.0005 CNY / 1,000 input tokens`。report 只记录 fixed currency/unit price/source 与按严格 usage 计算的 `calculated_cost_cny`，不得写 USD、声称 provider response cost 或实际账单。
-- [ ] **Step 5:** 实现 research runner，默认读取 Task 8 的 12 chunks/8 queries；cache/report 分别写入 `.local/milvus-embedding-cache/` 与 `.local/milvus-research/` 并加入 `.gitignore`。
-- [ ] **Step 6:** 增加 `research-embeddings` Make target，要求显式 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1`；未设置时失败而不是 skip。
-- [ ] **Step 7:** 在未跟踪配置中注入百炼北京 workspace-specific `/compatible-mode/v1` HTTPS endpoint 与 key，使用 direct research runner 运行一次 profile。先验证 request raw model/1536 维/float encoding，provider 返回 raw `text-embedding-v4` 的 1536 维 finite float vectors、`prompt_tokens == total_tokens` 与 body/header 相等的 bounded request ID；任一缺失、1024 默认维或 shape 漂移都停止。核对 report 的 input tokens、固定 `0.0005 CNY/1,000` 费率和精确 calculated CNY，明确其不是 provider cost/实际账单。验证正向 query 的预期 source 进入 top 10 后，把仅含脱敏 input hash、模型/维度和 vectors 的 snapshot 写入仓库；不得提交本地 cache、cost report、workspace endpoint 或 provider secret。
+- [x] **Step 5:** 实现 research runner，默认读取 Task 8 的 12 chunks/8 queries；cache/report 分别写入 `.local/milvus-embedding-cache/` 与 `.local/milvus-research/` 并加入 `.gitignore`。
+- [x] **Step 6:** 增加 `research-embeddings` Make target，要求显式 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1`；未设置时失败而不是 skip。
+- [x] **Step 7:** 在未跟踪配置中注入百炼北京 workspace-specific `/compatible-mode/v1` HTTPS endpoint 与 key，使用 direct research runner 运行一次 profile。先验证 request raw model/1536 维/float encoding，provider 返回 raw `text-embedding-v4` 的 1536 维 finite float vectors、`prompt_tokens == total_tokens` 与 body/header 相等的 bounded request ID；任一缺失、1024 默认维或 shape 漂移都停止。核对 report 的 input tokens、固定 `0.0005 CNY/1,000` 费率和精确 calculated CNY，明确其不是 provider cost/实际账单。验证正向 query 的预期 source 进入 top 10 后，把仅含脱敏 input hash、模型/维度和 vectors 的 snapshot 写入仓库；不得提交本地 cache、cost report、workspace endpoint 或 provider secret。
+
+  2026-08-27 当次真实运行处理 `12` chunks、`8` queries，经内容寻址去重产生 `18` 个唯一 provider requests；provider 返回 `203` input/total tokens、固定 `1536` 维 finite float vectors，按官方北京费率计算为 `0.0001015 CNY`。三个有 expected source 的正向 case 均为 dense rank `1`，top-10 gate 通过。提交的 snapshot SHA-256 为 `50a373057d529388b37389a9eb00fae1662988676d3be1840d97713c8e063ef0`；本地 ignored report SHA-256 为 `8a2637c8b35a0d345cad719ab5f6a5e90fe131b6de21baff9b8d39d81ad17a1f`。报告、cache、endpoint、secret 与 raw request IDs 均未进入 Git。
 - [ ] **Step 8:** 重跑 unit tests、snapshot hash validation 和 `make check && make test`。
 - [ ] **Step 9:** 只暂存本任务文件并提交。
 
