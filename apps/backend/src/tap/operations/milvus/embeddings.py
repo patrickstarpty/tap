@@ -503,7 +503,7 @@ def _validate_usage(usage: EmbeddingUsage) -> None:
         type(usage.input_tokens) is not int
         or type(usage.total_tokens) is not int
         or not 0 <= usage.input_tokens <= 1_000_000
-        or not usage.input_tokens <= usage.total_tokens <= 1_000_000
+        or usage.total_tokens != usage.input_tokens
         or usage.response_cost_usd is not None
         or type(cost) is not Decimal
         or not cost.is_finite()

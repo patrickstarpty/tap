@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlsplit
 
 import httpx
@@ -21,6 +23,9 @@ PROVIDER_MODEL = "text-embedding-v4"
 UNIT_PRICE_CNY_PER_1000_INPUT_TOKENS = Decimal("0.0005")
 PRICING_SOURCE = "official_rate_2026-08-27"
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
+_BEIJING_WORKSPACE_HOST = re.compile(
+    r"ws-[a-z0-9]{8,64}\.cn-beijing\.maas\.aliyuncs\.com\Z"
+)
 
 
 class BailianEmbeddingUnavailable(Exception):
@@ -92,28 +97,29 @@ class BailianEmbeddingAdapter:
             "encoding_format": "float",
         }
         try:
-            async with asyncio.timeout(self._config.deadline_seconds):
-                async with self._client.stream(
-                    "POST",
-                    self._config.api_base + "/embeddings",
-                    headers={
-                        "authorization": f"Bearer {self._config.api_key}",
-                        "content-type": "application/json",
-                    },
-                    content=json.dumps(
-                        payload,
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        separators=(",", ":"),
-                    ).encode("utf-8"),
-                ) as response:
-                    if response.status_code != 200:
-                        raise BailianEmbeddingUnavailable(
-                            "Bailian research provider rejected the request"
-                        )
-                    raw = await _read_bounded(response, self._config.max_response_bytes)
-                    request_id = response.headers.get("x-request-id")
-                return _parse_response(raw, request_id)
+            with _redact_httpx_endpoint_logs(self._config.api_base):
+                async with asyncio.timeout(self._config.deadline_seconds):
+                    async with self._client.stream(
+                        "POST",
+                        self._config.api_base + "/embeddings",
+                        headers={
+                            "authorization": f"Bearer {self._config.api_key}",
+                            "content-type": "application/json",
+                        },
+                        content=json.dumps(
+                            payload,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                            separators=(",", ":"),
+                        ).encode("utf-8"),
+                    ) as response:
+                        if response.status_code != 200:
+                            raise BailianEmbeddingUnavailable(
+                                "Bailian research provider rejected the request"
+                            )
+                        raw = await _read_bounded(response, self._config.max_response_bytes)
+                        request_id = response.headers.get("x-request-id")
+                    return _parse_response(raw, request_id)
         except TimeoutError:
             raise BailianEmbeddingUnavailable("Bailian research exceeded the deadline") from None
         except httpx.TransportError:
@@ -144,11 +150,12 @@ def _parse_response(raw: bytes, request_id: str | None) -> Embedding:
         raise BailianEmbeddingUnavailable("Bailian research response is malformed") from None
     if (
         not isinstance(body, dict)
-        or set(body) != {"object", "data", "model", "usage"}
+        or set(body) != {"id", "object", "data", "model", "usage"}
         or body["object"] != "list"
         or body["model"] != PROVIDER_MODEL
         or not isinstance(request_id, str)
         or _REQUEST_ID.fullmatch(request_id) is None
+        or body["id"] != request_id
     ):
         raise BailianEmbeddingUnavailable("Bailian research response is malformed")
     data = body["data"]
@@ -177,7 +184,7 @@ def _parse_response(raw: bytes, request_id: str | None) -> Embedding:
         type(input_tokens) is not int
         or type(total_tokens) is not int
         or not 0 <= input_tokens <= 1_000_000
-        or not input_tokens <= total_tokens <= 1_000_000
+        or total_tokens != input_tokens
     ):
         raise BailianEmbeddingUnavailable("Bailian research usage is malformed")
     calculated_cost = Decimal(input_tokens) * UNIT_PRICE_CNY_PER_1000_INPUT_TOKENS / 1000
@@ -208,6 +215,33 @@ def _reject_constant(_value: str) -> None:
     raise ValueError("non-finite JSON number")
 
 
+class _EndpointRedactionFilter(logging.Filter):
+    def __init__(self, api_base: str) -> None:
+        super().__init__()
+        self._api_base = api_base
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except (TypeError, ValueError):
+            return True
+        if self._api_base in message:
+            record.msg = message.replace(self._api_base, "[redacted-bailian-endpoint]")
+            record.args = ()
+        return True
+
+
+@contextmanager
+def _redact_httpx_endpoint_logs(api_base: str) -> Iterator[None]:
+    logger = logging.getLogger("httpx")
+    redaction_filter = _EndpointRedactionFilter(api_base)
+    logger.addFilter(redaction_filter)
+    try:
+        yield
+    finally:
+        logger.removeFilter(redaction_filter)
+
+
 def _valid_api_base(value: object) -> bool:
     if not isinstance(value, str) or len(value) > 2048:
         return False
@@ -220,11 +254,8 @@ def _valid_api_base(value: object) -> bool:
     return (
         parsed.scheme == "https"
         and hostname is not None
-        and re.fullmatch(
-            r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))+",
-            hostname,
-        )
-        is not None
+        and _BEIJING_WORKSPACE_HOST.fullmatch(hostname) is not None
+        and parsed.netloc == hostname
         and parsed.username is None
         and parsed.password is None
         and port is None

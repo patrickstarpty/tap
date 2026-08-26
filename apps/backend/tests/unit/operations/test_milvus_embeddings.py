@@ -136,7 +136,10 @@ def cli_settings() -> dict[str, str]:
         "LITELLM_MASTER_KEY": "sanitized-test-key",
         "LITELLM_EMBEDDING_MODEL": "text-embedding-v4",
         "LITELLM_EMBEDDING_API_KEY": "sanitized-provider-key",
-        "LITELLM_EMBEDDING_API_BASE": ("https://workspace.example/compatible-mode/v1"),
+        "LITELLM_EMBEDDING_API_BASE": (
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com"
+            "/compatible-mode/v1"
+        ),
     }
 
 
@@ -639,10 +642,12 @@ async def test_cli_runner_sends_fixed_alias_and_1536_dimensions_on_every_embeddi
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        request_id = f"request-{len(requests)}"
         return httpx.Response(
             200,
-            headers={"x-request-id": f"request-{len(requests)}"},
+            headers={"x-request-id": request_id},
             json={
+                "id": request_id,
                 "object": "list",
                 "model": "text-embedding-v4",
                 "data": [
@@ -1135,14 +1140,17 @@ def test_cli_builds_only_the_fixed_direct_route_and_hides_provider_config() -> N
         "LITELLM_MASTER_KEY": "PRIVATE_GATEWAY_SECRET",
         "LITELLM_EMBEDDING_MODEL": "text-embedding-v4",
         "LITELLM_EMBEDDING_API_KEY": "PRIVATE_PROVIDER_SECRET",
-        "LITELLM_EMBEDDING_API_BASE": ("https://private-workspace.example/compatible-mode/v1"),
+        "LITELLM_EMBEDDING_API_BASE": (
+            "https://ws-privateworkspace.cn-beijing.maas.aliyuncs.com"
+            "/compatible-mode/v1"
+        ),
     }
     config = research_bailian_config(settings)
 
     assert config.deadline_seconds == 15.0
     assert "PRIVATE_GATEWAY_SECRET" not in repr(config)
     assert "PRIVATE_PROVIDER_SECRET" not in repr(config)
-    assert "private-workspace.example" not in repr(config)
+    assert "ws-privateworkspace.cn-beijing.maas.aliyuncs.com" not in repr(config)
 
 
 @pytest.mark.parametrize(
@@ -1151,24 +1159,39 @@ def test_cli_builds_only_the_fixed_direct_route_and_hides_provider_config() -> N
         ("LITELLM_EMBEDDING_API_BASE", ""),
         (
             "LITELLM_EMBEDDING_API_BASE",
-            "http://workspace.example/compatible-mode/v1",
+            "http://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         ),
         (
             "LITELLM_EMBEDDING_API_BASE",
-            "https://user@workspace.example/compatible-mode/v1",
-        ),
-        ("LITELLM_EMBEDDING_API_BASE", "https://workspace.example/v1"),
-        (
-            "LITELLM_EMBEDDING_API_BASE",
-            "https://workspace.example/compatible-mode/v1/extra",
+            "https://user@ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         ),
         (
             "LITELLM_EMBEDDING_API_BASE",
-            "https://workspace.example/compatible-mode/v1?key=PRIVATE_QUERY_SECRET",
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/v1",
         ),
         (
             "LITELLM_EMBEDDING_API_BASE",
-            "https://workspace.example/compatible-mode/v1#PRIVATE_FRAGMENT_SECRET",
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/extra",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1?key=PRIVATE_QUERY_SECRET",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1#PRIVATE_FRAGMENT_SECRET",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://evil.example/compatible-mode/v1",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://ws-abcdefghijklmnop.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        ),
+        (
+            "LITELLM_EMBEDDING_API_BASE",
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com:443/compatible-mode/v1",
         ),
         ("LITELLM_EMBEDDING_API_KEY", ""),
         ("LITELLM_EMBEDDING_MODEL", "openai/text-embedding-v4"),
@@ -1181,6 +1204,9 @@ def test_cli_builds_only_the_fixed_direct_route_and_hides_provider_config() -> N
         "extra-path",
         "query",
         "fragment",
+        "wrong-provider-host",
+        "wrong-region",
+        "explicit-port",
         "missing-key",
         "provider-prefix-must-not-be-in-model",
     ),
@@ -1196,7 +1222,7 @@ def test_research_provider_route_rejects_incomplete_or_widened_settings_without_
         research_bailian_config(settings)
 
     message = str(caught.value)
-    assert "workspace.example" not in message
+    assert "aliyuncs.com" not in message
     assert "PRIVATE_" not in message
     assert "sanitized-provider-key" not in message
 
@@ -1218,7 +1244,9 @@ async def test_invalid_provider_route_fails_before_marker_removal_or_adapter_con
             constructed = True
 
     settings = cli_settings()
-    settings["LITELLM_EMBEDDING_API_BASE"] = "http://workspace.example/compatible-mode/v1"
+    settings["LITELLM_EMBEDDING_API_BASE"] = (
+        "http://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    )
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
     monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", ForbiddenAdapter)
 
@@ -1246,7 +1274,9 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
 
     compose = (repository / "compose.yaml").read_text(encoding="utf-8")
     gateway = (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
-    assert "LITELLM_EMBEDDING_API_BASE: ${LITELLM_EMBEDDING_API_BASE:-}" in compose
+    assert "LITELLM_EMBEDDING_MODEL:" not in compose
+    assert "LITELLM_EMBEDDING_API_KEY:" not in compose
+    assert "LITELLM_EMBEDDING_API_BASE:" not in compose
     assert "research-embedding-v1" not in gateway
     assert "text-embedding-v4" not in gateway
     assert "LITELLM_EMBEDDING_API_BASE" not in gateway

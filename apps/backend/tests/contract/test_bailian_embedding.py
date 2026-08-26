@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from decimal import Decimal
 
 import httpx
@@ -19,7 +20,10 @@ from tap.operations.milvus.embeddings import EMBEDDING_ALIAS, EMBEDDING_DIMENSIO
 
 def config(**changes: object) -> BailianEmbeddingConfig:
     values: dict[str, object] = {
-        "api_base": "https://workspace.example/compatible-mode/v1",
+        "api_base": (
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com"
+            "/compatible-mode/v1"
+        ),
         "api_key": "PRIVATE_PROVIDER_KEY",
         "deadline_seconds": 1.0,
     }
@@ -29,6 +33,7 @@ def config(**changes: object) -> BailianEmbeddingConfig:
 
 def response_body(*, model: object = "text-embedding-v4", dimension: int = 1536) -> object:
     return {
+        "id": "request-17",
         "object": "list",
         "data": [
             {
@@ -82,9 +87,21 @@ async def test_direct_request_uses_raw_model_exact_dimensions_and_calculated_cny
         response_body(dimension=1024),
         {**response_body(), "usage": {"prompt_tokens": True, "total_tokens": 4}},
         {**response_body(), "usage": {"prompt_tokens": 5, "total_tokens": 4}},
+        {**response_body(), "usage": {"prompt_tokens": 1, "total_tokens": 1_000}},
+        {**response_body(), "id": "different-request"},
+        {**response_body(), "id": "unsafe request id"},
         {**response_body(), "extra": "widened"},
     ],
-    ids=("model", "dimension", "usage-type", "usage-order", "widened"),
+    ids=(
+        "model",
+        "dimension",
+        "usage-type",
+        "usage-order",
+        "usage-cost-drift",
+        "request-id-mismatch",
+        "request-id-shape",
+        "widened",
+    ),
 )
 async def test_direct_response_rejects_model_dimension_usage_and_shape_drift(body: object) -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
@@ -98,7 +115,13 @@ async def test_direct_response_rejects_model_dimension_usage_and_shape_drift(bod
 @pytest.mark.asyncio
 async def test_direct_failure_and_repr_never_expose_endpoint_key_or_text() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, text="PRIVATE_PROVIDER_KEY sanitized text workspace.example")
+        return httpx.Response(
+            401,
+            text=(
+                "PRIVATE_PROVIDER_KEY sanitized text "
+                "ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com"
+            ),
+        )
 
     direct_config = config()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -108,7 +131,28 @@ async def test_direct_failure_and_repr_never_expose_endpoint_key_or_text() -> No
     exposed = repr(direct_config) + str(caught.value)
     assert "PRIVATE_PROVIDER_KEY" not in exposed
     assert "sanitized text" not in exposed
-    assert "workspace.example" not in exposed
+    assert "cn-beijing.maas.aliyuncs.com" not in exposed
+
+
+@pytest.mark.asyncio
+async def test_direct_httpx_info_log_redacts_the_workspace_endpoint(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "request-17"},
+            json=response_body(),
+        )
+
+    caplog.set_level(logging.INFO, logger="httpx")
+    direct_config = config()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await BailianEmbeddingAdapter(direct_config, client=client).embed("sanitized text")
+
+    assert "cn-beijing.maas.aliyuncs.com" not in caplog.text
+    assert "PRIVATE_PROVIDER_KEY" not in caplog.text
+    assert "sanitized text" not in caplog.text
 
 
 @pytest.mark.asyncio

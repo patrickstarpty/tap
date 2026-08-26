@@ -164,7 +164,7 @@ TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential side
 
 官方事实：百炼提供 OpenAI-compatible embedding 调用，workspace base URL 模板以 `/compatible-mode/v1` 结尾；`text-embedding-v4` 支持请求参数 `dimensions`，可选维度包括 `1536`，默认维度为 `1024`。北京地域同步调用官方价格为每 1,000 input tokens `0.0005 CNY`（2026-08-27 核对）；该人民币费率不能填入 USD response-cost 字段。
 
-TAP 设计：百炼 raw provider model 固定为 `text-embedding-v4`，runner 拒绝 caller 注入 prefix。应用侧 alias 仍为 `research-embedding-v1`，canonical model/dimension/cache/schema digest 语义不变。endpoint/key 只通过未跟踪环境或 secret store 注入；每个 direct research request 显式发送 `dimensions=1536` 和 float encoding，并对实际 model、vector length/type/finite、usage 与 request ID fail closed。报告按 input tokens 与固定官方费率计算 CNY estimate，明确不把它称为 provider response cost 或实际账单。真实 provider quality probe 尚未完成，不能把静态适配记为质量 GREEN。
+TAP 设计：百炼 raw provider model 固定为 `text-embedding-v4`，runner 拒绝 caller 注入 prefix。应用侧 alias 仍为 `research-embedding-v1`，canonical model/dimension/cache/schema digest 语义不变。endpoint/key 只通过未跟踪环境或 secret store 注入，不进入 LiteLLM 容器；为绑定上述北京费率，hostname 固定为 canonical `ws-<lowercase-id>.cn-beijing.maas.aliyuncs.com`。每个 direct research request 显式发送 `dimensions=1536` 和 float encoding，并对实际 model、vector length/type/finite、`prompt_tokens == total_tokens`、body `id == x-request-id` fail closed；HTTP client 日志同样脱敏 endpoint。报告按 input tokens 与固定官方费率计算 CNY estimate，明确不把它称为 provider response cost 或实际账单。真实 provider quality probe 尚未完成，不能把静态适配记为质量 GREEN。
 
 ### Milvus 本地检索实验
 
