@@ -34,6 +34,7 @@ from tap.operations.milvus.client import (
     local_role_credentials as load_local_role_credentials,
 )
 from tap.operations.milvus.contracts import (
+    PROVISIONER_BASE_GRANTS,
     PROVISIONER_PRIVILEGES,
     READER_BASE_PRIVILEGES,
     READER_TARGET_PRIVILEGES,
@@ -484,7 +485,12 @@ async def test_bootstrap_reader_base_is_global_describe_only() -> None:
         MilvusGrant("collection", "*", privilege) for privilege in WRITER_PRIVILEGES
     )
     assert admin.grants["tap_provisioner"] == frozenset(
-        MilvusGrant("collection", "*", privilege) for privilege in PROVISIONER_PRIVILEGES
+        MilvusGrant(
+            "instance" if privilege == "DescribeAlias" else "collection",
+            "*",
+            privilege,
+        )
+        for privilege in PROVISIONER_PRIVILEGES
     )
 
 
@@ -610,6 +616,7 @@ async def test_sdk_admin_preserves_global_describe_and_removes_wildcard_reader_s
         client,  # type: ignore[arg-type]
         SecretStr("tap-local-Root1!"),
         authenticated_with_initial_root=False,
+        database_name="default",
     )
     expected = frozenset(
         {
@@ -652,6 +659,7 @@ async def test_sdk_admin_rejects_duplicate_base_grant_inventory() -> None:
         DuplicateGrantClient(),  # type: ignore[arg-type]
         SecretStr("tap-local-Root1!"),
         authenticated_with_initial_root=False,
+        database_name="default",
     )
     expected = frozenset(
         {
@@ -662,6 +670,284 @@ async def test_sdk_admin_rejects_duplicate_base_grant_inventory() -> None:
 
     with pytest.raises(RuntimeError, match="grant metadata"):
         await admin.replace_role_grants("tap_reader", expected)
+
+
+async def test_sdk_admin_rejects_conflicting_base_dimensions_before_mutation() -> None:
+    client = RoleGrantInventoryClient(
+        "tap_reader",
+        [
+            role_grant("tap_reader", "Global", "*", "DescribeAlias"),
+            role_grant("tap_reader", "Collection", "*", "DescribeAlias"),
+        ],
+    )
+    admin = sdk_admin(client)
+    expected = frozenset(
+        {
+            MilvusGrant("instance", "*", "DescribeAlias"),
+            MilvusGrant("instance", "*", "DescribeCollection"),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="grant metadata"):
+        await admin.replace_role_grants("tap_reader", expected)
+
+    assert client.calls == []
+
+
+class RoleGrantInventoryClient:
+    def __init__(self, role_name: str, privileges: list[dict[str, str]]) -> None:
+        self.role_name = role_name
+        self.privileges = privileges
+        self.calls: list[tuple[str, str, str]] = []
+
+    def describe_role(self, role_name: str, **kwargs: object) -> dict[str, object]:
+        assert role_name == self.role_name
+        return {"role": role_name, "privileges": [dict(item) for item in self.privileges]}
+
+    def revoke_privilege_v2(
+        self,
+        role_name: str,
+        privilege: str,
+        object_name: str,
+        **kwargs: object,
+    ) -> None:
+        self.calls.append(("revoke", privilege, object_name))
+        self.privileges = [
+            item
+            for item in self.privileges
+            if not (
+                item["role_name"] == role_name
+                and item["privilege"] == privilege
+                and item["object_name"] == object_name
+            )
+        ]
+
+    def grant_privilege_v2(
+        self,
+        role_name: str,
+        privilege: str,
+        object_name: str,
+        **kwargs: object,
+    ) -> None:
+        self.calls.append(("grant", privilege, object_name))
+        global_privilege = (
+            role_name == "tap_reader" and privilege in {"DescribeAlias", "DescribeCollection"}
+        ) or (role_name == "tap_provisioner" and privilege == "DescribeAlias")
+        self.privileges.append(
+            {
+                "object_type": "Global" if global_privilege else "Collection",
+                "object_name": object_name,
+                "db_name": "default",
+                "role_name": role_name,
+                "privilege": privilege,
+            }
+        )
+
+
+def role_grant(
+    role_name: str,
+    object_type: str,
+    object_name: str,
+    privilege: str,
+    *,
+    database_name: str = "default",
+) -> dict[str, str]:
+    return {
+        "object_type": object_type,
+        "object_name": object_name,
+        "db_name": database_name,
+        "role_name": role_name,
+        "privilege": privilege,
+    }
+
+
+def sdk_admin(client: RoleGrantInventoryClient) -> PyMilvusAdmin:
+    return PyMilvusAdmin(
+        client,  # type: ignore[arg-type]
+        SecretStr("tap-local-Root1!"),
+        authenticated_with_initial_root=False,
+        database_name="default",
+    )
+
+
+async def test_sdk_admin_preserves_active_reader_target_across_repeated_bootstrap() -> None:
+    physical = "kb_doc_v1_corpus_fixture_v1"
+    client = RoleGrantInventoryClient(
+        "tap_reader",
+        [
+            role_grant("tap_reader", "Global", "*", "DescribeAlias"),
+            role_grant("tap_reader", "Global", "*", "DescribeCollection"),
+            role_grant("tap_reader", "Collection", physical, "Query"),
+            role_grant("tap_reader", "Collection", physical, "Search"),
+        ],
+    )
+    admin = sdk_admin(client)
+    expected = frozenset(
+        {
+            MilvusGrant("instance", "*", "DescribeAlias"),
+            MilvusGrant("instance", "*", "DescribeCollection"),
+        }
+    )
+
+    await admin.replace_role_grants("tap_reader", expected)
+    await admin.replace_role_grants("tap_reader", expected)
+
+    assert client.calls == []
+    assert {
+        (item["object_name"], item["privilege"])
+        for item in client.privileges
+        if item["object_name"] != "*"
+    } == {(physical, "Query"), (physical, "Search")}
+
+
+async def test_sdk_admin_preserves_temporary_writer_target_across_repeated_bootstrap() -> None:
+    physical = "kb_doc_v1_corpus_fixture_v1"
+    client = RoleGrantInventoryClient(
+        "tap_writer",
+        [
+            *[
+                role_grant("tap_writer", "Collection", "*", privilege)
+                for privilege in WRITER_PRIVILEGES
+            ],
+            role_grant("tap_writer", "Collection", physical, "Flush"),
+            role_grant("tap_writer", "Collection", physical, "Insert"),
+        ],
+    )
+    admin = sdk_admin(client)
+    expected = frozenset(
+        MilvusGrant("collection", "*", privilege) for privilege in WRITER_PRIVILEGES
+    )
+
+    await admin.replace_role_grants("tap_writer", expected)
+    await admin.replace_role_grants("tap_writer", expected)
+
+    assert client.calls == []
+    assert {
+        (item["object_name"], item["privilege"])
+        for item in client.privileges
+        if item["object_name"] != "*"
+    } == {(physical, "Flush"), (physical, "Insert")}
+
+
+async def test_sdk_admin_provisioner_base_is_exact_and_repeated_reconciliation_is_idle() -> None:
+    client = RoleGrantInventoryClient(
+        "tap_provisioner",
+        [
+            role_grant(
+                "tap_provisioner",
+                "Global" if privilege == "DescribeAlias" else "Collection",
+                "*",
+                privilege,
+            )
+            for privilege in PROVISIONER_PRIVILEGES
+        ],
+    )
+    admin = sdk_admin(client)
+    await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+    await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    (
+        role_grant(
+            "tap_reader",
+            "Collection",
+            "kb_doc_v1_corpus_fixture_v1",
+            "Insert",
+        ),
+        role_grant(
+            "tap_reader",
+            "Global",
+            "kb_doc_v1_corpus_fixture_v1",
+            "Search",
+        ),
+        role_grant(
+            "tap_reader",
+            "Database",
+            "kb_doc_v1_corpus_fixture_v1",
+            "Search",
+        ),
+        role_grant(
+            "tap_reader",
+            "Collection",
+            "kb_doc_v1_corpus_fixture_v1",
+            "Search",
+            database_name="other",
+        ),
+        role_grant("tap_reader", "Collection", "unowned_collection", "Search"),
+    ),
+    ids=("privilege", "global", "database", "other-database", "name"),
+)
+async def test_sdk_admin_invalid_reader_concrete_fails_before_any_base_mutation(
+    invalid: dict[str, str],
+) -> None:
+    client = RoleGrantInventoryClient(
+        "tap_reader",
+        [
+            role_grant("tap_reader", "Global", "*", "DescribeAlias"),
+            role_grant("tap_reader", "Collection", "*", "Search"),
+            invalid,
+        ],
+    )
+    admin = sdk_admin(client)
+    expected = frozenset(
+        {
+            MilvusGrant("instance", "*", "DescribeAlias"),
+            MilvusGrant("instance", "*", "DescribeCollection"),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="concrete grant metadata"):
+        await admin.replace_role_grants("tap_reader", expected)
+
+    assert client.calls == []
+
+
+async def test_sdk_admin_provisioner_concrete_fails_before_any_base_mutation() -> None:
+    client = RoleGrantInventoryClient(
+        "tap_provisioner",
+        [
+            role_grant("tap_provisioner", "Collection", "*", "CreateCollection"),
+            role_grant(
+                "tap_provisioner",
+                "Collection",
+                "kb_doc_v1_corpus_fixture_v1",
+                "CreateCollection",
+            ),
+        ],
+    )
+    admin = sdk_admin(client)
+    with pytest.raises(RuntimeError, match="concrete grant metadata"):
+        await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+
+    assert client.calls == []
+
+
+async def test_sdk_admin_corrects_provisioner_describe_alias_wildcard_then_idempotent() -> None:
+    client = RoleGrantInventoryClient(
+        "tap_provisioner",
+        [
+            role_grant(
+                "tap_provisioner",
+                "Collection",
+                "*",
+                privilege,
+            )
+            for privilege in PROVISIONER_PRIVILEGES
+        ],
+    )
+    admin = sdk_admin(client)
+
+    await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+    await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
+
+    assert client.calls == [
+        ("revoke", "DescribeAlias", "*"),
+        ("grant", "DescribeAlias", "*"),
+    ]
 
 
 class AuthenticationServer:
@@ -881,6 +1167,7 @@ async def test_sdk_admin_recreates_existing_user_and_converges_exact_role_member
         client,  # type: ignore[arg-type]
         SecretStr("tap-local-rotated-root"),
         authenticated_with_initial_root=False,
+        database_name="default",
     )
 
     await admin.ensure_user("tap_reader", SecretStr("tap-local-Reader1!"))

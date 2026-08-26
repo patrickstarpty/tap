@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import re
 import threading
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -22,8 +23,11 @@ from tap.modules.knowledge.adapters.milvus.transport import (
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
 from tap.operations.milvus.contracts import (
+    PROVISIONER_BASE_GRANTS,
     PROVISIONER_PRIVILEGES,
+    READER_BASE_GRANTS,
     READER_TARGET_PRIVILEGES,
+    WRITER_BASE_GRANTS,
     WRITER_PRIVILEGES,
     MilvusAdmin,
     MilvusGrant,
@@ -41,6 +45,7 @@ _PYMILVUS_RPC_LOGGING_SUPPRESSED = contextvars.ContextVar(
     "pymilvus_rpc_logging_suppressed",
     default=False,
 )
+_PUBLISHER_COLLECTION_NAME = re.compile(r"kb_doc_v1_[A-Za-z0-9_]{1,245}\Z")
 _PYMILVUS_RPC_FILTER_LOCK = threading.Lock()
 _PYMILVUS_RPC_FILTER_USERS = 0
 
@@ -202,9 +207,13 @@ class PyMilvusAdmin:
         current_root_password: SecretStr,
         *,
         authenticated_with_initial_root: bool,
+        database_name: str,
     ) -> None:
+        if not database_name:
+            raise ValueError("Milvus admin database name must not be empty")
         self._client = client
         self._current_root_password = current_root_password
+        self._database_name = database_name
         self.authenticated_with_initial_root = authenticated_with_initial_root
 
     async def ensure_user(self, username: str, password: SecretStr) -> None:
@@ -270,8 +279,16 @@ class PyMilvusAdmin:
         role_name: str,
         grants: frozenset[MilvusGrant],
     ) -> None:
+        expected = _expected_base_grants(role_name)
+        if grants != expected:
+            raise ValueError("Milvus bootstrap grants are outside the managed base contract")
         raw = await _call(lambda: self._client.describe_role(role_name, timeout=_TIMEOUT_SECONDS))
-        current = _role_grants(raw, role_name=role_name)
+        records = _role_grant_records(raw, role_name=role_name)
+        current = _validated_base_grants(
+            records,
+            role_name=role_name,
+            database_name=self._database_name,
+        )
         for grant in sorted(current - grants, key=_grant_sort_key):
 
             def revoke(grant: MilvusGrant = grant) -> object:
@@ -747,6 +764,7 @@ async def connect_local_admin(
             rotated_client,
             SecretStr(rotated),
             authenticated_with_initial_root=False,
+            database_name=database,
         )
 
     initial_client: _SyncClient | None = None
@@ -801,6 +819,7 @@ async def connect_local_admin(
         reconnected_client,
         SecretStr(rotated),
         authenticated_with_initial_root=False,
+        database_name=database,
     )
 
 
@@ -998,17 +1017,35 @@ def _user_roles(raw: object) -> set[str]:
     return _role_names(roles)
 
 
-def _role_grants(
+@dataclass(frozen=True, slots=True)
+class _RoleGrantRecord:
+    role_name: str
+    object_type: Literal["Global", "Database", "Collection"]
+    database_name: str
+    object_name: str
+    privilege: str
+
+    @property
+    def grant(self) -> MilvusGrant:
+        return MilvusGrant(
+            _resource_level(self.object_type),
+            self.object_name,
+            self.privilege,
+        )
+
+
+def _role_grant_records(
     raw: object,
     *,
     role_name: str,
-) -> frozenset[MilvusGrant]:
+) -> tuple[_RoleGrantRecord, ...]:
     if not isinstance(raw, Mapping) or raw.get("role") != role_name:
         raise RuntimeError("Milvus returned malformed grant metadata")
     privileges = raw.get("privileges", raw.get("grants", ()))
     if not isinstance(privileges, Sequence) or isinstance(privileges, (str, bytes)):
         raise RuntimeError("Milvus returned malformed grant metadata")
-    grants = set()
+    records: list[_RoleGrantRecord] = []
+    seen: set[tuple[str, str, str, str]] = set()
     for item in privileges:
         if not isinstance(item, Mapping):
             raise RuntimeError("Milvus returned malformed grant metadata")
@@ -1027,15 +1064,66 @@ def _role_grants(
             or not database_name
         ):
             raise RuntimeError("Milvus returned malformed grant metadata")
-        grant = MilvusGrant(
-            _resource_level(object_type),
-            resource_name,
-            privilege,
+        record = _RoleGrantRecord(
+            role_name=role_name,
+            object_type=_object_type(object_type),
+            database_name=database_name,
+            object_name=resource_name,
+            privilege=privilege,
         )
-        if grant in grants:
-            raise RuntimeError("Milvus returned duplicate grant metadata")
-        grants.add(grant)
-    return frozenset(grants)
+        identity = (role_name, database_name, resource_name, privilege)
+        if identity in seen:
+            raise RuntimeError("Milvus returned duplicate or conflicting grant metadata")
+        seen.add(identity)
+        records.append(record)
+    return tuple(records)
+
+
+def _validated_base_grants(
+    records: tuple[_RoleGrantRecord, ...],
+    *,
+    role_name: str,
+    database_name: str,
+) -> frozenset[MilvusGrant]:
+    base: set[MilvusGrant] = set()
+    allowed_concrete = {
+        "tap_reader": READER_TARGET_PRIVILEGES,
+        "tap_writer": WRITER_PRIVILEGES,
+        "tap_provisioner": frozenset(),
+    }.get(role_name)
+    if allowed_concrete is None:
+        raise ValueError("Milvus role is outside the closed bootstrap set")
+    for record in records:
+        if record.object_name == "*":
+            if record.database_name != database_name:
+                raise RuntimeError("Milvus returned ambiguous base grant metadata")
+            base.add(record.grant)
+            continue
+        if (
+            record.object_type != "Collection"
+            or record.database_name != database_name
+            or _PUBLISHER_COLLECTION_NAME.fullmatch(record.object_name) is None
+            or record.privilege not in allowed_concrete
+        ):
+            raise RuntimeError("Milvus returned invalid concrete grant metadata")
+    return frozenset(base)
+
+
+def _expected_base_grants(role_name: str) -> frozenset[MilvusGrant]:
+    expected = {
+        "tap_reader": READER_BASE_GRANTS,
+        "tap_writer": WRITER_BASE_GRANTS,
+        "tap_provisioner": PROVISIONER_BASE_GRANTS,
+    }.get(role_name)
+    if expected is None:
+        raise ValueError("Milvus role is outside the closed bootstrap set")
+    return expected
+
+
+def _object_type(value: object) -> Literal["Global", "Database", "Collection"]:
+    if not isinstance(value, str) or value not in {"Global", "Database", "Collection"}:
+        raise RuntimeError("Milvus returned malformed grant metadata")
+    return cast(Literal["Global", "Database", "Collection"], value)
 
 
 def _resource_level(value: object) -> Literal["instance", "database", "collection"]:

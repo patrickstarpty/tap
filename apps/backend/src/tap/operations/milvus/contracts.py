@@ -91,7 +91,12 @@ WRITER_BASE_GRANTS = frozenset(
     MilvusGrant("collection", "*", privilege) for privilege in WRITER_PRIVILEGES
 )
 PROVISIONER_BASE_GRANTS = frozenset(
-    MilvusGrant("collection", "*", privilege) for privilege in PROVISIONER_PRIVILEGES
+    MilvusGrant(
+        "instance" if privilege == "DescribeAlias" else "collection",
+        "*",
+        privilege,
+    )
+    for privilege in PROVISIONER_PRIVILEGES
 )
 
 
