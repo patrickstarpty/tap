@@ -94,6 +94,38 @@ raise SystemExit(cli.main())
     assert completed.stderr == ""
 
 
+async def test_health_cli_retries_a_transient_behavioral_readiness_failure() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import scripts.milvus_health_probe as cli
+
+attempts = 0
+
+async def transient_health(settings):
+    global attempts
+    attempts += 1
+    if attempts < 3:
+        raise RuntimeError("provider details must remain hidden")
+
+cli._run_health = transient_health
+cli._HEALTH_RETRY_DELAY_SECONDS = 0
+raise SystemExit(cli.main())
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "Milvus health probe passed.\n"
+    assert completed.stderr == ""
+
+
 class RecordingAdmin:
     def __init__(self) -> None:
         self.dropped_collections: list[str] = []

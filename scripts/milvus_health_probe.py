@@ -30,6 +30,9 @@ from tap.operations.milvus.client import (
 )
 from tap.operations.milvus.health import run_health_probe
 
+_HEALTH_MAX_ATTEMPTS = 4
+_HEALTH_RETRY_DELAY_SECONDS = 3.0
+
 
 async def _run_health(settings: Mapping[str, str]) -> None:
     clients = build_probe_clients(settings, sdk=_sdk())
@@ -44,6 +47,19 @@ async def _run_health(settings: Mapping[str, str]) -> None:
             raise RuntimeError("Milvus behavioral health assertions failed")
     finally:
         await close_probe_clients(clients)
+
+
+async def _run_health_until_ready(settings: Mapping[str, str]) -> None:
+    """Retry the full behavioral probe while Milvus finishes functional startup."""
+    for attempt in range(1, _HEALTH_MAX_ATTEMPTS + 1):
+        try:
+            await _run_health(settings)
+        except Exception:
+            if attempt == _HEALTH_MAX_ATTEMPTS:
+                raise
+            await asyncio.sleep(_HEALTH_RETRY_DELAY_SECONDS)
+        else:
+            return
 
 
 async def _run_reader_canary(settings: Mapping[str, str]) -> None:
@@ -101,7 +117,7 @@ def main() -> int:
             if args.reader_canary:
                 asyncio.run(_run_reader_canary(settings))
             else:
-                asyncio.run(_run_health(settings))
+                asyncio.run(_run_health_until_ready(settings))
     except Exception:
         print("Milvus health probe failed.", file=sys.stderr)
         return 1
