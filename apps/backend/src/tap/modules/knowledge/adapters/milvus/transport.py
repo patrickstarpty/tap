@@ -721,7 +721,10 @@ def _canonical_fields(raw: object) -> list[dict[str, object]]:
                 "is_primary": _optional_bool(value, "is_primary", default=False),
                 "name": name,
                 "nullable": _optional_bool(value, "nullable", default=False),
-                "params": _canonical_params(value.get("params", {})),
+                "params": _canonical_field_params(
+                    value.get("params", {}),
+                    field_name=name,
+                ),
                 "type": _enum_number(value.get("type")),
             }
         )
@@ -1030,6 +1033,18 @@ def _canonical_params(raw: object) -> dict[str, object]:
             item = json.loads(item, parse_constant=_reject_json_constant)
         normalized[key] = _plain_value(item)
     return dict(sorted(normalized.items()))
+
+
+def _canonical_field_params(
+    raw: object,
+    *,
+    field_name: str,
+) -> dict[str, object]:
+    value = _mapping(raw)
+    analyzer_enabled = value.get("enable_analyzer")
+    if field_name == "content" and type(analyzer_enabled) is str and analyzer_enabled == "true":
+        value = {**value, "enable_analyzer": True}
+    return _canonical_params(value)
 
 
 def _metadata_string(value: Mapping[str, object], name: str) -> str:

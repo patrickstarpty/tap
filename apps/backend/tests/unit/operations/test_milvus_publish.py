@@ -21,7 +21,7 @@ from tap.operations.milvus import async_call as milvus_async_call
 from tap.operations.milvus import client as milvus_client
 from tap.operations.milvus.activation import CorpusActivationState, LocalCorpusActivator
 from tap.operations.milvus.contracts import (
-    READER_PRIVILEGES,
+    READER_TARGET_PRIVILEGES,
     WRITER_PRIVILEGES,
     MilvusPublishClients,
     MilvusScopedGrant,
@@ -82,7 +82,7 @@ class RecordingProvisioner:
 
     async def grant_collection(self, name: str, role_name: str) -> None:
         self.events.append("grant_writer" if role_name == "tap_writer" else "grant_reader")
-        expected = WRITER_PRIVILEGES if role_name == "tap_writer" else READER_PRIVILEGES
+        expected = WRITER_PRIVILEGES if role_name == "tap_writer" else READER_TARGET_PRIVILEGES
         self.grants[(name, role_name)] = set(expected)
         self._fail_after("grant_writer" if role_name == "tap_writer" else "grant_reader")
 
@@ -674,6 +674,26 @@ async def test_same_manifest_second_publish_converges_without_recreate_or_reinse
     assert provisioner.describe_alias_calls == alias_calls + 2
 
 
+async def test_new_publish_target_reader_grants_are_only_search_and_query() -> None:
+    events: list[str] = []
+    publish_clients = clients(events)
+    manifest = load_doc_fixture(FIXTURE)
+
+    await publish_fixture(
+        publish_clients,
+        manifest,
+        unit_vectors(),
+        RecordingActivator(events),
+    )
+
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    reader_grants = await provisioner.collection_grants(
+        manifest.physical_collection,
+        "tap_reader",
+    )
+    assert {grant.privilege for grant in reader_grants} == {"Query", "Search"}
+
+
 async def test_preexisting_exact_target_converges_reader_and_partial_writer_grants() -> None:
     events: list[str] = []
     publish_clients = clients(events)
@@ -683,7 +703,6 @@ async def test_preexisting_exact_target_converges_reader_and_partial_writer_gran
     provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
     provisioner.grants[(manifest.physical_collection, "tap_reader")] = {
         "Query",
-        "Search",
     }
     provisioner.grants[(manifest.physical_collection, "tap_writer")] = {
         "Insert",
@@ -701,7 +720,7 @@ async def test_preexisting_exact_target_converges_reader_and_partial_writer_gran
         manifest.physical_collection,
         "tap_writer",
     )
-    assert {grant.privilege for grant in reader_grants} == READER_PRIVILEGES
+    assert {grant.privilege for grant in reader_grants} == READER_TARGET_PRIVILEGES
     assert writer_grants == frozenset()
     assert events == [
         "reconcile",
@@ -1431,7 +1450,11 @@ class GrantClient:
             'privileges': [
                 {
                     'object_type': 'Global', 'object_name': '*', 'db_name': 'default',
-                    'role_name': 'tap_reader', 'privilege': 'Query',
+                    'role_name': 'tap_reader', 'privilege': 'DescribeAlias',
+                },
+                {
+                    'object_type': 'Global', 'object_name': '*', 'db_name': 'default',
+                    'role_name': 'tap_reader', 'privilege': 'DescribeCollection',
                 },
                 {
                     'object_type': 'Collection',
@@ -1441,8 +1464,7 @@ class GrantClient:
                 {
                     'object_type': 'Collection',
                     'object_name': 'kb_doc_v1_corpus_fixture_v1',
-                    'db_name': 'default', 'role_name': 'tap_reader',
-                    'privilege': 'DescribeCollection',
+                    'db_name': 'default', 'role_name': 'tap_reader', 'privilege': 'Query',
                 },
             ]
         }
@@ -1473,7 +1495,7 @@ for grant in sorted(grants, key=lambda item: item.privilege):
         "('tap_reader', 'default')\n"
         "('tap_reader', 'Collection', 'collection', 'default', 'default', "
         "'kb_doc_v1_corpus_fixture_v1', 'kb_doc_v1_corpus_fixture_v1', "
-        "'DescribeCollection')\n"
+        "'Query')\n"
         "('tap_reader', 'Collection', 'collection', 'default', 'default', "
         "'kb_doc_v1_corpus_fixture_v1', 'kb_doc_v1_corpus_fixture_v1', 'Search')\n"
     )
@@ -1490,6 +1512,13 @@ base = {
     'object_type': 'Collection', 'object_name': target, 'db_name': 'default',
     'role_name': 'tap_reader', 'privilege': 'Search',
 }
+valid_base = [
+    {
+        'object_type': 'Global', 'object_name': '*', 'db_name': 'default',
+        'role_name': 'tap_reader', 'privilege': privilege,
+    }
+    for privilege in ('DescribeAlias', 'DescribeCollection')
+]
 conflicts = (
     {**base, 'db_name': 'other'},
     {**base, 'object_type': 'Global'},
@@ -1501,7 +1530,7 @@ class GrantClient:
         self.item = item
         self.top_role = top_role
     def describe_role(self, role_name, **kwargs):
-        return {'role': self.top_role, 'privileges': [self.item]}
+        return {'role': self.top_role, 'privileges': valid_base + [self.item]}
 
 cases = [(item, 'tap_reader') for item in conflicts] + [(base, 'tap_writer')]
 for item, top_role in cases:
@@ -1524,6 +1553,63 @@ for item, top_role in cases:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == "rejected\n" * 4
+
+
+async def test_fixture_provisioner_requires_exact_global_reader_base_inventory() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import asyncio
+import scripts.milvus_fixture as cli
+
+target = 'kb_doc_v1_corpus_fixture_v1'
+target_grants = [
+    {
+        'object_type': 'Collection', 'object_name': target, 'db_name': 'default',
+        'role_name': 'tap_reader', 'privilege': privilege,
+    }
+    for privilege in ('Query', 'Search')
+]
+valid_base = [
+    {
+        'object_type': 'Global', 'object_name': '*', 'db_name': 'default',
+        'role_name': 'tap_reader', 'privilege': privilege,
+    }
+    for privilege in ('DescribeAlias', 'DescribeCollection')
+]
+cases = (
+    valid_base[:1],
+    valid_base + [{**valid_base[0], 'privilege': 'Query'}],
+    valid_base + [dict(valid_base[0])],
+    [{**item, 'object_type': 'Collection'} for item in valid_base],
+    [{**item, 'db_name': 'other'} for item in valid_base],
+)
+
+class GrantClient:
+    def __init__(self, base):
+        self.base = base
+    def describe_role(self, role_name, **kwargs):
+        return {'role': role_name, 'privileges': self.base + target_grants}
+
+for base in cases:
+    try:
+        provisioner = cli._FixtureProvisioner(GrantClient(base), 'default')
+        asyncio.run(provisioner.collection_grants(target, 'tap_reader'))
+    except RuntimeError:
+        print('rejected')
+        continue
+    raise AssertionError('invalid reader base inventory accepted')
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "rejected\n" * 5
 
 
 async def test_fixture_provisioner_mutates_grants_in_its_exact_database_scope() -> None:
@@ -1563,7 +1649,7 @@ print(sorted({(operation, role, collection, database)
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == (
-        "8\n"
+        "4\n"
         "[('grant', 'tap_reader', 'kb_doc_v1_corpus_fixture_v1', "
         "'fixture_database'), ('revoke', 'tap_reader', "
         "'kb_doc_v1_corpus_fixture_v1', 'fixture_database')]\n"

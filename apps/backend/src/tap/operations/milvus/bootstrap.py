@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from tap.operations.milvus.contracts import (
-    PROVISIONER_PRIVILEGES,
-    READER_PRIVILEGES,
-    WRITER_PRIVILEGES,
+    PROVISIONER_BASE_GRANTS,
+    READER_BASE_GRANTS,
+    WRITER_BASE_GRANTS,
     MilvusAdmin,
-    MilvusGrant,
     MilvusRoleCredentials,
 )
 
-_ROLE_PRIVILEGES = (
-    ("tap_reader", READER_PRIVILEGES),
-    ("tap_writer", WRITER_PRIVILEGES),
-    ("tap_provisioner", PROVISIONER_PRIVILEGES),
+_ROLE_GRANTS = (
+    ("tap_reader", READER_BASE_GRANTS),
+    ("tap_writer", WRITER_BASE_GRANTS),
+    ("tap_provisioner", PROVISIONER_BASE_GRANTS),
 )
 
 
@@ -37,17 +36,7 @@ async def bootstrap_local_rbac(
         await admin.ensure_role(role_name)
         await admin.replace_user_roles(username, frozenset({role_name}))
 
-    for role_name, privileges in _ROLE_PRIVILEGES:
-        await admin.replace_role_grants(
-            role_name,
-            frozenset(
-                MilvusGrant(
-                    resource_level="collection",
-                    resource_name="*",
-                    privilege=privilege,
-                )
-                for privilege in privileges
-            ),
-        )
+    for role_name, grants in _ROLE_GRANTS:
+        await admin.replace_role_grants(role_name, grants)
 
     await admin.rotate_root_password(credentials.rotated_root_password)

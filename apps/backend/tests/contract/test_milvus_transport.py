@@ -417,6 +417,81 @@ async def test_transport_computes_schema_digest_from_closed_fields_functions_and
     assert [call[1]["index_name"] for call in index_calls] == list(_INDEX_FIELDS)  # type: ignore[index]
 
 
+@pytest.mark.asyncio
+async def test_transport_normalizes_only_pinned_content_analyzer_string_to_canonical_digest() -> (
+    None
+):
+    client = RecordingSDKClient()
+    content = next(
+        field
+        for field in client.collection["fields"]  # type: ignore[union-attr]
+        if field["name"] == "content"
+    )
+    content["params"]["enable_analyzer"] = "true"
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    descriptor = await reader.describe_collection(resolved)
+
+    assert descriptor.schema_sha256 == _schema_digest()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("false", "True", "TRUE", "yes", "", " true", "true ", False, 1, None, [], {}),
+    ids=(
+        "false-string",
+        "title-case",
+        "upper-case",
+        "other-string",
+        "empty-string",
+        "leading-space",
+        "trailing-space",
+        "false-boolean",
+        "integer",
+        "none",
+        "list",
+        "mapping",
+    ),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_other_content_analyzer_transport_values(value: object) -> None:
+    client = RecordingSDKClient()
+    content = next(
+        field
+        for field in client.collection["fields"]  # type: ignore[union-attr]
+        if field["name"] == "content"
+    )
+    content["params"]["enable_analyzer"] = value
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize("location", ("other-field", "wrong-path", "other-key"))
+@pytest.mark.asyncio
+async def test_transport_rejects_analyzer_string_outside_the_exact_content_param_path(
+    location: str,
+) -> None:
+    client = RecordingSDKClient()
+    fields = client.collection["fields"]  # type: ignore[assignment]
+    content = next(field for field in fields if field["name"] == "content")
+    if location == "other-field":
+        chunk_id = next(field for field in fields if field["name"] == "chunk_id")
+        chunk_id["params"]["enable_analyzer"] = "true"
+    elif location == "wrong-path":
+        content["enable_analyzer"] = "true"
+    else:
+        content["params"]["other_boolean"] = "true"
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable):
+        await reader.describe_collection(resolved)
+
+
 @pytest.mark.parametrize(
     ("bm25_b", "bm25_k1"),
     (("0.75", "1.2"), ("7.5e-1", "1.20"), (0.75, 1.2)),

@@ -25,7 +25,8 @@ from tap.operations.milvus.client import (
     suppress_pymilvus_rpc_logging,
 )
 from tap.operations.milvus.contracts import (
-    READER_PRIVILEGES,
+    READER_BASE_PRIVILEGES,
+    READER_TARGET_PRIVILEGES,
     WRITER_PRIVILEGES,
     MilvusProvisioner,
     MilvusPublishClients,
@@ -98,6 +99,8 @@ class _FixtureProvisioner:
         if isinstance(privileges, (str, bytes)) or not isinstance(privileges, Sequence):
             raise RuntimeError("Milvus returned malformed grant metadata")
         scoped: set[MilvusScopedGrant] = set()
+        reader_base: set[str] = set()
+        seen: set[tuple[str, str, str, str, str]] = set()
         for item in privileges:
             if not isinstance(item, Mapping):
                 raise RuntimeError("Milvus returned malformed grant metadata")
@@ -115,13 +118,24 @@ class _FixtureProvisioner:
             )
             if any(type(value) is not str or not value for value in dimensions):
                 raise RuntimeError("Milvus returned malformed grant metadata")
+            exact_dimensions = cast(tuple[str, str, str, str, str], dimensions)
+            if exact_dimensions in seen:
+                raise RuntimeError("Milvus returned duplicate grant metadata")
+            seen.add(exact_dimensions)
+            if grant_role != role_name or database_name != self._database_name:
+                raise RuntimeError("Milvus returned ambiguous scoped grant metadata")
+            if role_name == "tap_reader" and resource_name == "*":
+                if object_type != "Global":
+                    raise RuntimeError(
+                        "Milvus returned ambiguous reader base grant metadata"
+                    )
+                reader_base.add(cast(str, privilege))
+                continue
             if resource_name == name:
-                if (
-                    object_type != "Collection"
-                    or database_name != self._database_name
-                    or grant_role != role_name
-                ):
-                    raise RuntimeError("Milvus returned ambiguous scoped grant metadata")
+                if object_type != "Collection":
+                    raise RuntimeError(
+                        "Milvus returned ambiguous scoped grant metadata"
+                    )
                 scoped.add(
                     MilvusScopedGrant(
                         role_name=grant_role,
@@ -131,6 +145,8 @@ class _FixtureProvisioner:
                         privilege=cast(str, privilege),
                     )
                 )
+        if role_name == "tap_reader" and reader_base != READER_BASE_PRIVILEGES:
+            raise RuntimeError("Milvus returned incomplete reader base grant metadata")
         return frozenset(scoped)
 
     def _create_collection(self, name: str, schema: Mapping[str, object]) -> object:
@@ -452,9 +468,10 @@ def _connect(
 
 
 def _role_privileges(role_name: str) -> frozenset[str]:
-    privileges = {"tap_writer": WRITER_PRIVILEGES, "tap_reader": READER_PRIVILEGES}.get(
-        role_name
-    )
+    privileges = {
+        "tap_writer": WRITER_PRIVILEGES,
+        "tap_reader": READER_TARGET_PRIVILEGES,
+    }.get(role_name)
     if privileges is None:
         raise ValueError("fixture role is outside the closed set")
     return privileges

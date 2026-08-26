@@ -9,7 +9,7 @@ import threading
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 import grpc  # type: ignore[import-untyped]
 from pydantic import SecretStr
@@ -23,7 +23,7 @@ from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
 from tap.operations.milvus.contracts import (
     PROVISIONER_PRIVILEGES,
-    READER_PRIVILEGES,
+    READER_TARGET_PRIVILEGES,
     WRITER_PRIVILEGES,
     MilvusAdmin,
     MilvusGrant,
@@ -271,7 +271,7 @@ class PyMilvusAdmin:
         grants: frozenset[MilvusGrant],
     ) -> None:
         raw = await _call(lambda: self._client.describe_role(role_name, timeout=_TIMEOUT_SECONDS))
-        current = _role_grants(raw)
+        current = _role_grants(raw, role_name=role_name)
         for grant in sorted(current - grants, key=_grant_sort_key):
 
             def revoke(grant: MilvusGrant = grant) -> object:
@@ -998,8 +998,12 @@ def _user_roles(raw: object) -> set[str]:
     return _role_names(roles)
 
 
-def _role_grants(raw: object) -> frozenset[MilvusGrant]:
-    if not isinstance(raw, Mapping):
+def _role_grants(
+    raw: object,
+    *,
+    role_name: str,
+) -> frozenset[MilvusGrant]:
+    if not isinstance(raw, Mapping) or raw.get("role") != role_name:
         raise RuntimeError("Milvus returned malformed grant metadata")
     privileges = raw.get("privileges", raw.get("grants", ()))
     if not isinstance(privileges, Sequence) or isinstance(privileges, (str, bytes)):
@@ -1008,12 +1012,41 @@ def _role_grants(raw: object) -> frozenset[MilvusGrant]:
     for item in privileges:
         if not isinstance(item, Mapping):
             raise RuntimeError("Milvus returned malformed grant metadata")
-        privilege = item.get("privilege") or item.get("privilege_name")
-        resource_name = item.get("object_name") or item.get("collection_name")
-        if not isinstance(privilege, str) or not isinstance(resource_name, str):
+        privilege = item.get("privilege")
+        resource_name = item.get("object_name")
+        object_type = item.get("object_type")
+        grant_role = item.get("role_name")
+        database_name = item.get("db_name")
+        if (
+            not isinstance(privilege, str)
+            or not privilege
+            or not isinstance(resource_name, str)
+            or not resource_name
+            or grant_role != role_name
+            or not isinstance(database_name, str)
+            or not database_name
+        ):
             raise RuntimeError("Milvus returned malformed grant metadata")
-        grants.add(MilvusGrant("collection", resource_name, privilege))
+        grant = MilvusGrant(
+            _resource_level(object_type),
+            resource_name,
+            privilege,
+        )
+        if grant in grants:
+            raise RuntimeError("Milvus returned duplicate grant metadata")
+        grants.add(grant)
     return frozenset(grants)
+
+
+def _resource_level(value: object) -> Literal["instance", "database", "collection"]:
+    levels: dict[str, Literal["instance", "database", "collection"]] = {
+        "Global": "instance",
+        "Database": "database",
+        "Collection": "collection",
+    }
+    if not isinstance(value, str) or value not in levels:
+        raise RuntimeError("Milvus returned malformed grant metadata")
+    return levels[value]
 
 
 def _grant_sort_key(grant: MilvusGrant) -> tuple[str, str, str]:
@@ -1045,7 +1078,7 @@ def _mapping_rows(raw: object) -> tuple[Mapping[str, object], ...]:
 
 def _privileges_for_role(role_name: str) -> frozenset[str]:
     privileges = {
-        "tap_reader": READER_PRIVILEGES,
+        "tap_reader": READER_TARGET_PRIVILEGES,
         "tap_writer": WRITER_PRIVILEGES,
         "tap_provisioner": PROVISIONER_PRIVILEGES,
     }.get(role_name)

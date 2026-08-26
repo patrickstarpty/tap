@@ -13,7 +13,7 @@ from typing import Any, Protocol, cast
 from tap.operations.milvus.activation import CorpusActivationState
 from tap.operations.milvus.async_call import await_task_terminal
 from tap.operations.milvus.contracts import (
-    READER_PRIVILEGES,
+    READER_TARGET_PRIVILEGES,
     WRITER_PRIVILEGES,
     MilvusPublishClients,
     MilvusScopedGrant,
@@ -173,7 +173,7 @@ async def publish_fixture(
                 clients,
                 physical,
                 "tap_reader",
-                READER_PRIVILEGES,
+                READER_TARGET_PRIVILEGES,
             )
             await clients.writer.insert(physical, rows)
             await clients.writer.flush(physical)
@@ -186,16 +186,19 @@ async def publish_fixture(
         if preexisting:
             reader_grants = await _collection_grants(clients, physical, "tap_reader")
             writer_grants = await _collection_grants(clients, physical, "tap_writer")
-            if not reader_grants <= READER_PRIVILEGES or not writer_grants <= WRITER_PRIVILEGES:
+            if (
+                not reader_grants <= READER_TARGET_PRIVILEGES
+                or not writer_grants <= WRITER_PRIVILEGES
+            ):
                 raise PublishRejected("Milvus scoped grant inventory is unexpected")
-            if reader_grants != READER_PRIVILEGES:
+            if reader_grants != READER_TARGET_PRIVILEGES:
                 reader_grant_attempted = True
                 await clients.provisioner.grant_collection(physical, "tap_reader")
                 await _require_exact_collection_grants(
                     clients,
                     physical,
                     "tap_reader",
-                    READER_PRIVILEGES,
+                    READER_TARGET_PRIVILEGES,
                 )
             if writer_grants:
                 await clients.provisioner.revoke_collection(physical, "tap_writer")
@@ -234,7 +237,7 @@ async def publish_fixture(
             clients,
             physical,
             "tap_reader",
-            READER_PRIVILEGES,
+            READER_TARGET_PRIVILEGES,
         )
     except asyncio.CancelledError as cancellation:
         await _settle_rollback(

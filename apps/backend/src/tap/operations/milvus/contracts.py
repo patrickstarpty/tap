@@ -65,7 +65,8 @@ class MilvusScopedGrant:
         return self.object_name
 
 
-READER_PRIVILEGES = frozenset({"DescribeAlias", "DescribeCollection", "Search", "Query"})
+READER_BASE_PRIVILEGES = frozenset({"DescribeAlias", "DescribeCollection"})
+READER_TARGET_PRIVILEGES = frozenset({"Search", "Query"})
 WRITER_PRIVILEGES = frozenset({"Insert", "Upsert", "Delete", "Flush", "GetFlushState"})
 PROVISIONER_PRIVILEGES = frozenset(
     {
@@ -82,6 +83,15 @@ PROVISIONER_PRIVILEGES = frozenset(
         "DescribeAlias",
         "ManageOwnership",
     }
+)
+READER_BASE_GRANTS = frozenset(
+    MilvusGrant("instance", "*", privilege) for privilege in READER_BASE_PRIVILEGES
+)
+WRITER_BASE_GRANTS = frozenset(
+    MilvusGrant("collection", "*", privilege) for privilege in WRITER_PRIVILEGES
+)
+PROVISIONER_BASE_GRANTS = frozenset(
+    MilvusGrant("collection", "*", privilege) for privilege in PROVISIONER_PRIVILEGES
 )
 
 
