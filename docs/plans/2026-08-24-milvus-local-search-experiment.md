@@ -34,6 +34,7 @@ related-adrs:
 - 运行身份固定为 reader、writer、provisioner；读取应用不得持有写入、DDL、alias 或 RBAC 权限。
 - 固定 Milvus/PyMilvus/etcd/MinIO 版本，禁止浮动 tag。若 Python 3.13.12 或所需 SDK/API 行为探针失败，停止该任务并修订 RFC/计划，不得静默换版本。
 - Schema digest 继续只使用 fields/functions/indexes/consistency 的 canonical 表示；每个 canonical index 严格为 `index_name`、`field_name`、`index_type`、`metric_type`、嵌套 `params`。Pinned transport 的兼容修正只能归一化到这一表示，不能改变 digest 语义或产生第二套 publisher-only 摘要。
+- Reader 的 Describe privileges 只存在于 bootstrap `Global/*` base inventory；publisher 的 target-scoped reader set 严格只有 `Collection` + exact database/name 的 `Search`、`Query`。任何 `Global` target record 或不同 database/object type/role 的同名 grant 都不能冒充 target grant。
 - 日常 CI 使用仓库内脱敏预计算 vectors，不调用付费 API。实验报告前只运行一次有界真实 LiteLLM embedding profile；默认最多 100 chunks/20 queries，绝对上限 500/100。
 - Milvus 本地端口及现有本地服务宿主端口统一绑定 `127.0.0.1`；共享非生产部署、TLS、HA、SLO、备份和生产容量不在本计划范围。
 - 启动真实 Milvus 前验证 Docker 至少可用 2 vCPU 与 8 GiB memory；不足时门禁失败并报告资源，不降低数据库配置冒充有效实验。
@@ -608,6 +609,19 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
   | 其他字段中的 numeric string，或 `inverted_index_algo` 非字符串 | 不做通用 coercion，fail closed |
 
   可接受的 transport keys 保持闭合：基础字段只有 `field_name`、`index_name`、`index_type`、可选 `metric_type`、可选 `params`、`total_rows`、`indexed_rows`、`pending_index_rows`、`state`；只有上述精确 BM25 分支可增加三个 flat setting。该分支是 pinned live observation 的兼容层，不是新的 provider-wide 输入格式。
+
+  同日后续 live descriptor probe 还发现 canonical `content` field 的 `params.enable_analyzer` 以精确小写字符串 `"true"` 返回。继续先补 RED cases，再只修改现有 collection-field canonicalization 路径；publisher 仍复用该路径和唯一 digest：
+
+  | Case | Expected |
+  | --- | --- |
+  | canonical `content.params.enable_analyzer=true` 原生布尔值 | 继续产生完全相同的 canonical field 与 schema digest |
+  | canonical `content.params.enable_analyzer="true"` 精确小写字符串 | 只把该 exact field/path/value 归一化为布尔 `true`，digest 与 canonical fixture 相同 |
+  | `enable_analyzer` 出现在其他 field、field identity 错误或 key 位于错误路径 | fail closed |
+  | 值为 `"false"`、`"True"`、`"TRUE"`、空串、空白包围或其他 boolean-like 字符串 | fail closed，不做大小写或 truthy coercion |
+  | 值为 list/mapping 等 nested type，或其他 field param 使用 boolean-like string | fail closed，不做通用 string-to-bool coercion |
+  | field/params 中出现未知或重复来源 | 继续按原闭合 shape fail closed |
+
+  该分支只解释 pinned live transport，不改变 canonical fields/functions/indexes/consistency、schema digest 或声明值；错误 path/key/type 不得因为值看似 `true` 而被接受。
 - [ ] **Step 2:** 写竞争测试：alias 在 bind 后切换，hybrid request 仍查询已绑定 physical name；不得再次用 alias 发 search。
 - [ ] **Step 3:** 写 mapping tests，使用以下完整 row/bound factory，再逐键篡改；`anchor_json` 只能解析为 `DocumentAnchor` 的闭合字段。
 
@@ -669,7 +683,7 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
           raise SearchUnavailable("search provider call failed") from error
   ```
 - [ ] **Step 7:** 实现 target binding 和严格 mapper；output fields 只含内容/provenance/版本，不含 ACL array 或 vector。
-- [ ] **Step 8:** 重跑聚焦测试和 `make check && make test`。Task 5 修正只有在 nested 与 pinned-flat 两种输入产生同一 canonical digest、全部拒绝矩阵 GREEN 后才完成；静态/fake GREEN 不能代替 Task 8 的真实重跑。
+- [ ] **Step 8:** 重跑聚焦测试和 `make check && make test`。Task 5 修正只有在 nested 与 pinned-flat index、原生布尔与 pinned exact-string field 两组输入都产生同一 canonical digest，且全部拒绝矩阵 GREEN 后才完成；静态/fake GREEN 不能代替 Task 8 的真实重跑。
 - [ ] **Step 9:** 只暂存本任务文件并提交。
 
   ```sh
@@ -962,9 +976,8 @@ class MilvusGrant:
     resource_name: str
     privilege: str
 
-READER_PRIVILEGES = frozenset(
-    {"DescribeAlias", "DescribeCollection", "Search", "Query"}
-)
+READER_BASE_PRIVILEGES = frozenset({"DescribeAlias", "DescribeCollection"})
+READER_TARGET_PRIVILEGES = frozenset({"Search", "Query"})
 WRITER_PRIVILEGES = frozenset(
     {"Insert", "Upsert", "Delete", "Flush", "GetFlushState"}
 )
@@ -1029,13 +1042,15 @@ async def run_health_probe(clients: MilvusProbeClients, probe_id: str) -> Milvus
 
 **Steps:**
 
-- [ ] **Step 1:** 写 unit tests，以 recording admin client 断言 bootstrap 创建三个身份且授权矩阵不交叉；第二次执行的最终 grants 与第一次相同。
+- [ ] **Step 1:** 写 unit tests，以 recording admin client 断言 bootstrap 创建三个身份且授权矩阵不交叉；reader 的两个 Describe privilege 精确落在 `Global/*` base grants，第二次执行的最终 grants 与第一次相同。
 
   ```python
   await bootstrap_local_rbac(admin, local_role_credentials())
-  assert admin.role_privileges("tap_reader") == {
-      "DescribeAlias", "DescribeCollection", "Search", "Query"
+  assert admin.role_base_privileges("tap_reader") == {
+      "DescribeAlias", "DescribeCollection"
   }
+  assert admin.role_scoped_privileges("tap_reader") == set()
+  assert READER_TARGET_PRIVILEGES == {"Search", "Query"}
   assert admin.role_privileges("tap_writer") == {
       "Insert", "Upsert", "Delete", "Flush", "GetFlushState"
   }
@@ -1107,7 +1122,7 @@ async def run_health_probe(clients: MilvusProbeClients, probe_id: str) -> Milvus
   ```
 - [ ] **Step 5:** `.env.example` 增加 `MILVUS_MINIO_ROOT_USER=tap-local-minio`、`MILVUS_MINIO_ROOT_PASSWORD=tap-local-minio-password`、`MILVUS_INITIAL_ROOT_PASSWORD=Milvus`、`MILVUS_ROOT_PASSWORD=tap-local-rotated-root`、`TAP_ALLOW_INITIAL_MILVUS_ROOT=0`，以及 `MILVUS_READER_*`、`MILVUS_WRITER_*`、`MILVUS_PROVISIONER_*` 的 `tap-local-*` 用户名/密码。首次创建 volume 只能在命令行显式设 `TAP_ALLOW_INITIAL_MILVUS_ROOT=1`；bootstrap 先尝试 rotated root，只有该开关为 1 才尝试初始 root，成功后立即轮换。root/MinIO 变量只供 Compose/bootstrap，reader 配置不继承 root、MinIO、writer 或 provisioner。
 - [ ] **Step 6:** 实现可注入 client 的 bootstrap/health orchestration 与薄 CLI。CLI 只解析参数、构造 client、调用 operation，并用返回码 `0/1` 表示通过/失败；普通 service check 仅在 `TAP_SEARCH_BACKEND=milvus` 或 `--milvus` 时运行 bounded reader canary。
-- [ ] **Step 7:** 对上述每项 privilege 运行真实 allow probe，并对 reader 的 Insert/Delete、writer 的 Search/Query、provisioner 的实体读写运行真实 deny probe。`alter_alias` 必须由 `CreateAlias` grant 的实际 probe 证明；若 v2.6.22 行为不同，停止并更新计划，禁止附加 `CollectionAdmin`、`ClusterAdmin` 或 `All` 绕过。
+- [ ] **Step 7:** 对上述每项 privilege 运行真实 allow probe，并对 reader 的 Insert/Delete、writer 的 Search/Query、provisioner 的实体读写运行真实 deny probe。真实 inventory 必须证明 reader 的 `DescribeAlias`/`DescribeCollection` 只有 `Global/*` bootstrap base records，而每个 probe/fixture target 的 reader records 只有 `Search`/`Query` 且同时匹配 `object_type=Collection`、exact database/name/role；同名不同 database/object type/role、以 target 名称出现的 `Global` record 或额外 privilege 都失败。`alter_alias` 必须由 `CreateAlias` grant 的实际 probe 证明；若 v2.6.22 行为不同，停止并更新计划，禁止附加 `CollectionAdmin`、`ClusterAdmin` 或 `All` 绕过。
 - [ ] **Step 8:** 增加 `milvus-up`、`milvus-down`、`milvus-bootstrap`、`milvus-health` Make targets；`milvus-up` 先检查 2 vCPU/8 GiB，`milvus-down` 默认保留 volumes。
 - [ ] **Step 9:** 运行 `docker compose config`、unit tests、`make check && make test`。在全新本地 volume 上再运行 `make milvus-up && TAP_ALLOW_INITIAL_MILVUS_ROOT=1 make milvus-bootstrap && make milvus-health`；已有 rotated root 的 volume 运行时不得设置该开关。
 - [ ] **Step 10:** 只暂存本任务文件并提交。
@@ -1291,7 +1306,9 @@ def collection_description(manifest: DocFixtureManifest) -> str:
 
 Task 7 bootstrap 的真实行为探针先对 4 段固定中英文文本运行 `run_analyzer`，Task 10 再以 8 个 query cases 验证 BM25。若 analyzer 输出或 BM25 API 与上述固定配置不兼容，停止并把 schema version 改动送回计划/RFC 审查，不在运行时回退到另一 analyzer。
 
-2026-08-26 的首次 Task 8 live publish 在 insert/flush 后、safety query 与 alias mutation 前，被 Task 5 对 pinned `describe_index` 扁平 BM25 transport 的严格拒绝所停止。Task 8 live acceptance 保持 BLOCKED，直到 Task 5 按其新增 TDD 矩阵把该精确形状归一化到既有 canonical digest。修正完成后必须从已记录的零 collection、零 alias、零 scoped grant、无 active marker 状态重跑本 Task 的完整 publish/rebuild/alias/manifest/grant 对账；不得复用部分发布结果，也不得只用 publisher 自身的 descriptor 路径宣称通过。若真实返回超出 RFC-004 的闭合映射，再次停止并回到 RFC/计划审查，不能扩大版本、字段或 coercion。
+2026-08-26 的首次 Task 8 live publish 在 insert/flush 后、safety query 与 alias mutation 前，被 Task 5 对 pinned `describe_index` 扁平 BM25 transport 的严格拒绝所停止。Task 5 按闭合 TDD 矩阵修正后，第二次 live publish 通过 analyzer/create/index，但在 insert 前被 reader scoped-grant reconciliation 停止：固定组合把错误重复授予 target 的 `DescribeAlias`/`DescribeCollection` 表达为 `Global`，而 publisher 当时要求全部 target grants 为 `Collection`。只读 descriptor 诊断同时发现 canonical `content.params.enable_analyzer` 的布尔真值以精确字符串 `"true"` 返回。两个行为都已回到 RFC/计划形成闭合规则；这不是官方 transport 或 privilege 层级声明。
+
+Task 8 live acceptance 继续保持 BLOCKED，直到 Task 5 对 exact `content.params.enable_analyzer="true"` 的 field normalization 和 Task 7/8 对 reader base/target grant 分离都完成 TDD 修正。随后必须从已验证的零 collection、零 alias、零 scoped grant、无 active marker 状态重跑本 Task 的完整 publish/rebuild/alias/manifest/grant 对账；不得复用两次部分发布结果，也不得只用 publisher 自身的 descriptor 或 grant inventory 路径宣称通过。若真实返回超出 RFC-004 的闭合映射，再次停止并回到 RFC/计划审查，不能扩大版本、字段、权限或 coercion。
 
 **Steps:**
 
@@ -1326,7 +1343,7 @@ Task 7 bootstrap 的真实行为探针先对 4 段固定中英文文本运行 `r
 
   Query cases 固定为：`refund-allowed`、`payment-global-allowed`、`payment-wrong-group`、`payment-wrong-project`、`payment-wrong-tenant`、`security-over-classification`、`release-wrong-environment`、`payment-subtree-card-only`。每项保存 query、可信 policy inputs 和精确 `expected_source_ids`；六个 negative/scope case 的期望集合可为空或只含 card source，不使用模糊 relevance label。
 - [ ] **Step 2:** 写 manifest/schema tests：拒绝重复/额外 ID、错误 `h_` SHA-256、hash/provenance 不匹配、动态字段、非 `doc` source type、错误 physical/index family、混合模型或维度。将 fields/functions/indexes/consistency 的 canonical JSON 独立计算为 `schema_sha256`；manifest、collection description 和实际 describe 结果的 digest 任一不一致都拒绝发布，description 出现额外 key 也拒绝。
-- [ ] **Step 3:** 写 recording-client publisher tests，证明流程固定且验证失败时不切 alias。
+- [ ] **Step 3:** 写 recording-client publisher tests，证明流程固定且验证失败时不切 alias。reader bootstrap base inventory 必须已经精确为 `Global/*` 的 Describe grants；publisher 只为新 target 授予 `Search`/`Query`，并按 `Collection` + exact database/name/role 对账，拒绝 `Global` target record、冲突维度或额外 privilege。
 
   ```python
   receipt = await publish_fixture(clients, manifest(), unit_vectors(), activator)
@@ -1345,7 +1362,7 @@ Task 7 bootstrap 的真实行为探针先对 4 段固定中英文文本运行 `r
 - [ ] **Step 4:** 增加 ACL 收紧测试：先 upsert metadata/`deleted=true`，用 strong query 证明旧主体零命中后才产生 receipt；physical delete 不是授权生效条件。
 - [ ] **Step 5:** 增加 rebuild/rollback-window 测试：相同 manifest 生成相同 collection schema、IDs、hashes、ACL/provenance counts；alias verify 后用 temp-file + `os.replace` 原子写 `.local/milvus-active-corpus.json`，随后立即撤销新 physical 的 writer 权限。旧 reader 权限与 collection 保留到显式 `finalize --old-physical <exact-name>`，该命令先撤 reader 再删除；普通 publish/down 不清理旧 collection 或 volume。
 - [ ] **Step 6:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_fixtures.py apps/backend/tests/unit/operations/test_milvus_publish.py -v`；预期 FAIL 为 fixture/publish 模块缺失。随后实现严格 JSON loader、schema builder、reconciler 和 publisher CLI。
-- [ ] **Step 7:** 重跑聚焦测试和 `make check && make test`；确认 Task 5 pinned transport correction 已 GREEN 后，按上述零资源前置条件重跑真实 analyzer、publish、相同 manifest rebuild、alias/marker activation、reader/writer grant reconciliation 与显式旧 target cleanup，并记录 canonical schema digest 对账。任一 Task 5 runtime binding 或 transport shape 不一致都保持 BLOCKED。
+- [ ] **Step 7:** 重跑聚焦测试和 `make check && make test`；确认 Task 5 exact field normalization 与 Task 7/8 base/target grant inventory TDD 均 GREEN 后，从零 collection、零 alias、零 scoped grant、无 active marker 状态重跑真实 analyzer、publish、相同 manifest idempotence、rebuild、alias/marker activation、reader/writer grant reconciliation 与显式旧 target cleanup。live evidence 必须记录 canonical schema digest 不变、reader base grants 只有 `Global/*` Describe、active target grants 只有 exact `Collection` Search/Query、writer 最终撤销和 final zero-state reconciliation。任一 runtime binding、transport shape 或 grant dimension 不一致都保持 BLOCKED。
 - [ ] **Step 8:** 只暂存本任务文件并提交。
 
   ```sh

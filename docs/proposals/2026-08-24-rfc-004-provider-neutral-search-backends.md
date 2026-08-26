@@ -144,9 +144,11 @@ Milvus 配置只保存可信 logical alias、family、允许的物理名称模�
 
 Schema digest 的语义不因 SDK transport 形状改变。每个 index 的 canonical 表示仍然严格只有 `index_name`、`field_name`、`index_type`、`metric_type` 与嵌套 `params`；BM25 的 canonical `params` 固定为 `inverted_index_algo="DAAT_MAXSCORE"`、`bm25_k1=1.2` 与 `bm25_b=0.75`。collection description 中的声明 digest、从 fields/functions/indexes/consistency 计算的 digest 和 target 期望 digest 必须继续相同，不能为 publisher 或 reader 引入第二套摘要表示。
 
-2026-08-26 的本地 live probe 观察到，固定组合 Milvus `2.6.22` + PyMilvus `2.6.17` 会把该 BM25 index 的三个设置作为 `describe_index` 结果的顶层字段返回：`bm25_b` 与 `bm25_k1` 是 numeric strings，`inverted_index_algo` 是字符串，且结果没有嵌套 `params`。这是仓库对固定组合的实测，不是 Milvus 官方文档声明，也不能推广为其他版本的兼容承诺。
+2026-08-26 的本地 live probe 观察到，固定组合 Milvus `2.6.22` + PyMilvus `2.6.17` 会把该 BM25 index 的三个设置作为 `describe_index` 结果的顶层字段返回：`bm25_b` 与 `bm25_k1` 是 numeric strings，`inverted_index_algo` 是字符串，且结果没有嵌套 `params`。同一固定组合的 `describe_collection` 还把 canonical `content` 字段 `params.enable_analyzer` 的布尔真值返回为精确小写字符串 `"true"`。这些都是仓库对固定组合的 live 实测，不是 Milvus 官方文档声明，也不能推广为其他版本、其他字段或其他参数的兼容承诺。
 
-因此 transport 只增加一个版本锁定、闭合且无歧义的归一化分支：公共 transport key 集合仍限于实际基础字段 `field_name`、`index_name`、`index_type`、可选 `metric_type`、可选 `params`、`total_rows`、`indexed_rows`、`pending_index_rows` 与 `state`；只有已验证为 `SPARSE_INVERTED_INDEX` + `BM25` 的 index 才可额外接受顶层 `bm25_b`、`bm25_k1`、`inverted_index_algo`。`bm25_b` 与 `bm25_k1` 的 numeric string 只允许严格、有限的 JSON number 词法形式，并归一化为 canonical nested `params` 中的数值；`inverted_index_algo` 不做类型转换。任何未知字段、重复 index/设置、嵌套与扁平设置并存（即使值相同）、非有限或非规范 numeric string 都 fail closed。其他 index 继续使用原闭合形状，不能复用该分支做通用字符串到数值 coercion。归一化后的对象必须与上述唯一 canonical 表示逐字段相等后才能参与 digest。
+因此 transport 只增加版本锁定、闭合且无歧义的归一化分支。对 index，公共 transport key 集合仍限于实际基础字段 `field_name`、`index_name`、`index_type`、可选 `metric_type`、可选 `params`、`total_rows`、`indexed_rows`、`pending_index_rows` 与 `state`；只有已验证为 `SPARSE_INVERTED_INDEX` + `BM25` 的 index 才可额外接受顶层 `bm25_b`、`bm25_k1`、`inverted_index_algo`。`bm25_b` 与 `bm25_k1` 的 numeric string 只允许严格、有限的 JSON number 词法形式，并归一化为 canonical nested `params` 中的数值；`inverted_index_algo` 不做类型转换。任何未知字段、重复 index/设置、嵌套与扁平设置并存（即使值相同）、非有限或非规范 numeric string 都 fail closed。其他 index 继续使用原闭合形状，不能复用该分支做通用字符串到数值 coercion。
+
+对 collection fields，唯一新增的 transport 归一化是：字段 identity 必须精确为 canonical `content` 字段，路径必须精确为该字段的 `params.enable_analyzer`，实际值必须是大小写敏感的小写字符串 `"true"`，然后归一化为 canonical 布尔值 `true`。错误字段、错误路径、`"false"`、`"True"`、`"TRUE"`、其他 boolean-like 字符串、其他 key、布尔值以外的嵌套结构或未知字段继续 fail closed；不得把该规则扩展成通用字符串到布尔值 coercion。原生 canonical 布尔 `true` 继续直接接受。两类归一化后的 fields/functions/indexes/consistency 对象都必须与唯一 canonical 表示逐字段相等后才能参与 digest，digest 语义和既有声明值不变。
 
 ### 可信 ACL filter
 
@@ -196,11 +198,13 @@ provider 原始 score 可以进入受控诊断记录，但公共正确性不依�
 
 | 身份 | 必需权限 | 明确禁止 |
 | --- | --- | --- |
-| retrieval reader | 已发布 `doc` target 上的 `DescribeAlias`、`DescribeCollection`、`Search`、`Query` | Insert/Upsert/Delete/Flush、collection/index/alias 管理、RBAC |
+| retrieval reader | bootstrap base inventory 中 `Global/*` 的 `DescribeAlias`、`DescribeCollection`；已发布 `doc` target 上 `Collection` + exact database/name 的 `Search`、`Query` | Insert/Upsert/Delete/Flush、collection/index/alias 管理、RBAC，以及把 `Global` record 当作 target-scoped grant |
 | fixture writer | 指定未发布 physical fixture collection 上的 `Insert`、`Upsert`、`Delete`、`Flush` 及 flush 状态读取 | Search/Query、alias 切换、collection/index 管理、RBAC |
 | provisioner/publisher | 仅本地/CI 编排所需的 collection/index create/drop/load/release、alias create/alter/drop 与逐 target reader/writer 授权 | 被 Retrieval application 持有、出现在普通 runtime env |
 
-发布者在 alias 切换前给 reader 授予新 physical collection 的最小只读权限，回滚窗口结束后再撤销旧 target 权限。Milvus 候选版本对 `alter_alias` 的具体 RBAC 映射必须由版本固定前的行为探针验证，不能根据 SDK 方法名猜权限；实施只授予官方 privilege 表与行为探针共同证明必要的权限。
+2026-08-26 的仓库 live probe 观察到，固定 Milvus/PyMilvus 组合在 grant inventory 中把 `DescribeAlias`、`DescribeCollection` 表达为 `Global`，而 `Search`、`Query` 表达为 `Collection`。这是固定组合的实测，不是官方 privilege 层级承诺。闭合契约因此把两个 Describe privilege 只作为 bootstrap `Global/*` base grants 创建和验证；publisher 不再对每个 physical target 重复授予它们。reader 的 target-scoped grant set 严格只有 `Search`、`Query`，且 inventory 必须同时匹配 `object_type=Collection`、exact database、exact physical name 和 exact reader role。任何以 target 名称出现的 `Global` record、同名但不同 database/object type/role 的记录或额外 target privilege 都不能冒充合法 target grant，必须 fail closed。
+
+发布者在 alias 切换前只给 reader 授予新 physical collection 的 `Search`、`Query`，回滚窗口结束后再撤销旧 target 的这两项权限。Milvus 候选版本对 `alter_alias` 的具体 RBAC 映射必须由版本固定前的行为探针验证，不能根据 SDK 方法名猜权限；实施只授予官方 privilege 表与行为探针共同证明必要的权限。
 
 行为健康门禁由独立的本地/CI probe orchestrator 运行：provisioner 创建隔离临时 collection 并授权，writer insert/flush，reader 使用与应用同级的只读凭据完成 alias describe、filtered hybrid search/query，最后由 writer 删除实体、provisioner 删除 alias/collection。容器 `running` 或端口可连不是充分健康证明，probe 不得修改 active fixture collection。Retrieval application 的 liveness 只检查自身进程/event loop，不访问 Milvus；startup/readiness 才允许用 reader 凭据执行有 deadline 的 `DescribeAlias`、`DescribeCollection` 与预置 canary query。Milvus 故障使实例 not ready 并让已进入的请求获得受控 `503`，不能触发 liveness 重启；应用身份始终没有 create、insert 或 delete 能力。
 
@@ -342,7 +346,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 
 ## 未决问题
 
-- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 发现该组合的 BM25 `describe_index` 使用上述扁平 transport 形状；Task 5 必须先按闭合规则归一化并重跑测试，Task 8 才能重跑发布验收。该实现事实不改变本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
+- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport，以及 reader Describe grants 的 `Global` inventory 层级；Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
 - **Embedding route**：从现有 LiteLLM 允许列表选择一个固定 embedding model，fixture manifest 保存 model ID 与 dimension；若没有可用的脱敏非生产 route，真实 embedding 子实验保持阻塞，不退化为未标注的 fake GREEN。
 - **中文 analyzer**：由首轮脱敏 fixture 的实际语言分布选择并固化；若包含中文，必须对默认与中文 analyzer 输出做可复现对比后选择，选择结果进入 schema version。
 - **共享非生产部署**：本 RFC 提议的首轮批准范围只有本地 Docker。是否把 Standalone 放到共享 VM/容器环境，在本地资源、恢复和安全 review 后另行批准，并强制 TLS 与 secret 注入。
