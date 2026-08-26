@@ -11,6 +11,7 @@ import threading
 import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from enum import IntEnum
 from typing import Literal, Protocol, cast
 
@@ -56,6 +57,7 @@ _INDEX_FIELDS = (
     "deleted",
 )
 _SAFE_COLLECTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}\Z")
+_JSON_NUMBER_STRING = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 _METADATA_PREFIX = "tap-collection-metadata-v1:"
 _MAX_NORMALIZATION_DEPTH = 16
 _MAX_NORMALIZATION_ITEMS = 20_000
@@ -123,18 +125,21 @@ _FUNCTION_DESCRIPTION_FIELDS = frozenset(
 )
 _INDEX_DESCRIPTION_FIELDS = frozenset(
     {
+        "bm25_b",
+        "bm25_k1",
         "field_name",
         "index_name",
         "index_type",
+        "inverted_index_algo",
         "metric_type",
         "params",
         "total_rows",
         "indexed_rows",
         "pending_index_rows",
         "state",
-        "fail_reason",
     }
 )
+_FLATTENED_BM25_FIELDS = frozenset({"bm25_b", "bm25_k1", "inverted_index_algo"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -760,18 +765,73 @@ def _canonical_indexes(raw: tuple[object, ...]) -> list[dict[str, object]]:
         index_name = _description_name(value, "index_name")
         if field_name != index_name or field_name not in _INDEX_FIELDS:
             raise ValueError("index identity is outside the closed schema")
+        index_type = _description_name(value, "index_type")
+        metric_type = _optional_description_name(value.get("metric_type"))
         canonical.append(
             {
                 "field_name": field_name,
                 "index_name": index_name,
-                "index_type": _description_name(value, "index_type"),
-                "metric_type": _optional_description_name(value.get("metric_type")),
-                "params": _canonical_params(value.get("params", {})),
+                "index_type": index_type,
+                "metric_type": metric_type,
+                "params": _canonical_index_params(
+                    value,
+                    field_name=field_name,
+                    index_type=index_type,
+                    metric_type=metric_type,
+                ),
             }
         )
     if {index["field_name"] for index in canonical} != set(_INDEX_FIELDS):
         raise ValueError("index descriptions are incomplete")
     return sorted(canonical, key=lambda item: cast(str, item["field_name"]))
+
+
+def _canonical_index_params(
+    value: Mapping[str, object],
+    *,
+    field_name: str,
+    index_type: str,
+    metric_type: str | None,
+) -> dict[str, object]:
+    flattened = set(value) & _FLATTENED_BM25_FIELDS
+    if not flattened:
+        return _canonical_params(value.get("params", {}))
+    if (
+        "params" in value
+        or flattened != _FLATTENED_BM25_FIELDS
+        or field_name != "bm25_sparse"
+        or index_type != "SPARSE_INVERTED_INDEX"
+        or metric_type != "BM25"
+        or value.get("inverted_index_algo") != "DAAT_MAXSCORE"
+    ):
+        raise ValueError("flattened index settings are outside the pinned BM25 shape")
+    return {
+        "bm25_b": _canonical_bm25_number(value["bm25_b"], expected="0.75"),
+        "bm25_k1": _canonical_bm25_number(value["bm25_k1"], expected="1.2"),
+        "inverted_index_algo": "DAAT_MAXSCORE",
+    }
+
+
+def _canonical_bm25_number(raw: object, *, expected: str) -> float:
+    if isinstance(raw, str):
+        if len(raw) > 64 or _JSON_NUMBER_STRING.fullmatch(raw) is None:
+            raise ValueError("BM25 numeric setting is not canonical")
+        try:
+            value = Decimal(raw)
+        except InvalidOperation:
+            raise ValueError("BM25 numeric setting is invalid") from None
+    elif type(raw) is int:
+        value = Decimal(cast(int, raw))
+    elif type(raw) is float:
+        provider_float = cast(float, raw)
+        if not math.isfinite(provider_float):
+            raise ValueError("BM25 numeric setting is not finite")
+        value = Decimal(str(provider_float))
+    else:
+        raise ValueError("BM25 numeric setting has an invalid type")
+    if not value.is_finite() or value != Decimal(expected):
+        raise ValueError("BM25 numeric setting does not match the canonical schema")
+    return float(expected)
 
 
 def _hybrid_rows(

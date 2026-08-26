@@ -104,7 +104,11 @@ def _canonical_schema() -> dict[str, object]:
                 "index_name": "bm25_sparse",
                 "index_type": "SPARSE_INVERTED_INDEX",
                 "metric_type": "BM25",
-                "params": {"bm25_b": 0.75, "bm25_k1": 1.2},
+                "params": {
+                    "bm25_b": 0.75,
+                    "bm25_k1": 1.2,
+                    "inverted_index_algo": "DAAT_MAXSCORE",
+                },
             },
             {
                 "field_name": "classification_rank",
@@ -236,6 +240,25 @@ def _raw_indexes() -> dict[str, dict[str, object]]:
         }
         for index in canonical["indexes"]  # type: ignore[union-attr]
     }
+
+
+def _flatten_bm25(
+    indexes: dict[str, dict[str, object]],
+    *,
+    bm25_b: object = "0.75",
+    bm25_k1: object = "1.2",
+    inverted_index_algo: object = "DAAT_MAXSCORE",
+) -> dict[str, object]:
+    bm25 = indexes["bm25_sparse"]
+    bm25.pop("params")
+    bm25.update(
+        {
+            "bm25_b": bm25_b,
+            "bm25_k1": bm25_k1,
+            "inverted_index_algo": inverted_index_algo,
+        }
+    )
+    return bm25
 
 
 def _config(*, timeout_seconds: float = 1.0) -> MilvusSearchConfig:
@@ -392,6 +415,196 @@ async def test_transport_computes_schema_digest_from_closed_fields_functions_and
     assert descriptor.vector_dimension == 1536
     index_calls = [call for call in client.calls if call[0] == "describe_index"]
     assert [call[1]["index_name"] for call in index_calls] == list(_INDEX_FIELDS)  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("bm25_b", "bm25_k1"),
+    (("0.75", "1.2"), ("7.5e-1", "1.20"), (0.75, 1.2)),
+    ids=("pinned-strings", "equivalent-json-number-strings", "provider-numbers"),
+)
+@pytest.mark.asyncio
+async def test_transport_normalizes_pinned_flattened_bm25_settings_to_canonical_digest(
+    bm25_b: object,
+    bm25_k1: object,
+) -> None:
+    client = RecordingSDKClient()
+    _flatten_bm25(client.indexes, bm25_b=bm25_b, bm25_k1=bm25_k1)
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    descriptor = await reader.describe_collection(resolved)
+
+    assert descriptor.schema_sha256 == _schema_digest()
+
+
+@pytest.mark.asyncio
+async def test_transport_rejects_nested_and_flattened_bm25_settings_together() -> None:
+    client = RecordingSDKClient()
+    client.indexes["bm25_sparse"].update(
+        {
+            "bm25_b": "0.75",
+            "bm25_k1": "1.2",
+            "inverted_index_algo": "DAAT_MAXSCORE",
+        }
+    )
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.asyncio
+async def test_transport_rejects_unknown_index_transport_key() -> None:
+    client = RecordingSDKClient()
+    client.indexes["bm25_sparse"]["unknown_setting"] = "provider-widening"
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection") as caught:
+        await reader.describe_collection(resolved)
+
+    assert "provider-widening" not in str(caught.value) + repr(caught.value)
+
+
+@pytest.mark.parametrize(
+    "missing_setting",
+    ("bm25_b", "bm25_k1", "inverted_index_algo"),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_incomplete_flattened_bm25_settings(
+    missing_setting: str,
+) -> None:
+    client = RecordingSDKClient()
+    bm25 = _flatten_bm25(client.indexes)
+    bm25.pop(missing_setting)
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.asyncio
+async def test_transport_rejects_duplicate_index_identity() -> None:
+    client = RecordingSDKClient()
+    client.indexes["tenant_id"] = dict(client.indexes["bm25_sparse"])
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    (
+        ("bm25_b", True),
+        ("bm25_b", []),
+        ("bm25_k1", None),
+        ("inverted_index_algo", 1),
+    ),
+    ids=("boolean", "list", "none", "algorithm-not-string"),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_wrong_flattened_bm25_setting_types(
+    setting: str,
+    value: object,
+) -> None:
+    client = RecordingSDKClient()
+    bm25 = _flatten_bm25(client.indexes)
+    bm25[setting] = value
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "",
+        " 0.75",
+        "0.75 ",
+        "+0.75",
+        ".75",
+        "00.75",
+        "0x1.8p-1",
+        "0.75000000000000000001",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ),
+    ids=(
+        "empty",
+        "leading-space",
+        "trailing-space",
+        "plus-sign",
+        "missing-integer",
+        "leading-zero",
+        "hex",
+        "different-high-precision-value",
+        "nan-string",
+        "positive-inf-string",
+        "negative-inf-string",
+        "nan-number",
+        "positive-inf-number",
+        "negative-inf-number",
+    ),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_noncanonical_or_nonfinite_flattened_bm25_numbers(
+    value: object,
+) -> None:
+    client = RecordingSDKClient()
+    _flatten_bm25(client.indexes, bm25_b=value)
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("index_type", "INVERTED"), ("metric_type", "COSINE")),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_flattened_settings_for_wrong_index_identity(
+    field: str,
+    value: str,
+) -> None:
+    client = RecordingSDKClient()
+    bm25 = _flatten_bm25(client.indexes)
+    bm25[field] = value
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.asyncio
+async def test_transport_does_not_apply_flattened_bm25_coercion_to_other_indexes() -> None:
+    client = RecordingSDKClient()
+    dense = client.indexes["dense_vector"]
+    dense.pop("params")
+    dense.update(
+        {
+            "bm25_b": "0.75",
+            "bm25_k1": "1.2",
+            "inverted_index_algo": "DAAT_MAXSCORE",
+        }
+    )
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
 
 
 @pytest.mark.asyncio
