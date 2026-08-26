@@ -36,6 +36,7 @@ _HEALTH_RETRY_DELAY_SECONDS = 3.0
 
 async def _run_health(settings: Mapping[str, str]) -> None:
     clients = build_probe_clients(settings, sdk=_sdk())
+    failure: BaseException | None = None
     try:
         probe_id = f"probe_{secrets.token_hex(8)}"
         report = await run_health_probe(clients, probe_id)
@@ -45,8 +46,20 @@ async def _run_health(settings: Mapping[str, str]) -> None:
             or not report.cleanup_complete
         ):
             raise RuntimeError("Milvus behavioral health assertions failed")
-    finally:
+    except BaseException as error:
+        failure = error
+    try:
         await close_probe_clients(clients)
+    except Exception:
+        if failure is None or (
+            isinstance(failure, Exception)
+            and not isinstance(failure, MilvusHealthCleanupFailed)
+        ):
+            failure = MilvusHealthCleanupFailed("Milvus health client cleanup failed")
+        else:
+            failure.add_note("Milvus health client cleanup also failed")
+    if failure is not None:
+        raise failure
 
 
 async def _run_health_until_ready(settings: Mapping[str, str]) -> None:

@@ -162,6 +162,55 @@ raise SystemExit(result)
     assert completed.stderr == "Milvus health probe failed.\n"
 
 
+async def test_health_double_cleanup_failure_preserves_the_non_retryable_error() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import asyncio
+import scripts.milvus_health_probe as cli
+from tap.operations.milvus.health import MilvusHealthCleanupFailed
+
+builds = 0
+
+def build_clients(settings, *, sdk):
+    global builds
+    builds += 1
+    return object()
+
+async def fail_server_cleanup(clients, probe_id):
+    raise MilvusHealthCleanupFailed("server cleanup failed")
+
+async def fail_client_cleanup(clients):
+    raise RuntimeError("client cleanup failed")
+
+cli.build_probe_clients = build_clients
+cli.run_health_probe = fail_server_cleanup
+cli.close_probe_clients = fail_client_cleanup
+cli._sdk = object
+cli._HEALTH_RETRY_DELAY_SECONDS = 0
+try:
+    asyncio.run(cli._run_health_until_ready({}))
+except MilvusHealthCleanupFailed:
+    if builds != 1:
+        raise SystemExit(99)
+else:
+    raise SystemExit(98)
+print("non-retryable cleanup preserved")
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "non-retryable cleanup preserved\n"
+    assert completed.stderr == ""
+
+
 class RecordingAdmin:
     def __init__(self) -> None:
         self.dropped_collections: list[str] = []
