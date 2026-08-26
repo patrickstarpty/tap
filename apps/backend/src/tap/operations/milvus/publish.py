@@ -581,7 +581,6 @@ async def _rollback(
     activation_attempted: bool,
 ) -> tuple[str, ...]:
     issues: list[str] = []
-    alias_restored = False
     try:
         current = await _current_alias_target(clients, manifest.alias)
         if (
@@ -593,8 +592,7 @@ async def _rollback(
                 await clients.provisioner.drop_alias(manifest.alias)
             else:
                 await clients.provisioner.alter_alias(manifest.alias, previous_target)
-        alias_restored = await _current_alias_target(clients, manifest.alias) == previous_target
-        if not alias_restored:
+        if await _current_alias_target(clients, manifest.alias) != previous_target:
             issues.append("alias")
     except Exception:
         issues.append("alias")
@@ -631,22 +629,13 @@ async def _rollback(
             issues.append(role_name)
     if create_attempted and not preexisting:
         try:
-            collection_exists = await _collection_exists(
+            if await _collection_exists(
                 clients,
                 manifest.physical_collection,
-            )
-            if collection_exists and alias_attempted:
-                issues.append("collection")
-            elif collection_exists:
-                await clients.provisioner.drop_collection(manifest.physical_collection)
-            if not alias_attempted and await _collection_exists(
-                clients, manifest.physical_collection
             ):
-                if "collection" not in issues:
-                    issues.append("collection")
-        except Exception:
-            if "collection" not in issues:
                 issues.append("collection")
+        except Exception:
+            issues.append("collection")
     return tuple(issues)
 
 

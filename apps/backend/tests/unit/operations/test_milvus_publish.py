@@ -45,7 +45,6 @@ class RecordingProvisioner:
         self.collections: set[str] = set()
         self.grants: dict[tuple[str, str], set[str]] = {}
         self.fail_after: str | None = None
-        self.fail_persistently: str | None = None
         self.fail_alias_restore = False
         self.describe_alias_calls = 0
 
@@ -113,8 +112,6 @@ class RecordingProvisioner:
 
     async def drop_collection(self, name: str) -> None:
         self.events.append("drop_collection")
-        if self.fail_persistently == "drop_collection":
-            raise TimeoutError("cleanup timeout")
         self.collections.discard(name)
 
     def _fail_after(self, event: str) -> None:
@@ -129,7 +126,6 @@ class DelayedAliasProvisioner(RecordingProvisioner):
         self.alias_started = threading.Event()
         self.alias_release = threading.Event()
         self.alias_finished = threading.Event()
-        self.drop_alias_targets: list[str | None] = []
 
     async def alter_alias(self, alias: str, collection_name: str) -> None:
         if collection_name.endswith("_old"):
@@ -145,23 +141,51 @@ class DelayedAliasProvisioner(RecordingProvisioner):
 
         await milvus_client._call(mutate_alias)
 
-    async def drop_collection(self, name: str) -> None:
-        self.drop_alias_targets.append(self.alias_target)
-        await super().drop_collection(name)
 
-
-class DelayedDropProvisioner(RecordingProvisioner):
+class DelayedCollectionInventoryProvisioner(RecordingProvisioner):
     def __init__(self, events: list[str]) -> None:
         super().__init__(events)
-        self.drop_started = asyncio.Event()
-        self.drop_release = asyncio.Event()
-        self.drop_finished = False
+        self.inventory_calls = 0
+        self.inventory_started = asyncio.Event()
+        self.inventory_release = asyncio.Event()
+        self.inventory_finished = False
 
-    async def drop_collection(self, name: str) -> None:
-        self.drop_started.set()
-        await self.drop_release.wait()
-        await super().drop_collection(name)
-        self.drop_finished = True
+    async def collection_exists(self, name: str) -> bool:
+        self.inventory_calls += 1
+        if self.inventory_calls > 1:
+            self.inventory_started.set()
+            await self.inventory_release.wait()
+            self.inventory_finished = True
+        return await super().collection_exists(name)
+
+
+class ExternalAliasBeforeRollbackProvisioner(RecordingProvisioner):
+    async def create_indexes(self, name: str) -> None:
+        await super().create_indexes(name)
+        self.alias_target = name
+
+
+class ExternalAliasAfterObservationProvisioner(RecordingProvisioner):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.observed_for_rollback = False
+
+    async def describe_alias(self, alias: str) -> str | None:
+        value = await super().describe_alias(alias)
+        if self.describe_alias_calls == 3:
+            self.observed_for_rollback = True
+            asyncio.get_running_loop().call_soon(
+                setattr,
+                self,
+                "alias_target",
+                "kb_doc_v1_corpus_fixture_v1",
+            )
+        return value
+
+    async def collection_exists(self, name: str) -> bool:
+        if self.observed_for_rollback:
+            await asyncio.sleep(0)
+        return await super().collection_exists(name)
 
 
 class RecordingWriter:
@@ -421,26 +445,33 @@ async def test_publish_uses_fixed_fail_closed_order() -> None:
     assert receipt.manifest_sha256 == manifest_sha256(manifest)
 
 
-async def test_negative_probe_failure_never_switches_alias_and_cleans_new_target() -> None:
+async def test_negative_probe_failure_never_switches_alias_and_retains_new_target() -> None:
     events: list[str] = []
     manifest = load_doc_fixture(FIXTURE)
-    with pytest.raises(PublishRejected):
+    publish_clients = clients(events, fail_negative_probe=True)
+    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
+    sink = RecordingCleanupSink([])
+
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
         await publish_fixture(
-            clients(events, fail_negative_probe=True),
+            publish_clients,
             manifest,
             unit_vectors(),
             RecordingActivator(events),
+            cleanup_status_sink=sink,
         )
 
     assert "alter_alias" not in events
-    assert events[-3:] == ["revoke_writer", "revoke_reader", "drop_collection"]
+    assert "drop_collection" not in events
+    assert manifest.physical_collection in provisioner.collections
+    assert sink.issues == [("collection",)]
 
 
 @pytest.mark.parametrize(
     "partial_event",
     ("create_collection", "grant_writer", "grant_reader"),
 )
-async def test_partial_side_effect_then_timeout_is_reconciled_without_orphans(
+async def test_partial_side_effect_then_timeout_retains_created_target_for_explicit_cleanup(
     partial_event: str,
 ) -> None:
     events: list[str] = []
@@ -449,14 +480,78 @@ async def test_partial_side_effect_then_timeout_is_reconciled_without_orphans(
     provisioner.fail_after = partial_event
     activator = RecordingActivator(events)
     manifest = load_doc_fixture(FIXTURE)
+    sink = RecordingCleanupSink([])
 
-    with pytest.raises(PublishRejected):
-        await publish_fixture(publish_clients, manifest, unit_vectors(), activator)
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
+        await publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            activator,
+            cleanup_status_sink=sink,
+        )
 
     assert provisioner.alias_target is None
-    assert manifest.physical_collection not in provisioner.collections
+    assert manifest.physical_collection in provisioner.collections
     assert not {grant for grant in provisioner.grants if grant[0] == manifest.physical_collection}
     assert activator.state is None
+    assert sink.issues == [("collection",)]
+    assert "drop_collection" not in events
+
+
+async def test_external_alias_to_new_target_before_rollback_never_triggers_drop() -> None:
+    events: list[str] = []
+    provisioner = ExternalAliasBeforeRollbackProvisioner(events)
+    publish_clients = clients_with_provisioner(
+        events,
+        provisioner,
+        fail_negative_probe=True,
+    )
+    manifest = load_doc_fixture(FIXTURE)
+    sink = RecordingCleanupSink([])
+
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
+        await publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            RecordingActivator(events),
+            cleanup_status_sink=sink,
+        )
+
+    assert provisioner.alias_target == manifest.physical_collection
+    assert manifest.physical_collection in provisioner.collections
+    assert sink.issues == [("alias", "collection")]
+    assert "alter_alias" not in events
+    assert "drop_collection" not in events
+
+
+async def test_external_alias_switch_after_rollback_observation_never_triggers_drop() -> None:
+    events: list[str] = []
+    provisioner = ExternalAliasAfterObservationProvisioner(events)
+    publish_clients = clients_with_provisioner(
+        events,
+        provisioner,
+        fail_negative_probe=True,
+    )
+    manifest = load_doc_fixture(FIXTURE)
+    sink = RecordingCleanupSink([])
+
+    with pytest.raises(PublishRejected, match="cleanup incomplete"):
+        await publish_fixture(
+            publish_clients,
+            manifest,
+            unit_vectors(),
+            RecordingActivator(events),
+            cleanup_status_sink=sink,
+        )
+
+    assert provisioner.observed_for_rollback
+    assert provisioner.alias_target == manifest.physical_collection
+    assert manifest.physical_collection in provisioner.collections
+    assert sink.issues == [("collection",)]
+    assert "alter_alias" not in events
+    assert "drop_collection" not in events
 
 
 async def test_failed_alias_attempt_restores_alias_but_preserves_new_collection() -> None:
@@ -540,12 +635,11 @@ async def test_alias_restore_failure_preserves_new_physical_and_reports_incomple
     assert "drop_collection" not in events
 
 
-async def test_cleanup_incomplete_is_surfaced_without_deleting_other_collection() -> None:
+async def test_retained_created_target_never_deletes_unrelated_collection() -> None:
     events: list[str] = []
     publish_clients = clients(events, fail_negative_probe=True)
     provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
     provisioner.collections.add("kb_doc_v1_unrelated")
-    provisioner.fail_persistently = "drop_collection"
 
     with pytest.raises(PublishRejected, match="cleanup incomplete"):
         await publish_fixture(
@@ -1090,9 +1184,9 @@ async def test_cancelled_delayed_alias_settles_then_preserves_new_target() -> No
     assert not returned_before_provider
     assert task.cancelled()
     assert provisioner.alias_target == "kb_doc_v1_corpus_fixture_old"
-    assert provisioner.drop_alias_targets == []
     assert manifest.physical_collection in provisioner.collections
     assert sink.issues == [("collection",)]
+    assert "drop_collection" not in events
 
 
 async def test_repeated_cancellation_waits_for_rollback_terminal_result() -> None:
@@ -1133,7 +1227,7 @@ async def test_repeated_cancellation_waits_for_rollback_terminal_result() -> Non
 
 async def test_ordinary_failure_then_repeated_cancellation_finishes_rollback() -> None:
     events: list[str] = []
-    provisioner = DelayedDropProvisioner(events)
+    provisioner = DelayedCollectionInventoryProvisioner(events)
     publish_clients = clients_with_provisioner(
         events,
         provisioner,
@@ -1150,29 +1244,28 @@ async def test_ordinary_failure_then_repeated_cancellation_finishes_rollback() -
             cleanup_status_sink=sink,
         )
     )
-    await provisioner.drop_started.wait()
+    await provisioner.inventory_started.wait()
 
     task.cancel()
     task.cancel()
     await asyncio.sleep(0)
     returned_before_rollback = task.done()
-    provisioner.drop_release.set()
+    provisioner.inventory_release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
 
     assert not returned_before_rollback
     assert task.cancelled()
     assert task.cancelling() == 2
-    assert provisioner.drop_finished
-    assert manifest.physical_collection not in provisioner.collections
-    assert sink.issues == [()]
+    assert provisioner.inventory_finished
+    assert manifest.physical_collection in provisioner.collections
+    assert sink.issues == [("collection",)]
+    assert "drop_collection" not in events
 
 
 async def test_cleanup_sink_cancellation_never_replaces_ordinary_failure() -> None:
     events: list[str] = []
     publish_clients = clients(events, fail_negative_probe=True)
-    provisioner = cast(RecordingProvisioner, publish_clients.provisioner)
-    provisioner.fail_persistently = "drop_collection"
 
     with pytest.raises(PublishRejected, match="cleanup incomplete"):
         await publish_fixture(
