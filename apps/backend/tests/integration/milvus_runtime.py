@@ -113,6 +113,7 @@ _REBUILD_FIELDS = (
     "anchor_json",
     "derived_from_chunk_ids",
 )
+_REBUILD_SOURCE_ONLY_FIELDS = frozenset({"title", "content", "content_role", "dense_vector"})
 _CASE_SCOPE = {
     "payment-wrong-group": "blob:fixture/payment/refund",
     "payment-wrong-project": "blob:fixture/payment/refund",
@@ -455,7 +456,7 @@ class PublishedFixture:
             self.manifest,
             {item_id: record.vector for item_id, record in self.snapshot.chunks.items()},
         )
-        return _rows_digest(tuple(_rebuild_row(row) for row in rows))
+        return _rows_digest(tuple(_expected_rebuild_row(row) for row in rows))
 
     async def live_rebuild_digest(self) -> str:
         client = self._raw_client(
@@ -851,6 +852,13 @@ def _rebuild_row(raw: Mapping[str, object] | object) -> dict[str, object]:
             raise AssertionError("rebuild reconciliation array is malformed")
         row[name] = list(value)
     return row
+
+
+def _expected_rebuild_row(raw: Mapping[str, object] | object) -> dict[str, object]:
+    expected_fields = set(_REBUILD_FIELDS) | _REBUILD_SOURCE_ONLY_FIELDS
+    if not isinstance(raw, Mapping) or set(raw) != expected_fields:
+        raise AssertionError("expected rebuild source row is widened or incomplete")
+    return _rebuild_row({name: raw[name] for name in _REBUILD_FIELDS})
 
 
 def _rows_digest(rows: Sequence[Mapping[str, object]]) -> str:
