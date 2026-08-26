@@ -378,12 +378,13 @@ def _preflight(
             or _DIGEST.fullmatch(item.content_hash) is None
             or content_hash(item.text) != item.content_hash
             or item.item_id in seen_ids
-            or (
-                item.content_hash in normalized_by_hash
-                and normalized_by_hash[item.content_hash] != normalized
-            )
         ):
             raise EmbeddingResearchRejected("embedding input identity, text, or hash is malformed")
+        if (
+            item.content_hash in normalized_by_hash
+            and normalized_by_hash[item.content_hash] != normalized
+        ):
+            raise EmbeddingResearchRejected("verified embedding hash collision")
         seen_ids.add(item.item_id)
         normalized_by_hash[item.content_hash] = normalized
     return all_items
@@ -396,12 +397,31 @@ def _validate_embedding(
         raise EmbeddingResearchRejected("provider embedding does not match the fixed model")
     _validate_vector(embedding.vector)
     usage = embedding.usage
-    if not isinstance(usage, EmbeddingUsage) or usage.response_cost_usd is None:
+    if type(usage) is not EmbeddingUsage:
         raise EmbeddingResearchRejected("embedding usage and cost are required")
+    _validate_usage(usage)
     request_id = embedding.provider_request_id
     if not isinstance(request_id, str) or _PROVIDER_REQUEST_ID.fullmatch(request_id) is None:
         raise EmbeddingResearchRejected("provider request identity is malformed")
     return embedding.vector, usage, request_id
+
+
+def _validate_usage(usage: EmbeddingUsage) -> None:
+    cost = usage.response_cost_usd
+    exponent = cost.as_tuple().exponent if type(cost) is Decimal and cost.is_finite() else None
+    if (
+        type(usage.input_tokens) is not int
+        or type(usage.total_tokens) is not int
+        or not 0 <= usage.input_tokens <= 1_000_000
+        or not usage.input_tokens <= usage.total_tokens <= 1_000_000
+        or type(cost) is not Decimal
+        or not cost.is_finite()
+        or not 0 <= cost <= Decimal("100")
+        or type(exponent) is not int
+        or not -18 <= exponent <= 0
+        or len(cost.as_tuple().digits) > 21
+    ):
+        raise EmbeddingResearchRejected("embedding usage and cost are malformed")
 
 
 def _validate_vector(vector: tuple[float, ...]) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -9,6 +10,7 @@ import sys
 from dataclasses import asdict, replace
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,6 +34,14 @@ from tap.operations.milvus.fixtures import content_hash as fixture_content_hash
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "milvus"
 DOC_FIXTURE = FIXTURES / "doc-fixture-v1.json"
 QUERY_FIXTURE = FIXTURES / "query-cases-v1.json"
+REPOSITORY = Path(__file__).resolve().parents[5]
+_CLI_SPEC = importlib.util.spec_from_file_location(
+    "milvus_embedding_research_test_module",
+    REPOSITORY / "scripts/milvus_embedding_research.py",
+)
+assert _CLI_SPEC is not None and _CLI_SPEC.loader is not None
+research_cli = importlib.util.module_from_spec(_CLI_SPEC)
+_CLI_SPEC.loader.exec_module(research_cli)
 
 
 def research_input(item_id: str, text: str | None = None) -> EmbeddingInput:
@@ -102,6 +112,26 @@ class FakeEmbeddingModel:
                 response_cost_usd=self.cost,
             ),
         )
+
+
+def cli_args() -> SimpleNamespace:
+    return SimpleNamespace(
+        doc_fixture=DOC_FIXTURE,
+        query_fixture=QUERY_FIXTURE,
+        cache_directory=Path(".local/milvus-embedding-cache"),
+        report=Path(".local/milvus-research/report.json"),
+        candidate_snapshot=Path(".local/milvus-research/vectors-research-embedding-v1.json"),
+        max_chunks=100,
+        max_queries=20,
+    )
+
+
+def cli_settings() -> dict[str, str]:
+    return {
+        "LITELLM_BASE_URL": "http://127.0.0.1:4000",
+        "LITELLM_MASTER_KEY": "sanitized-test-key",
+        "LITELLM_EMBEDDING_MODEL": "provider/research-embed-1536",
+    }
 
 
 def test_cache_key_is_exactly_bound_to_model_dimension_and_hash() -> None:
@@ -236,6 +266,24 @@ async def test_same_normalized_content_across_chunk_and_query_is_embedded_once_a
 
 
 @pytest.mark.asyncio
+async def test_verified_digest_collision_with_different_normalized_text_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    collision = "sha256:" + "c" * 64
+    chunks = (
+        EmbeddingInput(item_id="chunk-1", text="first", content_hash=collision),
+        EmbeddingInput(item_id="chunk-2", text="second", content_hash=collision),
+    )
+    model = FakeEmbeddingModel()
+    monkeypatch.setattr(embedding_module, "content_hash", lambda _value: collision)
+
+    with pytest.raises(EmbeddingResearchRejected, match="hash collision"):
+        await generate_snapshot(model, chunks, (), MemoryEmbeddingCache())
+
+    assert model.calls == []
+
+
+@pytest.mark.asyncio
 async def test_cache_hit_is_deterministic_and_second_run_has_zero_paid_usage() -> None:
     chunks = (research_input("chunk-1"), research_input("chunk-2"))
     queries = (research_input("query-1"),)
@@ -364,6 +412,47 @@ async def test_usage_and_aggregate_decimal_cost_are_required_and_bounded() -> No
             (),
             MemoryEmbeddingCache(),
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("input_tokens", True),
+        ("input_tokens", -1),
+        ("input_tokens", 1_000_001),
+        ("total_tokens", False),
+        ("total_tokens", 3),
+        ("total_tokens", 1_000_001),
+        ("response_cost_usd", None),
+        ("response_cost_usd", "0.01"),
+        ("response_cost_usd", Decimal("NaN")),
+        ("response_cost_usd", Decimal("1E-19")),
+        ("response_cost_usd", Decimal("101")),
+    ],
+)
+async def test_core_revalidates_mutated_usage_before_cache_or_output(
+    field: str,
+    value: object,
+) -> None:
+    class MutatedUsageModel(FakeEmbeddingModel):
+        async def embed(self, query: str) -> Embedding:
+            embedding = await super().embed(query)
+            assert embedding.usage is not None
+            object.__setattr__(embedding.usage, field, value)
+            return embedding
+
+    cache = MemoryEmbeddingCache()
+
+    with pytest.raises(EmbeddingResearchRejected, match="usage"):
+        await generate_snapshot(
+            MutatedUsageModel(),
+            (research_input("chunk-1"),),
+            (),
+            cache,
+        )
+
+    assert cache.values == {}
 
 
 def test_file_cache_round_trips_atomic_closed_entries_and_rejects_corruption(
@@ -518,6 +607,161 @@ async def test_default_task8_inputs_account_for_unique_content_without_losing_ca
     assert report.input_tokens == 72
     assert len(snapshot.chunks) == 12
     assert len(snapshot.queries) == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["provider", "cancel", "candidate", "report"])
+async def test_cli_run_revokes_completion_marker_and_never_restores_it_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    repository = tmp_path / "repository"
+    report_path = repository / ".local/milvus-research/report.json"
+    candidate_path = repository / ".local/milvus-research/vectors-research-embedding-v1.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text('{"old":"completion"}\n', encoding="utf-8")
+    calls: list[str] = []
+
+    class LifecycleAdapter(FakeEmbeddingModel):
+        def __init__(self, _config: object) -> None:
+            super().__init__()
+
+        async def embed(self, query: str) -> Embedding:
+            assert not report_path.exists()
+            calls.append(query)
+            if failure == "provider":
+                raise RuntimeError("sanitized provider failure")
+            if failure == "cancel":
+                raise asyncio.CancelledError
+            return await super().embed(query)
+
+        async def close(self) -> None:
+            return None
+
+    original_snapshot_writer = research_cli.write_vector_snapshot
+    original_report_writer = research_cli.write_research_report
+
+    def candidate_writer(path: Path, snapshot: object) -> None:
+        original_snapshot_writer(path, snapshot)  # type: ignore[arg-type]
+        if failure == "candidate":
+            raise OSError("candidate durability fault")
+
+    def report_writer(path: Path, report: object) -> None:
+        assert candidate_path.is_file()
+        original_report_writer(path, report)  # type: ignore[arg-type]
+        if failure == "report":
+            raise OSError("report durability fault")
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", LifecycleAdapter)
+    monkeypatch.setattr(research_cli, "write_vector_snapshot", candidate_writer)
+    monkeypatch.setattr(research_cli, "write_research_report", report_writer)
+
+    expected = asyncio.CancelledError if failure == "cancel" else (RuntimeError, OSError)
+    with pytest.raises(expected):
+        await research_cli._run(cli_args(), cli_settings())
+
+    assert calls
+    assert not report_path.exists()
+    if failure in {"candidate", "report"}:
+        assert candidate_path.is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value_kind"),
+    [
+        ("cache_directory", "escape"),
+        ("cache_directory", "wrong-subdir"),
+        ("report", "absolute-outside"),
+        ("candidate_snapshot", "wrong-subdir"),
+    ],
+)
+async def test_cli_rejects_output_paths_outside_the_exact_local_profile_before_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value_kind: str,
+) -> None:
+    repository = tmp_path / "repository"
+    report_path = repository / ".local/milvus-research/report.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text('{"old":"completion"}\n', encoding="utf-8")
+    constructed = False
+
+    class ForbiddenAdapter:
+        def __init__(self, _config: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    args = cli_args()
+    if value_kind == "escape":
+        value = Path("../outside")
+    elif value_kind == "absolute-outside":
+        value = tmp_path / "outside-report.json"
+    else:
+        value = Path(".local/other/output")
+    setattr(args, field, value)
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+
+    with pytest.raises(EmbeddingResearchRejected, match="output path"):
+        await research_cli._run(args, cli_settings())
+
+    assert not constructed
+    assert report_path.read_text(encoding="utf-8") == '{"old":"completion"}\n'
+    assert not (tmp_path / "outside-report.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "symlink_kind",
+    ["local-parent", "research-parent", "cache", "report", "candidate"],
+)
+async def test_cli_rejects_symlinked_output_path_components_before_provider_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    symlink_kind: str,
+) -> None:
+    repository = tmp_path / "repository"
+    local = repository / ".local"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if symlink_kind == "local-parent":
+        repository.mkdir()
+        local.symlink_to(outside, target_is_directory=True)
+    else:
+        local.mkdir(parents=True)
+        research = local / "milvus-research"
+        if symlink_kind == "research-parent":
+            research.symlink_to(outside, target_is_directory=True)
+        else:
+            research.mkdir()
+            target = outside / "target"
+            if symlink_kind == "cache":
+                target.mkdir()
+                (local / "milvus-embedding-cache").symlink_to(target, target_is_directory=True)
+            elif symlink_kind == "report":
+                target.write_text("outside", encoding="utf-8")
+                (research / "report.json").symlink_to(target)
+            else:
+                target.write_text("outside", encoding="utf-8")
+                (research / "vectors-research-embedding-v1.json").symlink_to(target)
+    constructed = False
+
+    class ForbiddenAdapter:
+        def __init__(self, _config: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
+    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+
+    with pytest.raises(EmbeddingResearchRejected, match="output path"):
+        await research_cli._run(cli_args(), cli_settings())
+
+    assert not constructed
 
 
 @pytest.mark.parametrize("flag", [None, "", "true", "yes", "0", "2"])
