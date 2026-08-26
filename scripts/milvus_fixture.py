@@ -32,17 +32,22 @@ from tap.operations.milvus.contracts import (
     MilvusPublishClients,
     MilvusScopedGrant,
 )
+from tap.operations.milvus.embeddings import load_vector_snapshot
 from tap.operations.milvus.fixtures import (
     BM25_FUNCTION,
     CONTENT_ANALYZER,
     INDEXES,
     DocFixtureManifest,
+    content_hash,
     load_doc_fixture,
+    load_query_cases,
 )
 from tap.operations.milvus.publish import finalize_old_physical, publish_fixture
 
 _TIMEOUT_SECONDS = 10.0
 _FIXTURE = Path("apps/backend/tests/fixtures/milvus/doc-fixture-v1.json")
+_QUERIES = Path("apps/backend/tests/fixtures/milvus/query-cases-v1.json")
+_VECTORS = Path("apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json")
 _ACTIVE_MARKER = Path(".local/milvus-active-corpus.json")
 _ANALYZER_TEXTS = (
     "退款申请须由付款组审批。",
@@ -376,6 +381,13 @@ class _FixtureReader:
 async def _run(args: argparse.Namespace) -> None:
     settings = dict(os.environ)
     credentials = local_role_credentials(settings)
+    publish_input: tuple[DocFixtureManifest, dict[str, tuple[float, ...]]] | None = None
+    if args.command == "publish":
+        publish_input = _load_publish_fixture(
+            args.fixture,
+            args.queries,
+            args.vectors,
+        )
     provisioner_client = _connect(
         settings,
         credentials.provisioner_username,
@@ -406,12 +418,14 @@ async def _run(args: argparse.Namespace) -> None:
         if args.command == "finalize":
             await finalize_old_physical(clients, args.old_physical)
             return
-        manifest = load_doc_fixture(args.fixture)
+        if publish_input is None:
+            raise RuntimeError("Milvus fixture publish input is unavailable")
+        manifest, vectors = publish_input
         await _verify_analyzer(provisioner_client)
         await publish_fixture(
             clients,
             manifest,
-            _deterministic_vectors(manifest),
+            vectors,
             LocalCorpusActivator(args.active_marker),
         )
     finally:
@@ -442,15 +456,23 @@ async def _verify_analyzer(client: MilvusClient) -> None:
         )
 
 
-def _deterministic_vectors(
-    manifest: DocFixtureManifest,
-) -> dict[str, tuple[float, ...]]:
-    vectors = {}
-    for index, chunk in enumerate(manifest.chunks):
-        vector = [0.0] * manifest.vector_dimension
-        vector[index] = 1.0
-        vectors[chunk.chunk_id] = tuple(vector)
-    return vectors
+def _load_publish_fixture(
+    fixture_path: Path,
+    query_path: Path,
+    vector_path: Path,
+) -> tuple[DocFixtureManifest, dict[str, tuple[float, ...]]]:
+    manifest = load_doc_fixture(fixture_path)
+    cases = load_query_cases(query_path)
+    snapshot = load_vector_snapshot(
+        vector_path,
+        chunk_hashes={
+            chunk.chunk_id: chunk.chunk_content_hash for chunk in manifest.chunks
+        },
+        query_hashes={case.case_id: content_hash(case.query) for case in cases},
+    )
+    return manifest, {
+        chunk_id: record.vector for chunk_id, record in snapshot.chunks.items()
+    }
 
 
 def _connect(
@@ -501,6 +523,8 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     publish = subparsers.add_parser("publish")
     publish.add_argument("--fixture", type=Path, default=_FIXTURE)
+    publish.add_argument("--queries", type=Path, default=_QUERIES)
+    publish.add_argument("--vectors", type=Path, default=_VECTORS)
     publish.add_argument("--active-marker", type=Path, default=_ACTIVE_MARKER)
     finalize = subparsers.add_parser("finalize")
     finalize.add_argument("--old-physical", required=True)

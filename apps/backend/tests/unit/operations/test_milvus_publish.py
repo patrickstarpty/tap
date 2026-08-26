@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -35,6 +36,8 @@ from tap.operations.milvus.publish import (
 )
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "milvus" / "doc-fixture-v1.json"
+QUERY_FIXTURE = FIXTURE.with_name("query-cases-v1.json")
+VECTOR_FIXTURE = FIXTURE.with_name("vectors-research-embedding-v1.json")
 pytestmark = pytest.mark.asyncio
 
 
@@ -1388,6 +1391,43 @@ raise SystemExit(cli.main(['publish']))
     assert completed.returncode == 1
     assert completed.stdout == ""
     assert completed.stderr == "Milvus fixture operation failed.\n"
+
+
+async def test_fixture_cli_publish_defaults_to_strict_committed_vectors() -> None:
+    path = Path(__file__).resolve().parents[5] / "scripts" / "milvus_fixture.py"
+    spec = importlib.util.spec_from_file_location("milvus_fixture_vector_test_module", path)
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = cli
+    spec.loader.exec_module(cli)
+
+    args = cli._parser().parse_args(["publish"])
+    assert args.fixture == Path("apps/backend/tests/fixtures/milvus/doc-fixture-v1.json")
+    assert args.queries == Path("apps/backend/tests/fixtures/milvus/query-cases-v1.json")
+    assert args.vectors == Path(
+        "apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json"
+    )
+
+    manifest, vectors = cli._load_publish_fixture(FIXTURE, QUERY_FIXTURE, VECTOR_FIXTURE)
+    assert set(vectors) == {chunk.chunk_id for chunk in manifest.chunks}
+    assert {len(vector) for vector in vectors.values()} == {1536}
+    assert not hasattr(cli, "_deterministic_vectors")
+
+
+async def test_makefile_scopes_real_milvus_gate_and_uses_committed_snapshot() -> None:
+    makefile = (Path(__file__).resolve().parents[5] / "Makefile").read_text(encoding="utf-8")
+
+    assert "TAP_MILVUS_COMPOSE_PROJECT ?= tap-milvus-local-experiment" in makefile
+    assert "export TAP_MILVUS_COMPOSE_PROJECT" in makefile
+    assert 'docker compose -p "$(TAP_MILVUS_COMPOSE_PROJECT)"' in makefile
+    assert "test-milvus:" in makefile
+    assert (
+        "--vectors apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json"
+    ) in makefile
+    assert "TAP_RUN_MILVUS_INTEGRATION=1" in makefile
+    assert "test-milvus-rebuild-empty:" in makefile
+    assert "TAP_ALLOW_MILVUS_VOLUME_RESET" in makefile
+    assert "down -v --remove-orphans" in makefile
 
 
 async def test_fixture_cli_rejects_duplicate_or_root_principals_before_connections() -> None:

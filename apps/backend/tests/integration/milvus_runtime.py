@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import itertools
 import json
-import math
 import os
 import re
 import subprocess
@@ -68,8 +67,8 @@ from tap.operations.milvus.contracts import MilvusPublishClients
 from tap.operations.milvus.embeddings import (
     EMBEDDING_ALIAS,
     EMBEDDING_DIMENSION,
-    VectorRecord,
     VectorSnapshot,
+    load_vector_snapshot,
 )
 from tap.operations.milvus.fixtures import (
     DocFixtureChunk,
@@ -89,8 +88,6 @@ _DOC_FIXTURE = _FIXTURES / "doc-fixture-v1.json"
 _QUERY_FIXTURE = _FIXTURES / "query-cases-v1.json"
 _VECTOR_SNAPSHOT = _FIXTURES / "vectors-research-embedding-v1.json"
 _SAFE_PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
-_SNAPSHOT_KEYS = frozenset({"chunks", "dimension", "modelId", "queries"})
-_RECORD_KEYS = frozenset({"inputHash", "vector"})
 _REBUILD_FIELDS = (
     "chunk_id",
     "logical_chunk_id",
@@ -812,70 +809,11 @@ def _load_snapshot(
     manifest: DocFixtureManifest,
     cases: tuple[QueryCase, ...],
 ) -> VectorSnapshot:
-    try:
-        raw = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=_closed_pairs,
-            parse_constant=_reject_constant,
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ValueError("committed Milvus vector snapshot is unavailable") from error
-    if not isinstance(raw, dict) or set(raw) != _SNAPSHOT_KEYS:
-        raise ValueError("committed Milvus vector snapshot fields are not closed")
-    if raw["modelId"] != EMBEDDING_ALIAS or raw["dimension"] != EMBEDDING_DIMENSION:
-        raise ValueError("committed Milvus vector snapshot space is incorrect")
-    chunks = _snapshot_records(
-        raw["chunks"],
-        {chunk.chunk_id: chunk.chunk_content_hash for chunk in manifest.chunks},
+    return load_vector_snapshot(
+        path,
+        chunk_hashes={chunk.chunk_id: chunk.chunk_content_hash for chunk in manifest.chunks},
+        query_hashes={case.case_id: content_hash(case.query) for case in cases},
     )
-    queries = _snapshot_records(
-        raw["queries"],
-        {case.case_id: content_hash(case.query) for case in cases},
-    )
-    return VectorSnapshot(
-        model_id=EMBEDDING_ALIAS,
-        dimension=EMBEDDING_DIMENSION,
-        chunks=chunks,
-        queries=queries,
-    )
-
-
-def _snapshot_records(
-    raw: object,
-    expected_hashes: Mapping[str, str],
-) -> Mapping[str, VectorRecord]:
-    if not isinstance(raw, dict) or set(raw) != set(expected_hashes):
-        raise ValueError("committed Milvus vector identities are not exact")
-    records: dict[str, VectorRecord] = {}
-    for item_id, item in raw.items():
-        if not isinstance(item_id, str) or not isinstance(item, dict) or set(item) != _RECORD_KEYS:
-            raise ValueError("committed Milvus vector record is malformed")
-        vector = item["vector"]
-        if (
-            item["inputHash"] != expected_hashes[item_id]
-            or not isinstance(vector, list)
-            or len(vector) != EMBEDDING_DIMENSION
-            or any(type(value) is not float or not math.isfinite(value) for value in vector)
-        ):
-            raise ValueError("committed Milvus vector record is outside the fixed space")
-        records[item_id] = VectorRecord(
-            input_hash=cast(str, item["inputHash"]),
-            vector=tuple(cast(list[float], vector)),
-        )
-    return records
-
-
-def _closed_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    value: dict[str, object] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("committed Milvus vector snapshot contains duplicate keys")
-        value[key] = item
-    return value
-
-
-def _reject_constant(value: str) -> object:
-    raise ValueError(f"unsupported vector snapshot constant: {value}")
 
 
 def _document_anchor(chunk: DocFixtureChunk) -> DocumentAnchor:

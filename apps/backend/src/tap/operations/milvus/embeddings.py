@@ -44,6 +44,8 @@ _ITEM_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _PROVIDER_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\Z")
 _CACHE_KEYS = frozenset({"cacheKey", "dimension", "modelId", "vector"})
+_SNAPSHOT_KEYS = frozenset({"chunks", "dimension", "modelId", "queries"})
+_SNAPSHOT_RECORD_KEYS = frozenset({"inputHash", "vector"})
 _OUTPUT_NAME = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
 _ATOMIC_TEMP_ATTEMPTS = 8
 
@@ -418,6 +420,49 @@ def write_vector_snapshot_at(
     _atomic_json_write_at(directory_fd, name, _snapshot_payload(snapshot))
 
 
+def load_vector_snapshot(
+    path: Path,
+    *,
+    chunk_hashes: Mapping[str, str],
+    query_hashes: Mapping[str, str],
+) -> VectorSnapshot:
+    """Load one closed, precomputed vector space against exact fixture hashes."""
+
+    try:
+        _validate_expected_snapshot_hashes(chunk_hashes, HARD_MAX_CHUNKS)
+        _validate_expected_snapshot_hashes(query_hashes, HARD_MAX_QUERIES)
+        raw = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_closed_pairs,
+            parse_constant=_reject_json_constant,
+        )
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != _SNAPSHOT_KEYS
+            or raw["modelId"] != EMBEDDING_ALIAS
+            or type(raw["dimension"]) is not int
+            or raw["dimension"] != EMBEDDING_DIMENSION
+        ):
+            raise ValueError("snapshot envelope drift")
+        chunks = _load_snapshot_records(raw["chunks"], chunk_hashes)
+        queries = _load_snapshot_records(raw["queries"], query_hashes)
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+        EmbeddingResearchRejected,
+    ) as error:
+        raise EmbeddingResearchRejected("vector snapshot is malformed") from error
+    return VectorSnapshot(
+        model_id=EMBEDDING_ALIAS,
+        dimension=EMBEDDING_DIMENSION,
+        chunks=MappingProxyType(chunks),
+        queries=MappingProxyType(queries),
+    )
+
+
 def _preflight(
     model: EmbeddingModelPort,
     chunks: tuple[EmbeddingInput, ...],
@@ -534,6 +579,46 @@ def _snapshot_records(records: Mapping[str, VectorRecord]) -> dict[str, object]:
         _validate_vector(record.vector)
         result[item_id] = {"inputHash": record.input_hash, "vector": list(record.vector)}
     return result
+
+
+def _validate_expected_snapshot_hashes(
+    expected_hashes: Mapping[str, str],
+    maximum: int,
+) -> None:
+    if (
+        not isinstance(expected_hashes, Mapping)
+        or len(expected_hashes) > maximum
+        or any(
+            not isinstance(item_id, str)
+            or _ITEM_ID.fullmatch(item_id) is None
+            or not isinstance(input_hash, str)
+            or _DIGEST.fullmatch(input_hash) is None
+            for item_id, input_hash in expected_hashes.items()
+        )
+    ):
+        raise ValueError("expected snapshot identities are malformed")
+
+
+def _load_snapshot_records(
+    raw: object,
+    expected_hashes: Mapping[str, str],
+) -> dict[str, VectorRecord]:
+    if not isinstance(raw, dict) or set(raw) != set(expected_hashes):
+        raise ValueError("snapshot identities are not exact")
+    records: dict[str, VectorRecord] = {}
+    for item_id, value in raw.items():
+        if not isinstance(value, dict) or set(value) != _SNAPSHOT_RECORD_KEYS:
+            raise ValueError("snapshot record fields are not closed")
+        vector = value["vector"]
+        if value["inputHash"] != expected_hashes[item_id] or not isinstance(vector, list):
+            raise ValueError("snapshot record identity is malformed")
+        normalized = tuple(vector)
+        _validate_vector(normalized)
+        records[item_id] = VectorRecord(
+            input_hash=expected_hashes[item_id],
+            vector=normalized,
+        )
+    return records
 
 
 def _validate_report(report: EmbeddingResearchReport) -> None:
@@ -734,6 +819,10 @@ def _closed_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise ValueError("duplicate JSON key")
         value[key] = item
     return value
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
 
 
 def _fsync_directory(path: Path) -> None:

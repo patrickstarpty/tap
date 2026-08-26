@@ -27,6 +27,7 @@ from tap.operations.milvus.embeddings import (
     embedding_cache_key,
     generate_snapshot,
     load_fixture_inputs,
+    load_vector_snapshot,
     research_bailian_config,
     write_research_report,
     write_vector_snapshot,
@@ -36,6 +37,7 @@ from tap.operations.milvus.fixtures import content_hash as fixture_content_hash
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "milvus"
 DOC_FIXTURE = FIXTURES / "doc-fixture-v1.json"
 QUERY_FIXTURE = FIXTURES / "query-cases-v1.json"
+VECTOR_FIXTURE = FIXTURES / "vectors-research-embedding-v1.json"
 REPOSITORY = Path(__file__).resolve().parents[5]
 _CLI_SPEC = importlib.util.spec_from_file_location(
     "milvus_embedding_research_test_module",
@@ -137,8 +139,7 @@ def cli_settings() -> dict[str, str]:
         "LITELLM_EMBEDDING_MODEL": "text-embedding-v4",
         "LITELLM_EMBEDDING_API_KEY": "sanitized-provider-key",
         "LITELLM_EMBEDDING_API_BASE": (
-            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com"
-            "/compatible-mode/v1"
+            "https://ws-abcdefghijklmnop.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
         ),
     }
 
@@ -149,13 +150,77 @@ def test_cache_key_is_exactly_bound_to_model_dimension_and_hash() -> None:
         "h_"
         + hashlib.sha256(("research-embedding-v1\x001536\x00" + digest).encode("utf-8")).hexdigest()
     )
-
     assert embedding_cache_key(EMBEDDING_ALIAS, EMBEDDING_DIMENSION, digest) == expected
     assert embedding_cache_key("other", EMBEDDING_DIMENSION, digest) != expected
     assert embedding_cache_key(EMBEDDING_ALIAS, 2, digest) != expected
     assert (
         embedding_cache_key(EMBEDDING_ALIAS, EMBEDDING_DIMENSION, "sha256:" + "b" * 64) != expected
     )
+
+
+def test_committed_vector_snapshot_loads_against_exact_fixture_hashes() -> None:
+    chunks, queries = load_fixture_inputs(DOC_FIXTURE, QUERY_FIXTURE)
+
+    snapshot = load_vector_snapshot(
+        VECTOR_FIXTURE,
+        chunk_hashes={item.item_id: item.content_hash for item in chunks},
+        query_hashes={item.item_id: item.content_hash for item in queries},
+    )
+
+    assert snapshot.model_id == EMBEDDING_ALIAS
+    assert snapshot.dimension == EMBEDDING_DIMENSION
+    assert len(snapshot.chunks) == 12
+    assert len(snapshot.queries) == 8
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("extra-field", "wrong-model", "wrong-dimension", "wrong-hash", "integer-vector"),
+)
+def test_vector_snapshot_loader_rejects_widened_identity_and_vector_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    chunk_hash = "sha256:" + "a" * 64
+    query_hash = "sha256:" + "b" * 64
+    raw: dict[str, object] = {
+        "chunks": {"chunk-1": {"inputHash": chunk_hash, "vector": [0.001] * EMBEDDING_DIMENSION}},
+        "dimension": EMBEDDING_DIMENSION,
+        "modelId": EMBEDDING_ALIAS,
+        "queries": {"query-1": {"inputHash": query_hash, "vector": [0.001] * EMBEDDING_DIMENSION}},
+    }
+    if mutation == "extra-field":
+        raw["extra"] = True
+    elif mutation == "wrong-model":
+        raw["modelId"] = "other-model"
+    elif mutation == "wrong-dimension":
+        raw["dimension"] = 1024
+    elif mutation == "wrong-hash":
+        raw["chunks"]["chunk-1"]["inputHash"] = "sha256:" + "c" * 64  # type: ignore[index]
+    else:
+        raw["chunks"]["chunk-1"]["vector"][0] = 0  # type: ignore[index]
+    path = tmp_path / "vectors.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(EmbeddingResearchRejected, match="vector snapshot"):
+        load_vector_snapshot(
+            path,
+            chunk_hashes={"chunk-1": chunk_hash},
+            query_hashes={"query-1": query_hash},
+        )
+
+
+def test_vector_snapshot_loader_rejects_duplicate_keys_and_nonfinite_constants(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "vectors.json"
+    for payload in (
+        '{"chunks":{},"chunks":{},"dimension":1536,"modelId":"research-embedding-v1","queries":{}}',
+        '{"chunks":{},"dimension":1536,"modelId":"research-embedding-v1","queries":{},"value":NaN}',
+    ):
+        path.write_text(payload, encoding="utf-8")
+        with pytest.raises(EmbeddingResearchRejected, match="vector snapshot"):
+            load_vector_snapshot(path, chunk_hashes={}, query_hashes={})
 
 
 @pytest.mark.asyncio
@@ -675,9 +740,7 @@ async def test_cli_runner_sends_fixed_alias_and_1536_dimensions_on_every_embeddi
     await research_cli._run(cli_args(), cli_settings())
 
     assert len(requests) == 18
-    assert all(
-        json.loads(request.content)["model"] == "text-embedding-v4" for request in requests
-    )
+    assert all(json.loads(request.content)["model"] == "text-embedding-v4" for request in requests)
     assert all(json.loads(request.content)["dimensions"] == 1536 for request in requests)
     assert all(json.loads(request.content)["encoding_format"] == "float" for request in requests)
 
@@ -1141,8 +1204,7 @@ def test_cli_builds_only_the_fixed_direct_route_and_hides_provider_config() -> N
         "LITELLM_EMBEDDING_MODEL": "text-embedding-v4",
         "LITELLM_EMBEDDING_API_KEY": "PRIVATE_PROVIDER_SECRET",
         "LITELLM_EMBEDDING_API_BASE": (
-            "https://ws-privateworkspace.cn-beijing.maas.aliyuncs.com"
-            "/compatible-mode/v1"
+            "https://ws-privateworkspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
         ),
     }
     config = research_bailian_config(settings)
