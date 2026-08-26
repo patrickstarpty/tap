@@ -1,7 +1,9 @@
 .worktrees/
 .superpowers/
 .env
+.local/milvus-active-corpus.json
 .local/milvus-embedding-cache/
+.local/milvus-ci/
 .local/milvus-research/
 .venv/
 .mypy_cache/

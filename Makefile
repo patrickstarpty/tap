@@ -56,6 +56,14 @@ test-milvus: ## run the non-skippable real Milvus correctness gate with committe
 	$(MAKE) milvus-bootstrap TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	$(MAKE) milvus-health TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	uv run --project apps/backend python scripts/milvus_fixture.py publish --fixture apps/backend/tests/fixtures/milvus/doc-fixture-v1.json --queries apps/backend/tests/fixtures/milvus/query-cases-v1.json --vectors apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json
+	MILVUS_URI="$${MILVUS_URI:-http://127.0.0.1:19530}" \
+	MILVUS_DATABASE="$${MILVUS_DATABASE:-default}" \
+	MILVUS_READER_USERNAME="$${MILVUS_READER_USERNAME:-tap_reader}" \
+	MILVUS_READER_PASSWORD="$${MILVUS_READER_PASSWORD:-tap-local-Reader1!}" \
+	MILVUS_WRITER_USERNAME="$${MILVUS_WRITER_USERNAME:-tap_writer}" \
+	MILVUS_WRITER_PASSWORD="$${MILVUS_WRITER_PASSWORD:-tap-local-Writer1!}" \
+	MILVUS_PROVISIONER_USERNAME="$${MILVUS_PROVISIONER_USERNAME:-tap_provisioner}" \
+	MILVUS_PROVISIONER_PASSWORD="$${MILVUS_PROVISIONER_PASSWORD:-tap-local-Provisioner1!}" \
 	TAP_RUN_MILVUS_INTEGRATION=1 uv run --project apps/backend pytest apps/backend/tests/integration/test_milvus_search_acl.py apps/backend/tests/integration/test_milvus_rebuild_alias.py -v
 
 test-milvus-rebuild-empty: ## delete only the opted-in project volumes and rebuild from fixtures

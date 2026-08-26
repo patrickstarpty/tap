@@ -1425,6 +1425,20 @@ async def test_makefile_scopes_real_milvus_gate_and_uses_committed_snapshot() ->
         "--vectors apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json"
     ) in makefile
     assert "TAP_RUN_MILVUS_INTEGRATION=1" in makefile
+    for setting in (
+        'MILVUS_URI="$${MILVUS_URI:-http://127.0.0.1:19530}"',
+        'MILVUS_DATABASE="$${MILVUS_DATABASE:-default}"',
+        'MILVUS_READER_USERNAME="$${MILVUS_READER_USERNAME:-tap_reader}"',
+        'MILVUS_READER_PASSWORD="$${MILVUS_READER_PASSWORD:-tap-local-Reader1!}"',
+        'MILVUS_WRITER_USERNAME="$${MILVUS_WRITER_USERNAME:-tap_writer}"',
+        'MILVUS_WRITER_PASSWORD="$${MILVUS_WRITER_PASSWORD:-tap-local-Writer1!}"',
+        'MILVUS_PROVISIONER_USERNAME="$${MILVUS_PROVISIONER_USERNAME:-tap_provisioner}"',
+        (
+            'MILVUS_PROVISIONER_PASSWORD="'
+            '$${MILVUS_PROVISIONER_PASSWORD:-tap-local-Provisioner1!}"'
+        ),
+    ):
+        assert setting in makefile
     assert "test-milvus-rebuild-empty:" in makefile
     assert "TAP_ALLOW_MILVUS_VOLUME_RESET" in makefile
     assert "down -v --remove-orphans" in makefile
