@@ -82,6 +82,7 @@ PROVISIONER_PRIVILEGES = frozenset(
         "DropAlias",
         "DescribeAlias",
         "ManageOwnership",
+        "SelectOwnership",
     }
 )
 _PROVISIONER_INSTANCE_PRIVILEGES = frozenset(
@@ -92,6 +93,7 @@ _PROVISIONER_INSTANCE_PRIVILEGES = frozenset(
         "DropAlias",
         "DropCollection",
         "ManageOwnership",
+        "SelectOwnership",
     }
 )
 READER_BASE_GRANTS = frozenset(

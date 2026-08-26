@@ -59,6 +59,7 @@ _PROVISIONER_GLOBAL_PRIVILEGES = frozenset(
         "DropAlias",
         "DropCollection",
         "ManageOwnership",
+        "SelectOwnership",
     }
 )
 _PROVISIONER_COLLECTION_PRIVILEGES = frozenset(
@@ -487,6 +488,9 @@ async def test_bootstrap_replaces_three_non_overlapping_least_privilege_roles() 
     )
     assert "Search" not in admin.role_privileges("tap_writer")
     assert "Insert" not in admin.role_privileges("tap_reader")
+    assert "SelectOwnership" in admin.role_privileges("tap_provisioner")
+    assert "SelectOwnership" not in admin.role_privileges("tap_reader")
+    assert "SelectOwnership" not in admin.role_privileges("tap_writer")
     assert not ((READER_BASE_PRIVILEGES | READER_TARGET_PRIVILEGES) & WRITER_PRIVILEGES)
     assert not (WRITER_PRIVILEGES & PROVISIONER_PRIVILEGES)
     assert admin.password_rotations == [("root", "tap-local-Root1!")]
@@ -891,6 +895,43 @@ async def test_sdk_admin_provisioner_base_is_exact_and_repeated_reconciliation_i
     await admin.replace_role_grants("tap_provisioner", PROVISIONER_BASE_GRANTS)
 
     assert client.calls == []
+
+
+async def test_sdk_admin_adds_missing_select_ownership_then_is_idempotent() -> None:
+    client = RoleGrantInventoryClient(
+        "tap_provisioner",
+        [
+            role_grant("tap_provisioner", scope, "*", privilege)
+            for scope, privileges in (
+                (
+                    "Global",
+                    _PROVISIONER_GLOBAL_PRIVILEGES - {"SelectOwnership"},
+                ),
+                ("Collection", _PROVISIONER_COLLECTION_PRIVILEGES),
+            )
+            for privilege in sorted(privileges)
+        ],
+    )
+    expected = frozenset(
+        {
+            *(
+                MilvusGrant("instance", "*", privilege)
+                for privilege in _PROVISIONER_GLOBAL_PRIVILEGES
+            ),
+            *(
+                MilvusGrant("collection", "*", privilege)
+                for privilege in _PROVISIONER_COLLECTION_PRIVILEGES
+            ),
+        }
+    )
+    admin = sdk_admin(client)
+
+    await admin.replace_role_grants("tap_provisioner", expected)
+    await admin.replace_role_grants("tap_provisioner", expected)
+
+    assert client.calls == [("grant", "SelectOwnership", "*")]
+    added = next(item for item in client.privileges if item["privilege"] == "SelectOwnership")
+    assert added["object_type"] == "Global"
 
 
 @pytest.mark.parametrize(
