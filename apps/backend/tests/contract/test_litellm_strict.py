@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -117,6 +118,15 @@ def embedding_response(
     }
 
 
+def embedding_response_with_usage(
+    *,
+    usage: object | None = None,
+) -> dict[str, object]:
+    body = embedding_response()
+    body["usage"] = {"prompt_tokens": 4, "total_tokens": 4} if usage is None else usage
+    return body
+
+
 def answer_response(
     *,
     answer: object = "Grounded answer.",
@@ -216,6 +226,169 @@ async def test_embedding_rejects_cross_route_body_and_gateway_model_labels(
     assert "not-a-real-key" not in str(caught.value)
     assert body_model not in str(caught.value)
     assert gateway_model not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_embedding_parses_standard_usage_and_exact_decimal_response_cost() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "x-request-id": "request-17",
+                "x-litellm-response-cost": "0.000001",
+            },
+            json=embedding_response_with_usage(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+    assert result.usage is not None
+    assert result.usage.input_tokens == 4
+    assert result.usage.total_tokens == 4
+    assert result.usage.response_cost_usd == Decimal("0.000001")
+
+
+@pytest.mark.asyncio
+async def test_missing_cost_header_remains_explicit_none_for_research_to_reject() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=embedding_response_with_usage())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+    assert result.usage is not None
+    assert result.usage.response_cost_usd is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        {"prompt_tokens": True, "total_tokens": 4},
+        {"prompt_tokens": -1, "total_tokens": 4},
+        {"prompt_tokens": 4.0, "total_tokens": 4},
+        {"prompt_tokens": 5, "total_tokens": 4},
+        {"prompt_tokens": 1_000_001, "total_tokens": 1_000_001},
+        {"prompt_tokens": 4, "total_tokens": float("nan")},
+        {"prompt_tokens": 4, "total_tokens": float("inf")},
+    ],
+    ids=(
+        "missing",
+        "boolean",
+        "negative",
+        "float",
+        "total-less-than-prompt",
+        "overflow",
+        "nan",
+        "infinity",
+    ),
+)
+async def test_embedding_usage_rejects_missing_non_integer_non_finite_and_overflow(
+    usage: object | None,
+) -> None:
+    body = embedding_response()
+    if usage is not None:
+        body["usage"] = usage
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-response-cost": "0.000001"},
+            content=json.dumps(body, allow_nan=True).encode(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_cost",
+    [
+        "-0.1",
+        "NaN",
+        "Infinity",
+        "101",
+        "1e-6",
+        "+0.1",
+        " 0.1",
+        "0.1234567890123456789",
+        "9" * 257,
+    ],
+    ids=(
+        "negative",
+        "nan",
+        "infinity",
+        "bound",
+        "exponent",
+        "plus",
+        "whitespace",
+        "precision",
+        "header-overflow",
+    ),
+)
+async def test_embedding_cost_header_rejects_noncanonical_nonfinite_and_overflow(
+    raw_cost: str,
+) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-response-cost": raw_cost},
+            json=embedding_response_with_usage(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+async def test_embedding_response_duplicate_usage_keys_fail_closed() -> None:
+    body = (
+        '{"id":"embedding-17","model":"provider-embed-v1",'
+        '"data":[{"embedding":[0.25,0.5]}],'
+        '"usage":{"prompt_tokens":4,"prompt_tokens":5,"total_tokens":5}}'
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-response-cost": "0.000001"},
+            content=body.encode(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://127.0.0.1:4000", "http://localhost:4000", "https://litellm.example"],
+)
+def test_litellm_config_accepts_https_or_exact_loopback_http(base_url: str) -> None:
+    assert config(base_url=base_url).base_url == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1",
+        "http://127.0.0.1:4000/path",
+        "http://localhost:4000?query=1",
+        "http://user@localhost:4000",
+        "http://127.0.0.2:4000",
+        "http://0.0.0.0:4000",
+        "http://[::1]:4000",
+        "https://user:secret@litellm.example",
+    ],
+)
+def test_litellm_config_rejects_nonexact_loopback_http(base_url: str) -> None:
+    with pytest.raises(ValueError, match="HTTPS or exact loopback HTTP"):
+        config(base_url=base_url)
 
 
 @pytest.mark.asyncio

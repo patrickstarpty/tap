@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 
 from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.knowledge.domain.models import (
@@ -48,14 +49,43 @@ class SearchHit:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingUsage:
+    input_tokens: int
+    total_tokens: int
+    response_cost_usd: Decimal | None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.input_tokens) is not int
+            or type(self.total_tokens) is not int
+            or not 0 <= self.input_tokens <= 1_000_000
+            or not self.input_tokens <= self.total_tokens <= 1_000_000
+        ):
+            raise ValueError("embedding usage tokens are outside the closed bounds")
+        cost = self.response_cost_usd
+        exponent = cost.as_tuple().exponent if type(cost) is Decimal and cost.is_finite() else None
+        if cost is not None and (
+            type(cost) is not Decimal
+            or not cost.is_finite()
+            or cost < 0
+            or cost > Decimal("100")
+            or type(exponent) is not int
+            or not -18 <= exponent <= 0
+            or len(cost.as_tuple().digits) > 21
+        ):
+            raise ValueError("embedding response cost is outside the closed bounds")
+
+
+@dataclass(frozen=True, slots=True)
 class Embedding:
-    vector: tuple[float, ...]
+    vector: tuple[float, ...] = field(repr=False)
     model_id: str
     provider_request_id: str | None
     gateway_call_id: str | None = None
     gateway_model_id: str | None = None
     provider_model_id: str | None = None
     completion_id: str | None = None
+    usage: EmbeddingUsage | None = None
 
 
 @dataclass(frozen=True, slots=True)

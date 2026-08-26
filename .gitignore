@@ -1,6 +1,8 @@
 .worktrees/
 .superpowers/
 .env
+.local/milvus-embedding-cache/
+.local/milvus-research/
 .venv/
 .mypy_cache/
 node_modules/

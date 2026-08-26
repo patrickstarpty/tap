@@ -1,13 +1,13 @@
-.PHONY: bootstrap check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health
+.PHONY: bootstrap check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
 	corepack pnpm install --frozen-lockfile
 
 check: ## lint, format-check, typecheck, architecture checks
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py
-	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py
+	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py
 	uv run --project apps/backend python scripts/export_contracts.py --check
 
 test: ## unit, integration, and contract tests
@@ -40,3 +40,10 @@ milvus-bootstrap: ## create local users/roles; initial root requires explicit op
 
 milvus-health: ## run the destructive-isolated three-role behavioral probe
 	uv run --project apps/backend python scripts/milvus_health_probe.py
+
+research-embeddings: ## run the explicitly authorized paid embedding research profile
+	@if [ "$${TAP_RUN_PAID_EMBEDDING_RESEARCH:-}" != "1" ]; then \
+		echo "research-embeddings requires TAP_RUN_PAID_EMBEDDING_RESEARCH=1" >&2; \
+		exit 2; \
+	fi
+	uv run --project apps/backend python scripts/milvus_embedding_research.py

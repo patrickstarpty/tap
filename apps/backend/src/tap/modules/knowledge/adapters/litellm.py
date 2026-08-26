@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -15,8 +18,11 @@ from tap.modules.knowledge.domain.models import Evidence, RevisionKind, SourceRe
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
+    EmbeddingUsage,
     GeneratedClaim,
 )
+
+_CANONICAL_COST = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,18})?\Z")
 
 
 class ModelUnavailable(Exception):
@@ -51,8 +57,8 @@ class LiteLLMConfig:
     max_labels_per_claim: int = 16
 
     def __post_init__(self) -> None:
-        if not isinstance(self.base_url, str) or not self.base_url.startswith("https://"):
-            raise ValueError("LiteLLM URL must use HTTPS")
+        if not _valid_litellm_url(self.base_url):
+            raise ValueError("LiteLLM URL must use HTTPS or exact loopback HTTP")
         for name in (
             "api_key",
             "embedding_model_id",
@@ -127,6 +133,7 @@ class _GatewayResponse:
     provider_request_id: str | None
     gateway_call_id: str | None
     gateway_model_id: str | None
+    response_cost_header: str | None
 
 
 class LiteLLMAdapter:
@@ -345,12 +352,17 @@ class LiteLLMAdapter:
                         )
                         gateway_call_id = _first_header(response, ("x-litellm-call-id",))
                         gateway_model_id = _bounded_model_header(response)
+                        response_cost_header = response.headers.get("x-litellm-response-cost")
             except httpx.TransportError as error:
                 if attempt == self._config.max_retries:
                     raise ModelUnavailable("LiteLLM transport retry budget exhausted") from error
                 continue
             try:
-                body = json.loads(raw, parse_constant=_reject_json_constant)
+                body = json.loads(
+                    raw,
+                    parse_constant=_reject_json_constant,
+                    object_pairs_hook=_closed_pairs,
+                )
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
                 raise ModelUnavailable("LiteLLM returned malformed JSON") from error
             if not isinstance(body, dict):
@@ -364,6 +376,7 @@ class LiteLLMAdapter:
                 provider_request_id=provider_request_id,
                 gateway_call_id=gateway_call_id,
                 gateway_model_id=gateway_model_id,
+                response_cost_header=response_cost_header,
             )
         raise ModelUnavailable("LiteLLM retry budget exhausted")
 
@@ -385,6 +398,7 @@ class LiteLLMAdapter:
                 for value in raw_vector
             ):
                 raise ValueError("embedding values must be finite numbers")
+            usage = _embedding_usage(body, response.response_cost_header)
             return Embedding(
                 vector=tuple(float(value) for value in raw_vector),
                 model_id=self.embedding_model_id,
@@ -393,6 +407,7 @@ class LiteLLMAdapter:
                 gateway_model_id=response.gateway_model_id,
                 provider_model_id=model,
                 completion_id=_optional_body_string(body, "id", maximum=256),
+                usage=usage,
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ModelUnavailable("LiteLLM returned a malformed embedding") from error
@@ -503,11 +518,89 @@ def _first_header(response: httpx.Response, names: tuple[str, ...]) -> str | Non
     return None
 
 
+def _valid_litellm_url(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    if parsed.scheme == "https":
+        return (
+            parsed.hostname is not None
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.query == ""
+            and parsed.fragment == ""
+            and (port is None or 1 <= port <= 65_535)
+        )
+    return (
+        parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "localhost"}
+        and parsed.username is None
+        and parsed.password is None
+        and port is not None
+        and 1 <= port <= 65_535
+        and parsed.netloc == f"{parsed.hostname}:{port}"
+        and parsed.path == ""
+        and parsed.query == ""
+        and parsed.fragment == ""
+    )
+
+
+def _embedding_usage(
+    body: dict[str, Any],
+    raw_cost: str | None,
+) -> EmbeddingUsage:
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        raise ValueError("embedding usage must be an object")
+    prompt_tokens = usage.get("prompt_tokens")
+    total_tokens = usage.get("total_tokens")
+    if (
+        type(prompt_tokens) is not int
+        or type(total_tokens) is not int
+        or not 0 <= prompt_tokens <= 1_000_000
+        or not prompt_tokens <= total_tokens <= 1_000_000
+    ):
+        raise ValueError("embedding usage tokens are malformed")
+    cost = _response_cost(raw_cost)
+    return EmbeddingUsage(
+        input_tokens=prompt_tokens,
+        total_tokens=total_tokens,
+        response_cost_usd=cost,
+    )
+
+
+def _response_cost(value: str | None) -> Decimal | None:
+    if value is None:
+        return None
+    if len(value) > 256 or _CANONICAL_COST.fullmatch(value) is None:
+        raise ValueError("embedding response cost is malformed")
+    try:
+        cost = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError("embedding response cost is malformed") from error
+    if not cost.is_finite() or cost < 0 or cost > Decimal("100"):
+        raise ValueError("embedding response cost is outside the bound")
+    return cost
+
+
+def _closed_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
 def _bounded_model_header(response: httpx.Response) -> str | None:
     value = response.headers.get("x-litellm-model-id")
     if value is None:
         return None
-    if not value or len(value) > 256:
+    if not isinstance(value, str) or not value or len(value) > 256:
         raise ModelUnavailable("LiteLLM returned malformed fixed-route metadata")
     return value
 
