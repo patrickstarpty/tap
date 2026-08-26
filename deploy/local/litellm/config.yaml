@@ -3,12 +3,6 @@ model_list:
     litellm_params:
       model: os.environ/LITELLM_MODEL
       api_key: os.environ/OPENAI_API_KEY
-  - model_name: research-embedding-v1
-    litellm_params:
-      model: openai/text-embedding-v4
-      api_key: os.environ/LITELLM_EMBEDDING_API_KEY
-      api_base: os.environ/LITELLM_EMBEDDING_API_BASE
-
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 

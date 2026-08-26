@@ -18,11 +18,9 @@ from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Protocol
-from urllib.parse import urlsplit
 
-from tap.modules.knowledge.adapters.litellm import LiteLLMConfig
 from tap.modules.knowledge.ports.models import Embedding, EmbeddingUsage
-from tap.modules.knowledge.ports.search import ModelPort
+from tap.operations.milvus.bailian import BailianEmbeddingConfig
 from tap.operations.milvus.fixtures import content_hash, load_doc_fixture, load_query_cases
 
 EMBEDDING_ALIAS: Literal["research-embedding-v1"] = "research-embedding-v1"
@@ -34,8 +32,11 @@ HARD_MAX_CHUNKS = 500
 HARD_MAX_QUERIES = 100
 
 MAX_AGGREGATE_INPUT_TOKENS = 10_000_000
-MAX_AGGREGATE_COST_USD = Decimal("100")
+MAX_AGGREGATE_COST_CNY = Decimal("100")
 MAX_PROVIDER_REQUEST_IDS = HARD_MAX_CHUNKS + HARD_MAX_QUERIES
+RESEARCH_COST_CURRENCY = "CNY"
+RESEARCH_UNIT_PRICE_PER_1000_INPUT_TOKENS = Decimal("0.0005")
+RESEARCH_PRICING_SOURCE = "official_rate_2026-08-27"
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _CACHE_KEY = re.compile(r"h_[0-9a-f]{64}\Z")
@@ -81,7 +82,10 @@ class EmbeddingResearchReport:
     cache_hits: int
     cache_misses: int
     input_tokens: int
-    response_cost_usd: Decimal
+    currency: str
+    unit_price_per_1000_input_tokens: Decimal
+    calculated_cost_cny: Decimal
+    pricing_source: str
     provider_request_ids: tuple[str, ...]
     started_at: str
     finished_at: str
@@ -91,6 +95,16 @@ class EmbeddingCache(Protocol):
     def get(self, key: str) -> tuple[float, ...] | None: ...
 
     def put(self, key: str, vector: tuple[float, ...]) -> None: ...
+
+
+class EmbeddingModelPort(Protocol):
+    @property
+    def embedding_model_id(self) -> str: ...
+
+    @property
+    def embedding_dimension(self) -> int: ...
+
+    async def embed(self, query: str) -> Embedding: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +243,7 @@ def embedding_cache_key(model_id: str, dimension: int, input_hash: str) -> str:
 
 
 async def generate_snapshot(
-    model: ModelPort,
+    model: EmbeddingModelPort,
     chunks: tuple[EmbeddingInput, ...],
     queries: tuple[EmbeddingInput, ...],
     cache: EmbeddingCache,
@@ -267,7 +281,7 @@ async def generate_snapshot(
 
     generated: list[tuple[str, EmbeddingInput, tuple[float, ...]]] = []
     input_tokens = 0
-    response_cost = Decimal("0")
+    calculated_cost_cny = Decimal("0")
     request_ids: list[str] = []
     seen_request_ids: set[str] = set()
     for key, item in misses:
@@ -276,9 +290,9 @@ async def generate_snapshot(
         input_tokens += usage.input_tokens
         if input_tokens > MAX_AGGREGATE_INPUT_TOKENS:
             raise EmbeddingResearchRejected("aggregate embedding token usage exceeds the bound")
-        assert usage.response_cost_usd is not None
-        response_cost += usage.response_cost_usd
-        if not response_cost.is_finite() or response_cost > MAX_AGGREGATE_COST_USD:
+        assert usage.calculated_cost_cny is not None
+        calculated_cost_cny += usage.calculated_cost_cny
+        if not calculated_cost_cny.is_finite() or calculated_cost_cny > MAX_AGGREGATE_COST_CNY:
             raise EmbeddingResearchRejected("aggregate cost exceeds the bounded research profile")
         if request_id not in seen_request_ids:
             seen_request_ids.add(request_id)
@@ -320,7 +334,10 @@ async def generate_snapshot(
         cache_hits=len(unique_inputs) - len(misses),
         cache_misses=len(misses),
         input_tokens=input_tokens,
-        response_cost_usd=response_cost,
+        currency=RESEARCH_COST_CURRENCY,
+        unit_price_per_1000_input_tokens=RESEARCH_UNIT_PRICE_PER_1000_INPUT_TOKENS,
+        calculated_cost_cny=calculated_cost_cny,
+        pricing_source=RESEARCH_PRICING_SOURCE,
         provider_request_ids=tuple(request_ids),
         started_at=started_at,
         finished_at=finished_at,
@@ -353,34 +370,22 @@ def load_fixture_inputs(
     return chunks, queries
 
 
-def research_litellm_config(settings: Mapping[str, str]) -> LiteLLMConfig:
-    """Build the one fixed research route without exposing its gateway secret."""
+def research_bailian_config(settings: Mapping[str, str]) -> BailianEmbeddingConfig:
+    """Build the one fixed direct research route without exposing its secrets."""
 
-    base_url = _required_setting(settings, "LITELLM_BASE_URL", maximum=2048)
-    master_key = _required_setting(settings, "LITELLM_MASTER_KEY", maximum=256)
     provider_model = _required_setting(settings, "LITELLM_EMBEDDING_MODEL", maximum=256)
-    _required_setting(settings, "LITELLM_EMBEDDING_API_KEY", maximum=256)
+    provider_key = _required_setting(settings, "LITELLM_EMBEDDING_API_KEY", maximum=256)
     provider_api_base = _required_setting(
         settings,
         "LITELLM_EMBEDDING_API_BASE",
         maximum=2048,
     )
-    if provider_model != EMBEDDING_PROVIDER_MODEL or not _valid_provider_api_base(
-        provider_api_base
-    ):
+    if provider_model != EMBEDDING_PROVIDER_MODEL:
         raise EmbeddingResearchRejected("embedding research provider route is invalid")
-    unused_answer_model = "unused-answer-research-v1"
-    return LiteLLMConfig(
-        base_url=base_url,
-        api_key=master_key,
-        embedding_model_id=EMBEDDING_ALIAS,
-        answer_model_id=unused_answer_model,
-        answer_profile_id="unused-answer-profile-v1",
-        embedding_dimension=EMBEDDING_DIMENSION,
-        allowed_embedding_model_labels=frozenset({EMBEDDING_ALIAS, provider_model}),
-        allowed_answer_model_labels=frozenset({unused_answer_model}),
-        allowed_retrieval_profile_ids=frozenset({"unused-research-profile-v1"}),
-    )
+    try:
+        return BailianEmbeddingConfig(api_base=provider_api_base, api_key=provider_key)
+    except ValueError as error:
+        raise EmbeddingResearchRejected("embedding research provider route is invalid") from error
 
 
 def write_research_report(path: Path, report: EmbeddingResearchReport) -> None:
@@ -414,7 +419,7 @@ def write_vector_snapshot_at(
 
 
 def _preflight(
-    model: ModelPort,
+    model: EmbeddingModelPort,
     chunks: tuple[EmbeddingInput, ...],
     queries: tuple[EmbeddingInput, ...],
     *,
@@ -487,19 +492,26 @@ def _validate_embedding(
 
 
 def _validate_usage(usage: EmbeddingUsage) -> None:
-    cost = usage.response_cost_usd
+    cost = usage.calculated_cost_cny
     exponent = cost.as_tuple().exponent if type(cost) is Decimal and cost.is_finite() else None
+    expected_cost = (
+        Decimal(usage.input_tokens) * RESEARCH_UNIT_PRICE_PER_1000_INPUT_TOKENS / 1000
+        if type(usage.input_tokens) is int
+        else None
+    )
     if (
         type(usage.input_tokens) is not int
         or type(usage.total_tokens) is not int
         or not 0 <= usage.input_tokens <= 1_000_000
         or not usage.input_tokens <= usage.total_tokens <= 1_000_000
+        or usage.response_cost_usd is not None
         or type(cost) is not Decimal
         or not cost.is_finite()
         or not 0 <= cost <= Decimal("100")
         or type(exponent) is not int
         or not -18 <= exponent <= 0
         or len(cost.as_tuple().digits) > 21
+        or cost != expected_cost
     ):
         raise EmbeddingResearchRejected("embedding usage and cost are malformed")
 
@@ -533,7 +545,7 @@ def _validate_report(report: EmbeddingResearchReport) -> None:
         report.input_tokens,
     )
     request_ids = report.provider_request_ids
-    cost = report.response_cost_usd
+    cost = report.calculated_cost_cny
     cost_exponent = cost.as_tuple().exponent if type(cost) is Decimal and cost.is_finite() else None
     if (
         report.model_id != EMBEDDING_ALIAS
@@ -548,9 +560,13 @@ def _validate_report(report: EmbeddingResearchReport) -> None:
         <= report.cache_hits + report.cache_misses
         <= (report.chunk_count + report.query_count)
         or not 0 <= report.input_tokens <= MAX_AGGREGATE_INPUT_TOKENS
+        or report.currency != RESEARCH_COST_CURRENCY
+        or report.unit_price_per_1000_input_tokens != RESEARCH_UNIT_PRICE_PER_1000_INPUT_TOKENS
+        or report.pricing_source != RESEARCH_PRICING_SOURCE
         or type(cost) is not Decimal
         or not cost.is_finite()
-        or not 0 <= cost <= MAX_AGGREGATE_COST_USD
+        or not 0 <= cost <= MAX_AGGREGATE_COST_CNY
+        or cost != Decimal(report.input_tokens) * RESEARCH_UNIT_PRICE_PER_1000_INPUT_TOKENS / 1000
         or type(cost_exponent) is not int
         or not -18 <= cost_exponent <= 0
         or len(cost.as_tuple().digits) > 21
@@ -580,9 +596,15 @@ def _report_payload(report: EmbeddingResearchReport) -> dict[str, object]:
         "finishedAt": report.finished_at,
         "inputTokens": report.input_tokens,
         "modelId": report.model_id,
+        "currency": report.currency,
+        "unitPricePer1000InputTokens": format(
+            report.unit_price_per_1000_input_tokens,
+            "f",
+        ),
+        "calculatedCostCny": format(report.calculated_cost_cny, "f"),
+        "pricingSource": report.pricing_source,
         "providerRequestIds": list(report.provider_request_ids),
         "queryCount": report.query_count,
-        "responseCostUsd": format(report.response_cost_usd, "f"),
         "startedAt": report.started_at,
     }
 
@@ -740,28 +762,3 @@ def _required_setting(settings: Mapping[str, str], name: str, *, maximum: int) -
     ):
         raise EmbeddingResearchRejected("embedding research configuration is incomplete")
     return value
-
-
-def _valid_provider_api_base(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-    except ValueError:
-        return False
-    hostname = parsed.hostname
-    return (
-        parsed.scheme == "https"
-        and hostname is not None
-        and len(hostname) <= 253
-        and re.fullmatch(
-            r"(?=.{1,253}\Z)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))+",
-            hostname,
-        )
-        is not None
-        and parsed.username is None
-        and parsed.password is None
-        and port is None
-        and parsed.path == "/compatible-mode/v1"
-        and parsed.query == ""
-        and parsed.fragment == ""
-    )

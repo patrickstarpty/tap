@@ -53,6 +53,7 @@ class EmbeddingUsage:
     input_tokens: int
     total_tokens: int
     response_cost_usd: Decimal | None
+    calculated_cost_cny: Decimal | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -62,18 +63,25 @@ class EmbeddingUsage:
             or not self.input_tokens <= self.total_tokens <= 1_000_000
         ):
             raise ValueError("embedding usage tokens are outside the closed bounds")
-        cost = self.response_cost_usd
-        exponent = cost.as_tuple().exponent if type(cost) is Decimal and cost.is_finite() else None
-        if cost is not None and (
-            type(cost) is not Decimal
-            or not cost.is_finite()
-            or cost < 0
-            or cost > Decimal("100")
-            or type(exponent) is not int
-            or not -18 <= exponent <= 0
-            or len(cost.as_tuple().digits) > 21
-        ):
-            raise ValueError("embedding response cost is outside the closed bounds")
+        costs = (self.response_cost_usd, self.calculated_cost_cny)
+        if sum(cost is not None for cost in costs) > 1:
+            raise ValueError("embedding usage cannot mix cost currencies")
+        for cost in costs:
+            exponent = (
+                cost.as_tuple().exponent
+                if type(cost) is Decimal and cost.is_finite()
+                else None
+            )
+            if cost is not None and (
+                type(cost) is not Decimal
+                or not cost.is_finite()
+                or cost < 0
+                or cost > Decimal("100")
+                or type(exponent) is not int
+                or not -18 <= exponent <= 0
+                or len(cost.as_tuple().digits) > 21
+            ):
+                raise ValueError("embedding response cost is outside the closed bounds")
 
 
 @dataclass(frozen=True, slots=True)

@@ -214,7 +214,7 @@ provider 原始 score 可以进入受控诊断记录，但公共正确性不依�
 
 ### Embedding、缓存与成本上限
 
-fixture ingestion 与 query embedding 都通过现有 LiteLLM `ModelPort`，Milvus adapter 不直接连接模型 provider。首轮允许付费 embedding API，但设置以下边界：
+正常应用 runtime 的模型调用继续通过 LiteLLM `ModelPort`，Milvus adapter 不直接连接模型 provider。Task 9 的一次性、脱敏、有界 research runner 是例外：2026-08-27 的 pinned LiteLLM live probe 先后证明 raw model 无法选择 provider、`custom_llm_provider` 在该 execution path 被忽略，内部 prefix 路径仍不能完成本次 embedding 调用；经用户明确批准，仅该 research runner 使用百炼 OpenAI-compatible HTTPS endpoint 直连。此例外不进入应用 runtime，也不推广到其他模型调用。首轮允许付费 embedding API，但设置以下边界：
 
 - 默认 research profile 最多 `100` 个脱敏 chunks 和 `20` 条有期望 source 的查询；显式扩展 profile 的绝对上限为 `500` chunks、`100` queries，不能由请求或环境变量继续放大。
 - 每段文本仍受现有 `8,000` 字符上限约束；运行前先计算所有未缓存输入，任何计数超限都必须在第一次 provider 调用前失败。
@@ -226,11 +226,11 @@ fixture ingestion 与 query embedding 都通过现有 LiteLLM `ModelPort`，Milv
 
 embedding cache 只是成本优化，不是内容、权限或 ingestion checkpoint 的权威源。删除 cache 后必须可以重新生成；ACL 变化不能因复用向量而跳过 metadata 更新与可见性验证。
 
-2026-08-26 用户为本次有界研究选择百炼 `text-embedding-v4`。百炼官方同步 embedding 文档确认该模型提供 OpenAI-compatible endpoint，并允许在请求中显式选择 `1536` 维；这只确定 provider route，不改变仓库固定 alias `research-embedding-v1`、1536 维 vector space、fixture manifest、cache key 或 schema digest 语义。2026-08-27 live startup/execution 证明 pinned gateway deployment 必须把内部 route 写成 `openai/text-embedding-v4` 才能选择 provider；该 prefix 是 LiteLLM 内部 routing，OpenAI-compatible upstream transform 发送的 provider model 仍是原始 `text-embedding-v4`。独立 `custom_llm_provider` 在该 pinned execution path 未生效，因此不再配置。runner 环境仍保存并严格验证 raw `LITELLM_EMBEDDING_MODEL=text-embedding-v4`，provider key 与 workspace-specific HTTPS API base 继续从环境读取。应用发往 alias 的每个 embedding 请求都显式携带 `dimensions=1536`。API base 只接受无 userinfo、query、fragment 的精确 `/compatible-mode/v1` path，endpoint 与 key 不进入报告、repr 或文档。
+2026-08-26 用户为本次有界研究选择百炼 `text-embedding-v4`。百炼官方同步 embedding 文档确认该模型提供 OpenAI-compatible endpoint，并允许在请求中显式选择 `1536` 维；这只确定 provider route，不改变仓库固定 alias `research-embedding-v1`、1536 维 vector space、fixture manifest、cache key 或 schema digest 语义。runner 环境严格验证 raw `LITELLM_EMBEDDING_MODEL=text-embedding-v4`，provider key 与 workspace-specific HTTPS API base 只从环境读取。直连 adapter 的每个请求固定发送 raw model、`dimensions=1536` 与 `encoding_format=float`，并严格验证 provider model、1536 个有限浮点数、usage 和 bounded request ID。API base 只接受 HTTPS、无 userinfo/query/fragment/port且 path 精确为 `/compatible-mode/v1`；endpoint、key、文本和 vector 不进入报告、repr 或错误。
 
-固定 LiteLLM `v1.76.1-stable` 支持 `api_base` 与自定义 cost metadata，但其该版本 model cost map 不包含 `text-embedding-v4`，百炼官方价格又以人民币计价。因此本 RFC 不猜测 `base_model` 映射、美元换算或 `input_cost_per_token`；research run 继续严格要求 LiteLLM 实际返回 canonical `x-litellm-response-cost` 和 usage，缺失或异常即失败。真实 provider/LiteLLM probe、成本 header 与 1536 维返回仍待 Task 9 Step 7 验证，不能以静态配置冒充完成。
+固定 LiteLLM `v1.76.1-stable` 的 model cost map 不包含 `text-embedding-v4`，百炼官方北京同步调用价格为每 1,000 input tokens `0.0005 CNY`。因此本 RFC 不猜测 `base_model`、美元换算、USD response cost 或实际账单；research report 固定记录 `currency=CNY`、`unit_price_per_1000_input_tokens=0.0005`、按严格 input token usage 计算的 `calculated_cost_cny` 与 `source=official_rate_2026-08-27`。该值只是基于官方费率的精确计算，不宣称 provider 返回成本或最终账单。真实 provider 1536 维响应与检索质量仍待 Task 9 Step 7 验证，不能以静态配置冒充完成。
 
-日常 CI 不调用付费 embedding API。仓库保存一组最小、脱敏、版本化的预计算 fixture/query vectors，并绑定 model ID、dimension 与内容 hash；这些向量是 conformance test input，不是运行时 cache。真实 Milvus CI 门禁使用它们验证数据库、hybrid 与 ACL。完成本次实验报告前必须另外运行一次真实 LiteLLM embedding research profile，重新生成本地 ignored cache，并验证维度、版本、正向检索和成本记录；该外部模型探针不因日常 CI 重复计费。
+日常 CI 不调用付费 embedding API。仓库保存一组最小、脱敏、版本化的预计算 fixture/query vectors，并绑定 model ID、dimension 与内容 hash；这些向量是 conformance test input，不是运行时 cache。真实 Milvus CI 门禁使用它们验证数据库、hybrid 与 ACL。完成本次实验报告前必须另外运行一次真实 direct Bailian embedding research profile，重新生成本地 ignored cache，并验证维度、版本、正向检索和成本记录；该外部模型探针不因日常 CI 重复计费。
 
 ### 删除、重建与 alias 发布
 
@@ -257,9 +257,9 @@ ACL 收紧和删除必须先 upsert 新 metadata 或写入 `deleted=true`，以 
 | Unit/contract | filter escaping 与 bounds、空 ACL fail closed、默认空 source 只形成 `doc` Plan、同 filter 多通道、严格 row mapping、共享错误与 HTTP 503 映射、deadline/cancel、未配置 family、秘密不进 repr/log |
 | Provider conformance | 每条出站请求含精确 ACL filter、allowed positive、denied provider rows/hits zero、tenant/project/classification/environment/corpus 隔离、scope/subtree、撤权窗口、delete、provenance、bounded result、alias/physical identity |
 | Real Milvus CI | Docker Milvus 建表/写入/hybrid、版本化预计算 vectors、ACL 收紧、重启持久性、重建对账、alias/corpus 发布 |
-| Embedding research | 真实 LiteLLM embedding、ignored cache、模型/维度绑定、正向检索与调用/成本记录；完成实验报告前必跑，日常 CI 不重复调用 |
+| Embedding research | 真实 direct Bailian embedding、ignored cache、模型/维度绑定、正向检索与调用/成本记录；完成实验报告前必跑，日常 CI 不重复调用 |
 
-Milvus real database integration 是本地研究和日常 CI 的必跑门禁。Azure adapter 继续运行相同的 unit/contract/conformance tests；真实 Azure gate 对本地 Milvus 实验与每次提交改为 opt-in，仅在提供 `non-production-sanitized` 凭据时运行，skip 不阻塞日常 Milvus 开发。但任何 Azure-backed 环境的发布、ADR-002 企业基线验证或当前 Azure-specific Task 3 的正式关闭仍必须运行真实 Azure gate；本 RFC 不用一次本地 Milvus GREEN 代替 Azure 部署验收。真实 LiteLLM embedding research profile 是完成首轮实验报告的必跑项，但不是每次 CI 的前置条件。禁止使用 fake/skip 代替 Milvus 的真实 ACL GREEN，也禁止用预计算 vectors 冒充真实 embedding 已运行。
+Milvus real database integration 是本地研究和日常 CI 的必跑门禁。Azure adapter 继续运行相同的 unit/contract/conformance tests；真实 Azure gate 对本地 Milvus 实验与每次提交改为 opt-in，仅在提供 `non-production-sanitized` 凭据时运行，skip 不阻塞日常 Milvus 开发。但任何 Azure-backed 环境的发布、ADR-002 企业基线验证或当前 Azure-specific Task 3 的正式关闭仍必须运行真实 Azure gate；本 RFC 不用一次本地 Milvus GREEN 代替 Azure 部署验收。真实 direct Bailian embedding research profile 是完成首轮实验报告的必跑项，但不是每次 CI 的前置条件。禁止使用 fake/skip 代替 Milvus 的真实 ACL GREEN，也禁止用预计算 vectors 冒充真实 embedding 已运行。
 
 Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subject 与 current-policy fake 验证 adapter，但不能据此宣称真实身份/撤权集成完成，也不能关闭 Task 3 的 Entra 外部门禁。
 
@@ -329,7 +329,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 3. 增加本地 Milvus Compose profile、三类最小权限身份、行为健康检查、脱敏 fixture manifest 与 embedding cache 边界。
 4. 以 TDD 新增 Milvus filter compiler、alias-to-physical target binding、strict result mapping 和 `MilvusSearchAdapter`，保持 Knowledge application 的 provider-neutral 检索流程不分支。
 5. 参数化 provider conformance suite，先取得 fake/controlled RED，再以预计算 vectors 取得真实 Milvus ACL GREEN；保留 Azure contract tests。
-6. 完成 `doc` fixture loader、BM25+dense hybrid、撤权/delete、rebuild/alias/corpus；单独运行真实 LiteLLM embedding research profile 并完成资源/成本测量。
+6. 完成 `doc` fixture loader、BM25+dense hybrid、撤权/delete、rebuild/alias/corpus；单独运行真实 direct Bailian embedding research profile 并完成资源/成本测量。
 7. 修正 reference contract 中 `physicalIndex` 与当前生成 HTTP schema 的漂移，输出时间点实验 review；只有安全硬门禁全部通过且 review 建议继续，才接受本 RFC、创建 superseding ADR 并修改正式 Task 3/4 计划。
 8. 后续按新计划增加 provider-neutral `IndexWriterPort`/`IndexAdminPort`，再逐步扩展 `code`、`bdd`、`failure`；不在本 RFC 首轮偷跑完整 Task 4。
 
@@ -341,7 +341,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 - `SearchPort` 方法签名保持不变，Azure/Milvus 只抛共享 port errors；provider 不可用与执行边界错误分别形成受控 503，不能变成成功 abstention。
 - 本地 Compose 能按需启动固定版本 Milvus Standalone，并通过 create/insert/filtered hybrid/delete 行为健康探针。
 - 实验 Project Policy 精确允许 `doc`；默认空 source 请求成功且 QueryPlan 只有 `doc`，显式未配置 family 在 provider I/O 前失败。
-- `doc` 纵向切片在完成实验报告前使用一次真实 LiteLLM embedding 和内容寻址 cache，可从脱敏 manifest 重建；日常 CI 使用绑定相同模型空间的版本化预计算 vectors。
+- `doc` 纵向切片在完成实验报告前使用一次真实 direct Bailian embedding 和内容寻址 cache，可从脱敏 manifest 重建；日常 CI 使用绑定相同模型空间的版本化预计算 vectors。
 - Milvus 与 Azure adapter 均通过同一核心 conformance suite；真实 Milvus 数据库 gate 在日常 CI 必跑，真实 Azure gate 对普通提交 opt-in、对 Azure-backed 发布必跑。
 - 每条出站检索/补充请求都含精确可信 ACL filter；所有 ACL negative probes 在 provider rows、mapped hits 与当前 Search/Answer citations 层均为零，且撤权与删除后旧主体无法从当前 surface 读取。Task 7 再独立验证旧 citation/history/Trace 读取时重新授权。
 - BM25、dense、hybrid 和 resource scope 使用同一可信 filter；公共调用者无法提交或覆盖 filter。
@@ -356,7 +356,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 ## 未决问题
 
 - **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport、reader Describe grants 的 `Global` inventory 层级、provisioner 六项既有 `Global/*`/六项 `Collection/*` inventory 二分，以及 `describe_role` 对 `PrivilegeSelectOwnership` 的明确要求；闭合 provisioner base 因而是七项 `Global/*` 与六项 `Collection/*`。Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
-- **Embedding route（provider 已选择，真实探针待执行）**：2026-08-26 已选择百炼 `text-embedding-v4` 的 OpenAI-compatible route，并固定显式请求 1536 维；仓库 alias/digest schema 保持不变。Task 9 Step 7 仍须在脱敏非生产 workspace 上验证真实 LiteLLM/provider 响应、usage/cost header、1536 维和 top-10 质量；探针完成前保持 pending，不退化为未标注的 fake GREEN。
+- **Embedding route（provider 已选择，真实探针待执行）**：2026-08-26 已选择百炼 `text-embedding-v4` 的 OpenAI-compatible route，并固定显式请求 1536 维；仓库 alias/digest schema 保持不变。Task 9 Step 7 仍须在脱敏非生产 workspace 上验证真实 direct provider 响应、usage/request ID、1536 维、CNY calculated-cost report 和 top-10 质量；探针完成前保持 pending，不退化为未标注的 fake GREEN。
 - **中文 analyzer**：由首轮脱敏 fixture 的实际语言分布选择并固化；若包含中文，必须对默认与中文 analyzer 输出做可复现对比后选择，选择结果进入 schema version。
 - **共享非生产部署**：本 RFC 提议的首轮批准范围只有本地 Docker。是否把 Standalone 放到共享 VM/容器环境，在本地资源、恢复和安全 review 后另行批准，并强制 TLS 与 secret 注入。
 - **生产形态**：Standalone、Distributed 或 Azure AI Search 的生产选择推迟到真实 corpus 容量、SLO/RPO/RTO 和运维成本具备后，由实施计划的 [Task 8 容量与部署门禁](../plans/2026-08-23-phase-1-application-implementation.md#task-8-deployment-observability-and-capacity-gates) 处理。

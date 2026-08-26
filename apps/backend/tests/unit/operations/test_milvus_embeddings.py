@@ -15,9 +15,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
 from tap.modules.knowledge.ports.models import Embedding, EmbeddingUsage
 from tap.operations.milvus import embeddings as embedding_module
+from tap.operations.milvus.bailian import BailianEmbeddingAdapter
 from tap.operations.milvus.embeddings import (
     EMBEDDING_ALIAS,
     EMBEDDING_DIMENSION,
@@ -27,7 +27,7 @@ from tap.operations.milvus.embeddings import (
     embedding_cache_key,
     generate_snapshot,
     load_fixture_inputs,
-    research_litellm_config,
+    research_bailian_config,
     write_research_report,
     write_vector_snapshot,
 )
@@ -79,7 +79,7 @@ class FakeEmbeddingModel:
         fail_on_call: int | None = None,
         cancel_on_call: int | None = None,
         request_ids: tuple[str, ...] = (),
-        cost: Decimal = Decimal("0.000001"),
+        cost: Decimal = Decimal("0.000002"),
         cache: MemoryEmbeddingCache | None = None,
         expected_cache_reads: int | None = None,
     ) -> None:
@@ -112,7 +112,8 @@ class FakeEmbeddingModel:
             usage=EmbeddingUsage(
                 input_tokens=4,
                 total_tokens=4,
-                response_cost_usd=self.cost,
+                response_cost_usd=None,
+                calculated_cost_cny=self.cost,
             ),
         )
 
@@ -264,7 +265,8 @@ async def test_same_normalized_content_across_chunk_and_query_is_embedded_once_a
     assert first_report.cache_hits == 0
     assert first_report.cache_misses == 1
     assert first_report.input_tokens == 4
-    assert first_report.response_cost_usd == Decimal("0.000001")
+    assert first_report.calculated_cost_cny == Decimal("0.000002")
+    assert first_report.currency == "CNY"
     assert second_report.cache_hits == 1
     assert second_report.cache_misses == 0
     assert cache.get_count == 2
@@ -305,7 +307,7 @@ async def test_cache_hit_is_deterministic_and_second_run_has_zero_paid_usage() -
     assert second_report.cache_hits == 3
     assert second_report.cache_misses == 0
     assert second_report.input_tokens == 0
-    assert second_report.response_cost_usd == Decimal("0")
+    assert second_report.calculated_cost_cny == Decimal("0")
     assert second_report.provider_request_ids == ()
     assert set(asdict(second_report)) == {
         "model_id",
@@ -315,7 +317,10 @@ async def test_cache_hit_is_deterministic_and_second_run_has_zero_paid_usage() -
         "cache_hits",
         "cache_misses",
         "input_tokens",
-        "response_cost_usd",
+        "currency",
+        "unit_price_per_1000_input_tokens",
+        "calculated_cost_cny",
+        "pricing_source",
         "provider_request_ids",
         "started_at",
         "finished_at",
@@ -395,7 +400,7 @@ async def test_unsafe_provider_request_ids_fail_closed(request_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_usage_and_aggregate_decimal_cost_are_required_and_bounded() -> None:
+async def test_usage_and_exact_official_cny_calculation_are_required() -> None:
     class InvalidUsageModel(FakeEmbeddingModel):
         async def embed(self, query: str) -> Embedding:
             result = await super().embed(query)
@@ -410,7 +415,7 @@ async def test_usage_and_aggregate_decimal_cost_are_required_and_bounded() -> No
         )
 
     expensive = FakeEmbeddingModel(cost=Decimal("60"))
-    with pytest.raises(EmbeddingResearchRejected, match="aggregate cost"):
+    with pytest.raises(EmbeddingResearchRejected, match="usage"):
         await generate_snapshot(
             expensive,
             (research_input("chunk-1"), research_input("chunk-2")),
@@ -429,11 +434,12 @@ async def test_usage_and_aggregate_decimal_cost_are_required_and_bounded() -> No
         ("total_tokens", False),
         ("total_tokens", 3),
         ("total_tokens", 1_000_001),
-        ("response_cost_usd", None),
-        ("response_cost_usd", "0.01"),
-        ("response_cost_usd", Decimal("NaN")),
-        ("response_cost_usd", Decimal("1E-19")),
-        ("response_cost_usd", Decimal("101")),
+        ("response_cost_usd", Decimal("0.01")),
+        ("calculated_cost_cny", None),
+        ("calculated_cost_cny", "0.01"),
+        ("calculated_cost_cny", Decimal("NaN")),
+        ("calculated_cost_cny", Decimal("1E-19")),
+        ("calculated_cost_cny", Decimal("101")),
     ],
 )
 async def test_core_revalidates_mutated_usage_before_cache_or_output(
@@ -509,8 +515,11 @@ def test_report_and_snapshot_writes_are_closed_atomic_and_redacted(
         "modelId",
         "providerRequestIds",
         "queryCount",
-        "responseCostUsd",
+        "calculatedCostCny",
+        "currency",
+        "pricingSource",
         "startedAt",
+        "unitPricePer1000InputTokens",
     }
     assert set(snapshot_value) == {"chunks", "dimension", "modelId", "queries"}
     assert set(snapshot_value["chunks"]["chunk-secret"]) == {"inputHash", "vector"}
@@ -533,7 +542,8 @@ def test_report_and_snapshot_writes_are_closed_atomic_and_redacted(
     "mutation",
     [
         {"provider_request_ids": ("PRIVATE SECRET",)},
-        {"response_cost_usd": Decimal("NaN")},
+        {"calculated_cost_cny": Decimal("NaN")},
+        {"currency": "USD"},
         {"input_tokens": True},
         {"cache_misses": 601},
         {"model_id": "other-model"},
@@ -551,7 +561,10 @@ def test_report_writer_revalidates_runtime_mutation_before_persistence(
         cache_hits=0,
         cache_misses=1,
         input_tokens=4,
-        response_cost_usd=Decimal("0.000001"),
+        currency="CNY",
+        unit_price_per_1000_input_tokens=Decimal("0.0005"),
+        calculated_cost_cny=Decimal("0.000002"),
+        pricing_source="official_rate_2026-08-27",
         provider_request_ids=("request-1",),
         started_at="2026-08-26T00:00:00.000Z",
         finished_at="2026-08-26T00:00:01.000Z",
@@ -610,6 +623,7 @@ async def test_default_task8_inputs_account_for_unique_content_without_losing_ca
     assert len(model.calls) == 18
     assert report.cache_misses == 18
     assert report.input_tokens == 72
+    assert report.calculated_cost_cny == Decimal("0.000036")
     assert len(snapshot.chunks) == 12
     assert len(snapshot.queries) == 8
 
@@ -627,19 +641,22 @@ async def test_cli_runner_sends_fixed_alias_and_1536_dimensions_on_every_embeddi
         requests.append(request)
         return httpx.Response(
             200,
-            headers={
-                "x-request-id": f"request-{len(requests)}",
-                "x-litellm-response-cost": "0.000001",
-            },
+            headers={"x-request-id": f"request-{len(requests)}"},
             json={
-                "id": f"embedding-{len(requests)}",
+                "object": "list",
                 "model": "text-embedding-v4",
-                "data": [{"embedding": [0.001] * EMBEDDING_DIMENSION}],
+                "data": [
+                    {
+                        "object": "embedding",
+                        "index": 0,
+                        "embedding": [0.001] * EMBEDDING_DIMENSION,
+                    }
+                ],
                 "usage": {"prompt_tokens": 4, "total_tokens": 4},
             },
         )
 
-    class RecordingAdapter(LiteLLMAdapter):
+    class RecordingAdapter(BailianEmbeddingAdapter):
         def __init__(self, config: object) -> None:
             self._recording_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
             super().__init__(config, client=self._recording_client)  # type: ignore[arg-type]
@@ -648,13 +665,16 @@ async def test_cli_runner_sends_fixed_alias_and_1536_dimensions_on_every_embeddi
             await self._recording_client.aclose()
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", RecordingAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", RecordingAdapter)
 
     await research_cli._run(cli_args(), cli_settings())
 
     assert len(requests) == 18
-    assert all(json.loads(request.content)["model"] == EMBEDDING_ALIAS for request in requests)
+    assert all(
+        json.loads(request.content)["model"] == "text-embedding-v4" for request in requests
+    )
     assert all(json.loads(request.content)["dimensions"] == 1536 for request in requests)
+    assert all(json.loads(request.content)["encoding_format"] == "float" for request in requests)
 
 
 @pytest.mark.asyncio
@@ -702,7 +722,7 @@ async def test_cli_run_revokes_completion_marker_and_never_restores_it_on_failur
             raise OSError("report durability fault")
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", LifecycleAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", LifecycleAdapter)
     monkeypatch.setattr(research_cli, "write_vector_snapshot_at", candidate_writer)
     monkeypatch.setattr(research_cli, "write_research_report_at", report_writer)
 
@@ -752,7 +772,7 @@ async def test_cli_rejects_output_paths_outside_the_exact_local_profile_before_s
         value = Path(".local/other/output")
     setattr(args, field, value)
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", ForbiddenAdapter)
 
     with pytest.raises(EmbeddingResearchRejected, match="output path"):
         await research_cli._run(args, cli_settings())
@@ -804,7 +824,7 @@ async def test_cli_rejects_symlinked_output_path_components_before_provider_call
             constructed = True
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", ForbiddenAdapter)
 
     with pytest.raises(EmbeddingResearchRejected, match="output path"):
         await research_cli._run(cli_args(), cli_settings())
@@ -861,7 +881,7 @@ async def test_cli_held_directory_fds_prevent_rename_symlink_output_escape(
         raise OSError("post-replace report fault")
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", SwitchingAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", SwitchingAdapter)
     if report_fault:
         monkeypatch.setattr(
             research_cli,
@@ -919,7 +939,7 @@ async def test_cli_closes_every_held_directory_fd_when_cancelled(
             return None
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", CancellingAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", CancellingAdapter)
     monkeypatch.setattr(research_cli.os, "open", tracked_open)
     monkeypatch.setattr(research_cli.os, "close", tracked_close)
     monkeypatch.setattr(research_cli, "_dirfd_capabilities_available", lambda: True)
@@ -950,7 +970,7 @@ async def test_cli_fails_before_marker_or_provider_when_dirfd_api_is_unavailable
             constructed = True
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", ForbiddenAdapter)
     monkeypatch.setattr(
         research_cli,
         "_dirfd_capabilities_available",
@@ -998,7 +1018,7 @@ async def test_cli_cleanup_failure_preserves_primary_exception_and_records_incom
             raise OSError("PRIVATE cleanup sink detail")
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", FailingAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", FailingAdapter)
     monkeypatch.setattr(
         research_cli,
         "_remove_completion_marker_at",
@@ -1039,7 +1059,7 @@ async def test_cli_initial_marker_revoke_failure_stops_before_provider(
         raise OSError("PRIVATE marker detail")
 
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", ForbiddenAdapter)
     monkeypatch.setattr(
         research_cli,
         "_remove_completion_marker_at",
@@ -1109,7 +1129,7 @@ raise SystemExit(cli.main([]))
         assert completed.stderr == "Embedding research failed.\n"
 
 
-def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() -> None:
+def test_cli_builds_only_the_fixed_direct_route_and_hides_provider_config() -> None:
     settings = {
         "LITELLM_BASE_URL": "http://127.0.0.1:4000",
         "LITELLM_MASTER_KEY": "PRIVATE_GATEWAY_SECRET",
@@ -1117,13 +1137,9 @@ def test_cli_builds_only_the_fixed_alias_and_hides_gateway_secret_from_repr() ->
         "LITELLM_EMBEDDING_API_KEY": "PRIVATE_PROVIDER_SECRET",
         "LITELLM_EMBEDDING_API_BASE": ("https://private-workspace.example/compatible-mode/v1"),
     }
-    config = research_litellm_config(settings)
+    config = research_bailian_config(settings)
 
-    assert config.embedding_model_id == EMBEDDING_ALIAS
-    assert config.embedding_dimension == EMBEDDING_DIMENSION
-    assert config.allowed_embedding_model_labels == frozenset(
-        {EMBEDDING_ALIAS, "text-embedding-v4"}
-    )
+    assert config.deadline_seconds == 15.0
     assert "PRIVATE_GATEWAY_SECRET" not in repr(config)
     assert "PRIVATE_PROVIDER_SECRET" not in repr(config)
     assert "private-workspace.example" not in repr(config)
@@ -1177,7 +1193,7 @@ def test_research_provider_route_rejects_incomplete_or_widened_settings_without_
     settings[name] = value
 
     with pytest.raises(EmbeddingResearchRejected) as caught:
-        research_litellm_config(settings)
+        research_bailian_config(settings)
 
     message = str(caught.value)
     assert "workspace.example" not in message
@@ -1204,7 +1220,7 @@ async def test_invalid_provider_route_fails_before_marker_removal_or_adapter_con
     settings = cli_settings()
     settings["LITELLM_EMBEDDING_API_BASE"] = "http://workspace.example/compatible-mode/v1"
     monkeypatch.setattr(research_cli, "_REPOSITORY_ROOT", repository, raising=False)
-    monkeypatch.setattr(research_cli, "LiteLLMAdapter", ForbiddenAdapter)
+    monkeypatch.setattr(research_cli, "BailianEmbeddingAdapter", ForbiddenAdapter)
 
     with pytest.raises(EmbeddingResearchRejected):
         await research_cli._run(cli_args(), settings)
@@ -1231,20 +1247,9 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     compose = (repository / "compose.yaml").read_text(encoding="utf-8")
     gateway = (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
     assert "LITELLM_EMBEDDING_API_BASE: ${LITELLM_EMBEDDING_API_BASE:-}" in compose
-    assert "api_base: os.environ/LITELLM_EMBEDDING_API_BASE" in gateway
-    assert "model: openai/text-embedding-v4" in gateway
-    assert "model: os.environ/LITELLM_EMBEDDING_MODEL" not in gateway
-    assert "custom_llm_provider:" not in gateway
-    internal_provider, separator, upstream_model = "openai/text-embedding-v4".partition("/")
-    assert (internal_provider, separator, upstream_model) == (
-        "openai",
-        "/",
-        environment["LITELLM_EMBEDDING_MODEL"],
-    )
-    # The pinned LiteLLM cost map has no text-embedding-v4 entry. Claiming a
-    # base model or numeric override would fabricate USD cost metadata.
-    assert "base_model:" not in gateway
-    assert "input_cost_per_token" not in gateway
+    assert "research-embedding-v1" not in gateway
+    assert "text-embedding-v4" not in gateway
+    assert "LITELLM_EMBEDDING_API_BASE" not in gateway
 
 
 def test_make_paid_target_fails_explicitly_instead_of_skipping() -> None:

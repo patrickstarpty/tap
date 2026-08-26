@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
+from tap.operations.milvus.bailian import BailianEmbeddingAdapter
 from tap.operations.milvus.embeddings import (
     DEFAULT_MAX_CHUNKS,
     DEFAULT_MAX_QUERIES,
@@ -21,7 +21,7 @@ from tap.operations.milvus.embeddings import (
     EmbeddingResearchRejected,
     generate_snapshot,
     load_fixture_inputs,
-    research_litellm_config,
+    research_bailian_config,
     write_research_report_at,
     write_vector_snapshot_at,
 )
@@ -51,12 +51,12 @@ class _OutputDirectories:
 
 
 async def _run(args: argparse.Namespace, settings: Mapping[str, str]) -> None:
-    config = research_litellm_config(settings)
+    config = research_bailian_config(settings)
     with _open_output_directories(args) as outputs:
         _revoke_completion_marker(outputs.research_fd)
         try:
             chunks, queries = load_fixture_inputs(args.doc_fixture, args.query_fixture)
-            adapter = LiteLLMAdapter(config)
+            adapter = BailianEmbeddingAdapter(config)
             try:
                 snapshot, report = await generate_snapshot(
                     adapter,

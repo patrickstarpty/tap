@@ -36,7 +36,7 @@ related-adrs:
 - Schema digest 继续只使用 fields/functions/indexes/consistency 的 canonical 表示；每个 canonical index 严格为 `index_name`、`field_name`、`index_type`、`metric_type`、嵌套 `params`。Pinned transport 的兼容修正只能归一化到这一表示，不能改变 digest 语义或产生第二套 publisher-only 摘要。
 - Reader 的 Describe privileges 只存在于 bootstrap `Global/*` base inventory；publisher 的 target-scoped reader set 严格只有 `Collection` + exact database/name 的 `Search`、`Query`。任何 `Global` target record 或不同 database/object type/role 的同名 grant 都不能冒充 target grant。
 - Provisioner bootstrap base grants 只接受 pinned live inventory/denial 的闭合二分：`Global/*` 精确为 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership`、`SelectOwnership`，`Collection/*` 精确为 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release`；不得泛化到其他 privilege、版本、API 或 resource level。`SelectOwnership` 只允许 publisher 使用 provisioner 身份执行安全 `describe_role`/grant inventory，`ManageOwnership` 保留既有 grant mutation 用途；reader/writer 不获得前者，publisher 也不得用 root/admin 旁路。Bootstrap 只拥有 `Global/*` 与 wildcard base namespace，必须精确纠错且保留 publisher 拥有的合法 concrete target grants；异常或所有权不明的 concrete record 必须 fail closed，不能静默接受或宽泛删除。
-- 日常 CI 使用仓库内脱敏预计算 vectors，不调用付费 API。实验报告前只运行一次有界真实 LiteLLM embedding profile；默认最多 100 chunks/20 queries，绝对上限 500/100。
+- 日常 CI 使用仓库内脱敏预计算 vectors，不调用付费 API。实验报告前只运行一次有界真实 direct Bailian embedding profile；默认最多 100 chunks/20 queries，绝对上限 500/100。
 - Milvus 本地端口及现有本地服务宿主端口统一绑定 `127.0.0.1`；共享非生产部署、TLS、HA、SLO、备份和生产容量不在本计划范围。
 - 启动真实 Milvus 前验证 Docker 至少可用 2 vCPU 与 8 GiB memory；不足时门禁失败并报告资源，不降低数据库配置冒充有效实验。
 - 任何真实凭据、provider 请求正文、group IDs、raw filter 或 vectors 不进入日志、报告、git 或异常响应。
@@ -1402,10 +1402,12 @@ Task 8 live acceptance 继续保持 BLOCKED，直到 Task 5 的 exact field norm
 - Modify: `.gitignore`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/models.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/litellm.py`
+- Create: `apps/backend/src/tap/operations/milvus/bailian.py`
 - Create: `apps/backend/src/tap/operations/milvus/embeddings.py`
 - Create: `scripts/milvus_embedding_research.py`
 - Create: `apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json`
 - Create: `apps/backend/tests/unit/operations/test_milvus_embeddings.py`
+- Create: `apps/backend/tests/contract/test_bailian_embedding.py`
 - Modify: `apps/backend/tests/contract/test_litellm_strict.py`
 - Modify: `Makefile`
 
@@ -1413,7 +1415,7 @@ Task 8 live acceptance 继续保持 BLOCKED，直到 Task 5 的 exact field norm
 
 **Interfaces:**
 
-- Consumes: Task 8 sanitized manifest/query cases and existing `ModelPort.embed(str) -> Embedding` through LiteLLM.
+- Consumes: Task 8 sanitized manifest/query cases and the embedding-only subset of `ModelPort`. Normal application runtime remains on LiteLLM; the explicitly approved Task 9 research runner alone uses the strict direct Bailian adapter after the pinned gateway failed its provider-routing probes.
 - Produces: content-addressed ignored cache, redacted research report, and committed `VectorSnapshot` in the exact 1536-dimensional model space consumed by Task 10.
 
 ```python
@@ -1439,6 +1441,7 @@ class EmbeddingUsage:
     input_tokens: int
     total_tokens: int
     response_cost_usd: Decimal | None
+    calculated_cost_cny: Decimal | None = None
 
 @dataclass(frozen=True, slots=True)
 class VectorRecord:
@@ -1461,7 +1464,10 @@ class EmbeddingResearchReport:
     cache_hits: int
     cache_misses: int
     input_tokens: int
-    response_cost_usd: Decimal
+    currency: Literal["CNY"]
+    unit_price_per_1000_input_tokens: Decimal
+    calculated_cost_cny: Decimal
+    pricing_source: Literal["official_rate_2026-08-27"]
     provider_request_ids: tuple[str, ...]
     started_at: str
     finished_at: str
@@ -1547,30 +1553,19 @@ async def generate_snapshot(
   assert len(model.calls) == first_call_count
   assert set(asdict(second_report)) == {
       "model_id", "dimension", "chunk_count", "query_count", "cache_hits",
-      "cache_misses", "input_tokens", "response_cost_usd", "provider_request_ids",
+      "cache_misses", "input_tokens", "currency",
+      "unit_price_per_1000_input_tokens", "calculated_cost_cny", "pricing_source",
+      "provider_request_ids",
       "started_at", "finished_at",
   }
   ```
-- [ ] **Step 3:** 在 LiteLLM strict test 增加 standard `usage.prompt_tokens/total_tokens` 与 non-streaming `x-litellm-response-cost` header 的解析测试；负数、NaN、超大值、缺 usage 均 fail closed。`Embedding` 新增可选 `usage: EmbeddingUsage | None = None`，现有调用保持兼容；真实 research profile 要求每次调用 usage 与 cost 均存在。配置同时只新增对 `http://127.0.0.1:<port>` 与 `http://localhost:<port>` 的本地例外，其他 HTTP URL 继续拒绝。百炼适配的 TDD 必须另外证明 embedding request（包括 runner 的全部调用）使用固定 alias 并显式发送 `dimensions=1536`，provider 返回默认 1024 维时拒绝；answer/其他 model call 的 request body 不得被泛化修改。运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_embeddings.py apps/backend/tests/contract/test_litellm_strict.py -v`，预期 FAIL 为 embeddings module/usage 字段、loopback rule 或显式维度缺失。
-- [ ] **Step 4:** 在 LiteLLM 增加以下固定 alias。2026-08-26 用户选择百炼 raw model `text-embedding-v4`；2026-08-27 live execution 证明 pinned gateway 只有在 deployment 内部 model 固定为 `openai/text-embedding-v4` 时才识别 provider，独立 `custom_llm_provider` 在该执行路径无效。该 prefix 只用于 LiteLLM routing，上游 transform 必须仍发送 raw `text-embedding-v4`。runner 的 `LITELLM_EMBEDDING_MODEL` 保持 raw 并拒绝 prefix；provider key 与 workspace API base 只从环境读取，Compose 仍透传三项以供 runner/preflight。API base 必须使用 HTTPS、无 userinfo/query/fragment 且 path 精确为 `/compatible-mode/v1`；missing、HTTP、错误 path 或 secret-bearing URL 在 marker/model side effect 前失败，异常/repr 不回显 endpoint/key。实际 provider model 必须返回 1536 维。
+- [ ] **Step 3:** 在 LiteLLM strict test 增加 standard `usage.prompt_tokens/total_tokens` 与 non-streaming `x-litellm-response-cost` header 的解析测试；负数、NaN、超大值、缺 usage 均 fail closed。`EmbeddingUsage` 保留可选 `response_cost_usd` 以兼容应用 LiteLLM adapter，并新增互斥的 `calculated_cost_cny`；direct research profile 要求每次调用都有严格 usage 与精确 CNY calculated cost。配置同时只新增对 `http://127.0.0.1:<port>` 与 `http://localhost:<port>` 的本地例外，其他 HTTP URL 继续拒绝。百炼适配的 TDD 必须另外证明全部 runner request 发送 raw model、`dimensions=1536` 与 float encoding，provider 返回默认 1024 维时拒绝；answer/其他 model call 不得被泛化修改。运行 focused LiteLLM、Bailian 和 research runner tests，预期 RED 为 direct module/CNY usage 字段或显式 request/response contract 缺失。
+- [ ] **Step 4:** 2026-08-27 pinned LiteLLM live execution 已依次证明 raw model 无法选择 provider、独立 `custom_llm_provider` 被该 execution path 忽略，内部 `openai/` prefix 路径也未完成本次调用。经用户批准，移除未工作的 gateway research deployment，只让 Task 9 runner 通过严格 direct adapter 调用百炼；default chat 与应用 runtime 的 LiteLLM 配置不变。runner 的 `LITELLM_EMBEDDING_MODEL` 固定为 raw `text-embedding-v4` 并拒绝 prefix；provider key 与 workspace API base 只从环境读取。API base 必须为 HTTPS、无 userinfo/query/fragment/port且 path 精确为 `/compatible-mode/v1`。每个 request 固定 raw model、`dimensions=1536`、`encoding_format=float`；provider model、1536 个有限 float、usage 和 bounded request ID 必须闭合验证。timeout/cancel/错误不得泄露 endpoint、key、text 或 vector。
 
-  ```yaml
-  model_list:
-    - model_name: default-chat
-      litellm_params:
-        model: os.environ/LITELLM_MODEL
-        api_key: os.environ/OPENAI_API_KEY
-    - model_name: research-embedding-v1
-      litellm_params:
-        model: openai/text-embedding-v4
-        api_key: os.environ/LITELLM_EMBEDDING_API_KEY
-        api_base: os.environ/LITELLM_EMBEDDING_API_BASE
-  ```
-
-  `.env.example` 增加 `LITELLM_BASE_URL=http://127.0.0.1:4000`、runner 使用的非 secret 原始 model `LITELLM_EMBEDDING_MODEL=text-embedding-v4`、空的 `LITELLM_EMBEDDING_API_KEY=` 与 `LITELLM_EMBEDDING_API_BASE=`；workspace endpoint/key 只写未跟踪的 `.env` 或 secret store。TDD 必须锁定 gateway 内部 prefixed route、禁止无效 `custom_llm_provider`/model env 用法、拒绝 runner env provider prefix，并证明内部 route 拆分后的 upstream model 精确等于 raw env model。该版本 cost map 没有 `text-embedding-v4`，且百炼官方价格不是美元，故不得猜测 `base_model`、USD 换算或自定义 `input_cost_per_token`；cost 仅接受真实响应的严格 header。
+  `.env.example` 保留 runner 使用的非 secret raw model `LITELLM_EMBEDDING_MODEL=text-embedding-v4`、空的 `LITELLM_EMBEDDING_API_KEY=` 与 `LITELLM_EMBEDDING_API_BASE=`；workspace endpoint/key 只写未跟踪环境或 secret store。百炼北京同步调用官方价格固定为 `0.0005 CNY / 1,000 input tokens`。report 只记录 fixed currency/unit price/source 与按严格 usage 计算的 `calculated_cost_cny`，不得写 USD、声称 provider response cost 或实际账单。
 - [ ] **Step 5:** 实现 research runner，默认读取 Task 8 的 12 chunks/8 queries；cache/report 分别写入 `.local/milvus-embedding-cache/` 与 `.local/milvus-research/` 并加入 `.gitignore`。
 - [ ] **Step 6:** 增加 `research-embeddings` Make target，要求显式 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1`；未设置时失败而不是 skip。
-- [ ] **Step 7:** 在未跟踪配置中注入百炼 workspace-specific `/compatible-mode/v1` HTTPS endpoint 与 key，使用真实 LiteLLM 运行一次 profile。先验证 gateway route 确为 `research-embedding-v1`、请求显式为 1536 维、provider 返回 `text-embedding-v4` 的 1536 维 vectors，且 standard usage 与 canonical `x-litellm-response-cost` 均存在；任一缺失、1024 默认维、route label 漂移或成本单位无法证明都停止，不伪造 metadata。验证正向 query 的预期 source 进入 top 10 后，把仅含脱敏 input hash、模型/维度和 vectors 的 snapshot 写入仓库；不得提交本地 cache、cost report、workspace endpoint 或 provider secret。
+- [ ] **Step 7:** 在未跟踪配置中注入百炼 workspace-specific `/compatible-mode/v1` HTTPS endpoint 与 key，使用 direct research runner 运行一次 profile。先验证 request raw model/1536 维/float encoding，provider 返回 raw `text-embedding-v4` 的 1536 维 finite float vectors、standard usage 与 bounded request ID；任一缺失、1024 默认维或 shape 漂移都停止。核对 report 的 input tokens、固定 `0.0005 CNY/1,000` 费率和精确 calculated CNY，明确其不是 provider cost/实际账单。验证正向 query 的预期 source 进入 top 10 后，把仅含脱敏 input hash、模型/维度和 vectors 的 snapshot 写入仓库；不得提交本地 cache、cost report、workspace endpoint 或 provider secret。
 - [ ] **Step 8:** 重跑 unit tests、snapshot hash validation 和 `make check && make test`。
 - [ ] **Step 9:** 只暂存本任务文件并提交。
 

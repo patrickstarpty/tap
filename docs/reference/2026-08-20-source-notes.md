@@ -153,7 +153,7 @@ TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential side
 
 采用的事实：LiteLLM 提供统一模型接口、Gateway、路由、预算、限流与多类模型端点；当前内建 key/team/budget/spend 持久化数据模型使用 PostgreSQL。TAP 在已确认的 MySQL/Redis 栈中先采用无状态协议/路由能力，并由 TAP MySQL 保存预算账本和审计；LiteLLM 内建持久化能力需单独 POC，不能静默引入 PostgreSQL。
 
-2026-08-26 固定版本源码/配置资料核对：`v1.76.1-stable` 的 model config schema 虽支持独立 `custom_llm_provider`，但 2026-08-27 live execution 证明本次 pinned embedding deployment 路径没有把该字段传给 `get_llm_provider`，raw config model 因而报 provider 未指定。仓库实测可行的闭合形状是在 gateway deployment 内部使用 `openai/text-embedding-v4`；pinned provider resolver 随后剥离 routing prefix，并向 OpenAI-compatible handler 传 raw `text-embedding-v4`。这是固定组合的 live observation，不泛化到其他 LiteLLM 路径或版本。custom pricing 文档支持 `model_info.base_model` 与显式 token price override，但该 tag 的 model cost map 没有 `text-embedding-v4`。仓库不把内部 routing prefix 当作百炼 model，也不写未经同币种证明的 USD token price。
+2026-08-26 固定版本源码/配置资料核对：`v1.76.1-stable` 的 model config schema 虽支持独立 `custom_llm_provider`，但 2026-08-27 live execution 证明本次 pinned embedding deployment 路径没有把该字段传给 `get_llm_provider`，raw config model 因而报 provider 未指定；随后尝试内部 `openai/` routing prefix 也没有使本次真实 research path 成功。这是固定组合的仓库实测，不是 LiteLLM 官方行为声明，也不泛化到其他路径或版本。应用 runtime 继续使用 LiteLLM；仅 Task 9 的有界脱敏 research runner 经用户批准改为直连百炼，gateway 已移除未工作的 research deployment。
 
 ### 百炼 embedding research route
 
@@ -162,9 +162,9 @@ TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential side
 - [文本向量同步 API](https://help.aliyun.com/zh/model-studio/text-embedding-synchronous-api/)
 - [文本向量模型与价格](https://help.aliyun.com/zh/model-studio/embedding?disableWebsiteRedirect=true)
 
-官方事实：百炼提供 OpenAI-compatible embedding 调用，workspace base URL 模板以 `/compatible-mode/v1` 结尾；`text-embedding-v4` 支持请求参数 `dimensions`，可选维度包括 `1536`，默认维度为 `1024`。官方价格表以人民币列示，不能直接填入仓库的 USD cost 字段。
+官方事实：百炼提供 OpenAI-compatible embedding 调用，workspace base URL 模板以 `/compatible-mode/v1` 结尾；`text-embedding-v4` 支持请求参数 `dimensions`，可选维度包括 `1536`，默认维度为 `1024`。北京地域同步调用官方价格为每 1,000 input tokens `0.0005 CNY`（2026-08-27 核对）；该人民币费率不能填入 USD response-cost 字段。
 
-TAP 设计：百炼 raw provider model 仍是 `text-embedding-v4`；LiteLLM deployment 内部固定 `openai/text-embedding-v4` 只用于 provider routing，上游 transform 必须得到 raw model。runner 环境继续固定 raw model 并拒绝 caller 注入 prefix。应用侧 alias 仍为 `research-embedding-v1`，canonical model/dimension/cache/schema digest 语义不变。endpoint/key 只通过未跟踪环境或 secret store 注入；每个 embedding request 显式发送 `dimensions=1536`，并对实际 vector length、usage 与 LiteLLM cost header fail closed。真实 provider probe 尚未完成，不能把 routing 修正记为质量或计费 GREEN。
+TAP 设计：百炼 raw provider model 固定为 `text-embedding-v4`，runner 拒绝 caller 注入 prefix。应用侧 alias 仍为 `research-embedding-v1`，canonical model/dimension/cache/schema digest 语义不变。endpoint/key 只通过未跟踪环境或 secret store 注入；每个 direct research request 显式发送 `dimensions=1536` 和 float encoding，并对实际 model、vector length/type/finite、usage 与 request ID fail closed。报告按 input tokens 与固定官方费率计算 CNY estimate，明确不把它称为 provider response cost 或实际账单。真实 provider quality probe 尚未完成，不能把静态适配记为质量 GREEN。
 
 ### Milvus 本地检索实验
 
