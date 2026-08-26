@@ -167,6 +167,8 @@ TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential side
 
 采用的事实：Milvus `v2.6.22` release 的兼容表将其 Python SDK 列为 `2.6.17`；PyPI 将 Milvus `2.6.*` 对应到 PyMilvus `2.6.X`，且该 SDK 支持 Python 3.8+。本仓库将本地实验矩阵进一步固定为 Milvus `2.6.22`、PyMilvus `2.6.17`、etcd `3.5.25` 与 MinIO `RELEASE.2024-12-18T13-15-44Z`，并以 Python `3.13.12` 的 import/API surface 合约作为 transport 开发前的硬门禁。Compose 指南提供 `v2.6.22` 的 standalone 配置下载和启动方式；前置条件列出 standalone 至少 8 GB RAM（建议 16 GB）、Docker Desktop 的 2 vCPU/8 GB 初始内存要求，以及 MinIO `RELEASE.2024-12-18T13-15-44Z`。`FLAT` 文档说明其穷举比较、100% recall 及不需附加 index/search 参数；`GrantPrivilegeV2` 文档确认 `MilvusClient.grant_privilege_v2()` 的角色、权限与 collection 参数。全文、语言识别和 INVERTED 文档为后续 schema/index 设计的限定资料，不在本次兼容性门禁中实现其功能。
 
+仓库实测（2026-08-26，非官方文档声明）：本地 live probe 使用 Milvus `2.6.22` + PyMilvus `2.6.17` 时，BM25 `describe_index` 结果把 `bm25_b`、`bm25_k1` 与 `inverted_index_algo` 放在顶层，没有嵌套 `params`；前两个值以 numeric strings 返回。仓库同时检查了 pinned SDK 的返回组装路径，其基础结果键为 index 的 `field_name`、`index_name` 和服务端 index 参数，以及 `total_rows`、`indexed_rows`、`pending_index_rows`、`state`。这项观察只支持 RFC-004 中对该精确版本和 BM25 identity 的闭合 transport 归一化：已知 numeric BM25 strings 严格解析为有限数值并放回唯一 canonical nested `params`；未知、重复、nested+flat 冲突以及其他 index 的 coercion 继续拒绝。它不是对其他版本、其他 index 类型或 Milvus 官方稳定 transport 合约的推断。
+
 ## 事实、决策与补充的标识
 
 | 类型 | 示例 | 文档处理 |

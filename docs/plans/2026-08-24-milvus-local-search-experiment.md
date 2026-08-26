@@ -33,6 +33,7 @@ related-adrs:
 - 所有 Milvus 查询必须使用可信 Policy/Plan 编译的 filter。不得接受原始 filter、不得截断超限 principal/scope、不得把 provider 故障转成成功 abstention。
 - 运行身份固定为 reader、writer、provisioner；读取应用不得持有写入、DDL、alias 或 RBAC 权限。
 - 固定 Milvus/PyMilvus/etcd/MinIO 版本，禁止浮动 tag。若 Python 3.13.12 或所需 SDK/API 行为探针失败，停止该任务并修订 RFC/计划，不得静默换版本。
+- Schema digest 继续只使用 fields/functions/indexes/consistency 的 canonical 表示；每个 canonical index 严格为 `index_name`、`field_name`、`index_type`、`metric_type`、嵌套 `params`。Pinned transport 的兼容修正只能归一化到这一表示，不能改变 digest 语义或产生第二套 publisher-only 摘要。
 - 日常 CI 使用仓库内脱敏预计算 vectors，不调用付费 API。实验报告前只运行一次有界真实 LiteLLM embedding profile；默认最多 100 chunks/20 queries，绝对上限 500/100。
 - Milvus 本地端口及现有本地服务宿主端口统一绑定 `127.0.0.1`；共享非生产部署、TLS、HA、SLO、备份和生产容量不在本计划范围。
 - 启动真实 Milvus 前验证 Docker 至少可用 2 vCPU 与 8 GiB memory；不足时门禁失败并报告资源，不降低数据库配置冒充有效实验。
@@ -592,6 +593,21 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
   bound = await bind_target(AliasReader(), doc_target())
   assert bound.physical_collection == "kb_doc_v1_corpus_fixture_v1"
   ```
+
+  2026-08-26 live probe 发现固定 Milvus `2.6.22` + PyMilvus `2.6.17` 的 BM25 `describe_index` transport 使用扁平设置。先补以下 RED cases，再最小修改同一个 `_canonical_indexes` 路径；publisher 不得另建 normalization 或 digest：
+
+  | Case | Expected |
+  | --- | --- |
+  | 原 canonical nested `params` | 继续产生完全相同的 canonical index 与 schema digest |
+  | 精确 BM25 identity，顶层 `bm25_b="0.75"`、`bm25_k1="1.2"`、`inverted_index_algo="DAAT_MAXSCORE"` | 严格解析两个有限数值，归一化为同一 nested `params`，digest 与 canonical fixture 相同 |
+  | numeric BM25 值为 JSON number 或合法 finite numeric string | 只在这两个已知 BM25 key 上归一化；结果逐字段匹配 canonical 值 |
+  | 未知顶层 key、重复 index identity/setting | fail closed，不计算可信 digest |
+  | nested `params` 与任一 flat BM25 setting 并存，即使值相同 | fail closed，拒绝双重来源 |
+  | 空白包围、空串、`NaN`、`Infinity`、`-Infinity`、hex 或其他非规范/非有限 numeric string | fail closed |
+  | flat BM25 setting 出现在 FLAT/INVERTED、错误 metric/type 或其他 index | fail closed |
+  | 其他字段中的 numeric string，或 `inverted_index_algo` 非字符串 | 不做通用 coercion，fail closed |
+
+  可接受的 transport keys 保持闭合：基础字段只有 `field_name`、`index_name`、`index_type`、可选 `metric_type`、可选 `params`、`total_rows`、`indexed_rows`、`pending_index_rows`、`state`；只有上述精确 BM25 分支可增加三个 flat setting。该分支是 pinned live observation 的兼容层，不是新的 provider-wide 输入格式。
 - [ ] **Step 2:** 写竞争测试：alias 在 bind 后切换，hybrid request 仍查询已绑定 physical name；不得再次用 alias 发 search。
 - [ ] **Step 3:** 写 mapping tests，使用以下完整 row/bound factory，再逐键篡改；`anchor_json` 只能解析为 `DocumentAnchor` 的闭合字段。
 
@@ -653,7 +669,7 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
           raise SearchUnavailable("search provider call failed") from error
   ```
 - [ ] **Step 7:** 实现 target binding 和严格 mapper；output fields 只含内容/provenance/版本，不含 ACL array 或 vector。
-- [ ] **Step 8:** 重跑聚焦测试和 `make check && make test`。
+- [ ] **Step 8:** 重跑聚焦测试和 `make check && make test`。Task 5 修正只有在 nested 与 pinned-flat 两种输入产生同一 canonical digest、全部拒绝矩阵 GREEN 后才完成；静态/fake GREEN 不能代替 Task 8 的真实重跑。
 - [ ] **Step 9:** 只暂存本任务文件并提交。
 
   ```sh
@@ -1275,6 +1291,8 @@ def collection_description(manifest: DocFixtureManifest) -> str:
 
 Task 7 bootstrap 的真实行为探针先对 4 段固定中英文文本运行 `run_analyzer`，Task 10 再以 8 个 query cases 验证 BM25。若 analyzer 输出或 BM25 API 与上述固定配置不兼容，停止并把 schema version 改动送回计划/RFC 审查，不在运行时回退到另一 analyzer。
 
+2026-08-26 的首次 Task 8 live publish 在 insert/flush 后、safety query 与 alias mutation 前，被 Task 5 对 pinned `describe_index` 扁平 BM25 transport 的严格拒绝所停止。Task 8 live acceptance 保持 BLOCKED，直到 Task 5 按其新增 TDD 矩阵把该精确形状归一化到既有 canonical digest。修正完成后必须从已记录的零 collection、零 alias、零 scoped grant、无 active marker 状态重跑本 Task 的完整 publish/rebuild/alias/manifest/grant 对账；不得复用部分发布结果，也不得只用 publisher 自身的 descriptor 路径宣称通过。若真实返回超出 RFC-004 的闭合映射，再次停止并回到 RFC/计划审查，不能扩大版本、字段或 coercion。
+
 **Steps:**
 
 - [ ] **Step 1:** 创建 12 个完全虚构的中文/英文 `doc` chunks 与 8 条 query cases，覆盖两个 tenant、两个 project、多个 groups、classification、environment/global、subtree、撤权与删除。使用以下规范计算稳定 ID/hash。
@@ -1327,7 +1345,7 @@ Task 7 bootstrap 的真实行为探针先对 4 段固定中英文文本运行 `r
 - [ ] **Step 4:** 增加 ACL 收紧测试：先 upsert metadata/`deleted=true`，用 strong query 证明旧主体零命中后才产生 receipt；physical delete 不是授权生效条件。
 - [ ] **Step 5:** 增加 rebuild/rollback-window 测试：相同 manifest 生成相同 collection schema、IDs、hashes、ACL/provenance counts；alias verify 后用 temp-file + `os.replace` 原子写 `.local/milvus-active-corpus.json`，随后立即撤销新 physical 的 writer 权限。旧 reader 权限与 collection 保留到显式 `finalize --old-physical <exact-name>`，该命令先撤 reader 再删除；普通 publish/down 不清理旧 collection 或 volume。
 - [ ] **Step 6:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_fixtures.py apps/backend/tests/unit/operations/test_milvus_publish.py -v`；预期 FAIL 为 fixture/publish 模块缺失。随后实现严格 JSON loader、schema builder、reconciler 和 publisher CLI。
-- [ ] **Step 7:** 重跑聚焦测试和 `make check && make test`。
+- [ ] **Step 7:** 重跑聚焦测试和 `make check && make test`；确认 Task 5 pinned transport correction 已 GREEN 后，按上述零资源前置条件重跑真实 analyzer、publish、相同 manifest rebuild、alias/marker activation、reader/writer grant reconciliation 与显式旧 target cleanup，并记录 canonical schema digest 对账。任一 Task 5 runtime binding 或 transport shape 不一致都保持 BLOCKED。
 - [ ] **Step 8:** 只暂存本任务文件并提交。
 
   ```sh

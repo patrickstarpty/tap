@@ -140,6 +140,14 @@ Milvus 配置只保存可信 logical alias、family、允许的物理名称模�
 
 首轮小数据采用 `FLAT + COSINE` 建立向量正确性基线，减少 ANN recall 对安全/映射实验的干扰。BM25 使用 Milvus 内置 sparse/inverted 能力；中文或多语言 analyzer 由 fixture 语言决定并写入 schema version。HNSW、量化或其他 ANN 只在正确性门禁通过后的独立性能实验中比较。
 
+### Schema digest 与 pinned transport 归一化
+
+Schema digest 的语义不因 SDK transport 形状改变。每个 index 的 canonical 表示仍然严格只有 `index_name`、`field_name`、`index_type`、`metric_type` 与嵌套 `params`；BM25 的 canonical `params` 固定为 `inverted_index_algo="DAAT_MAXSCORE"`、`bm25_k1=1.2` 与 `bm25_b=0.75`。collection description 中的声明 digest、从 fields/functions/indexes/consistency 计算的 digest 和 target 期望 digest 必须继续相同，不能为 publisher 或 reader 引入第二套摘要表示。
+
+2026-08-26 的本地 live probe 观察到，固定组合 Milvus `2.6.22` + PyMilvus `2.6.17` 会把该 BM25 index 的三个设置作为 `describe_index` 结果的顶层字段返回：`bm25_b` 与 `bm25_k1` 是 numeric strings，`inverted_index_algo` 是字符串，且结果没有嵌套 `params`。这是仓库对固定组合的实测，不是 Milvus 官方文档声明，也不能推广为其他版本的兼容承诺。
+
+因此 transport 只增加一个版本锁定、闭合且无歧义的归一化分支：公共 transport key 集合仍限于实际基础字段 `field_name`、`index_name`、`index_type`、可选 `metric_type`、可选 `params`、`total_rows`、`indexed_rows`、`pending_index_rows` 与 `state`；只有已验证为 `SPARSE_INVERTED_INDEX` + `BM25` 的 index 才可额外接受顶层 `bm25_b`、`bm25_k1`、`inverted_index_algo`。`bm25_b` 与 `bm25_k1` 的 numeric string 只允许严格、有限的 JSON number 词法形式，并归一化为 canonical nested `params` 中的数值；`inverted_index_algo` 不做类型转换。任何未知字段、重复 index/设置、嵌套与扁平设置并存（即使值相同）、非有限或非规范 numeric string 都 fail closed。其他 index 继续使用原闭合形状，不能复用该分支做通用字符串到数值 coercion。归一化后的对象必须与上述唯一 canonical 表示逐字段相等后才能参与 digest。
+
 ### 可信 ACL filter
 
 Milvus filter 只能由 adapter 从 `SearchExecution.policy` 与已绑定的 `QueryPlan` 编译。公共请求、模型输出、Chat 状态和任意原始 filter 字符串都不能进入编译器。语义固定为：
@@ -334,7 +342,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 
 ## 未决问题
 
-- **Milvus/PyMilvus 精确版本**：实施第一步只在 Python 3.13 与本地 Docker 行为探针通过后选定一组兼容版本，并立即固定到配置与 lockfile；任何候选失败都不能通过放宽版本约束绕过。
+- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 发现该组合的 BM25 `describe_index` 使用上述扁平 transport 形状；Task 5 必须先按闭合规则归一化并重跑测试，Task 8 才能重跑发布验收。该实现事实不改变本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
 - **Embedding route**：从现有 LiteLLM 允许列表选择一个固定 embedding model，fixture manifest 保存 model ID 与 dimension；若没有可用的脱敏非生产 route，真实 embedding 子实验保持阻塞，不退化为未标注的 fake GREEN。
 - **中文 analyzer**：由首轮脱敏 fixture 的实际语言分布选择并固化；若包含中文，必须对默认与中文 analyzer 输出做可复现对比后选择，选择结果进入 schema version。
 - **共享非生产部署**：本 RFC 提议的首轮批准范围只有本地 Docker。是否把 Standalone 放到共享 VM/容器环境，在本地资源、恢复和安全 review 后另行批准，并强制 TLS 与 secret 注入。
