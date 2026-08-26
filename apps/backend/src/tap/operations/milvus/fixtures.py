@@ -93,6 +93,11 @@ _VECTOR_DIMENSION = 1536
 _PHYSICAL_COLLECTION = "kb_doc_v1_corpus_fixture_v1"
 _ALIAS = "kb_doc_active"
 _SOURCE_REVISION = "fixture-blob-v1"
+_TRUSTED_DOC_JSON_SHA256 = "sha256:13e104d1b9e5aaeb2639a73fd5de7c77a91f4bec0f606aa773b5efcad4269e03"
+_TRUSTED_QUERY_JSON_SHA256 = (
+    "sha256:cd54a48cfc7807a26a6301abd67d52715d9afe2cfc1339a90727214a8a459a31"
+)
+_TRUSTED_MANIFEST_SHA256 = "sha256:46a182eefe65fd191c78b15f726909e351a1c2c131a341e6fef0f5ea2688879e"
 _SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}\Z")
 _HASH_ID = re.compile(r"h_[0-9a-f]{64}\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -215,6 +220,8 @@ def content_hash(value: str) -> str:
 
 def load_doc_fixture(path: Path) -> DocFixtureManifest:
     raw = _load_closed_json(path)
+    if _canonical_digest(raw) != _TRUSTED_DOC_JSON_SHA256:
+        raise ValueError("fixture JSON does not match the trusted corpus")
     value = _exact_mapping(raw, _MANIFEST_KEYS, "fixture manifest")
     raw_chunks = _sequence(value["chunks"], "fixture chunks")
     chunks = tuple(_load_chunk(item) for item in raw_chunks)
@@ -241,7 +248,10 @@ def load_doc_fixture(path: Path) -> DocFixtureManifest:
 
 
 def load_query_cases(path: Path) -> tuple[QueryCase, ...]:
-    raw = _exact_mapping(_load_closed_json(path), _QUERY_DOCUMENT_KEYS, "query fixture")
+    loaded = _load_closed_json(path)
+    if _canonical_digest(loaded) != _TRUSTED_QUERY_JSON_SHA256:
+        raise ValueError("query fixture does not match the trusted policy cases")
+    raw = _exact_mapping(loaded, _QUERY_DOCUMENT_KEYS, "query fixture")
     if raw["schemaVersion"] != "query-cases-v1":
         raise ValueError("query fixture schema version is unsupported")
     cases = tuple(_load_query_case(item) for item in _sequence(raw["cases"], "query cases"))
@@ -300,23 +310,25 @@ def collection_description(manifest: DocFixtureManifest) -> str:
 
 def manifest_sha256(manifest: DocFixtureManifest) -> str:
     _validate_manifest(manifest)
+    return _canonical_digest(_manifest_payload(manifest))
+
+
+def _manifest_payload(manifest: DocFixtureManifest) -> dict[str, object]:
     chunks = []
     for chunk in manifest.chunks:
         value = asdict(chunk)
         value["allowed_group_ids"] = list(chunk.allowed_group_ids)
         chunks.append(value)
-    return _canonical_digest(
-        {
-            "schema_version": manifest.schema_version,
-            "schema_sha256": manifest.schema_sha256,
-            "corpus_version": manifest.corpus_version,
-            "embedding_model_version": manifest.embedding_model_version,
-            "vector_dimension": manifest.vector_dimension,
-            "physical_collection": manifest.physical_collection,
-            "alias": manifest.alias,
-            "chunks": chunks,
-        }
-    )
+    return {
+        "schema_version": manifest.schema_version,
+        "schema_sha256": manifest.schema_sha256,
+        "corpus_version": manifest.corpus_version,
+        "embedding_model_version": manifest.embedding_model_version,
+        "vector_dimension": manifest.vector_dimension,
+        "physical_collection": manifest.physical_collection,
+        "alias": manifest.alias,
+        "chunks": chunks,
+    }
 
 
 def fixture_rows(
@@ -425,6 +437,8 @@ def _validate_manifest(manifest: DocFixtureManifest) -> None:
             parent = by_id.get(chunk.parent_id)
             if parent is None or parent.root_id != chunk.root_id:
                 raise ValueError("fixture parent provenance is malformed")
+    if _canonical_digest(_manifest_payload(manifest)) != _TRUSTED_MANIFEST_SHA256:
+        raise ValueError("fixture manifest does not match the trusted corpus")
 
 
 def _validate_chunk(chunk: DocFixtureChunk) -> None:

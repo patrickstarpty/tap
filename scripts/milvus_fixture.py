@@ -18,7 +18,11 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     _collection_descriptor,
 )
 from tap.operations.milvus.activation import LocalCorpusActivator
-from tap.operations.milvus.client import PyMilvusWriter, suppress_pymilvus_rpc_logging
+from tap.operations.milvus.client import (
+    PyMilvusWriter,
+    local_role_credentials,
+    suppress_pymilvus_rpc_logging,
+)
 from tap.operations.milvus.contracts import (
     READER_PRIVILEGES,
     WRITER_PRIVILEGES,
@@ -57,6 +61,39 @@ class _FixtureProvisioner:
 
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
         await _call(lambda: self._create_collection(name, schema))
+
+    async def collection_exists(self, name: str) -> bool:
+        raw = await _call(
+            lambda: self._client.list_collections(timeout=_TIMEOUT_SECONDS)
+        )
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise RuntimeError("Milvus returned malformed collection inventory")
+        if any(not isinstance(item, str) for item in raw):
+            raise RuntimeError("Milvus returned malformed collection inventory")
+        return name in raw
+
+    async def has_collection_grant(self, name: str, role_name: str) -> bool:
+        raw = await _call(
+            lambda: self._client.describe_role(
+                role_name,
+                timeout=_TIMEOUT_SECONDS,
+            )
+        )
+        if not isinstance(raw, Mapping):
+            raise RuntimeError("Milvus returned malformed grant metadata")
+        privileges = raw.get("privileges", raw.get("grants", ()))
+        if isinstance(privileges, (str, bytes)) or not isinstance(privileges, Sequence):
+            raise RuntimeError("Milvus returned malformed grant metadata")
+        for item in privileges:
+            if not isinstance(item, Mapping):
+                raise RuntimeError("Milvus returned malformed grant metadata")
+            resource_name = item.get("object_name") or item.get("collection_name")
+            privilege = item.get("privilege") or item.get("privilege_name")
+            if not isinstance(resource_name, str) or not isinstance(privilege, str):
+                raise RuntimeError("Milvus returned malformed grant metadata")
+            if resource_name == name:
+                return True
+        return False
 
     def _create_collection(self, name: str, schema: Mapping[str, object]) -> object:
         sdk_schema = MilvusClient.create_schema(
@@ -253,32 +290,50 @@ class _FixtureReader:
             raise RuntimeError("Milvus returned malformed fixture query results")
         return tuple(dict(cast(Mapping[str, object], item)) for item in raw)
 
+    async def query_persisted_rows(
+        self,
+        collection_name: str,
+        filter_expression: str,
+        output_fields: tuple[str, ...],
+        limit: int,
+    ) -> tuple[Mapping[str, object], ...]:
+        raw = await _call(
+            lambda: self._client.query(
+                collection_name,
+                filter=filter_expression,
+                output_fields=list(output_fields),
+                limit=limit,
+                consistency_level="Strong",
+                timeout=_TIMEOUT_SECONDS,
+            )
+        )
+        if not isinstance(raw, list) or any(
+            not isinstance(item, Mapping) for item in raw
+        ):
+            raise RuntimeError("Milvus returned malformed fixture query results")
+        return tuple(dict(cast(Mapping[str, object], item)) for item in raw)
+
     async def close(self) -> None:
         await _call(self._client.close)
 
 
 async def _run(args: argparse.Namespace) -> None:
     settings = dict(os.environ)
+    credentials = local_role_credentials(settings)
     provisioner_client = _connect(
         settings,
-        "MILVUS_PROVISIONER_USERNAME",
-        "tap_provisioner",
-        "MILVUS_PROVISIONER_PASSWORD",
-        "tap-local-Provisioner1!",
+        credentials.provisioner_username,
+        credentials.provisioner_password.get_secret_value(),
     )
     writer_client = _connect(
         settings,
-        "MILVUS_WRITER_USERNAME",
-        "tap_writer",
-        "MILVUS_WRITER_PASSWORD",
-        "tap-local-Writer1!",
+        credentials.writer_username,
+        credentials.writer_password.get_secret_value(),
     )
     reader_client = _connect(
         settings,
-        "MILVUS_READER_USERNAME",
-        "tap_reader",
-        "MILVUS_READER_PASSWORD",
-        "tap-local-Reader1!",
+        credentials.reader_username,
+        credentials.reader_password.get_secret_value(),
     )
     provisioner = _FixtureProvisioner(provisioner_client)
     writer = PyMilvusWriter(writer_client)
@@ -341,15 +396,13 @@ def _deterministic_vectors(
 
 def _connect(
     settings: Mapping[str, str],
-    username_key: str,
-    username_default: str,
-    password_key: str,
-    password_default: str,
+    username: str,
+    password: str,
 ) -> MilvusClient:
     return MilvusClient(
         uri=settings.get("MILVUS_URI", "http://127.0.0.1:19530"),
-        user=settings.get(username_key, username_default),
-        password=settings.get(password_key, password_default),
+        user=username,
+        password=password,
         db_name=settings.get("MILVUS_DATABASE", "default"),
         timeout=_TIMEOUT_SECONDS,
     )

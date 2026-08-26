@@ -235,3 +235,32 @@ def test_manifest_rejects_runtime_model_or_physical_mutation() -> None:
         build_collection_schema(replace(manifest, vector_dimension=2))
     with pytest.raises(ValueError):
         build_collection_schema(replace(manifest, physical_collection="kb_code_v1_fixture"))
+
+
+def test_fixture_digest_rejects_rehashed_content_or_acl_substitution(tmp_path: Path) -> None:
+    raw = json.loads(DOC_FIXTURE.read_text())
+    chunk = raw["chunks"][0]
+    chunk["content"] = "重新计算散列后仍不属于固定脱敏语料。"
+    chunk["sourceContentHash"] = content_hash(chunk["content"])
+    chunk["chunkContentHash"] = content_hash(chunk["content"])
+    chunk["chunkId"] = sha256_id(
+        f"{chunk['sourceId']}\0{chunk['sourceRevision']}\0{chunk['content']}"
+    )
+    chunk["rootId"] = chunk["chunkId"]
+    chunk["allowedGroupIds"] = ["group-support"]
+    candidate = tmp_path / "rehashed.json"
+    candidate.write_text(json.dumps(raw, ensure_ascii=False))
+
+    with pytest.raises(ValueError, match="trusted corpus"):
+        load_doc_fixture(candidate)
+
+
+def test_query_digest_rejects_changed_policy_expectations(tmp_path: Path) -> None:
+    raw = json.loads(QUERY_FIXTURE.read_text())
+    raw["cases"][0]["expectedSourceIds"] = ["blob:fixture/public/support"]
+    raw["cases"][0]["groupIds"] = ["group-support"]
+    candidate = tmp_path / "changed-queries.json"
+    candidate.write_text(json.dumps(raw))
+
+    with pytest.raises(ValueError, match="trusted policy cases"):
+        load_query_cases(candidate)
