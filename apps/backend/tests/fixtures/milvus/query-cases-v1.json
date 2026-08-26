@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "query-cases-v1",
+  "cases": [
+    {
+      "caseId": "refund-allowed",
+      "query": "退款申请由谁审批",
+      "tenantId": "tenant-a",
+      "projectId": "project-a",
+      "groupIds": ["group-payments"],
+      "classificationCeiling": "internal",
+      "environment": "production",
+      "expectedSourceIds": ["blob:fixture/payment/refund"]
+    },
+    {
+      "caseId": "payment-global-allowed",
+      "query": "大额付款双人复核",
+      "tenantId": "tenant-a",
+      "projectId": "project-a",
+      "groupIds": ["group-payments"],
+      "classificationCeiling": "confidential",
+      "environment": "production",
+      "expectedSourceIds": ["blob:fixture/payment/limit"]
+    },
+    {
+      "caseId": "payment-wrong-group",
+      "query": "退款申请审批",
+      "tenantId": "tenant-a",
+      "projectId": "project-a",
+      "groupIds": ["group-release"],
+      "classificationCeiling": "internal",
+      "environment": "production",
+      "expectedSourceIds": []
+    },
+    {
+      "caseId": "payment-wrong-project",
+      "query": "退款申请审批",
+      "tenantId": "tenant-a",
+      "projectId": "project-b",
+      "groupIds": ["group-payments"],
+      "classificationCeiling": "internal",
+      "environment": "production",
+      "expectedSourceIds": []
+    },
+    {
+      "caseId": "payment-wrong-tenant",
+      "query": "退款申请审批",
+      "tenantId": "tenant-b",
+      "projectId": "project-a",
+      "groupIds": ["group-payments"],
+      "classificationCeiling": "internal",
+      "environment": "production",
+      "expectedSourceIds": []
+    },
+    {
+      "caseId": "security-over-classification",
+      "query": "key rotation recovery record",
+      "tenantId": "tenant-a",
+      "projectId": "project-a",
+      "groupIds": ["group-security"],
+      "classificationCeiling": "confidential",
+      "environment": "production",
+      "expectedSourceIds": []
+    },
+    {
+      "caseId": "release-wrong-environment",
+      "query": "rollback recorded approval",
+      "tenantId": "tenant-a",
+      "projectId": "project-a",
+      "groupIds": ["group-release"],
+      "classificationCeiling": "internal",
+      "environment": "production",
+      "expectedSourceIds": []
+    },
+    {
+      "caseId": "payment-subtree-card-only",
+      "query": "银行卡付款子章节",
+      "tenantId": "tenant-a",
+      "projectId": "project-a",
+      "groupIds": ["group-payments"],
+      "classificationCeiling": "internal",
+      "environment": "production",
+      "expectedSourceIds": ["blob:fixture/payment/card"]
+    }
+  ]
+}
