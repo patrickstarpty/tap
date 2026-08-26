@@ -200,9 +200,11 @@ provider 原始 score 可以进入受控诊断记录，但公共正确性不依�
 | --- | --- | --- |
 | retrieval reader | bootstrap base inventory 中 `Global/*` 的 `DescribeAlias`、`DescribeCollection`；已发布 `doc` target 上 `Collection` + exact database/name 的 `Search`、`Query` | Insert/Upsert/Delete/Flush、collection/index/alias 管理、RBAC，以及把 `Global` record 当作 target-scoped grant |
 | fixture writer | 指定未发布 physical fixture collection 上的 `Insert`、`Upsert`、`Delete`、`Flush` 及 flush 状态读取 | Search/Query、alias 切换、collection/index 管理、RBAC |
-| provisioner/publisher | 仅本地/CI 编排所需的 collection/index create/drop/load/release、alias create/alter/drop 与逐 target reader/writer 授权 | 被 Retrieval application 持有、出现在普通 runtime env |
+| provisioner/publisher | bootstrap base inventory 中 `Global/*` 的 `DescribeAlias`；其余既有闭合集合保持 `Collection/*` wildcard base grants，用于本地/CI 的 collection/index create/drop/load/release、alias create/alter/drop 与逐 target reader/writer 授权 | 被 Retrieval application 持有、出现在普通 runtime env；任意 provisioner concrete target grant |
 
-2026-08-26 的仓库 live probe 观察到，固定 Milvus/PyMilvus 组合在 grant inventory 中把 `DescribeAlias`、`DescribeCollection` 表达为 `Global`，而 `Search`、`Query` 表达为 `Collection`。这是固定组合的实测，不是官方 privilege 层级承诺。闭合契约因此把两个 Describe privilege 只作为 bootstrap `Global/*` base grants 创建和验证；publisher 不再对每个 physical target 重复授予它们。reader 的 target-scoped grant set 严格只有 `Search`、`Query`，且 inventory 必须同时匹配 `object_type=Collection`、exact database、exact physical name 和 exact reader role。任何以 target 名称出现的 `Global` record、同名但不同 database/object type/role 的记录或额外 target privilege 都不能冒充合法 target grant，必须 fail closed。
+2026-08-26 的仓库 live probe 观察到，固定 Milvus/PyMilvus 组合在 grant inventory 中把 reader 的 `DescribeAlias`、`DescribeCollection` 和 provisioner 的 `DescribeAlias` 表达为 `Global`，而 reader 的 `Search`、`Query` 及 provisioner 的其余既有 base privileges 表达为 `Collection`。这是固定组合的实测，不是官方 privilege 层级承诺。闭合契约因此把 reader 的两个 Describe privileges 和 provisioner 的 `DescribeAlias` 作为 bootstrap `Global/*` base grants 创建和验证；provisioner 的其余 privilege names 与 `Collection/*` wildcard 维度保持不变。publisher 不再对每个 physical target 重复授予 reader Describe privileges。reader 的 target-scoped grant set 严格只有 `Search`、`Query`，且 inventory 必须同时匹配 `object_type=Collection`、exact database、exact physical name 和 exact reader role。任何以 target 名称出现的 `Global` record、同名但不同 database/object type/role 的记录或额外 target privilege 都不能冒充合法 target grant，必须 fail closed。
+
+`bootstrap replace_role_grants` 只拥有各 role 的 base namespace：所有 `Global/*` records 与 wildcard grants。它必须补齐缺失 base grant，并清理或拒绝错误 object type、错误 wildcard、额外 privilege 或重复 base record，使该 namespace 精确收敛；第二次运行不得产生 mutation。具体 `Collection/<database>/<physical>` grant 由 publisher 拥有：bootstrap 必须保留符合 publisher 闭合契约的 reader `Search`/`Query` 和临时 writer grants，且 provisioner 正常情况下不得有 concrete grant。bootstrap 发现超出这些闭合集合、维度冲突或无法判定所有权的 concrete record 时必须 fail closed，不得把它视为合法、不得借 base reconciliation 删除可能属于在途发布的 target；后续只能由 publisher 或带 exact target 的显式清理流程处置。
 
 发布者在 alias 切换前只给 reader 授予新 physical collection 的 `Search`、`Query`，回滚窗口结束后再撤销旧 target 的这两项权限。Milvus 候选版本对 `alter_alias` 的具体 RBAC 映射必须由版本固定前的行为探针验证，不能根据 SDK 方法名猜权限；实施只授予官方 privilege 表与行为探针共同证明必要的权限。
 
@@ -339,6 +341,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 - BM25、dense、hybrid 和 resource scope 使用同一可信 filter；公共调用者无法提交或覆盖 filter。
 - 返回命中严格绑定 family、physical collection、schema、corpus、embedding model、revision、anchor 和 hashes。
 - 重建前后 IDs、hashes、ACL、provenance 和 manifest 对账一致；alias/corpus 发布不混合版本。
+- RBAC bootstrap 精确收敛 reader/writer/provisioner 的 `Global/*` 与 wildcard base namespace，同时保留 publisher-owned 的合法 concrete reader/writer grants；错误 base 被纠正或 fail closed，异常 concrete 不被静默接受或宽泛删除，重复运行无 mutation。
 - 现有 Task 1–3 测试、静态检查与 contract drift 门禁继续通过。
 - reference contracts 的 `physicalIndex` 漂移已与当前生成 HTTP schema 同步；普通浏览器响应仍不暴露 physical target。
 - 实验 review 记录质量、延迟、资源、恢复、embedding 调用与估算成本，并给出继续、修正或停止结论。
@@ -346,7 +349,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 
 ## 未决问题
 
-- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport，以及 reader Describe grants 的 `Global` inventory 层级；Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
+- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport，以及 reader Describe grants 与 provisioner `DescribeAlias` 的 `Global` inventory 层级；Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
 - **Embedding route**：从现有 LiteLLM 允许列表选择一个固定 embedding model，fixture manifest 保存 model ID 与 dimension；若没有可用的脱敏非生产 route，真实 embedding 子实验保持阻塞，不退化为未标注的 fake GREEN。
 - **中文 analyzer**：由首轮脱敏 fixture 的实际语言分布选择并固化；若包含中文，必须对默认与中文 analyzer 输出做可复现对比后选择，选择结果进入 schema version。
 - **共享非生产部署**：本 RFC 提议的首轮批准范围只有本地 Docker。是否把 Standalone 放到共享 VM/容器环境，在本地资源、恢复和安全 review 后另行批准，并强制 TLS 与 secret 注入。
