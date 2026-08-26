@@ -28,7 +28,7 @@ from tap.operations.milvus.client import (
     close_probe_clients,
     suppress_pymilvus_rpc_logging,
 )
-from tap.operations.milvus.health import run_health_probe
+from tap.operations.milvus.health import MilvusHealthCleanupFailed, run_health_probe
 
 _HEALTH_MAX_ATTEMPTS = 4
 _HEALTH_RETRY_DELAY_SECONDS = 3.0
@@ -54,6 +54,8 @@ async def _run_health_until_ready(settings: Mapping[str, str]) -> None:
     for attempt in range(1, _HEALTH_MAX_ATTEMPTS + 1):
         try:
             await _run_health(settings)
+        except MilvusHealthCleanupFailed:
+            raise
         except Exception:
             if attempt == _HEALTH_MAX_ATTEMPTS:
                 raise

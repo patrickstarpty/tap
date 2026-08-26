@@ -28,7 +28,7 @@ from tap.operations.milvus.contracts import (
     MilvusHealthReport,
     MilvusProbeClients,
 )
-from tap.operations.milvus.health import run_health_probe
+from tap.operations.milvus.health import MilvusHealthCleanupFailed, run_health_probe
 
 pytestmark = pytest.mark.asyncio
 
@@ -124,6 +124,42 @@ raise SystemExit(cli.main())
     assert completed.returncode == 0
     assert completed.stdout == "Milvus health probe passed.\n"
     assert completed.stderr == ""
+
+
+async def test_health_cli_never_retries_an_incomplete_probe_cleanup() -> None:
+    repository = Path(__file__).resolve().parents[5]
+    program = """
+import scripts.milvus_health_probe as cli
+from tap.operations.milvus.health import MilvusHealthCleanupFailed
+
+attempts = 0
+
+async def incomplete_cleanup(settings):
+    global attempts
+    attempts += 1
+    if attempts == 1:
+        raise MilvusHealthCleanupFailed("provider details must remain hidden")
+
+cli._run_health = incomplete_cleanup
+cli._HEALTH_RETRY_DELAY_SECONDS = 0
+result = cli.main()
+if attempts != 1:
+    raise SystemExit(99)
+raise SystemExit(result)
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert completed.stderr == "Milvus health probe failed.\n"
 
 
 class RecordingAdmin:
@@ -366,7 +402,7 @@ async def test_health_cleanup_still_drops_collection_after_alias_cleanup_failure
     clients, admin, provisioner, _, _, _ = probe_clients()
     provisioner.fail_drop_alias = True
 
-    with pytest.raises(RuntimeError, match="Milvus health cleanup failed"):
+    with pytest.raises(MilvusHealthCleanupFailed, match="Milvus health cleanup failed"):
         await run_health_probe(clients, "probe_20260824_001")
 
     assert admin.dropped_collections == ["tap_health_probe_probe_20260824_001"]

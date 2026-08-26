@@ -38,6 +38,10 @@ HEALTH_SCHEMA: Mapping[str, object] = {
 }
 
 
+class MilvusHealthCleanupFailed(RuntimeError):
+    """The isolated health probe could not prove that all owned resources were removed."""
+
+
 async def run_health_probe(
     clients: MilvusProbeClients,
     probe_id: str,
@@ -103,7 +107,7 @@ async def run_health_probe(
             except Exception:
                 cleanup_failed = True
         if cleanup_failed:
-            raise RuntimeError("Milvus health cleanup failed") from None
+            raise MilvusHealthCleanupFailed("Milvus health cleanup failed") from None
 
 
 def _probe_row(chunk_id: str, group_id: str) -> Mapping[str, object]:
