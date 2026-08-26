@@ -41,3 +41,118 @@ jobs:
       - run: make check
       - run: uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
       - run: make test
+
+  milvus-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAP_MILVUS_COMPOSE_PROJECT: tap-milvus-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      TAP_RUN_MILVUS_INTEGRATION: "1"
+      TAP_ALLOW_INITIAL_MILVUS_ROOT: "1"
+      MILVUS_URI: http://127.0.0.1:19530
+      MILVUS_DATABASE: default
+      MILVUS_INITIAL_ROOT_PASSWORD: Milvus
+      MILVUS_ROOT_PASSWORD: tap-ci-Root1!
+      MILVUS_READER_USERNAME: tap_reader
+      MILVUS_READER_PASSWORD: tap-ci-Reader1!
+      MILVUS_WRITER_USERNAME: tap_writer
+      MILVUS_WRITER_PASSWORD: tap-ci-Writer1!
+      MILVUS_PROVISIONER_USERNAME: tap_provisioner
+      MILVUS_PROVISIONER_PASSWORD: tap-ci-Provisioner1!
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@f0ec1fc3b38f5e7cd731bb6ce540c5af426746bb # v6.1.0
+        with:
+          version: "0.10.8"
+      - name: Require Docker and cgroup capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r docker_cpus docker_memory < <(
+            docker info --format '{{.NCPU}} {{.MemTotal}}'
+          )
+          case "$docker_cpus:$docker_memory" in
+            *[!0-9:]*|:|*:)
+              echo "Invalid Docker resource metadata." >&2
+              exit 1
+              ;;
+          esac
+
+          cgroup_cpus="$docker_cpus"
+          if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+            read -r quota period < /sys/fs/cgroup/cpu.max
+            if [[ "$quota" != max ]]; then
+              case "$quota:$period" in
+                *[!0-9:]*|:|*:)
+                  echo "Invalid cgroup CPU metadata." >&2
+                  exit 1
+                  ;;
+              esac
+              cgroup_cpus=$((quota / period))
+              if ((cgroup_cpus < 1)); then cgroup_cpus=1; fi
+            fi
+          fi
+
+          cgroup_memory="$docker_memory"
+          if [[ -r /sys/fs/cgroup/memory.max ]]; then
+            memory_limit="$(< /sys/fs/cgroup/memory.max)"
+            if [[ "$memory_limit" != max ]]; then
+              case "$memory_limit" in
+                *[!0-9]*|'')
+                  echo "Invalid cgroup memory metadata." >&2
+                  exit 1
+                  ;;
+              esac
+              cgroup_memory="$memory_limit"
+            fi
+          fi
+
+          available_cpus="$docker_cpus"
+          if ((cgroup_cpus < available_cpus)); then available_cpus="$cgroup_cpus"; fi
+          available_memory="$docker_memory"
+          if ((cgroup_memory < available_memory)); then
+            available_memory="$cgroup_memory"
+          fi
+          if ((available_cpus < 2 || available_memory < 8589934592)); then
+            echo "Milvus requires at least 2 vCPU and 8 GiB; Docker reports ${docker_cpus}/${docker_memory}, cgroup reports ${cgroup_cpus}/${cgroup_memory}." >&2
+            exit 1
+          fi
+          echo "Milvus resource gate passed: ${available_cpus} vCPU and ${available_memory} bytes."
+      - run: uv sync --frozen --all-groups
+      - name: Run persistent real Milvus gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .local/milvus-ci
+          make test-milvus 2>&1 | tee .local/milvus-ci/persistent.log
+          if rg -n '(^|[[:space:]])SKIPPED([[:space:]]|$)|[0-9]+ skipped' \
+            .local/milvus-ci/persistent.log; then
+            echo "Real Milvus gate must not skip tests." >&2
+            exit 1
+          fi
+      - name: Delete scoped volumes and rebuild from fixtures
+        shell: bash
+        env:
+          TAP_ALLOW_MILVUS_VOLUME_RESET: "1"
+        run: |
+          set -euo pipefail
+          make test-milvus-rebuild-empty 2>&1 | tee .local/milvus-ci/rebuild-empty.log
+          if rg -n '(^|[[:space:]])SKIPPED([[:space:]]|$)|[0-9]+ skipped' \
+            .local/milvus-ci/rebuild-empty.log; then
+            echo "Real Milvus empty-rebuild gate must not skip tests." >&2
+            exit 1
+          fi
+      - name: Preserve diagnostics and remove only scoped volumes
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          project="$TAP_MILVUS_COMPOSE_PROJECT"
+          if [[ ! "$project" =~ ^[a-z0-9][a-z0-9_-]{2,62}$ ]]; then
+            echo "Refusing cleanup for an invalid Compose project." >&2
+            exit 1
+          fi
+          mkdir -p .local/milvus-ci
+          docker compose -p "$project" --profile milvus logs --no-color \
+            2>&1 | tee .local/milvus-ci/compose.log || true
+          docker compose -p "$project" --profile milvus down -v --remove-orphans
