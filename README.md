@@ -1,6 +1,6 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库当前保存可评审、可演进的技术架构基线；Phase 1 workspace、公共 HTTP/SSE 契约和其确定性生成链路已经建立，业务模块、持久化与 Web 应用仍未开始。
+TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库保存可评审、可演进的技术架构基线；Phase 1 workspace、公共 HTTP/SSE 契约、授权 Knowledge 纵向切片与本地 Milvus 检索实验已经建立，Web 应用、共享环境部署与生产加固仍未完成。
 
 ## 一句话架构
 
@@ -36,7 +36,10 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 文档导航
 
 - [总体技术架构](docs/architecture/2026-08-20-overview.md)：边界、组件、数据、流程、安全、可靠性与部署。
+- TAP 平台完整架构图：[draw.io 源文件](docs/architecture/2026-08-27-tap-platform-architecture.drawio) / [SVG 预览](docs/architecture/2026-08-27-tap-platform-architecture.svg)：面向管理层展示业务入口、知识与执行平面、平台控制面、数据与外部依赖。
+- RAG 知识与业务流转详图：[draw.io 源文件](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.drawio) / [SVG 预览](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.svg)：分别展开知识生产、在线问答、ACL、引用与反馈闭环。
 - [整体架构评审](docs/reviews/2026-08-21-architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。
+- [Milvus 本地检索实验评审](docs/reviews/2026-08-27-milvus-local-search-experiment.md)：记录真实数据库、空卷重建、embedding 预算证据与严格的决策边界。
 - [Phase 1：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
 - [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
 - [Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
@@ -61,7 +64,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 当前状态
 
 - 架构状态：`v0.3 integrated platform + RAG baseline / review-ready`
-- 实现状态：`Phase 1 workspace and contract generation active`
+- 实现状态：`Phase 1 backend slices active; web/shared/production pending`
 - 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
 - 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
 - 默认仓库可见性：建议 `private`
@@ -69,7 +72,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 
 ## 本地中间件预置
 
-Phase 1 在本地仅预置确实存在替身的中间件：MySQL、Redis、Azurite Blob 和 LiteLLM Proxy。Azure AI Search、Entra ID 与 Key Vault 没有本地替身；单元测试应使用 fake/stub，集成测试与安全验收应连接受控 Azure 测试资源，而不是引入 Elasticsearch/OpenSearch、假身份服务或秘密库模拟器。
+Phase 1 默认本地 profile 仅预置确实存在替身的中间件：MySQL、Redis、Azurite Blob 和 LiteLLM Proxy；Milvus 通过独立实验 profile 按需启动。Azure AI Search、Entra ID 与 Key Vault 没有本地替身；单元测试应使用 fake/stub，集成测试与安全验收应连接受控 Azure 测试资源，而不是引入 Elasticsearch/OpenSearch、假身份服务或秘密库模拟器。
 
 首次启动前复制环境模板并按需填入 LiteLLM provider 凭据：
 
@@ -108,11 +111,19 @@ Milvus 目前仅是本地、可回退的 `doc` 检索实验，不是共享非生
 
 ```sh
 make milvus-preflight
+
+# 仅首次创建全新 volume；完成 root 轮换后不再设置该开关
+TAP_ALLOW_INITIAL_MILVUS_ROOT=1 make test-milvus
+
+# 已完成 root 轮换的既有 volume
 make test-milvus
-TAP_ALLOW_MILVUS_VOLUME_RESET=1 make test-milvus-rebuild-empty
+
+TAP_ALLOW_INITIAL_MILVUS_ROOT=1 \
+  TAP_ALLOW_MILVUS_VOLUME_RESET=1 \
+  make test-milvus-rebuild-empty
 ```
 
-真实 embedding profile 是显式授权的付费研究入口，只能在注入未跟踪 provider 配置并单独批准后运行 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1 make research-embeddings`。上述命令或单次 GREEN 都不表示 RFC 已接受、ADR 已变更或共享环境已获批准；生命周期建议必须以当次实验 review 的完整证据为准。
+真实 embedding profile 是显式授权的付费研究入口，只能在注入未跟踪 provider 配置并单独批准后运行 `TAP_RUN_PAID_EMBEDDING_RESEARCH=1 make research-embeddings`。上述命令或单次 GREEN 都不表示 RFC 已接受、ADR 已变更或共享环境已获批准；生命周期建议以[本次实验评审](docs/reviews/2026-08-27-milvus-local-search-experiment.md)的完整证据为准。
 
 ## 开发工作区与契约
 

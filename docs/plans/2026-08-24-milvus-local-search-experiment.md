@@ -1,6 +1,6 @@
 ---
 id: PLAN-MILVUS-LOCAL-SEARCH-EXPERIMENT
-status: active
+status: completed
 date: 2026-08-24
 related-rfcs:
   - RFC-004
@@ -100,7 +100,7 @@ SEARCH_EXECUTION_REJECTED_TYPE = "https://tap.example/problems/search-execution-
 
 **Steps:**
 
-- [ ] **Step 1:** 写测试证明两个异常从 `knowledge.ports.errors` 导入，Azure adapter 抛出的是同一 class object，而不是 adapter 私有类型。
+- [x] **Step 1:** 写测试证明两个异常从 `knowledge.ports.errors` 导入，Azure adapter 抛出的是同一 class object，而不是 adapter 私有类型。
 
   ```python
   from tap.modules.knowledge.adapters.azure_ai_search import (
@@ -113,7 +113,7 @@ SEARCH_EXECUTION_REJECTED_TYPE = "https://tap.example/problems/search-execution-
       assert AzureSearchUnavailable is SearchUnavailable
       assert issubclass(SearchBoundsExceeded, Exception)
   ```
-- [ ] **Step 2:** 在 HTTP contract test 增加仅供测试的 endpoint，分别抛出两个异常；核心断言如下，第二个异常使用 `/search-execution-rejected` 重复同一组断言。
+- [x] **Step 2:** 在 HTTP contract test 增加仅供测试的 endpoint，分别抛出两个异常；核心断言如下，第二个异常使用 `/search-execution-rejected` 重复同一组断言。
 
   ```python
   async def fail_search() -> None:
@@ -128,9 +128,9 @@ SEARCH_EXECUTION_REJECTED_TYPE = "https://tap.example/problems/search-execution-
   assert "secret" not in response.text
   assert "raw-filter" not in response.text
   ```
-- [ ] **Step 3:** 在 `test_knowledge_api.py` 增加失败路径：`SearchPort` 抛错后 `KnowledgeAPI.answer` 继续抛共享错误，model 未调用且没有成功 response/citation。
-- [ ] **Step 4:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_search_errors.py apps/backend/tests/contract/test_http_problem_details.py apps/backend/tests/contract/test_knowledge_api.py -v`，确认因模块/handler 缺失失败。
-- [ ] **Step 5:** 新建共享错误模块，迁移 Azure import，并在 `create_app()` 注册以下两个 handler；不得把 `_error` 插入响应。
+- [x] **Step 3:** 在 `test_knowledge_api.py` 增加失败路径：`SearchPort` 抛错后 `KnowledgeAPI.answer` 继续抛共享错误，model 未调用且没有成功 response/citation。
+- [x] **Step 4:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_search_errors.py apps/backend/tests/contract/test_http_problem_details.py apps/backend/tests/contract/test_knowledge_api.py -v`，确认因模块/handler 缺失失败。
+- [x] **Step 5:** 新建共享错误模块，迁移 Azure import，并在 `create_app()` 注册以下两个 handler；不得把 `_error` 插入响应。
 
   ```python
   @app.exception_handler(SearchUnavailable)
@@ -145,8 +145,8 @@ SEARCH_EXECUTION_REJECTED_TYPE = "https://tap.example/problems/search-execution-
   ) -> JSONResponse:
       return problem_response(SEARCH_EXECUTION_REJECTED_PROBLEM)
   ```
-- [ ] **Step 6:** 重跑聚焦测试，再运行 `make check && make test`。
-- [ ] **Step 7:** 只暂存本任务文件并提交。
+- [x] **Step 6:** 重跑聚焦测试，再运行 `make check && make test`。
+- [x] **Step 7:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/src/tap/modules/knowledge/ports/errors.py apps/backend/src/tap/modules/knowledge/adapters/azure_ai_search.py apps/backend/src/tap/interfaces/http/app.py apps/backend/tests/contract/test_azure_search_strict.py apps/backend/tests/contract/test_knowledge_api.py apps/backend/tests/contract/test_http_problem_details.py apps/backend/tests/contract/test_search_errors.py
@@ -184,7 +184,7 @@ def _string_set(
 
 **Steps:**
 
-- [ ] **Step 1:** 增加 actor 与 project policy 的边界测试：128 个 group 和 256 字符成员通过；129 个、257 字符、空白成员失败；错误不得包含完整 group 值。
+- [x] **Step 1:** 增加 actor 与 project policy 的边界测试：128 个 group 和 256 字符成员通过；129 个、257 字符、空白成员失败；错误不得包含完整 group 值。
 
   ```python
   def test_verified_subject_rejects_more_than_128_groups() -> None:
@@ -198,9 +198,9 @@ def _string_set(
               token_verified=True,
           )
   ```
-- [ ] **Step 2:** 增加执行顺序测试：实验 policy 精确允许 `frozenset({"doc"})` 时，空 source 请求只产生 `doc` plan；显式 `code` 请求在 redaction、embedding、alias/search recorder 被调用前失败。
-- [ ] **Step 3:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_policy_context.py apps/backend/tests/contract/test_authorized_execution.py -v`，确认边界测试失败。
-- [ ] **Step 4:** 给 `_string_set` 添加以下精确检查，并在 subject、project policy 与 authorized actor 的 group 字段传入 `max_items=128`、`max_item_length=256`；roles 与闭合 enum 集合不传 `max_items`。
+- [x] **Step 2:** 增加执行顺序测试：实验 policy 精确允许 `frozenset({"doc"})` 时，空 source 请求只产生 `doc` plan；显式 `code` 请求在 redaction、embedding、alias/search recorder 被调用前失败。
+- [x] **Step 3:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_policy_context.py apps/backend/tests/contract/test_authorized_execution.py -v`，确认边界测试失败。
+- [x] **Step 4:** 给 `_string_set` 添加以下精确检查，并在 subject、project policy 与 authorized actor 的 group 字段传入 `max_items=128`、`max_item_length=256`；roles 与闭合 enum 集合不传 `max_items`。
 
   ```python
   if max_items is not None and len(value) > max_items:
@@ -208,9 +208,9 @@ def _string_set(
   if any(len(item) > max_item_length for item in value):
       raise ValueError(f"{name} values must contain at most {max_item_length} characters")
   ```
-- [ ] **Step 5:** 保持 `_source_families` 的 policy 语义不变，只补足显式未授权 family 的 pre-I/O 断言与测试 double 观测。
-- [ ] **Step 6:** 重跑聚焦测试和 `make check && make test`。
-- [ ] **Step 7:** 只暂存本任务文件并提交。
+- [x] **Step 5:** 保持 `_source_families` 的 policy 语义不变，只补足显式未授权 family 的 pre-I/O 断言与测试 double 观测。
+- [x] **Step 6:** 重跑聚焦测试和 `make check && make test`。
+- [x] **Step 7:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/src/tap/modules/access/domain/policy.py apps/backend/src/tap/modules/knowledge/application/retrieve.py apps/backend/tests/unit/access/test_policy_context.py apps/backend/tests/contract/test_authorized_execution.py
@@ -245,7 +245,7 @@ def _string_set(
 
 **Steps:**
 
-- [ ] **Step 1:** 写 compatibility test，断言 PyMilvus 版本与所需 surface。
+- [x] **Step 1:** 写 compatibility test，断言 PyMilvus 版本与所需 surface。
 
   ```python
   import pymilvus
@@ -270,12 +270,12 @@ def _string_set(
       assert Function is not None
       assert FunctionType.BM25 is not None
   ```
-- [ ] **Step 2:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_pymilvus_compatibility.py -v`；预期 FAIL 为 `ModuleNotFoundError: No module named 'pymilvus'`。
-- [ ] **Step 3:** 执行 `uv add --project apps/backend 'pymilvus==2.6.17'`，提交生成的 lockfile；不得手工放宽 Python `==3.13.12`。
-- [ ] **Step 4:** 运行 `uv sync --frozen --all-groups` 与上一步 pytest 命令；预期 PASS。安装、import 或 API surface 任一失败即停止执行并记录阻断证据。
-- [ ] **Step 5:** 在 source notes 记录官方 release、SDK compatibility、Compose 安装和最低本地资源来源链接及访问日期。
-- [ ] **Step 6:** 运行 `make check && make test`。
-- [ ] **Step 7:** 只暂存本任务文件并提交。
+- [x] **Step 2:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_pymilvus_compatibility.py -v`；预期 FAIL 为 `ModuleNotFoundError: No module named 'pymilvus'`。
+- [x] **Step 3:** 执行 `uv add --project apps/backend 'pymilvus==2.6.17'`，提交生成的 lockfile；不得手工放宽 Python `==3.13.12`。
+- [x] **Step 4:** 运行 `uv sync --frozen --all-groups` 与上一步 pytest 命令；预期 PASS。安装、import 或 API surface 任一失败即停止执行并记录阻断证据。
+- [x] **Step 5:** 在 source notes 记录官方 release、SDK compatibility、Compose 安装和最低本地资源来源链接及访问日期。
+- [x] **Step 6:** 运行 `make check && make test`。
+- [x] **Step 7:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/pyproject.toml uv.lock apps/backend/tests/contract/test_pymilvus_compatibility.py docs/reference/2026-08-20-source-notes.md
@@ -332,7 +332,7 @@ def compile_milvus_filter(
 
 **Steps:**
 
-- [ ] **Step 1:** 写配置测试：`http://` 只允许 `127.0.0.1`/`localhost`，非 loopback 必须 `https://`；首轮只接受单个 `doc` target、canonical `schema_sha256`、正整数维度、候选 `1..50`、deadline `0 < n <= 30`、connections `1..16` 和安全 alias/prefix；`repr` 不出现 password。
+- [x] **Step 1:** 写配置测试：`http://` 只允许 `127.0.0.1`/`localhost`，非 loopback 必须 `https://`；首轮只接受单个 `doc` target、canonical `schema_sha256`、正整数维度、候选 `1..50`、deadline `0 < n <= 30`、connections `1..16` 和安全 alias/prefix；`repr` 不出现 password。
 
   ```python
   def test_milvus_config_hides_password_and_accepts_only_doc_target() -> None:
@@ -356,7 +356,7 @@ def compile_milvus_filter(
       assert "reader-secret" not in repr(config)
       assert tuple(config.targets) == (SourceFamily.DOC,)
   ```
-- [ ] **Step 2:** 在 test module 定义以下 `doc_execution()` factory，并用其固定完整必需 clause；resource-scope cases 构造新的 Project Policy，不通过 `object.__setattr__` 篡改可信 context。
+- [x] **Step 2:** 在 test module 定义以下 `doc_execution()` factory，并用其固定完整必需 clause；resource-scope cases 构造新的 Project Policy，不通过 `object.__setattr__` 篡改可信 context。
 
   ```python
   def doc_execution() -> SearchExecution:
@@ -448,10 +448,10 @@ def compile_milvus_filter(
   ):
       assert clause in expression
   ```
-- [ ] **Step 3:** 增加 resource union 测试：只有当前 family 且 `ResourceMode.SCOPE` 的 resources 进入 provider filter；每个 resource 内 source/revision/hash 与 subtree 为 AND，多个 resource 为 OR。`REQUIRED`/`PREFERRED` 继续由 application 结果语义处理，不擅自缩窄 provider corpus；引号、反斜线和控制字符被专用 literal encoder 拒绝或安全编码。
-- [ ] **Step 4:** 增加 fail-closed 测试：空 groups/classifications、超过 20 resources、32 locators、256 字符、32 KiB 以及非 `doc` family 都在 transport recorder 调用前抛 `SearchBoundsExceeded`。
-- [ ] **Step 5:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_milvus_config.py apps/backend/tests/contract/test_milvus_filter.py -v`；预期 FAIL 为无法导入 `tap.modules.knowledge.adapters.milvus`。
-- [ ] **Step 6:** 实现不可变配置和只允许以下字段/运算的私有 expression builder；literal 编码使用 JSON 双引号形式并拒绝控制字符，最终以 `len(expression.encode("utf-8"))` 检查 32 KiB。
+- [x] **Step 3:** 增加 resource union 测试：只有当前 family 且 `ResourceMode.SCOPE` 的 resources 进入 provider filter；每个 resource 内 source/revision/hash 与 subtree 为 AND，多个 resource 为 OR。`REQUIRED`/`PREFERRED` 继续由 application 结果语义处理，不擅自缩窄 provider corpus；引号、反斜线和控制字符被专用 literal encoder 拒绝或安全编码。
+- [x] **Step 4:** 增加 fail-closed 测试：空 groups/classifications、超过 20 resources、32 locators、256 字符、32 KiB 以及非 `doc` family 都在 transport recorder 调用前抛 `SearchBoundsExceeded`。
+- [x] **Step 5:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_milvus_config.py apps/backend/tests/contract/test_milvus_filter.py -v`；预期 FAIL 为无法导入 `tap.modules.knowledge.adapters.milvus`。
+- [x] **Step 6:** 实现不可变配置和只允许以下字段/运算的私有 expression builder；literal 编码使用 JSON 双引号形式并拒绝控制字符，最终以 `len(expression.encode("utf-8"))` 检查 32 KiB。
 
   ```python
   _FILTER_FIELDS = frozenset(
@@ -477,8 +477,8 @@ def compile_milvus_filter(
           raise SearchBoundsExceeded("filter literal contains a control character")
       return json.dumps(value, ensure_ascii=False)
   ```
-- [ ] **Step 7:** 重跑聚焦测试和 `make check && make test`。
-- [ ] **Step 8:** 只暂存本任务文件并提交。
+- [x] **Step 7:** 重跑聚焦测试和 `make check && make test`。
+- [x] **Step 8:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/src/tap/modules/knowledge/adapters/milvus/__init__.py apps/backend/src/tap/modules/knowledge/adapters/milvus/config.py apps/backend/src/tap/modules/knowledge/adapters/milvus/filter.py apps/backend/tests/contract/test_milvus_config.py apps/backend/tests/contract/test_milvus_filter.py
@@ -556,7 +556,7 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
 
 **Steps:**
 
-- [ ] **Step 1:** 写 fake-reader test，使用一个明确记录调用的对象锁定 alias 与 metadata 行为。真实 transport 从 closed collection description 解析 family/version 声明，并从 `describe_collection` fields/functions 与 `describe_index` 结果独立计算 `schema_sha256`；声明 digest、计算 digest 与 target expected digest 三者必须相同。
+- [x] **Step 1:** 写 fake-reader test，使用一个明确记录调用的对象锁定 alias 与 metadata 行为。真实 transport 从 closed collection description 解析 family/version 声明，并从 `describe_collection` fields/functions 与 `describe_index` 结果独立计算 `schema_sha256`；声明 digest、计算 digest 与 target expected digest 三者必须相同。
 
   ```python
   def doc_target() -> MilvusIndexTarget:
@@ -623,8 +623,8 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
   | field/params 中出现未知或重复来源 | 继续按原闭合 shape fail closed |
 
   该分支只解释 pinned live transport，不改变 canonical fields/functions/indexes/consistency、schema digest 或声明值；错误 path/key/type 不得因为值看似 `true` 而被接受。
-- [ ] **Step 2:** 写竞争测试：alias 在 bind 后切换，hybrid request 仍查询已绑定 physical name；不得再次用 alias 发 search。
-- [ ] **Step 3:** 写 mapping tests，使用以下完整 row/bound factory，再逐键篡改；`anchor_json` 只能解析为 `DocumentAnchor` 的闭合字段。
+- [x] **Step 2:** 写竞争测试：alias 在 bind 后切换，hybrid request 仍查询已绑定 physical name；不得再次用 alias 发 search。
+- [x] **Step 3:** 写 mapping tests，使用以下完整 row/bound factory，再逐键篡改；`anchor_json` 只能解析为 `DocumentAnchor` 的闭合字段。
 
   ```python
   def bound_target() -> BoundMilvusTarget:
@@ -667,9 +667,9 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
   with pytest.raises(SearchUnavailable, match="row does not match bound target"):
       map_milvus_hit(forged, bound_target(), local_rank=1)
   ```
-- [ ] **Step 4:** 写 transport tests，证明 SDK 异常、deadline 与 cancellation 被归一化为共享错误，异常和 repr 不泄漏 URI 密码、filter、groups 或 vector。
-- [ ] **Step 5:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_milvus_transport.py apps/backend/tests/contract/test_milvus_target_binding.py apps/backend/tests/contract/test_milvus_mapping.py -v`；预期 FAIL 为三个模块尚不存在。
-- [ ] **Step 6:** 实现 narrow protocol 和读取侧 PyMilvus wrapper；Knowledge 模块中只有 `transport.py` 导入 `pymilvus`。所有 SDK 调用通过同一 helper 执行并归一化异常；Task 7 的独立运维 client 不被 Knowledge application 导入。
+- [x] **Step 4:** 写 transport tests，证明 SDK 异常、deadline 与 cancellation 被归一化为共享错误，异常和 repr 不泄漏 URI 密码、filter、groups 或 vector。
+- [x] **Step 5:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_milvus_transport.py apps/backend/tests/contract/test_milvus_target_binding.py apps/backend/tests/contract/test_milvus_mapping.py -v`；预期 FAIL 为三个模块尚不存在。
+- [x] **Step 6:** 实现 narrow protocol 和读取侧 PyMilvus wrapper；Knowledge 模块中只有 `transport.py` 导入 `pymilvus`。所有 SDK 调用通过同一 helper 执行并归一化异常；Task 7 的独立运维 client 不被 Knowledge application 导入。
 
   ```python
   async def _bounded_call[T](timeout_seconds: float, call: Callable[[], T]) -> T:
@@ -683,9 +683,9 @@ def map_milvus_hit(row: Mapping[str, object], bound: BoundMilvusTarget, local_ra
       except Exception as error:
           raise SearchUnavailable("search provider call failed") from error
   ```
-- [ ] **Step 7:** 实现 target binding 和严格 mapper；output fields 只含内容/provenance/版本，不含 ACL array 或 vector。
-- [ ] **Step 8:** 重跑聚焦测试和 `make check && make test`。Task 5 修正只有在 nested 与 pinned-flat index、原生布尔与 pinned exact-string field 两组输入都产生同一 canonical digest，且全部拒绝矩阵 GREEN 后才完成；静态/fake GREEN 不能代替 Task 8 的真实重跑。
-- [ ] **Step 9:** 只暂存本任务文件并提交。
+- [x] **Step 7:** 实现 target binding 和严格 mapper；output fields 只含内容/provenance/版本，不含 ACL array 或 vector。
+- [x] **Step 8:** 重跑聚焦测试和 `make check && make test`。Task 5 修正只有在 nested 与 pinned-flat index、原生布尔与 pinned exact-string field 两组输入都产生同一 canonical digest，且全部拒绝矩阵 GREEN 后才完成；静态/fake GREEN 不能代替 Task 8 的真实重跑。
+- [x] **Step 9:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/src/tap/modules/knowledge/adapters/milvus/transport.py apps/backend/src/tap/modules/knowledge/adapters/milvus/targets.py apps/backend/src/tap/modules/knowledge/adapters/milvus/mapping.py apps/backend/tests/contract/test_milvus_transport.py apps/backend/tests/contract/test_milvus_target_binding.py apps/backend/tests/contract/test_milvus_mapping.py
@@ -784,7 +784,7 @@ class SearchProviderConformanceHarness(Protocol):
 
 **Steps:**
 
-- [ ] **Step 1:** 写 strict adapter test，reader 保存唯一 request；使用 Task 4 的 `doc_execution()` 与 Task 5 的 `valid_doc_row()`。
+- [x] **Step 1:** 写 strict adapter test，reader 保存唯一 request；使用 Task 4 的 `doc_execution()` 与 Task 5 的 `valid_doc_row()`。
 
   ```python
   class RecordingReader:
@@ -834,8 +834,8 @@ class SearchProviderConformanceHarness(Protocol):
   assert request.limit == 50
   assert tuple(hit.local_rank for hit in hits) == tuple(range(1, len(hits) + 1))
   ```
-- [ ] **Step 2:** 覆盖空向量/维度错误、未配置 family、alias/metadata 漂移、extra/malformed row、超过返回上限与 transport failure；每项不得产生部分成功 hits。
-- [ ] **Step 3:** 新建共享 conformance harness，把 Milvus fake reader 与 Azure controlled transport 归一化为上述 result。参数化用例至少包含 allowed、denied-group、wrong-tenant、wrong-project、over-classification、wrong-environment、wrong-corpus、resource-scope、unavailable；每个检索 channel 的 filter 必须与 harness 从同一 execution 生成的 `expected_filter` 字节一致。
+- [x] **Step 2:** 覆盖空向量/维度错误、未配置 family、alias/metadata 漂移、extra/malformed row、超过返回上限与 transport failure；每项不得产生部分成功 hits。
+- [x] **Step 3:** 新建共享 conformance harness，把 Milvus fake reader 与 Azure controlled transport 归一化为上述 result。参数化用例至少包含 allowed、denied-group、wrong-tenant、wrong-project、over-classification、wrong-environment、wrong-corpus、resource-scope、unavailable；每个检索 channel 的 filter 必须与 harness 从同一 execution 生成的 `expected_filter` 字节一致。
 
   ```python
   @pytest.mark.asyncio
@@ -852,7 +852,7 @@ class SearchProviderConformanceHarness(Protocol):
       assert result.provider_rows == ()
       assert result.hits == ()
   ```
-- [ ] **Step 4:** 写 bootstrap tests；factories 只递增各自计数，不连接外部服务。
+- [x] **Step 4:** 写 bootstrap tests；factories 只递增各自计数，不连接外部服务。
 
   ```python
   settings = {
@@ -895,11 +895,11 @@ class SearchProviderConformanceHarness(Protocol):
                         azure_factory=unexpected_azure_factory,
                         audit_sink=RecordingAuditSink())
   ```
-- [ ] **Step 5:** 写 architecture test，禁止 application/domain/contracts 导入 `pymilvus` 或 Milvus adapter。
-- [ ] **Step 6:** 写 audit test，断言 success/failure 均恰好 emit 一次且 `asdict(event)` 键集合与上述 dataclass 相同；把 secret、group ID、compiled filter、query text、vector 放入异常/输入后，序列化 event 仍不含这些值。audit sink 写入失败时该 search 以共享 `SearchUnavailable` 失败，不返回 hits/citations；异常 detail 仍为通用文案。
-- [ ] **Step 7:** 写 readiness test：只用 reader 调用一次 alias describe、一次 collection metadata 验证和一次按 canary chunk + 完整 ACL/corpus filter 的 bounded scalar query；缺失/多行/错误 chunk 或 timeout 均失败。测试同时断言 `create_app()` 的 liveness 构造不接收 Milvus client，provider 故障不触发 liveness 逻辑。
-- [ ] **Step 8:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_milvus_search_strict.py apps/backend/tests/contract/test_milvus_audit.py apps/backend/tests/contract/test_milvus_readiness.py apps/backend/tests/contract/test_search_bootstrap.py apps/backend/tests/contract/test_search_provider_conformance.py apps/backend/tests/architecture/test_module_boundaries.py -v`；预期 FAIL 为 search/audit/readiness/bootstrap/conformance 模块缺失。
-- [ ] **Step 9:** 实现 adapter 的固定顺序，并在 provider I/O 前拒绝 target 数量不是 1 或 family 不是 `doc`。
+- [x] **Step 5:** 写 architecture test，禁止 application/domain/contracts 导入 `pymilvus` 或 Milvus adapter。
+- [x] **Step 6:** 写 audit test，断言 success/failure 均恰好 emit 一次且 `asdict(event)` 键集合与上述 dataclass 相同；把 secret、group ID、compiled filter、query text、vector 放入异常/输入后，序列化 event 仍不含这些值。audit sink 写入失败时该 search 以共享 `SearchUnavailable` 失败，不返回 hits/citations；异常 detail 仍为通用文案。
+- [x] **Step 7:** 写 readiness test：只用 reader 调用一次 alias describe、一次 collection metadata 验证和一次按 canary chunk + 完整 ACL/corpus filter 的 bounded scalar query；缺失/多行/错误 chunk 或 timeout 均失败。测试同时断言 `create_app()` 的 liveness 构造不接收 Milvus client，provider 故障不触发 liveness 逻辑。
+- [x] **Step 8:** 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_milvus_search_strict.py apps/backend/tests/contract/test_milvus_audit.py apps/backend/tests/contract/test_milvus_readiness.py apps/backend/tests/contract/test_search_bootstrap.py apps/backend/tests/contract/test_search_provider_conformance.py apps/backend/tests/architecture/test_module_boundaries.py -v`；预期 FAIL 为 search/audit/readiness/bootstrap/conformance 模块缺失。
+- [x] **Step 9:** 实现 adapter 的固定顺序，并在 provider I/O 前拒绝 target 数量不是 1 或 family 不是 `doc`。
 
   ```python
   if execution.plan.source_families != (SourceFamily.DOC,):
@@ -915,9 +915,9 @@ class SearchProviderConformanceHarness(Protocol):
   )
   return tuple(map_milvus_hit(row, bound, rank) for rank, row in enumerate(rows, 1))
   ```
-- [ ] **Step 10:** 实现 audit、reader-only readiness probe 和独立 bootstrap factory；当前仓库没有 Knowledge HTTP composition root，因此本任务不伪造公开 route。实验 runner 使用 readiness，后续 composition root 必须把它接到 readiness 而不是 liveness。
-- [ ] **Step 11:** 重跑聚焦测试和 `make check && make test`。
-- [ ] **Step 12:** 只暂存本任务文件并提交。
+- [x] **Step 10:** 实现 audit、reader-only readiness probe 和独立 bootstrap factory；当前仓库没有 Knowledge HTTP composition root，因此本任务不伪造公开 route。实验 runner 使用 readiness，后续 composition root 必须把它接到 readiness 而不是 liveness。
+- [x] **Step 11:** 重跑聚焦测试和 `make check && make test`。
+- [x] **Step 12:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/src/tap/modules/knowledge/adapters/milvus/search.py apps/backend/src/tap/modules/knowledge/adapters/milvus/readiness.py apps/backend/src/tap/modules/knowledge/adapters/milvus/audit.py apps/backend/src/tap/entrypoints/knowledge_bootstrap.py apps/backend/tests/contract/test_milvus_search_strict.py apps/backend/tests/contract/test_milvus_readiness.py apps/backend/tests/contract/test_milvus_audit.py apps/backend/tests/contract/search_provider_conformance.py apps/backend/tests/contract/test_search_provider_conformance.py apps/backend/tests/contract/test_azure_search_strict.py apps/backend/tests/contract/test_search_bootstrap.py apps/backend/tests/architecture/test_module_boundaries.py
@@ -1055,7 +1055,7 @@ async def run_health_probe(clients: MilvusProbeClients, probe_id: str) -> Milvus
 
 **Steps:**
 
-- [ ] **Step 1:** 写 unit tests，以 recording admin client 断言 bootstrap 创建三个身份且授权矩阵不交叉；reader 的两个 Describe privilege 精确落在 `Global/*` base grants；provisioner 的 `Global/*` 精确为 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership`、`SelectOwnership`，`Collection/*` 精确为 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release`，任何缺项、额外项或互换 dimension 都失败，不能泛化。新增 provider-like tests：缺少 `SelectOwnership` 时 provisioner `describe_role` 必须得到明确 denial；加入后只允许安全 grant inventory，reader/writer 仍 denial；精确七项/六项 inventory 重复 reconcile 必须 idle，每个 wrong scope、missing/extra/duplicate record 都按闭合 contract 精确纠正或 fail closed。`replace_role_grants` 只收敛 base namespace：合法的 reader concrete `Search`/`Query` 和临时 writer concrete grants 必须原样保留；provisioner concrete、越权 concrete 或所有权不明记录必须 fail closed 且不得被宽泛删除。reader legacy `Collection/*` `Search`/`Query` wildcard 必须被精确撤销且不是新 base/target contract。第二次 bootstrap 不得产生 grant mutation，并增加“带合法在途/已发布 target grants 重跑 bootstrap”的 idempotence case。
+- [x] **Step 1:** 写 unit tests，以 recording admin client 断言 bootstrap 创建三个身份且授权矩阵不交叉；reader 的两个 Describe privilege 精确落在 `Global/*` base grants；provisioner 的 `Global/*` 精确为 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership`、`SelectOwnership`，`Collection/*` 精确为 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release`，任何缺项、额外项或互换 dimension 都失败，不能泛化。新增 provider-like tests：缺少 `SelectOwnership` 时 provisioner `describe_role` 必须得到明确 denial；加入后只允许安全 grant inventory，reader/writer 仍 denial；精确七项/六项 inventory 重复 reconcile 必须 idle，每个 wrong scope、missing/extra/duplicate record 都按闭合 contract 精确纠正或 fail closed。`replace_role_grants` 只收敛 base namespace：合法的 reader concrete `Search`/`Query` 和临时 writer concrete grants 必须原样保留；provisioner concrete、越权 concrete 或所有权不明记录必须 fail closed 且不得被宽泛删除。reader legacy `Collection/*` `Search`/`Query` wildcard 必须被精确撤销且不是新 base/target contract。第二次 bootstrap 不得产生 grant mutation，并增加“带合法在途/已发布 target grants 重跑 bootstrap”的 idempotence case。
 
   ```python
   await bootstrap_local_rbac(admin, local_role_credentials())
@@ -1080,7 +1080,7 @@ async def run_health_probe(clients: MilvusProbeClients, probe_id: str) -> Milvus
   assert "Insert" not in admin.role_privileges("tap_reader")
   assert admin.password_rotations == [("root", "tap-local-rotated-root")]
   ```
-- [ ] **Step 2:** 写 health orchestration test：provisioner 创建隔离 collection/alias 并授权，writer insert/flush/delete，reader describe + filtered hybrid/query，最后 provisioner 清理。
+- [x] **Step 2:** 写 health orchestration test：provisioner 创建隔离 collection/alias 并授权，writer insert/flush/delete，reader describe + filtered hybrid/query，最后 provisioner 清理。
 
   ```python
   report = await run_health_probe(probe_clients(), "probe_20260824_001")
@@ -1089,8 +1089,8 @@ async def run_health_probe(clients: MilvusProbeClients, probe_id: str) -> Milvus
   assert report.cleanup_complete is True
   assert all(name.startswith("tap_health_probe_") for name in admin.dropped_collections)
   ```
-- [ ] **Step 3:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_bootstrap.py apps/backend/tests/unit/operations/test_milvus_health.py -v`；预期 FAIL 为 operations package 缺失。
-- [ ] **Step 4:** 增加 `milvus` profile、命名 volumes、auth 配置和以下精确服务镜像；etcd/MinIO 不发布宿主端口。把 MySQL、Redis、Azurite、LiteLLM 的现有宿主端口也改为 `127.0.0.1`。
+- [x] **Step 3:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_bootstrap.py apps/backend/tests/unit/operations/test_milvus_health.py -v`；预期 FAIL 为 operations package 缺失。
+- [x] **Step 4:** 增加 `milvus` profile、命名 volumes、auth 配置和以下精确服务镜像；etcd/MinIO 不发布宿主端口。把 MySQL、Redis、Azurite、LiteLLM 的现有宿主端口也改为 `127.0.0.1`。
 
   ```yaml
   milvus-etcd:
@@ -1141,12 +1141,12 @@ async def run_health_probe(clients: MilvusProbeClients, probe_id: str) -> Milvus
     security:
       authorizationEnabled: true
   ```
-- [ ] **Step 5:** `.env.example` 增加 `MILVUS_MINIO_ROOT_USER=tap-local-minio`、`MILVUS_MINIO_ROOT_PASSWORD=tap-local-minio-password`、`MILVUS_INITIAL_ROOT_PASSWORD=Milvus`、`MILVUS_ROOT_PASSWORD=tap-local-rotated-root`、`TAP_ALLOW_INITIAL_MILVUS_ROOT=0`，以及 `MILVUS_READER_*`、`MILVUS_WRITER_*`、`MILVUS_PROVISIONER_*` 的 `tap-local-*` 用户名/密码。首次创建 volume 只能在命令行显式设 `TAP_ALLOW_INITIAL_MILVUS_ROOT=1`；bootstrap 先尝试 rotated root，只有该开关为 1 才尝试初始 root，成功后立即轮换。root/MinIO 变量只供 Compose/bootstrap，reader 配置不继承 root、MinIO、writer 或 provisioner。
-- [ ] **Step 6:** 实现可注入 client 的 bootstrap/health orchestration 与薄 CLI。CLI 只解析参数、构造 client、调用 operation，并用返回码 `0/1` 表示通过/失败；普通 service check 仅在 `TAP_SEARCH_BACKEND=milvus` 或 `--milvus` 时运行 bounded reader canary。
-- [ ] **Step 7:** 对上述每项 privilege 运行真实 allow probe，并对 reader 的 Insert/Delete、writer 的 Search/Query、provisioner 的实体读写运行真实 deny probe。真实 inventory 必须证明 reader 的 `DescribeAlias`/`DescribeCollection` 只有 `Global/*` bootstrap base records；provisioner 必须精确呈现 `Global/*` 的 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership`、`SelectOwnership` 与 `Collection/*` 的 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release`，不得接受其他二分。真实 probe 必须证明 `SelectOwnership` 仅使 provisioner 的 `describe_role`/grant inventory 成功，缺少该项时得到明确 permission denial，reader/writer 仍不能读取 grant inventory；`ManageOwnership` 的 grant/revoke mutation 行为保持独立。每个 probe/fixture target 的 reader records 只有 `Search`/`Query` 且同时匹配 `object_type=Collection`、exact database/name/role。同名不同 database/object type/role、以 target 名称出现的 `Global` record 或额外 privilege 都失败。初始只读 preflight 必须证明 zero concrete grants/resources；若只缺少已裁决的 `SelectOwnership`，把该十二项 provisioner base 记录为待 bootstrap 精确补齐的 known legacy state。bootstrap 后 base counts 必须为 reader/writer/provisioner `2/5/13`，并以合法 concrete reader/writer grants 存在的状态重跑，证明 base reconciliation 不撤销 publisher-owned grants，且第二次运行无 grant mutation。注入错误 base 与异常 concrete records，分别证明精确纠错和 fail-closed ownership。`alter_alias` 必须由 `CreateAlias` grant 的实际 probe 证明；若 v2.6.22 行为不同，停止并更新计划，禁止附加 `CollectionAdmin`、`ClusterAdmin` 或 `All` 绕过。
-- [ ] **Step 8:** 增加 `milvus-up`、`milvus-down`、`milvus-bootstrap`、`milvus-health` Make targets；`milvus-up` 先检查 2 vCPU/8 GiB，`milvus-down` 默认保留 volumes。
-- [ ] **Step 9:** 运行 `docker compose config`、unit tests、`make check && make test`。在全新本地 volume 上再运行 `make milvus-up && TAP_ALLOW_INITIAL_MILVUS_ROOT=1 make milvus-bootstrap && make milvus-health`；已有 rotated root 的 volume 运行时不得设置该开关。
-- [ ] **Step 10:** 只暂存本任务文件并提交。
+- [x] **Step 5:** `.env.example` 增加 `MILVUS_MINIO_ROOT_USER=tap-local-minio`、`MILVUS_MINIO_ROOT_PASSWORD=tap-local-minio-password`、`MILVUS_INITIAL_ROOT_PASSWORD=Milvus`、`MILVUS_ROOT_PASSWORD=tap-local-rotated-root`、`TAP_ALLOW_INITIAL_MILVUS_ROOT=0`，以及 `MILVUS_READER_*`、`MILVUS_WRITER_*`、`MILVUS_PROVISIONER_*` 的 `tap-local-*` 用户名/密码。首次创建 volume 只能在命令行显式设 `TAP_ALLOW_INITIAL_MILVUS_ROOT=1`；bootstrap 先尝试 rotated root，只有该开关为 1 才尝试初始 root，成功后立即轮换。root/MinIO 变量只供 Compose/bootstrap，reader 配置不继承 root、MinIO、writer 或 provisioner。
+- [x] **Step 6:** 实现可注入 client 的 bootstrap/health orchestration 与薄 CLI。CLI 只解析参数、构造 client、调用 operation，并用返回码 `0/1` 表示通过/失败；普通 service check 仅在 `TAP_SEARCH_BACKEND=milvus` 或 `--milvus` 时运行 bounded reader canary。
+- [x] **Step 7:** 对上述每项 privilege 运行真实 allow probe，并对 reader 的 Insert/Delete、writer 的 Search/Query、provisioner 的实体读写运行真实 deny probe。真实 inventory 必须证明 reader 的 `DescribeAlias`/`DescribeCollection` 只有 `Global/*` bootstrap base records；provisioner 必须精确呈现 `Global/*` 的 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership`、`SelectOwnership` 与 `Collection/*` 的 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release`，不得接受其他二分。真实 probe 必须证明 `SelectOwnership` 仅使 provisioner 的 `describe_role`/grant inventory 成功，缺少该项时得到明确 permission denial，reader/writer 仍不能读取 grant inventory；`ManageOwnership` 的 grant/revoke mutation 行为保持独立。每个 probe/fixture target 的 reader records 只有 `Search`/`Query` 且同时匹配 `object_type=Collection`、exact database/name/role。同名不同 database/object type/role、以 target 名称出现的 `Global` record 或额外 privilege 都失败。初始只读 preflight 必须证明 zero concrete grants/resources；若只缺少已裁决的 `SelectOwnership`，把该十二项 provisioner base 记录为待 bootstrap 精确补齐的 known legacy state。bootstrap 后 base counts 必须为 reader/writer/provisioner `2/5/13`，并以合法 concrete reader/writer grants 存在的状态重跑，证明 base reconciliation 不撤销 publisher-owned grants，且第二次运行无 grant mutation。注入错误 base 与异常 concrete records，分别证明精确纠错和 fail-closed ownership。`alter_alias` 必须由 `CreateAlias` grant 的实际 probe 证明；若 v2.6.22 行为不同，停止并更新计划，禁止附加 `CollectionAdmin`、`ClusterAdmin` 或 `All` 绕过。
+- [x] **Step 8:** 增加 `milvus-up`、`milvus-down`、`milvus-bootstrap`、`milvus-health` Make targets；`milvus-up` 先检查 2 vCPU/8 GiB，`milvus-down` 默认保留 volumes。
+- [x] **Step 9:** 运行 `docker compose config`、unit tests、`make check && make test`。在全新本地 volume 上再运行 `make milvus-up && TAP_ALLOW_INITIAL_MILVUS_ROOT=1 make milvus-bootstrap && make milvus-health`；已有 rotated root 的 volume 运行时不得设置该开关。
+- [x] **Step 10:** 只暂存本任务文件并提交。
 
   ```sh
   git add compose.yaml .env.example deploy/local/milvus/milvus.yaml apps/backend/src/tap/operations/__init__.py apps/backend/src/tap/operations/milvus/__init__.py apps/backend/src/tap/operations/milvus/contracts.py apps/backend/src/tap/operations/milvus/client.py apps/backend/src/tap/operations/milvus/bootstrap.py apps/backend/src/tap/operations/milvus/health.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py apps/backend/tests/unit/operations/test_milvus_bootstrap.py apps/backend/tests/unit/operations/test_milvus_health.py scripts/check-local-services.sh Makefile
@@ -1333,7 +1333,7 @@ Task 8 live acceptance 继续保持 BLOCKED，直到 Task 5 的 exact field norm
 
 **Steps:**
 
-- [ ] **Step 1:** 创建 12 个完全虚构的中文/英文 `doc` chunks 与 8 条 query cases，覆盖两个 tenant、两个 project、多个 groups、classification、environment/global、subtree、撤权与删除。使用以下规范计算稳定 ID/hash。
+- [x] **Step 1:** 创建 12 个完全虚构的中文/英文 `doc` chunks 与 8 条 query cases，覆盖两个 tenant、两个 project、多个 groups、classification、environment/global、subtree、撤权与删除。使用以下规范计算稳定 ID/hash。
 
   ```python
   def sha256_id(value: str) -> str:
@@ -1363,8 +1363,8 @@ Task 8 live acceptance 继续保持 BLOCKED，直到 Task 5 的 exact field norm
   | `blob:fixture/public/support` | Public support contact procedure; English | `tenant-a/project-a` | `group-support` | 0 | `global` | false |
 
   Query cases 固定为：`refund-allowed`、`payment-global-allowed`、`payment-wrong-group`、`payment-wrong-project`、`payment-wrong-tenant`、`security-over-classification`、`release-wrong-environment`、`payment-subtree-card-only`。每项保存 query、可信 policy inputs 和精确 `expected_source_ids`；六个 negative/scope case 的期望集合可为空或只含 card source，不使用模糊 relevance label。
-- [ ] **Step 2:** 写 manifest/schema tests：拒绝重复/额外 ID、错误 `h_` SHA-256、hash/provenance 不匹配、动态字段、非 `doc` source type、错误 physical/index family、混合模型或维度。将 fields/functions/indexes/consistency 的 canonical JSON 独立计算为 `schema_sha256`；manifest、collection description 和实际 describe 结果的 digest 任一不一致都拒绝发布，description 出现额外 key 也拒绝。
-- [ ] **Step 3:** 写 recording-client publisher tests，证明流程固定且验证失败时不切 alias。reader bootstrap base inventory 必须已经精确为 `Global/*` 的 Describe grants；publisher 只为新 target 授予 `Search`/`Query`，并按 `Collection` + exact database/name/role 对账，拒绝 `Global` target record、冲突维度或额外 privilege。增加所有权/idempotence cases：bootstrap 重跑保留 publisher-owned reader/writer concrete grants；publisher 相同 manifest 重跑仍精确收敛；provisioner concrete 或越权/歧义 concrete inventory 不能由 bootstrap 或 publisher 静默合法化。
+- [x] **Step 2:** 写 manifest/schema tests：拒绝重复/额外 ID、错误 `h_` SHA-256、hash/provenance 不匹配、动态字段、非 `doc` source type、错误 physical/index family、混合模型或维度。将 fields/functions/indexes/consistency 的 canonical JSON 独立计算为 `schema_sha256`；manifest、collection description 和实际 describe 结果的 digest 任一不一致都拒绝发布，description 出现额外 key 也拒绝。
+- [x] **Step 3:** 写 recording-client publisher tests，证明流程固定且验证失败时不切 alias。reader bootstrap base inventory 必须已经精确为 `Global/*` 的 Describe grants；publisher 只为新 target 授予 `Search`/`Query`，并按 `Collection` + exact database/name/role 对账，拒绝 `Global` target record、冲突维度或额外 privilege。增加所有权/idempotence cases：bootstrap 重跑保留 publisher-owned reader/writer concrete grants；publisher 相同 manifest 重跑仍精确收敛；provisioner concrete 或越权/歧义 concrete inventory 不能由 bootstrap 或 publisher 静默合法化。
 
   ```python
   receipt = await publish_fixture(clients, manifest(), unit_vectors(), activator)
@@ -1380,11 +1380,11 @@ Task 8 live acceptance 继续保持 BLOCKED，直到 Task 5 的 exact field norm
       await publish_fixture(clients, manifest(), unit_vectors(), activator)
   assert "alter_alias" not in clients.events_after_reset
   ```
-- [ ] **Step 4:** 增加 ACL 收紧测试：先 upsert metadata/`deleted=true`，用 strong query 证明旧主体零命中后才产生 receipt；physical delete 不是授权生效条件。
-- [ ] **Step 5:** 增加 rebuild/rollback-window 测试：相同 manifest 生成相同 collection schema、IDs、hashes、ACL/provenance counts；alias verify 后用 temp-file + `os.replace` 原子写 `.local/milvus-active-corpus.json`，随后立即撤销新 physical 的 writer 权限。旧 reader 权限与 collection 保留到显式 `finalize --old-physical <exact-name>`，该命令先撤 reader 再删除；普通 publish/down 不清理旧 collection 或 volume。
-- [ ] **Step 6:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_fixtures.py apps/backend/tests/unit/operations/test_milvus_publish.py -v`；预期 FAIL 为 fixture/publish 模块缺失。随后实现严格 JSON loader、schema builder、reconciler 和 publisher CLI。
-- [ ] **Step 7:** 重跑聚焦测试和 `make check && make test`；确认 Task 5 exact field normalization 与 Task 7/8 base/target grant inventory TDD 均 GREEN 后，从零 collection、零 alias、零 concrete/scoped grant、无 active marker 状态开始完整 live workflow。只读 preflight 可以把仅缺少 `SelectOwnership` 的 provisioner 十二项 base 识别为待 bootstrap 补齐的 known legacy state；bootstrap 后必须对账 reader/writer/provisioner exact base counts `2/5/13`，重复 bootstrap 无 grant mutation，并由 provisioner 自身成功执行 `describe_role`/grant inventory，reader/writer 保持 denial。随后重跑真实 analyzer、publish、相同 manifest idempotence、rebuild、alias/marker activation、reader/writer grant reconciliation、bootstrap-with-concrete-grants idempotence 与显式旧 target cleanup。live evidence 必须记录 canonical schema digest 不变、reader base grants 只有 `Global/*` Describe、provisioner 精确七项 `Global/*` 与六项 `Collection/*`、active target grants 只有 exact `Collection` Search/Query、bootstrap 保留合法 concrete reader/writer grants、writer 最终撤销和 final zero-state reconciliation。任一 runtime binding、transport shape、grant dimension 或所有权不一致都保持 BLOCKED。
-- [ ] **Step 8:** 只暂存本任务文件并提交。
+- [x] **Step 4:** 增加 ACL 收紧测试：先 upsert metadata/`deleted=true`，用 strong query 证明旧主体零命中后才产生 receipt；physical delete 不是授权生效条件。
+- [x] **Step 5:** 增加 rebuild/rollback-window 测试：相同 manifest 生成相同 collection schema、IDs、hashes、ACL/provenance counts；alias verify 后用 temp-file + `os.replace` 原子写 `.local/milvus-active-corpus.json`，随后立即撤销新 physical 的 writer 权限。旧 reader 权限与 collection 保留到显式 `finalize --old-physical <exact-name>`，该命令先撤 reader 再删除；普通 publish/down 不清理旧 collection 或 volume。
+- [x] **Step 6:** 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_milvus_fixtures.py apps/backend/tests/unit/operations/test_milvus_publish.py -v`；预期 FAIL 为 fixture/publish 模块缺失。随后实现严格 JSON loader、schema builder、reconciler 和 publisher CLI。
+- [x] **Step 7:** 重跑聚焦测试和 `make check && make test`；确认 Task 5 exact field normalization 与 Task 7/8 base/target grant inventory TDD 均 GREEN 后，从零 collection、零 alias、零 concrete/scoped grant、无 active marker 状态开始完整 live workflow。只读 preflight 可以把仅缺少 `SelectOwnership` 的 provisioner 十二项 base 识别为待 bootstrap 补齐的 known legacy state；bootstrap 后必须对账 reader/writer/provisioner exact base counts `2/5/13`，重复 bootstrap 无 grant mutation，并由 provisioner 自身成功执行 `describe_role`/grant inventory，reader/writer 保持 denial。随后重跑真实 analyzer、publish、相同 manifest idempotence、rebuild、alias/marker activation、reader/writer grant reconciliation、bootstrap-with-concrete-grants idempotence 与显式旧 target cleanup。live evidence 必须记录 canonical schema digest 不变、reader base grants 只有 `Global/*` Describe、provisioner 精确七项 `Global/*` 与六项 `Collection/*`、active target grants 只有 exact `Collection` Search/Query、bootstrap 保留合法 concrete reader/writer grants、writer 最终撤销和 final zero-state reconciliation。任一 runtime binding、transport shape、grant dimension 或所有权不一致都保持 BLOCKED。
+- [x] **Step 8:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/src/tap/operations/milvus/fixtures.py apps/backend/src/tap/operations/milvus/activation.py apps/backend/src/tap/operations/milvus/publish.py scripts/milvus_fixture.py apps/backend/tests/fixtures/milvus/doc-fixture-v1.json apps/backend/tests/fixtures/milvus/query-cases-v1.json apps/backend/tests/unit/operations/test_milvus_fixtures.py apps/backend/tests/unit/operations/test_milvus_publish.py
@@ -1568,8 +1568,8 @@ async def generate_snapshot(
 - [x] **Step 7:** 在未跟踪配置中注入百炼北京 workspace-specific `/compatible-mode/v1` HTTPS endpoint 与 key，使用 direct research runner 运行一次 profile。先验证 request raw model/1536 维/float encoding，provider 返回 raw `text-embedding-v4` 的 1536 维 finite float vectors、`prompt_tokens == total_tokens` 与 body/header 相等的 bounded request ID；任一缺失、1024 默认维或 shape 漂移都停止。核对 report 的 input tokens、固定 `0.0005 CNY/1,000` 费率和精确 calculated CNY，明确其不是 provider cost/实际账单。验证正向 query 的预期 source 进入 top 10 后，把仅含脱敏 input hash、模型/维度和 vectors 的 snapshot 写入仓库；不得提交本地 cache、cost report、workspace endpoint 或 provider secret。
 
   2026-08-27 当次真实运行处理 `12` chunks、`8` queries，经内容寻址去重产生 `18` 个唯一 provider requests；provider 返回 `203` input/total tokens、固定 `1536` 维 finite float vectors，按官方北京费率计算为 `0.0001015 CNY`。三个有 expected source 的正向 case 均为 dense rank `1`，top-10 gate 通过。提交的 snapshot SHA-256 为 `50a373057d529388b37389a9eb00fae1662988676d3be1840d97713c8e063ef0`；本地 ignored report SHA-256 为 `8a2637c8b35a0d345cad719ab5f6a5e90fe131b6de21baff9b8d39d81ad17a1f`。报告、cache、endpoint、secret 与 raw request IDs 均未进入 Git。
-- [ ] **Step 8:** 重跑 unit tests、snapshot hash validation 和 `make check && make test`。
-- [ ] **Step 9:** 只暂存本任务文件并提交。
+- [x] **Step 8:** 重跑 unit tests、snapshot hash validation 和 `make check && make test`。
+- [x] **Step 9:** 只暂存本任务文件并提交。
 
   ```sh
   git add deploy/local/litellm/config.yaml compose.yaml .env.example .gitignore apps/backend/src/tap/modules/knowledge/ports/models.py apps/backend/src/tap/modules/knowledge/adapters/litellm.py apps/backend/src/tap/operations/milvus/embeddings.py scripts/milvus_embedding_research.py apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json apps/backend/tests/unit/operations/test_milvus_embeddings.py apps/backend/tests/contract/test_litellm_strict.py Makefile
@@ -1606,7 +1606,7 @@ class PublishedFixture:
 
 **Steps:**
 
-- [ ] **Step 1:** 写真实 integration module gate；日常 `make test` 未选择 suite 时 module-level skip，`make test-milvus` 设置开关后任何缺项调用 `pytest.fail`。
+- [x] **Step 1:** 写真实 integration module gate；日常 `make test` 未选择 suite 时 module-level skip，`make test-milvus` 设置开关后任何缺项调用 `pytest.fail`。
 
   ```python
   RUN_REAL_MILVUS = os.getenv("TAP_RUN_MILVUS_INTEGRATION") == "1"
@@ -1622,7 +1622,7 @@ class PublishedFixture:
   if missing:
       pytest.fail("missing required real Milvus settings: " + ", ".join(missing), pytrace=False)
   ```
-- [ ] **Step 2:** ACL test 使用预计算 vectors 建表/发布，验证 allowed top 10 与所有 negative 维度。
+- [x] **Step 2:** ACL test 使用预计算 vectors 建表/发布，验证 allowed top 10 与所有 negative 维度。
 
   ```python
   @pytest.mark.asyncio
@@ -1639,10 +1639,10 @@ class PublishedFixture:
       assert result.search_hits == ()
       assert result.citations == ()
   ```
-- [ ] **Step 3:** 覆盖 BM25、dense、hybrid、resource/subtree、撤权、`deleted=true` 与 direct physical query；用 spy/transport evidence 证明每个 channel/补充 read 都使用同一 filter。
-- [ ] **Step 4:** rebuild/alias test 先验证普通容器重启后持久可见与并发 alias 切换只看到单一 physical/corpus version；再由 `test-milvus-rebuild-empty` 在 `TAP_ALLOW_MILVUS_VOLUME_RESET=1` 时只删除经 `^[a-z0-9][a-z0-9_-]{2,62}$` 验证的 `TAP_MILVUS_COMPOSE_PROJECT` 所属 Compose volumes，重新启动并从 manifest/snapshot 发布，断言 ID/hash/ACL/provenance 与删除前 digest 完全一致。未设开关或 project name 无效时必须在 `down -v` 前失败。
-- [ ] **Step 5:** 先运行 `TAP_RUN_MILVUS_INTEGRATION=1 uv run --project apps/backend pytest apps/backend/tests/integration/test_milvus_search_acl.py apps/backend/tests/integration/test_milvus_rebuild_alias.py -v`；预期 FAIL 明确列出缺少的 real Milvus settings，或在资源齐全时显示尚未满足的真实行为断言。
-- [ ] **Step 6:** 增加 `test-milvus` target，精确顺序为 up -> bootstrap -> health -> fixture publish -> integration tests；失败时保留诊断日志，本地不自动删除 volumes。
+- [x] **Step 3:** 覆盖 BM25、dense、hybrid、resource/subtree、撤权、`deleted=true` 与 direct physical query；用 spy/transport evidence 证明每个 channel/补充 read 都使用同一 filter。
+- [x] **Step 4:** rebuild/alias test 先验证普通容器重启后持久可见与并发 alias 切换只看到单一 physical/corpus version；再由 `test-milvus-rebuild-empty` 在 `TAP_ALLOW_MILVUS_VOLUME_RESET=1` 时只删除经 `^[a-z0-9][a-z0-9_-]{2,62}$` 验证的 `TAP_MILVUS_COMPOSE_PROJECT` 所属 Compose volumes，重新启动并从 manifest/snapshot 发布，断言 ID/hash/ACL/provenance 与删除前 digest 完全一致。未设开关或 project name 无效时必须在 `down -v` 前失败。
+- [x] **Step 5:** 先运行 `TAP_RUN_MILVUS_INTEGRATION=1 uv run --project apps/backend pytest apps/backend/tests/integration/test_milvus_search_acl.py apps/backend/tests/integration/test_milvus_rebuild_alias.py -v`；预期 FAIL 明确列出缺少的 real Milvus settings，或在资源齐全时显示尚未满足的真实行为断言。
+- [x] **Step 6:** 增加 `test-milvus` target，精确顺序为 up -> bootstrap -> health -> fixture publish -> integration tests；失败时保留诊断日志，本地不自动删除 volumes。
 
   ```make
   TAP_MILVUS_COMPOSE_PROJECT ?= tap-milvus-local-experiment
@@ -1657,10 +1657,10 @@ class PublishedFixture:
 	docker compose -p "$(TAP_MILVUS_COMPOSE_PROJECT)" --profile milvus down -v --remove-orphans
 	$(MAKE) test-milvus TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
   ```
-- [ ] **Step 7:** 给 workflow 增加独立 `milvus-integration` job，先使用现有 `ubuntu-latest` 免费/标准 runner，并设置唯一 `TAP_MILVUS_COMPOSE_PROJECT=tap-milvus-ci-${{ github.run_id }}-${{ github.run_attempt }}`。preflight 读取 Docker/cgroup 可用资源，少于 2 vCPU 或 8 GiB 直接 fail（不 skip、不自动购买 larger runner）；资源满足时使用固定 images/预计算 vectors并显式设置 `TAP_RUN_MILVUS_INTEGRATION=1`。先运行 `make test-milvus`，再以 `TAP_ALLOW_MILVUS_VOLUME_RESET=1 make test-milvus-rebuild-empty` 验证删卷重建；job 中任何 skip 视为失败，cleanup 只删除该 project 的 volumes。若标准 runner 资源不足，将证据写入 review 并由用户另行批准 self-hosted/付费 runner，不能弱化门禁。
-- [ ] **Step 8:** 保留真实 Azure test 的 opt-in 条件；不得用 Milvus GREEN 修改 Azure-backed 发布门禁或 Task 3 外部验收状态。
-- [ ] **Step 9:** 本地运行 `make test-milvus`，再运行 `make check && make test`。
-- [ ] **Step 10:** 只暂存本任务文件并提交。
+- [x] **Step 7:** 给 workflow 增加独立 `milvus-integration` job，先使用现有 `ubuntu-latest` 免费/标准 runner，并设置唯一 `TAP_MILVUS_COMPOSE_PROJECT=tap-milvus-ci-${{ github.run_id }}-${{ github.run_attempt }}`。preflight 读取 Docker/cgroup 可用资源，少于 2 vCPU 或 8 GiB 直接 fail（不 skip、不自动购买 larger runner）；资源满足时使用固定 images/预计算 vectors并显式设置 `TAP_RUN_MILVUS_INTEGRATION=1`。先运行 `make test-milvus`，再以 `TAP_ALLOW_MILVUS_VOLUME_RESET=1 make test-milvus-rebuild-empty` 验证删卷重建；job 中任何 skip 视为失败，cleanup 只删除该 project 的 volumes。若标准 runner 资源不足，将证据写入 review 并由用户另行批准 self-hosted/付费 runner，不能弱化门禁。
+- [x] **Step 8:** 保留真实 Azure test 的 opt-in 条件；不得用 Milvus GREEN 修改 Azure-backed 发布门禁或 Task 3 外部验收状态。
+- [x] **Step 9:** 本地运行 `make test-milvus`，再运行 `make check && make test`。
+- [x] **Step 10:** 只暂存本任务文件并提交。
 
   ```sh
   git add apps/backend/tests/integration/test_milvus_search_acl.py apps/backend/tests/integration/test_milvus_rebuild_alias.py apps/backend/tests/integration/milvus_runtime.py .github/workflows/contracts.yml Makefile
@@ -1674,10 +1674,11 @@ class PublishedFixture:
 
 - Modify: `apps/backend/tests/contract/test_generated_contracts.py`
 - Modify: `docs/reference/2026-08-20-contracts.md`
-- Create: `docs/reviews/2026-08-24-milvus-local-search-experiment.md`
+- Create: `docs/reviews/2026-08-27-milvus-local-search-experiment.md`
 - Modify: `docs/reviews/index.md`
 - Modify: `README.md`
 - Modify: `docs/index.md`
+- Modify: `docs/plans/index.md`
 - Modify: `docs/plans/2026-08-24-milvus-local-search-experiment.md`
 
 **Interfaces:**
@@ -1687,7 +1688,7 @@ class PublishedFixture:
 
 **Steps:**
 
-- [ ] **Step 1:** 先加强 generated contract test，断言 public `RetrievalHit` schema 不含 provider physical target。
+- [x] **Step 1:** 先加强 generated contract test，断言 public `RetrievalHit` schema 不含 provider physical target。
 
   ```python
   def test_public_retrieval_hit_omits_physical_target() -> None:
@@ -1696,12 +1697,12 @@ class PublishedFixture:
       assert "physicalIndex" not in properties
       assert "physicalCollection" not in properties
   ```
-- [ ] **Step 2:** 从 reference contract 的公共 hit 删除 `physicalIndex`，把 physical target 说明移到授权运维 Retrieval Trace；不得暴露 alias、collection 或 provider 内情给普通客户端。
-- [ ] **Step 3:** 用已保存的真实输出写 review，表头固定为 `Gate | Result | Evidence`。六行依次为 ACL negative matrix、8-case hybrid top 10、restart persistence、rebuild parity、alias single-version binding、embedding budget；`Result` 只能写当次证据支持的 `pass` 或 `fail`，`Evidence` 必须写 artifact 文件名与 SHA-256。没有测量值就保持计划 `active`，不得填估算值。
-- [ ] **Step 4:** review 必须明确给出且只给出 `continue`、`fix-and-repeat`、`stop` 之一，并列出证据；不得自动接受 RFC、修改 ADR-002/005/012 或批准共享非生产。
-- [ ] **Step 5:** README 只描述可复现实验命令和“实验性”状态，不把 Milvus 写成已投产。同步 docs/reviews 与 docs 根索引。
-- [ ] **Step 6:** 将本计划 `status` 改为 `completed` 的条件固定为：Tasks 1–10 全部提交，`make check`、`make test`、`make test-milvus`、真实 `research-embeddings` 均有当次证据，且 review 已记录结果。否则保持 `active` 并写明未通过项。
-- [ ] **Step 7:** 运行：
+- [x] **Step 2:** 从 reference contract 的公共 hit 删除 `physicalIndex`，把 physical target 说明移到授权运维 Retrieval Trace；不得暴露 alias、collection 或 provider 内情给普通客户端。
+- [x] **Step 3:** 用已保存的真实输出写 review，表头固定为 `Gate | Result | Evidence`。六行依次为 ACL negative matrix、8-case hybrid top 10、restart persistence、rebuild parity、alias single-version binding、embedding budget；`Result` 只能写当次证据支持的 `pass` 或 `fail`，`Evidence` 必须写 artifact 文件名与 SHA-256。没有测量值就保持计划 `active`，不得填估算值。
+- [x] **Step 4:** review 必须明确给出且只给出 `continue`、`fix-and-repeat`、`stop` 之一，并列出证据；不得自动接受 RFC、修改 ADR-002/005/012 或批准共享非生产。
+- [x] **Step 5:** README 只描述可复现实验命令和“实验性”状态，不把 Milvus 写成已投产。同步 docs/reviews 与 docs 根索引。
+- [x] **Step 6:** 将本计划 `status` 改为 `completed` 的条件固定为：Tasks 1–10 全部提交，`make check`、`make test`、`make test-milvus`、真实 `research-embeddings` 均有当次证据，且 review 已记录结果。否则保持 `active` 并写明未通过项。
+- [x] **Step 7:** 运行：
 
    ```sh
    rg --files README.md docs
@@ -1709,16 +1710,17 @@ class PublishedFixture:
    make check
    make test
    make test-milvus
+   TAP_ALLOW_INITIAL_MILVUS_ROOT=1 TAP_ALLOW_MILVUS_VOLUME_RESET=1 make test-milvus-rebuild-empty
    rg -n 'TO[D]O|TB[D]|placeholde[r]' README.md docs apps/backend/tests/contract
    rg -n 'physicalInde[x]|physicalCollectio[n]' docs/reference/2026-08-20-contracts.md
    ```
 
-- [ ] **Step 8:** 用兼容 renderer 预览所有变更 Markdown/Mermaid，检查相对链接、frontmatter、术语与 phase 状态。
-- [ ] **Step 9:** 请求独立代码审查，修复审查发现后重跑全部门禁。
-- [ ] **Step 10:** 只暂存本任务文件并提交。
+- [x] **Step 8:** 用兼容 renderer 预览所有变更 Markdown/Mermaid，检查相对链接、frontmatter、术语与 phase 状态。
+- [x] **Step 9:** 请求独立代码审查，修复审查发现后重跑全部门禁。
+- [x] **Step 10:** 只暂存本任务文件并提交。
 
   ```sh
-  git add apps/backend/tests/contract/test_generated_contracts.py docs/reference/2026-08-20-contracts.md docs/reviews/2026-08-24-milvus-local-search-experiment.md docs/reviews/index.md README.md docs/index.md docs/plans/2026-08-24-milvus-local-search-experiment.md
+  git add apps/backend/tests/contract/test_generated_contracts.py docs/reference/2026-08-20-contracts.md docs/reviews/2026-08-27-milvus-local-search-experiment.md docs/reviews/index.md README.md docs/index.md docs/plans/index.md docs/plans/2026-08-24-milvus-local-search-experiment.md
   git diff --cached --check
   git commit -m "docs: report milvus local search experiment"
   ```
@@ -1729,6 +1731,18 @@ class PublishedFixture:
 - **Checkpoint B — adapter conformance:** Tasks 4–6 后审查 filter、alias race、严格 mapping 与 provider selection；全部使用 fake transport。
 - **Checkpoint C — operational safety:** Tasks 7–9 后审查 loopback、RBAC、fixture 可重建性、付费上限与 snapshot provenance。
 - **Checkpoint D — real evidence:** Tasks 10–11 后审查真实 Milvus、现有全量回归与实验决策；只有此处允许把计划标记 completed。
+
+## Execution Closeout
+
+计划于 2026-08-27 完成。Tasks 1–10 均已有窄提交和独立代码审查；最终代码证据基线为 `18995dc`，审查未发现 Critical、Important 或 Minor 问题。
+
+- `make check`：通过；`check.log` SHA-256 `c6c55f2f076f74cc6ae3393f6a5b0f6c7fdd78a09b3b962e5c4afe2aaca0489f`。
+- `make test`：`1106 passed, 4 skipped`；`test.log` SHA-256 `ecc92f60258c4697bb1a4b4c794205d9eba50a83ca84deadcdb6a0bd9c45331c`。
+- `make test-milvus`：`19 passed, 0 skipped`；`persistent.log` SHA-256 `d20293e619125b807a152d789befaeb649cb9c2d3ee745e84141ffadcd3dfd67`。
+- scoped 空卷重建：`19 passed, 0 skipped`；`rebuild-empty.log` SHA-256 `181ad4c3b0a5d364fec9898edaee6ddd85113f97d6f4680b5889b48f4b7c45fb`。
+- 真实 embedding 报告：`report.json` SHA-256 `8a2637c8b35a0d345cad719ab5f6a5e90fe131b6de21baff9b8d39d81ad17a1f`；提交快照 SHA-256 `50a373057d529388b37389a9eb00fae1662988676d3be1840d97713c8e063ef0`。
+
+完整结果、测量值与决策边界记录在[Milvus 本地检索实验评审](../reviews/2026-08-27-milvus-local-search-experiment.md)。
 
 ## Follow-up Boundary
 
