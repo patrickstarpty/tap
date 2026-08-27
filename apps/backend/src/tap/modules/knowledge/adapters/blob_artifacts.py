@@ -240,15 +240,22 @@ def encode_chunks_artifact(revision_id: str, chunks: tuple[ChunkDraft, ...]) -> 
     if not all(isinstance(chunk, ChunkDraft) for chunk in chunks):
         raise ArtifactIntegrityError("chunk artifact contains an invalid row")
     source_hashes = {chunk.source_content_hash for chunk in chunks}
-    if len(source_hashes) != 1:
+    document_ids = {str(chunk.root_id) for chunk in chunks}
+    if len(source_hashes) != 1 or len(document_ids) != 1:
         raise ArtifactIntegrityError("chunk artifact source hash is not exact")
+    source_hash = _digest(next(iter(source_hashes)))
+    document_id = DocumentId(_text(next(iter(document_ids)), maximum=256))
+    if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != revision_id:
+        raise ArtifactIntegrityError("chunk artifact revision provenance is inconsistent")
     payload = b"".join(_canonical_line(_chunk_payload(chunk, revision_id)) for chunk in chunks)
     header = {
+        "documentId": str(document_id),
         "itemCount": len(chunks),
+        "parserVersion": PARSER_VERSION,
         "payloadSha256": canonical_sha256(payload),
         "revisionId": revision_id,
         "schemaVersion": _CHUNKS_SCHEMA,
-        "sourceContentHash": next(iter(source_hashes)),
+        "sourceContentHash": source_hash,
     }
     return gzip.compress(_canonical_line(header) + payload, mtime=0)
 
@@ -262,11 +269,26 @@ def decode_chunks_artifact(data: bytes, *, expected_revision: str) -> tuple[Chun
         header = _closed_json_line(lines[0])
         _exact_keys(
             header,
-            {"itemCount", "payloadSha256", "revisionId", "schemaVersion", "sourceContentHash"},
+            {
+                "documentId",
+                "itemCount",
+                "parserVersion",
+                "payloadSha256",
+                "revisionId",
+                "schemaVersion",
+                "sourceContentHash",
+            },
         )
         if header["schemaVersion"] != _CHUNKS_SCHEMA or header["revisionId"] != expected_revision:
             raise ValueError
         source_hash = _digest(header["sourceContentHash"])
+        document_id = DocumentId(_text(header["documentId"], maximum=256))
+        parser_version = _text(header["parserVersion"], maximum=128)
+        if (
+            parser_version != PARSER_VERSION
+            or str(revision_id_for(document_id, source_hash, parser_version)) != expected_revision
+        ):
+            raise ValueError
         payload = b"".join(lines[1:])
         if canonical_sha256(payload) != _digest(header["payloadSha256"]):
             raise ValueError
@@ -276,6 +298,8 @@ def decode_chunks_artifact(data: bytes, *, expected_revision: str) -> tuple[Chun
             _chunk_from_payload(_closed_json_line(line), source_hash, expected_revision)
             for line in lines[1:]
         )
+        if any(chunk.root_id != document_id for chunk in chunks):
+            raise ValueError
         return chunks
     except (KeyError, TypeError, ValueError, OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ArtifactIntegrityError("chunk artifact integrity check failed") from error
@@ -574,7 +598,15 @@ class AzureBlobArtifactStore:
             age = now - _metadata_staged_at(item.metadata)
             invisible = item.name not in visible_staging_keys
             if age >= timedelta(hours=24) or (invisible and age >= timedelta(hours=1)):
-                await self._delete_if_exists(container.get_blob_client(item.name))
+                remaining = deadline_at - loop.time()
+                if remaining <= 0:
+                    raise ArtifactIntegrityError("Azure Blob provider operation exceeded deadline")
+                await self._delete_if_exists(
+                    container.get_blob_client(item.name),
+                    timeout_seconds=remaining,
+                )
+                if loop.time() >= deadline_at:
+                    raise ArtifactIntegrityError("Azure Blob provider operation exceeded deadline")
                 removed.append(item.name)
         return ArtifactScavengeReceipt(scanned=scanned, removed=tuple(removed))
 
@@ -619,13 +651,16 @@ class AzureBlobArtifactStore:
             raise ArtifactIntegrityError("staged original integrity check failed")
         blob_name = f"revisions/{revision_id}/{digest.removeprefix('sha256:')}"
         destination = self._blob(ORIGINALS_CONTAINER, blob_name)
+        owner_token = _copy_owner_token(staging_key, revision_id, digest)
         if await self._bounded(destination.exists()):
-            if await self._download_verified(destination) != await self._download(source):
-                raise ArtifactIntegrityError(
-                    "content-addressed original conflicts with existing data"
-                )
-            await self._delete_if_exists(source)
-            return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+            if await self._resolve_copy_destination(
+                destination,
+                owner_token,
+                source,
+                expected_size=expected_size,
+            ):
+                await self._delete_if_exists(source)
+                return artifact_locator(ORIGINALS_CONTAINER, blob_name)
 
         copy_id: str | None = None
         try:
@@ -633,27 +668,49 @@ class AzureBlobArtifactStore:
                 destination.start_copy_from_url(
                     self._source_copy_url(source),
                     match_condition=MatchConditions.IfMissing,
+                    metadata={
+                        "blobsha256": digest.removeprefix("sha256:"),
+                        "copyowner": owner_token,
+                        "size": str(expected_size),
+                    },
                 )
             )
             copy_id = result.get("copy_id") if isinstance(result, Mapping) else None
-            await self._wait_copy_terminal(destination)
-            properties = await self._bounded(destination.get_blob_properties())
-            if properties.size != expected_size or await self._download_verified(
-                destination
-            ) != await self._download(source):
-                raise ArtifactIntegrityError("promoted original integrity check failed")
+            if not await self._resolve_copy_destination(
+                destination,
+                owner_token,
+                source,
+                expected_size=expected_size,
+                expected_copy_id=copy_id,
+            ):
+                raise ArtifactIntegrityError("server-side original copy did not succeed")
         except (ResourceExistsError, ResourceModifiedError):
-            if await self._download_verified(destination) != await self._download(source):
-                raise ArtifactIntegrityError(
-                    "content-addressed original conflicts with existing data"
-                ) from None
-            await self._delete_if_exists(source)
-            return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+            if await self._resolve_copy_destination(
+                destination,
+                owner_token,
+                source,
+                expected_size=expected_size,
+            ):
+                await self._delete_if_exists(source)
+                return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+            raise ArtifactIntegrityError("server-side original copy did not succeed") from None
         except asyncio.CancelledError as cancellation:
-            await self._cleanup(self._abort_and_delete(destination, copy_id))
+            await self._cleanup(self._abort_and_delete(destination, owner_token, copy_id))
             raise cancellation
         except Exception as error:
-            await self._cleanup(self._abort_and_delete(destination, copy_id))
+            try:
+                recovered = await self._resolve_copy_destination(
+                    destination,
+                    owner_token,
+                    source,
+                    expected_size=expected_size,
+                    expected_copy_id=copy_id,
+                )
+            except Exception:
+                recovered = False
+            if recovered:
+                await self._delete_if_exists(source)
+                return artifact_locator(ORIGINALS_CONTAINER, blob_name)
             if isinstance(error, ArtifactIntegrityError):
                 raise error
             raise ArtifactIntegrityError("server-side original copy failed") from None
@@ -680,38 +737,103 @@ class AzureBlobArtifactStore:
         )
         return f"{source.url}?{sas}"
 
-    async def _wait_copy_terminal(self, blob: BlobClient) -> None:
+    async def _wait_copy_terminal(
+        self,
+        blob: BlobClient,
+        owner_token: str,
+        expected_copy_id: str | None,
+    ):  # type: ignore[no-untyped-def]
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.operation_timeout_seconds
         while True:
-            properties = await self._bounded(blob.get_blob_properties())
-            copy = properties.copy
-            status = getattr(copy, "status", None)
-            if status == "success":
-                return
-            if status in {"failed", "aborted"}:
-                raise ArtifactIntegrityError("server-side original copy did not succeed")
-            if status != "pending" or loop.time() >= deadline:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 raise ArtifactIntegrityError(
                     "server-side original copy did not reach terminal success"
                 )
-            await asyncio.sleep(self._config.copy_poll_seconds)
+            properties = await self._bounded(blob.get_blob_properties(), timeout_seconds=remaining)
+            if _metadata_copy_owner(properties.metadata) != owner_token:
+                raise ArtifactIntegrityError("server-side original copy ownership changed")
+            copy = properties.copy
+            status = getattr(copy, "status", None)
+            actual_copy_id = getattr(copy, "id", None) or getattr(copy, "copy_id", None)
+            if expected_copy_id is not None and actual_copy_id != expected_copy_id:
+                raise ArtifactIntegrityError("server-side original copy identity changed")
+            if status in {"success", "failed", "aborted"}:
+                return properties
+            if status != "pending":
+                raise ArtifactIntegrityError(
+                    "server-side original copy did not reach terminal success"
+                )
+            await asyncio.sleep(
+                min(self._config.copy_poll_seconds, max(0.0, deadline - loop.time()))
+            )
 
-    async def _abort_and_delete(self, blob: BlobClient, copy_id: str | None) -> None:
-        if copy_id is None:
-            return
+    async def _resolve_copy_destination(
+        self,
+        blob: BlobClient,
+        owner_token: str,
+        source: BlobClient,
+        *,
+        expected_size: int,
+        expected_copy_id: str | None = None,
+    ) -> bool:
+        properties = await self._bounded(blob.get_blob_properties())
+        owner = _metadata_copy_owner_optional(properties.metadata)
+        copy = getattr(properties, "copy", None)
+        status = getattr(copy, "status", None)
+        actual_copy_id = getattr(copy, "id", None) or getattr(copy, "copy_id", None)
+        if owner == owner_token:
+            if expected_copy_id is not None and actual_copy_id != expected_copy_id:
+                raise ArtifactIntegrityError("server-side original copy identity changed")
+            if status == "pending":
+                properties = await self._wait_copy_terminal(
+                    blob,
+                    owner_token,
+                    expected_copy_id or actual_copy_id,
+                )
+                status = getattr(properties.copy, "status", None)
+            if status in {"failed", "aborted"}:
+                await self._delete_if_exists(blob)
+                return False
+            if status != "success":
+                raise ArtifactIntegrityError("server-side original copy state is malformed")
+        elif status not in {None, "success"}:
+            raise ArtifactIntegrityError("unowned original copy is not terminal")
+        if properties.size != expected_size or await self._download_verified(
+            blob
+        ) != await self._download(source):
+            raise ArtifactIntegrityError("content-addressed original conflicts with existing data")
+        return True
+
+    async def _abort_and_delete(
+        self,
+        blob: BlobClient,
+        owner_token: str,
+        copy_id: str | None,
+    ) -> None:
         try:
             properties = await self._bounded(blob.get_blob_properties())
+            if _metadata_copy_owner_optional(properties.metadata) != owner_token:
+                return
             actual_copy_id = getattr(properties.copy, "id", None) or getattr(
                 properties.copy, "copy_id", None
             )
-            if actual_copy_id != copy_id:
+            if copy_id is not None and actual_copy_id != copy_id:
                 return
             if getattr(properties.copy, "status", None) == "pending":
-                await self._bounded(blob.abort_copy(copy_id))
+                if not isinstance(actual_copy_id, str) or not actual_copy_id:
+                    return
+                await self._bounded(blob.abort_copy(actual_copy_id))
+                properties = await self._wait_copy_terminal(
+                    blob,
+                    owner_token,
+                    actual_copy_id,
+                )
         except Exception:
             return
-        await self._delete_if_exists(blob)
+        if getattr(properties.copy, "status", None) in {"failed", "aborted"}:
+            await self._delete_if_exists(blob)
 
     async def _write_artifact(
         self,
@@ -774,9 +896,17 @@ class AzureBlobArtifactStore:
             self._blob(ORIGINALS_CONTAINER, staging_key).get_blob_properties()
         )
 
-    async def _delete_if_exists(self, blob: BlobClient) -> None:
+    async def _delete_if_exists(
+        self,
+        blob: BlobClient,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> None:
         try:
-            await self._bounded(blob.delete_blob(delete_snapshots="include"))
+            await self._bounded(
+                blob.delete_blob(delete_snapshots="include"),
+                timeout_seconds=timeout_seconds,
+            )
         except ResourceNotFoundError:
             return
 
@@ -1081,6 +1211,32 @@ def _revision_from_artifact_name(blob_name: str) -> str:
 def _metadata_digest(metadata: Mapping[str, str]) -> str:
     value = metadata.get("blobsha256")
     return _digest("sha256:" + value if isinstance(value, str) else value)
+
+
+def _copy_owner_token(staging_key: str, revision_id: str, digest: str) -> str:
+    return sha256(
+        f"athena-original-copy-v1\0{staging_key}\0{revision_id}\0{digest}".encode()
+    ).hexdigest()
+
+
+def _metadata_copy_owner_optional(metadata: Mapping[str, str]) -> str | None:
+    value = metadata.get("copyowner")
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ArtifactIntegrityError("original copy ownership metadata is malformed")
+    return value
+
+
+def _metadata_copy_owner(metadata: Mapping[str, str]) -> str:
+    value = _metadata_copy_owner_optional(metadata)
+    if value is None:
+        raise ArtifactIntegrityError("original copy ownership metadata is missing")
+    return value
 
 
 def _metadata_size(metadata: Mapping[str, str]) -> int:

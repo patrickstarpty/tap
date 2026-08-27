@@ -13,8 +13,14 @@ from dataclasses import dataclass
 from tap.modules.knowledge.adapters.milvus.transport import MilvusCollectionDescriptor
 from tap.modules.knowledge.domain.documents import (
     MAX_CHUNKS_PER_DOCUMENT,
+    PARSER_VERSION,
     ChunkDraft,
+    DocumentId,
+    RevisionId,
     canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+    revision_id_for,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.modules.knowledge.ports.documents import (
@@ -31,6 +37,7 @@ from tap.modules.knowledge.ports.errors import (
 from tap.modules.knowledge.ports.projection import (
     ProjectionMutationCoordinator,
     ProjectionMutationLease,
+    ProjectionOwnershipReceipt,
 )
 from tap.operations.milvus.async_call import await_task_terminal
 from tap.operations.milvus.contracts import (
@@ -271,15 +278,21 @@ class MilvusDocumentIndex:
     ) -> RebuildReceipt:
         if not isinstance(records, tuple):
             raise ValueError("Athena rebuild requires a closed ready-revision snapshot")
+        committed_receipt: RebuildReceipt | None = None
         try:
             async with self._coordinator.mutation(self._config.alias) as authority:
-                return await self._rebuild_locked(authority, records)
+                committed_receipt = await self._rebuild_locked(authority, records)
         except asyncio.CancelledError:
+            if committed_receipt is not None:
+                return committed_receipt
             raise
         except RebuildRejected:
             raise
         except Exception as error:
             raise RebuildRejected(("cleanup_unknown:preflight",)) from error
+        if committed_receipt is None:
+            raise AssertionError("Athena rebuild exited without an authoritative receipt")
+        return committed_receipt
 
     async def close(self) -> None:
         seen: set[int] = set()
@@ -317,6 +330,7 @@ class MilvusDocumentIndex:
             except Exception:
                 await self._provisioner.create_indexes(physical, self._schema())
                 await self._require_descriptor(physical)
+            await self._require_loaded(physical)
             await self._ensure_exact_grants(physical)
             try:
                 await self._provisioner.create_alias(self._config.alias, physical)
@@ -329,6 +343,7 @@ class MilvusDocumentIndex:
         if not await self._provisioner.collection_exists(alias_target):
             raise IndexUnavailable("Athena alias target does not exist")
         await self._require_descriptor(alias_target)
+        await self._require_loaded(alias_target)
         await self._ensure_exact_grants(alias_target)
         await self._synchronize_authority(authority, alias_target)
         await self._reconcile_cleanup_locked(authority, alias_target, limit=1)
@@ -347,9 +362,14 @@ class MilvusDocumentIndex:
             return
         self._require_target_name(recorded)
         if recorded != actual_physical:
-            await authority.enqueue_cleanup(recorded)
-            await authority.activate(actual_physical)
-            await authority.complete_cleanup(actual_physical)
+            ownership = await authority.ownership(actual_physical)
+            if (
+                ownership is None
+                or ownership.status != "building"
+                or ownership.predecessor_collection != recorded
+            ):
+                raise IndexUnavailable("Athena alias drift has no durable ownership lineage")
+            await authority.activate_build(ownership)
 
     async def _current_target_locked(self, authority: ProjectionMutationLease) -> str:
         target = await self._provisioner.describe_alias(self._config.alias)
@@ -385,11 +405,13 @@ class MilvusDocumentIndex:
         limit: int,
     ) -> tuple[str, ...]:
         facts: list[str] = []
-        for physical in await authority.pending_cleanup(limit):
+        for ownership in await authority.owned_cleanup(limit):
+            physical = ownership.physical_collection
             self._require_target_name(physical)
             if physical == current:
-                await authority.complete_cleanup(physical)
-                continue
+                raise IndexUnavailable("Athena owned cleanup unexpectedly targets active alias")
+            if not await authority.verify_cleanup(ownership):
+                raise IndexUnavailable("Athena projection cleanup ownership changed")
             if await self._provisioner.collection_aliases(physical):
                 facts.append(f"cleanup_still_aliased:{physical}")
                 continue
@@ -397,7 +419,7 @@ class MilvusDocumentIndex:
                 await self._provisioner.revoke_collection(physical, "tap_reader")
                 await self._provisioner.revoke_collection(physical, "tap_writer")
                 await self._provisioner.drop_collection(physical)
-            await authority.complete_cleanup(physical)
+            await authority.complete_owned_cleanup(ownership)
             facts.append(f"dropped_owned_physical:{physical}")
         return tuple(facts)
 
@@ -408,14 +430,16 @@ class MilvusDocumentIndex:
     ) -> RebuildReceipt:
         old = await self._current_target_locked(authority)
         fresh = f"{self._config.physical_collection}_{secrets.token_hex(6)}"
+        operation_id = secrets.token_hex(16)
         created = False
-        await authority.enqueue_cleanup(fresh)
+        ownership = await authority.reserve_build(fresh, old, operation_id)
         try:
             await self._provisioner.create_collection(fresh, self._schema())
             created = True
             await self._require_base_descriptor(fresh)
             await self._provisioner.create_indexes(fresh, self._schema())
             await self._require_descriptor(fresh)
+            await self._require_loaded(fresh)
 
             old_fence_rows = await self._reader.query_persisted_rows(
                 old,
@@ -482,25 +506,51 @@ class MilvusDocumentIndex:
             if await self._provisioner.describe_alias(self._config.alias) != fresh:
                 raise IndexReconciliationFailed("Athena alias switch did not persist")
 
-            await self._provisioner.revoke_collection(old, "tap_reader")
-            await self._provisioner.revoke_collection(old, "tap_writer")
-            await authority.enqueue_cleanup(old)
-            await authority.activate(fresh)
-            await authority.complete_cleanup(fresh)
+            old_ownership = await authority.ownership(old)
+            await self._activate_build_resolved(authority, ownership)
         except asyncio.CancelledError as cancellation:
-            cleanup = await self._settle_rebuild_rollback(authority, old, fresh, created)
+            cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
             cancellation.add_note("Athena rebuild cleanup facts: " + ",".join(cleanup))
             raise
         except Exception as error:
-            cleanup = await self._settle_rebuild_rollback(authority, old, fresh, created)
+            cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
             raise RebuildRejected(cleanup) from error
 
+        cleanup_fact = (
+            f"cleanup_queued:{old}"
+            if old_ownership is not None and old_ownership.status == "active"
+            else f"retained_legacy_physical:{old}"
+        )
         return RebuildReceipt(
             physical_collection=fresh,
             alias=self._config.alias,
             row_count=len(expected_ids),
-            cleanup_facts=(f"cleanup_queued:{old}",),
+            cleanup_facts=(cleanup_fact,),
         )
+
+    async def _activate_build_resolved(
+        self,
+        authority: ProjectionMutationLease,
+        ownership: ProjectionOwnershipReceipt,
+    ) -> None:
+        try:
+            await authority.activate_build(ownership)
+            return
+        except BaseException:
+            _, recorded = await authority.state()
+            actual = await authority.ownership(ownership.physical_collection)
+            alias_target = await self._provisioner.describe_alias(self._config.alias)
+            if (
+                recorded == ownership.physical_collection
+                and actual is not None
+                and actual.physical_collection == ownership.physical_collection
+                and actual.operation_id == ownership.operation_id
+                and actual.predecessor_collection == ownership.predecessor_collection
+                and actual.status == "active"
+                and alias_target == ownership.physical_collection
+            ):
+                return
+            raise
 
     def _schema(self) -> dict[str, object]:
         return build_doc_collection_schema(
@@ -570,6 +620,11 @@ class MilvusDocumentIndex:
             if privileges != expected:
                 raise IndexUnavailable("Athena Milvus scoped privileges are not exact")
 
+    async def _require_loaded(self, physical: str) -> None:
+        await self._provisioner.ensure_loaded(physical)
+        if not await self._provisioner.is_loaded(physical):
+            raise IndexUnavailable("Athena Milvus collection is not loaded")
+
     def _revision_rows(
         self,
         physical: str,
@@ -594,6 +649,16 @@ class MilvusDocumentIndex:
             or not 1 <= len(work.filename) <= 1_024
         ):
             raise ValueError("Athena revision artifacts do not match the closed index target")
+        try:
+            canonical_revision = revision_id_for(
+                DocumentId(work.document_id),
+                work.source_content_hash,
+                work.parser_version,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("Athena revision provenance is invalid") from error
+        if work.parser_version != PARSER_VERSION or str(canonical_revision) != work.revision_id:
+            raise ValueError("Athena revision provenance is inconsistent")
         if len({str(chunk.chunk_id) for chunk in chunks}) != len(chunks):
             raise ValueError("Athena revision chunk identities must be unique")
         rows: list[Mapping[str, object]] = []
@@ -606,6 +671,16 @@ class MilvusDocumentIndex:
                 or _DIGEST.fullmatch(chunk.source_content_hash) is None
                 or _DIGEST.fullmatch(chunk.chunk_content_hash) is None
                 or canonical_sha256(chunk.content.encode("utf-8")) != chunk.chunk_content_hash
+                or str(logical_chunk_id_for(chunk.root_id, chunk.anchor_json))
+                != str(chunk.logical_chunk_id)
+                or str(
+                    chunk_id_for(
+                        RevisionId(work.revision_id),
+                        chunk.anchor_json,
+                        chunk.chunk_content_hash,
+                    )
+                )
+                != str(chunk.chunk_id)
                 or not 1 <= len(chunk.content) <= 32_768
                 or any(
                     ord(character) < 0x20 and character not in "\t\n\r"
@@ -820,22 +895,23 @@ class MilvusDocumentIndex:
         self,
         authority: ProjectionMutationLease,
         old: str,
-        fresh: str,
+        ownership: ProjectionOwnershipReceipt,
         created: bool,
     ) -> tuple[str, ...]:
-        task = asyncio.create_task(self._rebuild_rollback(authority, old, fresh, created))
+        task = asyncio.create_task(self._rebuild_rollback(authority, old, ownership, created))
         outcome = await await_task_terminal(task)
         if outcome.error is not None or outcome.value is None:
-            return (f"cleanup_unknown:{fresh}",)
+            return (f"cleanup_unknown:{ownership.physical_collection}",)
         return outcome.value
 
     async def _rebuild_rollback(
         self,
         authority: ProjectionMutationLease,
         old: str,
-        fresh: str,
+        ownership: ProjectionOwnershipReceipt,
         created: bool,
     ) -> tuple[str, ...]:
+        fresh = ownership.physical_collection
         facts: list[str] = []
         alias_target: str | None = None
         try:
@@ -861,15 +937,18 @@ class MilvusDocumentIndex:
             except Exception:
                 facts.append(f"old_grants_restore_failed:{old}")
 
-        if alias_target == old:
+        current_ownership = await authority.ownership(fresh)
+        if current_ownership == ownership:
             try:
-                await authority.activate(old)
-                await authority.complete_cleanup(old)
+                await authority.abandon_build(ownership)
+                current_ownership = await authority.ownership(fresh)
             except Exception:
-                facts.append(f"generation_restore_failed:{old}")
+                facts.append(f"ownership_abandon_failed:{fresh}")
 
-        if created and alias_target != fresh:
+        if created and alias_target != fresh and current_ownership is not None:
             try:
+                if not await authority.verify_cleanup(current_ownership):
+                    raise IndexReconciliationFailed("Athena owned partial cleanup receipt changed")
                 await self._provisioner.revoke_collection(fresh, "tap_reader")
                 await self._provisioner.revoke_collection(fresh, "tap_writer")
                 if await self._provisioner.collection_aliases(fresh):
@@ -878,16 +957,14 @@ class MilvusDocumentIndex:
                     )
                 if await self._provisioner.collection_exists(fresh):
                     await self._provisioner.drop_collection(fresh)
-                await authority.complete_cleanup(fresh)
+                await authority.complete_owned_cleanup(current_ownership)
                 facts.append(f"dropped_owned_physical:{fresh}")
             except Exception:
-                await authority.enqueue_cleanup(fresh)
                 facts.append(f"cleanup_pending:{fresh}")
         elif created:
-            await authority.enqueue_cleanup(fresh)
             facts.append(f"cleanup_pending:{fresh}")
-        else:
-            await authority.complete_cleanup(fresh)
+        elif current_ownership is not None and await authority.verify_cleanup(current_ownership):
+            await authority.complete_owned_cleanup(current_ownership)
         return tuple(facts)
 
 

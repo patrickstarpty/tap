@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectionOwnershipReceipt:
+    physical_collection: str
+    operation_id: str
+    predecessor_collection: str
+    status: Literal["building", "active", "cleanup"]
 
 
 class ProjectionMutationLease(Protocol):
@@ -19,13 +28,27 @@ class ProjectionMutationLease(Protocol):
 
     async def fences(self, limit: int) -> tuple[tuple[str, str], ...]: ...
 
-    async def activate(self, physical: str) -> tuple[int, str]: ...
+    async def reserve_build(
+        self,
+        physical: str,
+        predecessor: str,
+        operation_id: str,
+    ) -> ProjectionOwnershipReceipt: ...
 
-    async def enqueue_cleanup(self, physical: str) -> None: ...
+    async def ownership(self, physical: str) -> ProjectionOwnershipReceipt | None: ...
 
-    async def pending_cleanup(self, limit: int) -> tuple[str, ...]: ...
+    async def activate_build(
+        self,
+        receipt: ProjectionOwnershipReceipt,
+    ) -> tuple[int, str]: ...
 
-    async def complete_cleanup(self, physical: str) -> None: ...
+    async def abandon_build(self, receipt: ProjectionOwnershipReceipt) -> None: ...
+
+    async def owned_cleanup(self, limit: int) -> tuple[ProjectionOwnershipReceipt, ...]: ...
+
+    async def verify_cleanup(self, receipt: ProjectionOwnershipReceipt) -> bool: ...
+
+    async def complete_owned_cleanup(self, receipt: ProjectionOwnershipReceipt) -> None: ...
 
 
 class ProjectionMutationCoordinator(Protocol):

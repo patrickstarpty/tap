@@ -698,6 +698,15 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
         if not _is_loaded_state(raw_load_state):
             raise RuntimeError("Milvus collection did not reach loaded state")
 
+    async def ensure_loaded(self, name: str) -> None:
+        await _doc_call(lambda: self._client.load_collection(name, timeout=_DOC_TIMEOUT_SECONDS))
+
+    async def is_loaded(self, name: str) -> bool:
+        raw = await _doc_call(
+            lambda: self._client.get_load_state(name, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        return _is_loaded_state(raw)
+
     async def grant_collection(self, name: str, role_name: str) -> None:
         for privilege in sorted(_privileges_for_role(role_name)):
 

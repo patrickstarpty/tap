@@ -6,7 +6,7 @@ import asyncio
 import gzip
 import json
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -215,6 +215,53 @@ def test_chunk_artifact_rejects_stable_identity_rebinding(field: str) -> None:
 
     with pytest.raises(ArtifactIntegrityError):
         encode_chunks_artifact(REVISION, (replace(chunk, **{field: changes[field]}),))
+
+
+def test_chunk_artifact_rejects_coordinated_document_source_revision_rebinding() -> None:
+    """Recomputing every row ID must not detach a revision from its root/source/parser facts."""
+    document_b = DocumentId("doc_b")
+    source_b = "sha256:" + "b" * 64
+    content = "Athena policy rebound."
+    anchor = '{"blockId":"block-b"}'
+    content_hash = canonical_sha256(content.encode())
+    rebound = ChunkDraft(
+        chunk_id=chunk_id_for(RevisionId(REVISION), anchor, content_hash),
+        logical_chunk_id=logical_chunk_id_for(document_b, anchor),
+        root_id=document_b,
+        parent_id=None,
+        content=content,
+        anchor_json=anchor,
+        source_content_hash=source_b,
+        chunk_content_hash=content_hash,
+    )
+
+    with pytest.raises(ArtifactIntegrityError):
+        encode_chunks_artifact(REVISION, (rebound,))
+
+    raw = gzip.decompress(encode_chunks_artifact(REVISION, chunk_artifact()))
+    lines = raw.splitlines()
+    header = json.loads(lines[0])
+    row = json.loads(lines[1])
+    header["documentId"] = str(document_b)
+    header["sourceContentHash"] = source_b
+    row.update(
+        {
+            "chunkContentHash": content_hash,
+            "chunkId": str(rebound.chunk_id),
+            "content": content,
+            "logicalChunkId": str(rebound.logical_chunk_id),
+            "rootId": str(document_b),
+        }
+    )
+    payload = (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    header["payloadSha256"] = canonical_sha256(payload)
+    corrupted = gzip.compress(
+        (json.dumps(header, sort_keys=True, separators=(",", ":")) + "\n").encode() + payload,
+        mtime=0,
+    )
+
+    with pytest.raises(ArtifactIntegrityError):
+        decode_chunks_artifact(corrupted, expected_revision=REVISION)
 
 
 def test_normalized_artifact_rejects_revision_rebinding() -> None:
@@ -433,6 +480,16 @@ async def test_original_promotion_race_reuses_exact_existing_blob_without_deleti
             copy_conditions.update(kwargs)
             raise race_error("raced")
 
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": canonical_sha256(b"abc").removeprefix("sha256:"),
+                    "size": "3",
+                },
+                copy=SimpleNamespace(status="success", id="winner-copy"),
+            )
+
     destination = Destination()
     deleted: list[object] = []
     staged = StagedOriginal(
@@ -491,9 +548,165 @@ async def test_uncertain_copy_without_owned_copy_id_never_deletes_destination(
 
     monkeypatch.setattr(store, "_delete_if_exists", delete)
 
-    await store._abort_and_delete(destination, None)  # type: ignore[arg-type]
+    await store._abort_and_delete(destination, "f" * 64, None)  # type: ignore[arg-type]
 
     assert deleted == []
+
+
+@pytest.mark.asyncio
+async def test_uncertain_copy_response_recovers_owned_success_from_destination_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost start response after server success must converge by durable ownership metadata."""
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    source = object()
+    deleted: list[object] = []
+
+    class Destination:
+        metadata: dict[str, str] = {}
+
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(self, url: str, **kwargs: object) -> None:
+            del url
+            self.metadata = dict(kwargs["metadata"])  # type: ignore[arg-type]
+            raise RuntimeError("response lost after copy acceptance")
+
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                size=3,
+                metadata=self.metadata,
+                copy=SimpleNamespace(status="success", id="copy-owned"),
+            )
+
+    destination = Destination()
+    staged = StagedOriginal(
+        staging_key="staging/task5-uncertain-success",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_download_verified", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+
+    async def delete(blob):  # type: ignore[no-untyped-def]
+        deleted.append(blob)
+
+    monkeypatch.setattr(store, "_delete_if_exists", delete)
+
+    locator = await store.commit_original(staged, "rev_uncertain_success")
+
+    assert str(locator).startswith("athena-originals/revisions/rev_uncertain_success/")
+    assert destination.metadata["copyowner"]
+    assert destination.metadata["blobsha256"] == staged.source_content_hash.removeprefix("sha256:")
+    assert deleted == [source]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_uncertain_copy_acceptance_aborts_and_deletes_owned_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller cancellation must settle an accepted owned copy even when start returned no ID."""
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    source = object()
+    accepted = asyncio.Event()
+    deleted: list[object] = []
+
+    class Destination:
+        metadata: dict[str, str] = {}
+        status = "pending"
+        aborted = False
+
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(self, url: str, **kwargs: object) -> None:
+            del url
+            accepted.set()
+            self.metadata = dict(kwargs.get("metadata", {}))  # type: ignore[arg-type]
+            await asyncio.Event().wait()
+
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                size=0,
+                metadata=self.metadata,
+                copy=SimpleNamespace(status=self.status, id="copy-owned"),
+            )
+
+        async def abort_copy(self, copy_id: str) -> None:
+            assert copy_id == "copy-owned"
+            self.status = "aborted"
+            self.aborted = True
+
+    destination = Destination()
+    staged = StagedOriginal(
+        staging_key="staging/task5-uncertain-cancel",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+
+    async def delete(blob):  # type: ignore[no-untyped-def]
+        deleted.append(blob)
+
+    monkeypatch.setattr(store, "_delete_if_exists", delete)
+    task = asyncio.create_task(store.commit_original(staged, "rev_uncertain_cancel"))
+    await accepted.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert destination.aborted
+    assert deleted == [destination]
+
+
+def _async_value(value):  # type: ignore[no-untyped-def]
+    async def result():  # type: ignore[no-untyped-def]
+        return value
+
+    return result()
 
 
 @pytest.mark.asyncio
@@ -568,3 +781,73 @@ async def test_scavenger_list_page_uses_deadline_cancel_and_terminal_settlement(
         )
 
     assert pages.cancelled
+
+
+@pytest.mark.asyncio
+async def test_scavenger_uses_one_absolute_deadline_across_all_deletes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Individually fast deletes must not reset and exceed the global scavenger budget."""
+    cancelled: list[str] = []
+    now = datetime.now(timezone.utc)
+    items = iter(
+        (
+            SimpleNamespace(
+                name=f"staging/slow-{index}",
+                metadata={"stagedat": (now - timedelta(hours=25)).isoformat()},
+            )
+            for index in range(2)
+        )
+    )
+
+    class Pages:
+        def __aiter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __anext__(self):  # type: ignore[no-untyped-def]
+            try:
+                return next(items)
+            except StopIteration:
+                raise StopAsyncIteration from None
+
+    class SlowDelete:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def delete_blob(self, **kwargs: object) -> None:
+            del kwargs
+            try:
+                await asyncio.sleep(0.007)
+            except asyncio.CancelledError:
+                cancelled.append(self.name)
+                raise
+
+    class Container:
+        def list_blobs(self, **kwargs: object) -> Pages:
+            del kwargs
+            return Pages()
+
+        def get_blob_client(self, name: str) -> SlowDelete:
+            return SlowDelete(name)
+
+    class Service(_ServiceDouble):
+        def get_container_client(self, name: str) -> Container:
+            del name
+            return Container()
+
+    service = Service(_BlobDouble())
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    store = AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(
+            connection_string=SecretStr("UseDevelopmentStorage=true"),
+            operation_timeout_seconds=0.01,
+        )
+    )
+
+    with pytest.raises(ArtifactIntegrityError, match="deadline"):
+        await store.scavenge_staging(now=now, visible_staging_keys=frozenset(), limit=2)
+
+    assert cancelled == ["staging/slow-1"]

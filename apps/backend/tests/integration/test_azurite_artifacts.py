@@ -269,6 +269,39 @@ async def test_real_azurite_copy_failure_retains_staging_and_exposes_no_final(
 
 
 @pytest.mark.asyncio
+async def test_real_azurite_recovers_copy_after_success_response_is_lost(
+    store: AzureBlobArtifactStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Azurite destination metadata must recover an accepted copy with no returned copy ID."""
+    staged = await store.stage_original(Upload(), max_bytes=1024)
+    source = store._blob(ORIGINALS_CONTAINER, staged.staging_key)
+    destination_name = f"revisions/{REVISION}/{staged.source_content_hash.removeprefix('sha256:')}"
+    destination = store._blob(ORIGINALS_CONTAINER, destination_name)
+    original_start = destination.start_copy_from_url
+
+    async def start_then_lose_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+        await original_start(*args, **kwargs)
+        raise RuntimeError("injected response loss after Azurite accepted copy")
+
+    monkeypatch.setattr(destination, "start_copy_from_url", start_then_lose_response)
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+
+    locator = await store.commit_original(staged, REVISION)
+
+    assert await store.read_original(locator) == b"Athena policy."
+    service = await service_client()
+    try:
+        assert not await service.get_blob_client(ORIGINALS_CONTAINER, staged.staging_key).exists()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_real_azurite_scavenger_is_bounded_and_respects_visibility_windows(
     store: AzureBlobArtifactStore,
 ) -> None:

@@ -24,7 +24,16 @@ from tap.modules.knowledge.adapters.milvus_documents import (
     ReadyRevisionArtifacts,
     RebuildRejected,
 )
-from tap.modules.knowledge.domain.documents import ChunkDraft, DocumentId, canonical_sha256
+from tap.modules.knowledge.domain.documents import (
+    PARSER_VERSION,
+    ChunkDraft,
+    DocumentId,
+    RevisionId,
+    canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+    revision_id_for,
+)
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
@@ -34,6 +43,7 @@ from tap.modules.knowledge.ports.documents import (
     JobKind,
     JobStage,
 )
+from tap.modules.knowledge.ports.projection import ProjectionOwnershipReceipt
 from tap.operations.milvus.contracts import (
     READER_TARGET_PRIVILEGES,
     WRITER_PRIVILEGES,
@@ -56,7 +66,15 @@ EXPECTED_INDEXES = frozenset(
 )
 
 
-def work(revision_id: str = "rev_a") -> IngestionWork:
+def _source_hash(revision_key: str) -> str:
+    return (
+        "sha256:" + "a" * 64 if revision_key == "rev_a" else canonical_sha256(revision_key.encode())
+    )
+
+
+def work(revision_key: str = "rev_a") -> IngestionWork:
+    source_hash = _source_hash(revision_key)
+    revision_id = str(revision_id_for(DocumentId("doc_a"), source_hash, PARSER_VERSION))
     return IngestionWork(
         job_id="job_a",
         lease_token="lease_a",
@@ -66,8 +84,8 @@ def work(revision_id: str = "rev_a") -> IngestionWork:
         revision_id=revision_id,
         filename="policy.md",
         media_type="text/markdown",
-        source_content_hash="sha256:" + "a" * 64,
-        original_locator=ArtifactLocator("athena-originals/revisions/rev_a/a"),
+        source_content_hash=source_hash,
+        original_locator=ArtifactLocator(f"athena-originals/revisions/{revision_id}/a"),
         normalized_locator=None,
         chunks_locator=None,
         embeddings_locator=None,
@@ -78,21 +96,25 @@ def work(revision_id: str = "rev_a") -> IngestionWork:
     )
 
 
-def chunk(index: int = 1) -> ChunkDraft:
+def chunk(index: int = 1, revision_key: str = "rev_a") -> ChunkDraft:
     content = f"Athena policy {index}."
+    anchor = json.dumps(
+        {"headingPath": [], "type": "document"},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    source_hash = _source_hash(revision_key)
+    revision_id = revision_id_for(DocumentId("doc_a"), source_hash, PARSER_VERSION)
+    content_hash = canonical_sha256(content.encode())
     return ChunkDraft(
-        chunk_id=f"h_{index:064x}",  # type: ignore[arg-type]
-        logical_chunk_id=f"lc_{index:064x}",  # type: ignore[arg-type]
+        chunk_id=chunk_id_for(revision_id, anchor, content_hash),
+        logical_chunk_id=logical_chunk_id_for(DocumentId("doc_a"), anchor),
         root_id=DocumentId("doc_a"),
         parent_id=f"block-{index}",
         content=content,
-        anchor_json=json.dumps(
-            {"headingPath": [], "type": "document"},
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
-        source_content_hash="sha256:" + "a" * 64,
-        chunk_content_hash=canonical_sha256(content.encode()),
+        anchor_json=anchor,
+        source_content_hash=source_hash,
+        chunk_content_hash=content_hash,
     )
 
 
@@ -105,12 +127,21 @@ class MemoryProjectionCoordinator:
         self.physical: str | None = None
         self.fence_records: dict[str, str] = {}
         self.cleanup: dict[str, int] = {}
+        self.owned: dict[str, ProjectionOwnershipReceipt] = {}
+        self.cancel_activation = False
+        self.activate_error_after_success = False
+        self.cancel_release_after_body = False
 
     @asynccontextmanager
     async def mutation(self, alias: str):  # type: ignore[no-untyped-def]
         assert alias == ATHENA_ALIAS
         async with self.lock:
-            yield self
+            try:
+                yield self
+            finally:
+                if self.cancel_release_after_body:
+                    self.cancel_release_after_body = False
+                    raise asyncio.CancelledError("lease release cancelled after commit")
 
     async def state(self) -> tuple[int, str | None]:
         return self.generation, self.physical
@@ -147,6 +178,74 @@ class MemoryProjectionCoordinator:
     async def complete_cleanup(self, physical: str) -> None:
         self.cleanup.pop(physical, None)
 
+    async def reserve_build(
+        self,
+        physical: str,
+        predecessor: str,
+        operation_id: str,
+    ) -> ProjectionOwnershipReceipt:
+        if physical in self.owned:
+            raise RuntimeError("physical collection ownership already exists")
+        receipt = ProjectionOwnershipReceipt(
+            physical_collection=physical,
+            operation_id=operation_id,
+            predecessor_collection=predecessor,
+            status="building",
+        )
+        self.owned[physical] = receipt
+        return receipt
+
+    async def ownership(self, physical: str) -> ProjectionOwnershipReceipt | None:
+        return self.owned.get(physical)
+
+    async def activate_build(
+        self,
+        receipt: ProjectionOwnershipReceipt,
+    ) -> tuple[int, str]:
+        if self.cancel_activation:
+            self.cancel_activation = False
+            raise asyncio.CancelledError
+        current = self.owned.get(receipt.physical_collection)
+        if (
+            current != receipt
+            or receipt.status != "building"
+            or self.physical != receipt.predecessor_collection
+        ):
+            raise RuntimeError("projection build ownership conflicts")
+        if self.physical is not None:
+            predecessor = self.owned.get(self.physical)
+            if predecessor is not None and predecessor.status == "active":
+                self.owned[self.physical] = replace(predecessor, status="cleanup")
+        self.generation += 1
+        self.physical = receipt.physical_collection
+        self.owned[receipt.physical_collection] = replace(receipt, status="active")
+        if self.activate_error_after_success:
+            self.activate_error_after_success = False
+            raise RuntimeError("activation response lost after durable commit")
+        return self.generation, self.physical
+
+    async def abandon_build(self, receipt: ProjectionOwnershipReceipt) -> None:
+        current = self.owned.get(receipt.physical_collection)
+        if current != receipt or receipt.status != "building":
+            raise RuntimeError("projection build ownership conflicts")
+        self.owned[receipt.physical_collection] = replace(receipt, status="cleanup")
+
+    async def owned_cleanup(self, limit: int) -> tuple[ProjectionOwnershipReceipt, ...]:
+        return tuple(
+            item for item in self.owned.values() if item.status in {"building", "cleanup"}
+        )[:limit]
+
+    async def verify_cleanup(self, receipt: ProjectionOwnershipReceipt) -> bool:
+        return self.owned.get(receipt.physical_collection) == receipt and receipt.status in {
+            "building",
+            "cleanup",
+        }
+
+    async def complete_owned_cleanup(self, receipt: ProjectionOwnershipReceipt) -> None:
+        if not await self.verify_cleanup(receipt):
+            raise RuntimeError("projection cleanup ownership conflicts")
+        self.owned.pop(receipt.physical_collection)
+
     async def close(self) -> None:
         return
 
@@ -156,6 +255,7 @@ class MemoryMilvus:
         self.collections: dict[str, dict[str, dict[str, object]]] = {}
         self.schemas: dict[str, Mapping[str, object]] = {}
         self.indexes: dict[str, set[str]] = {}
+        self.loaded: set[str] = set()
         self.aliases: dict[str, str] = {}
         self.grants: dict[tuple[str, str], set[str]] = {}
         self.upsert_batches: list[int] = []
@@ -168,6 +268,7 @@ class MemoryMilvus:
         self.alter_alias_error_after_success = False
         self.events: list[str] = []
         self.coordinator = MemoryProjectionCoordinator()
+        self.require_fresh_receipt_before_create = False
 
     async def collection_exists(self, name: str) -> bool:
         return name in self.collections
@@ -179,6 +280,12 @@ class MemoryMilvus:
         return tuple(alias for alias, target in self.aliases.items() if target == name)
 
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
+        if (
+            self.require_fresh_receipt_before_create
+            and name != ATHENA_PHYSICAL_COLLECTION
+            and name not in self.coordinator.owned
+        ):
+            raise AssertionError("fresh collection create preceded its ownership receipt")
         self.events.append(f"create-collection:{name}")
         self.collections[name] = {}
         self.schemas[name] = schema
@@ -200,6 +307,14 @@ class MemoryMilvus:
                 raise RuntimeError("injected partial index creation interruption")
             present.add(index_name)
             created += 1
+
+    async def ensure_loaded(self, name: str) -> None:
+        self.events.append(f"load:{name}")
+        self.loaded.add(name)
+
+    async def is_loaded(self, name: str) -> bool:
+        self.events.append(f"load-state:{name}")
+        return name in self.loaded
 
     async def describe_collection_schema(
         self, name: str, schema: Mapping[str, object]
@@ -352,13 +467,15 @@ async def test_ensure_upsert_read_back_delete_and_negative_probe_are_exact() -> 
     )
     assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
     first_row = memory.collections[ATHENA_PHYSICAL_COLLECTION][str(chunks[0].chunk_id)]
-    assert first_row["logical_chunk_id"] == "h_" + "0" * 63 + "1"
+    assert first_row["logical_chunk_id"] == "h_" + str(chunks[0].logical_chunk_id)[3:]
     assert str(first_row["root_id"]).startswith("h_")
     assert str(first_row["parent_id"]).startswith("h_")
     assert first_row["source_id"] == "doc_a"
     assert first_row["source_type"] == "doc"
 
-    target_delete = DeletionTarget("doc_a", "rev_a", tuple(str(c.chunk_id) for c in chunks), ())
+    target_delete = DeletionTarget(
+        "doc_a", work().revision_id, tuple(str(c.chunk_id) for c in chunks), ()
+    )
     await index.delete_revision(target_delete)
     assert await index.count_revision(target_delete) == 0
     assert memory.delete_batches[-1] == 65
@@ -370,7 +487,7 @@ async def test_durable_fence_blocks_late_upsert_and_survives_index_reconstructio
     memory = MemoryMilvus()
     first = index_for(memory)
     await first.ensure_target()
-    target = DeletionTarget("doc_a", "rev_a", (str(chunk().chunk_id),), ())
+    target = DeletionTarget("doc_a", work().revision_id, (str(chunk().chunk_id),), ())
     await first.fence_revision(target)
     restarted = index_for(memory)
 
@@ -396,7 +513,12 @@ async def test_rebuild_uses_fresh_physical_and_switches_alias_only_after_exact_p
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
-    fenced = DeletionTarget("doc_a", "rev_deleted", (str(chunk(9).chunk_id),), ())
+    fenced = DeletionTarget(
+        "doc_a",
+        work("rev_deleted").revision_id,
+        (str(chunk(9, "rev_deleted").chunk_id),),
+        (),
+    )
     await index.fence_revision(fenced)
     record = ReadyRevisionArtifacts(
         work=work(),
@@ -415,7 +537,7 @@ async def test_rebuild_uses_fresh_physical_and_switches_alias_only_after_exact_p
     assert receipt.physical_collection.startswith(ATHENA_PHYSICAL_COLLECTION + "_")
     assert len(receipt.physical_collection.removeprefix(ATHENA_PHYSICAL_COLLECTION + "_")) == 12
     assert receipt.row_count == 1
-    assert receipt.cleanup_facts == (f"cleanup_queued:{ATHENA_PHYSICAL_COLLECTION}",)
+    assert receipt.cleanup_facts == (f"retained_legacy_physical:{ATHENA_PHYSICAL_COLLECTION}",)
     assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
     assert memory.grants[(receipt.physical_collection, "tap_reader")] == set(
         READER_TARGET_PRIVILEGES
@@ -424,23 +546,23 @@ async def test_rebuild_uses_fresh_physical_and_switches_alias_only_after_exact_p
 
     restarted = index_for(memory)
     assert (await restarted.ensure_target()).physical_collection == receipt.physical_collection
-    assert ATHENA_PHYSICAL_COLLECTION not in memory.collections
+    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
     with pytest.raises(IndexFenced):
         await restarted.upsert_revision(
             work("rev_deleted"),
-            (chunk(9),),
+            (chunk(9, "rev_deleted"),),
             EmbeddingArtifact(
                 ATHENA_EMBEDDING_MODEL,
                 1536,
                 ((0.1,) * 1536,),
-                (str(chunk(9).chunk_id),),
+                (str(chunk(9, "rev_deleted").chunk_id),),
             ),
             index_version="athena-v1",
         )
 
 
 def ready_record(revision_id: str = "rev_a", index: int = 1) -> ReadyRevisionArtifacts:
-    item = chunk(index)
+    item = chunk(index, revision_id)
     return ReadyRevisionArtifacts(
         work=work(revision_id),
         chunks=(item,),
@@ -460,7 +582,7 @@ async def test_rebuild_excludes_stale_ready_record_with_existing_durable_fence()
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
-    target = DeletionTarget("doc_a", "rev_a", (str(chunk().chunk_id),), ())
+    target = DeletionTarget("doc_a", work().revision_id, (str(chunk().chunk_id),), ())
     await index.fence_revision(target)
 
     receipt = await index.rebuild((ready_record(),))
@@ -497,7 +619,7 @@ async def test_concurrent_fence_after_snapshot_applies_to_activated_generation(
     monkeypatch.setattr(rebuilding, "_require_fence_parity", barrier)
     rebuild_task = asyncio.create_task(rebuilding.rebuild((ready_record(),)))
     await entered.wait()
-    target = DeletionTarget("doc_a", "rev_a", (str(chunk().chunk_id),), ())
+    target = DeletionTarget("doc_a", work().revision_id, (str(chunk().chunk_id),), ())
     fence_task = asyncio.create_task(deleting.fence_revision(target))
     await asyncio.sleep(0)
     release.set()
@@ -548,7 +670,12 @@ async def test_concurrent_upsert_during_rebuild_lands_on_activated_generation(
 
     assert (
         await publishing.count_revision(
-            DeletionTarget("doc_a", "rev_b", (str(chunk(2).chunk_id),), ())
+            DeletionTarget(
+                "doc_a",
+                work("rev_b").revision_id,
+                (str(chunk(2, "rev_b").chunk_id),),
+                (),
+            )
         )
         == 1
     )
@@ -560,7 +687,12 @@ async def test_empty_rebuild_preserves_fences_and_switches_complete_empty_projec
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
-    target = DeletionTarget("doc_a", "rev_deleted", (str(chunk(9).chunk_id),), ())
+    target = DeletionTarget(
+        "doc_a",
+        work("rev_deleted").revision_id,
+        (str(chunk(9, "rev_deleted").chunk_id),),
+        (),
+    )
     await index.fence_revision(target)
 
     receipt = await index.rebuild(())
@@ -570,12 +702,12 @@ async def test_empty_rebuild_preserves_fences_and_switches_complete_empty_projec
     with pytest.raises(IndexFenced):
         await index.upsert_revision(
             work("rev_deleted"),
-            (chunk(9),),
+            (chunk(9, "rev_deleted"),),
             EmbeddingArtifact(
                 ATHENA_EMBEDDING_MODEL,
                 1536,
                 ((0.1,) * 1536,),
-                (str(chunk(9).chunk_id),),
+                (str(chunk(9, "rev_deleted").chunk_id),),
             ),
             index_version="athena-v1",
         )
@@ -605,8 +737,13 @@ async def test_repeated_rebuilds_bound_owned_unaliased_cleanup_queue() -> None:
     for _ in range(3):
         await index.rebuild((ready_record(),))
 
-    assert len(memory.collections) <= 2
-    assert len(memory.coordinator.cleanup) <= 1
+    assert len(memory.collections) <= 3
+    assert len([name for name in memory.collections if name != ATHENA_PHYSICAL_COLLECTION]) <= 2
+    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert len([item for item in memory.coordinator.owned.values() if item.status == "active"]) == 1
+    assert (
+        len([item for item in memory.coordinator.owned.values() if item.status == "cleanup"]) <= 1
+    )
 
 
 def test_exact_athena_defaults_are_closed() -> None:
@@ -654,11 +791,38 @@ async def test_ensure_validates_full_descriptor_before_any_grant_or_alias_publis
     await index_for(memory).ensure_target()
 
     full = memory.events.index(f"describe-full:{ATHENA_PHYSICAL_COLLECTION}")
+    loaded = memory.events.index(f"load-state:{ATHENA_PHYSICAL_COLLECTION}")
     reader_grant = memory.events.index(f"grant:tap_reader:{ATHENA_PHYSICAL_COLLECTION}")
     writer_grant = memory.events.index(f"grant:tap_writer:{ATHENA_PHYSICAL_COLLECTION}")
     alias = memory.events.index(f"create-alias:{ATHENA_PHYSICAL_COLLECTION}")
-    assert full < reader_grant < alias
-    assert full < writer_grant < alias
+    assert full < loaded < reader_grant < alias
+    assert full < loaded < writer_grant < alias
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias_exists", [False, True])
+async def test_ensure_loads_complete_but_released_target_before_any_publication(
+    alias_exists: bool,
+) -> None:
+    """A complete but released target must not be granted or published before load-ready."""
+    memory = MemoryMilvus()
+    await memory.create_collection(ATHENA_PHYSICAL_COLLECTION, index_for(memory)._schema())
+    memory.indexes[ATHENA_PHYSICAL_COLLECTION] = set(EXPECTED_INDEXES)
+    if alias_exists:
+        memory.aliases[ATHENA_ALIAS] = ATHENA_PHYSICAL_COLLECTION
+    memory.events.clear()
+
+    receipt = await index_for(memory).ensure_target()
+
+    assert receipt.physical_collection == ATHENA_PHYSICAL_COLLECTION
+    load = memory.events.index(f"load:{ATHENA_PHYSICAL_COLLECTION}")
+    loaded = memory.events.index(f"load-state:{ATHENA_PHYSICAL_COLLECTION}")
+    reader_grant = memory.events.index(f"grant:tap_reader:{ATHENA_PHYSICAL_COLLECTION}")
+    writer_grant = memory.events.index(f"grant:tap_writer:{ATHENA_PHYSICAL_COLLECTION}")
+    assert load < loaded < reader_grant
+    assert load < loaded < writer_grant
+    if not alias_exists:
+        assert loaded < memory.events.index(f"create-alias:{ATHENA_PHYSICAL_COLLECTION}")
 
 
 @pytest.mark.asyncio
@@ -712,6 +876,111 @@ async def test_ensure_queries_alias_after_success_then_error_outcome() -> None:
 
 
 @pytest.mark.asyncio
+async def test_external_legal_alias_drift_never_manufactures_cleanup_ownership() -> None:
+    """A legal name and valid schema are not evidence that this authority owns deletion."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    external = ATHENA_PHYSICAL_COLLECTION + "_" + "e" * 12
+    await memory.create_collection(external, index._schema())
+    memory.indexes[external] = set(EXPECTED_INDEXES)
+    memory.loaded.add(external)
+    memory.aliases[ATHENA_ALIAS] = external
+
+    with pytest.raises(IndexUnavailable, match="ownership"):
+        await index.ensure_target()
+
+    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert f"drop-collection:{ATHENA_PHYSICAL_COLLECTION}" not in memory.events
+    assert memory.coordinator.cleanup == {}
+
+
+def test_direct_milvus_publication_rejects_coordinated_revision_rebinding() -> None:
+    """The provider trust boundary must recompute revision, logical, and chunk identities."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    document_b = DocumentId("doc_b")
+    source_b = "sha256:" + "b" * 64
+    revision_a = str(revision_id_for(DocumentId("doc_a"), "sha256:" + "a" * 64, PARSER_VERSION))
+    anchor = '{"type":"document"}'
+    content = "Rebound publication."
+    content_hash = canonical_sha256(content.encode())
+    rebound = ChunkDraft(
+        chunk_id=chunk_id_for(RevisionId(revision_a), anchor, content_hash),
+        logical_chunk_id=logical_chunk_id_for(document_b, anchor),
+        root_id=document_b,
+        parent_id=None,
+        content=content,
+        anchor_json=anchor,
+        source_content_hash=source_b,
+        chunk_content_hash=content_hash,
+    )
+    rebound_work = replace(
+        work(),
+        document_id=str(document_b),
+        source_content_hash=source_b,
+        parser_version=PARSER_VERSION,
+    )
+
+    with pytest.raises(ValueError, match="provenance"):
+        index._revision_rows(
+            ATHENA_PHYSICAL_COLLECTION,
+            rebound_work,
+            (rebound,),
+            EmbeddingArtifact(
+                ATHENA_EMBEDDING_MODEL,
+                1536,
+                ((0.1,) * 1536,),
+                (str(rebound.chunk_id),),
+            ),
+            "athena-v1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rebuild_persists_exact_ownership_receipt_before_provider_create() -> None:
+    """A provider create without a prior durable receipt must never confer later drop authority."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    memory.require_fresh_receipt_before_create = True
+
+    receipt = await index.rebuild((ready_record(),))
+
+    ownership = memory.coordinator.owned[receipt.physical_collection]
+    assert ownership.status == "active"
+    assert ownership.predecessor_collection == ATHENA_PHYSICAL_COLLECTION
+    assert len(ownership.operation_id) == 32
+
+
+@pytest.mark.asyncio
+async def test_owned_alias_switch_after_crash_repairs_lineage_without_dropping_legacy() -> None:
+    """Only a pre-create receipt may authorize crash recovery of an uncertain alias switch."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    fresh = ATHENA_PHYSICAL_COLLECTION + "_" + "c" * 12
+    operation_id = "d" * 32
+    build = await memory.coordinator.reserve_build(
+        fresh,
+        ATHENA_PHYSICAL_COLLECTION,
+        operation_id,
+    )
+    await memory.create_collection(fresh, index._schema())
+    memory.indexes[fresh] = set(EXPECTED_INDEXES)
+    memory.loaded.add(fresh)
+    memory.aliases[ATHENA_ALIAS] = fresh
+
+    receipt = await index_for(memory).ensure_target()
+
+    assert receipt.physical_collection == fresh
+    assert memory.coordinator.physical == fresh
+    assert memory.coordinator.owned[fresh] == replace(build, status="active")
+    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert ATHENA_PHYSICAL_COLLECTION not in memory.coordinator.cleanup
+
+
+@pytest.mark.asyncio
 async def test_rebuild_failure_and_post_switch_cancellation_restore_old_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -740,7 +1009,7 @@ async def test_rebuild_failure_and_post_switch_cancellation_restore_old_alias(
     assert rejected.value.cleanup_facts[0].startswith("dropped_owned_physical:")
 
     monkeypatch.undo()
-    memory.cancel_retirement = True
+    memory.coordinator.cancel_activation = True
     with pytest.raises(asyncio.CancelledError):
         await index.rebuild((record,))
     assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
@@ -748,6 +1017,61 @@ async def test_rebuild_failure_and_post_switch_cancellation_restore_old_alias(
         READER_TARGET_PRIVILEGES
     )
     assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_returns_receipt_on_postcommit_lease_exit_cancellation() -> None:
+    """A committed alias/generation must not be reported as cancelled without its receipt."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    memory.coordinator.cancel_release_after_body = True
+
+    receipt = await index.rebuild((ready_record(),))
+
+    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert memory.coordinator.physical == receipt.physical_collection
+    assert memory.coordinator.owned[receipt.physical_collection].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_resolves_activation_success_then_error_from_durable_lineage() -> None:
+    """A lost activation response must use alias/state/ownership truth, not rollback a commit."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    memory.coordinator.activate_error_after_success = True
+
+    receipt = await index.rebuild((ready_record(),))
+
+    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert memory.coordinator.physical == receipt.physical_collection
+    assert memory.coordinator.owned[receipt.physical_collection].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_rollback_failure_reports_exact_owned_physical_cleanup_fact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cleanup failure must preserve the pre-create receipt's exact physical identity."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+
+    async def fail_parity(*args: object) -> None:
+        raise RuntimeError("injected publication failure")
+
+    async def fail_cleanup(*args: object) -> tuple[str, ...]:
+        raise RuntimeError("injected cleanup failure")
+
+    monkeypatch.setattr(index, "_require_revision_parity", fail_parity)
+    monkeypatch.setattr(index, "_rebuild_rollback", fail_cleanup)
+
+    with pytest.raises(RebuildRejected) as rejected:
+        await index.rebuild((ready_record(),))
+
+    [owned_physical] = memory.coordinator.owned
+    assert rejected.value.cleanup_facts == (f"cleanup_unknown:{owned_physical}",)
 
 
 @pytest.mark.asyncio

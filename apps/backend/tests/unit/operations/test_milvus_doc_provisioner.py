@@ -68,6 +68,22 @@ class PartialIndexClient:
         return {"state": "Loaded"}
 
 
+class ReleasedCollectionClient:
+    def __init__(self) -> None:
+        self.loaded = False
+        self.events: list[str] = []
+
+    def load_collection(self, collection_name: str, **kwargs: object) -> None:
+        assert collection_name == "kb_doc_v1_athena_demo"
+        self.events.append("load")
+        self.loaded = True
+
+    def get_load_state(self, collection_name: str, **kwargs: object) -> dict[str, object]:
+        assert collection_name == "kb_doc_v1_athena_demo"
+        self.events.append("state")
+        return {"state": "Loaded" if self.loaded else "NotLoad"}
+
+
 def sdk() -> MilvusSdk:
     return MilvusSdk(
         client_factory=lambda **kwargs: object(),
@@ -113,3 +129,19 @@ async def test_partial_index_creation_is_reconciled_after_adapter_reconstruction
 
     assert client.indexes == set(schema["indexes"])
     assert client.create_attempts.count("dense_vector") == 1
+
+
+@pytest.mark.asyncio
+async def test_released_collection_has_independent_load_and_exact_readiness_surface() -> None:
+    """Complete indexes do not imply a collection is loaded for stable reader publication."""
+    client = ReleasedCollectionClient()
+    provisioner = PyMilvusDocProvisioner(
+        client,
+        sdk(),
+        database_name="default",  # type: ignore[arg-type]
+    )
+
+    assert await provisioner.is_loaded("kb_doc_v1_athena_demo") is False
+    await provisioner.ensure_loaded("kb_doc_v1_athena_demo")
+    assert await provisioner.is_loaded("kb_doc_v1_athena_demo") is True
+    assert client.events == ["state", "load", "state"]

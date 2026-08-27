@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 
@@ -33,9 +34,14 @@ from tap.modules.knowledge.adapters.mysql_projection import (  # noqa: E402
     MysqlProjectionCoordinator,
 )
 from tap.modules.knowledge.domain.documents import (  # noqa: E402
+    PARSER_VERSION,
     ChunkDraft,
     DocumentId,
+    RevisionId,
     canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+    revision_id_for,
 )
 from tap.modules.knowledge.ports.documents import (  # noqa: E402
     ArtifactLocator,
@@ -62,7 +68,15 @@ def vector(value: float) -> tuple[float, ...]:
     return (value,) + (0.0,) * 1535
 
 
-def work(revision_id: str = "rev_a") -> IngestionWork:
+def _source_hash(revision_key: str) -> str:
+    return (
+        "sha256:" + "a" * 64 if revision_key == "rev_a" else canonical_sha256(revision_key.encode())
+    )
+
+
+def work(revision_key: str = "rev_a") -> IngestionWork:
+    source_hash = _source_hash(revision_key)
+    revision_id = str(revision_id_for(DocumentId("doc_a"), source_hash, PARSER_VERSION))
     return IngestionWork(
         job_id="job_a",
         lease_token="lease_a",
@@ -72,8 +86,8 @@ def work(revision_id: str = "rev_a") -> IngestionWork:
         revision_id=revision_id,
         filename="policy.md",
         media_type="text/markdown",
-        source_content_hash="sha256:" + "a" * 64,
-        original_locator=ArtifactLocator("athena-originals/revisions/rev_a/a"),
+        source_content_hash=source_hash,
+        original_locator=ArtifactLocator(f"athena-originals/revisions/{revision_id}/a"),
         normalized_locator=None,
         chunks_locator=None,
         embeddings_locator=None,
@@ -84,21 +98,25 @@ def work(revision_id: str = "rev_a") -> IngestionWork:
     )
 
 
-def chunk(index: int = 1) -> ChunkDraft:
+def chunk(index: int = 1, revision_key: str = "rev_a") -> ChunkDraft:
     content = f"Athena policy {index}."
+    anchor = json.dumps(
+        {"headingPath": [], "type": "document"},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    source_hash = _source_hash(revision_key)
+    revision_id = revision_id_for(DocumentId("doc_a"), source_hash, PARSER_VERSION)
+    content_hash = canonical_sha256(content.encode())
     return ChunkDraft(
-        chunk_id=f"h_{index:064x}",  # type: ignore[arg-type]
-        logical_chunk_id=f"lc_{index:064x}",  # type: ignore[arg-type]
+        chunk_id=chunk_id_for(RevisionId(revision_id), anchor, content_hash),
+        logical_chunk_id=logical_chunk_id_for(DocumentId("doc_a"), anchor),
         root_id=DocumentId("doc_a"),
         parent_id=f"block-{index}",
         content=content,
-        anchor_json=json.dumps(
-            {"headingPath": [], "type": "document"},
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
-        source_content_hash="sha256:" + "a" * 64,
-        chunk_content_hash=canonical_sha256(content.encode()),
+        anchor_json=anchor,
+        source_content_hash=source_hash,
+        chunk_content_hash=content_hash,
     )
 
 
@@ -177,6 +195,7 @@ async def _real_index():  # type: ignore[no-untyped-def]
     async def clean_authority() -> None:
         async with engine.begin() as connection:
             for table_name in (
+                "knowledge_projection_lineage",
                 "knowledge_projection_cleanup",
                 "knowledge_projection_fence",
                 "knowledge_projection_state",
@@ -250,7 +269,12 @@ async def test_real_milvus_ensure_upsert_delete_and_durable_late_write_fence(rea
         ),
         index_version="athena-v1",
     )
-    target = DeletionTarget("doc_a", "rev_a", tuple(str(item.chunk_id) for item in chunks), ())
+    target = DeletionTarget(
+        "doc_a",
+        work().revision_id,
+        tuple(str(item.chunk_id) for item in chunks),
+        (),
+    )
 
     assert receipt.indexed_count == 2
     assert await index.count_revision(target) == 2
@@ -282,3 +306,21 @@ async def test_real_milvus_target_grants_are_exact_without_false_exclusivity(rea
     assert frozenset(item.privilege for item in reader_grants) == READER_TARGET_PRIVILEGES
     assert frozenset(item.privilege for item in writer_grants) == WRITER_PRIVILEGES
     assert await provisioner.describe_alias(ATHENA_ALIAS) == ATHENA_PHYSICAL_COLLECTION
+
+
+@pytest.mark.asyncio
+async def test_real_milvus_released_complete_target_is_loaded_before_republication(
+    real_index,
+) -> None:  # type: ignore[no-untyped-def]
+    index, provisioner = real_index
+    await index.ensure_target()
+    await asyncio.to_thread(
+        provisioner._client.release_collection,  # type: ignore[attr-defined]
+        ATHENA_PHYSICAL_COLLECTION,
+    )
+    assert await provisioner.is_loaded(ATHENA_PHYSICAL_COLLECTION) is False
+
+    receipt = await index.ensure_target()
+
+    assert receipt.physical_collection == ATHENA_PHYSICAL_COLLECTION
+    assert await provisioner.is_loaded(ATHENA_PHYSICAL_COLLECTION) is True
