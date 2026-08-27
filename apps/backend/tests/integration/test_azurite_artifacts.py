@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -23,20 +24,28 @@ from tap.modules.knowledge.adapters.blob_artifacts import (  # noqa: E402
     ArtifactIntegrityError,
     AzureBlobArtifactConfig,
     AzureBlobArtifactStore,
+    artifact_locator,
+    encode_normalized_artifact,
 )
 from tap.modules.knowledge.domain.documents import (  # noqa: E402
+    PARSER_VERSION,
     BlockKind,
     ChunkDraft,
     DocumentId,
     MediaType,
     NormalizedArtifact,
     NormalizedBlock,
+    RevisionId,
     canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+    revision_id_for,
 )
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact  # noqa: E402
 
-REVISION = "rev_task5_contract"
 SOURCE_HASH = "sha256:" + "a" * 64
+DOCUMENT_ID = DocumentId("doc_a")
+REVISION = str(revision_id_for(DOCUMENT_ID, SOURCE_HASH, PARSER_VERSION))
 
 AZURITE_CONNECTION = os.getenv(
     "AZURITE_CONNECTION_STRING",
@@ -49,8 +58,8 @@ def normalized_artifact() -> NormalizedArtifact:
         filename="policy.md",
         media_type=MediaType.MARKDOWN,
         source_hash=SOURCE_HASH,
-        document_id=DocumentId("doc_a"),
-        revision_id=REVISION,  # type: ignore[arg-type]
+        document_id=DOCUMENT_ID,
+        revision_id=RevisionId(REVISION),
         blocks=(
             NormalizedBlock(
                 block_id="block-1",
@@ -68,16 +77,18 @@ def normalized_artifact() -> NormalizedArtifact:
 
 def chunk_artifact() -> tuple[ChunkDraft, ...]:
     content = "Athena policy."
+    anchor = '{"blockId":"block-1"}'
+    content_hash = canonical_sha256(content.encode())
     return (
         ChunkDraft(
-            chunk_id="h_" + "1" * 64,  # type: ignore[arg-type]
-            logical_chunk_id="lc_" + "2" * 64,  # type: ignore[arg-type]
-            root_id=DocumentId("doc_a"),
+            chunk_id=chunk_id_for(RevisionId(REVISION), anchor, content_hash),
+            logical_chunk_id=logical_chunk_id_for(DOCUMENT_ID, anchor),
+            root_id=DOCUMENT_ID,
             parent_id=None,
             content=content,
-            anchor_json='{"blockId":"block-1"}',
+            anchor_json=anchor,
             source_content_hash=SOURCE_HASH,
-            chunk_content_hash=canonical_sha256(content.encode()),
+            chunk_content_hash=content_hash,
         ),
     )
 
@@ -137,7 +148,12 @@ async def test_real_azurite_round_trips_all_artifact_kinds_and_keeps_containers_
     chunks = await store.write_chunks(REVISION, chunk_artifact())
     embeddings = await store.write_embeddings(
         REVISION,
-        EmbeddingArtifact("athena-embedding", 3, ((0.1, 0.2, 0.3),)),
+        EmbeddingArtifact(
+            "athena-embedding",
+            3,
+            ((0.1, 0.2, 0.3),),
+            tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
+        ),
         source_content_hash=SOURCE_HASH,
     )
 
@@ -145,7 +161,10 @@ async def test_real_azurite_round_trips_all_artifact_kinds_and_keeps_containers_
     assert await store.read_normalized(normalized) == normalized_artifact()
     assert await store.read_chunks(chunks) == chunk_artifact()
     assert await store.read_embeddings(embeddings) == EmbeddingArtifact(
-        "athena-embedding", 3, ((0.1, 0.2, 0.3),)
+        "athena-embedding",
+        3,
+        ((0.1, 0.2, 0.3),),
+        tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
     )
     for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
         properties = await store.container_properties(container)
@@ -175,6 +194,53 @@ async def test_real_azurite_blob_hash_tampering_is_rejected(store: AzureBlobArti
 
     with pytest.raises(ArtifactIntegrityError):
         await store.read_chunks(locator)
+
+
+@pytest.mark.asyncio
+async def test_real_azurite_immutable_artifact_replay_is_compare_only(
+    store: AzureBlobArtifactStore,
+) -> None:
+    """A conflicting retry must not overwrite or delete an immutable revision artifact."""
+    original = normalized_artifact()
+    locator = await store.write_normalized(REVISION, original)
+
+    assert await store.write_normalized(REVISION, original) == locator
+    with pytest.raises(ArtifactIntegrityError):
+        await store.write_normalized(
+            REVISION,
+            replace(original, filename="policy-conflict.md"),
+        )
+
+    assert await store.read_normalized(locator) == original
+
+
+@pytest.mark.asyncio
+async def test_real_azurite_rejects_cross_revision_locator_rebinding(
+    store: AzureBlobArtifactStore,
+) -> None:
+    """Valid bytes copied under another revision path must fail the semantic read boundary."""
+    other_revision = "rev_" + "f" * 64
+    blob_name = f"revisions/{other_revision}/normalized-v1.json"
+    locator = artifact_locator(ARTIFACTS_CONTAINER, blob_name)
+    data = encode_normalized_artifact(REVISION, normalized_artifact())
+    service = await service_client()
+    try:
+        await service.get_blob_client(ARTIFACTS_CONTAINER, blob_name).upload_blob(
+            data,
+            overwrite=False,
+            metadata={
+                "blobsha256": canonical_sha256(data).removeprefix("sha256:"),
+                "size": str(len(data)),
+            },
+        )
+        with pytest.raises(ArtifactIntegrityError):
+            await store.read_normalized(locator)
+    finally:
+        try:
+            await service.get_blob_client(ARTIFACTS_CONTAINER, blob_name).delete_blob()
+        except ResourceNotFoundError:
+            pass
+        await service.close()
 
 
 @pytest.mark.asyncio

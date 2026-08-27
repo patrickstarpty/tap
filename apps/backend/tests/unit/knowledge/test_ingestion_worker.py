@@ -5,8 +5,10 @@ import json
 from dataclasses import replace
 from datetime import datetime, timedelta
 
+import httpx
 import pytest
 
+from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.documents import (
     BlockKind,
@@ -19,11 +21,14 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedBlock,
     RevisionId,
     canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     ClaimedIngestionJob,
     DeletionTarget,
+    DocumentEmbeddingPort,
     DocumentState,
     EmbeddingArtifact,
     IndexReceipt,
@@ -339,16 +344,17 @@ class Chunker:
     def chunk(self, artifact: NormalizedArtifact) -> tuple[ChunkDraft, ...]:
         content = artifact.blocks[0].text
         anchor = json.dumps({"blockId": "block-1"}, separators=(",", ":"))
+        chunk_hash = canonical_sha256(content.encode())
         return (
             ChunkDraft(
-                chunk_id="chunk-1",  # type: ignore[arg-type]
-                logical_chunk_id="logical-1",  # type: ignore[arg-type]
+                chunk_id=chunk_id_for(RevisionId(REVISION_ID), anchor, chunk_hash),
+                logical_chunk_id=logical_chunk_id_for(DocumentId(DOCUMENT_ID), anchor),
                 root_id=DocumentId(DOCUMENT_ID),
                 parent_id=None,
                 content=content,
                 anchor_json=anchor,
                 source_content_hash=SOURCE_HASH,
-                chunk_content_hash=canonical_sha256(content.encode()),
+                chunk_content_hash=chunk_hash,
             ),
         )
 
@@ -368,7 +374,11 @@ class Embeddings:
         self.settled = asyncio.Event()
 
     async def embed_documents(
-        self, texts: tuple[str, ...], *, model_alias: str
+        self,
+        texts: tuple[str, ...],
+        *,
+        model_alias: str,
+        chunk_ids: tuple[str, ...],
     ) -> EmbeddingArtifact:
         self.calls += 1
         self.started.set()
@@ -381,6 +391,7 @@ class Embeddings:
                 vectors=tuple(
                     tuple(float(index) for index in range(self.dimension)) for _ in texts
                 ),
+                chunk_ids=chunk_ids,
             )
         finally:
             self.settled.set()
@@ -393,7 +404,11 @@ class CancellationResistantEmbeddings(Embeddings):
         self.finish_after_cancel = asyncio.Event()
 
     async def embed_documents(
-        self, texts: tuple[str, ...], *, model_alias: str
+        self,
+        texts: tuple[str, ...],
+        *,
+        model_alias: str,
+        chunk_ids: tuple[str, ...],
     ) -> EmbeddingArtifact:
         self.calls += 1
         self.started.set()
@@ -409,6 +424,7 @@ class CancellationResistantEmbeddings(Embeddings):
             model_alias=model_alias,
             dimension=3,
             vectors=tuple((0.0, 1.0, 2.0) for _ in texts),
+            chunk_ids=chunk_ids,
         )
 
 
@@ -478,7 +494,7 @@ def worker_parts(
 def build_worker(
     repository: StatefulRepository,
     artifacts: StatefulArtifacts,
-    embeddings: Embeddings,
+    embeddings: DocumentEmbeddingPort,
     index: Index,
     clock: FakeClock,
     *,
@@ -534,7 +550,7 @@ async def test_ingestion_persists_every_stage_and_ready_projection() -> None:
     assert repository.work.chunks_locator is not None
     assert repository.work.embeddings_locator is not None
     assert embeddings.calls == index.upsert_calls == 1
-    assert set(index.rows) == {"chunk-1"}
+    assert set(index.rows) == {repository.work.manifest[0].chunk_id}
     assert all(
         str(locator) in artifacts.values
         for locator in (
@@ -543,6 +559,51 @@ async def test_ingestion_persists_every_stage_and_ready_projection() -> None:
             repository.work.embeddings_locator,
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_composes_directly_with_litellm_document_embedding_port() -> None:
+    """A real Task 5 adapter must cross Task 4's embedding stage without a wrapper."""
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "embedding-worker-1",
+                "model": "provider-embed-v1",
+                "data": [{"embedding": [0.0, 1.0, 2.0], "index": 0}],
+                "usage": {"prompt_tokens": 4, "total_tokens": 4},
+            },
+        )
+
+    repository = StatefulRepository()
+    artifacts = StatefulArtifacts()
+    index = Index()
+    clock = FakeClock()
+    config = LiteLLMConfig(
+        base_url="https://litellm.example",
+        api_key="not-a-real-key",
+        embedding_model_id="athena-embedding",
+        answer_model_id="tap-answer-fixed-v1",
+        answer_profile_id="grounded-answer-v2",
+        embedding_dimension=3,
+        allowed_embedding_model_labels=frozenset({"athena-embedding", "provider-embed-v1"}),
+        allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1"}),
+        allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
+        deadline_seconds=1,
+        max_retries=0,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = LiteLLMAdapter(config, client=client)
+        worker = build_worker(repository, artifacts, adapter, index, clock)
+        result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert len(requests) == 1
+    stored = await artifacts.read_embeddings(repository.work.embeddings_locator)  # type: ignore[arg-type]
+    assert stored.chunk_ids == tuple(item.chunk_id for item in repository.work.manifest)
 
 
 @pytest.mark.asyncio
@@ -646,7 +707,12 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
             repository.work,
             embeddings_locator=await artifacts.write_embeddings(
                 REVISION_ID,
-                EmbeddingArtifact("athena-embedding", 3, ((0.0, 1.0, 2.0),)),
+                EmbeddingArtifact(
+                    "athena-embedding",
+                    3,
+                    ((0.0, 1.0, 2.0),),
+                    (manifest[0].chunk_id,),
+                ),
                 source_content_hash=SOURCE_HASH,
             ),
         )
@@ -656,6 +722,69 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
     assert result.failed == 1
     assert repository.failed is not None
     assert repository.failed.error_code == error_code
+    assert embeddings.calls == 0
+    assert index.upsert_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("logical_chunk_id", "lc_" + "f" * 64),
+        ("root_id", DocumentId("doc_" + "9" * 32)),
+        ("parent_id", "block-other"),
+        ("anchor_json", '{"blockId":"block-other"}'),
+        ("chunk_content_hash", "sha256:" + "e" * 64),
+        ("source_content_hash", "sha256:" + "d" * 64),
+    ],
+)
+async def test_worker_rejects_full_chunk_manifest_rebinding_before_embedding(
+    field: str,
+    value: object,
+) -> None:
+    """An ID-only readback check would accept changed provenance under a stable chunk ID."""
+    worker, repository, artifacts, embeddings, index, _ = worker_parts()
+    chunks = Chunker().chunk(
+        Parser().parse(
+            DocumentSource(
+                content=SOURCE_BYTES,
+                filename="source.md",
+                media_type=MediaType.MARKDOWN,
+                document_id=DocumentId(DOCUMENT_ID),
+                revision_id=RevisionId(REVISION_ID),
+            )
+        )
+    )
+    locator = await artifacts.write_chunks(
+        REVISION_ID,
+        (replace(chunks[0], **{field: value}),),
+    )
+    manifest = (
+        ManifestChunk(
+            chunk_id=str(chunks[0].chunk_id),
+            logical_chunk_id=str(chunks[0].logical_chunk_id),
+            ordinal=0,
+            root_id=DOCUMENT_ID,
+            parent_id=chunks[0].parent_id,
+            anchor_json=chunks[0].anchor_json,
+            chunk_content_hash=chunks[0].chunk_content_hash,
+            embedding_model_version="athena-embedding",
+            index_version="athena-doc-v1",
+        ),
+    )
+    repository.job = replace(repository.job, stage=JobStage.EMBEDDING)
+    repository.work = replace(
+        repository.work,
+        stage=JobStage.EMBEDDING,
+        chunks_locator=locator,
+        manifest=manifest,
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.failed == 1
+    assert repository.failed is not None
+    assert repository.failed.error_code == "artifact-unavailable"
     assert embeddings.calls == 0
     assert index.upsert_calls == 0
 

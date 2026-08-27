@@ -15,6 +15,9 @@ from tap.modules.knowledge.domain.documents import (
     DocumentSource,
     MediaType,
     RevisionId,
+    canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
@@ -273,6 +276,7 @@ class IngestionWorker:
                     lambda: self._embeddings.embed_documents(
                         tuple(chunk.content for chunk in chunks),
                         model_alias=self._embedding_model_alias,
+                        chunk_ids=tuple(str(chunk.chunk_id) for chunk in chunks),
                     ),
                 )
             except JobLeaseLost:
@@ -285,6 +289,7 @@ class IngestionWorker:
                 artifact.model_alias != self._embedding_model_alias
                 or artifact.dimension != self._embedding_dimension
                 or len(artifact.vectors) != len(chunks)
+                or artifact.chunk_ids != tuple(str(chunk.chunk_id) for chunk in chunks)
             ):
                 raise _SafeStageError(stage, "embedding-dimension-mismatch")
             locator = await self._artifact_write(
@@ -309,6 +314,7 @@ class IngestionWorker:
                 embeddings.model_alias != self._embedding_model_alias
                 or embeddings.dimension != self._embedding_dimension
                 or len(embeddings.vectors) != len(work.manifest)
+                or embeddings.chunk_ids != tuple(item.chunk_id for item in work.manifest)
             ):
                 raise _SafeStageError(stage, "embedding-dimension-mismatch")
             try:
@@ -399,8 +405,28 @@ class IngestionWorker:
     async def _read_chunks(self, work: IngestionWork, stage: JobStage) -> tuple[ChunkDraft, ...]:
         chunks_locator = _required_locator(work.chunks_locator, stage)
         chunks = await self._artifact_call(stage, self._artifacts.read_chunks(chunks_locator))
-        if tuple(str(chunk.chunk_id) for chunk in chunks) != tuple(
-            item.chunk_id for item in work.manifest
+        if len(chunks) != len(work.manifest) or any(
+            item.ordinal != ordinal
+            or item.chunk_id != str(chunk.chunk_id)
+            or item.logical_chunk_id != str(chunk.logical_chunk_id)
+            or item.root_id != str(chunk.root_id)
+            or item.parent_id != chunk.parent_id
+            or item.anchor_json != chunk.anchor_json
+            or item.chunk_content_hash != chunk.chunk_content_hash
+            or str(chunk.root_id) != work.document_id
+            or chunk.source_content_hash != work.source_content_hash
+            or canonical_sha256(chunk.content.encode("utf-8")) != chunk.chunk_content_hash
+            or str(logical_chunk_id_for(chunk.root_id, chunk.anchor_json))
+            != str(chunk.logical_chunk_id)
+            or str(
+                chunk_id_for(
+                    RevisionId(work.revision_id),
+                    chunk.anchor_json,
+                    chunk.chunk_content_hash,
+                )
+            )
+            != str(chunk.chunk_id)
+            for ordinal, (chunk, item) in enumerate(zip(chunks, work.manifest, strict=True))
         ):
             raise _SafeStageError(stage, "artifact-unavailable")
         return chunks

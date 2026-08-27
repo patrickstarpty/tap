@@ -20,6 +20,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusHybridRequest,
     MilvusQueryRequest,
     _collection_descriptor,
+    collection_base_descriptor,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
@@ -114,6 +115,8 @@ class _SyncClient(Protocol):
     def list_collections(self, **kwargs: object) -> object: ...
 
     def list_aliases(self, **kwargs: object) -> object: ...
+
+    def list_indexes(self, collection_name: str, **kwargs: object) -> object: ...
 
     def list_users(self, **kwargs: object) -> object: ...
 
@@ -546,6 +549,37 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
     async def collection_exists(self, name: str) -> bool:
         return name in await self.list_collections()
 
+    async def collection_aliases(self, name: str) -> tuple[str, ...]:
+        raw = await _doc_call(
+            lambda: self._client.list_aliases(
+                collection_name=name,
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
+        )
+        if isinstance(raw, Mapping):
+            if (
+                set(raw) != {"aliases", "collection_name", "db_name"}
+                or raw.get("collection_name") != name
+                or raw.get("db_name") != self._database_name
+            ):
+                raise RuntimeError("Milvus returned malformed alias inventory")
+            raw = raw.get("aliases")
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise RuntimeError("Milvus returned malformed alias inventory")
+        aliases: list[str] = []
+        for item in raw:
+            alias = (
+                item
+                if isinstance(item, str)
+                else item.get("alias")
+                if isinstance(item, Mapping)
+                else None
+            )
+            if not isinstance(alias, str):
+                raise RuntimeError("Milvus returned malformed alias inventory")
+            aliases.append(alias)
+        return tuple(aliases)
+
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
         if not isinstance(schema, Mapping) or schema.get("consistency_level") != "Strong":
             raise ValueError("Milvus doc schema is malformed")
@@ -611,17 +645,32 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
         except KeyError as error:
             raise ValueError("Milvus doc schema contains an unsupported data type") from error
 
-    async def create_indexes(self, name: str) -> None:
-        schema = self._schemas.get(name)
+    async def create_indexes(
+        self,
+        name: str,
+        schema: Mapping[str, object] | None = None,
+    ) -> None:
+        schema = schema or self._schemas.get(name)
         if schema is None:
             raise ValueError("Milvus doc schema is unavailable for index creation")
+        self._schemas[name] = schema
         await _doc_call(lambda: self._create_indexes(name, schema))
 
     def _create_indexes(self, name: str, schema: Mapping[str, object]) -> None:
-        params = self._client.prepare_index_params()
-        add_index = cast(Callable[..., object], getattr(params, "add_index"))
         indexes = cast(Mapping[str, Mapping[str, object]], schema["indexes"])
+        raw_present = self._client.list_indexes(name, timeout=_DOC_TIMEOUT_SECONDS)
+        if isinstance(raw_present, (str, bytes)) or not isinstance(raw_present, Sequence):
+            raise RuntimeError("Milvus returned malformed index inventory")
+        if any(not isinstance(item, str) for item in raw_present):
+            raise RuntimeError("Milvus returned malformed index inventory")
+        present = set(cast(Sequence[str], raw_present))
+        if not present <= set(indexes):
+            raise RuntimeError("Milvus collection contains an unmanaged index")
         for field_name, definition in indexes.items():
+            if field_name in present:
+                continue
+            params = self._client.prepare_index_params()
+            add_index = cast(Callable[..., object], getattr(params, "add_index"))
             kwargs: dict[str, object] = {
                 "field_name": field_name,
                 "index_name": field_name,
@@ -632,9 +681,22 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
             if "params" in definition:
                 kwargs["params"] = definition["params"]
             add_index(**kwargs)
-        self._client.create_index(name, params, timeout=_DOC_TIMEOUT_SECONDS)
+            self._client.create_index(name, params, timeout=_DOC_TIMEOUT_SECONDS)
+            self._client.describe_index(name, field_name, timeout=_DOC_TIMEOUT_SECONDS)
+        raw_complete = self._client.list_indexes(name, timeout=_DOC_TIMEOUT_SECONDS)
+        if (
+            isinstance(raw_complete, (str, bytes))
+            or not isinstance(raw_complete, Sequence)
+            or any(not isinstance(item, str) for item in raw_complete)
+            or set(cast(Sequence[str], raw_complete)) != set(indexes)
+        ):
+            raise RuntimeError("Milvus index reconciliation did not reach exact parity")
+        for index_name in indexes:
+            self._client.describe_index(name, index_name, timeout=_DOC_TIMEOUT_SECONDS)
         self._client.load_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
-        self._client.get_load_state(name, timeout=_DOC_TIMEOUT_SECONDS)
+        raw_load_state = self._client.get_load_state(name, timeout=_DOC_TIMEOUT_SECONDS)
+        if not _is_loaded_state(raw_load_state):
+            raise RuntimeError("Milvus collection did not reach loaded state")
 
     async def grant_collection(self, name: str, role_name: str) -> None:
         for privilege in sorted(_privileges_for_role(role_name)):
@@ -719,6 +781,20 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
             raw_collection,
             tuple(raw_indexes),
             expected_collection=name,
+        )
+
+    async def describe_collection_schema(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> MilvusCollectionDescriptor:
+        raw = await _doc_call(
+            lambda: self._client.describe_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        return collection_base_descriptor(
+            raw,
+            expected_collection=name,
+            expected_schema=schema,
         )
 
     async def create_alias(self, alias: str, collection_name: str) -> None:
@@ -1478,6 +1554,16 @@ def _alias_collection(raw: object) -> str:
     if not isinstance(raw, Mapping) or not isinstance(raw.get("collection_name"), str):
         raise RuntimeError("Milvus returned malformed alias metadata")
     return cast(str, raw["collection_name"])
+
+
+def _is_loaded_state(raw: object) -> bool:
+    if not isinstance(raw, Mapping) or set(raw) != {"state"}:
+        return False
+    state = raw.get("state")
+    name = getattr(state, "name", None)
+    if isinstance(name, str):
+        return name.casefold() == "loaded"
+    return isinstance(state, str) and state.casefold() == "loaded"
 
 
 def _hybrid_rows(raw: object) -> tuple[Mapping[str, object], ...]:

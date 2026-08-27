@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
+from dataclasses import replace
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
+from azure.core.exceptions import ResourceExistsError, ResourceModifiedError
+from pydantic import SecretStr
 
 from tap.modules.knowledge.adapters.blob_artifacts import (
     ARTIFACTS_CONTAINER,
     ORIGINALS_CONTAINER,
     ArtifactIntegrityError,
+    AzureBlobArtifactConfig,
+    AzureBlobArtifactStore,
     artifact_locator,
     decode_chunks_artifact,
     decode_embeddings_artifact,
@@ -20,18 +28,29 @@ from tap.modules.knowledge.adapters.blob_artifacts import (
     encode_normalized_artifact,
 )
 from tap.modules.knowledge.domain.documents import (
+    PARSER_VERSION,
     BlockKind,
     ChunkDraft,
     DocumentId,
     MediaType,
     NormalizedArtifact,
     NormalizedBlock,
+    RevisionId,
     canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+    revision_id_for,
 )
-from tap.modules.knowledge.ports.documents import EmbeddingArtifact
+from tap.modules.knowledge.ports.documents import (
+    ArtifactLocator,
+    DeletionTarget,
+    EmbeddingArtifact,
+    StagedOriginal,
+)
 
-REVISION = "rev_task5_contract"
 SOURCE_HASH = "sha256:" + "a" * 64
+DOCUMENT_ID = DocumentId("doc_a")
+REVISION = str(revision_id_for(DOCUMENT_ID, SOURCE_HASH, PARSER_VERSION))
 
 
 def normalized_artifact() -> NormalizedArtifact:
@@ -39,8 +58,8 @@ def normalized_artifact() -> NormalizedArtifact:
         filename="policy.md",
         media_type=MediaType.MARKDOWN,
         source_hash=SOURCE_HASH,
-        document_id=DocumentId("doc_a"),
-        revision_id=REVISION,  # type: ignore[arg-type]
+        document_id=DOCUMENT_ID,
+        revision_id=RevisionId(REVISION),
         blocks=(
             NormalizedBlock(
                 block_id="block-1",
@@ -58,16 +77,18 @@ def normalized_artifact() -> NormalizedArtifact:
 
 def chunk_artifact() -> tuple[ChunkDraft, ...]:
     content = "Athena policy."
+    anchor = '{"blockId":"block-1"}'
+    content_hash = canonical_sha256(content.encode())
     return (
         ChunkDraft(
-            chunk_id="h_" + "1" * 64,  # type: ignore[arg-type]
-            logical_chunk_id="lc_" + "2" * 64,  # type: ignore[arg-type]
-            root_id=DocumentId("doc_a"),
+            chunk_id=chunk_id_for(RevisionId(REVISION), anchor, content_hash),
+            logical_chunk_id=logical_chunk_id_for(DOCUMENT_ID, anchor),
+            root_id=DOCUMENT_ID,
             parent_id=None,
             content=content,
-            anchor_json='{"blockId":"block-1"}',
+            anchor_json=anchor,
             source_content_hash=SOURCE_HASH,
-            chunk_content_hash=canonical_sha256(content.encode()),
+            chunk_content_hash=content_hash,
         ),
     )
 
@@ -76,7 +97,12 @@ def test_canonical_artifact_envelopes_are_deterministic_and_round_trip_exactly()
     """Noncanonical or timestamped encoding would break content-addressed retries."""
     normalized = normalized_artifact()
     chunks = chunk_artifact()
-    embeddings = EmbeddingArtifact("athena-embedding", 3, ((0.1, 0.2, 0.3),))
+    embeddings = EmbeddingArtifact(
+        "athena-embedding",
+        3,
+        ((0.1, 0.2, 0.3),),
+        tuple(str(chunk.chunk_id) for chunk in chunks),
+    )
 
     normalized_bytes = encode_normalized_artifact(REVISION, normalized)
     chunks_bytes = encode_chunks_artifact(REVISION, chunks)
@@ -114,7 +140,12 @@ def test_artifact_reads_reject_payload_hash_or_envelope_widening(kind: str) -> N
         )
         decoder = decode_chunks_artifact
     else:
-        artifact = EmbeddingArtifact("athena-embedding", 3, ((0.1, 0.2, 0.3),))
+        artifact = EmbeddingArtifact(
+            "athena-embedding",
+            3,
+            ((0.1, 0.2, 0.3),),
+            tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
+        )
         raw = gzip.decompress(encode_embeddings_artifact(REVISION, SOURCE_HASH, artifact))
         lines = raw.splitlines()
         envelope = json.loads(lines[0])
@@ -170,3 +201,370 @@ def test_chunk_artifact_rejects_semantic_hash_rebinding_with_valid_envelope_hash
 
     with pytest.raises(ArtifactIntegrityError):
         decode_chunks_artifact(corrupted, expected_revision=REVISION)
+
+
+@pytest.mark.parametrize("field", ("chunk_id", "logical_chunk_id", "root_id"))
+def test_chunk_artifact_rejects_stable_identity_rebinding(field: str) -> None:
+    """Valid-looking IDs must still be derived from revision/root/anchor/content facts."""
+    chunk = chunk_artifact()[0]
+    changes: dict[str, object] = {
+        "chunk_id": "h_" + "f" * 64,
+        "logical_chunk_id": "lc_" + "e" * 64,
+        "root_id": DocumentId("doc_other"),
+    }
+
+    with pytest.raises(ArtifactIntegrityError):
+        encode_chunks_artifact(REVISION, (replace(chunk, **{field: changes[field]}),))
+
+
+def test_normalized_artifact_rejects_revision_rebinding() -> None:
+    """A valid payload hash cannot bind one document/source pair to another revision locator."""
+    rebound = replace(normalized_artifact(), revision_id=RevisionId("rev_" + "f" * 64))
+    with pytest.raises(ArtifactIntegrityError):
+        encode_normalized_artifact("rev_" + "f" * 64, rebound)
+
+
+def test_embedding_rows_bind_exact_chunk_identity_and_order() -> None:
+    """Ordinal-only vectors would permit a manifest reorder without changing the envelope."""
+    chunks = chunk_artifact()
+    artifact = EmbeddingArtifact(
+        "athena-embedding",
+        3,
+        ((0.1, 0.2, 0.3),),
+        (str(chunks[0].chunk_id),),
+    )
+    decoded = gzip.decompress(encode_embeddings_artifact(REVISION, SOURCE_HASH, artifact))
+    row = json.loads(decoded.splitlines()[1])
+
+    assert row["chunkId"] == str(chunks[0].chunk_id)
+    assert (
+        decode_embeddings_artifact(
+            encode_embeddings_artifact(REVISION, SOURCE_HASH, artifact),
+            expected_revision=REVISION,
+        ).chunk_ids
+        == artifact.chunk_ids
+    )
+
+
+class _Upload:
+    filename = "policy.md"
+    media_type = "text/markdown"
+
+    def __init__(self, parts: tuple[bytes, ...]) -> None:
+        self._parts = parts
+
+    @property
+    def content(self):  # type: ignore[no-untyped-def]
+        async def stream():  # type: ignore[no-untyped-def]
+            for part in self._parts:
+                yield part
+
+        return stream()
+
+
+class _BlobDouble:
+    def __init__(self, *, fail_upload: bool = False, slow_delete: bool = False) -> None:
+        self.fail_upload = fail_upload
+        self.slow_delete = slow_delete
+        self.upload_streamed = False
+        self.uploaded = b""
+        self.delete_cancelled = False
+        self.delete_calls = 0
+
+    async def upload_blob(self, data, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        if self.fail_upload:
+            raise RuntimeError("injected upload failure")
+        self.upload_streamed = not isinstance(data, (bytes, bytearray)) and hasattr(data, "read")
+        if not self.upload_streamed:
+            raise AssertionError("original upload was materialized before provider streaming")
+        parts: list[bytes] = []
+        while part := data.read(4):
+            parts.append(part)
+        self.uploaded = b"".join(parts)
+
+    async def delete_blob(self, **kwargs):  # type: ignore[no-untyped-def]
+        del kwargs
+        self.delete_calls += 1
+        if not self.slow_delete:
+            return
+        try:
+            await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            self.delete_cancelled = True
+
+
+class _ServiceDouble:
+    credential = object()
+    account_name = "devstoreaccount1"
+
+    def __init__(self, blob: _BlobDouble) -> None:
+        self.blob = blob
+
+    def get_blob_client(self, container: str, blob_name: str) -> _BlobDouble:
+        del container, blob_name
+        return self.blob
+
+    async def close(self) -> None:
+        return
+
+
+def _store_with_double(
+    monkeypatch: pytest.MonkeyPatch,
+    blob: _BlobDouble,
+    *,
+    timeout: float = 1,
+) -> AzureBlobArtifactStore:
+    service = _ServiceDouble(blob)
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    return AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(
+            connection_string=SecretStr("UseDevelopmentStorage=true"),
+            operation_timeout_seconds=timeout,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_stage_original_streams_from_bounded_spool_without_materializing_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full bytearray copy would violate the 25 MiB streaming upload boundary."""
+    blob = _BlobDouble()
+    store = _store_with_double(monkeypatch, blob)
+
+    staged = await store.stage_original(_Upload((b"abc", b"def")), max_bytes=6)
+
+    assert blob.upload_streamed
+    assert blob.uploaded == b"abcdef"
+    assert staged.size == 6
+    assert staged.source_content_hash == canonical_sha256(b"abcdef")
+
+
+@pytest.mark.asyncio
+async def test_stage_original_cleanup_deadline_cancels_and_settles_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw cleanup awaits can outlive Task 4 cancellation and leave an SDK call running."""
+    blob = _BlobDouble(fail_upload=True, slow_delete=True)
+    store = _store_with_double(monkeypatch, blob, timeout=0.01)
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store.stage_original(_Upload((b"abc",)), max_bytes=3)
+
+    assert blob.delete_cancelled
+
+
+@pytest.mark.asyncio
+async def test_provider_timeout_with_cancelled_child_keeps_safe_deadline_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled SDK child must not overwrite the provider-neutral timeout verdict."""
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=0.01)
+
+    async def never() -> None:
+        await asyncio.Event().wait()
+
+    with pytest.raises(ArtifactIntegrityError, match="deadline"):
+        await store._bounded(never())
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_waits_for_provider_child_then_preserves_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller cancellation must remain distinct after the SDK child reaches terminal state."""
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=1)
+    started = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def blocked() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            settled.set()
+
+    task = asyncio.create_task(store._bounded(blocked()))
+    await started.wait()
+    task.cancel("caller-cancelled")
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert settled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_spontaneously_cancelled_provider_child_is_not_caller_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An SDK child cancelling itself is provider failure, not authority to cancel its caller."""
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=1)
+
+    async def provider_cancelled() -> None:
+        raise asyncio.CancelledError("provider-internal")
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store._bounded(provider_cancelled())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("race_error", [ResourceExistsError, ResourceModifiedError])
+async def test_original_promotion_race_reuses_exact_existing_blob_without_deleting_it(
+    monkeypatch: pytest.MonkeyPatch,
+    race_error: type[Exception],
+) -> None:
+    """A create race must compare immutable bytes, never delete the winner's final Blob."""
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    source = object()
+    copy_conditions: dict[str, object] = {}
+
+    class Destination:
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(  # type: ignore[no-untyped-def]
+            self, url: str, **kwargs: object
+        ):
+            del url
+            copy_conditions.update(kwargs)
+            raise race_error("raced")
+
+    destination = Destination()
+    deleted: list[object] = []
+    staged = StagedOriginal(
+        staging_key="staging/task5-race",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+
+    async def properties(_key: str):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(
+            size=3,
+            metadata={
+                "blobsha256": canonical_sha256(b"abc").removeprefix("sha256:"),
+                "size": "3",
+            },
+        )
+
+    async def download(_blob):  # type: ignore[no-untyped-def]
+        return b"abc"
+
+    async def delete(blob):  # type: ignore[no-untyped-def]
+        deleted.append(blob)
+
+    monkeypatch.setattr(store, "_staging_properties", properties)
+    monkeypatch.setattr(store, "_download", download)
+    monkeypatch.setattr(store, "_download_verified", download)
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+    monkeypatch.setattr(store, "_delete_if_exists", delete)
+
+    locator = await store.commit_original(staged, "rev_task5_race")
+
+    assert str(locator).startswith("athena-originals/revisions/rev_task5_race/")
+    assert deleted == [source]
+    assert "etag" not in copy_conditions
+    assert getattr(copy_conditions["match_condition"], "name", None) == "IfMissing"
+
+
+@pytest.mark.asyncio
+async def test_uncertain_copy_without_owned_copy_id_never_deletes_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the returned copy ID the adapter cannot prove ownership of a final Blob."""
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    deleted: list[object] = []
+    destination = object()
+
+    async def delete(blob):  # type: ignore[no-untyped-def]
+        deleted.append(blob)
+
+    monkeypatch.setattr(store, "_delete_if_exists", delete)
+
+    await store._abort_and_delete(destination, None)  # type: ignore[arg-type]
+
+    assert deleted == []
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_cross_revision_locator_before_provider_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A corrupted ledger locator must never authorize deleting another revision's Blob."""
+    blob = _BlobDouble()
+    store = _store_with_double(monkeypatch, blob)
+    target = DeletionTarget(
+        "doc_a",
+        "rev_expected",
+        (),
+        (ArtifactLocator("athena-artifacts/revisions/rev_other/normalized-v1.json"),),
+    )
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store.delete_revision_artifacts(target)
+
+    assert blob.delete_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_scavenger_list_page_uses_deadline_cancel_and_terminal_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Async paging is an SDK await and cannot bypass the common terminal deadline path."""
+
+    class Pages:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def __aiter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __anext__(self):  # type: ignore[no-untyped-def]
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise StopAsyncIteration from None
+            raise StopAsyncIteration
+
+    pages = Pages()
+
+    class Container:
+        def list_blobs(self, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            return pages
+
+    class Service(_ServiceDouble):
+        def get_container_client(self, name: str) -> Container:
+            del name
+            return Container()
+
+    service = Service(_BlobDouble())
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    store = AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(
+            connection_string=SecretStr("UseDevelopmentStorage=true"),
+            operation_timeout_seconds=0.01,
+        )
+    )
+
+    with pytest.raises(ArtifactIntegrityError, match="deadline"):
+        await store.scavenge_staging(
+            now=datetime.now(timezone.utc),
+            visible_staging_keys=frozenset(),
+        )
+
+    assert pages.cancelled

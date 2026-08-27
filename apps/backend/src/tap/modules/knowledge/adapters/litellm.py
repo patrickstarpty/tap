@@ -15,6 +15,7 @@ from uuid import uuid4
 import httpx
 
 from tap.modules.knowledge.domain.models import Evidence, RevisionKind, SourceRevisionRef
+from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.errors import ModelUnavailable
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
@@ -205,11 +206,9 @@ class LiteLLMAdapter:
             or any(not isinstance(text, str) or not text for text in texts)
         ):
             raise ModelUnavailable("embedding batch is outside the fixed bounds")
-        try:
-            text_bytes = sum(len(text.encode("utf-8")) for text in texts)
-        except UnicodeEncodeError as error:
-            raise ModelUnavailable("embedding batch is not valid UTF-8") from error
-        if text_bytes > _MAX_EMBEDDING_REQUEST_BYTES:
+        if self._embedding_request_size(texts) > min(
+            self._config.max_request_bytes, _MAX_EMBEDDING_REQUEST_BYTES
+        ):
             raise ModelUnavailable("embedding batch exceeds the byte bound")
 
         loop = asyncio.get_running_loop()
@@ -233,6 +232,73 @@ class LiteLLMAdapter:
                 return result
         except TimeoutError as error:
             raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
+
+    async def embed_documents(
+        self,
+        texts: tuple[str, ...],
+        *,
+        model_alias: str,
+        chunk_ids: tuple[str, ...],
+    ) -> EmbeddingArtifact:
+        """Implement the ingestion port with exact request-size and identity batching."""
+
+        if model_alias != _ATHENA_EMBEDDING_ALIAS or model_alias != self.embedding_model_id:
+            raise ModelUnavailable("the ingestion embedding route is not configured")
+        if (
+            not isinstance(texts, tuple)
+            or not 1 <= len(texts) <= 10_000
+            or any(not isinstance(text, str) or not text for text in texts)
+            or not isinstance(chunk_ids, tuple)
+            or len(chunk_ids) != len(texts)
+            or len(set(chunk_ids)) != len(chunk_ids)
+            or any(not isinstance(chunk_id, str) or not chunk_id for chunk_id in chunk_ids)
+        ):
+            raise ModelUnavailable("embedding document input is outside the fixed bounds")
+
+        request_bound = min(self._config.max_request_bytes, _MAX_EMBEDDING_REQUEST_BYTES)
+        batches: list[tuple[str, ...]] = []
+        pending: list[str] = []
+        for text in texts:
+            candidate = tuple((*pending, text))
+            if (
+                len(candidate) <= _MAX_EMBEDDING_BATCH
+                and self._embedding_request_size(candidate) <= request_bound
+            ):
+                pending.append(text)
+                continue
+            if not pending or self._embedding_request_size((text,)) > request_bound:
+                raise ModelUnavailable("one embedding input exceeds the byte bound")
+            batches.append(tuple(pending))
+            pending = [text]
+        if pending:
+            batches.append(tuple(pending))
+
+        vectors: list[tuple[float, ...]] = []
+        for batch in batches:
+            vectors.extend(item.vector for item in await self.embed_many(batch))
+        return EmbeddingArtifact(
+            model_alias=model_alias,
+            dimension=self.embedding_dimension,
+            vectors=tuple(vectors),
+            chunk_ids=chunk_ids,
+        )
+
+    def _embedding_request_size(self, texts: tuple[str, ...]) -> int:
+        try:
+            return len(
+                json.dumps(
+                    {
+                        "model": _ATHENA_EMBEDDING_ALIAS,
+                        "input": list(texts),
+                        "dimensions": self._config.embedding_dimension,
+                    },
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+        except (TypeError, UnicodeEncodeError, ValueError) as error:
+            raise ModelUnavailable("embedding batch is not valid UTF-8") from error
 
     async def answer(
         self,
@@ -658,7 +724,7 @@ def _embedding_usage(
     raw_cost: str | None,
 ) -> EmbeddingUsage:
     usage = body.get("usage")
-    if not isinstance(usage, dict):
+    if not isinstance(usage, dict) or set(usage) != {"prompt_tokens", "total_tokens"}:
         raise ValueError("embedding usage must be an object")
     prompt_tokens = usage.get("prompt_tokens")
     total_tokens = usage.get("total_tokens")

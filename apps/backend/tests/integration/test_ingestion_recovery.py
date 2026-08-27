@@ -13,7 +13,14 @@ from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application import ingestion
 from tap.modules.knowledge.application.ingestion import IngestionWorker
-from tap.modules.knowledge.domain.documents import ChunkDraft, DocumentId
+from tap.modules.knowledge.domain.documents import (
+    ChunkDraft,
+    DocumentId,
+    RevisionId,
+    canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+)
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     EmbeddingArtifact,
@@ -51,25 +58,13 @@ async def _clean(engine) -> None:  # type: ignore[no-untyped-def]
 
 
 class DurableArtifacts:
-    def __init__(self, embeddings: EmbeddingArtifact) -> None:
+    def __init__(self, embeddings: EmbeddingArtifact, chunk: ChunkDraft) -> None:
         self.embeddings = embeddings
+        self.chunk = chunk
 
     async def read_chunks(self, locator):  # type: ignore[no-untyped-def]
-        from tap.modules.knowledge.domain.documents import ChunkDraft, DocumentId
-
         del locator
-        return (
-            ChunkDraft(
-                chunk_id="chunk-real-recovery",  # type: ignore[arg-type]
-                logical_chunk_id="logical-real-recovery",  # type: ignore[arg-type]
-                root_id=DocumentId(self.document_id),
-                parent_id=None,
-                content="durable fact",
-                anchor_json='{"blockId":"b-1"}',
-                source_content_hash="sha256:" + "a" * 64,
-                chunk_content_hash="sha256:" + "b" * 64,
-            ),
-        )
+        return (self.chunk,)
 
     async def read_embeddings(self, locator):  # type: ignore[no-untyped-def]
         del locator
@@ -91,7 +86,10 @@ class NeverCalled:
         self.calls += 1
         raise AssertionError("completed chunk stage was repeated")
 
-    async def embed_documents(self, texts, *, model_alias):  # type: ignore[no-untyped-def]
+    async def embed_documents(  # type: ignore[no-untyped-def]
+        self, texts, *, model_alias, chunk_ids
+    ):
+        del texts, model_alias, chunk_ids
         self.calls += 1
         raise AssertionError("completed embedding stage was repeated")
 
@@ -234,15 +232,28 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                     normalized_locator=ArtifactLocator("artifact:normalized"),
                 )
             )
+            content = "durable fact"
+            anchor_json = '{"blockId":"b-1"}'
+            chunk_hash = canonical_sha256(content.encode("utf-8"))
+            chunk_identity = str(
+                chunk_id_for(
+                    RevisionId(reservation.revision_id),
+                    anchor_json,
+                    chunk_hash,
+                )
+            )
+            logical_identity = str(
+                logical_chunk_id_for(DocumentId(reservation.document_id), anchor_json)
+            )
             manifest = (
                 ManifestChunk(
-                    chunk_id="chunk-real-recovery",
-                    logical_chunk_id="logical-real-recovery",
+                    chunk_id=chunk_identity,
+                    logical_chunk_id=logical_identity,
                     ordinal=0,
                     root_id=reservation.document_id,
                     parent_id=None,
-                    anchor_json='{"blockId":"b-1"}',
-                    chunk_content_hash="sha256:" + "b" * 64,
+                    anchor_json=anchor_json,
+                    chunk_content_hash=chunk_hash,
                     embedding_model_version="athena-embedding",
                     index_version="athena-doc-v1",
                 ),
@@ -274,9 +285,25 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                 model_alias="athena-embedding",
                 dimension=3,
                 vectors=((0.0, 1.0, 2.0),),
+                chunk_ids=(manifest[0].chunk_id,),
             )
-            artifacts = DurableArtifacts(embeddings)
-            artifacts.document_id = reservation.document_id
+            artifact_chunk = ChunkDraft(
+                chunk_id=chunk_id_for(
+                    RevisionId(reservation.revision_id),
+                    anchor_json,
+                    chunk_hash,
+                ),
+                logical_chunk_id=logical_chunk_id_for(
+                    DocumentId(reservation.document_id), anchor_json
+                ),
+                root_id=DocumentId(reservation.document_id),
+                parent_id=None,
+                content=content,
+                anchor_json=anchor_json,
+                source_content_hash="sha256:" + "a" * 64,
+                chunk_content_hash=chunk_hash,
+            )
+            artifacts = DurableArtifacts(embeddings, artifact_chunk)
             completed_stage = NeverCalled()
             index = RecordingIndex()
             restarted = IngestionWorker(
@@ -305,7 +332,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
             )
 
             assert completed_stage.calls == 0
-            assert index.rows == {"chunk-real-recovery"}
+            assert index.rows == {chunk_identity}
             record = await repository.get_document(reservation.document_id)  # type: ignore[arg-type]
             assert record is not None
             assert record.chunk_count == 1
@@ -604,15 +631,44 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                     normalized_locator=ArtifactLocator("artifact:normalized"),
                 )
             )
+            content = "durable fact"
+            anchor_json = '{"blockId":"b-1"}'
+            chunk_hash = canonical_sha256(content.encode("utf-8"))
+            chunk_identity = str(
+                chunk_id_for(
+                    RevisionId(reservation.revision_id),
+                    anchor_json,
+                    chunk_hash,
+                )
+            )
+            logical_identity = str(
+                logical_chunk_id_for(DocumentId(reservation.document_id), anchor_json)
+            )
+            artifact_chunk = ChunkDraft(
+                chunk_id=chunk_id_for(
+                    RevisionId(reservation.revision_id),
+                    anchor_json,
+                    chunk_hash,
+                ),
+                logical_chunk_id=logical_chunk_id_for(
+                    DocumentId(reservation.document_id), anchor_json
+                ),
+                root_id=DocumentId(reservation.document_id),
+                parent_id=None,
+                content=content,
+                anchor_json=anchor_json,
+                source_content_hash="sha256:" + "a" * 64,
+                chunk_content_hash=chunk_hash,
+            )
             manifest = (
                 ManifestChunk(
-                    chunk_id="chunk-real-recovery",
-                    logical_chunk_id="logical-real-recovery",
+                    chunk_id=chunk_identity,
+                    logical_chunk_id=logical_identity,
                     ordinal=0,
                     root_id=reservation.document_id,
                     parent_id=None,
-                    anchor_json='{"blockId":"b-1"}',
-                    chunk_content_hash="sha256:" + "b" * 64,
+                    anchor_json=anchor_json,
+                    chunk_content_hash=chunk_hash,
                     embedding_model_version="athena-embedding",
                     index_version="athena-doc-v1",
                 ),
@@ -648,9 +704,14 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
             await repository.retry_failed(DocumentId(reservation.document_id), datetime.now())
 
             artifacts = DurableArtifacts(
-                EmbeddingArtifact("athena-embedding", 3, ((0.0, 1.0, 2.0),))
+                EmbeddingArtifact(
+                    "athena-embedding",
+                    3,
+                    ((0.0, 1.0, 2.0),),
+                    (manifest[0].chunk_id,),
+                ),
+                artifact_chunk,
             )
-            artifacts.document_id = reservation.document_id
             completed_stage = NeverCalled()
             index = BlockingIndex()
             publisher = IngestionWorker(
@@ -706,7 +767,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
             publish_result = await publish_task
             assert publish_result.lease_lost == 1
             assert index.settled.is_set()
-            assert index.rows == {"chunk-real-recovery"}
+            assert index.rows == {chunk_identity}
 
             delete_result = await deleting_worker.run_once(limit=1)
             assert delete_result.deleted == 1

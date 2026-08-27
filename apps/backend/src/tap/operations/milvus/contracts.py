@@ -163,7 +163,21 @@ class MilvusDocProvisioner(MilvusProvisioner, Protocol):
 
     async def describe_collection(self, name: str) -> Mapping[str, object] | object: ...
 
+    async def describe_collection_schema(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> Mapping[str, object] | object: ...
+
+    async def create_indexes(
+        self,
+        name: str,
+        schema: Mapping[str, object] | None = None,
+    ) -> None: ...
+
     async def list_collections(self) -> tuple[str, ...]: ...
+
+    async def collection_aliases(self, name: str) -> tuple[str, ...]: ...
 
     async def close(self) -> None: ...
 

@@ -436,6 +436,7 @@ class EmbeddingArtifact:
     model_alias: str
     dimension: int
     vectors: tuple[tuple[float, ...], ...]
+    chunk_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_alias, str) or not self.model_alias:
@@ -444,6 +445,13 @@ class EmbeddingArtifact:
             raise ValueError("embedding dimension must be positive")
         if not isinstance(self.vectors, tuple):
             raise TypeError("embedding vectors must be immutable")
+        if (
+            not isinstance(self.chunk_ids, tuple)
+            or len(self.chunk_ids) != len(self.vectors)
+            or len(set(self.chunk_ids)) != len(self.chunk_ids)
+            or any(not isinstance(chunk_id, str) or not chunk_id for chunk_id in self.chunk_ids)
+        ):
+            raise ValueError("embedding chunk identities must be exact, unique, and ordered")
         for vector in self.vectors:
             if (
                 not isinstance(vector, tuple)
@@ -667,7 +675,11 @@ class DocumentChunker(Protocol):
 
 class DocumentEmbeddingPort(Protocol):
     async def embed_documents(
-        self, texts: tuple[str, ...], *, model_alias: str
+        self,
+        texts: tuple[str, ...],
+        *,
+        model_alias: str,
+        chunk_ids: tuple[str, ...],
     ) -> EmbeddingArtifact: ...
 
 

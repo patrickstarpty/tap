@@ -348,6 +348,31 @@ async def test_embedding_usage_rejects_missing_non_integer_non_finite_and_overfl
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "usage",
+    [
+        {"prompt_tokens": 4},
+        {"total_tokens": 4},
+        {"prompt_tokens": 4, "total_tokens": 4, "provider_extension": 1},
+        {"prompt_tokens": 4, "total_tokens": True},
+        {"prompt_tokens": 4, "total_tokens": -1},
+    ],
+    ids=("missing-total", "missing-prompt", "widened", "boolean-total", "negative-total"),
+)
+async def test_embedding_usage_requires_exact_closed_token_shape(usage: object) -> None:
+    """Missing or widened usage facts must not cross the fixed provider boundary."""
+    body = embedding_response()
+    body["usage"] = usage
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "raw_cost",
     [
         "-0.1",
@@ -950,3 +975,119 @@ async def test_embed_many_requires_exact_athena_embedding_alias() -> None:
             await LiteLLMAdapter(config(), client=client).embed_many(("first",))
 
     assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_embed_documents_partitions_count_and_binds_chunk_order() -> None:
+    """A Task 4 worker must be able to inject the adapter without losing chunk identity."""
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        payload = json.loads(request.content)
+        rows = [
+            {"embedding": [float(index), float(index + 1)], "index": index}
+            for index in reversed(range(len(payload["input"])))
+        ]
+        return httpx.Response(200, json=batch_embedding_response(rows))
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+        max_request_bytes=262_144,
+    )
+    texts = tuple(f"chunk-{index}" for index in range(33))
+    chunk_ids = tuple(f"h_{index:064x}" for index in range(33))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        artifact = await LiteLLMAdapter(fixed, client=client).embed_documents(
+            texts,
+            model_alias="athena-embedding",
+            chunk_ids=chunk_ids,
+        )
+
+    assert [len(json.loads(request.content)["input"]) for request in requests] == [32, 1]
+    assert all(len(request.content) <= 262_144 for request in requests)
+    assert artifact.model_alias == "athena-embedding"
+    assert artifact.dimension == 2
+    assert artifact.chunk_ids == chunk_ids
+    assert artifact.vectors[0] == (0.0, 1.0)
+    assert artifact.vectors[31] == (31.0, 32.0)
+    assert artifact.vectors[32] == (0.0, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_embed_documents_partitions_by_complete_encoded_request_size() -> None:
+    """Summing text bytes alone would emit an oversized JSON request for legal inputs."""
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=batch_embedding_response([{"embedding": [0.25, 0.5], "index": 0}]),
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+        max_request_bytes=262_144,
+    )
+    texts = ("a" * 140_000, "b" * 140_000)
+    chunk_ids = ("h_" + "1" * 64, "h_" + "2" * 64)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        artifact = await LiteLLMAdapter(fixed, client=client).embed_documents(
+            texts,
+            model_alias="athena-embedding",
+            chunk_ids=chunk_ids,
+        )
+
+    assert len(requests) == 2
+    assert all(len(request.content) <= 262_144 for request in requests)
+    assert artifact.chunk_ids == chunk_ids
+    assert len(artifact.vectors) == 2
+
+
+@pytest.mark.asyncio
+async def test_embed_documents_applies_deadline_per_batch_not_whole_document() -> None:
+    """A legal second batch must not inherit the first batch's spent request deadline."""
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+        count = len(json.loads(request.content)["input"])
+        return httpx.Response(
+            200,
+            json=batch_embedding_response(
+                [
+                    {"embedding": [float(index), float(index + 1)], "index": index}
+                    for index in range(count)
+                ]
+            ),
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+        deadline_seconds=0.03,
+        max_request_bytes=262_144,
+    )
+    texts = tuple(f"chunk-{index}" for index in range(33))
+    chunk_ids = tuple(f"h_{index:064x}" for index in range(33))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        artifact = await LiteLLMAdapter(fixed, client=client).embed_documents(
+            texts,
+            model_alias="athena-embedding",
+            chunk_ids=chunk_ids,
+        )
+
+    assert calls == 2
+    assert artifact.chunk_ids == chunk_ids
+    assert len(artifact.vectors) == 33

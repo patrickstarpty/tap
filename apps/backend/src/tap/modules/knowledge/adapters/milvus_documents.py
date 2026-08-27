@@ -28,6 +28,10 @@ from tap.modules.knowledge.ports.errors import (
     IndexReconciliationFailed,
     IndexUnavailable,
 )
+from tap.modules.knowledge.ports.projection import (
+    ProjectionMutationCoordinator,
+    ProjectionMutationLease,
+)
 from tap.operations.milvus.async_call import await_task_terminal
 from tap.operations.milvus.contracts import (
     READER_TARGET_PRIVILEGES,
@@ -70,35 +74,6 @@ _DOC_READBACK_FIELDS = (
     "source_id",
     "source_type",
     "physical_collection",
-)
-_ROW_FIELDS = (
-    "chunk_id",
-    "logical_chunk_id",
-    "root_id",
-    "parent_id",
-    "title",
-    "content",
-    "content_role",
-    "tenant_id",
-    "project_id",
-    "allowed_group_ids",
-    "classification_rank",
-    "environment",
-    "deleted",
-    "index_family",
-    "physical_collection",
-    "corpus_version",
-    "schema_version",
-    "embedding_model_version",
-    "source_id",
-    "source_type",
-    "revision_kind",
-    "source_revision",
-    "source_content_hash",
-    "chunk_content_hash",
-    "anchor_json",
-    "derived_from_chunk_ids",
-    "dense_vector",
 )
 
 
@@ -183,6 +158,7 @@ class MilvusDocumentIndex:
         provisioner: MilvusDocProvisioner,
         writer: MilvusWriter,
         reader: MilvusDocReader,
+        coordinator: ProjectionMutationCoordinator,
     ) -> None:
         if not isinstance(config, AthenaMilvusConfig):
             raise TypeError("Athena index requires closed configuration")
@@ -190,24 +166,12 @@ class MilvusDocumentIndex:
         self._provisioner = provisioner
         self._writer = writer
         self._reader = reader
+        self._coordinator = coordinator
 
     async def ensure_target(self) -> IndexTargetReceipt:
         try:
-            physical = self._config.physical_collection
-            alias_target = await self._provisioner.describe_alias(self._config.alias)
-            if alias_target is None:
-                if not await self._provisioner.collection_exists(physical):
-                    await self._provisioner.create_collection(physical, self._schema())
-                    await self._provisioner.create_indexes(physical)
-                await self._ensure_exact_grants(physical)
-                await self._provisioner.create_alias(self._config.alias, physical)
-                alias_target = physical
-            self._require_target_name(alias_target)
-            if not await self._provisioner.collection_exists(alias_target):
-                raise IndexUnavailable("Athena alias target does not exist")
-            await self._ensure_exact_grants(alias_target)
-            await self._require_descriptor(alias_target)
-            return IndexTargetReceipt(alias_target, self._config.alias)
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                return await self._ensure_target_locked(authority)
         except asyncio.CancelledError:
             raise
         except IndexUnavailable:
@@ -223,46 +187,52 @@ class MilvusDocumentIndex:
         *,
         index_version: str,
     ) -> IndexReceipt:
-        physical = await self._current_target()
-        rows = self._revision_rows(physical, work, chunks, embeddings, index_version)
         try:
-            await self._require_not_fenced(physical, work.revision_id)
-            for batch in _batches(rows, _UPSERT_BATCH):
-                await self._writer.upsert(physical, batch)
-            await self._writer.flush(physical)
-            if await self._is_fenced(physical, work.revision_id):
-                await self._delete_ids(physical, tuple(str(item.chunk_id) for item in chunks))
-                raise IndexFenced("Athena revision has a durable deletion fence")
-            await self._require_revision_parity(physical, work, chunks)
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                physical = await self._current_target_locked(authority)
+                rows = self._revision_rows(physical, work, chunks, embeddings, index_version)
+                await self._require_not_fenced(authority, physical, work.revision_id)
+                for batch in _batches(rows, _UPSERT_BATCH):
+                    await self._writer.upsert(physical, batch)
+                await self._writer.flush(physical)
+                if await self._is_fenced(authority, physical, work.revision_id):
+                    await self._delete_ids(
+                        physical,
+                        tuple(str(item.chunk_id) for item in chunks),
+                    )
+                    raise IndexFenced("Athena revision has a durable deletion fence")
+                await self._require_revision_parity(physical, work, chunks)
         except asyncio.CancelledError:
             raise
         except (IndexFenced, IndexReconciliationFailed):
             raise
         except Exception as error:
             raise IndexUnavailable("Athena Milvus upsert failed") from error
-        return IndexReceipt(work.revision_id, index_version, len(rows))
+        return IndexReceipt(work.revision_id, index_version, len(chunks))
 
     async def fence_revision(self, target: DeletionTarget) -> None:
-        physical = await self._current_target()
-        row = self._fence_row(physical, target)
         try:
-            await self._writer.upsert(physical, (row,))
-            await self._writer.flush(physical)
-            persisted = await self._reader.query_persisted_rows(
-                physical,
-                _eq("chunk_id", str(row["chunk_id"])),
-                ("chunk_id", "source_type", "source_id"),
-                2,
-            )
-            if persisted != (
-                {
-                    "chunk_id": row["chunk_id"],
-                    "source_type": "athena_fence",
-                    "source_id": target.document_id,
-                },
-            ):
-                raise IndexReconciliationFailed("Athena deletion fence did not persist exactly")
-            await self._delete_ids(physical, target.chunk_ids)
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                await authority.record_fence(target.revision_id, target.document_id)
+                physical = await self._current_target_locked(authority)
+                row = self._fence_row(physical, target)
+                await self._writer.upsert(physical, (row,))
+                await self._writer.flush(physical)
+                persisted = await self._reader.query_persisted_rows(
+                    physical,
+                    _eq("chunk_id", str(row["chunk_id"])),
+                    ("chunk_id", "source_type", "source_id"),
+                    2,
+                )
+                if persisted != (
+                    {
+                        "chunk_id": row["chunk_id"],
+                        "source_type": "athena_fence",
+                        "source_id": target.document_id,
+                    },
+                ):
+                    raise IndexReconciliationFailed("Athena deletion fence did not persist exactly")
+                await self._delete_ids(physical, target.chunk_ids)
         except asyncio.CancelledError:
             raise
         except IndexReconciliationFailed:
@@ -271,11 +241,12 @@ class MilvusDocumentIndex:
             raise IndexUnavailable("Athena Milvus fence failed") from error
 
     async def delete_revision(self, target: DeletionTarget) -> None:
-        physical = await self._current_target()
         try:
-            await self._delete_ids(physical, target.chunk_ids)
-            if await self.count_revision(target):
-                raise IndexReconciliationFailed("Athena revision delete negative probe failed")
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                physical = await self._current_target_locked(authority)
+                await self._delete_ids(physical, target.chunk_ids)
+                if await self._count_revision_locked(physical, target):
+                    raise IndexReconciliationFailed("Athena revision delete negative probe failed")
         except asyncio.CancelledError:
             raise
         except IndexReconciliationFailed:
@@ -284,106 +255,41 @@ class MilvusDocumentIndex:
             raise IndexUnavailable("Athena Milvus delete failed") from error
 
     async def count_revision(self, target: DeletionTarget) -> int:
-        physical = await self._current_target()
         try:
-            rows = await self._reader.query_persisted_rows(
-                physical,
-                _eq("source_revision", target.revision_id),
-                ("chunk_id",),
-                _QUERY_LIMIT,
-            )
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                physical = await self._current_target_locked(authority)
+                return await self._count_revision_locked(physical, target)
         except asyncio.CancelledError:
             raise
         except Exception as error:
             raise IndexUnavailable("Athena Milvus count failed") from error
-        if len(rows) > MAX_CHUNKS_PER_DOCUMENT:
-            raise IndexReconciliationFailed("Athena revision exceeds the closed chunk bound")
-        return len(rows)
+        raise AssertionError("unreachable")
 
     async def rebuild(
         self,
         records: tuple[ReadyRevisionArtifacts, ...],
     ) -> RebuildReceipt:
-        if not isinstance(records, tuple) or not records:
-            raise ValueError("Athena rebuild requires at least one ready revision")
-        old = await self._current_target()
-        fresh = f"{self._config.physical_collection}_{secrets.token_hex(6)}"
-        created = False
-        switched = False
+        if not isinstance(records, tuple):
+            raise ValueError("Athena rebuild requires a closed ready-revision snapshot")
         try:
-            await self._provisioner.create_collection(fresh, self._schema())
-            created = True
-            await self._provisioner.create_indexes(fresh)
-            fence_rows = await self._reader.query_persisted_rows(
-                old,
-                'source_type == "athena_fence"',
-                _ROW_FIELDS,
-                _QUERY_LIMIT,
-            )
-            if fence_rows:
-                remapped_fences = tuple({**row, "physical_collection": fresh} for row in fence_rows)
-                for fence_batch in _batches(remapped_fences, _UPSERT_BATCH):
-                    await self._writer.upsert(fresh, fence_batch)
-            expected_ids: set[str] = set()
-            for record in records:
-                rows = self._revision_rows(
-                    fresh,
-                    record.work,
-                    record.chunks,
-                    record.embeddings,
-                    record.index_version,
-                )
-                row_ids = {str(row["chunk_id"]) for row in rows}
-                if expected_ids & row_ids:
-                    raise ValueError("Athena rebuild contains duplicate chunk identities")
-                expected_ids.update(row_ids)
-                for revision_batch in _batches(rows, _UPSERT_BATCH):
-                    await self._writer.upsert(fresh, revision_batch)
-            await self._writer.flush(fresh)
-            # The segregated reader intentionally has no wildcard data grant. Grant the
-            # unaliased fresh target before its strong readback; it remains undiscoverable
-            # through the stable alias until every parity check succeeds.
-            await self._ensure_exact_grants(fresh)
-            await self._require_fence_parity(fresh, fence_rows)
-            for record in records:
-                await self._require_revision_parity(fresh, record.work, record.chunks)
-            await self._require_descriptor(fresh)
-            await self._provisioner.alter_alias(self._config.alias, fresh)
-            switched = True
-            if await self._provisioner.describe_alias(self._config.alias) != fresh:
-                raise IndexReconciliationFailed("Athena alias switch did not persist")
-        except asyncio.CancelledError as cancellation:
-            cleanup = await self._settle_rebuild_rollback(old, fresh, created, switched)
-            cancellation.add_note("Athena rebuild cleanup facts: " + ",".join(cleanup))
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                return await self._rebuild_locked(authority, records)
+        except asyncio.CancelledError:
+            raise
+        except RebuildRejected:
             raise
         except Exception as error:
-            cleanup = await self._settle_rebuild_rollback(old, fresh, created, switched)
-            rejected = RebuildRejected(cleanup)
-            raise rejected from error
-
-        cleanup_facts: list[str] = []
-        if old != fresh:
-            try:
-                await self._provisioner.revoke_collection(old, "tap_reader")
-                await self._provisioner.revoke_collection(old, "tap_writer")
-                cleanup_facts.append(f"unaliased_retained_physical:{old}")
-            except asyncio.CancelledError as cancellation:
-                cleanup = await self._settle_rebuild_rollback(old, fresh, True, True)
-                cancellation.add_note("Athena rebuild cleanup facts: " + ",".join(cleanup))
-                raise
-            except Exception:
-                cleanup_facts.append(f"retire_pending:{old}")
-        return RebuildReceipt(
-            physical_collection=fresh,
-            alias=self._config.alias,
-            row_count=len(expected_ids),
-            cleanup_facts=tuple(cleanup_facts),
-        )
+            raise RebuildRejected(("cleanup_unknown:preflight",)) from error
 
     async def close(self) -> None:
         seen: set[int] = set()
         errors: list[BaseException] = []
-        for client in (self._reader, self._writer, self._provisioner):
+        for client in (
+            self._reader,
+            self._writer,
+            self._provisioner,
+            self._coordinator,
+        ):
             if id(client) not in seen:
                 seen.add(id(client))
                 try:
@@ -396,6 +302,206 @@ class MilvusDocumentIndex:
                     raise recorded_error
             raise errors[0]
 
+    async def _ensure_target_locked(
+        self,
+        authority: ProjectionMutationLease,
+    ) -> IndexTargetReceipt:
+        physical = self._config.physical_collection
+        alias_target = await self._provisioner.describe_alias(self._config.alias)
+        if alias_target is None:
+            if not await self._provisioner.collection_exists(physical):
+                await self._provisioner.create_collection(physical, self._schema())
+            await self._require_base_descriptor(physical)
+            try:
+                await self._require_descriptor(physical)
+            except Exception:
+                await self._provisioner.create_indexes(physical, self._schema())
+                await self._require_descriptor(physical)
+            await self._ensure_exact_grants(physical)
+            try:
+                await self._provisioner.create_alias(self._config.alias, physical)
+            except Exception:
+                if await self._provisioner.describe_alias(self._config.alias) != physical:
+                    raise
+            alias_target = await self._provisioner.describe_alias(self._config.alias)
+        self._require_target_name(alias_target)
+        assert isinstance(alias_target, str)
+        if not await self._provisioner.collection_exists(alias_target):
+            raise IndexUnavailable("Athena alias target does not exist")
+        await self._require_descriptor(alias_target)
+        await self._ensure_exact_grants(alias_target)
+        await self._synchronize_authority(authority, alias_target)
+        await self._reconcile_cleanup_locked(authority, alias_target, limit=1)
+        return IndexTargetReceipt(alias_target, self._config.alias)
+
+    async def _synchronize_authority(
+        self,
+        authority: ProjectionMutationLease,
+        actual_physical: str,
+    ) -> None:
+        _, recorded = await authority.state()
+        if recorded is None:
+            _, initialized = await authority.initialize(actual_physical)
+            if initialized != actual_physical:
+                raise IndexUnavailable("Athena projection generation initialization conflicted")
+            return
+        self._require_target_name(recorded)
+        if recorded != actual_physical:
+            await authority.enqueue_cleanup(recorded)
+            await authority.activate(actual_physical)
+            await authority.complete_cleanup(actual_physical)
+
+    async def _current_target_locked(self, authority: ProjectionMutationLease) -> str:
+        target = await self._provisioner.describe_alias(self._config.alias)
+        if target is None:
+            target = (await self._ensure_target_locked(authority)).physical_collection
+        self._require_target_name(target)
+        assert isinstance(target, str)
+        await self._require_descriptor(target)
+        await self._synchronize_authority(authority, target)
+        await self._reconcile_cleanup_locked(authority, target, limit=1)
+        return target
+
+    async def _count_revision_locked(
+        self,
+        physical: str,
+        target: DeletionTarget,
+    ) -> int:
+        rows = await self._reader.query_persisted_rows(
+            physical,
+            _eq("source_revision", target.revision_id),
+            ("chunk_id",),
+            _QUERY_LIMIT,
+        )
+        if len(rows) > MAX_CHUNKS_PER_DOCUMENT:
+            raise IndexReconciliationFailed("Athena revision exceeds the closed chunk bound")
+        return len(rows)
+
+    async def _reconcile_cleanup_locked(
+        self,
+        authority: ProjectionMutationLease,
+        current: str,
+        *,
+        limit: int,
+    ) -> tuple[str, ...]:
+        facts: list[str] = []
+        for physical in await authority.pending_cleanup(limit):
+            self._require_target_name(physical)
+            if physical == current:
+                await authority.complete_cleanup(physical)
+                continue
+            if await self._provisioner.collection_aliases(physical):
+                facts.append(f"cleanup_still_aliased:{physical}")
+                continue
+            if await self._provisioner.collection_exists(physical):
+                await self._provisioner.revoke_collection(physical, "tap_reader")
+                await self._provisioner.revoke_collection(physical, "tap_writer")
+                await self._provisioner.drop_collection(physical)
+            await authority.complete_cleanup(physical)
+            facts.append(f"dropped_owned_physical:{physical}")
+        return tuple(facts)
+
+    async def _rebuild_locked(
+        self,
+        authority: ProjectionMutationLease,
+        records: tuple[ReadyRevisionArtifacts, ...],
+    ) -> RebuildReceipt:
+        old = await self._current_target_locked(authority)
+        fresh = f"{self._config.physical_collection}_{secrets.token_hex(6)}"
+        created = False
+        await authority.enqueue_cleanup(fresh)
+        try:
+            await self._provisioner.create_collection(fresh, self._schema())
+            created = True
+            await self._require_base_descriptor(fresh)
+            await self._provisioner.create_indexes(fresh, self._schema())
+            await self._require_descriptor(fresh)
+
+            old_fence_rows = await self._reader.query_persisted_rows(
+                old,
+                'source_type == "athena_fence"',
+                ("source_revision", "source_id", "source_type"),
+                _QUERY_LIMIT,
+            )
+            if len(old_fence_rows) >= _QUERY_LIMIT:
+                raise IndexReconciliationFailed("Athena durable fence snapshot exceeds its bound")
+            for row in old_fence_rows:
+                revision = row.get("source_revision")
+                document_id = row.get("source_id")
+                if (
+                    not isinstance(revision, str)
+                    or not revision.startswith("fence:")
+                    or not isinstance(document_id, str)
+                ):
+                    raise IndexReconciliationFailed("Athena deletion fence row is malformed")
+                await authority.record_fence(revision.removeprefix("fence:"), document_id)
+
+            durable_fences = await authority.fences(_QUERY_LIMIT)
+            if len(durable_fences) >= _QUERY_LIMIT:
+                raise IndexReconciliationFailed("Athena durable fence ledger exceeds its bound")
+            fence_rows = tuple(
+                self._fence_row(
+                    fresh,
+                    DeletionTarget(document_id, revision_id, (), ()),
+                )
+                for revision_id, document_id in durable_fences
+            )
+            for fence_batch in _batches(fence_rows, _UPSERT_BATCH):
+                await self._writer.upsert(fresh, fence_batch)
+
+            active_records: list[ReadyRevisionArtifacts] = []
+            expected_ids: set[str] = set()
+            for record in records:
+                if await authority.is_fenced(record.work.revision_id):
+                    continue
+                rows = self._revision_rows(
+                    fresh,
+                    record.work,
+                    record.chunks,
+                    record.embeddings,
+                    record.index_version,
+                )
+                row_ids = {str(row["chunk_id"]) for row in rows}
+                if expected_ids & row_ids:
+                    raise ValueError("Athena rebuild contains duplicate chunk identities")
+                expected_ids.update(row_ids)
+                active_records.append(record)
+                for revision_batch in _batches(rows, _UPSERT_BATCH):
+                    await self._writer.upsert(fresh, revision_batch)
+            await self._writer.flush(fresh)
+            await self._ensure_exact_grants(fresh)
+            await self._require_fence_parity(fresh, fence_rows)
+            for record in active_records:
+                await self._require_revision_parity(fresh, record.work, record.chunks)
+
+            try:
+                await self._provisioner.alter_alias(self._config.alias, fresh)
+            except Exception:
+                if await self._provisioner.describe_alias(self._config.alias) != fresh:
+                    raise
+            if await self._provisioner.describe_alias(self._config.alias) != fresh:
+                raise IndexReconciliationFailed("Athena alias switch did not persist")
+
+            await self._provisioner.revoke_collection(old, "tap_reader")
+            await self._provisioner.revoke_collection(old, "tap_writer")
+            await authority.enqueue_cleanup(old)
+            await authority.activate(fresh)
+            await authority.complete_cleanup(fresh)
+        except asyncio.CancelledError as cancellation:
+            cleanup = await self._settle_rebuild_rollback(authority, old, fresh, created)
+            cancellation.add_note("Athena rebuild cleanup facts: " + ",".join(cleanup))
+            raise
+        except Exception as error:
+            cleanup = await self._settle_rebuild_rollback(authority, old, fresh, created)
+            raise RebuildRejected(cleanup) from error
+
+        return RebuildReceipt(
+            physical_collection=fresh,
+            alias=self._config.alias,
+            row_count=len(expected_ids),
+            cleanup_facts=(f"cleanup_queued:{old}",),
+        )
+
     def _schema(self) -> dict[str, object]:
         return build_doc_collection_schema(
             DocCollectionMetadata(
@@ -406,14 +512,6 @@ class MilvusDocumentIndex:
                 vector_dimension=self._config.vector_dimension,
             )
         )
-
-    async def _current_target(self) -> str:
-        target = await self._provisioner.describe_alias(self._config.alias)
-        if target is None:
-            target = (await self.ensure_target()).physical_collection
-        self._require_target_name(target)
-        await self._require_descriptor(target)
-        return target
 
     def _require_target_name(self, target: object) -> None:
         if not isinstance(target, str) or not (
@@ -428,6 +526,16 @@ class MilvusDocumentIndex:
 
     async def _require_descriptor(self, physical: str) -> None:
         descriptor = await self._provisioner.describe_collection(physical)
+        self._require_descriptor_value(descriptor)
+
+    async def _require_base_descriptor(self, physical: str) -> None:
+        descriptor = await self._provisioner.describe_collection_schema(
+            physical,
+            self._schema(),
+        )
+        self._require_descriptor_value(descriptor)
+
+    def _require_descriptor_value(self, descriptor: object) -> None:
         expected = (
             SourceFamily.DOC,
             self._config.schema_version,
@@ -478,6 +586,7 @@ class MilvusDocumentIndex:
             or embeddings.model_alias != self._config.embedding_model
             or embeddings.dimension != self._config.vector_dimension
             or len(embeddings.vectors) != len(chunks)
+            or embeddings.chunk_ids != tuple(str(chunk.chunk_id) for chunk in chunks)
             or not isinstance(index_version, str)
             or not 1 <= len(index_version) <= 256
             or not 1 <= len(work.document_id) <= 1_024
@@ -589,11 +698,23 @@ class MilvusDocumentIndex:
             "dense_vector": [0.0] * self._config.vector_dimension,
         }
 
-    async def _require_not_fenced(self, physical: str, revision_id: str) -> None:
-        if await self._is_fenced(physical, revision_id):
+    async def _require_not_fenced(
+        self,
+        authority: ProjectionMutationLease,
+        physical: str,
+        revision_id: str,
+    ) -> None:
+        if await self._is_fenced(authority, physical, revision_id):
             raise IndexFenced("Athena revision has a durable deletion fence")
 
-    async def _is_fenced(self, physical: str, revision_id: str) -> bool:
+    async def _is_fenced(
+        self,
+        authority: ProjectionMutationLease,
+        physical: str,
+        revision_id: str,
+    ) -> bool:
+        if await authority.is_fenced(revision_id):
+            return True
         fence_id = "h_" + hashlib.sha256(revision_id.encode("utf-8")).hexdigest()
         rows = await self._reader.query_persisted_rows(
             physical,
@@ -697,12 +818,12 @@ class MilvusDocumentIndex:
 
     async def _settle_rebuild_rollback(
         self,
+        authority: ProjectionMutationLease,
         old: str,
         fresh: str,
         created: bool,
-        switched: bool,
     ) -> tuple[str, ...]:
-        task = asyncio.create_task(self._rebuild_rollback(old, fresh, created, switched))
+        task = asyncio.create_task(self._rebuild_rollback(authority, old, fresh, created))
         outcome = await await_task_terminal(task)
         if outcome.error is not None or outcome.value is None:
             return (f"cleanup_unknown:{fresh}",)
@@ -710,20 +831,63 @@ class MilvusDocumentIndex:
 
     async def _rebuild_rollback(
         self,
+        authority: ProjectionMutationLease,
         old: str,
         fresh: str,
         created: bool,
-        switched: bool,
     ) -> tuple[str, ...]:
         facts: list[str] = []
-        if switched:
+        alias_target: str | None = None
+        try:
+            alias_target = await self._provisioner.describe_alias(self._config.alias)
+        except Exception:
+            facts.append(f"alias_state_unknown:{self._config.alias}")
+        if alias_target == fresh:
             try:
                 await self._ensure_exact_grants(old)
-                await self._provisioner.alter_alias(self._config.alias, old)
+                try:
+                    await self._provisioner.alter_alias(self._config.alias, old)
+                except Exception:
+                    if await self._provisioner.describe_alias(self._config.alias) != old:
+                        raise
+                if await self._provisioner.describe_alias(self._config.alias) != old:
+                    raise IndexReconciliationFailed("Athena old alias restoration did not persist")
+                alias_target = old
             except Exception:
                 facts.append(f"alias_restore_failed:{old}")
-        if created:
-            facts.append(f"partial_collection:{fresh}")
+        elif alias_target == old:
+            try:
+                await self._ensure_exact_grants(old)
+            except Exception:
+                facts.append(f"old_grants_restore_failed:{old}")
+
+        if alias_target == old:
+            try:
+                await authority.activate(old)
+                await authority.complete_cleanup(old)
+            except Exception:
+                facts.append(f"generation_restore_failed:{old}")
+
+        if created and alias_target != fresh:
+            try:
+                await self._provisioner.revoke_collection(fresh, "tap_reader")
+                await self._provisioner.revoke_collection(fresh, "tap_writer")
+                if await self._provisioner.collection_aliases(fresh):
+                    raise IndexReconciliationFailed(
+                        "Athena owned partial collection is still aliased"
+                    )
+                if await self._provisioner.collection_exists(fresh):
+                    await self._provisioner.drop_collection(fresh)
+                await authority.complete_cleanup(fresh)
+                facts.append(f"dropped_owned_physical:{fresh}")
+            except Exception:
+                await authority.enqueue_cleanup(fresh)
+                facts.append(f"cleanup_pending:{fresh}")
+        elif created:
+            await authority.enqueue_cleanup(fresh)
+            facts.append(f"cleanup_pending:{fresh}")
+        else:
+            await authority.complete_cleanup(fresh)
         return tuple(facts)
 
 

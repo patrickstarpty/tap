@@ -8,20 +8,29 @@ import io
 import json
 import math
 import re
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import Any, cast
 from uuid import uuid4
 
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core import MatchConditions
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceModifiedError,
+    ResourceNotFoundError,
+)
 from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
 from azure.storage.blob.aio import BlobClient, BlobServiceClient
 from pydantic import SecretStr
 
 from tap.modules.knowledge.domain.documents import (
+    PARSER_VERSION,
     BlockKind,
     ChunkDraft,
+    ChunkId,
     DocumentId,
     LogicalChunkId,
     MediaType,
@@ -29,6 +38,9 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedBlock,
     RevisionId,
     canonical_sha256,
+    chunk_id_for,
+    logical_chunk_id_for,
+    revision_id_for,
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
@@ -107,7 +119,13 @@ def artifact_locator(container: str, blob_name: str) -> ArtifactLocator:
 
 def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -> bytes:
     _identity("revision_id", revision_id)
-    if not isinstance(artifact, NormalizedArtifact) or str(artifact.revision_id) != revision_id:
+    if (
+        not isinstance(artifact, NormalizedArtifact)
+        or str(artifact.revision_id) != revision_id
+        or artifact.document_id is None
+        or str(revision_id_for(artifact.document_id, artifact.source_hash, PARSER_VERSION))
+        != revision_id
+    ):
         raise ArtifactIntegrityError("normalized artifact identity does not match revision")
     payload = {
         "blocks": [
@@ -199,12 +217,15 @@ def decode_normalized_artifact(data: bytes, *, expected_revision: str) -> Normal
                     end_offset=_integer(block["endOffset"], minimum=1),
                 )
             )
+        document_id = DocumentId(_text(payload["documentId"], maximum=256))
+        if str(revision_id_for(document_id, source_hash, PARSER_VERSION)) != expected_revision:
+            raise ValueError
         return NormalizedArtifact(
             filename=_text(payload["filename"], maximum=1024),
             media_type=MediaType(_text(payload["mediaType"], maximum=128)),
             source_hash=source_hash,
             blocks=tuple(blocks),
-            document_id=DocumentId(_text(payload["documentId"], maximum=256)),
+            document_id=document_id,
             revision_id=RevisionId(expected_revision),
             schema=_text(payload["normalizedSchema"], maximum=128),
         )
@@ -221,7 +242,7 @@ def encode_chunks_artifact(revision_id: str, chunks: tuple[ChunkDraft, ...]) -> 
     source_hashes = {chunk.source_content_hash for chunk in chunks}
     if len(source_hashes) != 1:
         raise ArtifactIntegrityError("chunk artifact source hash is not exact")
-    payload = b"".join(_canonical_line(_chunk_payload(chunk)) for chunk in chunks)
+    payload = b"".join(_canonical_line(_chunk_payload(chunk, revision_id)) for chunk in chunks)
     header = {
         "itemCount": len(chunks),
         "payloadSha256": canonical_sha256(payload),
@@ -252,7 +273,8 @@ def decode_chunks_artifact(data: bytes, *, expected_revision: str) -> tuple[Chun
         if header["itemCount"] != len(lines) - 1 or not 1 <= len(lines) - 1 <= _MAX_CHUNKS:
             raise ValueError
         chunks = tuple(
-            _chunk_from_payload(_closed_json_line(line), source_hash) for line in lines[1:]
+            _chunk_from_payload(_closed_json_line(line), source_hash, expected_revision)
+            for line in lines[1:]
         )
         return chunks
     except (KeyError, TypeError, ValueError, OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -272,7 +294,9 @@ def encode_embeddings_artifact(
     ):
         raise ArtifactIntegrityError("embedding artifact count is outside the bound")
     payload = b"".join(
-        _canonical_line({"ordinal": index, "vector": list(vector)})
+        _canonical_line(
+            {"chunkId": artifact.chunk_ids[index], "ordinal": index, "vector": list(vector)}
+        )
         for index, vector in enumerate(artifact.vectors)
     )
     header = {
@@ -320,11 +344,13 @@ def decode_embeddings_artifact(data: bytes, *, expected_revision: str) -> Embedd
         if count != len(lines) - 1:
             raise ValueError
         vectors: list[tuple[float, ...]] = []
+        chunk_ids: list[str] = []
         for expected_ordinal, line in enumerate(lines[1:]):
             row = _closed_json_line(line)
-            _exact_keys(row, {"ordinal", "vector"})
+            _exact_keys(row, {"chunkId", "ordinal", "vector"})
             if row["ordinal"] != expected_ordinal:
                 raise ValueError
+            chunk_ids.append(_chunk_identity(row["chunkId"]))
             raw_vector = _sequence(row["vector"], maximum=dimension)
             if len(raw_vector) != dimension:
                 raise ValueError
@@ -333,6 +359,7 @@ def decode_embeddings_artifact(data: bytes, *, expected_revision: str) -> Embedd
             model_alias=_text(header["model"], maximum=256),
             dimension=dimension,
             vectors=tuple(vectors),
+            chunk_ids=tuple(chunk_ids),
         )
     except (KeyError, TypeError, ValueError, OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ArtifactIntegrityError("embedding artifact integrity check failed") from error
@@ -362,42 +389,48 @@ class AzureBlobArtifactStore:
     async def stage_original(self, upload: UploadStream, *, max_bytes: int) -> StagedOriginal:
         if type(max_bytes) is not int or not 1 <= max_bytes <= 25 * 1024 * 1024:
             raise ValueError("original upload byte bound is invalid")
-        data = bytearray()
-        async for part in upload.content:
-            if not isinstance(part, bytes):
-                raise ArtifactIntegrityError("original upload yielded non-bytes")
-            data.extend(part)
-            if len(data) > max_bytes:
-                raise ArtifactIntegrityError("original upload exceeds the byte bound")
-        if not data:
-            raise ArtifactIntegrityError("original upload is empty")
-        digest = canonical_sha256(bytes(data))
-        blob_name = f"staging/{uuid4().hex}"
-        blob = self._blob(ORIGINALS_CONTAINER, blob_name)
-        try:
-            await self._bounded(
-                blob.upload_blob(
-                    bytes(data),
-                    overwrite=False,
-                    metadata={
-                        "blobsha256": digest.removeprefix("sha256:"),
-                        "size": str(len(data)),
-                        "stagedat": datetime.now(timezone.utc).isoformat(),
-                    },
-                    content_settings=ContentSettings(content_type=upload.media_type),
+        digest_builder = sha256()
+        size = 0
+        with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as spool:
+            async for part in upload.content:
+                if not isinstance(part, bytes):
+                    raise ArtifactIntegrityError("original upload yielded non-bytes")
+                if len(part) > max_bytes - size:
+                    raise ArtifactIntegrityError("original upload exceeds the byte bound")
+                size += len(part)
+                digest_builder.update(part)
+                spool.write(part)
+            if size == 0:
+                raise ArtifactIntegrityError("original upload is empty")
+            digest = "sha256:" + digest_builder.hexdigest()
+            blob_name = f"staging/{uuid4().hex}"
+            blob = self._blob(ORIGINALS_CONTAINER, blob_name)
+            spool.seek(0)
+            try:
+                await self._bounded(
+                    blob.upload_blob(
+                        spool,
+                        length=size,
+                        overwrite=False,
+                        metadata={
+                            "blobsha256": digest.removeprefix("sha256:"),
+                            "size": str(size),
+                            "stagedat": datetime.now(timezone.utc).isoformat(),
+                        },
+                        content_settings=ContentSettings(content_type=upload.media_type),
+                    )
                 )
-            )
-        except asyncio.CancelledError:
-            await _terminal_cleanup(blob.delete_blob(delete_snapshots="include"))
-            raise
-        except Exception as error:
-            await _terminal_cleanup(blob.delete_blob(delete_snapshots="include"))
-            raise ArtifactIntegrityError("original staging failed") from error
+            except asyncio.CancelledError:
+                await self._cleanup(blob.delete_blob(delete_snapshots="include"))
+                raise
+            except Exception as error:
+                await self._cleanup(blob.delete_blob(delete_snapshots="include"))
+                raise ArtifactIntegrityError("original staging failed") from error
         return StagedOriginal(
             staging_key=blob_name,
             filename=upload.filename,
             media_type=upload.media_type,
-            size=len(data),
+            size=size,
             source_content_hash=digest,
         )
 
@@ -500,8 +533,13 @@ class AzureBlobArtifactStore:
     async def delete_revision_artifacts(self, target: DeletionTarget) -> None:
         if not isinstance(target, DeletionTarget):
             raise TypeError("artifact deletion requires an exact target")
-        for locator in target.artifact_locators:
-            container, blob_name = _parse_locator(locator)
+        resolved = tuple(_parse_locator(locator) for locator in target.artifact_locators)
+        if any(
+            _revision_from_artifact_name(blob_name) != target.revision_id
+            for _, blob_name in resolved
+        ):
+            raise ArtifactIntegrityError("artifact deletion locator revision does not match")
+        for container, blob_name in resolved:
             await self._delete_if_exists(self._blob(container, blob_name))
 
     async def scavenge_staging(
@@ -518,19 +556,26 @@ class AzureBlobArtifactStore:
         container = self._service.get_container_client(ORIGINALS_CONTAINER)
         scanned = 0
         removed: list[str] = []
-        async with asyncio.timeout(self._config.operation_timeout_seconds):
-            async for item in container.list_blobs(
-                name_starts_with="staging/",
-                include=["metadata"],
-            ):
-                if scanned >= limit:
-                    break
-                scanned += 1
-                age = now - _metadata_staged_at(item.metadata)
-                invisible = item.name not in visible_staging_keys
-                if age >= timedelta(hours=24) or (invisible and age >= timedelta(hours=1)):
-                    await self._delete_if_exists(container.get_blob_client(item.name))
-                    removed.append(item.name)
+        loop = asyncio.get_running_loop()
+        deadline_at = loop.time() + self._config.operation_timeout_seconds
+        pages = container.list_blobs(
+            name_starts_with="staging/",
+            include=["metadata"],
+        ).__aiter__()
+        while scanned < limit:
+            remaining = deadline_at - loop.time()
+            if remaining <= 0:
+                raise ArtifactIntegrityError("Azure Blob provider operation exceeded deadline")
+            try:
+                item = await self._bounded(pages.__anext__(), timeout_seconds=remaining)
+            except StopAsyncIteration:
+                break
+            scanned += 1
+            age = now - _metadata_staged_at(item.metadata)
+            invisible = item.name not in visible_staging_keys
+            if age >= timedelta(hours=24) or (invisible and age >= timedelta(hours=1)):
+                await self._delete_if_exists(container.get_blob_client(item.name))
+                removed.append(item.name)
         return ArtifactScavengeReceipt(scanned=scanned, removed=tuple(removed))
 
     async def container_properties(self, container: str) -> Mapping[str, object]:
@@ -545,8 +590,13 @@ class AzureBlobArtifactStore:
         async with self._close_lock:
             if self._closed:
                 return
-            self._closed = True
-            await self._service.close()
+            try:
+                await self._bounded(self._service.close())
+            finally:
+                self._closed = True
+
+    async def aclose(self) -> None:
+        await self.close()
 
     async def _promote(
         self,
@@ -569,7 +619,7 @@ class AzureBlobArtifactStore:
             raise ArtifactIntegrityError("staged original integrity check failed")
         blob_name = f"revisions/{revision_id}/{digest.removeprefix('sha256:')}"
         destination = self._blob(ORIGINALS_CONTAINER, blob_name)
-        if await destination.exists():
+        if await self._bounded(destination.exists()):
             if await self._download_verified(destination) != await self._download(source):
                 raise ArtifactIntegrityError(
                     "content-addressed original conflicts with existing data"
@@ -580,7 +630,10 @@ class AzureBlobArtifactStore:
         copy_id: str | None = None
         try:
             result = await self._bounded(
-                destination.start_copy_from_url(self._source_copy_url(source))
+                destination.start_copy_from_url(
+                    self._source_copy_url(source),
+                    match_condition=MatchConditions.IfMissing,
+                )
             )
             copy_id = result.get("copy_id") if isinstance(result, Mapping) else None
             await self._wait_copy_terminal(destination)
@@ -589,11 +642,18 @@ class AzureBlobArtifactStore:
                 destination
             ) != await self._download(source):
                 raise ArtifactIntegrityError("promoted original integrity check failed")
+        except (ResourceExistsError, ResourceModifiedError):
+            if await self._download_verified(destination) != await self._download(source):
+                raise ArtifactIntegrityError(
+                    "content-addressed original conflicts with existing data"
+                ) from None
+            await self._delete_if_exists(source)
+            return artifact_locator(ORIGINALS_CONTAINER, blob_name)
         except asyncio.CancelledError as cancellation:
-            await _terminal_cleanup(self._abort_and_delete(destination, copy_id))
+            await self._cleanup(self._abort_and_delete(destination, copy_id))
             raise cancellation
         except Exception as error:
-            await _terminal_cleanup(self._abort_and_delete(destination, copy_id))
+            await self._cleanup(self._abort_and_delete(destination, copy_id))
             if isinstance(error, ArtifactIntegrityError):
                 raise error
             raise ArtifactIntegrityError("server-side original copy failed") from None
@@ -638,12 +698,19 @@ class AzureBlobArtifactStore:
             await asyncio.sleep(self._config.copy_poll_seconds)
 
     async def _abort_and_delete(self, blob: BlobClient, copy_id: str | None) -> None:
+        if copy_id is None:
+            return
         try:
-            properties = await blob.get_blob_properties()
-            if getattr(properties.copy, "status", None) == "pending" and copy_id:
-                await blob.abort_copy(copy_id)
+            properties = await self._bounded(blob.get_blob_properties())
+            actual_copy_id = getattr(properties.copy, "id", None) or getattr(
+                properties.copy, "copy_id", None
+            )
+            if actual_copy_id != copy_id:
+                return
+            if getattr(properties.copy, "status", None) == "pending":
+                await self._bounded(blob.abort_copy(copy_id))
         except Exception:
-            pass
+            return
         await self._delete_if_exists(blob)
 
     async def _write_artifact(
@@ -659,21 +726,25 @@ class AzureBlobArtifactStore:
             await self._bounded(
                 blob.upload_blob(
                     data,
-                    overwrite=True,
+                    overwrite=False,
                     metadata={"blobsha256": digest.removeprefix("sha256:"), "size": str(len(data))},
                     content_settings=ContentSettings(content_type=content_type),
                 )
             )
-            if await self._download_verified(blob) != data:
-                raise ArtifactIntegrityError("artifact Blob readback mismatch")
-        except asyncio.CancelledError as cancellation:
-            await _terminal_cleanup(blob.delete_blob(delete_snapshots="include"))
-            raise cancellation
+        except ResourceExistsError:
+            if await self._download_verified(blob) == data:
+                return artifact_locator(ARTIFACTS_CONTAINER, blob_name)
+            raise ArtifactIntegrityError(
+                "immutable artifact conflicts with existing data"
+            ) from None
+        except asyncio.CancelledError:
+            raise
         except Exception as error:
-            await _terminal_cleanup(blob.delete_blob(delete_snapshots="include"))
             if isinstance(error, ArtifactIntegrityError):
                 raise error
             raise ArtifactIntegrityError("artifact Blob write failed") from error
+        if await self._download_verified(blob) != data:
+            raise ArtifactIntegrityError("artifact Blob readback mismatch")
         return artifact_locator(ARTIFACTS_CONTAINER, blob_name)
 
     async def _download_verified(self, blob: BlobClient) -> bytes:
@@ -709,10 +780,41 @@ class AzureBlobArtifactStore:
         except ResourceNotFoundError:
             return
 
-    async def _bounded(self, operation):  # type: ignore[no-untyped-def]
+    async def _bounded(  # type: ignore[no-untyped-def]
+        self, operation, *, timeout_seconds: float | None = None
+    ):
         self._ensure_open()
-        async with asyncio.timeout(self._config.operation_timeout_seconds):
-            return await operation
+        task = asyncio.ensure_future(operation)
+        timeout = (
+            self._config.operation_timeout_seconds
+            if timeout_seconds is None
+            else min(timeout_seconds, self._config.operation_timeout_seconds)
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                return await asyncio.shield(task)
+        except TimeoutError as error:
+            task.cancel()
+            await _wait_terminal(task)
+            raise ArtifactIntegrityError(
+                "Azure Blob provider operation exceeded deadline"
+            ) from error
+        except asyncio.CancelledError as cancellation:
+            caller = asyncio.current_task()
+            if task.done() and task.cancelled() and caller is not None and not caller.cancelling():
+                await _wait_terminal(task)
+                raise ArtifactIntegrityError(
+                    "Azure Blob provider operation was cancelled"
+                ) from None
+            task.cancel()
+            await _wait_terminal(task)
+            raise cancellation
+
+    async def _cleanup(self, operation):  # type: ignore[no-untyped-def]
+        try:
+            await self._bounded(operation)
+        except (asyncio.CancelledError, Exception):
+            return
 
     def _blob(self, container: str, blob_name: str) -> BlobClient:
         self._ensure_open()
@@ -723,8 +825,7 @@ class AzureBlobArtifactStore:
             raise ArtifactIntegrityError("Azure Blob artifact store is closed")
 
 
-async def _terminal_cleanup(operation: Any) -> None:
-    task = asyncio.create_task(operation)
+async def _wait_terminal(task: asyncio.Future[Any]) -> None:
     while not task.done():
         try:
             await asyncio.shield(task)
@@ -734,11 +835,13 @@ async def _terminal_cleanup(operation: Any) -> None:
             break
     try:
         task.result()
+    except asyncio.CancelledError:
+        pass
     except Exception:
         pass
 
 
-def _chunk_payload(chunk: ChunkDraft) -> dict[str, object]:
+def _chunk_payload(chunk: ChunkDraft, revision_id: str) -> dict[str, object]:
     if not isinstance(chunk, ChunkDraft):
         raise ArtifactIntegrityError("chunk artifact contains an invalid row")
     try:
@@ -751,6 +854,16 @@ def _chunk_payload(chunk: ChunkDraft) -> dict[str, object]:
         or json.dumps(anchor, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         != chunk.anchor_json
         or content_hash != chunk.chunk_content_hash
+        or str(logical_chunk_id_for(chunk.root_id, chunk.anchor_json))
+        != str(chunk.logical_chunk_id)
+        or str(
+            chunk_id_for(
+                RevisionId(revision_id),
+                chunk.anchor_json,
+                chunk.chunk_content_hash,
+            )
+        )
+        != str(chunk.chunk_id)
     ):
         raise ArtifactIntegrityError("chunk artifact provenance is inconsistent")
     return {
@@ -764,7 +877,9 @@ def _chunk_payload(chunk: ChunkDraft) -> dict[str, object]:
     }
 
 
-def _chunk_from_payload(value: Mapping[str, object], source_hash: str) -> ChunkDraft:
+def _chunk_from_payload(
+    value: Mapping[str, object], source_hash: str, expected_revision: str
+) -> ChunkDraft:
     _exact_keys(
         value,
         {
@@ -779,7 +894,7 @@ def _chunk_from_payload(value: Mapping[str, object], source_hash: str) -> ChunkD
     )
     parent = value["parentId"]
     chunk = ChunkDraft(
-        chunk_id=cast(Any, _text(value["chunkId"], maximum=128)),
+        chunk_id=ChunkId(_chunk_identity(value["chunkId"])),
         logical_chunk_id=LogicalChunkId(_text(value["logicalChunkId"], maximum=128)),
         root_id=DocumentId(_text(value["rootId"], maximum=256)),
         parent_id=None if parent is None else _text(parent, maximum=256),
@@ -788,8 +903,15 @@ def _chunk_from_payload(value: Mapping[str, object], source_hash: str) -> ChunkD
         source_content_hash=source_hash,
         chunk_content_hash=_digest(value["chunkContentHash"]),
     )
-    _chunk_payload(chunk)
+    _chunk_payload(chunk, expected_revision)
     return chunk
+
+
+def _chunk_identity(value: object) -> str:
+    text = _text(value, maximum=128)
+    if re.fullmatch(r"h_[0-9a-f]{64}", text) is None:
+        raise ValueError("chunk identity is not canonical")
+    return text
 
 
 def _canonical_line(value: object) -> bytes:

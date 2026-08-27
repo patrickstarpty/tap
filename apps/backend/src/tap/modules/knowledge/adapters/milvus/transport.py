@@ -669,6 +669,67 @@ def _collection_descriptor(
     )
 
 
+def collection_base_descriptor(
+    raw_collection: object,
+    *,
+    expected_collection: str,
+    expected_schema: Mapping[str, object],
+) -> MilvusCollectionDescriptor:
+    """Validate immutable collection facts before repairing any missing indexes."""
+
+    collection = _mapping(raw_collection)
+    if set(collection) - _COLLECTION_FIELDS:
+        raise ValueError("collection description is widened")
+    if collection.get("collection_name") != expected_collection:
+        raise ValueError("collection identity does not match")
+    if (
+        collection.get("auto_id") is not False
+        or collection.get("enable_dynamic_field") is not False
+        or collection.get("enable_namespace") is not False
+        or collection.get("consistency_level_name") != "Strong"
+        or collection.get("description") != expected_schema.get("description")
+    ):
+        raise ValueError("collection base metadata does not match")
+    metadata = _collection_metadata(collection.get("description"))
+    fields = _canonical_fields(collection.get("fields"))
+    expected_fields = [
+        dict(cast(Mapping[str, object], item))
+        for item in cast(Sequence[object], expected_schema.get("fields"))
+    ]
+    if fields != expected_fields:
+        raise ValueError("collection fields do not match the canonical schema")
+    functions = _canonical_functions(collection.get("functions"))
+    if functions != [
+        {
+            "input_field_names": ["content"],
+            "name": "content_bm25_v1",
+            "output_field_names": ["bm25_sparse"],
+            "params": {},
+            "type": 1,
+        }
+    ]:
+        raise ValueError("collection functions do not match the canonical schema")
+    vector_dimension = metadata["vectorDimension"]
+    dense_fields = [field for field in fields if field["name"] == "dense_vector"]
+    if (
+        type(vector_dimension) is not int
+        or len(dense_fields) != 1
+        or dense_fields[0]["params"] != {"dim": vector_dimension}
+    ):
+        raise ValueError("vector dimension does not match dense field")
+    return MilvusCollectionDescriptor(
+        collection_name=expected_collection,
+        family=SourceFamily(cast(str, metadata["family"])),
+        schema_version=_metadata_string(metadata, "schemaVersion"),
+        schema_sha256=cast(str, metadata["schemaSha256"]),
+        corpus_version=_metadata_string(metadata, "corpusVersion"),
+        embedding_model_version=_metadata_string(metadata, "embeddingModelVersion"),
+        vector_dimension=vector_dimension,
+        dynamic_fields_enabled=False,
+        consistency_level="Strong",
+    )
+
+
 def _collection_metadata(raw: object) -> dict[str, object]:
     if (
         not isinstance(raw, str)
