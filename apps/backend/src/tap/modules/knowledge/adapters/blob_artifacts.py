@@ -171,32 +171,39 @@ def artifact_locator(container: str, blob_name: str) -> ArtifactLocator:
     return ArtifactLocator(f"{container}/{blob_name}")
 
 
-def _argument_identity(name: str, value: object) -> str:
+def _persisted_identity(name: str, value: object) -> str:
     try:
         return _identity(name, value)
-    except (TypeError, ValueError) as error:
-        raise _ArtifactArgumentValueError(str(error)) from None
+    except (TypeError, ValueError):
+        raise ArtifactIntegrityError(f"persisted {name} is malformed") from None
 
 
-def _argument_staging_name(value: object) -> str:
+def _persisted_staging_name(value: object) -> str:
     try:
         _staging_name(cast(str, value))
-    except (TypeError, ValueError) as error:
-        raise _ArtifactArgumentValueError(str(error)) from None
+    except (TypeError, ValueError):
+        raise ArtifactIntegrityError("persisted staging locator is malformed") from None
     return cast(str, value)
 
 
-def _public_locator(
+def _persisted_digest(name: str, value: object) -> str:
+    try:
+        return _digest(value)
+    except (TypeError, ValueError):
+        raise ArtifactIntegrityError(f"persisted {name} is malformed") from None
+
+
+def _persisted_locator(
     locator: object,
     *,
     expected_container: str | None = None,
 ) -> tuple[str, str]:
     if not isinstance(locator, ArtifactLocator):
-        raise _ArtifactArgumentValueError("artifact locator type is invalid")
+        raise ArtifactIntegrityError("persisted artifact locator is malformed")
     try:
         return _parse_locator(locator, expected_container=expected_container)
-    except (TypeError, ValueError) as error:
-        raise ArtifactIntegrityError("artifact locator state is malformed") from error
+    except (TypeError, ValueError):
+        raise ArtifactIntegrityError("persisted artifact locator is malformed") from None
 
 
 def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -> bytes:
@@ -478,10 +485,17 @@ class AzureBlobArtifactStore:
         if not isinstance(config, AzureBlobArtifactConfig):
             raise TypeError("Azure Blob artifact store requires validated configuration")
         self._config = config
-        self._service = BlobServiceClient.from_connection_string(
-            config.connection_string.get_secret_value(),
-            api_version=config.api_version,
-        )
+        service: BlobServiceClient | None = None
+        try:
+            service = BlobServiceClient.from_connection_string(
+                config.connection_string.get_secret_value(),
+                api_version=config.api_version,
+            )
+        except Exception:
+            pass
+        if service is None:
+            raise ArtifactProviderUnavailable("Azure Blob provider construction failed") from None
+        self._service = service
         self._closed = False
         self._close_lock = asyncio.Lock()
 
@@ -528,14 +542,14 @@ class AzureBlobArtifactStore:
                         content_settings=ContentSettings(content_type=upload.media_type),
                     )
                 )
-            except asyncio.CancelledError:
-                await self._cleanup(blob.delete_blob(delete_snapshots="include"))
-                raise
-            except ArtifactProviderUnavailable:
-                await self._cleanup(blob.delete_blob(delete_snapshots="include"))
-                raise
+            except asyncio.CancelledError as cancellation:
+                await self._cleanup(lambda: blob.delete_blob(delete_snapshots="include"))
+                raise cancellation
+            except ArtifactProviderUnavailable as unavailable:
+                await self._cleanup(lambda: blob.delete_blob(delete_snapshots="include"))
+                raise unavailable
             except Exception as error:
-                await self._cleanup(blob.delete_blob(delete_snapshots="include"))
+                await self._cleanup(lambda: blob.delete_blob(delete_snapshots="include"))
                 raise ArtifactProviderUnavailable("original staging failed") from error
         return StagedOriginal(
             staging_key=blob_name,
@@ -553,7 +567,7 @@ class AzureBlobArtifactStore:
     ) -> ArtifactLocator:
         if not isinstance(staged, StagedOriginal):
             raise _ArtifactArgumentTypeError("original promotion requires a staged original")
-        _argument_identity("revision_id", revision_id)
+        revision_id = _persisted_identity("revision identity", revision_id)
         return await self._promote(
             staged.staging_key,
             revision_id,
@@ -565,8 +579,8 @@ class AzureBlobArtifactStore:
     async def recover_original(self, staging_key: str, revision_id: str) -> ArtifactLocator:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.operation_timeout_seconds
-        staging_key = _argument_staging_name(staging_key)
-        _argument_identity("revision_id", revision_id)
+        staging_key = _persisted_staging_name(staging_key)
+        revision_id = _persisted_identity("revision identity", revision_id)
         try:
             properties = await self._promotion_call(
                 lambda: self._staging_properties(staging_key), deadline
@@ -603,12 +617,12 @@ class AzureBlobArtifactStore:
 
     @_artifact_boundary
     async def discard_staging(self, staging_key: str) -> None:
-        staging_key = _argument_staging_name(staging_key)
+        staging_key = _persisted_staging_name(staging_key)
         await self._delete_if_exists(self._blob(ORIGINALS_CONTAINER, staging_key))
 
     @_artifact_boundary
     async def read_original(self, locator: ArtifactLocator) -> bytes:
-        container, blob_name = _public_locator(locator, expected_container=ORIGINALS_CONTAINER)
+        container, blob_name = _persisted_locator(locator, expected_container=ORIGINALS_CONTAINER)
         return await self._download_verified(self._blob(container, blob_name))
 
     @_artifact_boundary
@@ -617,7 +631,7 @@ class AzureBlobArtifactStore:
         revision_id: str,
         artifact: NormalizedArtifact,
     ) -> ArtifactLocator:
-        _argument_identity("revision_id", revision_id)
+        revision_id = _persisted_identity("revision identity", revision_id)
         blob_name = f"revisions/{revision_id}/normalized-v1.json"
         return await self._write_artifact(
             blob_name,
@@ -627,7 +641,7 @@ class AzureBlobArtifactStore:
 
     @_artifact_boundary
     async def read_normalized(self, locator: ArtifactLocator) -> NormalizedArtifact:
-        container, blob_name = _public_locator(locator, expected_container=ARTIFACTS_CONTAINER)
+        container, blob_name = _persisted_locator(locator, expected_container=ARTIFACTS_CONTAINER)
         return decode_normalized_artifact(
             await self._download_verified(self._blob(container, blob_name)),
             expected_revision=_revision_from_artifact_name(blob_name),
@@ -639,7 +653,7 @@ class AzureBlobArtifactStore:
         revision_id: str,
         chunks: tuple[ChunkDraft, ...],
     ) -> ArtifactLocator:
-        _argument_identity("revision_id", revision_id)
+        revision_id = _persisted_identity("revision identity", revision_id)
         blob_name = f"revisions/{revision_id}/chunks-v1.jsonl.gz"
         return await self._write_artifact(
             blob_name,
@@ -649,7 +663,7 @@ class AzureBlobArtifactStore:
 
     @_artifact_boundary
     async def read_chunks(self, locator: ArtifactLocator) -> tuple[ChunkDraft, ...]:
-        container, blob_name = _public_locator(locator, expected_container=ARTIFACTS_CONTAINER)
+        container, blob_name = _persisted_locator(locator, expected_container=ARTIFACTS_CONTAINER)
         return decode_chunks_artifact(
             await self._download_verified(self._blob(container, blob_name)),
             expected_revision=_revision_from_artifact_name(blob_name),
@@ -663,7 +677,8 @@ class AzureBlobArtifactStore:
         *,
         source_content_hash: str,
     ) -> ArtifactLocator:
-        _argument_identity("revision_id", revision_id)
+        revision_id = _persisted_identity("revision identity", revision_id)
+        source_content_hash = _persisted_digest("source content hash", source_content_hash)
         try:
             model = _safe_path_segment(artifact.model_alias)
         except (AttributeError, TypeError, ValueError) as error:
@@ -679,7 +694,7 @@ class AzureBlobArtifactStore:
 
     @_artifact_boundary
     async def read_embeddings(self, locator: ArtifactLocator) -> EmbeddingArtifact:
-        container, blob_name = _public_locator(locator, expected_container=ARTIFACTS_CONTAINER)
+        container, blob_name = _persisted_locator(locator, expected_container=ARTIFACTS_CONTAINER)
         return decode_embeddings_artifact(
             await self._download_verified(self._blob(container, blob_name)),
             expected_revision=_revision_from_artifact_name(blob_name),
@@ -909,11 +924,8 @@ class AzureBlobArtifactStore:
                 self._config.operation_timeout_seconds,
             )
             await self._cleanup(
-                self._abort_and_delete(
-                    destination,
-                    owner_token,
-                    copy_id,
-                    deadline=settlement_deadline,
+                lambda: self._abort_and_delete(
+                    destination, owner_token, copy_id, deadline=settlement_deadline
                 ),
                 timeout_seconds=max(0.0, settlement_deadline - asyncio.get_running_loop().time()),
             )
@@ -1315,12 +1327,12 @@ class AzureBlobArtifactStore:
 
     async def _cleanup(  # type: ignore[no-untyped-def]
         self,
-        operation,
+        operation_factory,
         *,
         timeout_seconds: float | None = None,
     ):
         try:
-            await self._bounded(operation, timeout_seconds=timeout_seconds)
+            await self._bounded(operation_factory(), timeout_seconds=timeout_seconds)
         except (asyncio.CancelledError, Exception):
             return
 
@@ -1595,7 +1607,7 @@ def _revision_from_artifact_name(blob_name: str) -> str:
     parts = blob_name.split("/")
     if len(parts) < 3 or parts[0] != "revisions":
         raise ArtifactIntegrityError("artifact locator has no revision identity")
-    return _identity("revision_id", parts[1])
+    return _persisted_identity("revision identity", parts[1])
 
 
 def _metadata_digest(metadata: Mapping[str, str]) -> str:

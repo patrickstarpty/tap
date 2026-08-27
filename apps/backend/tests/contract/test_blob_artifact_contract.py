@@ -477,6 +477,42 @@ def _store_with_provider_failure(
     )
 
 
+@pytest.mark.parametrize("provider_error", (ServiceRequestError, ValueError, TypeError))
+def test_constructor_sdk_failure_is_provider_neutral_and_traceback_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_error: type[Exception],
+) -> None:
+    """A credential-bearing SDK constructor failure must not cross composition."""
+
+    def fail_construction(*_args: object, **_kwargs: object) -> None:
+        raise provider_error("azure AccountKey=constructor-secret")
+
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        fail_construction,
+    )
+    config = AzureBlobArtifactConfig(connection_string=SecretStr("AccountKey=input-secret"))
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        AzureBlobArtifactStore(config)
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, (ServiceRequestError, TypeError, ValueError))
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    formatted = "".join(traceback.format_exception(caught.value))
+    assert "constructor-secret" not in formatted
+    assert "input-secret" not in formatted
+
+
+def test_constructor_caller_argument_errors_remain_type_or_value_errors() -> None:
+    """Configuration validation is caller-owned and must not be relabeled as provider outage."""
+    with pytest.raises(ValueError):
+        AzureBlobArtifactConfig(connection_string=SecretStr(""))
+    with pytest.raises(TypeError):
+        AzureBlobArtifactStore(object())  # type: ignore[arg-type]
+
+
 async def _exercise_public_blob_operation(
     store: AzureBlobArtifactStore,
     operation: str,
@@ -871,6 +907,43 @@ async def test_public_blob_argument_validation_precedes_provider_translation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "durable_fact",
+    ("staging_key", "locator", "revision_id", "source_content_hash"),
+)
+async def test_malformed_durable_blob_facts_are_integrity_not_caller_or_outage(
+    monkeypatch: pytest.MonkeyPatch,
+    durable_fact: str,
+) -> None:
+    """Repository identities are corruption facts, never public argument/provider errors."""
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    chunks = chunk_artifact()
+    embeddings = EmbeddingArtifact(
+        "model",
+        3,
+        ((0.1, 0.2, 0.3),),
+        (str(chunks[0].chunk_id),),
+    )
+
+    with pytest.raises(ArtifactIntegrityFailure) as caught:
+        if durable_fact == "staging_key":
+            await store.recover_original("../bad-staging", REVISION)
+        elif durable_fact == "locator":
+            await store.read_original("not-a-durable-locator")  # type: ignore[arg-type]
+        elif durable_fact == "revision_id":
+            await store.write_normalized("../bad-revision", normalized_artifact())
+        else:
+            await store.write_embeddings(
+                REVISION,
+                embeddings,
+                source_content_hash="not-a-source-hash",
+            )
+
+    assert isinstance(caught.value, ArtifactIntegrityError)
+    assert not isinstance(caught.value, (ArtifactProviderUnavailable, TypeError, ValueError))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "item",
     (
         SimpleNamespace(name=None, metadata={}),
@@ -1117,6 +1190,65 @@ async def test_stage_original_cleanup_deadline_cancels_and_settles_provider_call
         await store.stage_original(_Upload((b"abc",)), max_bytes=3)
 
     assert blob.delete_cancelled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_failure", ("sync", "async", "hang"))
+async def test_stage_cleanup_cannot_replace_the_first_caller_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_failure: str,
+) -> None:
+    """Cleanup construction, await failure, and timeout must retain one cancellation object."""
+
+    class Blob:
+        def __init__(self) -> None:
+            self.upload_started = asyncio.Event()
+            self.cleanup_started = asyncio.Event()
+
+        async def upload_blob(self, *_args: object, **_kwargs: object) -> None:
+            self.upload_started.set()
+            await asyncio.Event().wait()
+
+        def delete_blob(self, **_kwargs: object):  # type: ignore[no-untyped-def]
+            if cleanup_failure == "sync":
+                raise ServiceRequestError("azure AccountKey=cleanup-secret")
+
+            async def cleanup() -> None:
+                self.cleanup_started.set()
+                if cleanup_failure == "async":
+                    raise ServiceRequestError("azure AccountKey=cleanup-secret")
+                await asyncio.Event().wait()
+
+            return cleanup()
+
+    blob = Blob()
+    store = _store_with_double(monkeypatch, blob, timeout=0.01)  # type: ignore[arg-type]
+    real_bounded = store._bounded  # pyright: ignore[reportPrivateUsage]
+    observed: list[asyncio.CancelledError] = []
+
+    async def observe_primary(operation, *, timeout_seconds=None):  # type: ignore[no-untyped-def]
+        try:
+            return await real_bounded(operation, timeout_seconds=timeout_seconds)
+        except asyncio.CancelledError as error:
+            observed.append(error)
+            raise
+
+    monkeypatch.setattr(store, "_bounded", observe_primary)
+    task = asyncio.create_task(store.stage_original(_Upload((b"abc",)), max_bytes=3))
+    await blob.upload_started.wait()
+    task.cancel("caller-cancel")
+    if cleanup_failure == "hang":
+        await blob.cleanup_started.wait()
+        task.cancel("later-cancel")
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+
+    assert observed
+    assert caught.value is observed[0]
+    assert caught.value.args == ("caller-cancel",)
+    if cleanup_failure == "hang":
+        assert observed[1].args == ("later-cancel",)
 
 
 @pytest.mark.asyncio
