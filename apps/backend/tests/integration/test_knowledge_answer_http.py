@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -20,6 +21,7 @@ from tap.modules.knowledge.application.citations import (
     CitationStale,
     CitationUnavailable,
 )
+from tap.modules.knowledge.application.documents import DocumentService
 from tap.modules.knowledge.domain.documents import DocumentParseRejected
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
@@ -28,10 +30,15 @@ from tap.modules.knowledge.domain.models import (
     RetrievalProfileId,
 )
 from tap.modules.knowledge.ports.documents import (
+    ArtifactStore,
     DocumentCapacityExceeded,
     DocumentNotFound,
+    DocumentRepository,
     InvalidDocumentCursor,
+    ReservationState,
     RetryNotAllowed,
+    StagedOriginal,
+    UploadReservation,
 )
 from tap.modules.knowledge.ports.errors import (
     ArtifactUnavailable,
@@ -449,5 +456,74 @@ def test_unexpected_rest_fallback_does_not_consume_caller_cancellation() -> None
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             with pytest.raises(asyncio.CancelledError, match="caller disconnected"):
                 await client.post("/v1/knowledge/answers", json=answer_payload("doc-a"))
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("phase", "message"),
+    [
+        ("reserve", "reserve caller disconnected"),
+        ("duplicate-commit", "commit caller disconnected"),
+    ],
+)
+def test_upload_cleanup_failure_does_not_replace_cancellation_through_asgi(
+    phase: str,
+    message: str,
+) -> None:
+    async def scenario() -> None:
+        cancellation = asyncio.CancelledError(message)
+
+        class Artifacts:
+            async def stage_original(self, _upload: object, *, max_bytes: int) -> StagedOriginal:
+                assert max_bytes > 0
+                return StagedOriginal(
+                    staging_key="staging-cancel",
+                    filename="policy.md",
+                    media_type="text/markdown",
+                    size=1,
+                    source_content_hash="sha256:" + "a" * 64,
+                )
+
+            async def commit_original(self, _staged: StagedOriginal, _revision_id: str) -> None:
+                raise cancellation
+
+            async def discard_staged(self, _staged: StagedOriginal) -> None:
+                raise RuntimeError("cleanup credential=secret")
+
+        class Repository:
+            async def reserve_upload(self, _command: object) -> UploadReservation:
+                if phase == "reserve":
+                    raise cancellation
+                return UploadReservation(
+                    state=ReservationState.DUPLICATE_PENDING,
+                    reservation_id="reservation-a",
+                    owner_token="",
+                    document_id="doc-a",
+                    revision_id="rev-a",
+                    dedupe_key="sha256:" + "b" * 64,
+                    document=None,
+                    staging_key="staging-owner",
+                )
+
+        documents = DocumentService(
+            repository=cast(DocumentRepository, Repository()),
+            artifacts=cast(ArtifactStore, Artifacts()),
+        )
+        service = KnowledgeHttpService(
+            documents=documents,
+            answers=cast(Any, Answers()),
+            citations=cast(Any, Citations()),
+        )
+        transport = httpx.ASGITransport(app=create_app(HttpServices(knowledge=service)))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await client.post(
+                    "/v1/knowledge/documents",
+                    files={"upload": ("policy.md", b"# Policy", "text/markdown")},
+                )
+
+        assert caught.value is cancellation
+        assert caught.value.args == (message,)
 
     asyncio.run(scenario())

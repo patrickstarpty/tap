@@ -9,11 +9,13 @@ import json
 import math
 import re
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from hashlib import sha256
-from typing import Any, cast
+from typing import Any, ParamSpec, TypeVar, cast
 from uuid import uuid4
 
 from azure.core import MatchConditions
@@ -63,6 +65,13 @@ _MAX_BLOCKS = 100_000
 _MAX_CHUNKS = 10_000
 _MAX_VECTORS = 10_000
 _MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+_COPY_RECOVERY_PROBE_TIMEOUT_SECONDS = 0.01
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+_ACTIVE_COPY_SETTLEMENT_DEADLINE: ContextVar[float | None] = ContextVar(
+    "athena_blob_copy_settlement_deadline",
+    default=None,
+)
 
 
 class ArtifactIntegrityError(ArtifactIntegrityFailure):
@@ -71,6 +80,46 @@ class ArtifactIntegrityError(ArtifactIntegrityFailure):
 
 class ArtifactProviderUnavailable(ArtifactUnavailable):
     """A bounded Blob SDK operation could not reach a valid terminal provider result."""
+
+
+class _ArtifactArgumentValueError(ValueError):
+    """Validated caller input is invalid before any provider operation."""
+
+
+class _ArtifactArgumentTypeError(TypeError):
+    """Validated caller input has the wrong public port type."""
+
+
+def _artifact_boundary(
+    operation: Callable[_P, Awaitable[_R]],
+) -> Callable[_P, Awaitable[_R]]:
+    """Keep every public Blob operation inside one provider-neutral error family."""
+
+    @wraps(operation)
+    async def translated(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return await operation(*args, **kwargs)
+        except asyncio.CancelledError:
+            raise
+        except ArtifactProviderUnavailable as error:
+            # Rebuild at the public edge so a secret-bearing provider exception
+            # cannot survive as a formatted cause/context chain.
+            raise ArtifactProviderUnavailable(str(error)) from None
+        except ArtifactIntegrityError as error:
+            raise ArtifactIntegrityError(str(error)) from None
+        except (_ArtifactArgumentValueError, _ArtifactArgumentTypeError):
+            raise
+        except ResourceNotFoundError:
+            # A public administration/write operation cannot infer artifact
+            # staleness from a missing provider resource. Reads and promotion
+            # translate their context-specific missing cases before this edge.
+            raise ArtifactProviderUnavailable("Azure Blob provider operation failed") from None
+        except (ResourceExistsError, ResourceModifiedError):
+            raise ArtifactIntegrityError("Blob artifact state is conflicting") from None
+        except Exception:
+            raise ArtifactProviderUnavailable("Azure Blob provider operation failed") from None
+
+    return translated
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +169,34 @@ def artifact_locator(container: str, blob_name: str) -> ArtifactLocator:
     if any(character in blob_name for character in ("?", "#", "\\")):
         raise ValueError("artifact locator must contain identity only")
     return ArtifactLocator(f"{container}/{blob_name}")
+
+
+def _argument_identity(name: str, value: object) -> str:
+    try:
+        return _identity(name, value)
+    except (TypeError, ValueError) as error:
+        raise _ArtifactArgumentValueError(str(error)) from None
+
+
+def _argument_staging_name(value: object) -> str:
+    try:
+        _staging_name(cast(str, value))
+    except (TypeError, ValueError) as error:
+        raise _ArtifactArgumentValueError(str(error)) from None
+    return cast(str, value)
+
+
+def _public_locator(
+    locator: object,
+    *,
+    expected_container: str | None = None,
+) -> tuple[str, str]:
+    if not isinstance(locator, ArtifactLocator):
+        raise _ArtifactArgumentValueError("artifact locator type is invalid")
+    try:
+        return _parse_locator(locator, expected_container=expected_container)
+    except (TypeError, ValueError) as error:
+        raise ArtifactIntegrityError("artifact locator state is malformed") from error
 
 
 def encode_normalized_artifact(revision_id: str, artifact: NormalizedArtifact) -> bytes:
@@ -408,6 +485,7 @@ class AzureBlobArtifactStore:
         self._closed = False
         self._close_lock = asyncio.Lock()
 
+    @_artifact_boundary
     async def ensure_containers(self) -> None:
         for name in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
             try:
@@ -415,9 +493,10 @@ class AzureBlobArtifactStore:
             except ResourceExistsError:
                 continue
 
+    @_artifact_boundary
     async def stage_original(self, upload: UploadStream, *, max_bytes: int) -> StagedOriginal:
         if type(max_bytes) is not int or not 1 <= max_bytes <= 25 * 1024 * 1024:
-            raise ValueError("original upload byte bound is invalid")
+            raise _ArtifactArgumentValueError("original upload byte bound is invalid")
         digest_builder = sha256()
         size = 0
         with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b") as spool:
@@ -466,13 +545,15 @@ class AzureBlobArtifactStore:
             source_content_hash=digest,
         )
 
+    @_artifact_boundary
     async def commit_original(
         self,
         staged: StagedOriginal,
         revision_id: str,
     ) -> ArtifactLocator:
         if not isinstance(staged, StagedOriginal):
-            raise TypeError("original promotion requires a staged original")
+            raise _ArtifactArgumentTypeError("original promotion requires a staged original")
+        _argument_identity("revision_id", revision_id)
         return await self._promote(
             staged.staging_key,
             revision_id,
@@ -480,9 +561,16 @@ class AzureBlobArtifactStore:
             expected_hash=staged.source_content_hash,
         )
 
+    @_artifact_boundary
     async def recover_original(self, staging_key: str, revision_id: str) -> ArtifactLocator:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._config.operation_timeout_seconds
+        staging_key = _argument_staging_name(staging_key)
+        _argument_identity("revision_id", revision_id)
         try:
-            properties = await self._staging_properties(staging_key)
+            properties = await self._promotion_call(
+                lambda: self._staging_properties(staging_key), deadline
+            )
         except asyncio.CancelledError:
             raise
         except ArtifactProviderUnavailable:
@@ -493,31 +581,43 @@ class AzureBlobArtifactStore:
             raise ArtifactIntegrityError("staged original does not exist") from error
         except Exception as error:
             raise ArtifactProviderUnavailable("staged original provider failed") from error
-        digest = _metadata_digest(properties.metadata)
-        size = _metadata_size(properties.metadata)
+        try:
+            digest = _metadata_digest(properties.metadata)
+            size = _metadata_size(properties.metadata)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ArtifactIntegrityError("staged original metadata is malformed") from error
         return await self._promote(
             staging_key,
             revision_id,
             expected_size=size,
             expected_hash=digest,
+            deadline=deadline,
+            source_properties=properties,
         )
 
+    @_artifact_boundary
     async def discard_staged(self, staged: StagedOriginal) -> None:
+        if not isinstance(staged, StagedOriginal):
+            raise _ArtifactArgumentTypeError("staging discard requires a staged original")
         await self.discard_staging(staged.staging_key)
 
+    @_artifact_boundary
     async def discard_staging(self, staging_key: str) -> None:
-        _staging_name(staging_key)
+        staging_key = _argument_staging_name(staging_key)
         await self._delete_if_exists(self._blob(ORIGINALS_CONTAINER, staging_key))
 
+    @_artifact_boundary
     async def read_original(self, locator: ArtifactLocator) -> bytes:
-        container, blob_name = _parse_locator(locator, expected_container=ORIGINALS_CONTAINER)
+        container, blob_name = _public_locator(locator, expected_container=ORIGINALS_CONTAINER)
         return await self._download_verified(self._blob(container, blob_name))
 
+    @_artifact_boundary
     async def write_normalized(
         self,
         revision_id: str,
         artifact: NormalizedArtifact,
     ) -> ArtifactLocator:
+        _argument_identity("revision_id", revision_id)
         blob_name = f"revisions/{revision_id}/normalized-v1.json"
         return await self._write_artifact(
             blob_name,
@@ -525,18 +625,21 @@ class AzureBlobArtifactStore:
             content_type="application/json",
         )
 
+    @_artifact_boundary
     async def read_normalized(self, locator: ArtifactLocator) -> NormalizedArtifact:
-        container, blob_name = _parse_locator(locator, expected_container=ARTIFACTS_CONTAINER)
+        container, blob_name = _public_locator(locator, expected_container=ARTIFACTS_CONTAINER)
         return decode_normalized_artifact(
             await self._download_verified(self._blob(container, blob_name)),
             expected_revision=_revision_from_artifact_name(blob_name),
         )
 
+    @_artifact_boundary
     async def write_chunks(
         self,
         revision_id: str,
         chunks: tuple[ChunkDraft, ...],
     ) -> ArtifactLocator:
+        _argument_identity("revision_id", revision_id)
         blob_name = f"revisions/{revision_id}/chunks-v1.jsonl.gz"
         return await self._write_artifact(
             blob_name,
@@ -544,13 +647,15 @@ class AzureBlobArtifactStore:
             content_type="application/gzip",
         )
 
+    @_artifact_boundary
     async def read_chunks(self, locator: ArtifactLocator) -> tuple[ChunkDraft, ...]:
-        container, blob_name = _parse_locator(locator, expected_container=ARTIFACTS_CONTAINER)
+        container, blob_name = _public_locator(locator, expected_container=ARTIFACTS_CONTAINER)
         return decode_chunks_artifact(
             await self._download_verified(self._blob(container, blob_name)),
             expected_revision=_revision_from_artifact_name(blob_name),
         )
 
+    @_artifact_boundary
     async def write_embeddings(
         self,
         revision_id: str,
@@ -558,7 +663,13 @@ class AzureBlobArtifactStore:
         *,
         source_content_hash: str,
     ) -> ArtifactLocator:
-        model = _safe_path_segment(artifact.model_alias)
+        _argument_identity("revision_id", revision_id)
+        try:
+            model = _safe_path_segment(artifact.model_alias)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ArtifactIntegrityError(
+                "embedding artifact model identity is malformed"
+            ) from error
         blob_name = f"revisions/{revision_id}/embeddings/{model}/{artifact.dimension}-v1.jsonl.gz"
         return await self._write_artifact(
             blob_name,
@@ -566,17 +677,22 @@ class AzureBlobArtifactStore:
             content_type="application/gzip",
         )
 
+    @_artifact_boundary
     async def read_embeddings(self, locator: ArtifactLocator) -> EmbeddingArtifact:
-        container, blob_name = _parse_locator(locator, expected_container=ARTIFACTS_CONTAINER)
+        container, blob_name = _public_locator(locator, expected_container=ARTIFACTS_CONTAINER)
         return decode_embeddings_artifact(
             await self._download_verified(self._blob(container, blob_name)),
             expected_revision=_revision_from_artifact_name(blob_name),
         )
 
+    @_artifact_boundary
     async def delete_revision_artifacts(self, target: DeletionTarget) -> None:
         if not isinstance(target, DeletionTarget):
-            raise TypeError("artifact deletion requires an exact target")
-        resolved = tuple(_parse_locator(locator) for locator in target.artifact_locators)
+            raise _ArtifactArgumentTypeError("artifact deletion requires an exact target")
+        try:
+            resolved = tuple(_parse_locator(locator) for locator in target.artifact_locators)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ArtifactIntegrityError("artifact deletion target is malformed") from error
         if any(
             _revision_from_artifact_name(blob_name) != target.revision_id
             for _, blob_name in resolved
@@ -585,6 +701,7 @@ class AzureBlobArtifactStore:
         for container, blob_name in resolved:
             await self._delete_if_exists(self._blob(container, blob_name))
 
+    @_artifact_boundary
     async def scavenge_staging(
         self,
         *,
@@ -595,7 +712,7 @@ class AzureBlobArtifactStore:
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         if type(limit) is not int or not 1 <= limit <= 1000:
-            raise ValueError("staging scavenger limit is outside the bound")
+            raise _ArtifactArgumentValueError("staging scavenger limit is outside the bound")
         container = self._service.get_container_client(ORIGINALS_CONTAINER)
         scanned = 0
         removed: list[str] = []
@@ -614,8 +731,13 @@ class AzureBlobArtifactStore:
             except StopAsyncIteration:
                 break
             scanned += 1
-            age = now - _metadata_staged_at(item.metadata)
-            invisible = item.name not in visible_staging_keys
+            try:
+                item_name = item.name
+                _staging_name(item_name)
+                age = now - _metadata_staged_at(item.metadata)
+            except (AttributeError, KeyError, TypeError, ValueError) as error:
+                raise ArtifactIntegrityError("staging listing metadata is malformed") from error
+            invisible = item_name not in visible_staging_keys
             if age >= timedelta(hours=24) or (invisible and age >= timedelta(hours=1)):
                 remaining = deadline_at - loop.time()
                 if remaining <= 0:
@@ -623,24 +745,26 @@ class AzureBlobArtifactStore:
                         "Azure Blob provider operation exceeded deadline"
                     )
                 await self._delete_if_exists(
-                    container.get_blob_client(item.name),
+                    container.get_blob_client(item_name),
                     timeout_seconds=remaining,
                 )
                 if loop.time() >= deadline_at:
                     raise ArtifactProviderUnavailable(
                         "Azure Blob provider operation exceeded deadline"
                     )
-                removed.append(item.name)
+                removed.append(item_name)
         return ArtifactScavengeReceipt(scanned=scanned, removed=tuple(removed))
 
+    @_artifact_boundary
     async def container_properties(self, container: str) -> Mapping[str, object]:
         if container not in _CONTAINERS:
-            raise ValueError("container is outside the closed set")
+            raise _ArtifactArgumentValueError("container is outside the closed set")
         properties = await self._bounded(
             self._service.get_container_client(container).get_container_properties()
         )
         return cast(Mapping[str, object], properties)
 
+    @_artifact_boundary
     async def close(self) -> None:
         async with self._close_lock:
             if self._closed:
@@ -650,6 +774,7 @@ class AzureBlobArtifactStore:
             finally:
                 self._closed = True
 
+    @_artifact_boundary
     async def aclose(self) -> None:
         await self.close()
 
@@ -660,13 +785,33 @@ class AzureBlobArtifactStore:
         *,
         expected_size: int,
         expected_hash: str,
+        deadline: float | None = None,
+        source_properties: object | None = None,
     ) -> ArtifactLocator:
+        try:
+            _staging_name(staging_key)
+            _identity("revision_id", revision_id)
+            digest = _digest(expected_hash)
+        except (TypeError, ValueError) as error:
+            raise ArtifactIntegrityError("original promotion source is invalid") from error
+        promotion_deadline = (
+            asyncio.get_running_loop().time() + self._config.operation_timeout_seconds
+            if deadline is None
+            else deadline
+        )
+        settlement_deadline = promotion_deadline + min(
+            _COPY_RECOVERY_PROBE_TIMEOUT_SECONDS,
+            self._config.operation_timeout_seconds,
+        )
+        settlement_token = _ACTIVE_COPY_SETTLEMENT_DEADLINE.set(settlement_deadline)
         try:
             return await self._promote_checked(
                 staging_key,
                 revision_id,
                 expected_size=expected_size,
-                expected_hash=expected_hash,
+                expected_hash=digest,
+                deadline=promotion_deadline,
+                source_properties=source_properties,
             )
         except asyncio.CancelledError:
             raise
@@ -675,9 +820,11 @@ class AzureBlobArtifactStore:
         except ArtifactIntegrityError:
             raise
         except ResourceNotFoundError as error:
-            raise ArtifactIntegrityError("original promotion source does not exist") from error
+            raise ArtifactIntegrityError("original promotion source is invalid") from error
         except Exception as error:
             raise ArtifactProviderUnavailable("original promotion provider failed") from error
+        finally:
+            _ACTIVE_COPY_SETTLEMENT_DEADLINE.reset(settlement_token)
 
     async def _promote_checked(
         self,
@@ -686,43 +833,54 @@ class AzureBlobArtifactStore:
         *,
         expected_size: int,
         expected_hash: str,
+        deadline: float,
+        source_properties: object | None = None,
     ) -> ArtifactLocator:
-        _staging_name(staging_key)
-        _identity("revision_id", revision_id)
-        digest = _digest(expected_hash)
+        digest = expected_hash
         source = self._blob(ORIGINALS_CONTAINER, staging_key)
-        source_properties = await self._staging_properties(staging_key)
-        if (
-            source_properties.size != expected_size
-            or _metadata_digest(source_properties.metadata) != digest
-            or canonical_sha256(await self._download(source)) != digest
-        ):
+        if source_properties is None:
+            source_properties = await self._promotion_call(
+                lambda: self._staging_properties(staging_key), deadline
+            )
+        try:
+            source_size = source_properties.size  # type: ignore[attr-defined]
+            source_digest = _metadata_digest(source_properties.metadata)  # type: ignore[attr-defined]
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ArtifactIntegrityError("staged original metadata is malformed") from error
+        if source_size != expected_size or source_digest != digest:
+            raise ArtifactIntegrityError("staged original integrity check failed")
+        source_content = await self._promotion_call(lambda: self._download(source), deadline)
+        if canonical_sha256(source_content) != digest:
             raise ArtifactIntegrityError("staged original integrity check failed")
         blob_name = f"revisions/{revision_id}/{digest.removeprefix('sha256:')}"
         destination = self._blob(ORIGINALS_CONTAINER, blob_name)
         owner_token = _copy_owner_token(staging_key, revision_id, digest)
-        if await self._bounded(destination.exists()):
+        if await self._promotion_call(lambda: self._bounded(destination.exists()), deadline):
             if await self._resolve_copy_destination(
                 destination,
                 owner_token,
                 source,
                 expected_size=expected_size,
+                deadline=deadline,
             ):
-                await self._delete_if_exists(source)
+                await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
                 return artifact_locator(ORIGINALS_CONTAINER, blob_name)
 
         copy_id: str | None = None
         try:
-            result = await self._bounded(
-                destination.start_copy_from_url(
-                    self._source_copy_url(source),
-                    match_condition=MatchConditions.IfMissing,
-                    metadata={
-                        "blobsha256": digest.removeprefix("sha256:"),
-                        "copyowner": owner_token,
-                        "size": str(expected_size),
-                    },
-                )
+            result = await self._promotion_call(
+                lambda: self._bounded(
+                    destination.start_copy_from_url(
+                        self._source_copy_url(source),
+                        match_condition=MatchConditions.IfMissing,
+                        metadata={
+                            "blobsha256": digest.removeprefix("sha256:"),
+                            "copyowner": owner_token,
+                            "size": str(expected_size),
+                        },
+                    )
+                ),
+                deadline,
             )
             copy_id = result.get("copy_id") if isinstance(result, Mapping) else None
             if not await self._resolve_copy_destination(
@@ -731,6 +889,7 @@ class AzureBlobArtifactStore:
                 source,
                 expected_size=expected_size,
                 expected_copy_id=copy_id,
+                deadline=deadline,
             ):
                 raise ArtifactIntegrityError("server-side original copy did not succeed")
         except (ResourceExistsError, ResourceModifiedError):
@@ -739,15 +898,33 @@ class AzureBlobArtifactStore:
                 owner_token,
                 source,
                 expected_size=expected_size,
+                deadline=deadline,
             ):
-                await self._delete_if_exists(source)
+                await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
                 return artifact_locator(ORIGINALS_CONTAINER, blob_name)
             raise ArtifactIntegrityError("server-side original copy did not succeed") from None
         except asyncio.CancelledError as cancellation:
-            await self._cleanup(self._abort_and_delete(destination, owner_token, copy_id))
+            settlement_deadline = deadline + min(
+                _COPY_RECOVERY_PROBE_TIMEOUT_SECONDS,
+                self._config.operation_timeout_seconds,
+            )
+            await self._cleanup(
+                self._abort_and_delete(
+                    destination,
+                    owner_token,
+                    copy_id,
+                    deadline=settlement_deadline,
+                ),
+                timeout_seconds=max(0.0, settlement_deadline - asyncio.get_running_loop().time()),
+            )
             raise cancellation
         except Exception as error:
             recovery_failure: ArtifactProviderUnavailable | None = None
+            recovery_integrity: ArtifactIntegrityError | None = None
+            settlement_deadline = deadline + min(
+                _COPY_RECOVERY_PROBE_TIMEOUT_SECONDS,
+                self._config.operation_timeout_seconds,
+            )
             try:
                 recovered = await self._resolve_copy_destination(
                     destination,
@@ -755,22 +932,33 @@ class AzureBlobArtifactStore:
                     source,
                     expected_size=expected_size,
                     expected_copy_id=copy_id,
+                    deadline=settlement_deadline,
+                    content_deadline=deadline,
+                    wait_for_pending=False,
                 )
             except ArtifactProviderUnavailable as unavailable:
                 recovered = False
                 recovery_failure = unavailable
-            except (ResourceNotFoundError, ArtifactIntegrityError):
+            except ResourceNotFoundError:
                 recovered = False
+                recovery_integrity = ArtifactIntegrityError(
+                    "server-side original copy destination is missing"
+                )
+            except ArtifactIntegrityError as integrity:
+                recovered = False
+                recovery_integrity = integrity
             except Exception:
                 recovered = False
                 recovery_failure = ArtifactProviderUnavailable(
                     "server-side original copy recovery failed"
                 )
             if recovered:
-                await self._delete_if_exists(source)
+                await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
                 return artifact_locator(ORIGINALS_CONTAINER, blob_name)
             if recovery_failure is not None:
                 raise recovery_failure
+            if recovery_integrity is not None:
+                raise recovery_integrity
             if isinstance(error, ArtifactProviderUnavailable):
                 raise error
             if isinstance(error, ArtifactIntegrityError):
@@ -780,17 +968,35 @@ class AzureBlobArtifactStore:
                     "server-side original copy source does not exist"
                 ) from error
             raise ArtifactProviderUnavailable("server-side original copy failed") from None
-        await self._delete_if_exists(source)
+        await self._promotion_call(lambda: self._delete_if_exists(source), deadline)
         return artifact_locator(ORIGINALS_CONTAINER, blob_name)
+
+    async def _promotion_call(
+        self,
+        operation: Callable[[], Awaitable[_R]],
+        deadline: float,
+    ) -> _R:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise ArtifactProviderUnavailable(
+                "server-side original copy exceeded its client deadline"
+            )
+        try:
+            async with asyncio.timeout(remaining):
+                return await operation()
+        except TimeoutError:
+            raise ArtifactProviderUnavailable(
+                "server-side original copy exceeded its client deadline"
+            ) from None
 
     def _source_copy_url(self, source: BlobClient) -> str:
         credential = self._service.credential
         account_key = getattr(credential, "account_key", None)
         if not isinstance(account_key, str) or not account_key:
-            raise ArtifactIntegrityError("server-side copy credential is unavailable")
+            raise ArtifactProviderUnavailable("server-side copy credential is unavailable")
         account_name = self._service.account_name
         if not isinstance(account_name, str) or not account_name:
-            raise ArtifactIntegrityError("server-side copy account identity is unavailable")
+            raise ArtifactProviderUnavailable("server-side copy account identity is unavailable")
         now = datetime.now(timezone.utc)
         sas = generate_blob_sas(
             account_name=account_name,
@@ -808,19 +1014,32 @@ class AzureBlobArtifactStore:
         blob: BlobClient,
         owner_token: str,
         expected_copy_id: str | None,
+        *,
+        deadline: float | None = None,
     ):  # type: ignore[no-untyped-def]
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._config.operation_timeout_seconds
+        terminal_deadline = (
+            loop.time() + self._config.operation_timeout_seconds if deadline is None else deadline
+        )
         while True:
-            remaining = deadline - loop.time()
+            remaining = terminal_deadline - loop.time()
             if remaining <= 0:
                 raise ArtifactProviderUnavailable(
                     "server-side original copy exceeded its client deadline"
                 )
-            properties = await self._bounded(blob.get_blob_properties(), timeout_seconds=remaining)
-            if _metadata_copy_owner(properties.metadata) != owner_token:
+            properties = await self._promotion_call(
+                lambda: self._bounded(blob.get_blob_properties(), timeout_seconds=remaining),
+                terminal_deadline,
+            )
+            try:
+                copy_owner = _metadata_copy_owner(properties.metadata)
+                copy = properties.copy
+            except (AttributeError, KeyError, TypeError, ValueError) as error:
+                raise ArtifactIntegrityError(
+                    "server-side original copy state is malformed"
+                ) from error
+            if copy_owner != owner_token:
                 raise ArtifactIntegrityError("server-side original copy ownership changed")
-            copy = properties.copy
             status = getattr(copy, "status", None)
             actual_copy_id = getattr(copy, "id", None) or getattr(copy, "copy_id", None)
             if expected_copy_id is not None and actual_copy_id != expected_copy_id:
@@ -832,7 +1051,10 @@ class AzureBlobArtifactStore:
                     "server-side original copy did not reach terminal success"
                 )
             await asyncio.sleep(
-                min(self._config.copy_poll_seconds, max(0.0, deadline - loop.time()))
+                min(
+                    self._config.copy_poll_seconds,
+                    max(0.0, terminal_deadline - loop.time()),
+                )
             )
 
     async def _resolve_copy_destination(
@@ -843,32 +1065,63 @@ class AzureBlobArtifactStore:
         *,
         expected_size: int,
         expected_copy_id: str | None = None,
+        deadline: float | None = None,
+        content_deadline: float | None = None,
+        wait_for_pending: bool = True,
     ) -> bool:
-        properties = await self._bounded(blob.get_blob_properties())
-        owner = _metadata_copy_owner_optional(properties.metadata)
-        copy = getattr(properties, "copy", None)
-        status = getattr(copy, "status", None)
-        actual_copy_id = getattr(copy, "id", None) or getattr(copy, "copy_id", None)
+        terminal_deadline = (
+            asyncio.get_running_loop().time() + self._config.operation_timeout_seconds
+            if deadline is None
+            else deadline
+        )
+        properties = await self._promotion_call(
+            lambda: self._bounded(blob.get_blob_properties()),
+            terminal_deadline,
+        )
+        try:
+            owner = _metadata_copy_owner_optional(properties.metadata)
+            copy = properties.copy
+            status = getattr(copy, "status", None)
+            actual_copy_id = getattr(copy, "id", None) or getattr(copy, "copy_id", None)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ArtifactIntegrityError("server-side original copy state is malformed") from error
         if owner == owner_token:
             if expected_copy_id is not None and actual_copy_id != expected_copy_id:
                 raise ArtifactIntegrityError("server-side original copy identity changed")
             if status == "pending":
+                if not wait_for_pending:
+                    return False
                 properties = await self._wait_copy_terminal(
                     blob,
                     owner_token,
                     expected_copy_id or actual_copy_id,
+                    deadline=terminal_deadline,
                 )
                 status = getattr(properties.copy, "status", None)
             if status in {"failed", "aborted"}:
-                await self._delete_if_exists(blob)
+                await self._promotion_call(
+                    lambda: self._delete_if_exists(blob),
+                    terminal_deadline,
+                )
                 return False
             if status != "success":
                 raise ArtifactIntegrityError("server-side original copy state is malformed")
         elif status not in {None, "success"}:
             raise ArtifactIntegrityError("unowned original copy is not terminal")
-        if properties.size != expected_size or await self._download_verified(
-            blob
-        ) != await self._download(source):
+        verification_deadline = terminal_deadline if content_deadline is None else content_deadline
+        if asyncio.get_running_loop().time() >= verification_deadline:
+            return False
+        destination_content = await self._promotion_call(
+            lambda: self._download_verified(blob), verification_deadline
+        )
+        source_content = await self._promotion_call(
+            lambda: self._download(source), verification_deadline
+        )
+        try:
+            destination_size = properties.size
+        except AttributeError as error:
+            raise ArtifactIntegrityError("server-side original copy state is malformed") from error
+        if destination_size != expected_size or destination_content != source_content:
             raise ArtifactIntegrityError("content-addressed original conflicts with existing data")
         return True
 
@@ -877,9 +1130,19 @@ class AzureBlobArtifactStore:
         blob: BlobClient,
         owner_token: str,
         copy_id: str | None,
+        *,
+        deadline: float | None = None,
     ) -> None:
+        cleanup_deadline = (
+            asyncio.get_running_loop().time() + self._config.operation_timeout_seconds
+            if deadline is None
+            else deadline
+        )
         try:
-            properties = await self._bounded(blob.get_blob_properties())
+            properties = await self._promotion_call(
+                lambda: self._bounded(blob.get_blob_properties()),
+                cleanup_deadline,
+            )
             if _metadata_copy_owner_optional(properties.metadata) != owner_token:
                 return
             actual_copy_id = getattr(properties.copy, "id", None) or getattr(
@@ -890,16 +1153,21 @@ class AzureBlobArtifactStore:
             if getattr(properties.copy, "status", None) == "pending":
                 if not isinstance(actual_copy_id, str) or not actual_copy_id:
                     return
-                await self._bounded(blob.abort_copy(actual_copy_id))
-                properties = await self._wait_copy_terminal(
-                    blob,
-                    owner_token,
-                    actual_copy_id,
+                await self._promotion_call(
+                    lambda: self._bounded(blob.abort_copy(actual_copy_id)),
+                    cleanup_deadline,
+                )
+                properties = await self._promotion_call(
+                    lambda: self._bounded(blob.get_blob_properties()),
+                    cleanup_deadline,
                 )
         except Exception:
             return
         if getattr(properties.copy, "status", None) in {"failed", "aborted"}:
-            await self._delete_if_exists(blob)
+            await self._promotion_call(
+                lambda: self._delete_if_exists(blob),
+                cleanup_deadline,
+            )
 
     async def _write_artifact(
         self,
@@ -941,21 +1209,24 @@ class AzureBlobArtifactStore:
         try:
             properties = await self._bounded(blob.get_blob_properties())
             data = await self._download(blob)
+        except ResourceNotFoundError as error:
+            raise ArtifactIntegrityError("artifact Blob does not exist") from error
+        except asyncio.CancelledError:
+            raise
+        except ArtifactProviderUnavailable:
+            raise
+        except ArtifactIntegrityError:
+            raise
+        except Exception as error:
+            raise ArtifactProviderUnavailable("Blob provider read failed") from error
+        try:
             if properties.size != len(data) or _metadata_size(properties.metadata) != len(data):
                 raise ValueError
             if canonical_sha256(data) != _metadata_digest(properties.metadata):
                 raise ValueError
             return data
-        except ResourceNotFoundError as error:
-            raise ArtifactIntegrityError("artifact Blob does not exist") from error
-        except ArtifactProviderUnavailable:
-            raise
-        except ArtifactIntegrityError:
-            raise
-        except (TypeError, ValueError) as error:
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
             raise ArtifactIntegrityError("Blob content hash verification failed") from error
-        except Exception as error:
-            raise ArtifactProviderUnavailable("Blob provider read failed") from error
 
     async def _download(self, blob: BlobClient) -> bytes:
         stream = await self._bounded(blob.download_blob(max_concurrency=1))
@@ -983,6 +1254,12 @@ class AzureBlobArtifactStore:
             )
         except ResourceNotFoundError:
             return
+        except asyncio.CancelledError:
+            raise
+        except ArtifactProviderUnavailable:
+            raise
+        except Exception as error:
+            raise ArtifactProviderUnavailable("Azure Blob delete failed") from error
 
     async def _bounded(  # type: ignore[no-untyped-def]
         self, operation, *, timeout_seconds: float | None = None
@@ -997,26 +1274,53 @@ class AzureBlobArtifactStore:
         try:
             async with asyncio.timeout(timeout):
                 return await asyncio.shield(task)
-        except TimeoutError as error:
+        except TimeoutError:
             task.cancel()
-            await _wait_terminal(task)
+            await _wait_terminal(
+                task,
+                timeout_seconds=self._terminal_settlement_timeout(),
+            )
             raise ArtifactProviderUnavailable(
                 "Azure Blob provider operation exceeded deadline"
-            ) from error
+            ) from None
         except asyncio.CancelledError as cancellation:
             caller = asyncio.current_task()
             if task.done() and task.cancelled() and caller is not None and not caller.cancelling():
-                await _wait_terminal(task)
+                await _wait_terminal(
+                    task,
+                    timeout_seconds=self._terminal_settlement_timeout(),
+                )
                 raise ArtifactProviderUnavailable(
                     "Azure Blob provider operation was cancelled"
                 ) from None
             task.cancel()
-            await _wait_terminal(task)
+            await _wait_terminal(
+                task,
+                timeout_seconds=self._terminal_settlement_timeout(),
+            )
             raise cancellation
 
-    async def _cleanup(self, operation):  # type: ignore[no-untyped-def]
+    def _terminal_settlement_timeout(self) -> float:
+        timeout = min(
+            _COPY_RECOVERY_PROBE_TIMEOUT_SECONDS,
+            self._config.operation_timeout_seconds,
+        )
+        active_deadline = _ACTIVE_COPY_SETTLEMENT_DEADLINE.get()
+        if active_deadline is None:
+            return timeout
+        return max(
+            0.0,
+            min(timeout, active_deadline - asyncio.get_running_loop().time()),
+        )
+
+    async def _cleanup(  # type: ignore[no-untyped-def]
+        self,
+        operation,
+        *,
+        timeout_seconds: float | None = None,
+    ):
         try:
-            await self._bounded(operation)
+            await self._bounded(operation, timeout_seconds=timeout_seconds)
         except (asyncio.CancelledError, Exception):
             return
 
@@ -1029,14 +1333,26 @@ class AzureBlobArtifactStore:
             raise ArtifactProviderUnavailable("Azure Blob artifact store is closed")
 
 
-async def _wait_terminal(task: asyncio.Future[Any]) -> None:
-    while not task.done():
+async def _wait_terminal(
+    task: asyncio.Future[Any],
+    *,
+    timeout_seconds: float,
+) -> None:
+    if not task.done() and timeout_seconds > 0:
         try:
-            await asyncio.shield(task)
+            async with asyncio.timeout(timeout_seconds):
+                await asyncio.shield(task)
         except asyncio.CancelledError:
-            continue
+            pass
         except Exception:
-            break
+            pass
+    if not task.done():
+        task.add_done_callback(_consume_terminal_result)
+        return
+    _consume_terminal_result(task)
+
+
+def _consume_terminal_result(task: asyncio.Future[Any]) -> None:
     try:
         task.result()
     except asyncio.CancelledError:

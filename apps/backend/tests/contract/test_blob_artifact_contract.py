@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import traceback
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -372,6 +373,78 @@ class _ServiceDouble:
         return
 
 
+class _ProviderFailureBlob:
+    container_name = ORIGINALS_CONTAINER
+    blob_name = "staging/provider-failure"
+    url = "http://provider.invalid/blob"
+
+    @staticmethod
+    def _failure() -> ServiceRequestError:
+        return ServiceRequestError("azure account-key=secret")
+
+    async def upload_blob(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+    async def delete_blob(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+    async def get_blob_properties(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+    async def download_blob(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+    async def exists(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+    async def start_copy_from_url(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+    async def abort_copy(self, *_args: object, **_kwargs: object) -> None:
+        raise self._failure()
+
+
+class _ProviderFailureContainer:
+    def __init__(self, blob: _ProviderFailureBlob) -> None:
+        self._blob = blob
+
+    def list_blobs(self, *_args: object, **_kwargs: object) -> _ProviderFailureContainer:
+        return self
+
+    def __aiter__(self) -> _ProviderFailureContainer:
+        return self
+
+    async def __anext__(self) -> None:
+        raise ServiceRequestError("azure account-key=secret")
+
+    async def get_container_properties(self) -> None:
+        raise ServiceRequestError("azure account-key=secret")
+
+    def get_blob_client(self, _blob_name: str) -> _ProviderFailureBlob:
+        return self._blob
+
+
+class _ProviderFailureService:
+    credential = object()
+    account_name = "devstoreaccount1"
+
+    def __init__(self) -> None:
+        self.blob = _ProviderFailureBlob()
+        self.container = _ProviderFailureContainer(self.blob)
+
+    def get_blob_client(self, _container: str, _blob_name: str) -> _ProviderFailureBlob:
+        return self.blob
+
+    def get_container_client(self, _container: str) -> _ProviderFailureContainer:
+        return self.container
+
+    async def create_container(self, *_args: object, **_kwargs: object) -> None:
+        raise ServiceRequestError("azure account-key=secret")
+
+    async def close(self) -> None:
+        raise ServiceRequestError("azure account-key=secret")
+
+
 def _store_with_double(
     monkeypatch: pytest.MonkeyPatch,
     blob: _BlobDouble,
@@ -389,6 +462,486 @@ def _store_with_double(
             operation_timeout_seconds=timeout,
         )
     )
+
+
+def _store_with_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AzureBlobArtifactStore:
+    service = _ProviderFailureService()
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    return AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+    )
+
+
+async def _exercise_public_blob_operation(
+    store: AzureBlobArtifactStore,
+    operation: str,
+) -> None:
+    staged = StagedOriginal(
+        staging_key="staging/provider-failure",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    normalized_locator = ArtifactLocator(
+        f"{ARTIFACTS_CONTAINER}/revisions/{REVISION}/normalized-v1.json"
+    )
+    chunks_locator = ArtifactLocator(
+        f"{ARTIFACTS_CONTAINER}/revisions/{REVISION}/chunks-v1.jsonl.gz"
+    )
+    embeddings_locator = ArtifactLocator(
+        f"{ARTIFACTS_CONTAINER}/revisions/{REVISION}/embeddings/model/3-v1.jsonl.gz"
+    )
+    if operation == "ensure_containers":
+        await store.ensure_containers()
+    elif operation == "stage_original":
+        await store.stage_original(_Upload((b"abc",)), max_bytes=3)
+    elif operation == "commit_original":
+        await store.commit_original(staged, REVISION)
+    elif operation == "recover_original":
+        await store.recover_original(staged.staging_key, REVISION)
+    elif operation == "discard_staged":
+        await store.discard_staged(staged)
+    elif operation == "discard_staging":
+        await store.discard_staging(staged.staging_key)
+    elif operation == "read_original":
+        await store.read_original(
+            ArtifactLocator(
+                f"{ORIGINALS_CONTAINER}/revisions/{REVISION}/{SOURCE_HASH.removeprefix('sha256:')}"
+            )
+        )
+    elif operation == "write_normalized":
+        await store.write_normalized(REVISION, normalized_artifact())
+    elif operation == "read_normalized":
+        await store.read_normalized(normalized_locator)
+    elif operation == "write_chunks":
+        await store.write_chunks(REVISION, chunk_artifact())
+    elif operation == "read_chunks":
+        await store.read_chunks(chunks_locator)
+    elif operation == "write_embeddings":
+        chunks = chunk_artifact()
+        await store.write_embeddings(
+            REVISION,
+            EmbeddingArtifact(
+                "model",
+                3,
+                ((0.1, 0.2, 0.3),),
+                (str(chunks[0].chunk_id),),
+            ),
+            source_content_hash=SOURCE_HASH,
+        )
+    elif operation == "read_embeddings":
+        await store.read_embeddings(embeddings_locator)
+    elif operation == "delete_revision_artifacts":
+        await store.delete_revision_artifacts(
+            DeletionTarget("doc-a", REVISION, (), (normalized_locator,))
+        )
+    elif operation == "scavenge_staging":
+        await store.scavenge_staging(
+            now=datetime.now(timezone.utc),
+            visible_staging_keys=frozenset(),
+        )
+    elif operation == "container_properties":
+        await store.container_properties(ORIGINALS_CONTAINER)
+    elif operation == "close":
+        await store.close()
+    elif operation == "aclose":
+        await store.aclose()
+    else:
+        raise AssertionError(f"unhandled public Blob operation: {operation}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    (
+        "ensure_containers",
+        "stage_original",
+        "commit_original",
+        "recover_original",
+        "discard_staged",
+        "discard_staging",
+        "read_original",
+        "write_normalized",
+        "read_normalized",
+        "write_chunks",
+        "read_chunks",
+        "write_embeddings",
+        "read_embeddings",
+        "delete_revision_artifacts",
+        "scavenge_staging",
+        "container_properties",
+        "close",
+        "aclose",
+    ),
+)
+async def test_every_public_blob_operation_redacts_raw_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    store = _store_with_provider_failure(monkeypatch)
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await _exercise_public_blob_operation(store, operation)
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
+    assert not isinstance(caught.value, ServiceRequestError)
+    assert "secret" not in str(caught.value)
+    assert "secret" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_site",
+    ("blob_factory", "container_factory", "list_factory", "iterator_factory"),
+)
+async def test_synchronous_sdk_factory_failures_are_provider_neutral_and_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_site: str,
+) -> None:
+    class Container:
+        def list_blobs(self, **_kwargs: object):  # type: ignore[no-untyped-def]
+            if failure_site == "list_factory":
+                raise ServiceRequestError("azure account-key=sync-secret")
+
+            class Pages:
+                def __aiter__(self):  # type: ignore[no-untyped-def]
+                    if failure_site == "iterator_factory":
+                        raise ServiceRequestError("azure account-key=sync-secret")
+                    return self
+
+                async def __anext__(self) -> None:
+                    raise StopAsyncIteration
+
+            return Pages()
+
+    class Service(_ServiceDouble):
+        def get_blob_client(self, _container: str, _name: str) -> _BlobDouble:
+            if failure_site == "blob_factory":
+                raise ServiceRequestError("azure account-key=sync-secret")
+            return self.blob
+
+        def get_container_client(self, _name: str) -> Container:
+            if failure_site == "container_factory":
+                raise ServiceRequestError("azure account-key=sync-secret")
+            return Container()
+
+    service = Service(_BlobDouble())
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    store = AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+    )
+
+    with pytest.raises(ArtifactProviderUnavailable) as caught:
+        if failure_site == "blob_factory":
+            await store.discard_staging("staging/sync-failure")
+        else:
+            await store.scavenge_staging(
+                now=datetime.now(timezone.utc),
+                visible_staging_keys=frozenset(),
+            )
+
+    assert "sync-secret" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_error", (ValueError, TypeError))
+async def test_provider_value_and_type_errors_cannot_escape_as_argument_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_error: type[Exception],
+) -> None:
+    class Service(_ServiceDouble):
+        async def create_container(self, *_args: object, **_kwargs: object) -> None:
+            raise provider_error("azure provider-secret")
+
+    service = Service(_BlobDouble())
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    store = AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+    )
+
+    with pytest.raises(ArtifactProviderUnavailable) as caught:
+        await store.ensure_containers()
+
+    assert "provider-secret" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("commit", "recover"))
+async def test_promotion_malformed_staging_metadata_is_integrity_not_outage(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    staged = StagedOriginal(
+        staging_key="staging/malformed-metadata",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(SimpleNamespace(size=3, metadata={"size": "3"})),
+    )
+
+    with pytest.raises(ArtifactIntegrityFailure) as caught:
+        if operation == "commit":
+            await store.commit_original(staged, REVISION)
+        else:
+            await store.recover_original(staged.staging_key, REVISION)
+
+    assert isinstance(caught.value, ArtifactIntegrityError)
+    assert not isinstance(caught.value, ArtifactUnavailable)
+
+
+@pytest.mark.asyncio
+async def test_public_commit_uses_one_total_deadline_for_permanently_pending_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeout = 0.04
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=timeout)
+    source = object()
+
+    class PendingDestination:
+        metadata: dict[str, str] = {}
+
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(self, _url: str, **kwargs: object) -> dict[str, str]:
+            self.metadata = dict(kwargs["metadata"])  # type: ignore[arg-type]
+            return {"copy_id": "copy-pending"}
+
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                size=0,
+                metadata=self.metadata,
+                copy=SimpleNamespace(status="pending", id="copy-pending"),
+            )
+
+    destination = PendingDestination()
+    staged = StagedOriginal(
+        staging_key="staging/permanent-pending",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(ArtifactUnavailable):
+        await store.commit_original(staged, REVISION)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed <= timeout + 0.02
+
+
+@pytest.mark.asyncio
+async def test_recovery_child_settlement_cannot_add_a_second_grace_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeout = 0.03
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=timeout)
+    source = object()
+
+    class Destination:
+        calls = 0
+
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(self, _url: str, **_kwargs: object) -> dict[str, str]:
+            await asyncio.sleep(0.02)
+            return {"copy_id": "copy-pending"}
+
+        async def get_blob_properties(self) -> object:
+            self.calls += 1
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                if self.calls > 1:
+                    await asyncio.sleep(0.08)
+                raise
+
+    destination = Destination()
+    staged = StagedOriginal(
+        staging_key="staging/single-settlement-grace",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(ArtifactProviderUnavailable):
+        await store.commit_original(staged, REVISION)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed <= timeout + 0.015
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "expected_error"),
+    (
+        ("stage", ValueError),
+        ("commit", TypeError),
+        ("delete", TypeError),
+        ("scavenge", ValueError),
+        ("container", ValueError),
+    ),
+)
+async def test_public_blob_argument_validation_precedes_provider_translation(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    expected_error: type[Exception],
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+
+    with pytest.raises(expected_error):
+        if operation == "stage":
+            await store.stage_original(_Upload((b"abc",)), max_bytes=0)
+        elif operation == "commit":
+            await store.commit_original(object(), REVISION)  # type: ignore[arg-type]
+        elif operation == "delete":
+            await store.delete_revision_artifacts(object())  # type: ignore[arg-type]
+        elif operation == "scavenge":
+            await store.scavenge_staging(
+                now=datetime.now(timezone.utc),
+                visible_staging_keys=frozenset(),
+                limit=0,
+            )
+        else:
+            await store.container_properties("outside")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "item",
+    (
+        SimpleNamespace(name=None, metadata={}),
+        SimpleNamespace(name="staging/malformed", metadata=None),
+    ),
+)
+async def test_scavenger_malformed_provider_item_is_integrity_not_outage(
+    monkeypatch: pytest.MonkeyPatch,
+    item: object,
+) -> None:
+    class Pages:
+        def __init__(self) -> None:
+            self._yielded = False
+
+        def __aiter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __anext__(self):  # type: ignore[no-untyped-def]
+            if self._yielded:
+                raise StopAsyncIteration
+            self._yielded = True
+            return item
+
+    class Container:
+        def list_blobs(self, **_kwargs: object) -> Pages:
+            return Pages()
+
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    monkeypatch.setattr(
+        store._service,
+        "get_container_client",
+        lambda _name: Container(),
+        raising=False,
+    )
+
+    with pytest.raises(ArtifactIntegrityFailure) as caught:
+        await store.scavenge_staging(
+            now=datetime.now(timezone.utc),
+            visible_staging_keys=frozenset(),
+        )
+
+    assert isinstance(caught.value, ArtifactIntegrityError)
+    assert not isinstance(caught.value, ArtifactUnavailable)
+
+
+@pytest.mark.asyncio
+async def test_public_recovery_does_not_refresh_the_promotion_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeout = 0.04
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=timeout)
+
+    async def slow_properties(_key: str) -> SimpleNamespace:
+        await asyncio.sleep(0.03)
+        return SimpleNamespace(
+            size=3,
+            metadata={
+                "blobsha256": canonical_sha256(b"abc").removeprefix("sha256:"),
+                "size": "3",
+            },
+        )
+
+    monkeypatch.setattr(store, "_staging_properties", slow_properties)
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(ArtifactUnavailable):
+        await store.recover_original("staging/slow-recovery", REVISION)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed <= timeout + 0.02
 
 
 @pytest.mark.asyncio
@@ -433,6 +986,79 @@ async def test_artifact_reads_translate_provider_failure_to_neutral_unavailable(
     assert isinstance(caught.value, ArtifactProviderUnavailable)
     assert not isinstance(caught.value, ArtifactIntegrityFailure)
     assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_error", (ValueError, TypeError))
+async def test_artifact_read_provider_value_and_type_errors_are_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_error: type[Exception],
+) -> None:
+    class FailedBlob(_BlobDouble):
+        async def get_blob_properties(self) -> None:
+            raise provider_error("azure read-secret")
+
+    store = _store_with_double(monkeypatch, FailedBlob())
+
+    with pytest.raises(ArtifactProviderUnavailable) as caught:
+        await store.read_original(
+            ArtifactLocator(
+                f"{ORIGINALS_CONTAINER}/revisions/{REVISION}/{SOURCE_HASH.removeprefix('sha256:')}"
+            )
+        )
+
+    assert "read-secret" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "properties",
+    (
+        SimpleNamespace(metadata=None, size=3),
+        SimpleNamespace(metadata={"blobsha256": "a" * 64, "size": "3"}),
+    ),
+)
+async def test_artifact_read_malformed_provider_properties_are_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+    properties: object,
+) -> None:
+    class Stream:
+        async def readall(self) -> bytes:
+            return b"abc"
+
+    class Blob(_BlobDouble):
+        async def get_blob_properties(self) -> object:
+            return properties
+
+        async def download_blob(self, **_kwargs: object) -> Stream:
+            return Stream()
+
+    store = _store_with_double(monkeypatch, Blob())
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store.read_original(
+            ArtifactLocator(
+                f"{ORIGINALS_CONTAINER}/revisions/{REVISION}/{SOURCE_HASH.removeprefix('sha256:')}"
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_copy_terminal_malformed_provider_properties_are_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+
+    class Destination:
+        async def get_blob_properties(self) -> object:
+            return SimpleNamespace(metadata=None, copy=None)
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store._wait_copy_terminal(  # pyright: ignore[reportPrivateUsage]
+            Destination(),  # type: ignore[arg-type]
+            "f" * 64,
+            None,
+        )
 
 
 @pytest.mark.asyncio
@@ -507,6 +1133,31 @@ async def test_provider_timeout_with_cancelled_child_keeps_safe_deadline_error(
         await store._bounded(never())
 
     assert not isinstance(caught.value, ArtifactIntegrityFailure)
+
+
+@pytest.mark.asyncio
+async def test_provider_deadline_does_not_wait_unbounded_for_cancellation_resistant_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeout = 0.02
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=timeout)
+    child_settled = asyncio.Event()
+
+    async def cancellation_resistant() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.08)
+        finally:
+            child_settled.set()
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(ArtifactProviderUnavailable):
+        await store._bounded(cancellation_resistant())
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed <= timeout + 0.02
+    await asyncio.wait_for(child_settled.wait(), timeout=0.2)
 
 
 @pytest.mark.asyncio
@@ -767,6 +1418,57 @@ async def test_copy_recovery_outage_is_not_downgraded_to_the_original_integrity_
 
     assert isinstance(caught.value, ArtifactProviderUnavailable)
     assert not isinstance(caught.value, ArtifactIntegrityFailure)
+
+
+@pytest.mark.asyncio
+async def test_copy_recovery_integrity_verdict_is_not_discarded_for_original_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    source = object()
+
+    class Destination:
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(self, _url: str, **_kwargs: object) -> None:
+            raise ArtifactProviderUnavailable("start response unavailable")
+
+    staged = StagedOriginal(
+        staging_key="staging/recovery-integrity",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else Destination(),
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+
+    async def recovery_integrity(*_args: object, **_kwargs: object) -> bool:
+        raise ArtifactIntegrityError("durable destination metadata is malformed")
+
+    monkeypatch.setattr(store, "_resolve_copy_destination", recovery_integrity)
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store.commit_original(staged, REVISION)
 
 
 @pytest.mark.asyncio

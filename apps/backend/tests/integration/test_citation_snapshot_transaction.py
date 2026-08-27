@@ -7,12 +7,19 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.sql.selectable import Select
 
+from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import (
     ANSWER_SNAPSHOT_LOCK_NAME,
     MysqlDocumentRepository,
+    _NamedLockAttempt,
     _release_named_lock,
 )
 from tap.modules.knowledge.application.answers import AnswerService
@@ -90,8 +97,18 @@ class CancelAfterNamedLockRepository(MysqlDocumentRepository):
 
     lock_granted = asyncio.Event()
 
-    async def _acquire_answer_snapshot_lock(self, connection: AsyncConnection) -> object:
-        acquired = await super()._acquire_answer_snapshot_lock(connection)
+    async def _acquire_answer_snapshot_lock(
+        self,
+        connection: AsyncConnection,
+        *,
+        server_connection_id: int,
+        lock_attempt: _NamedLockAttempt | None = None,
+    ) -> object:
+        acquired = await super()._acquire_answer_snapshot_lock(
+            connection,
+            server_connection_id=server_connection_id,
+            lock_attempt=lock_attempt,
+        )
         if acquired == 1:
             type(self).lock_granted.set()
             await asyncio.Event().wait()
@@ -101,9 +118,19 @@ class CancelAfterNamedLockRepository(MysqlDocumentRepository):
 class CancelWhileWaitingNamedLockRepository(MysqlDocumentRepository):
     acquisition_started = asyncio.Event()
 
-    async def _acquire_answer_snapshot_lock(self, connection: AsyncConnection) -> object:
+    async def _acquire_answer_snapshot_lock(
+        self,
+        connection: AsyncConnection,
+        *,
+        server_connection_id: int,
+        lock_attempt: _NamedLockAttempt | None = None,
+    ) -> object:
         type(self).acquisition_started.set()
-        return await super()._acquire_answer_snapshot_lock(connection)
+        return await super()._acquire_answer_snapshot_lock(
+            connection,
+            server_connection_id=server_connection_id,
+            lock_attempt=lock_attempt,
+        )
 
 
 class NeverAnswerGateway:
@@ -644,6 +671,8 @@ def test_uncertain_named_lock_ownership_terminates_physical_connection_before_re
                     connection,
                     ANSWER_SNAPSHOT_LOCK_NAME,
                     ownership_confirmed=False,
+                    engine=engine,
+                    server_connection_id=first_connection_id,
                 )
 
                 assert connection.invalidated is True
@@ -665,6 +694,110 @@ def test_uncertain_named_lock_ownership_terminates_physical_connection_before_re
                     )
                     == 1
                 )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ("acquire", "release"))
+def test_in_flight_named_lock_is_killed_and_verified_before_return(
+    phase: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client deadline must settle the server session, not only its pool handle."""
+
+    async def scenario() -> None:
+        engine = create_async_engine(DATABASE_URL, pool_size=1, max_overflow=0)
+        try:
+            async with engine.connect() as connection:
+                connection_id = await connection.scalar(text("SELECT CONNECTION_ID()"))
+                assert type(connection_id) is int
+                if phase == "release":
+                    assert (
+                        await connection.scalar(
+                            text("SELECT GET_LOCK(:lock_name, 0)"),
+                            {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                        )
+                        == 1
+                    )
+                    await connection.commit()
+                    statement = "SELECT IF(SLEEP(30)=0,RELEASE_LOCK(:lock_name),NULL)"
+                    monkeypatch.setattr(
+                        mysql_documents,
+                        "ANSWER_SNAPSHOT_LOCK_RELEASE_SQL",
+                        statement,
+                        raising=False,
+                    )
+                    monkeypatch.setattr(
+                        mysql_documents,
+                        "ANSWER_SNAPSHOT_LOCK_RELEASE_DEADLINE_SECONDS",
+                        0.05,
+                    )
+                    with pytest.raises(AnswerSnapshotUnavailable):
+                        await _release_named_lock(
+                            connection,
+                            ANSWER_SNAPSHOT_LOCK_NAME,
+                            ownership_confirmed=True,
+                            engine=engine,
+                            server_connection_id=connection_id,
+                        )
+                else:
+                    statement = "SELECT IF(GET_LOCK(:lock_name,0)=1,SLEEP(30),-1)"
+                    monkeypatch.setattr(
+                        mysql_documents,
+                        "ANSWER_SNAPSHOT_LOCK_ACQUIRE_SQL",
+                        statement,
+                        raising=False,
+                    )
+                    monkeypatch.setattr(
+                        mysql_documents,
+                        "ANSWER_SNAPSHOT_LOCK_ACQUIRE_DEADLINE_SECONDS",
+                        0.05,
+                    )
+                    repository = MysqlDocumentRepository(
+                        async_sessionmaker(engine, expire_on_commit=False)
+                    )
+                    with pytest.raises(AnswerSnapshotUnavailable):
+                        await repository._acquire_answer_snapshot_lock(
+                            connection,
+                            server_connection_id=connection_id,
+                        )
+
+            observer_engine = create_async_engine(DATABASE_URL)
+            async with observer_engine.connect() as observer:
+                assert (
+                    await observer.scalar(
+                        text(
+                            "SELECT COUNT(*) FROM information_schema.processlist "
+                            "WHERE id=:connection_id"
+                        ),
+                        {"connection_id": connection_id},
+                    )
+                    == 0
+                )
+                assert (
+                    await observer.scalar(
+                        text("SELECT IS_USED_LOCK(:lock_name)"),
+                        {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                    )
+                    != connection_id
+                )
+                assert (
+                    await observer.scalar(
+                        text("SELECT GET_LOCK(:lock_name, 0)"),
+                        {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                    )
+                    == 1
+                )
+                assert (
+                    await observer.scalar(
+                        text("SELECT RELEASE_LOCK(:lock_name)"),
+                        {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                    )
+                    == 1
+                )
+            await observer_engine.dispose()
         finally:
             await engine.dispose()
 

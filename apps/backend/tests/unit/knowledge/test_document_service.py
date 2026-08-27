@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from tap.interfaces.http.dependencies import KnowledgeRuntimeUnavailable, UploadInput
+from tap.modules.knowledge.application import documents as documents_module
 from tap.modules.knowledge.application.documents import DocumentService
 from tap.modules.knowledge.domain.documents import MAX_UPLOAD_BYTES
 from tap.modules.knowledge.ports.documents import (
@@ -434,5 +435,101 @@ def test_document_artifact_outage_crosses_the_same_provider_neutral_boundary() -
             await service.upload(markdown_upload("policy.md", b"# Policy"))
 
         assert "secret" not in str(caught.value)
+
+    asyncio.run(scenario())
+
+
+def test_reservation_cancellation_wins_over_staging_cleanup_failure() -> None:
+    async def scenario() -> None:
+        repository = MemoryDocumentRepository()
+        artifacts = FakeArtifactStore()
+        cancellation = asyncio.CancelledError("reserve caller disconnected")
+
+        async def cancel_reservation(*_args: object, **_kwargs: object) -> None:
+            raise cancellation
+
+        async def fail_cleanup(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("cleanup credential=secret")
+
+        repository.reserve_upload = cancel_reservation  # type: ignore[method-assign]
+        artifacts.discard_staging = fail_cleanup  # type: ignore[method-assign]
+        service = DocumentService(repository=repository, artifacts=artifacts)
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await service.upload(markdown_upload("cancel.md", b"# Cancel"))
+
+        assert caught.value is cancellation
+        assert caught.value.args == ("reserve caller disconnected",)
+
+    asyncio.run(scenario())
+
+
+def test_duplicate_pending_commit_cancellation_wins_over_staging_cleanup_failure() -> None:
+    async def scenario() -> None:
+        repository = MemoryDocumentRepository()
+        artifacts = FakeArtifactStore()
+        staged = await artifacts.stage_original(
+            markdown_upload("pending.md", b"# Pending"), max_bytes=MAX_UPLOAD_BYTES
+        )
+        await repository.reserve_upload(
+            ReserveUpload.from_staged(staged, now=datetime(2026, 8, 27, 10, 0))
+        )
+        cancellation = asyncio.CancelledError("commit caller disconnected")
+
+        async def cancel_commit(*_args: object, **_kwargs: object) -> None:
+            raise cancellation
+
+        async def fail_cleanup(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("cleanup credential=secret")
+
+        artifacts.commit_original = cancel_commit  # type: ignore[method-assign]
+        artifacts.discard_staging = fail_cleanup  # type: ignore[method-assign]
+        service = DocumentService(repository=repository, artifacts=artifacts)
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await service.upload(markdown_upload("pending.md", b"# Pending"))
+
+        assert caught.value is cancellation
+        assert caught.value.args == ("commit caller disconnected",)
+
+    asyncio.run(scenario())
+
+
+def test_reservation_cancellation_does_not_wait_unbounded_for_staging_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            documents_module,
+            "UPLOAD_CLEANUP_SETTLEMENT_TIMEOUT_SECONDS",
+            0.02,
+            raising=False,
+        )
+        repository = MemoryDocumentRepository()
+        artifacts = FakeArtifactStore()
+        cancellation = asyncio.CancelledError("reserve caller disconnected")
+        allow_cleanup = asyncio.Event()
+
+        async def cancel_reservation(*_args: object, **_kwargs: object) -> None:
+            raise cancellation
+
+        async def hang_cleanup(*_args: object, **_kwargs: object) -> None:
+            await allow_cleanup.wait()
+
+        repository.reserve_upload = cancel_reservation  # type: ignore[method-assign]
+        artifacts.discard_staging = hang_cleanup  # type: ignore[method-assign]
+        service = DocumentService(repository=repository, artifacts=artifacts)
+        uploading = asyncio.create_task(service.upload(markdown_upload("cancel.md", b"# Cancel")))
+
+        done, _pending = await asyncio.wait({uploading}, timeout=0.1)
+        completed_within_deadline = uploading in done
+        if not completed_within_deadline:
+            allow_cleanup.set()
+            uploading.cancel()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await uploading
+
+        assert completed_within_deadline
+        assert caught.value is cancellation
 
     asyncio.run(scenario())

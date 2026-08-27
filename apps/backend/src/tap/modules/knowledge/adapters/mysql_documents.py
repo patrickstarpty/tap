@@ -34,7 +34,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
 
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
@@ -97,6 +104,10 @@ ANSWER_SNAPSHOT_RETENTION = 1_000
 ANSWER_SNAPSHOT_LOCK_NAME = "tap:athena:answer-snapshot-retention:v1"
 ANSWER_SNAPSHOT_LOCK_ACQUIRE_DEADLINE_SECONDS = 6.0
 ANSWER_SNAPSHOT_LOCK_RELEASE_DEADLINE_SECONDS = 2.0
+ANSWER_SNAPSHOT_LOCK_SETTLEMENT_DEADLINE_SECONDS = 2.0
+ANSWER_SNAPSHOT_LOCK_ACQUIRE_SQL = "SELECT GET_LOCK(:lock_name, 5)"
+ANSWER_SNAPSHOT_LOCK_RELEASE_SQL = "SELECT RELEASE_LOCK(:lock_name)"
+_MAX_MYSQL_CONNECTION_ID = 2**64 - 1
 
 knowledge_document = Table(
     "knowledge_document",
@@ -289,6 +300,11 @@ class _NamedLockOutcome:
     cancellations: tuple[asyncio.CancelledError, ...]
 
 
+@dataclass(slots=True)
+class _NamedLockAttempt:
+    server_settlement_attempted: bool = False
+
+
 def _observe_task(task: asyncio.Task[object]) -> None:
     try:
         task.exception()
@@ -353,21 +369,158 @@ def _terminate_named_lock_connection(connection: AsyncConnection, error: BaseExc
     sync_connection.rollback()
 
 
+def _mysql_connection_id(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= _MAX_MYSQL_CONNECTION_ID:
+        raise AnswerSnapshotUnavailable("MySQL returned an invalid connection identity")
+    return value
+
+
+async def _kill_and_verify_named_lock_session(
+    engine: AsyncEngine,
+    server_connection_id: int,
+    lock_name: str,
+) -> None:
+    """Use an independent physical session to settle the exact lock owner."""
+    connection_id = _mysql_connection_id(server_connection_id)
+    if not isinstance(lock_name, str) or not lock_name or len(lock_name) > 64:
+        raise AnswerSnapshotUnavailable("answer snapshot lock identity is invalid")
+    control_engine = create_async_engine(
+        engine.url,
+        poolclass=NullPool,
+        pool_pre_ping=False,
+    )
+    try:
+        async with control_engine.connect() as control:
+            kill_error: BaseException | None = None
+            try:
+                # MySQL does not accept a bound parameter for the KILL grammar.
+                # The only interpolated value has passed a strict unsigned-int check.
+                await control.execute(text(f"KILL CONNECTION {connection_id}"))
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                kill_error = error
+
+            while True:
+                process_count = await control.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.processlist "
+                        "WHERE id=:connection_id"
+                    ),
+                    {"connection_id": connection_id},
+                )
+                owner = await control.scalar(
+                    text("SELECT IS_USED_LOCK(:lock_name)"),
+                    {"lock_name": lock_name},
+                )
+                if type(process_count) is not int or process_count not in {0, 1}:
+                    raise AnswerSnapshotUnavailable(
+                        "MySQL returned malformed session settlement state"
+                    )
+                if owner is not None:
+                    owner = _mysql_connection_id(owner)
+                if process_count == 0 and owner != connection_id:
+                    return
+                if kill_error is not None:
+                    raise AnswerSnapshotUnavailable(
+                        "MySQL refused exact session termination"
+                    ) from kill_error
+                await asyncio.sleep(0.01)
+    finally:
+        await control_engine.dispose()
+
+
+async def _settle_named_lock_session(
+    connection: AsyncConnection,
+    engine: AsyncEngine,
+    server_connection_id: int,
+    lock_name: str,
+    *,
+    first_cancellation: asyncio.CancelledError | None = None,
+) -> None:
+    """Bound, verify, and locally invalidate an uncertain server lock session."""
+    connection_id = _mysql_connection_id(server_connection_id)
+    task = asyncio.create_task(
+        _kill_and_verify_named_lock_session(engine, connection_id, lock_name)
+    )
+    cancellation = first_cancellation
+    deadline = asyncio.get_running_loop().time() + ANSWER_SNAPSHOT_LOCK_SETTLEMENT_DEADLINE_SECONDS
+    settlement_error: BaseException | None = None
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            task.cancel()
+            task.add_done_callback(_observe_task)
+            settlement_error = TimeoutError(
+                "answer snapshot session settlement exceeded its client deadline"
+            )
+            break
+        try:
+            done, _pending = await asyncio.wait({task}, timeout=remaining)
+            if not done:
+                task.cancel()
+                task.add_done_callback(_observe_task)
+                settlement_error = TimeoutError(
+                    "answer snapshot session settlement exceeded its client deadline"
+                )
+                break
+        except asyncio.CancelledError as caught:
+            if cancellation is None:
+                cancellation = caught
+    if task.done():
+        try:
+            task.result()
+        except BaseException as error:
+            settlement_error = error
+
+    try:
+        _terminate_named_lock_connection(
+            connection,
+            settlement_error
+            or AnswerSnapshotUnavailable("answer snapshot lock session was terminated"),
+        )
+    except BaseException as termination_error:
+        if cancellation is not None:
+            raise cancellation
+        raise AnswerSnapshotUnavailable(
+            "answer snapshot connection termination failed"
+        ) from termination_error
+    if cancellation is not None:
+        raise cancellation
+    if settlement_error is not None:
+        raise AnswerSnapshotUnavailable(
+            "answer snapshot lock session settlement failed"
+        ) from settlement_error
+
+
 async def _release_named_lock(
-    connection: AsyncConnection, lock_name: str, *, ownership_confirmed: bool
+    connection: AsyncConnection,
+    lock_name: str,
+    *,
+    ownership_confirmed: bool,
+    engine: AsyncEngine,
+    server_connection_id: int,
 ) -> None:
     """Release a confirmed lock or terminate a connection with uncertain ownership."""
     if connection.invalidated:
+        await _settle_named_lock_session(
+            connection,
+            engine,
+            server_connection_id,
+            lock_name,
+        )
         return
     if not ownership_confirmed:
-        _terminate_named_lock_connection(
+        await _settle_named_lock_session(
             connection,
-            AnswerSnapshotUnavailable("answer snapshot lock ownership is uncertain"),
+            engine,
+            server_connection_id,
+            lock_name,
         )
         return
     outcome = await _bounded_named_lock_query(
         connection,
-        "SELECT RELEASE_LOCK(:lock_name)",
+        ANSWER_SNAPSHOT_LOCK_RELEASE_SQL,
         {"lock_name": lock_name},
         timeout_seconds=ANSWER_SNAPSHOT_LOCK_RELEASE_DEADLINE_SECONDS,
     )
@@ -377,16 +530,13 @@ async def _release_named_lock(
     elif outcome.value != 1:
         failure = AnswerSnapshotUnavailable("answer snapshot serialization lock was lost")
     if failure is not None:
-        try:
-            _terminate_named_lock_connection(connection, outcome.error or failure)
-        except BaseException as termination_error:
-            if outcome.cancellations:
-                raise outcome.cancellations[0]
-            raise AnswerSnapshotUnavailable(
-                "answer snapshot connection termination failed"
-            ) from termination_error
-        if outcome.cancellations:
-            raise outcome.cancellations[0]
+        await _settle_named_lock_session(
+            connection,
+            engine,
+            server_connection_id,
+            lock_name,
+            first_cancellation=(outcome.cancellations[0] if outcome.cancellations else None),
+        )
         raise failure from outcome.error
     if outcome.cancellations:
         raise outcome.cancellations[0]
@@ -485,9 +635,18 @@ class MysqlDocumentRepository:
             async with self._engine.connect() as connection:
                 ownership_confirmed = False
                 acquisition_settled = False
+                acquisition_started = False
+                lock_attempt = _NamedLockAttempt()
+                server_connection_id: int | None = None
                 first_cancellation: asyncio.CancelledError | None = None
                 try:
-                    acquired = await self._acquire_answer_snapshot_lock(connection)
+                    server_connection_id = await self._named_lock_connection_id(connection)
+                    acquisition_started = True
+                    acquired = await self._acquire_answer_snapshot_lock(
+                        connection,
+                        server_connection_id=server_connection_id,
+                        lock_attempt=lock_attempt,
+                    )
                     acquisition_settled = True
                     if acquired != 1:
                         raise AnswerSnapshotUnavailable(
@@ -506,12 +665,21 @@ class MysqlDocumentRepository:
                     # The GET_LOCK await can be cancelled after MySQL granted ownership but
                     # before an override returns. A settled non-grant owns no lock; every
                     # other state must release or physically terminate this connection.
-                    if ownership_confirmed or not acquisition_settled:
+                    if server_connection_id is not None and (
+                        ownership_confirmed
+                        or (
+                            acquisition_started
+                            and not acquisition_settled
+                            and not lock_attempt.server_settlement_attempted
+                        )
+                    ):
                         try:
                             await _release_named_lock(
                                 connection,
                                 ANSWER_SNAPSHOT_LOCK_NAME,
                                 ownership_confirmed=ownership_confirmed,
+                                engine=self._engine,
+                                server_connection_id=server_connection_id,
                             )
                         except asyncio.CancelledError as cancellation:
                             if first_cancellation is None:
@@ -526,10 +694,38 @@ class MysqlDocumentRepository:
         except Exception as error:
             raise AnswerSnapshotUnavailable("answer snapshot transaction failed") from error
 
-    async def _acquire_answer_snapshot_lock(self, connection: AsyncConnection) -> object:
+    async def _named_lock_connection_id(self, connection: AsyncConnection) -> int:
         outcome = await _bounded_named_lock_query(
             connection,
-            "SELECT GET_LOCK(:lock_name, 5)",
+            "SELECT CONNECTION_ID()",
+            {},
+            timeout_seconds=ANSWER_SNAPSHOT_LOCK_RELEASE_DEADLINE_SECONDS,
+        )
+        if outcome.error is not None or outcome.cancellations:
+            failure = AnswerSnapshotUnavailable(
+                "answer snapshot connection identity is unavailable"
+            )
+            _terminate_named_lock_connection(connection, outcome.error or failure)
+            if outcome.cancellations:
+                raise outcome.cancellations[0]
+            raise failure from outcome.error
+        try:
+            return _mysql_connection_id(outcome.value)
+        except AnswerSnapshotUnavailable as failure:
+            _terminate_named_lock_connection(connection, failure)
+            raise
+
+    async def _acquire_answer_snapshot_lock(
+        self,
+        connection: AsyncConnection,
+        *,
+        server_connection_id: int,
+        lock_attempt: _NamedLockAttempt | None = None,
+    ) -> object:
+        connection_id = _mysql_connection_id(server_connection_id)
+        outcome = await _bounded_named_lock_query(
+            connection,
+            ANSWER_SNAPSHOT_LOCK_ACQUIRE_SQL,
             {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
             timeout_seconds=ANSWER_SNAPSHOT_LOCK_ACQUIRE_DEADLINE_SECONDS,
         )
@@ -538,16 +734,15 @@ class MysqlDocumentRepository:
             failure = AnswerSnapshotUnavailable(
                 "answer snapshot serialization lock acquisition failed"
             )
-            try:
-                _terminate_named_lock_connection(connection, outcome.error or failure)
-            except BaseException as termination_error:
-                if outcome.cancellations:
-                    raise outcome.cancellations[0]
-                raise AnswerSnapshotUnavailable(
-                    "answer snapshot connection termination failed"
-                ) from termination_error
-            if outcome.cancellations:
-                raise outcome.cancellations[0]
+            attempt = lock_attempt if lock_attempt is not None else _NamedLockAttempt()
+            attempt.server_settlement_attempted = True
+            await _settle_named_lock_session(
+                connection,
+                self._engine,
+                connection_id,
+                ANSWER_SNAPSHOT_LOCK_NAME,
+                first_cancellation=(outcome.cancellations[0] if outcome.cancellations else None),
+            )
             raise failure from outcome.error
         return outcome.value
 

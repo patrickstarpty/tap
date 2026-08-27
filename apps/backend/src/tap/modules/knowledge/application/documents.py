@@ -46,6 +46,7 @@ PublicMediaType = Literal[
     "text/plain",
 ]
 _T = TypeVar("_T")
+UPLOAD_CLEANUP_SETTLEMENT_TIMEOUT_SECONDS = 2.0
 
 
 class DocumentService:
@@ -79,8 +80,13 @@ class DocumentService:
             reservation = await self._repository.reserve_upload(
                 ReserveUpload.from_staged(staged, now=self._clock())
             )
-        except BaseException:
-            await _settle_cleanup(self._artifacts.discard_staged(staged))
+        except BaseException as error:
+            try:
+                await _settle_cleanup(self._artifacts.discard_staged(staged))
+            except BaseException:
+                if isinstance(error, asyncio.CancelledError):
+                    raise error
+                raise
             raise
         if reservation.state is ReservationState.DUPLICATE_ACTIVE:
             await _settle_cleanup(self._artifacts.discard_staged(staged))
@@ -95,6 +101,10 @@ class DocumentService:
                 try:
                     await _settle_cleanup(self._artifacts.discard_staged(staged))
                 except BaseException as cleanup_error:
+                    if isinstance(error, asyncio.CancelledError):
+                        raise error
+                    if isinstance(cleanup_error, asyncio.CancelledError):
+                        raise cleanup_error
                     raise BaseExceptionGroup(
                         "duplicate upload and staging cleanup both failed",
                         [error, cleanup_error],
@@ -213,16 +223,43 @@ async def _document_runtime_boundary(operation: Awaitable[_T]) -> _T:
 async def _settle_cleanup(*operations: Awaitable[object]) -> None:
     tasks = [asyncio.ensure_future(operation) for operation in operations]
     gathering = asyncio.gather(*tasks, return_exceptions=True)
-    try:
-        results = await asyncio.shield(gathering)
-    except asyncio.CancelledError:
-        await gathering
-        raise
+    first_cancellation: asyncio.CancelledError | None = None
+    deadline = asyncio.get_running_loop().time() + UPLOAD_CLEANUP_SETTLEMENT_TIMEOUT_SECONDS
+    timed_out = False
+    while not gathering.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            timed_out = True
+            break
+        try:
+            done, _pending = await asyncio.wait({gathering}, timeout=remaining)
+            if not done:
+                timed_out = True
+                break
+        except asyncio.CancelledError as cancellation:
+            if first_cancellation is None:
+                first_cancellation = cancellation
+    if timed_out:
+        for task in tasks:
+            task.cancel()
+        gathering.add_done_callback(_observe_cleanup)
+    if first_cancellation is not None:
+        raise first_cancellation
+    if timed_out:
+        raise TimeoutError("artifact cleanup exceeded its settlement deadline")
+    results = gathering.result()
     failures = [result for result in results if isinstance(result, BaseException)]
     if len(failures) == 1:
         raise failures[0]
     if failures:
         raise BaseExceptionGroup("artifact cleanup failed", failures)
+
+
+def _observe_cleanup(gathering: asyncio.Future[list[object]]) -> None:
+    try:
+        gathering.exception()
+    except BaseException:
+        pass
 
 
 def _iso(value: datetime) -> str:
