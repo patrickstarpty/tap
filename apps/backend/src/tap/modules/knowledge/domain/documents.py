@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -14,6 +15,7 @@ MAX_CHUNKS_PER_DOCUMENT = 10_000
 PARSER_VERSION = "athena-parser-v1"
 CHUNKER_VERSION = "athena-structure-512-v1"
 NORMALIZED_ARTIFACT_SCHEMA = "normalized-artifact-v1"
+STABLE_ID_SCHEMA = "stable-id-v1"
 
 
 class DocumentId(str):
@@ -83,6 +85,8 @@ class DocumentSource:
             raise ValueError("document filename must be a non-empty string")
         if not isinstance(self.media_type, MediaType) or not isinstance(self.content, bytes):
             raise TypeError("document source must use a closed media type and bytes")
+        if len(self.content) > MAX_UPLOAD_BYTES:
+            raise DocumentParseRejected("document-too-large")
         if (self.document_id is None) != (self.revision_id is None):
             raise ValueError("document and revision identity must be supplied together")
 
@@ -108,7 +112,7 @@ class NormalizedBlock:
         object.__setattr__(self, "kind", kind)
         if not isinstance(self.block_id, str) or not self.block_id:
             raise ValueError("normalized block requires a stable ID")
-        if not isinstance(self.text, str) or not self.text or "\0" in self.text:
+        if not isinstance(self.text, str) or not self.text.strip() or "\0" in self.text:
             raise ValueError("normalized block must contain safe text")
         if (
             not isinstance(self.heading_path, tuple)
@@ -130,6 +134,8 @@ class NormalizedBlock:
             or self.end_offset <= self.start_offset
         ):
             raise ValueError("normalized block offsets must be ordered non-empty code-point bounds")
+        if self.end_offset - self.start_offset != len(self.text):
+            raise ValueError("normalized block offsets must match Unicode code-point length")
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +166,17 @@ class NormalizedArtifact:
             raise ValueError("normalized artifact source identity must be complete")
         if sum(len(block.text) for block in self.blocks) > MAX_NORMALIZED_CHARACTERS:
             raise DocumentParseRejected("document-too-complex")
+        block_ids: set[str] = set()
+        previous_end = -1
+        for position, block in enumerate(self.blocks):
+            if block.block_id in block_ids:
+                raise ValueError("normalized artifact block IDs must be unique")
+            if block.start_offset < previous_end:
+                raise ValueError("normalized artifact blocks must be ordered and non-overlapping")
+            if block.paragraph_index != position:
+                raise ValueError("normalized artifact paragraph indices must be contiguous")
+            block_ids.add(block.block_id)
+            previous_end = block.end_offset
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,35 +206,54 @@ def canonical_sha256(data: bytes | Iterable[bytes]) -> str:
 
 def new_document_id(id_factory: Callable[[], str]) -> DocumentId:
     value = id_factory()
-    if not isinstance(value, str) or not value:
-        raise ValueError("document identity factory must return a non-empty string")
-    return DocumentId("doc_" + sha256(value.encode("utf-8")).hexdigest()[:32])
+    _required_identity_component("document identity factory value", value)
+    return DocumentId("doc_" + _stable_identity_digest("document", {"factoryValue": value})[:32])
 
 
 def revision_id_for(document_id: DocumentId, source_hash: str, parser_version: str) -> RevisionId:
     _validate_sha256(source_hash)
-    if not isinstance(document_id, str) or not document_id or not isinstance(parser_version, str):
-        raise ValueError("revision identity inputs must be non-empty strings")
+    _required_identity_component("document ID", document_id)
+    _required_identity_component("parser version", parser_version)
     return RevisionId(
-        "rev_" + sha256(f"{document_id}\0{source_hash}\0{parser_version}".encode()).hexdigest()
+        "rev_"
+        + _stable_identity_digest(
+            "revision",
+            {
+                "documentId": document_id,
+                "parserVersion": parser_version,
+                "sourceHash": source_hash,
+            },
+        )
     )
 
 
 def logical_chunk_id_for(document_id: DocumentId, anchor_json: str) -> LogicalChunkId:
-    if not isinstance(document_id, str) or not document_id or not isinstance(anchor_json, str):
-        raise ValueError("logical chunk identity inputs must be non-empty strings")
-    return LogicalChunkId("lc_" + sha256(f"{document_id}\0{anchor_json}".encode()).hexdigest())
+    _required_identity_component("document ID", document_id)
+    _required_identity_component("anchor JSON", anchor_json)
+    return LogicalChunkId(
+        "lc_"
+        + _stable_identity_digest(
+            "logical-chunk",
+            {"anchorJson": anchor_json, "documentId": document_id},
+        )
+    )
 
 
 def chunk_id_for(revision_id: RevisionId, anchor_json: str, chunk_hash: str) -> ChunkId:
     _validate_sha256(chunk_hash)
-    if not isinstance(revision_id, str) or not revision_id or not isinstance(anchor_json, str):
-        raise ValueError("chunk identity inputs must be non-empty strings")
+    _required_identity_component("revision ID", revision_id)
+    _required_identity_component("anchor JSON", anchor_json)
     return ChunkId(
         "h_"
-        + sha256(
-            f"{revision_id}\0{anchor_json}\0{chunk_hash}\0{CHUNKER_VERSION}".encode()
-        ).hexdigest()
+        + _stable_identity_digest(
+            "chunk",
+            {
+                "anchorJson": anchor_json,
+                "chunkHash": chunk_hash,
+                "chunkerVersion": CHUNKER_VERSION,
+                "revisionId": revision_id,
+            },
+        )
     )
 
 
@@ -242,3 +278,24 @@ def _validate_sha256(value: str) -> None:
         or any(character not in "0123456789abcdef" for character in value[7:])
     ):
         raise ValueError("source hash must be a canonical sha256 digest")
+
+
+def _required_identity_component(name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value
+
+
+def _stable_identity_digest(kind: str, fields: dict[str, str]) -> str:
+    """Hash a length-unambiguous, sorted JSON identity preimage.
+
+    JSON string escaping and the fixed field names preserve every component boundary, including
+    embedded NUL characters. The schema discriminator permits future intentional framing changes.
+    """
+    payload = {
+        "fields": fields,
+        "kind": kind,
+        "schema": STABLE_ID_SCHEMA,
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return sha256(canonical.encode("utf-8")).hexdigest()

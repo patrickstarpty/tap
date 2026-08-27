@@ -7,6 +7,7 @@ import zipfile
 from xml.sax.saxutils import escape
 
 import pytest
+from pypdf import PdfWriter
 
 from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
 from tap.modules.knowledge.domain.documents import (
@@ -143,6 +144,18 @@ def test_scanned_pdf_fails_as_ocr_required() -> None:
         ParserRegistry().parse(DocumentSource("scan.pdf", MediaType.PDF, _pdf_with_text("")))
 
 
+def test_encrypted_pdf_is_rejected_without_attempting_text_extraction() -> None:
+    """Accepting an encrypted source would defer a user-visible parser failure to publishing."""
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt("secret")
+    payload = io.BytesIO()
+    writer.write(payload)
+
+    with pytest.raises(DocumentParseRejected, match="^invalid-document$"):
+        ParserRegistry().parse(DocumentSource("locked.pdf", MediaType.PDF, payload.getvalue()))
+
+
 def test_markdown_keeps_fenced_code_and_pipe_table_as_single_locatable_blocks() -> None:
     """Splitting fenced code or a table row silently destroys their structural locator."""
     content = b"# Guide\n\n```python\nprint('x')\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n"
@@ -189,6 +202,7 @@ def test_text_parser_normalizes_crlf_and_uses_unicode_code_point_offsets() -> No
     ("source", "error"),
     [
         (DocumentSource("empty.txt", MediaType.TEXT, b"\r\n\r\n"), "empty-document"),
+        (DocumentSource("blank.txt", MediaType.TEXT, b" \t\r\n"), "empty-document"),
         (DocumentSource("nul.txt", MediaType.TEXT, b"before\0after"), "invalid-document"),
         (
             DocumentSource("wrong.txt", MediaType.PDF, _pdf_with_text("text")),
@@ -213,3 +227,27 @@ def test_docx_zip_bomb_is_rejected_before_document_library_opens_it() -> None:
 
     with pytest.raises(DocumentParseRejected, match="^invalid-document$"):
         ParserRegistry().parse(DocumentSource("bomb.docx", MediaType.DOCX, payload.getvalue()))
+
+
+@pytest.mark.parametrize("entry_name", ("../outside.xml", "word\\document.xml"))
+def test_docx_rejects_unsafe_zip_member_paths(entry_name: str) -> None:
+    """Opening traversal members would make the DOCX parser trust archive-controlled paths."""
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr(entry_name, b"untrusted")
+
+    with pytest.raises(DocumentParseRejected, match="^invalid-document$"):
+        ParserRegistry().parse(DocumentSource("unsafe.docx", MediaType.DOCX, payload.getvalue()))
+
+
+def test_docx_rejects_more_than_ten_thousand_zip_members_before_opening_document() -> None:
+    """An excessive entry count must be rejected before the document library allocates parts."""
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        for index in range(10_001):
+            archive.writestr(f"word/parts/{index}.xml", b"")
+
+    with pytest.raises(DocumentParseRejected, match="^invalid-document$"):
+        ParserRegistry().parse(
+            DocumentSource("many-parts.docx", MediaType.DOCX, payload.getvalue())
+        )

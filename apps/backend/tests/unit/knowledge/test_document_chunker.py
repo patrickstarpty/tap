@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
+import tiktoken
 
 from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
 from tap.modules.knowledge.domain.documents import (
+    ChunkId,
     DocumentId,
     DocumentParseRejected,
     MediaType,
@@ -19,12 +22,13 @@ from tap.modules.knowledge.domain.documents import (
 
 
 def _artifact(*blocks: NormalizedBlock) -> NormalizedArtifact:
-    text = "\n".join(block.text for block in blocks)
+    ordered = tuple(replace(block, paragraph_index=index) for index, block in enumerate(blocks))
+    text = "\n\n".join(block.text for block in ordered)
     return NormalizedArtifact(
         filename="policy.md",
         media_type=MediaType.MARKDOWN,
         source_hash=canonical_sha256(text.encode()),
-        blocks=blocks,
+        blocks=ordered,
         document_id=DocumentId("doc_01JTESTDOCUMENT000000000000"),
         revision_id=RevisionId("rev_test"),
     )
@@ -74,6 +78,42 @@ def test_chunker_splits_only_oversized_structural_block_with_overlap() -> None:
     assert all(StructuralChunker().token_count(chunk.content) <= 512 for chunk in chunks)
     assert chunks[0].content != chunks[1].content
     assert "word" in chunks[0].content and "word" in chunks[1].content
+
+
+def test_oversized_chunk_uses_exact_sixty_four_token_overlap() -> None:
+    """A changed overlap would lose or duplicate source context at an oversized boundary."""
+    text = " ".join(["word"] * 600)
+    chunks = StructuralChunker().chunk(_artifact(_block("paragraph", text, 0, len(text))))
+    encoding = tiktoken.get_encoding("cl100k_base")
+
+    assert len(chunks) == 2
+    assert encoding.encode(chunks[0].content)[-64:] == encoding.encode(chunks[1].content)[:64]
+
+
+def test_chunker_enforces_an_injected_manifest_limit_before_returning_chunks() -> None:
+    """Returning more manifest rows than the durable cap would overload later publishing."""
+    artifact = _artifact(
+        _block("paragraph", "first", 0, 5),
+        _block("paragraph", "next", 7, 11),
+        _block("paragraph", "third", 13, 18),
+    )
+
+    with pytest.raises(DocumentParseRejected, match="^document-too-complex$"):
+        StructuralChunker(max_chunks=2).chunk(artifact)
+
+
+def test_chunker_detects_a_duplicate_identity_from_its_identity_boundary() -> None:
+    """A collision must fail before a duplicate manifest row can be published."""
+    artifact = _artifact(
+        _block("paragraph", "first", 0, 5),
+        _block("paragraph", "next", 7, 11),
+    )
+
+    def duplicate_chunk_id(_: RevisionId, __: str, ___: str) -> ChunkId:
+        return ChunkId("h_duplicate")
+
+    with pytest.raises(AssertionError, match="^chunk identities are not unique$"):
+        StructuralChunker(chunk_id_factory=duplicate_chunk_id).chunk(artifact)
 
 
 def test_chunker_never_splits_a_unicode_code_point_at_a_token_boundary() -> None:

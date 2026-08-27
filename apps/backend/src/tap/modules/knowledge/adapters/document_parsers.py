@@ -16,6 +16,7 @@ from docx.text.paragraph import Paragraph
 from pypdf import PdfReader
 
 from tap.modules.knowledge.domain.documents import (
+    MAX_UPLOAD_BYTES,
     BlockKind,
     DocumentParseRejected,
     DocumentSource,
@@ -81,7 +82,7 @@ class ParserRegistry:
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
         try:
             validate_filename_media_type(source.filename, source.media_type)
-            if len(source.content) > 25 * 1024 * 1024:
+            if len(source.content) > MAX_UPLOAD_BYTES:
                 raise DocumentParseRejected("document-too-large")
             parser = self._parsers.get(source.media_type)
             if parser is None:
