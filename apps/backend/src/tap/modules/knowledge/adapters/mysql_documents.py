@@ -54,13 +54,17 @@ from tap.modules.knowledge.ports.documents import (
     DocumentRecordPage,
     DocumentState,
     IngestionJob,
+    IngestionWork,
     InvalidDocumentCursor,
     JobCheckpoint,
     JobFailure,
     JobKind,
     JobLeaseLost,
+    JobRetry,
     JobStage,
+    JobStageCommit,
     JobState,
+    ManifestChunk,
     ReservationState,
     ReserveUpload,
     RetryNotAllowed,
@@ -1194,16 +1198,35 @@ class MysqlDocumentRepository:
                 self._raise_lease_lost(job_id)
 
     async def checkpoint(self, checkpoint: JobCheckpoint) -> None:
+        await self._commit_stage(
+            JobStageCommit(
+                job_id=checkpoint.job_id,
+                lease_token=checkpoint.lease_token,
+                expected_stage=checkpoint.expected_stage,
+                completed_at=checkpoint.completed_at,
+            ),
+            require_stage_facts=False,
+        )
+
+    async def commit_stage(self, commit: JobStageCommit) -> None:
+        await self._commit_stage(commit, require_stage_facts=True)
+
+    async def _commit_stage(
+        self,
+        commit: JobStageCommit,
+        *,
+        require_stage_facts: bool,
+    ) -> None:
         async with self._sessions() as session, session.begin():
             row = (
                 (
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
-                            knowledge_ingestion_job.c.job_id == checkpoint.job_id,
+                            knowledge_ingestion_job.c.job_id == commit.job_id,
                             knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
-                            knowledge_ingestion_job.c.lease_token == checkpoint.lease_token,
-                            knowledge_ingestion_job.c.stage == checkpoint.expected_stage.value,
+                            knowledge_ingestion_job.c.lease_token == commit.lease_token,
+                            knowledge_ingestion_job.c.stage == commit.expected_stage.value,
                         )
                         .with_for_update()
                     )
@@ -1212,43 +1235,105 @@ class MysqlDocumentRepository:
                 .one_or_none()
             )
             if row is None:
-                self._raise_lease_lost(checkpoint.job_id)
+                self._raise_lease_lost(commit.job_id)
             database_now = await _database_now(session)
             if row["lease_until"] is None or row["lease_until"] <= database_now:
-                self._raise_lease_lost(checkpoint.job_id)
+                self._raise_lease_lost(commit.job_id)
+            if require_stage_facts and row["kind"] == JobKind.INGESTION.value:
+                required_fact = {
+                    JobStage.PARSING: commit.normalized_locator,
+                    JobStage.CHUNKING: commit.chunks_locator,
+                    JobStage.EMBEDDING: commit.embeddings_locator,
+                }.get(commit.expected_stage, True)
+                if required_fact is None:
+                    raise ValueError("ingestion stage commit is missing its durable artifact")
+                if commit.expected_stage is JobStage.CHUNKING and not commit.manifest:
+                    raise ValueError("chunking stage commit requires the complete manifest")
             results = list(deserialize_stage_results(row["stage_results_json"]))
-            index = list(JobStage).index(checkpoint.expected_stage)
+            index = list(JobStage).index(commit.expected_stage)
             results[index] = StageResult(
-                checkpoint.expected_stage,
+                commit.expected_stage,
                 StageState.COMPLETED,
-                _utc_naive(checkpoint.completed_at),
+                _utc_naive(commit.completed_at),
             )
-            is_complete = checkpoint.expected_stage is JobStage.READY
+            is_complete = commit.expected_stage is JobStage.READY
             next_stage = JobStage.READY if is_complete else list(JobStage)[index + 1]
             if not is_complete:
                 results[index + 1] = StageResult(next_stage, StageState.PROCESSING)
+            revision_values: dict[str, str] = {}
+            if commit.normalized_locator is not None:
+                revision_values["normalized_blob_locator"] = str(commit.normalized_locator)
+            if commit.chunks_locator is not None:
+                revision_values["chunks_blob_locator"] = str(commit.chunks_locator)
+            if commit.embeddings_locator is not None:
+                revision_values["embeddings_blob_locator"] = str(commit.embeddings_locator)
+            if revision_values:
+                updated_revision = await session.execute(
+                    update(knowledge_document_revision)
+                    .where(knowledge_document_revision.c.revision_id == row["revision_id"])
+                    .values(**revision_values)
+                )
+                if updated_revision.rowcount != 1:
+                    raise RuntimeError("job revision disappeared during stage commit")
+            if commit.manifest:
+                if tuple(item.ordinal for item in commit.manifest) != tuple(
+                    range(len(commit.manifest))
+                ):
+                    raise ValueError("manifest ordinals must be contiguous")
+                existing_manifest = list(
+                    (
+                        await session.execute(
+                            select(knowledge_chunk_manifest)
+                            .where(knowledge_chunk_manifest.c.revision_id == row["revision_id"])
+                            .order_by(knowledge_chunk_manifest.c.ordinal)
+                        )
+                    ).mappings()
+                )
+                if existing_manifest:
+                    if _manifest_from_rows(existing_manifest) != commit.manifest:
+                        raise RuntimeError("persisted manifest differs from replayed stage output")
+                else:
+                    await session.execute(
+                        insert(knowledge_chunk_manifest),
+                        [
+                            {
+                                "chunk_id": item.chunk_id,
+                                "logical_chunk_id": item.logical_chunk_id,
+                                "revision_id": row["revision_id"],
+                                "ordinal": item.ordinal,
+                                "root_id": item.root_id,
+                                "parent_id": item.parent_id,
+                                "anchor_json": json.loads(item.anchor_json),
+                                "chunk_content_hash": item.chunk_content_hash,
+                                "embedding_model_version": item.embedding_model_version,
+                                "index_version": item.index_version,
+                                "created_at": database_now,
+                            }
+                            for item in commit.manifest
+                        ],
+                    )
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
-                    knowledge_ingestion_job.c.job_id == checkpoint.job_id,
+                    knowledge_ingestion_job.c.job_id == commit.job_id,
                     knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
-                    knowledge_ingestion_job.c.lease_token == checkpoint.lease_token,
+                    knowledge_ingestion_job.c.lease_token == commit.lease_token,
                     knowledge_ingestion_job.c.lease_until > database_now,
-                    knowledge_ingestion_job.c.stage == checkpoint.expected_stage.value,
+                    knowledge_ingestion_job.c.stage == commit.expected_stage.value,
                 )
                 .values(
                     status=JobState.COMPLETED.value if is_complete else JobState.PROCESSING.value,
                     stage=next_stage.value,
                     stage_results_json=serialize_stage_results(tuple(results)),
                     lease_owner=None if is_complete else row["lease_owner"],
-                    lease_token=None if is_complete else checkpoint.lease_token,
+                    lease_token=None if is_complete else commit.lease_token,
                     lease_until=None if is_complete else row["lease_until"],
                     updated_at=database_now,
                     completed_at=database_now if is_complete else None,
                 )
             )
             if result.rowcount != 1:
-                self._raise_lease_lost(checkpoint.job_id)
+                self._raise_lease_lost(commit.job_id)
             revision = knowledge_document_revision.alias("checkpoint_revision")
             document_id = await session.scalar(
                 select(revision.c.document_id).where(revision.c.revision_id == row["revision_id"])
@@ -1268,6 +1353,20 @@ class MysqlDocumentRepository:
                     .values(dedupe_key=None, deleted_at=database_now, updated_at=database_now)
                 )
             elif row["kind"] == JobKind.INGESTION.value:
+                manifest_count = await session.scalar(
+                    select(func.count())
+                    .select_from(knowledge_chunk_manifest)
+                    .where(knowledge_chunk_manifest.c.revision_id == row["revision_id"])
+                )
+                if (
+                    require_stage_facts
+                    and is_complete
+                    and (commit.chunk_count is None or commit.chunk_count != manifest_count)
+                ):
+                    raise ValueError("ready stage chunk count must match the durable manifest")
+                ready_chunk_count = (
+                    cast(int, manifest_count) if commit.chunk_count is None else commit.chunk_count
+                )
                 await session.execute(
                     update(knowledge_document)
                     .where(
@@ -1279,9 +1378,156 @@ class MysqlDocumentRepository:
                         if is_complete
                         else DocumentState.PROCESSING.value,
                         stage=next_stage.value,
+                        chunk_count=(
+                            ready_chunk_count if is_complete else knowledge_document.c.chunk_count
+                        ),
                         updated_at=database_now,
                     )
                 )
+
+    async def load_ingestion_work(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+    ) -> IngestionWork:
+        async with self._sessions() as session, session.begin():
+            job = (
+                (
+                    await session.execute(
+                        select(knowledge_ingestion_job)
+                        .where(
+                            knowledge_ingestion_job.c.job_id == job_id,
+                            knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
+                            knowledge_ingestion_job.c.lease_token == lease_token,
+                            knowledge_ingestion_job.c.stage == expected_stage.value,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if job is None:
+                self._raise_lease_lost(job_id)
+            database_now = await _database_now(session)
+            if job["lease_until"] is None or job["lease_until"] <= database_now:
+                self._raise_lease_lost(job_id)
+            revision = (
+                (
+                    await session.execute(
+                        select(knowledge_document_revision).where(
+                            knowledge_document_revision.c.revision_id == job["revision_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            document = (
+                (
+                    await session.execute(
+                        select(knowledge_document).where(
+                            knowledge_document.c.document_id == revision["document_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            compatible = (
+                job["kind"] == JobKind.INGESTION.value
+                and document["status"] != DocumentState.DELETING.value
+            ) or (
+                job["kind"] == JobKind.DELETION.value
+                and document["status"] == DocumentState.DELETING.value
+            )
+            if not compatible or document["deleted_at"] is not None:
+                self._raise_lease_lost(job_id)
+            manifest_rows = list(
+                (
+                    await session.execute(
+                        select(knowledge_chunk_manifest)
+                        .where(knowledge_chunk_manifest.c.revision_id == revision["revision_id"])
+                        .order_by(knowledge_chunk_manifest.c.ordinal)
+                    )
+                ).mappings()
+            )
+            return IngestionWork(
+                job_id=job_id,
+                lease_token=lease_token,
+                kind=JobKind(job["kind"]),
+                stage=expected_stage,
+                document_id=document["document_id"],
+                revision_id=revision["revision_id"],
+                filename=document["filename"],
+                media_type=document["media_type"],
+                source_content_hash=revision["source_content_hash"],
+                original_locator=ArtifactLocator(revision["original_blob_locator"]),
+                normalized_locator=_optional_locator(revision["normalized_blob_locator"]),
+                chunks_locator=_optional_locator(revision["chunks_blob_locator"]),
+                embeddings_locator=_optional_locator(revision["embeddings_blob_locator"]),
+                parser_version=revision["parser_version"],
+                chunker_version=revision["chunker_version"],
+                pipeline_version=revision["pipeline_version"],
+                manifest=_manifest_from_rows(manifest_rows),
+            )
+
+    async def retry_job(self, retry: JobRetry) -> None:
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(knowledge_ingestion_job)
+                        .where(
+                            knowledge_ingestion_job.c.job_id == retry.job_id,
+                            knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
+                            knowledge_ingestion_job.c.lease_token == retry.lease_token,
+                            knowledge_ingestion_job.c.stage == retry.expected_stage.value,
+                            knowledge_ingestion_job.c.kind == JobKind.DELETION.value,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                self._raise_lease_lost(retry.job_id)
+            database_now = await _database_now(session)
+            if row["lease_until"] is None or row["lease_until"] <= database_now:
+                self._raise_lease_lost(retry.job_id)
+            results = list(deserialize_stage_results(row["stage_results_json"]))
+            index = list(JobStage).index(retry.expected_stage)
+            results[index] = StageResult(
+                retry.expected_stage,
+                StageState.FAILED,
+                database_now,
+                retry.error_code,
+            )
+            result = await session.execute(
+                update(knowledge_ingestion_job)
+                .where(
+                    knowledge_ingestion_job.c.job_id == retry.job_id,
+                    knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
+                    knowledge_ingestion_job.c.lease_token == retry.lease_token,
+                    knowledge_ingestion_job.c.lease_until > database_now,
+                    knowledge_ingestion_job.c.stage == retry.expected_stage.value,
+                )
+                .values(
+                    status=JobState.PENDING.value,
+                    stage_results_json=serialize_stage_results(tuple(results)),
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    next_attempt_at=database_now,
+                    error_code=retry.error_code,
+                    error_summary=SAFE_ERROR_SUMMARIES[retry.error_code],
+                    updated_at=database_now,
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_lease_lost(retry.job_id)
 
     async def fail_job(self, failure: JobFailure) -> None:
         async with self._sessions() as session, session.begin():
@@ -1447,6 +1693,27 @@ def _job_from_values(
         status=JobState.PENDING,
         stage=JobStage.STORED,
         stages=results,
+    )
+
+
+def _optional_locator(value: object) -> ArtifactLocator | None:
+    return ArtifactLocator(value) if isinstance(value, str) else None
+
+
+def _manifest_from_rows(rows: list[RowMapping]) -> tuple[ManifestChunk, ...]:
+    return tuple(
+        ManifestChunk(
+            chunk_id=cast(str, row["chunk_id"]),
+            logical_chunk_id=cast(str, row["logical_chunk_id"]),
+            ordinal=cast(int, row["ordinal"]),
+            root_id=cast(str, row["root_id"]),
+            parent_id=cast(str | None, row["parent_id"]),
+            anchor_json=json.dumps(row["anchor_json"], separators=(",", ":"), sort_keys=True),
+            chunk_content_hash=cast(str, row["chunk_content_hash"]),
+            embedding_model_version=cast(str, row["embedding_model_version"]),
+            index_version=cast(str, row["index_version"]),
+        )
+        for row in rows
     )
 
 

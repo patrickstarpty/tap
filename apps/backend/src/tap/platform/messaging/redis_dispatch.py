@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
@@ -31,6 +32,34 @@ MAX_RELAY_BATCH_SIZE = 500
 
 class AsyncRedis(Protocol):
     async def eval(self, script: str, number_of_keys: int, *values: object) -> int: ...
+
+
+class AsyncRedisStream(Protocol):
+    """Generic Redis Stream subset shared by domain-neutral wake-up consumers."""
+
+    async def xgroup_create(
+        self, name: str, groupname: str, id: str, *, mkstream: bool
+    ) -> object: ...
+
+    async def xreadgroup(
+        self,
+        groupname: str,
+        consumername: str,
+        streams: dict[str, str],
+        *,
+        count: int,
+        block: int,
+    ) -> object: ...
+
+    async def xack(self, name: str, groupname: str, *ids: str) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchWakeup:
+    """A latency hint; the aggregate identity never carries authoritative job facts."""
+
+    stream_id: str
+    aggregate_id: str
 
 
 class SystemClock:

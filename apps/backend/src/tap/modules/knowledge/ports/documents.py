@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -28,6 +29,9 @@ MAX_JOB_LEASE = timedelta(minutes=15)
 STAGE_ORDER = ("stored", "parsing", "chunking", "embedding", "publishing", "ready")
 SAFE_JOB_ERRORS = frozenset(
     {
+        "unsupported-document",
+        "document-too-large",
+        "empty-document",
         "invalid-document",
         "ocr-required",
         "document-too-complex",
@@ -40,6 +44,9 @@ SAFE_JOB_ERRORS = frozenset(
     }
 )
 SAFE_ERROR_SUMMARIES = {
+    "unsupported-document": "当前不支持这种文档格式。",
+    "document-too-large": "文档超过允许的大小限制。",
+    "empty-document": "文档内容为空。",
     "invalid-document": "文档内容无效，无法继续处理。",
     "ocr-required": "文档没有可提取文本，需要先进行 OCR。",
     "document-too-complex": "文档结构过于复杂，无法在当前限制内处理。",
@@ -381,6 +388,145 @@ class JobFailure:
             raise ValueError("job failure must use a safe closed error code")
 
 
+@dataclass(frozen=True, slots=True)
+class ManifestChunk:
+    """One durable vector-free manifest fact for an immutable revision chunk."""
+
+    chunk_id: str
+    logical_chunk_id: str
+    ordinal: int
+    root_id: str
+    parent_id: str | None
+    anchor_json: str
+    chunk_content_hash: str
+    embedding_model_version: str
+    index_version: str
+
+    def __post_init__(self) -> None:
+        if type(self.ordinal) is not int or self.ordinal < 0:
+            raise ValueError("manifest ordinal must be a non-negative integer")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.chunk_id,
+                self.logical_chunk_id,
+                self.root_id,
+                self.anchor_json,
+                self.chunk_content_hash,
+                self.embedding_model_version,
+                self.index_version,
+            )
+        ):
+            raise ValueError("manifest identities and versions must be nonblank")
+        try:
+            anchor = json.loads(self.anchor_json)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ValueError("manifest anchor must be canonical JSON") from error
+        if (
+            not isinstance(anchor, dict)
+            or json.dumps(anchor, separators=(",", ":"), sort_keys=True) != self.anchor_json
+        ):
+            raise ValueError("manifest anchor must be a canonical JSON object")
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingArtifact:
+    """A durable provider-neutral batch produced before index publication."""
+
+    model_alias: str
+    dimension: int
+    vectors: tuple[tuple[float, ...], ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model_alias, str) or not self.model_alias:
+            raise ValueError("embedding artifact requires a model alias")
+        if type(self.dimension) is not int or self.dimension < 1:
+            raise ValueError("embedding dimension must be positive")
+        if not isinstance(self.vectors, tuple):
+            raise TypeError("embedding vectors must be immutable")
+        for vector in self.vectors:
+            if (
+                not isinstance(vector, tuple)
+                or len(vector) != self.dimension
+                or any(type(value) is not float or not math.isfinite(value) for value in vector)
+            ):
+                raise ValueError("embedding vectors must be finite floats of the fixed dimension")
+
+
+@dataclass(frozen=True, slots=True)
+class IndexReceipt:
+    revision_id: str
+    index_version: str
+    indexed_count: int
+
+    def __post_init__(self) -> None:
+        if not self.revision_id or not self.index_version:
+            raise ValueError("index receipt identities must be nonblank")
+        if type(self.indexed_count) is not int or self.indexed_count < 0:
+            raise ValueError("index receipt count must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionWork:
+    """All durable revision facts reloaded for one fenced stage execution."""
+
+    job_id: str
+    lease_token: str
+    kind: JobKind
+    stage: JobStage
+    document_id: str
+    revision_id: str
+    filename: str
+    media_type: str
+    source_content_hash: str
+    original_locator: ArtifactLocator
+    normalized_locator: ArtifactLocator | None
+    chunks_locator: ArtifactLocator | None
+    embeddings_locator: ArtifactLocator | None
+    parser_version: str
+    chunker_version: str
+    pipeline_version: str
+    manifest: tuple[ManifestChunk, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DeletionTarget:
+    document_id: str
+    revision_id: str
+    chunk_ids: tuple[str, ...]
+    artifact_locators: tuple[ArtifactLocator, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class JobStageCommit(JobCheckpoint):
+    """A stage checkpoint plus the exact durable facts it made usable."""
+
+    normalized_locator: ArtifactLocator | None = None
+    chunks_locator: ArtifactLocator | None = None
+    embeddings_locator: ArtifactLocator | None = None
+    manifest: tuple[ManifestChunk, ...] = ()
+    chunk_count: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.chunk_count is not None and (
+            type(self.chunk_count) is not int or self.chunk_count < 0
+        ):
+            raise ValueError("chunk count must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class JobRetry:
+    job_id: str
+    lease_token: str
+    expected_stage: JobStage
+    error_code: str
+    retry_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.error_code not in SAFE_JOB_ERRORS:
+            raise ValueError("job retry must use a safe closed error code")
+
+
 class ArtifactStore(Protocol):
     async def stage_original(self, upload: UploadStream, *, max_bytes: int) -> StagedOriginal: ...
 
@@ -393,6 +539,28 @@ class ArtifactStore(Protocol):
     async def recover_original(self, staging_key: str, revision_id: str) -> ArtifactLocator: ...
 
     async def discard_staging(self, staging_key: str) -> None: ...
+
+    async def read_original(self, locator: ArtifactLocator) -> bytes: ...
+
+    async def write_normalized(
+        self, revision_id: str, artifact: NormalizedArtifact
+    ) -> ArtifactLocator: ...
+
+    async def read_normalized(self, locator: ArtifactLocator) -> NormalizedArtifact: ...
+
+    async def write_chunks(
+        self, revision_id: str, chunks: tuple[ChunkDraft, ...]
+    ) -> ArtifactLocator: ...
+
+    async def read_chunks(self, locator: ArtifactLocator) -> tuple[ChunkDraft, ...]: ...
+
+    async def write_embeddings(
+        self, revision_id: str, artifact: EmbeddingArtifact
+    ) -> ArtifactLocator: ...
+
+    async def read_embeddings(self, locator: ArtifactLocator) -> EmbeddingArtifact: ...
+
+    async def delete_revision_artifacts(self, target: DeletionTarget) -> None: ...
 
 
 class DocumentRepository(Protocol):
@@ -452,6 +620,17 @@ class DocumentRepository(Protocol):
 
     async def fail_job(self, failure: JobFailure) -> None: ...
 
+    async def load_ingestion_work(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+    ) -> IngestionWork: ...
+
+    async def commit_stage(self, commit: JobStageCommit) -> None: ...
+
+    async def retry_job(self, retry: JobRetry) -> None: ...
+
 
 class DocumentParser(Protocol):
     """Converts one closed media type into a safe normalized artifact."""
@@ -463,3 +642,24 @@ class DocumentChunker(Protocol):
     """Converts normalized, addressable text into vector-free manifest drafts."""
 
     def chunk(self, artifact: NormalizedArtifact) -> tuple[ChunkDraft, ...]: ...
+
+
+class DocumentEmbeddingPort(Protocol):
+    async def embed_documents(
+        self, texts: tuple[str, ...], *, model_alias: str
+    ) -> EmbeddingArtifact: ...
+
+
+class DocumentIndexPort(Protocol):
+    async def upsert_revision(
+        self,
+        work: IngestionWork,
+        chunks: tuple[ChunkDraft, ...],
+        embeddings: EmbeddingArtifact,
+        *,
+        index_version: str,
+    ) -> IndexReceipt: ...
+
+    async def delete_revision(self, target: DeletionTarget) -> None: ...
+
+    async def count_revision(self, target: DeletionTarget) -> int: ...
