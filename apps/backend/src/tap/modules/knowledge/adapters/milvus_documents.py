@@ -369,7 +369,8 @@ class MilvusDocumentIndex:
                 or ownership.predecessor_collection != recorded
             ):
                 raise IndexUnavailable("Athena alias drift has no durable ownership lineage")
-            await authority.activate_build(ownership)
+            await self._revoke_exact_grants(recorded)
+            await self._activate_build_resolved(authority, ownership)
 
     async def _current_target_locked(self, authority: ProjectionMutationLease) -> str:
         target = await self._provisioner.describe_alias(self._config.alias)

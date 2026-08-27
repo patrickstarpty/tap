@@ -998,7 +998,7 @@ async def test_rebuild_persists_exact_ownership_receipt_before_provider_create()
 
 @pytest.mark.asyncio
 async def test_owned_alias_switch_after_crash_repairs_lineage_without_dropping_legacy() -> None:
-    """Only a pre-create receipt may authorize crash recovery of an uncertain alias switch."""
+    """Crash recovery must retire legacy grants and resolve a committed activation response."""
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
@@ -1013,6 +1013,7 @@ async def test_owned_alias_switch_after_crash_repairs_lineage_without_dropping_l
     memory.indexes[fresh] = set(EXPECTED_INDEXES)
     memory.loaded.add(fresh)
     memory.aliases[ATHENA_ALIAS] = fresh
+    memory.coordinator.activate_error_after_success = True
 
     receipt = await index_for(memory).ensure_target()
 
@@ -1021,6 +1022,50 @@ async def test_owned_alias_switch_after_crash_repairs_lineage_without_dropping_l
     assert memory.coordinator.owned[fresh] == replace(build, status="active")
     assert ATHENA_PHYSICAL_COLLECTION in memory.collections
     assert ATHENA_PHYSICAL_COLLECTION not in memory.coordinator.cleanup
+    assert await memory.collection_aliases(ATHENA_PHYSICAL_COLLECTION) == ()
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set()
+
+
+@pytest.mark.asyncio
+async def test_crash_repair_retries_after_partial_legacy_grant_retirement() -> None:
+    """A partial revoke must preserve building lineage for an idempotent reconstruction retry."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    fresh = ATHENA_PHYSICAL_COLLECTION + "_" + "c" * 12
+    build = await memory.coordinator.reserve_build(
+        fresh,
+        ATHENA_PHYSICAL_COLLECTION,
+        "d" * 32,
+    )
+    await memory.create_collection(fresh, index._schema())
+    memory.indexes[fresh] = set(EXPECTED_INDEXES)
+    memory.loaded.add(fresh)
+    memory.aliases[ATHENA_ALIAS] = fresh
+    memory.retirement_outcome = "error_after"
+
+    with pytest.raises(IndexUnavailable):
+        await index_for(memory).ensure_target()
+
+    assert memory.coordinator.physical == ATHENA_PHYSICAL_COLLECTION
+    assert memory.coordinator.owned[fresh] == build
+    assert set(memory.coordinator.owned) == {fresh}
+    assert memory.coordinator.cleanup == {}
+    assert memory.aliases[ATHENA_ALIAS] == fresh
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert fresh in memory.collections
+
+    receipt = await index_for(memory).ensure_target()
+
+    assert receipt.physical_collection == fresh
+    assert memory.coordinator.physical == fresh
+    assert memory.coordinator.owned[fresh] == replace(build, status="active")
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set()
+    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
 
 
 @pytest.mark.asyncio
