@@ -555,7 +555,11 @@ class ArtifactStore(Protocol):
     async def read_chunks(self, locator: ArtifactLocator) -> tuple[ChunkDraft, ...]: ...
 
     async def write_embeddings(
-        self, revision_id: str, artifact: EmbeddingArtifact
+        self,
+        revision_id: str,
+        artifact: EmbeddingArtifact,
+        *,
+        source_content_hash: str,
     ) -> ArtifactLocator: ...
 
     async def read_embeddings(self, locator: ArtifactLocator) -> EmbeddingArtifact: ...

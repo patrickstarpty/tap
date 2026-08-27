@@ -15,6 +15,7 @@ from uuid import uuid4
 import httpx
 
 from tap.modules.knowledge.domain.models import Evidence, RevisionKind, SourceRevisionRef
+from tap.modules.knowledge.ports.errors import ModelUnavailable
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
     Embedding,
@@ -23,10 +24,9 @@ from tap.modules.knowledge.ports.models import (
 )
 
 _CANONICAL_COST = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,18})?\Z")
-
-
-class ModelUnavailable(Exception):
-    """The fixed LiteLLM route did not return a bounded valid response."""
+_ATHENA_EMBEDDING_ALIAS = "athena-embedding"
+_MAX_EMBEDDING_BATCH = 32
+_MAX_EMBEDDING_REQUEST_BYTES = 262_144
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +194,46 @@ class LiteLLMAdapter:
         except TimeoutError as error:
             raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
 
+    async def embed_many(self, texts: tuple[str, ...]) -> tuple[Embedding, ...]:
+        """Embed one bounded chunk batch on Athena's fixed ingestion route."""
+
+        if self.embedding_model_id != _ATHENA_EMBEDDING_ALIAS:
+            raise ModelUnavailable("the ingestion embedding route is not configured")
+        if (
+            not isinstance(texts, tuple)
+            or not 1 <= len(texts) <= _MAX_EMBEDDING_BATCH
+            or any(not isinstance(text, str) or not text for text in texts)
+        ):
+            raise ModelUnavailable("embedding batch is outside the fixed bounds")
+        try:
+            text_bytes = sum(len(text.encode("utf-8")) for text in texts)
+        except UnicodeEncodeError as error:
+            raise ModelUnavailable("embedding batch is not valid UTF-8") from error
+        if text_bytes > _MAX_EMBEDDING_REQUEST_BYTES:
+            raise ModelUnavailable("embedding batch exceeds the byte bound")
+
+        loop = asyncio.get_running_loop()
+        deadline_at = loop.time() + self._config.deadline_seconds
+        try:
+            async with asyncio.timeout_at(deadline_at):
+                response = await self._post(
+                    "v1/embeddings",
+                    {
+                        "model": _ATHENA_EMBEDDING_ALIAS,
+                        "input": list(texts),
+                        "dimensions": self._config.embedding_dimension,
+                    },
+                    deadline_at=deadline_at,
+                    allowed_model_labels=self._config.allowed_embedding_model_labels,
+                    maximum_request_bytes=_MAX_EMBEDDING_REQUEST_BYTES,
+                )
+                result = self._parse_embedding_batch(response, expected_count=len(texts))
+                if loop.time() >= deadline_at:
+                    raise TimeoutError
+                return result
+        except TimeoutError as error:
+            raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
+
     async def answer(
         self,
         query: str,
@@ -308,6 +348,7 @@ class LiteLLMAdapter:
         *,
         deadline_at: float,
         allowed_model_labels: frozenset[str],
+        maximum_request_bytes: int | None = None,
     ) -> _GatewayResponse:
         try:
             encoded = json.dumps(
@@ -318,7 +359,13 @@ class LiteLLMAdapter:
             ).encode("utf-8")
         except (TypeError, ValueError) as error:
             raise ModelUnavailable("LiteLLM request is not safely serializable") from error
-        if len(encoded) > self._config.max_request_bytes:
+        request_bound = min(
+            self._config.max_request_bytes,
+            maximum_request_bytes
+            if maximum_request_bytes is not None
+            else self._config.max_request_bytes,
+        )
+        if len(encoded) > request_bound:
             raise ModelUnavailable("LiteLLM request exceeds the byte bound")
         loop = asyncio.get_running_loop()
         if loop.time() >= deadline_at:
@@ -416,6 +463,58 @@ class LiteLLMAdapter:
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ModelUnavailable("LiteLLM returned a malformed embedding") from error
+
+    def _parse_embedding_batch(
+        self,
+        response: _GatewayResponse,
+        *,
+        expected_count: int,
+    ) -> tuple[Embedding, ...]:
+        try:
+            body = response.body
+            if not {"model", "data"} <= set(body) <= {"id", "model", "data", "usage"}:
+                raise ValueError("embedding response fields are widened")
+            model = _required_body_string(body, "model", maximum=256)
+            self._validate_model_label(model, self._config.allowed_embedding_model_labels)
+            data = body["data"]
+            if not isinstance(data, list) or len(data) != expected_count:
+                raise ValueError("embedding batch count is not exact")
+            ordered: list[Embedding | None] = [None] * expected_count
+            usage = _embedding_usage(body, response.response_cost_header)
+            for raw in data:
+                if not isinstance(raw, dict) or set(raw) != {"embedding", "index"}:
+                    raise ValueError("embedding row fields are widened")
+                index = raw["index"]
+                vector = raw["embedding"]
+                if (
+                    type(index) is not int
+                    or not 0 <= index < expected_count
+                    or ordered[index] is not None
+                    or not isinstance(vector, list)
+                    or len(vector) != self.embedding_dimension
+                    or any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        for value in vector
+                    )
+                ):
+                    raise ValueError("embedding row identity or vector is malformed")
+                ordered[index] = Embedding(
+                    vector=tuple(float(value) for value in vector),
+                    model_id=self.embedding_model_id,
+                    provider_request_id=response.provider_request_id,
+                    gateway_call_id=response.gateway_call_id,
+                    gateway_model_id=response.gateway_model_id,
+                    provider_model_id=model,
+                    completion_id=_optional_body_string(body, "id", maximum=256),
+                    usage=usage,
+                )
+            if any(item is None for item in ordered):
+                raise ValueError("embedding row identities are incomplete")
+            return tuple(item for item in ordered if item is not None)
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            raise ModelUnavailable("LiteLLM returned a malformed embedding batch") from error
 
     def _parse_answer(
         self,

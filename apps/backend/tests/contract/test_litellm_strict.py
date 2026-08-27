@@ -114,7 +114,20 @@ def embedding_response(
     return {
         "id": "embedding-17",
         "model": model,
-        "data": [{"embedding": vector if vector is not None else [0.25, 0.5]}],
+        "data": [{"embedding": vector if vector is not None else [0.25, 0.5], "index": 0}],
+    }
+
+
+def batch_embedding_response(
+    rows: list[dict[str, object]],
+    *,
+    model: str = "provider-embed-v1",
+) -> dict[str, object]:
+    return {
+        "id": "embedding-batch-17",
+        "model": model,
+        "data": rows,
+        "usage": {"prompt_tokens": 4, "total_tokens": 4},
     }
 
 
@@ -783,3 +796,157 @@ def test_litellm_config_rejects_non_strict_or_unbounded_limits(
     """Runtime annotation bypasses must not disable a provider resource bound."""
     with pytest.raises((TypeError, ValueError)):
         config(**{field: value})
+
+
+@pytest.mark.asyncio
+async def test_embed_many_uses_exact_fixed_route_and_restores_provider_index_order() -> None:
+    """Trusting response order would attach vectors to the wrong document chunks."""
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=batch_embedding_response(
+                [
+                    {"embedding": [0.75, 1.0], "index": 1},
+                    {"embedding": [0.25, 0.5], "index": 0},
+                ]
+            ),
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        vectors = await LiteLLMAdapter(fixed, client=client).embed_many(("first", "second"))
+
+    assert tuple(item.vector for item in vectors) == ((0.25, 0.5), (0.75, 1.0))
+    assert json.loads(requests[0].content) == {
+        "model": "athena-embedding",
+        "input": ["first", "second"],
+        "dimensions": 2,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [
+            {"embedding": [0.25, 0.5], "index": 0},
+            {"embedding": [0.75, 1.0], "index": 0},
+        ],
+        [{"embedding": [0.25, 0.5], "index": 0}],
+        [
+            {"embedding": [0.25, 0.5], "index": 0},
+            {"embedding": [0.75, 1.0], "index": 2},
+        ],
+        [
+            {"embedding": [0.25, 0.5], "index": 0, "object": "embedding"},
+            {"embedding": [0.75, 1.0], "index": 1},
+        ],
+        [
+            {"embedding": [0.25, float("nan")], "index": 0},
+            {"embedding": [0.75, 1.0], "index": 1},
+        ],
+        [
+            {"embedding": [0.25], "index": 0},
+            {"embedding": [0.75, 1.0], "index": 1},
+        ],
+    ],
+    ids=("duplicate", "missing", "out-of-range", "widened", "non-finite", "dimension"),
+)
+async def test_embed_many_rejects_non_bijective_or_malformed_provider_rows(
+    rows: list[dict[str, object]],
+) -> None:
+    """Malformed batch identity must fail before any vector can reach Milvus."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=json.dumps(batch_embedding_response(rows), allow_nan=True).encode(),
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(fixed, client=client).embed_many(("first", "second"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "texts",
+    [(), tuple("x" for _ in range(33)), ("x" * 262_145,)],
+    ids=("empty", "too-many", "byte-bound"),
+)
+async def test_embed_many_rejects_batch_bounds_before_egress(texts: tuple[str, ...]) -> None:
+    """An open batch shape would bypass the fixed provider resource budget."""
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+        max_request_bytes=262_144,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(fixed, client=client).embed_many(texts)
+
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_embed_many_rejects_unapproved_returned_model() -> None:
+    """A successful response cannot silently substitute another vector space."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=batch_embedding_response(
+                [{"embedding": [0.25, 0.5], "index": 0}],
+                model="unapproved-provider-model",
+            ),
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(fixed, client=client).embed_many(("first",))
+
+
+@pytest.mark.asyncio
+async def test_embed_many_requires_exact_athena_embedding_alias() -> None:
+    """A generic configured alias would let ingestion publish a different vector space."""
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed_many(("first",))
+
+    assert calls == 0

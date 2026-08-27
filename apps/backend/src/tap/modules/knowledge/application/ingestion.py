@@ -290,7 +290,11 @@ class IngestionWorker:
             locator = await self._artifact_write(
                 job,
                 stage,
-                lambda: self._artifacts.write_embeddings(work.revision_id, artifact),
+                lambda: self._artifacts.write_embeddings(
+                    work.revision_id,
+                    artifact,
+                    source_content_hash=work.source_content_hash,
+                ),
             )
             await self._commit(job, stage, embeddings_locator=locator)
             return

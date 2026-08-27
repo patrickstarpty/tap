@@ -15,5 +15,25 @@ class SearchBoundsExceeded(SearchError):
     """A trusted execution exceeds provider-neutral safety bounds."""
 
 
+class ModelUnavailable(Exception):
+    """The selected model route is unavailable or returned invalid data."""
+
+
+class IndexError(Exception):
+    """A document index operation failed without exposing provider details."""
+
+
+class IndexUnavailable(IndexError):
+    """The document index is unavailable or has incompatible metadata."""
+
+
+class IndexFenced(IndexError):
+    """A durable deletion fence rejected publication for this revision."""
+
+
+class IndexReconciliationFailed(IndexError):
+    """Persisted index rows did not match the requested projection."""
+
+
 SEARCH_UNAVAILABLE_TYPE = "https://tap.example/problems/search-unavailable"
 SEARCH_EXECUTION_REJECTED_TYPE = "https://tap.example/problems/search-execution-rejected"

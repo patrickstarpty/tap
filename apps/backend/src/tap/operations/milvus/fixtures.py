@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -14,48 +13,21 @@ from pathlib import Path
 from typing import Literal, cast, overload
 
 from tap.modules.access.domain.policy import Classification
-
-CONTENT_ANALYZER = {
-    "tokenizer": {
-        "type": "language_identifier",
-        "identifier": "whatlang",
-        "analyzers": {
-            "default": {"tokenizer": "standard"},
-            "English": {"type": "english"},
-            "Mandarin": {"tokenizer": "jieba", "filter": ["cnalphanumonly"]},
-        },
-    }
-}
-BM25_FUNCTION = {
-    "name": "content_bm25_v1",
-    "function_type": "BM25",
-    "input_field_names": ("content",),
-    "output_field_names": ("bm25_sparse",),
-}
-INDEXES: dict[str, dict[str, object]] = {
-    "dense_vector": {"index_type": "FLAT", "metric_type": "COSINE", "params": {}},
-    "bm25_sparse": {
-        "index_type": "SPARSE_INVERTED_INDEX",
-        "metric_type": "BM25",
-        "params": {
-            "inverted_index_algo": "DAAT_MAXSCORE",
-            "bm25_k1": 1.2,
-            "bm25_b": 0.75,
-        },
-    },
-    **{
-        field: {"index_type": "INVERTED"}
-        for field in (
-            "tenant_id",
-            "project_id",
-            "allowed_group_ids",
-            "classification_rank",
-            "environment",
-            "corpus_version",
-            "deleted",
-        )
-    },
-}
+from tap.operations.milvus.doc_schema import (
+    BM25_FUNCTION as BM25_FUNCTION,
+)
+from tap.operations.milvus.doc_schema import (
+    CONTENT_ANALYZER as CONTENT_ANALYZER,
+)
+from tap.operations.milvus.doc_schema import (
+    INDEXES as INDEXES,
+)
+from tap.operations.milvus.doc_schema import (
+    DocCollectionMetadata,
+    build_doc_collection_schema,
+    doc_collection_description,
+    doc_schema_sha256,
+)
 
 EXPECTED_SOURCE_IDS = frozenset(
     {
@@ -264,48 +236,26 @@ def load_query_cases(path: Path) -> tuple[QueryCase, ...]:
 
 def build_collection_schema(manifest: DocFixtureManifest) -> dict[str, object]:
     _validate_manifest(manifest)
-    return {
-        "auto_id": False,
-        "enable_dynamic_field": False,
-        "enable_namespace": False,
-        "consistency_level": "Strong",
-        "description": collection_description(manifest),
-        "vector_dimension": manifest.vector_dimension,
-        "fields": tuple(copy.deepcopy(_canonical_fields())),
-        "functions": (copy.deepcopy(BM25_FUNCTION),),
-        "indexes": copy.deepcopy(INDEXES),
-    }
+    return build_doc_collection_schema(_collection_metadata(manifest))
 
 
 def schema_sha256() -> str:
-    canonical = {
-        "consistency_level": "Strong",
-        "fields": _canonical_fields(),
-        "functions": [
-            {
-                "input_field_names": ["content"],
-                "name": BM25_FUNCTION["name"],
-                "output_field_names": ["bm25_sparse"],
-                "params": {},
-                "type": 1,
-            }
-        ],
-        "indexes": _canonical_indexes(),
-    }
-    return _canonical_digest(canonical)
+    return doc_schema_sha256()
 
 
 def collection_description(manifest: DocFixtureManifest) -> str:
     _validate_manifest(manifest)
-    metadata = {
-        "family": "doc",
-        "schemaVersion": manifest.schema_version,
-        "schemaSha256": manifest.schema_sha256,
-        "corpusVersion": manifest.corpus_version,
-        "embeddingModelVersion": manifest.embedding_model_version,
-        "vectorDimension": manifest.vector_dimension,
-    }
-    return _METADATA_PREFIX + json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+    return doc_collection_description(_collection_metadata(manifest))
+
+
+def _collection_metadata(manifest: DocFixtureManifest) -> DocCollectionMetadata:
+    return DocCollectionMetadata(
+        schema_version=manifest.schema_version,
+        schema_sha256=manifest.schema_sha256,
+        corpus_version=manifest.corpus_version,
+        embedding_model_version=manifest.embedding_model_version,
+        vector_dimension=manifest.vector_dimension,
+    )
 
 
 def manifest_sha256(manifest: DocFixtureManifest) -> str:
@@ -529,94 +479,6 @@ def _load_query_case(raw: object) -> QueryCase:
             None if environment is None else _string(environment, "environment", maximum=128)
         ),
         expected_source_ids=expected_source_ids,
-    )
-
-
-def _canonical_fields() -> list[dict[str, object]]:
-    def field(
-        name: str,
-        data_type: int,
-        params: Mapping[str, object] | None = None,
-        *,
-        element_type: int | None = None,
-        primary: bool = False,
-        nullable: bool = False,
-        function_output: bool = False,
-    ) -> dict[str, object]:
-        return {
-            "auto_id": False,
-            "element_type": element_type,
-            "is_function_output": function_output,
-            "is_primary": primary,
-            "name": name,
-            "nullable": nullable,
-            "params": dict(params or {}),
-            "type": data_type,
-        }
-
-    return [
-        field("chunk_id", 21, {"max_length": 66}, primary=True),
-        field("logical_chunk_id", 21, {"max_length": 66}),
-        field("root_id", 21, {"max_length": 66}),
-        field("parent_id", 21, {"max_length": 66}, nullable=True),
-        field("title", 21, {"max_length": 1024}, nullable=True),
-        field(
-            "content",
-            21,
-            {
-                "analyzer_params": copy.deepcopy(CONTENT_ANALYZER),
-                "enable_analyzer": True,
-                "max_length": 32768,
-            },
-        ),
-        field("content_role", 21, {"max_length": 32}),
-        field("tenant_id", 21, {"max_length": 256}),
-        field("project_id", 21, {"max_length": 256}),
-        field(
-            "allowed_group_ids",
-            22,
-            {"max_capacity": 128, "max_length": 256},
-            element_type=21,
-        ),
-        field("classification_rank", 2),
-        field("environment", 21, {"max_length": 128}),
-        field("deleted", 1),
-        field("index_family", 21, {"max_length": 16}),
-        field("physical_collection", 21, {"max_length": 255}),
-        field("corpus_version", 21, {"max_length": 256}),
-        field("schema_version", 21, {"max_length": 256}),
-        field("embedding_model_version", 21, {"max_length": 256}),
-        field("source_id", 21, {"max_length": 1024}),
-        field("source_type", 21, {"max_length": 32}),
-        field("revision_kind", 21, {"max_length": 32}),
-        field("source_revision", 21, {"max_length": 512}),
-        field("source_content_hash", 21, {"max_length": 71}),
-        field("chunk_content_hash", 21, {"max_length": 71}),
-        field("anchor_json", 21, {"max_length": 16384}),
-        field(
-            "derived_from_chunk_ids",
-            22,
-            {"max_capacity": 256, "max_length": 66},
-            element_type=21,
-        ),
-        field("bm25_sparse", 104, function_output=True),
-        field("dense_vector", 101, {"dim": 1536}),
-    ]
-
-
-def _canonical_indexes() -> list[dict[str, object]]:
-    return sorted(
-        (
-            {
-                "field_name": field_name,
-                "index_name": field_name,
-                "index_type": value["index_type"],
-                "metric_type": value.get("metric_type"),
-                "params": copy.deepcopy(value.get("params", {})),
-            }
-            for field_name, value in INDEXES.items()
-        ),
-        key=lambda item: cast(str, item["field_name"]),
     )
 
 

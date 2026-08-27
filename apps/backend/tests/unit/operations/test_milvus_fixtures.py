@@ -6,6 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from tap.operations.milvus.doc_schema import (
+    DocCollectionMetadata,
+    build_doc_collection_schema,
+    doc_collection_description,
+    doc_schema_sha256,
+)
 from tap.operations.milvus.fixtures import (
     EXPECTED_QUERY_CASE_IDS,
     EXPECTED_SOURCE_IDS,
@@ -52,6 +58,24 @@ def test_ids_hashes_and_schema_digest_are_deterministic_and_canonical() -> None:
     )
     assert manifest.schema_sha256 == schema_sha256()
     assert manifest_sha256(manifest) == manifest_sha256(load_doc_fixture(DOC_FIXTURE))
+
+
+def test_reusable_doc_schema_preserves_the_trusted_fixture_digest_and_metadata() -> None:
+    """Schema extraction must not silently change the trusted twelve-row target."""
+    manifest = load_doc_fixture(DOC_FIXTURE)
+    metadata = DocCollectionMetadata(
+        schema_version=manifest.schema_version,
+        schema_sha256=manifest.schema_sha256,
+        corpus_version=manifest.corpus_version,
+        embedding_model_version=manifest.embedding_model_version,
+        vector_dimension=manifest.vector_dimension,
+    )
+
+    assert doc_schema_sha256() == (
+        "sha256:998b3ca8933a0ad33e61d2acc6b5aa629b10fa691f42860bbe3fe2074402c71f"
+    )
+    assert build_doc_collection_schema(metadata) == build_collection_schema(manifest)
+    assert doc_collection_description(metadata) == collection_description(manifest)
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusCollectionDescriptor,
     MilvusHybridRequest,
     MilvusQueryRequest,
+    _collection_descriptor,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
@@ -30,12 +31,15 @@ from tap.operations.milvus.contracts import (
     WRITER_BASE_GRANTS,
     WRITER_PRIVILEGES,
     MilvusAdmin,
+    MilvusDocProvisioner,
     MilvusGrant,
     MilvusProbeClients,
     MilvusRoleCredentials,
+    MilvusScopedGrant,
 )
 
 _TIMEOUT_SECONDS = 10.0
+_DOC_TIMEOUT_SECONDS = 30.0
 _PERMISSION_DENIED_COMPATIBLE_CODE = 3
 _PYMILVUS_RPC_LOGGER_NAME = "pymilvus.decorators"
 _PYMILVUS_RPC_LOG_MODULE = "decorators"
@@ -107,6 +111,10 @@ class MilvusSdk:
 
 
 class _SyncClient(Protocol):
+    def list_collections(self, **kwargs: object) -> object: ...
+
+    def list_aliases(self, **kwargs: object) -> object: ...
+
     def list_users(self, **kwargs: object) -> object: ...
 
     def create_user(self, user_name: str, password: str, **kwargs: object) -> object: ...
@@ -510,34 +518,349 @@ class PyMilvusProvisioner:
         await _call(self._client.close)
 
 
+class PyMilvusDocProvisioner(MilvusDocProvisioner):
+    """Provision the reusable doc-family schema without health-probe dimension limits."""
+
+    def __init__(
+        self,
+        client: _SyncClient,
+        sdk: MilvusSdk,
+        *,
+        database_name: str,
+    ) -> None:
+        if not isinstance(sdk, MilvusSdk) or not database_name:
+            raise ValueError("Milvus doc provisioner requires SDK bindings and database")
+        self._client = client
+        self._sdk = sdk
+        self._database_name = database_name
+        self._schemas: dict[str, Mapping[str, object]] = {}
+
+    async def list_collections(self) -> tuple[str, ...]:
+        raw = await _doc_call(lambda: self._client.list_collections(timeout=_DOC_TIMEOUT_SECONDS))
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise RuntimeError("Milvus returned malformed collection inventory")
+        if any(not isinstance(item, str) for item in raw):
+            raise RuntimeError("Milvus returned malformed collection inventory")
+        return tuple(cast(Sequence[str], raw))
+
+    async def collection_exists(self, name: str) -> bool:
+        return name in await self.list_collections()
+
+    async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
+        if not isinstance(schema, Mapping) or schema.get("consistency_level") != "Strong":
+            raise ValueError("Milvus doc schema is malformed")
+        await _doc_call(lambda: self._create_collection(name, schema))
+        self._schemas[name] = schema
+
+    def _create_collection(self, name: str, schema: Mapping[str, object]) -> object:
+        sdk_schema = self._sdk.create_schema(
+            auto_id=False,
+            enable_dynamic_field=False,
+            description=cast(str, schema["description"]),
+        )
+        add_field = cast(Callable[..., object], getattr(sdk_schema, "add_field"))
+        add_function = cast(Callable[..., object], getattr(sdk_schema, "add_function"))
+        fields = cast(Sequence[Mapping[str, object]], schema["fields"])
+        for field in fields:
+            parameters = dict(cast(Mapping[str, object], field["params"]))
+            kwargs: dict[str, object] = {
+                "field_name": field["name"],
+                "datatype": self._data_type(cast(int, field["type"])),
+                "is_primary": field["is_primary"],
+                "nullable": field["nullable"],
+                **parameters,
+            }
+            element = field["element_type"]
+            if element is not None:
+                kwargs["element_type"] = self._data_type(cast(int, element))
+            add_field(**kwargs)
+        functions = cast(Sequence[Mapping[str, object]], schema["functions"])
+        if len(functions) != 1:
+            raise ValueError("Milvus doc schema requires one BM25 function")
+        function = functions[0]
+        add_function(
+            self._sdk.function_factory(
+                name=function["name"],
+                function_type=self._sdk.bm25_function_type,
+                input_field_names=list(cast(Sequence[str], function["input_field_names"])),
+                output_field_names=list(cast(Sequence[str], function["output_field_names"])),
+            )
+        )
+        return self._client.create_collection(
+            name,
+            schema=sdk_schema,
+            consistency_level="Strong",
+            timeout=_DOC_TIMEOUT_SECONDS,
+        )
+
+    def _data_type(self, value: int) -> object:
+        try:
+            int8_type = cast(Callable[[int], object], type(self._sdk.int64_type))(2)
+        except (TypeError, ValueError):
+            int8_type = self._sdk.int64_type
+        by_value = {
+            1: self._sdk.bool_type,
+            2: int8_type,
+            21: self._sdk.varchar_type,
+            22: self._sdk.array_type,
+            101: self._sdk.float_vector_type,
+            104: self._sdk.sparse_vector_type,
+        }
+        try:
+            return by_value[value]
+        except KeyError as error:
+            raise ValueError("Milvus doc schema contains an unsupported data type") from error
+
+    async def create_indexes(self, name: str) -> None:
+        schema = self._schemas.get(name)
+        if schema is None:
+            raise ValueError("Milvus doc schema is unavailable for index creation")
+        await _doc_call(lambda: self._create_indexes(name, schema))
+
+    def _create_indexes(self, name: str, schema: Mapping[str, object]) -> None:
+        params = self._client.prepare_index_params()
+        add_index = cast(Callable[..., object], getattr(params, "add_index"))
+        indexes = cast(Mapping[str, Mapping[str, object]], schema["indexes"])
+        for field_name, definition in indexes.items():
+            kwargs: dict[str, object] = {
+                "field_name": field_name,
+                "index_name": field_name,
+                "index_type": definition["index_type"],
+            }
+            if "metric_type" in definition:
+                kwargs["metric_type"] = definition["metric_type"]
+            if "params" in definition:
+                kwargs["params"] = definition["params"]
+            add_index(**kwargs)
+        self._client.create_index(name, params, timeout=_DOC_TIMEOUT_SECONDS)
+        self._client.load_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
+        self._client.get_load_state(name, timeout=_DOC_TIMEOUT_SECONDS)
+
+    async def grant_collection(self, name: str, role_name: str) -> None:
+        for privilege in sorted(_privileges_for_role(role_name)):
+
+            def grant_privilege(privilege: str = privilege) -> object:
+                return self._client.grant_privilege_v2(
+                    role_name,
+                    privilege,
+                    name,
+                    db_name=self._database_name,
+                    timeout=_DOC_TIMEOUT_SECONDS,
+                )
+
+            await _doc_call(grant_privilege)
+
+    async def revoke_collection(self, name: str, role_name: str) -> None:
+        current = {item.privilege for item in await self.collection_grants(name, role_name)}
+        for privilege in sorted(current):
+
+            def revoke_privilege(privilege: str = privilege) -> object:
+                return self._client.revoke_privilege_v2(
+                    role_name,
+                    privilege,
+                    name,
+                    db_name=self._database_name,
+                    timeout=_DOC_TIMEOUT_SECONDS,
+                )
+
+            await _doc_call(revoke_privilege)
+
+    async def collection_grants(
+        self,
+        name: str,
+        role_name: str,
+    ) -> frozenset[MilvusScopedGrant]:
+        raw = await _doc_call(
+            lambda: self._client.describe_role(
+                role_name,
+                db_name=self._database_name,
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
+        )
+        records = _role_grant_records(raw, role_name=role_name)
+        return frozenset(
+            MilvusScopedGrant(
+                role_name=record.role_name,
+                object_type="Collection",
+                db_name=record.database_name,
+                object_name=record.object_name,
+                privilege=record.privilege,
+            )
+            for record in records
+            if record.object_type == "Collection" and record.object_name == name
+        )
+
+    async def describe_collection(self, name: str) -> MilvusCollectionDescriptor:
+        raw_collection = await _doc_call(
+            lambda: self._client.describe_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        raw_indexes = []
+        for index_name in (
+            "dense_vector",
+            "bm25_sparse",
+            "tenant_id",
+            "project_id",
+            "allowed_group_ids",
+            "classification_rank",
+            "environment",
+            "corpus_version",
+            "deleted",
+        ):
+
+            def describe_index(index_name: str = index_name) -> object:
+                return self._client.describe_index(
+                    name,
+                    index_name,
+                    timeout=_DOC_TIMEOUT_SECONDS,
+                )
+
+            raw_indexes.append(await _doc_call(describe_index))
+        return _collection_descriptor(
+            raw_collection,
+            tuple(raw_indexes),
+            expected_collection=name,
+        )
+
+    async def create_alias(self, alias: str, collection_name: str) -> None:
+        await _doc_call(
+            lambda: self._client.create_alias(
+                collection_name,
+                alias,
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
+        )
+
+    async def alter_alias(self, alias: str, collection_name: str) -> None:
+        if await self.describe_alias(alias) is None:
+            await self.create_alias(alias, collection_name)
+            return
+        await _doc_call(
+            lambda: self._client.alter_alias(
+                collection_name,
+                alias,
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
+        )
+
+    async def describe_alias(self, alias: str) -> str | None:
+        raw_aliases = await _doc_call(
+            lambda: self._client.list_aliases(timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        if isinstance(raw_aliases, Mapping):
+            if set(raw_aliases) != {"aliases", "db_name"}:
+                raise RuntimeError("Milvus returned malformed alias inventory")
+            raw_aliases = raw_aliases.get("aliases")
+        if isinstance(raw_aliases, (str, bytes)) or not isinstance(raw_aliases, Sequence):
+            raise RuntimeError("Milvus returned malformed alias inventory")
+        names = {
+            item
+            if isinstance(item, str)
+            else item.get("alias")
+            if isinstance(item, Mapping)
+            else None
+            for item in raw_aliases
+        }
+        if alias not in names:
+            return None
+        raw = await _doc_call(
+            lambda: self._client.describe_alias(alias, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        return _alias_collection(raw)
+
+    async def drop_alias(self, alias: str) -> None:
+        await _doc_call(lambda: self._client.drop_alias(alias, timeout=_DOC_TIMEOUT_SECONDS))
+
+    async def drop_collection(self, name: str) -> None:
+        await _doc_call(lambda: self._client.drop_collection(name, timeout=_DOC_TIMEOUT_SECONDS))
+
+    async def close(self) -> None:
+        await _doc_call(self._client.close)
+
+
 class PyMilvusWriter:
     def __init__(self, client: _SyncClient) -> None:
         self._client = client
 
     async def insert(self, name: str, rows: tuple[Mapping[str, object], ...]) -> None:
-        await _call(
-            lambda: self._client.insert(name, [dict(row) for row in rows], timeout=_TIMEOUT_SECONDS)
+        await _doc_call(
+            lambda: self._client.insert(
+                name,
+                [dict(row) for row in rows],
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
         )
 
     async def upsert(self, name: str, rows: tuple[Mapping[str, object], ...]) -> None:
-        await _call(
-            lambda: self._client.upsert(name, [dict(row) for row in rows], timeout=_TIMEOUT_SECONDS)
+        await _doc_call(
+            lambda: self._client.upsert(
+                name,
+                [dict(row) for row in rows],
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
         )
 
     async def delete(self, name: str, chunk_ids: tuple[str, ...]) -> None:
-        await _call(
+        await _doc_call(
             lambda: self._client.delete(
                 name,
                 ids=list(chunk_ids),
-                timeout=_TIMEOUT_SECONDS,
+                timeout=_DOC_TIMEOUT_SECONDS,
             )
         )
 
     async def flush(self, name: str) -> None:
-        await _call(lambda: self._client.flush(name, timeout=_TIMEOUT_SECONDS))
+        await _doc_call(lambda: self._client.flush(name, timeout=_DOC_TIMEOUT_SECONDS))
 
     async def close(self) -> None:
-        await _call(self._client.close)
+        await _doc_call(self._client.close)
+
+
+class PyMilvusDocReader:
+    """Strong-consistency persisted-row reader for projection reconciliation."""
+
+    def __init__(self, client: _SyncClient) -> None:
+        self._client = client
+
+    async def query_persisted_rows(
+        self,
+        collection_name: str,
+        filter_expression: str,
+        output_fields: tuple[str, ...],
+        limit: int,
+    ) -> tuple[Mapping[str, object], ...]:
+        if (
+            not isinstance(filter_expression, str)
+            or not filter_expression
+            or len(filter_expression.encode("utf-8")) > 32_768
+            or not isinstance(output_fields, tuple)
+            or not output_fields
+            or len(set(output_fields)) != len(output_fields)
+            or type(limit) is not int
+            or not 1 <= limit <= 10_001
+        ):
+            raise ValueError("Milvus persisted-row query is outside the bound")
+        raw = await _doc_call(
+            lambda: self._client.query(
+                collection_name,
+                filter=filter_expression,
+                output_fields=list(output_fields),
+                limit=limit,
+                consistency_level="Strong",
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
+        )
+        if (
+            not isinstance(raw, list)
+            or len(raw) > limit
+            or any(
+                not isinstance(item, Mapping) or not set(item) <= set(output_fields) for item in raw
+            )
+        ):
+            raise RuntimeError("Milvus returned malformed persisted rows")
+        return tuple(dict(cast(Mapping[str, object], item)) for item in raw)
+
+    async def close(self) -> None:
+        await _doc_call(self._client.close)
 
 
 class PyMilvusProbeReader:
@@ -941,6 +1264,16 @@ async def _call[T](operation: Callable[[], T]) -> T:
         )
     except TimeoutError:
         raise RuntimeError("Milvus operation timed out") from None
+
+
+async def _doc_call[T](operation: Callable[[], T]) -> T:
+    try:
+        return await deadline_then_settle_blocking_call(
+            operation,
+            timeout_seconds=_DOC_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        raise RuntimeError("Milvus document operation timed out") from None
 
 
 async def _close_quietly(client: _SyncClient) -> None:

@@ -238,8 +238,13 @@ class StatefulArtifacts:
         return self.values[str(locator)]  # type: ignore[return-value]
 
     async def write_embeddings(
-        self, revision_id: str, artifact: EmbeddingArtifact
+        self,
+        revision_id: str,
+        artifact: EmbeddingArtifact,
+        *,
+        source_content_hash: str,
     ) -> ArtifactLocator:
+        assert source_content_hash == SOURCE_HASH
         locator = ArtifactLocator(f"artifact:{revision_id}:embeddings")
         self.values[str(locator)] = artifact
         return locator
@@ -286,10 +291,18 @@ class BlockingWriteArtifacts(StatefulArtifacts):
         return await super().write_chunks(revision_id, chunks)
 
     async def write_embeddings(
-        self, revision_id: str, artifact: EmbeddingArtifact
+        self,
+        revision_id: str,
+        artifact: EmbeddingArtifact,
+        *,
+        source_content_hash: str,
     ) -> ArtifactLocator:
         await self._block("embeddings")
-        return await super().write_embeddings(revision_id, artifact)
+        return await super().write_embeddings(
+            revision_id,
+            artifact,
+            source_content_hash=source_content_hash,
+        )
 
 
 class Parser:
@@ -634,6 +647,7 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
             embeddings_locator=await artifacts.write_embeddings(
                 REVISION_ID,
                 EmbeddingArtifact("athena-embedding", 3, ((0.0, 1.0, 2.0),)),
+                source_content_hash=SOURCE_HASH,
             ),
         )
 

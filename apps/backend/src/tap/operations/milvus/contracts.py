@@ -145,11 +145,27 @@ class MilvusProvisioner(Protocol):
 
     async def alter_alias(self, alias: str, collection_name: str) -> None: ...
 
-    async def describe_alias(self, alias: str) -> str: ...
+    async def describe_alias(self, alias: str) -> str | None: ...
 
     async def drop_alias(self, alias: str) -> None: ...
 
     async def drop_collection(self, name: str) -> None: ...
+
+
+class MilvusDocProvisioner(MilvusProvisioner, Protocol):
+    async def collection_exists(self, name: str) -> bool: ...
+
+    async def collection_grants(
+        self,
+        name: str,
+        role_name: str,
+    ) -> frozenset[MilvusScopedGrant]: ...
+
+    async def describe_collection(self, name: str) -> Mapping[str, object] | object: ...
+
+    async def list_collections(self) -> tuple[str, ...]: ...
+
+    async def close(self) -> None: ...
 
 
 class MilvusWriter(Protocol):
@@ -160,6 +176,20 @@ class MilvusWriter(Protocol):
     async def delete(self, name: str, chunk_ids: tuple[str, ...]) -> None: ...
 
     async def flush(self, name: str) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+class MilvusDocReader(Protocol):
+    async def query_persisted_rows(
+        self,
+        collection_name: str,
+        filter_expression: str,
+        output_fields: tuple[str, ...],
+        limit: int,
+    ) -> tuple[Mapping[str, object], ...]: ...
+
+    async def close(self) -> None: ...
 
 
 class MilvusDeniedProbe(Protocol):
