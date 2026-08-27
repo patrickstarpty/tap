@@ -39,7 +39,6 @@ T = TypeVar("T")
 LEASE_DURATION = timedelta(seconds=60)
 HEARTBEAT_SECONDS = 20.0
 MAX_WORKER_BATCH = 50
-PROVIDER_SETTLE_SECONDS = 5.0
 
 NEXT_STAGE = {
     JobStage.STORED: JobStage.PARSING,
@@ -78,6 +77,12 @@ class _SafeStageError(Exception):
         self.stage = stage
         self.code = code
         super().__init__(code)
+
+
+class _StageLeaseLost(JobLeaseLost):
+    def __init__(self, job_id: str, stage: JobStage) -> None:
+        self.stage = stage
+        super().__init__(job_id)
 
 
 class IngestionWorker:
@@ -131,7 +136,9 @@ class IngestionWorker:
         for job in jobs:
             try:
                 outcome = await self._process_claimed(job)
-            except JobLeaseLost:
+            except _StageLeaseLost as error:
+                if job.kind is JobKind.INGESTION:
+                    await self._settle_cancelled_owner(job, error.stage)
                 lease_lost += 1
                 continue
             except _SafeStageError as error:
@@ -157,6 +164,8 @@ class IngestionWorker:
                             )
                         )
                 except JobLeaseLost:
+                    if job.kind is JobKind.INGESTION:
+                        await self._settle_cancelled_owner(job, error.stage)
                     lease_lost += 1
                     continue
                 failed += 1
@@ -176,13 +185,22 @@ class IngestionWorker:
     async def _process_claimed(self, job: ClaimedIngestionJob) -> str:
         stage = job.stage
         while True:
-            work = await self._repository.load_ingestion_work(job.job_id, job.lease_token, stage)
-            if work.kind is not job.kind or work.stage is not stage:
-                raise JobLeaseLost(job.job_id)
-            if job.kind is JobKind.DELETION:
-                await self._run_deletion_stage(job, work)
-            else:
-                await self._run_ingestion_stage(job, work)
+            try:
+                work = await self._repository.load_ingestion_work(
+                    job.job_id, job.lease_token, stage
+                )
+                if work.kind is not job.kind or work.stage is not stage:
+                    raise JobLeaseLost(job.job_id)
+                if job.kind is JobKind.DELETION:
+                    await self._run_deletion_stage(job, work)
+                else:
+                    await self._run_ingestion_stage(job, work)
+            except JobLeaseLost as error:
+                raise _StageLeaseLost(job.job_id, stage) from error
+            except asyncio.CancelledError:
+                if job.kind is JobKind.INGESTION:
+                    await self._settle_cancelled_owner(job, stage)
+                raise
             if stage is JobStage.READY:
                 return "deleted" if job.kind is JobKind.DELETION else "ready"
             stage = NEXT_STAGE[stage]
@@ -243,6 +261,7 @@ class IngestionWorker:
             return
         if stage is JobStage.EMBEDDING:
             chunks = await self._read_chunks(work, stage)
+            self._validate_manifest_versions(work, stage)
             try:
                 artifact = await self._provider_call(
                     job,
@@ -271,6 +290,7 @@ class IngestionWorker:
             return
         if stage is JobStage.PUBLISHING:
             chunks = await self._read_chunks(work, stage)
+            self._validate_manifest_versions(work, stage)
             embeddings_locator = _required_locator(work.embeddings_locator, stage)
             embeddings = await self._artifact_call(
                 stage, self._artifacts.read_embeddings(embeddings_locator)
@@ -313,6 +333,7 @@ class IngestionWorker:
         target = _deletion_target(work)
         if stage is JobStage.STORED:
             try:
+                await self._provider_call(job, stage, lambda: self._index.fence_revision(target))
                 await self._provider_call(job, stage, lambda: self._index.delete_revision(target))
                 count = await self._provider_call(
                     job, stage, lambda: self._index.count_revision(target)
@@ -370,6 +391,18 @@ class IngestionWorker:
             raise _SafeStageError(stage, "artifact-unavailable")
         return chunks
 
+    def _validate_manifest_versions(self, work: IngestionWork, stage: JobStage) -> None:
+        if not work.manifest or tuple(item.ordinal for item in work.manifest) != tuple(
+            range(len(work.manifest))
+        ):
+            raise _SafeStageError(stage, "artifact-unavailable")
+        if any(
+            item.embedding_model_version != self._embedding_model_alias for item in work.manifest
+        ):
+            raise _SafeStageError(stage, "embedding-dimension-mismatch")
+        if any(item.index_version != self._index_version for item in work.manifest):
+            raise _SafeStageError(stage, "index-reconciliation-failed")
+
     async def _commit(
         self,
         job: ClaimedIngestionJob,
@@ -405,6 +438,22 @@ class IngestionWorker:
         except Exception as error:
             raise _SafeStageError(stage, "artifact-unavailable") from error
 
+    async def _settle_cancelled_owner(self, job: ClaimedIngestionJob, stage: JobStage) -> None:
+        settlement = asyncio.create_task(
+            self._repository.settle_cancelled_job(
+                job.job_id,
+                job.lease_token,
+                stage,
+                self._clock.now(),
+            ),
+            name=f"athena-settlement:{job.job_id}:{stage.value}",
+        )
+        await _wait_to_terminal(settlement)
+        try:
+            settlement.result()
+        except Exception:
+            pass
+
     async def _provider_call(
         self,
         job: ClaimedIngestionJob,
@@ -418,8 +467,13 @@ class IngestionWorker:
             self._clock.now(),
             LEASE_DURATION,
         )
-        provider = asyncio.create_task(operation())
-        heartbeat = asyncio.create_task(self._heartbeat(job, stage, provider))
+        provider = asyncio.create_task(
+            operation(), name=f"athena-provider:{job.job_id}:{stage.value}"
+        )
+        heartbeat = asyncio.create_task(
+            self._heartbeat(job, stage, provider),
+            name=f"athena-heartbeat:{job.job_id}:{stage.value}",
+        )
         try:
             done, _ = await asyncio.wait((provider, heartbeat), return_when=asyncio.FIRST_COMPLETED)
             if heartbeat in done:
@@ -461,12 +515,21 @@ class IngestionWorker:
 async def _cancel_and_settle(task: asyncio.Task[object]) -> None:
     if not task.done():
         task.cancel()
+    await _wait_to_terminal(task)
     try:
-        async with asyncio.timeout(PROVIDER_SETTLE_SECONDS):
+        task.exception()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _wait_to_terminal(task: asyncio.Task[object]) -> None:
+    while not task.done():
+        try:
             await asyncio.shield(task)
-    except (asyncio.CancelledError, TimeoutError):
-        if not task.done():
-            task.cancel()
+        except asyncio.CancelledError:
+            continue
+        except BaseException:
+            break
 
 
 def _required_locator(locator, stage: JobStage):  # type: ignore[no-untyped-def]

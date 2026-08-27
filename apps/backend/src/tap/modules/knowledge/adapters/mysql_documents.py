@@ -696,6 +696,7 @@ class MysqlDocumentRepository:
             statement = select(knowledge_document).where(
                 knowledge_document.c.activated_at.is_not(None),
                 knowledge_document.c.deleted_at.is_(None),
+                knowledge_document.c.status != DocumentState.DELETING.value,
             )
             if position is not None:
                 created_at, document_id = position
@@ -911,6 +912,12 @@ class MysqlDocumentRepository:
                 (row for row in job_rows if row["kind"] == JobKind.INGESTION.value), None
             )
             if ingestion is not None and ingestion["status"] != JobState.COMPLETED.value:
+                lease_is_active = (
+                    ingestion["status"] == JobState.PROCESSING.value
+                    and ingestion["lease_token"] is not None
+                    and ingestion["lease_until"] is not None
+                    and cast(datetime, ingestion["lease_until"]) > database_now
+                )
                 await session.execute(
                     update(knowledge_ingestion_job)
                     .where(
@@ -919,11 +926,11 @@ class MysqlDocumentRepository:
                     )
                     .values(
                         status=JobState.CANCELLED.value,
-                        lease_owner=None,
-                        lease_token=None,
-                        lease_until=None,
+                        lease_owner=ingestion["lease_owner"] if lease_is_active else None,
+                        lease_token=ingestion["lease_token"] if lease_is_active else None,
+                        lease_until=ingestion["lease_until"] if lease_is_active else None,
                         updated_at=database_now,
-                        completed_at=database_now,
+                        completed_at=None if lease_is_active else database_now,
                     )
                 )
             await session.execute(
@@ -1041,6 +1048,41 @@ class MysqlDocumentRepository:
         _validate_job_lease(worker_id, lease_duration)
         async with self._sessions() as session, session.begin():
             selection_now = await _database_now(session)
+            cancelled_ingestion = knowledge_ingestion_job.alias("cancelled_ingestion")
+            active_cancelled_owner = exists(
+                select(1).where(
+                    cancelled_ingestion.c.revision_id == knowledge_ingestion_job.c.revision_id,
+                    cancelled_ingestion.c.kind == JobKind.INGESTION.value,
+                    cancelled_ingestion.c.status == JobState.CANCELLED.value,
+                    cancelled_ingestion.c.lease_token.is_not(None),
+                    cancelled_ingestion.c.lease_until > selection_now,
+                )
+            )
+            compatible_document_for_update = exists(
+                select(1)
+                .select_from(
+                    knowledge_document_revision.join(
+                        knowledge_document,
+                        knowledge_document_revision.c.document_id
+                        == knowledge_document.c.document_id,
+                    )
+                )
+                .where(
+                    knowledge_document_revision.c.revision_id
+                    == knowledge_ingestion_job.c.revision_id,
+                    knowledge_document.c.deleted_at.is_(None),
+                    or_(
+                        and_(
+                            knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
+                            knowledge_document.c.status != DocumentState.DELETING.value,
+                        ),
+                        and_(
+                            knowledge_ingestion_job.c.kind == JobKind.DELETION.value,
+                            knowledge_document.c.status == DocumentState.DELETING.value,
+                        ),
+                    ),
+                )
+            )
             initially_claimable = or_(
                 and_(
                     knowledge_ingestion_job.c.status == JobState.PENDING.value,
@@ -1072,6 +1114,7 @@ class MysqlDocumentRepository:
                         and_(
                             knowledge_ingestion_job.c.kind == JobKind.DELETION.value,
                             knowledge_document.c.status == DocumentState.DELETING.value,
+                            ~active_cancelled_owner,
                         ),
                     ),
                 )
@@ -1119,7 +1162,7 @@ class MysqlDocumentRepository:
                     .where(
                         knowledge_ingestion_job.c.job_id == row["job_id"],
                         freshly_claimable,
-                        compatible_document,
+                        compatible_document_for_update,
                     )
                     .values(
                         status=JobState.PROCESSING.value,
@@ -1147,6 +1190,36 @@ class MysqlDocumentRepository:
                     )
                 )
             return tuple(claimed)
+
+    async def settle_cancelled_job(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+        settled_at: datetime,
+    ) -> None:
+        del settled_at
+        async with self._sessions() as session, session.begin():
+            database_now = await _database_now(session)
+            result = await session.execute(
+                update(knowledge_ingestion_job)
+                .where(
+                    knowledge_ingestion_job.c.job_id == job_id,
+                    knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
+                    knowledge_ingestion_job.c.status == JobState.CANCELLED.value,
+                    knowledge_ingestion_job.c.lease_token == lease_token,
+                    knowledge_ingestion_job.c.stage == expected_stage.value,
+                )
+                .values(
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    completed_at=database_now,
+                    updated_at=database_now,
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_lease_lost(job_id)
 
     async def renew_lease(
         self,

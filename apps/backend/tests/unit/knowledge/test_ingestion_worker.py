@@ -13,9 +13,11 @@ from tap.modules.knowledge.domain.documents import (
     ChunkDraft,
     DocumentId,
     DocumentParseRejected,
+    DocumentSource,
     MediaType,
     NormalizedArtifact,
     NormalizedBlock,
+    RevisionId,
     canonical_sha256,
 )
 from tap.modules.knowledge.ports.documents import (
@@ -170,6 +172,17 @@ class StatefulRepository:
             self.work = replace(self.work, lease_token="lease-b")
             raise JobLeaseLost(self.job.job_id)
 
+    async def settle_cancelled_job(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+        settled_at: datetime,
+    ) -> None:
+        del expected_stage, settled_at
+        if job_id != self.job.job_id or lease_token != self.job.lease_token:
+            raise JobLeaseLost(job_id)
+
     async def fail_job(self, failure: JobFailure) -> None:
         if failure.lease_token != self.work.lease_token:
             raise JobLeaseLost(failure.job_id)
@@ -312,6 +325,32 @@ class Embeddings:
             self.settled.set()
 
 
+class CancellationResistantEmbeddings(Embeddings):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_seen = asyncio.Event()
+        self.finish_after_cancel = asyncio.Event()
+
+    async def embed_documents(
+        self, texts: tuple[str, ...], *, model_alias: str
+    ) -> EmbeddingArtifact:
+        self.calls += 1
+        self.started.set()
+        try:
+            while not self.finish_after_cancel.is_set():
+                try:
+                    await self.finish_after_cancel.wait()
+                except asyncio.CancelledError:
+                    self.cancel_seen.set()
+        finally:
+            self.settled.set()
+        return EmbeddingArtifact(
+            model_alias=model_alias,
+            dimension=3,
+            vectors=tuple((0.0, 1.0, 2.0) for _ in texts),
+        )
+
+
 class Index:
     def __init__(self) -> None:
         self.rows: dict[str, tuple[float, ...]] = {}
@@ -319,6 +358,10 @@ class Index:
         self.fail_next_delete = False
         self.upsert_calls = 0
         self.events: list[str] = []
+
+    async def fence_revision(self, target: DeletionTarget) -> None:
+        del target
+        self.events.append("fence-index")
 
     async def upsert_revision(
         self,
@@ -489,6 +532,104 @@ async def test_embedding_dimension_mismatch_fails_before_index_write() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", [JobStage.EMBEDDING, JobStage.PUBLISHING])
+@pytest.mark.parametrize(
+    ("drift", "error_code"),
+    [
+        ("model", "embedding-dimension-mismatch"),
+        ("index", "index-reconciliation-failed"),
+    ],
+)
+async def test_durable_manifest_version_drift_stops_before_provider_write(
+    stage: JobStage,
+    drift: str,
+    error_code: str,
+) -> None:
+    """A restarted worker must reject model/index drift before model or index I/O."""
+
+    worker, repository, artifacts, embeddings, index, _ = worker_parts()
+    chunks = Chunker().chunk(
+        Parser().parse(
+            DocumentSource(
+                content=SOURCE_BYTES,
+                filename="source.md",
+                media_type=MediaType.MARKDOWN,
+                document_id=DocumentId(DOCUMENT_ID),
+                revision_id=RevisionId(REVISION_ID),
+            )
+        )
+    )
+    chunks_locator = await artifacts.write_chunks(REVISION_ID, chunks)
+    manifest = (
+        ManifestChunk(
+            chunk_id=str(chunks[0].chunk_id),
+            logical_chunk_id=str(chunks[0].logical_chunk_id),
+            ordinal=0,
+            root_id=DOCUMENT_ID,
+            parent_id=None,
+            anchor_json=chunks[0].anchor_json,
+            chunk_content_hash=chunks[0].chunk_content_hash,
+            embedding_model_version=("old-model-alias" if drift == "model" else "athena-embedding"),
+            index_version="old-index-version" if drift == "index" else "athena-doc-v1",
+        ),
+    )
+    repository.job = replace(repository.job, stage=stage)
+    repository.work = replace(
+        repository.work,
+        stage=stage,
+        chunks_locator=chunks_locator,
+        manifest=manifest,
+    )
+    if stage is JobStage.PUBLISHING:
+        repository.work = replace(
+            repository.work,
+            embeddings_locator=await artifacts.write_embeddings(
+                REVISION_ID,
+                EmbeddingArtifact("athena-embedding", 3, ((0.0, 1.0, 2.0),)),
+            ),
+        )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.failed == 1
+    assert repository.failed is not None
+    assert repository.failed.error_code == error_code
+    assert embeddings.calls == 0
+    assert index.upsert_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cancellation_waits_for_resistant_provider_terminal_state() -> None:
+    """Cancellation cannot return while a cancellation-resistant provider remains alive."""
+
+    worker, repository, artifacts, _, index, clock = worker_parts()
+    embeddings = CancellationResistantEmbeddings()
+    worker = build_worker(repository, artifacts, embeddings, index, clock)
+    task = asyncio.create_task(worker.run_once(limit=1))
+    await wait_until_provider_started_or_worker_stopped(task, embeddings.started)
+
+    task.cancel("caller-cancelled")
+    await embeddings.cancel_seen.wait()
+    task.cancel("caller-cancelled-again-during-cleanup")
+    await asyncio.sleep(0)
+    assert not task.done()
+    embeddings.finish_after_cancel.set()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert embeddings.settled.is_set()
+        assert not [
+            child
+            for child in asyncio.all_tasks()
+            if child is not asyncio.current_task()
+            and child.get_name().startswith(("athena-provider:", "athena-heartbeat:"))
+        ]
+    finally:
+        embeddings.finish_after_cancel.set()
+        await embeddings.settled.wait()
+
+
+@pytest.mark.asyncio
 async def test_textless_parser_failure_is_closed_and_stays_at_parsing() -> None:
     """A parser rejection must expose only its safe closed code at the exact stage."""
 
@@ -626,7 +767,7 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
     assert repository.retry is not None
     assert repository.retry.expected_stage is JobStage.PARSING
     assert index.rows == {}
-    assert index.events[:2] == ["delete-index", "negative-probe"]
+    assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
 
     second = await worker.run_once(limit=1)
 

@@ -616,6 +616,14 @@ class DocumentRepository(Protocol):
         lease_duration: timedelta,
     ) -> None: ...
 
+    async def settle_cancelled_job(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+        settled_at: datetime,
+    ) -> None: ...
+
     async def checkpoint(self, checkpoint: JobCheckpoint) -> None: ...
 
     async def fail_job(self, failure: JobFailure) -> None: ...
@@ -651,6 +659,10 @@ class DocumentEmbeddingPort(Protocol):
 
 
 class DocumentIndexPort(Protocol):
+    async def fence_revision(self, target: DeletionTarget) -> None:
+        """Durably prevent current and future stale writes for one revision."""
+        ...
+
     async def upsert_revision(
         self,
         work: IngestionWork,

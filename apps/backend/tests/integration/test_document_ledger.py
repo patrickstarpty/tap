@@ -1223,6 +1223,30 @@ def test_delete_waits_for_inflight_job_then_fences_every_old_ingestion_transitio
                     now=datetime(2026, 8, 27, 12, 12),
                     lease_duration=timedelta(seconds=30),
                 )
+            blocked = await repository.claim_jobs(
+                worker_id="deletion-only",
+                now=datetime(2026, 8, 27, 12, 12),
+                lease_duration=timedelta(seconds=30),
+                limit=10,
+            )
+            assert blocked == ()
+            async with engine.connect() as connection:
+                active_barrier = (
+                    await connection.execute(
+                        text(
+                            "SELECT status, lease_token FROM knowledge_ingestion_job "
+                            "WHERE job_id=:job_id"
+                        ),
+                        {"job_id": ingestion.job_id},
+                    )
+                ).one()
+                assert tuple(active_barrier) == ("cancelled", ingestion.lease_token)
+            await repository.settle_cancelled_job(
+                ingestion.job_id,
+                ingestion.lease_token,
+                JobStage.STORED,
+                datetime(2026, 8, 27, 12, 12),
+            )
             claimable = await repository.claim_jobs(
                 worker_id="deletion-only",
                 now=datetime(2026, 8, 27, 12, 12),
