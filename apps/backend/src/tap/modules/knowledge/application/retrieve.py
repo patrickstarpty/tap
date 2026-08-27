@@ -212,15 +212,18 @@ class AuthorizedRetrieval:
     @staticmethod
     def _complete_paragraph_span(answer: str, claim_text: str) -> tuple[int, int] | None:
         """Locate one claim only when it is exactly one complete answer paragraph."""
-        start = answer.find(claim_text)
-        if start < 0 or answer.find(claim_text, start + 1) >= 0:
+        if "\n\n" in claim_text:
             return None
-        end = start + len(claim_text)
-        if (start != 0 and not answer[:start].endswith("\n\n")) or (
-            end != len(answer) and not answer[end:].startswith("\n\n")
-        ):
+        matches: list[tuple[int, int]] = []
+        start = 0
+        for paragraph in answer.split("\n\n"):
+            end = start + len(paragraph)
+            if paragraph == claim_text:
+                matches.append((start, end))
+            start = end + 2
+        if len(matches) != 1:
             return None
-        return start, end
+        return matches[0]
 
     async def _retrieve(
         self,

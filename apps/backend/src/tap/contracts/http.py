@@ -95,6 +95,14 @@ class HealthComponentState(str, Enum):
     FAILED = "failed"
 
 
+class HealthRemediationCode(str, Enum):
+    START_MYSQL = "start-mysql"
+    START_REDIS = "start-redis"
+    START_BLOB = "start-blob"
+    START_MILVUS = "start-milvus"
+    CONFIGURE_MODELS = "configure-models"
+
+
 ShortIdentifier = Annotated[
     str,
     Field(strict=True, min_length=1, max_length=256),
@@ -214,7 +222,20 @@ class CitationPreview(ContractModel):
 class HealthComponent(ContractModel):
     name: HealthComponentName
     state: HealthComponentState
-    remediation_code: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+    remediation_code: HealthRemediationCode | None = None
+
+    @model_validator(mode="after")
+    def validate_remediation_code(self) -> Self:
+        expected = {
+            HealthComponentName.MYSQL: HealthRemediationCode.START_MYSQL,
+            HealthComponentName.REDIS: HealthRemediationCode.START_REDIS,
+            HealthComponentName.BLOB: HealthRemediationCode.START_BLOB,
+            HealthComponentName.MILVUS: HealthRemediationCode.START_MILVUS,
+            HealthComponentName.MODELS: HealthRemediationCode.CONFIGURE_MODELS,
+        }[self.name]
+        if self.remediation_code is not None and self.remediation_code is not expected:
+            raise ValueError("health remediation code must match its fixed component")
+        return self
 
 
 class LiveHealth(ContractModel):
@@ -473,7 +494,7 @@ class RetrievalClaim(ContractModel):
     text: str = Field(min_length=1)
     answer_start: NonNegativeAnchorInteger
     answer_end: NonNegativeAnchorInteger
-    citation_ids: list[str]
+    citation_ids: Annotated[list[str], Field(min_length=1, max_length=20)]
 
 
 class RetrievalSearchResponse(ContractModel):
@@ -499,12 +520,23 @@ class RetrievalAnswerResponse(ContractModel):
     abstained: bool
     abstention_reason: AbstentionReason | None = None
     claims: list[RetrievalClaim]
-    citations: list[RetrievalCitation]
+    citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
 
     @model_validator(mode="after")
     def validate_claim_spans(self) -> Self:
+        citation_ids = {citation.citation_id for citation in self.citations}
+        paragraphs = _answer_paragraph_spans(self.answer)
         previous_end = 0
         for claim in self.claims:
+            if not self.abstained and not set(claim.citation_ids) <= citation_ids:
+                raise ValueError("claim citations must exist in the answer citation set")
+            if "\n\n" in claim.text:
+                raise ValueError("claim text must not contain a paragraph separator")
+            matches = [
+                (start, end) for start, end in paragraphs if self.answer[start:end] == claim.text
+            ]
+            if len(matches) != 1 or matches[0] != (claim.answer_start, claim.answer_end):
+                raise ValueError("claim text must occupy one unique complete answer paragraph")
             if claim.answer_end < claim.answer_start:
                 raise ValueError("claim answer offsets must be ordered")
             if claim.answer_start < previous_end:
@@ -521,6 +553,17 @@ class RetrievalAnswerResponse(ContractModel):
                 raise ValueError("claim answer span must end on a paragraph boundary")
             previous_end = claim.answer_end
         return self
+
+
+def _answer_paragraph_spans(answer: str) -> tuple[tuple[int, int], ...]:
+    """Return complete answer-paragraph spans using Unicode code-point offsets."""
+    start = 0
+    spans: list[tuple[int, int]] = []
+    for paragraph in answer.split("\n\n"):
+        end = start + len(paragraph)
+        spans.append((start, end))
+        start = end + 2
+    return tuple(spans)
 
 
 class ChatTurnAccepted(ContractModel):

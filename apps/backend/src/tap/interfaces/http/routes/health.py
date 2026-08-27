@@ -8,6 +8,7 @@ from tap.contracts.http import (
     HealthComponent,
     HealthComponentName,
     HealthComponentState,
+    HealthRemediationCode,
     LiveHealth,
     ReadyHealth,
 )
@@ -25,17 +26,13 @@ async def get_ready_health() -> ReadyHealth:
     return ReadyHealth(
         status="unready",
         components=[
-            HealthComponent(
-                name=name,
-                state=HealthComponentState.FAILED,
-                remediation_code="runtime-unconfigured",
-            )
-            for name in (
-                HealthComponentName.MYSQL,
-                HealthComponentName.REDIS,
-                HealthComponentName.BLOB,
-                HealthComponentName.MILVUS,
-                HealthComponentName.MODELS,
+            HealthComponent(name=name, state=HealthComponentState.FAILED, remediation_code=code)
+            for name, code in (
+                (HealthComponentName.MYSQL, HealthRemediationCode.START_MYSQL),
+                (HealthComponentName.REDIS, HealthRemediationCode.START_REDIS),
+                (HealthComponentName.BLOB, HealthRemediationCode.START_BLOB),
+                (HealthComponentName.MILVUS, HealthRemediationCode.START_MILVUS),
+                (HealthComponentName.MODELS, HealthRemediationCode.CONFIGURE_MODELS),
             )
         ],
     )

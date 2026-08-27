@@ -47,6 +47,7 @@ from tap.modules.knowledge.api import (
     search_request_from_http,
     search_response_to_http,
 )
+from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
     AnswerMode,
@@ -83,6 +84,17 @@ from tap.modules.knowledge.ports.models import (
 
 SOURCE_HASH = "sha256:" + "a" * 64
 CHUNK_HASH = "sha256:" + "b" * 64
+
+
+def test_generated_claim_span_uses_equal_paragraphs_not_substrings() -> None:
+    """A claim paragraph remains grounded when another paragraph merely mentions it."""
+    answer = "Claim exact.\n\nAnother paragraph mentions Claim exact."
+
+    assert AuthorizedRetrieval._complete_paragraph_span(answer, "Claim exact.") == (0, 12)
+    assert (
+        AuthorizedRetrieval._complete_paragraph_span("First.\n\nSecond.", "First.\n\nSecond.")
+        is None
+    )
 
 
 def policy_context(

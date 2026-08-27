@@ -10,13 +10,18 @@ from pydantic import ValidationError
 
 from tap.contracts.http import (
     CitationPreview,
+    DocumentAccepted,
     DocumentDetail,
     DocumentPage,
+    DocumentSummary,
     HealthComponent,
     ReadyHealth,
     RetrievalAnswerRequest,
+    RetrievalAnswerResponse,
 )
 from tap.interfaces.http.app import create_app
+from tap.interfaces.http.dependencies import HttpServices, UploadInput
+from tap.interfaces.http.routes.knowledge_documents import MAX_DOCUMENT_BYTES
 
 
 def test_document_contract_is_closed_and_bounded() -> None:
@@ -154,6 +159,20 @@ def test_ready_health_requires_each_fixed_dependency_once() -> None:
         ReadyHealth(status="unready", components=components)
 
 
+def test_health_remediation_codes_are_closed_and_match_the_component() -> None:
+    """Open-ended remediation text could leak provider endpoints or credentials."""
+    schema = HealthComponent.model_json_schema(by_alias=True)
+    assert set(schema["$defs"]["HealthRemediationCode"]["enum"]) == {
+        "start-mysql",
+        "start-redis",
+        "start-blob",
+        "start-milvus",
+        "configure-models",
+    }
+    with pytest.raises(ValidationError):
+        HealthComponent(name="mysql", state="failed", remediationCode="start-redis")
+
+
 def test_answer_claim_spans_must_be_complete_non_overlapping_paragraphs() -> None:
     """Partial, overlapping, or mismatched claims would make citations misleading."""
     payload = {
@@ -181,12 +200,148 @@ def test_answer_claim_spans_must_be_complete_non_overlapping_paragraphs() -> Non
                 "citationIds": ["citation-2"],
             },
         ],
-        "citations": [],
+        "citations": [_retrieval_citation("citation-1"), _retrieval_citation("citation-2")],
     }
-
-    from tap.contracts.http import RetrievalAnswerResponse
 
     assert RetrievalAnswerResponse.model_validate(payload).claims[1].answer_start == 27
     payload["claims"][1]["answerStart"] = 26
     with pytest.raises(ValidationError):
         RetrievalAnswerResponse.model_validate(payload)
+
+
+def test_non_abstained_claims_require_existing_bounded_citations() -> None:
+    """Ungrounded or unbounded answer claims would make evidence verification impossible."""
+    payload = {
+        "traceId": "trace-1",
+        "queryPlanId": "plan-1",
+        "contextSnapshotId": "snapshot-1",
+        "corpusVersion": "corpus-1",
+        "retrievalProfileId": "quick-hybrid-v1",
+        "degradedMode": False,
+        "answer": "Grounded paragraph.",
+        "abstained": False,
+        "claims": [
+            {
+                "claimId": "claim-1",
+                "text": "Grounded paragraph.",
+                "answerStart": 0,
+                "answerEnd": 19,
+                "citationIds": ["citation-1"],
+            }
+        ],
+        "citations": [_retrieval_citation("citation-1")],
+    }
+
+    RetrievalAnswerResponse.model_validate(payload)
+    payload["claims"][0]["citationIds"] = []
+    with pytest.raises(ValidationError):
+        RetrievalAnswerResponse.model_validate(payload)
+    payload["claims"][0]["citationIds"] = ["missing-citation"]
+    with pytest.raises(ValidationError):
+        RetrievalAnswerResponse.model_validate(payload)
+
+    schema = RetrievalAnswerResponse.model_json_schema(by_alias=True)
+    assert schema["properties"]["citations"]["maxItems"] == 20
+
+
+def test_claim_text_must_be_exactly_one_unique_answer_paragraph() -> None:
+    """Substring matches or embedded paragraph separators would make spans ambiguous."""
+    payload = {
+        "traceId": "trace-1",
+        "queryPlanId": "plan-1",
+        "contextSnapshotId": "snapshot-1",
+        "corpusVersion": "corpus-1",
+        "retrievalProfileId": "quick-hybrid-v1",
+        "degradedMode": False,
+        "answer": "Claim exact.\n\nAnother paragraph mentions Claim exact.",
+        "abstained": False,
+        "claims": [
+            {
+                "claimId": "claim-1",
+                "text": "Claim exact.",
+                "answerStart": 0,
+                "answerEnd": 12,
+                "citationIds": ["citation-1"],
+            }
+        ],
+        "citations": [_retrieval_citation("citation-1")],
+    }
+
+    assert RetrievalAnswerResponse.model_validate(payload).claims[0].answer_start == 0
+
+    payload["answer"] = "First.\n\nSecond."
+    payload["claims"][0].update({"text": "First.\n\nSecond.", "answerStart": 0, "answerEnd": 15})
+    with pytest.raises(ValidationError):
+        RetrievalAnswerResponse.model_validate(payload)
+
+
+def test_multipart_upload_uses_streamed_file_bytes_not_total_body_length() -> None:
+    """Multipart framing must not reject a file exactly at the 25 MiB file limit."""
+    service = _CountingUploadService()
+    client = TestClient(create_app(HttpServices(knowledge=service)))
+
+    exact = client.post(
+        "/v1/knowledge/documents",
+        files={"upload": ("exact.txt", b"x" * MAX_DOCUMENT_BYTES, "text/plain")},
+    )
+    assert exact.status_code == 202
+    assert service.byte_count == MAX_DOCUMENT_BYTES
+
+    oversized = client.post(
+        "/v1/knowledge/documents",
+        files={"upload": ("oversized.txt", b"x" * (MAX_DOCUMENT_BYTES + 1), "text/plain")},
+    )
+    assert oversized.status_code == 413
+    assert oversized.headers["content-type"].startswith("application/problem+json")
+
+    response = create_app().openapi()["paths"]["/v1/knowledge/documents"]["post"]["responses"][
+        "413"
+    ]
+    assert set(response["content"]) == {"application/problem+json"}
+
+
+def _retrieval_citation(citation_id: str) -> dict[str, object]:
+    return {
+        "citationId": citation_id,
+        "evidenceLabel": "S1",
+        "chunkId": "chunk-1",
+        "logicalChunkId": "logical-chunk-1",
+        "source": {
+            "sourceId": "repo:tap:contract.py",
+            "sourceType": "code",
+            "revisionKind": "git_commit",
+            "revision": "a" * 40,
+            "sourceContentHash": "sha256:" + "a" * 64,
+            "anchor": {
+                "type": "code",
+                "repo": "tap",
+                "path": "contract.py",
+                "lineStart": 1,
+                "lineEnd": 1,
+            },
+        },
+        "chunkContentHash": "sha256:" + "b" * 64,
+        "contentRole": "source",
+    }
+
+
+class _CountingUploadService:
+    def __init__(self) -> None:
+        self.byte_count = 0
+
+    async def upload(self, upload: UploadInput) -> DocumentAccepted:
+        async for chunk in upload.content:
+            self.byte_count += len(chunk)
+        return DocumentAccepted(
+            document=DocumentSummary(
+                document_id="document-1",
+                filename="exact.txt",
+                media_type="text/plain",
+                status="queued",
+                stage="stored",
+                chunk_count=0,
+                updated_at="2026-08-27T00:00:00Z",
+            ),
+            job_id="job-1",
+            duplicate=False,
+        )

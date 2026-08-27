@@ -14,6 +14,7 @@ from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response
 
 router = APIRouter(prefix="/v1/knowledge/documents", tags=["knowledge"])
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
+MAX_MULTIPART_OVERHEAD_BYTES = 16 * 1024
 READ_CHUNK_BYTES = 1_048_576
 _MEDIA_TYPES_BY_EXTENSION = {
     ".pdf": "application/pdf",
@@ -61,6 +62,7 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
     status_code=status.HTTP_202_ACCEPTED,
     responses={
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid document upload"),
+        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: problem_response_metadata("Document too large"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"
         ),
@@ -71,7 +73,9 @@ async def upload_document(
     upload: UploadFile = File(...),
     content_length: int | None = Header(default=None, ge=0),
 ) -> DocumentAccepted:
-    if content_length is not None and content_length > MAX_DOCUMENT_BYTES:
+    if content_length is not None and content_length > (
+        MAX_DOCUMENT_BYTES + MAX_MULTIPART_OVERHEAD_BYTES
+    ):
         raise InvalidDocumentUpload("document-too-large")
     filename, media_type = sanitize_upload_metadata(upload.filename, upload.content_type)
     return await knowledge_service(request).upload(

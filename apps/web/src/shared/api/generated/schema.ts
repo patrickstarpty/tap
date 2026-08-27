@@ -442,11 +442,8 @@ export interface components {
         /** HealthComponent */
         HealthComponent: {
             name: components["schemas"]["HealthComponentName"];
-            /**
-             * Remediationcode
-             * @default null
-             */
-            remediationCode: string | null;
+            /** @default null */
+            remediationCode: components["schemas"]["HealthRemediationCode"] | null;
             state: components["schemas"]["HealthComponentState"];
         };
         /**
@@ -459,6 +456,11 @@ export interface components {
          * @enum {string}
          */
         HealthComponentState: "ok" | "failed";
+        /**
+         * HealthRemediationCode
+         * @enum {string}
+         */
+        HealthRemediationCode: "start-mysql" | "start-redis" | "start-blob" | "start-milvus" | "configure-models";
         /**
          * IngestionStage
          * @enum {string}
@@ -1086,6 +1088,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentAccepted"];
+                };
+            };
+            /** @description Document too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
             /** @description Invalid document upload */
