@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import DataError
+from sqlalchemy.exc import DataError, DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.sql.dml import Insert
 from sqlalchemy.sql.selectable import Select
@@ -28,6 +28,7 @@ from tap.modules.knowledge.ports.documents import (
     JobState,
     ReservationState,
     ReserveUpload,
+    RetryNotAllowed,
 )
 from tap.platform.db.session import create_engine_and_session_factory
 
@@ -85,6 +86,49 @@ class ClaimSelectionDelaySession(AsyncSession):
             type(self).delayed = True
             await asyncio.sleep(0.7)
         return result
+
+
+class RetryLockOrderBarrierSession(AsyncSession):
+    """Expose whether retry's first durable lock is the job or document row."""
+
+    document_locked = asyncio.Event()
+    job_locked = asyncio.Event()
+    allow_job_owner = asyncio.Event()
+    delete_job_locked = asyncio.Event()
+
+    async def execute(self, statement, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if isinstance(statement, Select) and statement._for_update_arg is not None:
+            table_names = {table.name for table in statement.get_final_froms()}
+            result = await super().execute(statement, *args, **kwargs)
+            if "knowledge_document" in table_names:
+                type(self).document_locked.set()
+                if not type(self).job_locked.is_set():
+                    await asyncio.wait_for(type(self).delete_job_locked.wait(), timeout=5)
+            elif "knowledge_ingestion_job" in table_names:
+                type(self).job_locked.set()
+                await asyncio.wait_for(type(self).allow_job_owner.wait(), timeout=5)
+            return result
+        return await super().execute(statement, *args, **kwargs)
+
+
+class DeleteLockOrderBarrierSession(AsyncSession):
+    """Signal only after delete actually owns the real ingestion-job lock."""
+
+    job_attempted = asyncio.Event()
+
+    async def execute(self, statement, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if (
+            isinstance(statement, Select)
+            and statement._for_update_arg is not None
+            and any(
+                table.name == "knowledge_ingestion_job" for table in statement.get_final_froms()
+            )
+        ):
+            type(self).job_attempted.set()
+            result = await super().execute(statement, *args, **kwargs)
+            RetryLockOrderBarrierSession.delete_job_locked.set()
+            return result
+        return await super().execute(statement, *args, **kwargs)
 
 
 def command(
@@ -985,6 +1029,127 @@ def test_failed_deletion_stays_unselectable_and_reissued_delete_requeues_cleanup
                 )
             assert dispatches == 2
         finally:
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock() -> None:
+    """Opposite job/document lock order would leak MySQL 1213 from this forced race."""
+
+    async def scenario() -> None:
+        engine, setup_sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        try:
+            setup = MysqlDocumentRepository(setup_sessions)
+            reserved = await setup.reserve_upload(command(47))
+            record = await setup.activate_upload(reserved, ArtifactLocator("blob:retry-delete"))
+            ingestion = (
+                await setup.claim_jobs(
+                    worker_id="retry-delete-setup",
+                    now=datetime(2026, 8, 27, 12, 20),
+                    lease_duration=timedelta(minutes=1),
+                    limit=1,
+                )
+            )[0]
+            await setup.fail_job(
+                JobFailure(
+                    job_id=ingestion.job_id,
+                    lease_token=ingestion.lease_token,
+                    expected_stage=JobStage.STORED,
+                    error_code="parser-unavailable",
+                    failed_at=datetime(2026, 8, 27, 12, 21),
+                )
+            )
+
+            RetryLockOrderBarrierSession.document_locked = asyncio.Event()
+            RetryLockOrderBarrierSession.job_locked = asyncio.Event()
+            RetryLockOrderBarrierSession.allow_job_owner = asyncio.Event()
+            RetryLockOrderBarrierSession.delete_job_locked = asyncio.Event()
+            DeleteLockOrderBarrierSession.job_attempted = asyncio.Event()
+            retry_sessions = async_sessionmaker(
+                engine, class_=RetryLockOrderBarrierSession, expire_on_commit=False
+            )
+            delete_sessions = async_sessionmaker(
+                engine, class_=DeleteLockOrderBarrierSession, expire_on_commit=False
+            )
+            retry = asyncio.create_task(
+                MysqlDocumentRepository(retry_sessions).retry_failed(
+                    DocumentId(record.document_id), datetime(2026, 8, 27, 12, 22)
+                )
+            )
+            first_lock = asyncio.create_task(RetryLockOrderBarrierSession.document_locked.wait())
+            correct_lock = asyncio.create_task(RetryLockOrderBarrierSession.job_locked.wait())
+            done, waiting = await asyncio.wait(
+                {first_lock, correct_lock}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+            )
+            assert done
+            for waiter in waiting:
+                waiter.cancel()
+
+            deleting = asyncio.create_task(
+                MysqlDocumentRepository(delete_sessions).request_delete(
+                    DocumentId(record.document_id), datetime(2026, 8, 27, 12, 23)
+                )
+            )
+            await asyncio.wait_for(DeleteLockOrderBarrierSession.job_attempted.wait(), timeout=5)
+            if RetryLockOrderBarrierSession.job_locked.is_set():
+                RetryLockOrderBarrierSession.allow_job_owner.set()
+
+            outcomes = await asyncio.wait_for(
+                asyncio.gather(retry, deleting, return_exceptions=True), timeout=5
+            )
+            assert not any(isinstance(outcome, DBAPIError) for outcome in outcomes)
+            assert not any(
+                isinstance(outcome, BaseException) and not isinstance(outcome, RetryNotAllowed)
+                for outcome in outcomes
+            )
+
+            visible = await setup.get_document(
+                DocumentId(record.document_id), include_deleting=True
+            )
+            assert visible is not None and visible.status is DocumentState.DELETING
+            async with engine.connect() as connection:
+                job_counts = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT kind, COUNT(*) AS count FROM knowledge_ingestion_job "
+                                "GROUP BY kind ORDER BY kind"
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                outbox_rows = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT outbox_id, message_type FROM outbox "
+                                "WHERE aggregate_id=:document_id ORDER BY outbox_id"
+                            ),
+                            {"document_id": record.document_id},
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            assert [(row["kind"], row["count"]) for row in job_counts] == [
+                ("deletion", 1),
+                ("ingestion", 1),
+            ]
+            assert len({row["outbox_id"] for row in outbox_rows}) == len(outbox_rows)
+            assert [row["message_type"] for row in outbox_rows].count(
+                "knowledge.deletion_requested"
+            ) == 1
+            assert [row["message_type"] for row in outbox_rows].count(
+                "knowledge.ingestion_requested"
+            ) == 2
+        finally:
+            RetryLockOrderBarrierSession.allow_job_owner.set()
+            RetryLockOrderBarrierSession.delete_job_locked.set()
             await clean(engine)
             await engine.dispose()
 

@@ -41,6 +41,7 @@ from tap.modules.knowledge.domain.documents import (
 )
 from tap.modules.knowledge.ports.documents import (
     DEFAULT_RESERVATION_LEASE,
+    DEFAULT_UPLOAD_CLEANUP_LEASE,
     MAX_DOCUMENTS,
     MAX_JOB_LEASE,
     MAX_RESERVATION_LEASE,
@@ -484,7 +485,7 @@ class MysqlDocumentRepository:
                 .values(
                     current_revision_id=reservation.revision_id,
                     activated_at=now,
-                    reservation_expires_at=now,
+                    reservation_expires_at=now + DEFAULT_UPLOAD_CLEANUP_LEASE,
                     updated_at=now,
                 )
             )
@@ -647,6 +648,23 @@ class MysqlDocumentRepository:
 
     async def complete_upload_cleanup(self, reservation_id: str, owner_token: str) -> None:
         async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(knowledge_document)
+                        .where(knowledge_document.c.document_id == reservation_id)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or row["activated_at"] is None:
+                raise JobLeaseLost(reservation_id)
+            if row["staging_blob_locator"] is None:
+                return
+            if row["reservation_owner_token"] != owner_token:
+                return
             now = await _database_now(session)
             result = await session.execute(
                 update(knowledge_document)
@@ -724,28 +742,23 @@ class MysqlDocumentRepository:
     async def retry_failed(self, document_id: DocumentId, now: datetime) -> IngestionJob:
         del now
         async with self._sessions() as session, session.begin():
-            document_row = (
-                (
-                    await session.execute(
-                        select(knowledge_document)
-                        .where(knowledge_document.c.document_id == document_id)
-                        .with_for_update()
-                    )
+            candidate_revision = await session.scalar(
+                select(knowledge_document.c.current_revision_id).where(
+                    knowledge_document.c.document_id == document_id,
+                    knowledge_document.c.status == DocumentState.FAILED.value,
+                    knowledge_document.c.activated_at.is_not(None),
+                    knowledge_document.c.deleted_at.is_(None),
                 )
-                .mappings()
-                .one_or_none()
             )
-            if document_row is None or document_row["status"] != DocumentState.FAILED.value:
+            if not isinstance(candidate_revision, str):
                 raise RetryNotAllowed(str(document_id))
             job_row = (
                 (
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
-                            knowledge_ingestion_job.c.revision_id
-                            == document_row["current_revision_id"],
+                            knowledge_ingestion_job.c.revision_id == candidate_revision,
                             knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
-                            knowledge_ingestion_job.c.status == JobState.FAILED.value,
                         )
                         .with_for_update()
                     )
@@ -753,7 +766,28 @@ class MysqlDocumentRepository:
                 .mappings()
                 .one_or_none()
             )
-            if job_row is None:
+            document_row = (
+                (
+                    await session.execute(
+                        select(knowledge_document)
+                        .where(
+                            knowledge_document.c.document_id == document_id,
+                            knowledge_document.c.current_revision_id == candidate_revision,
+                            knowledge_document.c.status == DocumentState.FAILED.value,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                job_row is None
+                or job_row["status"] != JobState.FAILED.value
+                or document_row is None
+            ):
                 raise RetryNotAllowed(str(document_id))
             database_now = await _database_now(session)
             results = list(deserialize_stage_results(job_row["stage_results_json"]))
@@ -790,7 +824,11 @@ class MysqlDocumentRepository:
             )
             await session.execute(
                 update(knowledge_document)
-                .where(knowledge_document.c.document_id == document_id)
+                .where(
+                    knowledge_document.c.document_id == document_id,
+                    knowledge_document.c.current_revision_id == candidate_revision,
+                    knowledge_document.c.status == DocumentState.FAILED.value,
+                )
                 .values(
                     status=DocumentState.QUEUED.value,
                     stage=first_incomplete.value,

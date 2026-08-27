@@ -43,6 +43,9 @@ class DurableArtifactFake:
         self.formal: dict[str, bytes] = {}
         self.sequence = 0
         self.fail_cleanup = False
+        self.block_cleanup = False
+        self.cleanup_started = asyncio.Event()
+        self.allow_cleanup = asyncio.Event()
 
     async def stage_original(self, upload: UploadInput, *, max_bytes: int) -> StagedOriginal:
         data = b"".join([part async for part in upload.content])
@@ -74,6 +77,9 @@ class DurableArtifactFake:
     async def discard_staging(self, staging_key: str) -> None:
         if self.fail_cleanup:
             raise RuntimeError("injected durable staging cleanup failure")
+        if self.block_cleanup:
+            self.cleanup_started.set()
+            await asyncio.wait_for(self.allow_cleanup.wait(), timeout=5)
         self.staging.pop(staging_key, None)
 
 
@@ -231,6 +237,97 @@ def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery() -
     asyncio.run(scenario())
 
 
+def test_activation_holds_cleanup_lease_until_owner_clears_staging_fact() -> None:
+    """Recovery must not steal ownership between activation commit and external cleanup."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        artifacts = DurableArtifactFake()
+        artifacts.block_cleanup = True
+        try:
+            repository = MysqlDocumentRepository(sessions)
+            upload = asyncio.create_task(
+                DocumentService(repository=repository, artifacts=artifacts).upload(
+                    markdown_upload("cleanup-window.md", b"# cleanup window")
+                )
+            )
+            await asyncio.wait_for(artifacts.cleanup_started.wait(), timeout=5)
+
+            claims = await repository.claim_upload_recoveries(
+                worker_id="premature-recovery",
+                lease_duration=timedelta(seconds=30),
+                limit=10,
+            )
+            assert claims == ()
+
+            artifacts.allow_cleanup.set()
+            accepted = await upload
+            assert accepted.document.status.value == "queued"
+            async with engine.connect() as connection:
+                recovery_fact = (
+                    await connection.execute(
+                        text(
+                            "SELECT staging_blob_locator, reservation_owner_token, "
+                            "reservation_expires_at FROM knowledge_document"
+                        )
+                    )
+                ).one()
+            assert tuple(recovery_fact) == (None, None, None)
+        finally:
+            artifacts.allow_cleanup.set()
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_expired_cleanup_takeover_does_not_turn_activated_upload_into_failure() -> None:
+    """An old owner losing its cleanup token delegates recovery without failing upload."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        artifacts = DurableArtifactFake()
+        artifacts.block_cleanup = True
+        try:
+            repository = MysqlDocumentRepository(sessions)
+            upload = asyncio.create_task(
+                DocumentService(repository=repository, artifacts=artifacts).upload(
+                    markdown_upload("cleanup-takeover.md", b"# cleanup takeover")
+                )
+            )
+            await asyncio.wait_for(artifacts.cleanup_started.wait(), timeout=5)
+            await expire_reservations(engine)
+            takeover = await repository.claim_upload_recoveries(
+                worker_id="cleanup-takeover",
+                lease_duration=timedelta(seconds=30),
+                limit=10,
+            )
+            assert len(takeover) == 1 and takeover[0].activated is True
+
+            artifacts.allow_cleanup.set()
+            accepted = await upload
+            assert accepted.document.status.value == "queued"
+
+            await artifacts.discard_staging(takeover[0].reservation.staging_key)
+            await repository.complete_upload_cleanup(
+                takeover[0].reservation.reservation_id,
+                takeover[0].reservation.owner_token,
+            )
+            async with engine.connect() as connection:
+                recovery_fact = await connection.scalar(
+                    text("SELECT staging_blob_locator FROM knowledge_document")
+                )
+            assert recovery_fact is None
+        finally:
+            artifacts.allow_cleanup.set()
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path() -> None:
     """A helper may finish the durable owner copy but must not create another formal path."""
 
@@ -276,6 +373,50 @@ def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path
                 == 1
             )
             assert artifacts.staging == {}
+        finally:
+            await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_duplicate_helper_uses_own_bytes_when_owner_staging_is_missing() -> None:
+    """Destroying helper bytes before promotion would make the hidden document unrecoverable."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await clean(engine)
+        artifacts = DurableArtifactFake()
+        try:
+            owner_staged = await artifacts.stage_original(
+                markdown_upload("owner-missing.md", b"# shared fallback"), max_bytes=1024
+            )
+            owner = await MysqlDocumentRepository(sessions).reserve_upload(
+                ReserveUpload.from_staged(owner_staged, now=datetime(2026, 8, 27, 9, 0))
+            )
+            artifacts.staging.pop(owner_staged.staging_key)
+
+            accepted = await DocumentService(
+                repository=MysqlDocumentRepository(sessions), artifacts=artifacts
+            ).upload(markdown_upload("helper.md", b"# shared fallback"))
+
+            assert accepted.duplicate is True
+            assert accepted.document.document_id == owner.document_id
+            assert artifacts.formal[owner.revision_id] == b"# shared fallback"
+            assert artifacts.staging == {}
+            async with engine.connect() as connection:
+                counts = (
+                    await connection.scalar(
+                        text("SELECT COUNT(*) FROM knowledge_document_revision")
+                    ),
+                    await connection.scalar(text("SELECT COUNT(*) FROM knowledge_ingestion_job")),
+                    await connection.scalar(
+                        text(
+                            "SELECT COUNT(*) FROM outbox WHERE aggregate_type='knowledge_document'"
+                        )
+                    ),
+                )
+            assert counts == (1, 1, 1)
         finally:
             await clean(engine)
             await engine.dispose()

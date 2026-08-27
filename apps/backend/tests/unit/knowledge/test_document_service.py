@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import replace
 from datetime import datetime
+from typing import cast
 
 import pytest
 
@@ -21,6 +22,7 @@ from tap.modules.knowledge.ports.documents import (
     JobStage,
     JobState,
     ReservationState,
+    ReserveUpload,
     StagedOriginal,
     UploadReservation,
 )
@@ -103,6 +105,7 @@ class MemoryDocumentRepository:
                 revision_id=pending.revision_id,
                 dedupe_key=pending.dedupe_key,
                 document=None,
+                staging_key=pending.staging_key,
             )
         if len(self.records_by_key) >= 50:
             raise DocumentCapacityExceeded
@@ -207,6 +210,40 @@ class MemoryDocumentRepository:
             status=JobState.PENDING,
             stage=JobStage.STORED,
             stages=record.stages,
+        )
+
+
+@pytest.mark.parametrize("staging_key", [None, "", "   "])
+def test_upload_commands_reject_blank_durable_staging_locator(staging_key: object) -> None:
+    """Allowing a blank locator makes an owned reservation impossible to recover."""
+
+    with pytest.raises(ValueError, match="staging locator"):
+        ReserveUpload(
+            filename="policy.md",
+            media_type="text/markdown",
+            source_content_hash="sha256:" + "a" * 64,
+            size=12,
+            now=datetime(2026, 8, 27),
+            staging_key=cast(str, staging_key),
+        )
+
+
+@pytest.mark.parametrize("state", [ReservationState.OWNED, ReservationState.DUPLICATE_PENDING])
+def test_recoverable_reservation_requires_nonblank_staging_locator(
+    state: ReservationState,
+) -> None:
+    """A hidden reservation without its locator permanently consumes capacity."""
+
+    with pytest.raises(ValueError, match="staging locator"):
+        UploadReservation(
+            state=state,
+            reservation_id="doc_" + "1" * 32,
+            owner_token="owner" if state is ReservationState.OWNED else "",
+            document_id="doc_" + "1" * 32,
+            revision_id="rev_" + "2" * 32,
+            dedupe_key="sha256:" + "3" * 64,
+            document=None,
+            staging_key=None,
         )
 
 

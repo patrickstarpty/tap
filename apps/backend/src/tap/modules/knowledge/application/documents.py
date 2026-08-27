@@ -79,17 +79,22 @@ class DocumentService:
             if reservation.document is None:
                 raise RuntimeError("an active duplicate must include its durable document")
             return _accepted(reservation.document, duplicate=True)
+        try:
+            original = await self._artifacts.commit_original(staged, reservation.revision_id)
+            record = await self._repository.activate_upload(reservation, original)
+        except BaseException as error:
+            if reservation.state is ReservationState.DUPLICATE_PENDING:
+                try:
+                    await _settle_cleanup(self._artifacts.discard_staged(staged))
+                except BaseException as cleanup_error:
+                    raise BaseExceptionGroup(
+                        "duplicate upload and staging cleanup both failed",
+                        [error, cleanup_error],
+                    ) from error
+            raise
         if reservation.state is ReservationState.DUPLICATE_PENDING:
             await _settle_cleanup(self._artifacts.discard_staged(staged))
-            if reservation.staging_key is None:
-                raise RuntimeError("a pending duplicate must include its durable staging locator")
-            original = await self._artifacts.recover_original(
-                reservation.staging_key, reservation.revision_id
-            )
-        else:
-            original = await self._artifacts.commit_original(staged, reservation.revision_id)
-        record = await self._repository.activate_upload(reservation, original)
-        if reservation.state is ReservationState.OWNED and reservation.staging_key is not None:
+        elif reservation.state is ReservationState.OWNED:
             await _settle_cleanup(self._artifacts.discard_staged(staged))
             await self._repository.complete_upload_cleanup(
                 reservation.reservation_id, reservation.owner_token

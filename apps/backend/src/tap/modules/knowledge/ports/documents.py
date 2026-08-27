@@ -22,6 +22,7 @@ from tap.modules.knowledge.domain.documents import (
 PIPELINE_VERSION = "athena-ingestion-v1"
 MAX_DOCUMENTS = 50
 DEFAULT_RESERVATION_LEASE = timedelta(minutes=5)
+DEFAULT_UPLOAD_CLEANUP_LEASE = timedelta(minutes=5)
 MAX_RESERVATION_LEASE = timedelta(minutes=15)
 MAX_JOB_LEASE = timedelta(minutes=15)
 STAGE_ORDER = ("stored", "parsing", "chunking", "embedding", "publishing", "ready")
@@ -217,10 +218,14 @@ class ReserveUpload:
     source_content_hash: str
     size: int
     now: datetime
+    staging_key: str
     parser_version: str = PARSER_VERSION
     chunker_version: str = CHUNKER_VERSION
     pipeline_version: str = PIPELINE_VERSION
-    staging_key: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.staging_key, str) or not self.staging_key.strip():
+            raise ValueError("upload reservation requires a nonblank staging locator")
 
     @classmethod
     def from_staged(cls, staged: StagedOriginal, *, now: datetime) -> ReserveUpload:
@@ -311,6 +316,12 @@ class UploadReservation:
     staging_key: str | None = None
     promoted_locator: ArtifactLocator | None = None
     expires_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.state in {ReservationState.OWNED, ReservationState.DUPLICATE_PENDING} and (
+            self.staging_key is None or not self.staging_key.strip()
+        ):
+            raise ValueError("recoverable upload reservation requires a nonblank staging locator")
 
     @classmethod
     def duplicate_active(cls, document: DocumentRecord) -> UploadReservation:
