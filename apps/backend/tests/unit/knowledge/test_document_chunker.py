@@ -8,6 +8,7 @@ from dataclasses import replace
 import pytest
 import tiktoken
 
+from tap.modules.knowledge.adapters import document_chunker
 from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
 from tap.modules.knowledge.domain.documents import (
     ChunkId,
@@ -102,7 +103,19 @@ def test_chunker_enforces_an_injected_manifest_limit_before_returning_chunks() -
         StructuralChunker(max_chunks=2).chunk(artifact)
 
 
-def test_chunker_detects_a_duplicate_identity_from_its_identity_boundary() -> None:
+def test_chunker_constructor_rejects_a_caller_supplied_chunk_identity_factory() -> None:
+    """Callers must not be able to replace revision-bound canonical chunk identities."""
+
+    def fabricated_chunk_id(_: RevisionId, __: str, ___: str) -> ChunkId:
+        return ChunkId("h_not_bound_to_the_draft")
+
+    with pytest.raises(TypeError):
+        StructuralChunker(chunk_id_factory=fabricated_chunk_id)
+
+
+def test_chunker_detects_a_duplicate_identity_from_its_identity_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A collision must fail before a duplicate manifest row can be published."""
     artifact = _artifact(
         _block("paragraph", "first", 0, 5),
@@ -113,7 +126,8 @@ def test_chunker_detects_a_duplicate_identity_from_its_identity_boundary() -> No
         return ChunkId("h_duplicate")
 
     with pytest.raises(AssertionError, match="^chunk identities are not unique$"):
-        StructuralChunker(chunk_id_factory=duplicate_chunk_id).chunk(artifact)
+        monkeypatch.setattr(document_chunker, "chunk_id_for", duplicate_chunk_id)
+        StructuralChunker().chunk(artifact)
 
 
 def test_chunker_never_splits_a_unicode_code_point_at_a_token_boundary() -> None:

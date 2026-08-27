@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 
 import tiktoken
 
@@ -11,11 +10,9 @@ from tap.modules.knowledge.domain.documents import (
     MAX_CHUNKS_PER_DOCUMENT,
     BlockKind,
     ChunkDraft,
-    ChunkId,
     DocumentParseRejected,
     NormalizedArtifact,
     NormalizedBlock,
-    RevisionId,
     canonical_sha256,
     chunk_id_for,
     logical_chunk_id_for,
@@ -32,15 +29,11 @@ class StructuralChunker:
         self,
         *,
         max_chunks: int = MAX_CHUNKS_PER_DOCUMENT,
-        chunk_id_factory: Callable[[RevisionId, str, str], ChunkId] = chunk_id_for,
     ) -> None:
         if type(max_chunks) is not int or not 1 <= max_chunks <= MAX_CHUNKS_PER_DOCUMENT:
             raise ValueError("chunk limit must be within the durable document bound")
-        if not callable(chunk_id_factory):
-            raise TypeError("chunk identity factory must be callable")
         self._encoding = tiktoken.get_encoding("cl100k_base")
         self._max_chunks = max_chunks
-        self._chunk_id_factory = chunk_id_factory
 
     def token_count(self, content: str) -> int:
         return len(self._encoding.encode(content, disallowed_special=()))
@@ -109,7 +102,7 @@ class StructuralChunker:
         anchor_json = json.dumps(anchor, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         chunk_hash = canonical_sha256(content.encode("utf-8"))
         return ChunkDraft(
-            chunk_id=self._chunk_id_factory(artifact.revision_id, anchor_json, chunk_hash),
+            chunk_id=chunk_id_for(artifact.revision_id, anchor_json, chunk_hash),
             logical_chunk_id=logical_chunk_id_for(artifact.document_id, anchor_json),
             root_id=artifact.document_id,
             parent_id=block.block_id,
