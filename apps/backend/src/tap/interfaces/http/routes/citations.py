@@ -16,6 +16,7 @@ router = APIRouter(prefix="/v1/citations", tags=["knowledge"])
     operation_id="citation_get_preview",
     response_model=CitationPreview,
     responses={
+        status.HTTP_404_NOT_FOUND: problem_response_metadata("Citation stale"),
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid citation ID"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"

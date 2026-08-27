@@ -1,0 +1,384 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pytest
+from fastapi.testclient import TestClient
+
+from tap.interfaces.http.app import create_app
+from tap.interfaces.http.dependencies import HttpServices
+from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.knowledge.application.answers import (
+    AnswerSnapshotUnavailable,
+    DocumentStateChanged,
+)
+from tap.modules.knowledge.application.citations import (
+    CitationPreviewResult,
+    CitationStale,
+    CitationUnavailable,
+)
+from tap.modules.knowledge.domain.documents import DocumentParseRejected
+from tap.modules.knowledge.domain.models import (
+    AbstentionReason,
+    AnswerResponse,
+    ModelCallProvenance,
+    RetrievalProfileId,
+)
+from tap.modules.knowledge.ports.documents import (
+    DocumentCapacityExceeded,
+    DocumentNotFound,
+    InvalidDocumentCursor,
+    RetryNotAllowed,
+)
+from tap.modules.knowledge.ports.errors import ModelUnavailable, SearchUnavailable
+
+
+class Documents:
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+
+    def _fail(self) -> None:
+        if self.error is not None:
+            raise self.error
+
+    async def upload(self, upload):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(upload)
+
+    async def list_documents(self, cursor, limit):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError((cursor, limit))
+
+    async def get_document(self, document_id):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(document_id)
+
+    async def retry_document(self, document_id):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(document_id)
+
+    async def delete_document(self, document_id):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(document_id)
+
+
+class Answers:
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+        self.requests = []
+
+    async def answer(self, request):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return AnswerResponse(
+            trace_id="trace-a",
+            query_plan_id="plan-a",
+            context_snapshot_id="context-a",
+            corpus_version="athena-demo-v1",
+            retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+            answer="",
+            abstained=True,
+            abstention_reason=AbstentionReason.INSUFFICIENT_EVIDENCE,
+            claims=(),
+            citations=(),
+            embedding_provenance=ModelCallProvenance("athena-embedding", "embed-a"),
+            answer_provenance=None,
+        )
+
+
+class Citations:
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+
+    async def resolve(self, citation_id: str) -> CitationPreviewResult:
+        if self.error is not None:
+            raise self.error
+        from tap.modules.knowledge.domain.models import DocumentAnchor
+
+        return CitationPreviewResult(
+            citation_id=citation_id,
+            document_id="doc-a",
+            revision_id="rev-a",
+            filename="policy.md",
+            source_content_hash="sha256:" + "a" * 64,
+            chunk_content_hash="sha256:" + "b" * 64,
+            anchor=DocumentAnchor(heading_path=("Policy",), start_offset=0, end_offset=8),
+            quote="Evidence",
+        )
+
+
+@dataclass
+class Harness:
+    client: TestClient
+    documents: Documents
+    answers: Answers
+    citations: Citations
+
+
+def harness() -> Harness:
+    documents = Documents()
+    answers = Answers()
+    citations = Citations()
+    service = KnowledgeHttpService(
+        documents=documents,
+        answers=answers,
+        citations=citations,
+    )
+    return Harness(
+        client=TestClient(create_app(HttpServices(knowledge=service))),
+        documents=documents,
+        answers=answers,
+        citations=citations,
+    )
+
+
+def answer_payload(*document_ids: str) -> dict[str, object]:
+    return {
+        "query": "What is the rule?",
+        "resourceRefs": [
+            {"family": "doc", "sourceId": document_id, "mode": "scope"}
+            for document_id in document_ids
+        ],
+    }
+
+
+def test_http_normalizes_selection_and_maps_answer_and_citation_dtos() -> None:
+    app = harness()
+
+    answer = app.client.post("/v1/knowledge/answers", json=answer_payload("doc-a"))
+    citation = app.client.get("/v1/citations/citation-a")
+
+    assert answer.status_code == 200
+    assert answer.json()["abstained"] is True
+    assert app.answers.requests[0].resource_refs[0].source_id == "doc-a"
+    assert citation.status_code == 200
+    assert citation.json() == {
+        "citationId": "citation-a",
+        "documentId": "doc-a",
+        "revisionId": "rev-a",
+        "filename": "policy.md",
+        "sourceContentHash": "sha256:" + "a" * 64,
+        "chunkContentHash": "sha256:" + "b" * 64,
+        "anchor": {
+            "type": "document",
+            "headingPath": ["Policy"],
+            "page": None,
+            "bbox": None,
+            "startOffset": 0,
+            "endOffset": 8,
+        },
+        "quote": "Evidence",
+        "prefix": "",
+        "suffix": "",
+    }
+
+
+def test_empty_duplicate_and_hidden_controls_are_stable_400_problems() -> None:
+    app = harness()
+    empty = app.client.post("/v1/knowledge/answers", json=answer_payload())
+    duplicate = app.client.post("/v1/knowledge/answers", json=answer_payload("doc-a", "doc-a"))
+    control = answer_payload("doc-a") | {"topK": 1}
+    hidden = app.client.post("/v1/knowledge/answers", json=control)
+
+    assert (empty.status_code, empty.json()["type"]) == (
+        400,
+        "https://tap.example/problems/source-selection-required",
+    )
+    assert (duplicate.status_code, duplicate.json()["type"]) == (
+        400,
+        "https://tap.example/problems/source-selection-required",
+    )
+    assert (hidden.status_code, hidden.json()["type"]) == (
+        400,
+        "https://tap.example/problems/unsupported-answer-control",
+    )
+    assert app.answers.requests == []
+
+
+def test_twenty_one_browser_refs_remain_contract_validation_422() -> None:
+    app = harness()
+    response = app.client.post(
+        "/v1/knowledge/answers",
+        json=answer_payload(*(f"doc-{index}" for index in range(21))),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "https://tap.example/problems/request-validation"
+    assert app.answers.requests == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        answer_payload("doc-a") | {"query": " \n\t "},
+        answer_payload("doc-a") | {"sources": ["doc", "doc"]},
+    ],
+)
+def test_domain_invalid_request_shape_is_contract_validation_422(
+    payload: dict[str, object],
+) -> None:
+    app = harness()
+
+    response = app.client.post("/v1/knowledge/answers", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "https://tap.example/problems/request-validation"
+    assert app.answers.requests == []
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "problem_type"),
+    [
+        (
+            DocumentParseRejected("unsupported-document"),
+            400,
+            "https://tap.example/problems/unsupported-document",
+        ),
+        (
+            DocumentParseRejected("empty-document"),
+            400,
+            "https://tap.example/problems/empty-document",
+        ),
+        (
+            DocumentParseRejected("document-too-large"),
+            413,
+            "https://tap.example/problems/document-too-large",
+        ),
+        (
+            DocumentCapacityExceeded("secret"),
+            429,
+            "https://tap.example/problems/document-limit-reached",
+        ),
+    ],
+)
+def test_upload_failures_are_redacted_stable_problems(
+    error: Exception, status: int, problem_type: str
+) -> None:
+    app = harness()
+    app.documents.error = error
+
+    response = app.client.post(
+        "/v1/knowledge/documents",
+        files={"upload": ("policy.md", b"# Policy", "text/markdown")},
+    )
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "method", "path", "status", "problem_type"),
+    [
+        (
+            DocumentNotFound("secret"),
+            "get",
+            "/v1/knowledge/documents/missing",
+            404,
+            "https://tap.example/problems/document-not-found",
+        ),
+        (
+            RetryNotAllowed("secret"),
+            "post",
+            "/v1/knowledge/documents/doc-a/retry",
+            409,
+            "https://tap.example/problems/document-not-retryable",
+        ),
+        (
+            InvalidDocumentCursor("secret"),
+            "get",
+            "/v1/knowledge/documents?cursor=opaque",
+            422,
+            "https://tap.example/problems/request-validation",
+        ),
+    ],
+)
+def test_document_command_failures_are_redacted_stable_problems(
+    error: Exception,
+    method: str,
+    path: str,
+    status: int,
+    problem_type: str,
+) -> None:
+    app = harness()
+    app.documents.error = error
+
+    response = app.client.request(method, path)
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "problem_type"),
+    [
+        (
+            DocumentStateChanged("secret"),
+            409,
+            "https://tap.example/problems/document-state-changed",
+        ),
+        (
+            AuthorizationDenied("secret"),
+            409,
+            "https://tap.example/problems/document-state-changed",
+        ),
+        (
+            PolicyUnavailable("secret"),
+            503,
+            "https://tap.example/problems/search-unavailable",
+        ),
+        (
+            ModelUnavailable("litellm key=secret"),
+            503,
+            "https://tap.example/problems/embedding-unavailable",
+        ),
+        (
+            SearchUnavailable("milvus password=secret"),
+            503,
+            "https://tap.example/problems/search-unavailable",
+        ),
+        (
+            AnswerSnapshotUnavailable("mysql password=secret"),
+            503,
+            "https://tap.example/problems/answer-snapshot-unavailable",
+        ),
+    ],
+)
+def test_answer_failures_are_redacted_stable_problems(
+    error: Exception, status: int, problem_type: str
+) -> None:
+    app = harness()
+    app.answers.error = error
+
+    response = app.client.post("/v1/knowledge/answers", json=answer_payload("doc-a"))
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "problem_type"),
+    [
+        (CitationStale("secret"), 404, "https://tap.example/problems/citation-stale"),
+        (
+            CitationUnavailable("secret"),
+            503,
+            "https://tap.example/problems/citation-unavailable",
+        ),
+    ],
+)
+def test_citation_failures_are_redacted_stable_problems(
+    error: Exception, status: int, problem_type: str
+) -> None:
+    app = harness()
+    app.citations.error = error
+
+    response = app.client.get("/v1/citations/citation-a")
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text

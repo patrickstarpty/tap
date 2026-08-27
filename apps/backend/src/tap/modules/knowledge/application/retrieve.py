@@ -567,6 +567,7 @@ class AuthorizedRetrieval:
             or not isinstance(hit.family, SourceFamily)
             or not isinstance(hit.source, SourceRevisionRef)
             or not isinstance(hit.source.source_type, str)
+            or not isinstance(hit.content, str)
         ):
             return False
         expected = _FAMILY_PROVENANCE.get(hit.family)
@@ -578,6 +579,7 @@ class AuthorizedRetrieval:
             hit.source.revision_kind is revision_kind
             and isinstance(hit.source.anchor, anchor_types)
             and (known_family is None or known_family is hit.family)
+            and hit.chunk_content_hash == AuthorizedRetrieval._text_hash(hit.content)
         )
 
     @staticmethod

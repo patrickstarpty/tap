@@ -14,6 +14,7 @@ from tap.modules.knowledge.domain.documents import MAX_UPLOAD_BYTES
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     DocumentCapacityExceeded,
+    DocumentNotFound,
     DocumentRecord,
     DocumentRecordPage,
     DocumentState,
@@ -359,5 +360,19 @@ def test_list_get_retry_and_delete_preserve_closed_public_document_semantics() -
         assert retried.document.error_code is retried.document.error_summary is None
         assert deleting is not None and deleting.status is DocumentState.DELETING
         assert "locator" not in detail.model_dump_json()
+
+    asyncio.run(scenario())
+
+
+def test_missing_document_commands_fail_as_not_found_before_mutation() -> None:
+    async def scenario() -> None:
+        service = DocumentService(
+            repository=MemoryDocumentRepository(), artifacts=FakeArtifactStore()
+        )
+
+        with pytest.raises(DocumentNotFound):
+            await service.retry_document("missing")
+        with pytest.raises(DocumentNotFound):
+            await service.delete_document("missing")
 
     asyncio.run(scenario())

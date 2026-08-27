@@ -897,6 +897,26 @@ export interface operations {
                     "application/json": components["schemas"]["CitationPreview"];
                 };
             };
+            /** @description Citation stale */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
             /** @description Invalid citation ID */
             422: {
                 headers: {
@@ -959,6 +979,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RetrievalAnswerResponse"];
+                };
+            };
+            /** @description Invalid answer selection */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Document state changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
             /** @description Invalid answer request */
@@ -1088,6 +1148,26 @@ export interface operations {
                     "application/json": components["schemas"]["DocumentAccepted"];
                 };
             };
+            /** @description Unsupported document */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
             /** @description Document too large */
             413: {
                 headers: {
@@ -1110,6 +1190,26 @@ export interface operations {
             };
             /** @description Invalid document upload */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Document limit reached */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1168,6 +1268,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentDetail"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
             /** @description Invalid document ID */
@@ -1230,6 +1350,46 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Document state changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
             /** @description Invalid document ID */
             422: {
                 headers: {
@@ -1290,6 +1450,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentAccepted"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Document is not retryable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Instance */
+                        instance?: string | null;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
             /** @description Invalid document ID */

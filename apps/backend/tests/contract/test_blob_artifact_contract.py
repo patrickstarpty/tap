@@ -10,13 +10,18 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from azure.core.exceptions import ResourceExistsError, ResourceModifiedError
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceModifiedError,
+    ResourceNotFoundError,
+)
 from pydantic import SecretStr
 
 from tap.modules.knowledge.adapters.blob_artifacts import (
     ARTIFACTS_CONTAINER,
     ORIGINALS_CONTAINER,
     ArtifactIntegrityError,
+    ArtifactProviderUnavailable,
     AzureBlobArtifactConfig,
     AzureBlobArtifactStore,
     artifact_locator,
@@ -47,6 +52,7 @@ from tap.modules.knowledge.ports.documents import (
     EmbeddingArtifact,
     StagedOriginal,
 )
+from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, ArtifactUnavailable
 
 SOURCE_HASH = "sha256:" + "a" * 64
 DOCUMENT_ID = DocumentId("doc_a")
@@ -373,6 +379,49 @@ def _store_with_double(
             operation_timeout_seconds=timeout,
         )
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_kind", ("normalized", "chunks"))
+async def test_artifact_reads_translate_missing_blob_to_neutral_integrity_failure(
+    monkeypatch: pytest.MonkeyPatch, read_kind: str
+) -> None:
+    class MissingBlob(_BlobDouble):
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            raise ResourceNotFoundError(message="account/container/provider detail")
+
+    store = _store_with_double(monkeypatch, MissingBlob())
+    locator = ArtifactLocator(
+        f"athena-artifacts/revisions/{REVISION}/"
+        + ("normalized-v1.json" if read_kind == "normalized" else "chunks-v1.jsonl.gz")
+    )
+
+    with pytest.raises(ArtifactIntegrityFailure) as caught:
+        if read_kind == "normalized":
+            await store.read_normalized(locator)
+        else:
+            await store.read_chunks(locator)
+
+    assert isinstance(caught.value, ArtifactIntegrityError)
+    assert not isinstance(caught.value, ResourceNotFoundError)
+
+
+@pytest.mark.asyncio
+async def test_artifact_reads_translate_provider_failure_to_neutral_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailedBlob(_BlobDouble):
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            raise RuntimeError("azure endpoint credential=secret")
+
+    store = _store_with_double(monkeypatch, FailedBlob())
+    locator = ArtifactLocator(f"athena-artifacts/revisions/{REVISION}/normalized-v1.json")
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await store.read_normalized(locator)
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert "secret" not in str(caught.value)
 
 
 @pytest.mark.asyncio

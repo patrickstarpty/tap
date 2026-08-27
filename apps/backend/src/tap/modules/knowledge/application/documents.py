@@ -152,6 +152,11 @@ class DocumentService:
         return _detail(record)
 
     async def retry_document(self, document_id: str) -> DocumentAccepted:
+        if (
+            await self._repository.get_document(DocumentId(document_id), include_deleting=True)
+            is None
+        ):
+            raise DocumentNotFound(document_id)
         job = await self._repository.retry_failed(DocumentId(document_id), self._clock())
         record = await self._repository.get_document(DocumentId(document_id), include_deleting=True)
         if record is None:
@@ -159,6 +164,11 @@ class DocumentService:
         return DocumentAccepted(document=_summary(record), job_id=job.job_id, duplicate=False)
 
     async def delete_document(self, document_id: str) -> None:
+        if (
+            await self._repository.get_document(DocumentId(document_id), include_deleting=True)
+            is None
+        ):
+            raise DocumentNotFound(document_id)
         await self._repository.request_delete(DocumentId(document_id), self._clock())
 
 

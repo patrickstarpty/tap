@@ -16,6 +16,8 @@ router = APIRouter(prefix="/v1/knowledge", tags=["knowledge"])
     operation_id="knowledge_create_answer",
     response_model=RetrievalAnswerResponse,
     responses={
+        status.HTTP_400_BAD_REQUEST: problem_response_metadata("Invalid answer selection"),
+        status.HTTP_409_CONFLICT: problem_response_metadata("Document state changed"),
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid answer request"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"

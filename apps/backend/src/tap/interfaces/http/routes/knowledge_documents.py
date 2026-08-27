@@ -60,8 +60,10 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
     response_model=DocumentAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
+        status.HTTP_400_BAD_REQUEST: problem_response_metadata("Unsupported document"),
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid document upload"),
         status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: problem_response_metadata("Document too large"),
+        status.HTTP_429_TOO_MANY_REQUESTS: problem_response_metadata("Document limit reached"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"
         ),
@@ -106,6 +108,7 @@ async def list_documents(
     operation_id="knowledge_get_document",
     response_model=DocumentDetail,
     responses={
+        status.HTTP_404_NOT_FOUND: problem_response_metadata("Document not found"),
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid document ID"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"
@@ -122,6 +125,8 @@ async def get_document(request: Request, document_id: str) -> DocumentDetail:
     response_model=DocumentAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
+        status.HTTP_404_NOT_FOUND: problem_response_metadata("Document not found"),
+        status.HTTP_409_CONFLICT: problem_response_metadata("Document is not retryable"),
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid document ID"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"
@@ -137,6 +142,8 @@ async def retry_document(request: Request, document_id: str) -> DocumentAccepted
     operation_id="knowledge_delete_document",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
+        status.HTTP_404_NOT_FOUND: problem_response_metadata("Document not found"),
+        status.HTTP_409_CONFLICT: problem_response_metadata("Document state changed"),
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid document ID"),
         status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata(
             "Knowledge runtime unavailable"

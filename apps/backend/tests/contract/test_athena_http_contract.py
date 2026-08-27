@@ -123,6 +123,33 @@ def test_knowledge_route_error_schemas_are_all_problem_details() -> None:
                 assert set(response["content"]) == {"application/problem+json"}
 
 
+def test_knowledge_routes_publish_the_closed_task_six_error_statuses() -> None:
+    paths = create_app().openapi()["paths"]
+    expected = {
+        ("/v1/knowledge/documents", "post"): {"400", "413", "422", "429", "503"},
+        ("/v1/knowledge/documents", "get"): {"422", "503"},
+        ("/v1/knowledge/documents/{document_id}", "get"): {"404", "422", "503"},
+        ("/v1/knowledge/documents/{document_id}", "delete"): {
+            "404",
+            "409",
+            "422",
+            "503",
+        },
+        ("/v1/knowledge/documents/{document_id}/retry", "post"): {
+            "404",
+            "409",
+            "422",
+            "503",
+        },
+        ("/v1/knowledge/answers", "post"): {"400", "409", "422", "503"},
+        ("/v1/citations/{citation_id}", "get"): {"404", "422", "503"},
+    }
+
+    for (path, method), statuses in expected.items():
+        actual = {code for code in paths[path][method]["responses"] if code.startswith(("4", "5"))}
+        assert actual == statuses
+
+
 def test_document_list_limit_is_validated_at_the_route_boundary() -> None:
     """A route accepting zero or fifty-one items would exceed fixed server bounds."""
     client = TestClient(create_app())
@@ -140,7 +167,7 @@ def test_invalid_upload_metadata_is_a_public_problem_not_a_server_error() -> Non
         files={"upload": ("../secret.txt", b"untrusted", "text/plain")},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["type"] == "https://tap.example/problems/unsupported-document"
 
@@ -319,7 +346,7 @@ def test_multipart_upload_uses_streamed_file_bytes_not_total_body_length() -> No
         data={"ignored": "x" * (20 * 1024)},
         files={"upload": ("exact.txt", b"x" * MAX_DOCUMENT_BYTES, "text/plain")},
     )
-    assert extra_part.status_code == 422
+    assert extra_part.status_code == 400
     assert extra_part.headers["content-type"].startswith("application/problem+json")
 
     oversized = client.post(

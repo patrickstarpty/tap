@@ -12,6 +12,7 @@ from pydantic import (
     RootModel,
     StrictInt,
     ValidationInfo,
+    field_validator,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
@@ -400,6 +401,20 @@ class RetrievalSearchRequest(ContractModel):
         Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None
     ) = None
     top_k: TopK | None = None
+
+    @field_validator("query")
+    @classmethod
+    def validate_nonblank_query(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("retrieval query must contain non-whitespace text")
+        return value
+
+    @field_validator("sources")
+    @classmethod
+    def validate_unique_sources(cls, value: list[SourceFamily] | None) -> list[SourceFamily] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("retrieval sources must be unique")
+        return value
 
 
 class RetrievalAnswerRequest(RetrievalSearchRequest):

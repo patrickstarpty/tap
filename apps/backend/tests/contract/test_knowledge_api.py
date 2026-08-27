@@ -83,7 +83,8 @@ from tap.modules.knowledge.ports.models import (
 )
 
 SOURCE_HASH = "sha256:" + "a" * 64
-CHUNK_HASH = "sha256:" + "b" * 64
+HIT_CONTENT = "Authorization requires the verified project policy."
+CHUNK_HASH = "sha256:" + hashlib.sha256(HIT_CONTENT.encode("utf-8")).hexdigest()
 
 
 def test_generated_claim_span_uses_equal_paragraphs_not_substrings() -> None:
@@ -157,7 +158,7 @@ def search_hit() -> SearchHit:
         chunk_id="h_" + "1" * 64,
         logical_chunk_id="h_" + "2" * 64,
         title="authorize",
-        content="Authorization requires the verified project policy.",
+        content=HIT_CONTENT,
         source=source_revision(),
         chunk_content_hash=CHUNK_HASH,
         content_role=ContentRole.SOURCE,
@@ -383,6 +384,19 @@ async def test_knowledge_answer_cites_each_claim_and_abstains_without_evidence()
     assert no_evidence.abstained is True
     assert no_evidence.abstention_reason is AbstentionReason.INSUFFICIENT_EVIDENCE
     assert no_evidence_model.answer_evidence == []
+
+
+@pytest.mark.asyncio
+async def test_knowledge_api_rejects_forged_hit_content_before_model_io() -> None:
+    forged = replace(search_hit(), content="Forged index text with a real manifest hash.")
+    model = FakeModelPort()
+
+    with pytest.raises(AuthorizationDenied):
+        await api(FakeSearchPort((forged,)), model).answer(
+            AnswerRequest(query="Where is policy verified?"), policy_context()
+        )
+
+    assert model.answer_evidence == []
 
 
 @pytest.mark.asyncio
@@ -622,7 +636,7 @@ def ranked_hit(
         title=base.title,
         content=base.content,
         source=source,
-        chunk_content_hash="sha256:" + suffix * 64,
+        chunk_content_hash=CHUNK_HASH,
         content_role=base.content_role,
         index_revision=IndexRevision(
             physical_index=f"kb-{family.value}-v1-20260823",

@@ -27,17 +27,30 @@ from sqlalchemy import (
     insert,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     new_document_id,
     revision_id_for,
+)
+from tap.modules.knowledge.ports.answers import (
+    AnswerSnapshot,
+    AnswerSnapshotUnavailable,
+    CitationSnapshot,
+    DocumentStateChanged,
+    ReadyDocumentRevision,
+)
+from tap.modules.knowledge.ports.citations import (
+    CitationDocumentFacts,
+    CitationLookup,
+    CitationSnapshotCorrupt,
 )
 from tap.modules.knowledge.ports.documents import (
     DEFAULT_RESERVATION_LEASE,
@@ -79,6 +92,8 @@ from tap.modules.knowledge.ports.documents import (
 from tap.platform.db.schema import metadata, outbox
 
 CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
+ANSWER_SNAPSHOT_RETENTION = 1_000
+ANSWER_SNAPSHOT_LOCK_NAME = "tap:athena:answer-snapshot-retention:v1"
 
 knowledge_document = Table(
     "knowledge_document",
@@ -264,6 +279,38 @@ async def _database_now(session: AsyncSession) -> datetime:
     return value
 
 
+async def _release_named_lock(
+    connection: AsyncConnection, lock_name: str, *, ownership_confirmed: bool
+) -> None:
+    """Settle RELEASE_LOCK on the owning pooled connection even during caller cancellation."""
+    if connection.invalidated:
+        # Cancellation inside the driver invalidates and physically closes the DBAPI
+        # connection, which also releases any MySQL connection-scoped lock. Clear
+        # SQLAlchemy's failed transaction marker without reconnecting so cleanup does
+        # not replace the original cancellation with PendingRollbackError.
+        await connection.rollback()
+        return
+    cancelled = False
+    task = asyncio.create_task(
+        connection.scalar(
+            text("SELECT RELEASE_LOCK(:lock_name)"),
+            {"lock_name": lock_name},
+        )
+    )
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    released = task.result()
+    if ownership_confirmed and released != 1:
+        raise AnswerSnapshotUnavailable("answer snapshot serialization lock was lost")
+    if not ownership_confirmed and released not in {None, 0, 1}:
+        raise AnswerSnapshotUnavailable("answer snapshot serialization lock was malformed")
+    if cancelled:
+        raise asyncio.CancelledError
+
+
 def _job_id() -> str:
     return f"job_{uuid4().hex}"
 
@@ -289,6 +336,420 @@ class MysqlDocumentRepository:
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
+        self._engine = cast(AsyncEngine, sessions.kw["bind"])
+
+    async def load_ready_revisions(
+        self, document_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]:
+        if (
+            not isinstance(document_ids, tuple)
+            or not 1 <= len(document_ids) <= 20
+            or len(set(document_ids)) != len(document_ids)
+            or any(not isinstance(item, str) or not item for item in document_ids)
+        ):
+            raise ValueError("ready revision lookup requires one to twenty unique document IDs")
+        ordered_ids = tuple(sorted(document_ids))
+        async with self._sessions() as session, session.begin():
+            rows = list(
+                (
+                    await session.execute(
+                        select(
+                            knowledge_document.c.document_id,
+                            knowledge_document.c.current_revision_id,
+                            knowledge_document.c.source_content_hash.label(
+                                "document_source_content_hash"
+                            ),
+                            knowledge_document_revision.c.source_content_hash.label(
+                                "revision_source_content_hash"
+                            ),
+                        )
+                        .select_from(
+                            knowledge_document.join(
+                                knowledge_document_revision,
+                                and_(
+                                    knowledge_document_revision.c.revision_id
+                                    == knowledge_document.c.current_revision_id,
+                                    knowledge_document_revision.c.document_id
+                                    == knowledge_document.c.document_id,
+                                ),
+                            )
+                        )
+                        .where(
+                            knowledge_document.c.document_id.in_(ordered_ids),
+                            knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .order_by(knowledge_document.c.document_id)
+                        .with_for_update()
+                    )
+                ).mappings()
+            )
+            return tuple(
+                ReadyDocumentRevision(
+                    document_id=cast(str, row["document_id"]),
+                    revision_id=cast(str, row["current_revision_id"]),
+                    source_content_hash=cast(str, row["document_source_content_hash"]),
+                )
+                for row in rows
+                if row["document_source_content_hash"] == row["revision_source_content_hash"]
+            )
+
+    async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
+        if not isinstance(snapshot, AnswerSnapshot):
+            raise TypeError("answer snapshot repository requires AnswerSnapshot")
+        try:
+            # Hold an explicit pooled connection so MySQL's connection-scoped lock
+            # cannot migrate after the business transaction commits.
+            async with self._engine.connect() as connection:
+                ownership_confirmed = False
+                try:
+                    acquired = await self._acquire_answer_snapshot_lock(connection)
+                    if acquired != 1:
+                        raise AnswerSnapshotUnavailable(
+                            "answer snapshot serialization is unavailable"
+                        )
+                    ownership_confirmed = True
+                    # GET_LOCK is connection-scoped rather than transactional. End its implicit
+                    # transaction before starting the snapshot transaction while retaining the
+                    # lock; the finally also covers cancellation during this boundary commit.
+                    await connection.commit()
+                    async with self._sessions(bind=connection) as session, session.begin():
+                        await self._save_answer_snapshot(session, snapshot)
+                finally:
+                    # The GET_LOCK await can be cancelled after MySQL granted ownership but
+                    # before the driver returns. Always attempt same-connection release; only
+                    # require a `1` result once ownership was observed by this coroutine.
+                    await _release_named_lock(
+                        connection,
+                        ANSWER_SNAPSHOT_LOCK_NAME,
+                        ownership_confirmed=ownership_confirmed,
+                    )
+        except (DocumentStateChanged, AnswerSnapshotUnavailable, asyncio.CancelledError):
+            raise
+        except Exception as error:
+            raise AnswerSnapshotUnavailable("answer snapshot transaction failed") from error
+
+    async def _acquire_answer_snapshot_lock(self, connection: AsyncConnection) -> object:
+        return await connection.scalar(
+            text("SELECT GET_LOCK(:lock_name, 5)"),
+            {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+        )
+
+    async def _save_answer_snapshot(self, session: AsyncSession, snapshot: AnswerSnapshot) -> None:
+        expected = snapshot.selected_revisions
+        document_ids = tuple(item.document_id for item in expected)
+        rows = list(
+            (
+                await session.execute(
+                    select(
+                        knowledge_document.c.document_id,
+                        knowledge_document.c.current_revision_id,
+                        knowledge_document.c.source_content_hash,
+                        knowledge_document.c.status,
+                        knowledge_document.c.activated_at,
+                        knowledge_document.c.deleted_at,
+                    )
+                    .where(knowledge_document.c.document_id.in_(document_ids))
+                    .order_by(knowledge_document.c.document_id)
+                    .with_for_update()
+                )
+            ).mappings()
+        )
+        actual = tuple(
+            (
+                cast(str, row["document_id"]),
+                cast(str | None, row["current_revision_id"]),
+                cast(str, row["source_content_hash"]),
+                cast(str, row["status"]),
+                row["activated_at"] is not None,
+                row["deleted_at"] is None,
+            )
+            for row in rows
+        )
+        wanted = tuple(
+            (
+                item.document_id,
+                item.revision_id,
+                item.source_content_hash,
+                DocumentState.READY.value,
+                True,
+                True,
+            )
+            for item in expected
+        )
+        if actual != wanted:
+            raise DocumentStateChanged("selected document state changed before snapshot commit")
+        revision_rows = list(
+            (
+                await session.execute(
+                    select(
+                        knowledge_document_revision.c.revision_id,
+                        knowledge_document_revision.c.document_id,
+                        knowledge_document_revision.c.source_content_hash,
+                    ).where(
+                        knowledge_document_revision.c.revision_id.in_(
+                            tuple(item.revision_id for item in expected)
+                        )
+                    )
+                )
+            ).mappings()
+        )
+        revision_facts = {
+            (
+                cast(str, row["document_id"]),
+                cast(str, row["revision_id"]),
+                cast(str, row["source_content_hash"]),
+            )
+            for row in revision_rows
+        }
+        if revision_facts != {
+            (item.document_id, item.revision_id, item.source_content_hash) for item in expected
+        }:
+            raise DocumentStateChanged("selected revision facts changed before snapshot commit")
+        if snapshot.citations:
+            manifest_rows = list(
+                (
+                    await session.execute(
+                        select(
+                            knowledge_chunk_manifest.c.chunk_id,
+                            knowledge_chunk_manifest.c.revision_id,
+                            knowledge_chunk_manifest.c.chunk_content_hash,
+                            knowledge_chunk_manifest.c.anchor_json,
+                        )
+                        .where(
+                            knowledge_chunk_manifest.c.chunk_id.in_(
+                                tuple(item.chunk_id for item in snapshot.citations)
+                            )
+                        )
+                        .order_by(knowledge_chunk_manifest.c.chunk_id)
+                        .with_for_update()
+                    )
+                ).mappings()
+            )
+            manifest_facts = {
+                (
+                    cast(str, row["chunk_id"]),
+                    cast(str, row["revision_id"]),
+                    cast(str, row["chunk_content_hash"]),
+                    _canonical_json_object(row["anchor_json"]),
+                )
+                for row in manifest_rows
+            }
+            citation_facts = {
+                (
+                    item.chunk_id,
+                    item.revision_id,
+                    item.chunk_content_hash,
+                    item.anchor_json,
+                )
+                for item in snapshot.citations
+            }
+            if manifest_facts != citation_facts:
+                raise AnswerSnapshotUnavailable(
+                    "answer citation manifest does not match durable facts"
+                )
+        now = await _database_now(session)
+        await session.execute(
+            insert(knowledge_answer_snapshot).values(
+                trace_id=snapshot.trace_id,
+                query_hash=snapshot.query_hash,
+                selected_revisions_json=[
+                    {
+                        "documentId": item.document_id,
+                        "revisionId": item.revision_id,
+                        "sourceContentHash": item.source_content_hash,
+                    }
+                    for item in expected
+                ],
+                created_at=now,
+            )
+        )
+        if snapshot.citations:
+            await session.execute(
+                insert(knowledge_citation_snapshot),
+                [
+                    {
+                        "citation_id": item.citation_id,
+                        "trace_id": item.trace_id,
+                        "document_id": item.document_id,
+                        "revision_id": item.revision_id,
+                        "chunk_id": item.chunk_id,
+                        "source_content_hash": item.source_content_hash,
+                        "chunk_content_hash": item.chunk_content_hash,
+                        "anchor_json": json.loads(item.anchor_json),
+                        "created_at": now,
+                    }
+                    for item in snapshot.citations
+                ],
+            )
+        count = cast(
+            int,
+            await session.scalar(select(func.count()).select_from(knowledge_answer_snapshot)),
+        )
+        excess = count - ANSWER_SNAPSHOT_RETENTION
+        if excess > 0:
+            expired = tuple(
+                await session.scalars(
+                    select(knowledge_answer_snapshot.c.trace_id)
+                    .order_by(
+                        knowledge_answer_snapshot.c.created_at,
+                        knowledge_answer_snapshot.c.trace_id,
+                    )
+                    .limit(excess)
+                )
+            )
+            if expired:
+                await session.execute(
+                    delete(knowledge_answer_snapshot).where(
+                        knowledge_answer_snapshot.c.trace_id.in_(expired)
+                    )
+                )
+
+    async def load_citation(self, citation_id: str) -> CitationLookup | None:
+        if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:
+            return None
+        citation = knowledge_citation_snapshot
+        answer = knowledge_answer_snapshot
+        document = knowledge_document
+        revision = knowledge_document_revision
+        manifest = knowledge_chunk_manifest
+        source = (
+            citation.join(answer, answer.c.trace_id == citation.c.trace_id)
+            .outerjoin(document, document.c.document_id == citation.c.document_id)
+            .outerjoin(
+                revision,
+                and_(
+                    revision.c.revision_id == citation.c.revision_id,
+                    revision.c.document_id == citation.c.document_id,
+                ),
+            )
+            .outerjoin(
+                manifest,
+                and_(
+                    manifest.c.chunk_id == citation.c.chunk_id,
+                    manifest.c.revision_id == citation.c.revision_id,
+                ),
+            )
+        )
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(
+                            citation.c.citation_id,
+                            citation.c.trace_id.label("citation_trace_id"),
+                            citation.c.document_id.label("citation_document_id"),
+                            citation.c.revision_id.label("citation_revision_id"),
+                            citation.c.chunk_id.label("citation_chunk_id"),
+                            citation.c.source_content_hash.label("citation_source_hash"),
+                            citation.c.chunk_content_hash.label("citation_chunk_hash"),
+                            citation.c.anchor_json.label("citation_anchor"),
+                            answer.c.trace_id.label("answer_trace_id"),
+                            answer.c.selected_revisions_json,
+                            document.c.document_id.label("document_id"),
+                            document.c.filename,
+                            document.c.status,
+                            document.c.deleted_at,
+                            document.c.current_revision_id,
+                            document.c.source_content_hash.label("document_source_hash"),
+                            revision.c.source_content_hash.label("revision_source_hash"),
+                            revision.c.normalized_blob_locator,
+                            revision.c.chunks_blob_locator,
+                            manifest.c.chunk_id.label("manifest_chunk_id"),
+                            manifest.c.logical_chunk_id,
+                            manifest.c.ordinal,
+                            manifest.c.root_id,
+                            manifest.c.parent_id,
+                            manifest.c.anchor_json.label("manifest_anchor"),
+                            manifest.c.chunk_content_hash.label("manifest_chunk_hash"),
+                            manifest.c.embedding_model_version,
+                            manifest.c.index_version,
+                        )
+                        .select_from(source)
+                        .where(citation.c.citation_id == citation_id)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        try:
+            citation_anchor = _canonical_json_object(row["citation_anchor"])
+            snapshot = CitationSnapshot(
+                trace_id=cast(str, row["citation_trace_id"]),
+                citation_id=cast(str, row["citation_id"]),
+                document_id=cast(str, row["citation_document_id"]),
+                revision_id=cast(str, row["citation_revision_id"]),
+                chunk_id=cast(str, row["citation_chunk_id"]),
+                source_content_hash=cast(str, row["citation_source_hash"]),
+                chunk_content_hash=cast(str, row["citation_chunk_hash"]),
+                anchor_json=citation_anchor,
+            )
+            selected = _selected_revisions(row["selected_revisions_json"])
+            document_facts = None
+            if row["document_id"] is not None:
+                document_facts = CitationDocumentFacts(
+                    document_id=cast(str, row["document_id"]),
+                    filename=cast(str, row["filename"]),
+                    status=DocumentState(cast(str, row["status"])),
+                    deleted=row["deleted_at"] is not None,
+                    current_revision_id=cast(str, row["current_revision_id"]),
+                    current_source_content_hash=cast(str, row["document_source_hash"]),
+                    revision_source_content_hash=cast(str, row["revision_source_hash"]),
+                    normalized_locator=_optional_locator(row["normalized_blob_locator"]),
+                    chunks_locator=_optional_locator(row["chunks_blob_locator"]),
+                )
+            manifest_fact = None
+            if row["manifest_chunk_id"] is not None:
+                manifest_fact = ManifestChunk(
+                    chunk_id=cast(str, row["manifest_chunk_id"]),
+                    logical_chunk_id=cast(str, row["logical_chunk_id"]),
+                    ordinal=cast(int, row["ordinal"]),
+                    root_id=cast(str, row["root_id"]),
+                    parent_id=cast(str | None, row["parent_id"]),
+                    anchor_json=_canonical_json_object(row["manifest_anchor"]),
+                    chunk_content_hash=cast(str, row["manifest_chunk_hash"]),
+                    embedding_model_version=cast(str, row["embedding_model_version"]),
+                    index_version=cast(str, row["index_version"]),
+                )
+            return CitationLookup(
+                citation=snapshot,
+                answer_trace_id=cast(str | None, row["answer_trace_id"]),
+                selected_revisions=selected,
+                document=document_facts,
+                manifest=manifest_fact,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise CitationSnapshotCorrupt("citation snapshot facts are malformed") from error
+
+    async def citation_is_current(self, citation: CitationSnapshot) -> bool:
+        if not isinstance(citation, CitationSnapshot):
+            raise TypeError("citation current check requires CitationSnapshot")
+        lookup = await self.load_citation(citation.citation_id)
+        if lookup is None or lookup.citation != citation or lookup.document is None:
+            return False
+        document = lookup.document
+        selected = {
+            (item.document_id, item.revision_id, item.source_content_hash)
+            for item in lookup.selected_revisions
+        }
+        return (
+            lookup.answer_trace_id == citation.trace_id
+            and document.status is DocumentState.READY
+            and not document.deleted
+            and document.document_id == citation.document_id
+            and document.current_revision_id == citation.revision_id
+            and document.current_source_content_hash == citation.source_content_hash
+            and document.revision_source_content_hash == citation.source_content_hash
+            and (
+                citation.document_id,
+                citation.revision_id,
+                citation.source_content_hash,
+            )
+            in selected
+        )
 
     async def reserve_upload(self, command: ReserveUpload) -> UploadReservation:
         for attempt in range(3):
@@ -1820,6 +2281,45 @@ def _optional_locator(value: object) -> ArtifactLocator | None:
     return ArtifactLocator(value) if isinstance(value, str) else None
 
 
+def _canonical_json_object(value: object) -> str:
+    decoded = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(decoded, dict) or any(not isinstance(key, str) for key in decoded):
+        raise ValueError("snapshot JSON value must be an object")
+    return json.dumps(
+        decoded,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _selected_revisions(value: object) -> tuple[ReadyDocumentRevision, ...]:
+    decoded = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(decoded, list) or not 1 <= len(decoded) <= 20:
+        raise ValueError("selected revisions must be a bounded array")
+    rows: list[ReadyDocumentRevision] = []
+    for item in decoded:
+        if not isinstance(item, dict) or set(item) != {
+            "documentId",
+            "revisionId",
+            "sourceContentHash",
+        }:
+            raise ValueError("selected revision shape is not closed")
+        rows.append(
+            ReadyDocumentRevision(
+                document_id=item["documentId"],
+                revision_id=item["revisionId"],
+                source_content_hash=item["sourceContentHash"],
+            )
+        )
+    result = tuple(rows)
+    if result != tuple(sorted(result, key=lambda item: item.document_id)) or len(
+        {item.document_id for item in result}
+    ) != len(result):
+        raise ValueError("selected revisions must be sorted and unique")
+    return result
+
+
 def _manifest_from_rows(rows: list[RowMapping]) -> tuple[ManifestChunk, ...]:
     return tuple(
         ManifestChunk(
@@ -1828,7 +2328,12 @@ def _manifest_from_rows(rows: list[RowMapping]) -> tuple[ManifestChunk, ...]:
             ordinal=cast(int, row["ordinal"]),
             root_id=cast(str, row["root_id"]),
             parent_id=cast(str | None, row["parent_id"]),
-            anchor_json=json.dumps(row["anchor_json"], separators=(",", ":"), sort_keys=True),
+            anchor_json=json.dumps(
+                row["anchor_json"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
             chunk_content_hash=cast(str, row["chunk_content_hash"]),
             embedding_model_version=cast(str, row["embedding_model_version"]),
             index_version=cast(str, row["index_version"]),

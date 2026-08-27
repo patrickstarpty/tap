@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -115,6 +116,11 @@ def map_milvus_hit(
         ):
             raise ValueError("score must be finite")
 
+        content = _required_content(row["content"])
+        chunk_content_hash = _required_sha256(row, "chunk_content_hash")
+        if "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest() != chunk_content_hash:
+            raise ValueError("content does not match immutable chunk hash")
+
         return SearchHit(
             family=family,
             chunk_id=_chunk_id(row["chunk_id"]),
@@ -122,9 +128,9 @@ def map_milvus_hit(
             root_id=_chunk_id(row["root_id"]),
             parent_id=_optional_chunk_id(row["parent_id"]),
             title=_optional_string(row, "title", maximum=1_024),
-            content=_required_content(row["content"]),
+            content=content,
             source=source,
-            chunk_content_hash=_required_sha256(row, "chunk_content_hash"),
+            chunk_content_hash=chunk_content_hash,
             content_role=ContentRole(_required_string(row, "content_role", maximum=32)),
             index_revision=IndexRevision(
                 physical_index=bound.physical_collection,

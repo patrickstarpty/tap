@@ -20,6 +20,7 @@ from tap.modules.knowledge.domain.documents import (
     canonical_sha256,
     chunk_id_for,
     logical_chunk_id_for,
+    logical_chunk_projection_id,
     revision_id_for,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
@@ -710,10 +711,7 @@ class MilvusDocumentIndex:
             rows.append(
                 {
                     "chunk_id": str(chunk.chunk_id),
-                    "logical_chunk_id": _projection_id(
-                        "logical",
-                        str(chunk.logical_chunk_id),
-                    ),
+                    "logical_chunk_id": logical_chunk_projection_id(chunk.logical_chunk_id),
                     "root_id": _projection_id("root", str(chunk.root_id)),
                     "parent_id": (
                         None

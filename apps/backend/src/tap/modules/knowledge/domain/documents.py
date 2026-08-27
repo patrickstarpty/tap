@@ -239,6 +239,18 @@ def logical_chunk_id_for(document_id: DocumentId, anchor_json: str) -> LogicalCh
     )
 
 
+def logical_chunk_projection_id(logical_chunk_id: LogicalChunkId) -> str:
+    """Project a stable logical identity into the shared 66-character search ID shape."""
+    value = str(logical_chunk_id)
+    if (
+        len(value) != 67
+        or not value.startswith("lc_")
+        or any(character not in "0123456789abcdef" for character in value[3:])
+    ):
+        raise ValueError("logical chunk identity must be canonical")
+    return "h_" + value[3:]
+
+
 def chunk_id_for(revision_id: RevisionId, anchor_json: str, chunk_hash: str) -> ChunkId:
     _validate_sha256(chunk_hash)
     _required_identity_component("revision ID", revision_id)

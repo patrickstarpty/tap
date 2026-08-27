@@ -693,6 +693,8 @@ class AzureAISearchAdapter:
                 row,
                 "chunkContentHash",
             )
+            if "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest() != chunk_hash:
+                raise ValueError("content does not match immutable chunk hash")
             corpus_version = _required_string(row, "corpusVersion", maximum=128)
             schema_version = _required_string(row, "schemaVersion", maximum=128)
             embedding_version = _required_string(

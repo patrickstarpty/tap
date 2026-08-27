@@ -424,7 +424,13 @@ class ManifestChunk:
             raise ValueError("manifest anchor must be canonical JSON") from error
         if (
             not isinstance(anchor, dict)
-            or json.dumps(anchor, separators=(",", ":"), sort_keys=True) != self.anchor_json
+            or json.dumps(
+                anchor,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            != self.anchor_json
         ):
             raise ValueError("manifest anchor must be a canonical JSON object")
 

@@ -17,6 +17,7 @@ from tap.modules.access.domain.policy import (
     VerifiedSubjectFacts,
 )
 from tap.modules.knowledge.api import KnowledgeAPI
+from tap.modules.knowledge.domain.documents import canonical_sha256
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
     AnswerRequest,
@@ -51,8 +52,9 @@ AUTHORIZED_ANCHOR = CodeAnchor(
 )
 SOURCE_HASH = "sha256:" + "a" * 64
 OTHER_SOURCE_HASH = "sha256:" + "b" * 64
-FIRST_VERSION_HASH = "sha256:" + "c" * 64
-SECOND_VERSION_HASH = "sha256:" + "d" * 64
+HIT_CONTENT = "Authorization uses current policy."
+FIRST_VERSION_CONTENT = "Authorization uses policy version one."
+SECOND_VERSION_CONTENT = "Authorization uses policy version two."
 
 
 def policy_context() -> RetrievalPolicyContext:
@@ -213,14 +215,14 @@ def hit(
     local_rank: int = 1,
     chunk_suffix: str = "1",
     logical_chunk_id: str = "h_" + "9" * 64,
-    chunk_hash: str | None = None,
+    content: str = HIT_CONTENT,
 ) -> SearchHit:
     return SearchHit(
         family=family,
         chunk_id="h_" + chunk_suffix * 64,
         logical_chunk_id=logical_chunk_id,
         title="authorize",
-        content="Authorization uses current policy.",
+        content=content,
         source=SourceRevisionRef(
             source_id=source_id,
             source_type=family.value,
@@ -229,7 +231,7 @@ def hit(
             source_content_hash=source_hash,
             anchor=anchor,
         ),
-        chunk_content_hash=chunk_hash or "sha256:" + chunk_suffix * 64,
+        chunk_content_hash=canonical_sha256(content.encode("utf-8")),
         content_role=ContentRole.SOURCE,
         index_revision=IndexRevision(
             physical_index=f"kb-{family.value}-v1-20260824",
@@ -356,8 +358,8 @@ async def test_same_logical_chunk_with_different_hashes_abstains_as_conflicting(
     response = await knowledge(
         StaticSearch(
             (
-                hit(chunk_suffix="4", chunk_hash=FIRST_VERSION_HASH),
-                hit(chunk_suffix="5", chunk_hash=SECOND_VERSION_HASH, local_rank=2),
+                hit(chunk_suffix="4", content=FIRST_VERSION_CONTENT),
+                hit(chunk_suffix="5", content=SECOND_VERSION_CONTENT, local_rank=2),
             )
         ),
         model,

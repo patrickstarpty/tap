@@ -49,6 +49,7 @@ from tap.modules.knowledge.ports.documents import (
     StagedOriginal,
     UploadStream,
 )
+from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, ArtifactUnavailable
 
 ORIGINALS_CONTAINER = "athena-originals"
 ARTIFACTS_CONTAINER = "athena-artifacts"
@@ -64,8 +65,12 @@ _MAX_VECTORS = 10_000
 _MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 
 
-class ArtifactIntegrityError(Exception):
+class ArtifactIntegrityError(ArtifactIntegrityFailure):
     """A Blob operation or persisted envelope failed the provider-neutral integrity contract."""
+
+
+class ArtifactProviderUnavailable(ArtifactIntegrityError, ArtifactUnavailable):
+    """A bounded Blob SDK operation could not reach a valid terminal provider result."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,7 +594,7 @@ class AzureBlobArtifactStore:
         while scanned < limit:
             remaining = deadline_at - loop.time()
             if remaining <= 0:
-                raise ArtifactIntegrityError("Azure Blob provider operation exceeded deadline")
+                raise ArtifactProviderUnavailable("Azure Blob provider operation exceeded deadline")
             try:
                 item = await self._bounded(pages.__anext__(), timeout_seconds=remaining)
             except StopAsyncIteration:
@@ -600,13 +605,17 @@ class AzureBlobArtifactStore:
             if age >= timedelta(hours=24) or (invisible and age >= timedelta(hours=1)):
                 remaining = deadline_at - loop.time()
                 if remaining <= 0:
-                    raise ArtifactIntegrityError("Azure Blob provider operation exceeded deadline")
+                    raise ArtifactProviderUnavailable(
+                        "Azure Blob provider operation exceeded deadline"
+                    )
                 await self._delete_if_exists(
                     container.get_blob_client(item.name),
                     timeout_seconds=remaining,
                 )
                 if loop.time() >= deadline_at:
-                    raise ArtifactIntegrityError("Azure Blob provider operation exceeded deadline")
+                    raise ArtifactProviderUnavailable(
+                        "Azure Blob provider operation exceeded deadline"
+                    )
                 removed.append(item.name)
         return ArtifactScavengeReceipt(scanned=scanned, removed=tuple(removed))
 
@@ -878,10 +887,16 @@ class AzureBlobArtifactStore:
             if canonical_sha256(data) != _metadata_digest(properties.metadata):
                 raise ValueError
             return data
-        except ResourceNotFoundError:
+        except ResourceNotFoundError as error:
+            raise ArtifactIntegrityError("artifact Blob does not exist") from error
+        except ArtifactProviderUnavailable:
             raise
-        except Exception as error:
+        except ArtifactIntegrityError:
+            raise
+        except (TypeError, ValueError) as error:
             raise ArtifactIntegrityError("Blob content hash verification failed") from error
+        except Exception as error:
+            raise ArtifactProviderUnavailable("Blob provider read failed") from error
 
     async def _download(self, blob: BlobClient) -> bytes:
         stream = await self._bounded(blob.download_blob(max_concurrency=1))
@@ -926,14 +941,14 @@ class AzureBlobArtifactStore:
         except TimeoutError as error:
             task.cancel()
             await _wait_terminal(task)
-            raise ArtifactIntegrityError(
+            raise ArtifactProviderUnavailable(
                 "Azure Blob provider operation exceeded deadline"
             ) from error
         except asyncio.CancelledError as cancellation:
             caller = asyncio.current_task()
             if task.done() and task.cancelled() and caller is not None and not caller.cancelling():
                 await _wait_terminal(task)
-                raise ArtifactIntegrityError(
+                raise ArtifactProviderUnavailable(
                     "Azure Blob provider operation was cancelled"
                 ) from None
             task.cancel()

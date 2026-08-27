@@ -19,6 +19,18 @@ class ModelUnavailable(Exception):
     """The selected model route is unavailable or returned invalid data."""
 
 
+class ArtifactError(Exception):
+    """A provider-neutral document artifact read could not satisfy its contract."""
+
+
+class ArtifactIntegrityFailure(ArtifactError):
+    """An immutable artifact was missing, malformed, or failed identity verification."""
+
+
+class ArtifactUnavailable(ArtifactError):
+    """The artifact provider could not complete an otherwise valid operation."""
+
+
 class IndexError(Exception):
     """A document index operation failed without exposing provider details."""
 

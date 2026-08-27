@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import FrozenInstanceError, replace
 from typing import Any
 
@@ -43,7 +44,8 @@ from tap.modules.knowledge.ports.models import (
 )
 
 SOURCE_HASH = "sha256:" + "a" * 64
-CHUNK_HASH = "sha256:" + "b" * 64
+HIT_CONTENT = "Authorization uses current policy."
+CHUNK_HASH = "sha256:" + hashlib.sha256(HIT_CONTENT.encode("utf-8")).hexdigest()
 
 
 def policy_context(
@@ -228,7 +230,7 @@ def search_hit() -> SearchHit:
         chunk_id="h_" + "1" * 64,
         logical_chunk_id="h_" + "2" * 64,
         title="authorize",
-        content="Authorization uses current policy.",
+        content=HIT_CONTENT,
         source=SourceRevisionRef(
             source_id="repo:checkout:payment.py",
             source_type="code",

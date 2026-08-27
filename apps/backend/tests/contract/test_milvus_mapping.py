@@ -7,6 +7,7 @@ import pytest
 from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget
 from tap.modules.knowledge.adapters.milvus.mapping import map_milvus_hit
 from tap.modules.knowledge.adapters.milvus.targets import BoundMilvusTarget
+from tap.modules.knowledge.domain.documents import canonical_sha256
 from tap.modules.knowledge.domain.models import (
     ContentRole,
     DocumentAnchor,
@@ -37,13 +38,14 @@ def bound_target() -> BoundMilvusTarget:
 
 
 def valid_doc_row() -> dict[str, object]:
+    content = "Refunds require an approved request."
     return {
         "chunk_id": "h_" + "1" * 64,
         "logical_chunk_id": "h_" + "2" * 64,
         "root_id": "h_" + "3" * 64,
         "parent_id": None,
         "title": "Payment policy",
-        "content": "Refunds require an approved request.",
+        "content": content,
         "content_role": "source",
         "index_family": "doc",
         "physical_collection": "kb_doc_v1_corpus_fixture_v1",
@@ -55,7 +57,7 @@ def valid_doc_row() -> dict[str, object]:
         "revision_kind": "blob_version",
         "source_revision": "2026-08-24T00:00:00Z",
         "source_content_hash": "sha256:" + "4" * 64,
-        "chunk_content_hash": "sha256:" + "5" * 64,
+        "chunk_content_hash": canonical_sha256(content.encode("utf-8")),
         "anchor_json": '{"type":"document","headingPath":["Payments"],"page":1}',
         "derived_from_chunk_ids": [],
         "score": 0.75,
@@ -81,11 +83,23 @@ def test_map_milvus_hit_builds_provider_neutral_provenance_from_a_closed_doc_row
 
 
 def test_map_milvus_hit_preserves_bounded_multiline_document_content() -> None:
-    row = {**valid_doc_row(), "content": "Approval steps:\n1. Review\n2. Approve"}
+    content = "Approval steps:\n1. Review\n2. Approve"
+    row = {
+        **valid_doc_row(),
+        "content": content,
+        "chunk_content_hash": canonical_sha256(content.encode("utf-8")),
+    }
 
     hit = map_milvus_hit(row, bound_target(), local_rank=1)
 
     assert hit.content == "Approval steps:\n1. Review\n2. Approve"
+
+
+def test_map_milvus_hit_rejects_content_that_does_not_match_its_hash() -> None:
+    row = {**valid_doc_row(), "content": "Forged index text."}
+
+    with pytest.raises(SearchUnavailable):
+        map_milvus_hit(row, bound_target(), local_rank=1)
 
 
 @pytest.mark.parametrize(

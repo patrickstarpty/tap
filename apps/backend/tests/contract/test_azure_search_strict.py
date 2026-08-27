@@ -26,6 +26,7 @@ from tap.modules.knowledge.adapters.azure_ai_search import (
     AzureIndexTarget,
     AzureSearchConfig,
 )
+from tap.modules.knowledge.domain.documents import canonical_sha256
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     CodeAnchor,
@@ -45,7 +46,8 @@ from tap.modules.knowledge.ports.models import SearchExecution
 
 CANONICAL_HASH = "sha256:" + "a" * 64
 SOURCE_HASH = "sha256:" + "b" * 64
-CHUNK_HASH = "sha256:" + "c" * 64
+ROW_CONTENT = "Authorization requires current policy."
+CHUNK_HASH = canonical_sha256(ROW_CONTENT.encode("utf-8"))
 SANITIZED_HASH = "sha256:df53c004039afb4e356e07ed30b12b466e3a5f1067ed623d7d76d99101e0894e"
 ANCHOR = CodeAnchor(
     repo="checkout",
@@ -269,7 +271,7 @@ def valid_row() -> dict[str, Any]:
         "rootId": "root-payment",
         "parentId": "parent-authorize",
         "title": "authorize",
-        "content": "Authorization requires current policy.",
+        "content": ROW_CONTENT,
         "sourceId": "repo:checkout:payment.py",
         "sourceType": "code",
         "sourceRevision": "a" * 40,
@@ -427,6 +429,7 @@ async def test_hybrid_request_uses_the_hand_derived_security_filter_for_both_cha
         ("sourceContentHash", "sha256:" + "g" * 64),
         ("chunkContentHash", ""),
         ("chunkContentHash", "sha256:" + "A" * 64),
+        ("content", "Forged index text with the original chunk hash."),
         ("sourceRevision", None),
         ("sourceRevision", "G" * 40),
         ("indexFamily", "doc"),
