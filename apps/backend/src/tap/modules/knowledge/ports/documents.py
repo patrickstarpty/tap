@@ -21,6 +21,9 @@ from tap.modules.knowledge.domain.documents import (
 
 PIPELINE_VERSION = "athena-ingestion-v1"
 MAX_DOCUMENTS = 50
+DEFAULT_RESERVATION_LEASE = timedelta(minutes=5)
+MAX_RESERVATION_LEASE = timedelta(minutes=15)
+MAX_JOB_LEASE = timedelta(minutes=15)
 STAGE_ORDER = ("stored", "parsing", "chunking", "embedding", "publishing", "ready")
 SAFE_JOB_ERRORS = frozenset(
     {
@@ -109,6 +112,7 @@ class JobState(str, Enum):
     PROCESSING = "processing"
     FAILED = "failed"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class DocumentCapacityExceeded(Exception):
@@ -216,6 +220,7 @@ class ReserveUpload:
     parser_version: str = PARSER_VERSION
     chunker_version: str = CHUNKER_VERSION
     pipeline_version: str = PIPELINE_VERSION
+    staging_key: str | None = None
 
     @classmethod
     def from_staged(cls, staged: StagedOriginal, *, now: datetime) -> ReserveUpload:
@@ -225,6 +230,7 @@ class ReserveUpload:
             source_content_hash=staged.source_content_hash,
             size=staged.size,
             now=now,
+            staging_key=staged.staging_key,
         )
 
     @property
@@ -299,6 +305,12 @@ class UploadReservation:
     revision_id: str
     dedupe_key: str
     document: DocumentRecord | None
+    parser_version: str = PARSER_VERSION
+    chunker_version: str = CHUNKER_VERSION
+    pipeline_version: str = PIPELINE_VERSION
+    staging_key: str | None = None
+    promoted_locator: ArtifactLocator | None = None
+    expires_at: datetime | None = None
 
     @classmethod
     def duplicate_active(cls, document: DocumentRecord) -> UploadReservation:
@@ -322,6 +334,12 @@ class IngestionJob:
     status: JobState
     stage: JobStage
     stages: tuple[StageResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UploadRecovery:
+    reservation: UploadReservation
+    activated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +379,10 @@ class ArtifactStore(Protocol):
 
     async def discard_staged(self, staged: StagedOriginal) -> None: ...
 
+    async def recover_original(self, staging_key: str, revision_id: str) -> ArtifactLocator: ...
+
+    async def discard_staging(self, staging_key: str) -> None: ...
+
 
 class DocumentRepository(Protocol):
     async def reserve_upload(self, command: ReserveUpload) -> UploadReservation: ...
@@ -369,7 +391,21 @@ class DocumentRepository(Protocol):
         self, reservation: UploadReservation, original: ArtifactLocator
     ) -> DocumentRecord: ...
 
+    async def record_upload_promotion(
+        self, reservation: UploadReservation, original: ArtifactLocator
+    ) -> ArtifactLocator: ...
+
     async def abandon_upload(self, reservation_id: str, owner_token: str) -> None: ...
+
+    async def claim_upload_recoveries(
+        self,
+        *,
+        worker_id: str,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> tuple[UploadRecovery, ...]: ...
+
+    async def complete_upload_cleanup(self, reservation_id: str, owner_token: str) -> None: ...
 
     async def list_documents(
         self, cursor: DocumentCursor | None, limit: int
@@ -396,6 +432,7 @@ class DocumentRepository(Protocol):
         self,
         job_id: str,
         lease_token: str,
+        expected_stage: JobStage,
         now: datetime,
         lease_duration: timedelta,
     ) -> None: ...

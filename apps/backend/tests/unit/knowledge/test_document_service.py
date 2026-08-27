@@ -68,13 +68,18 @@ class FakeArtifactStore:
         if self.fail_commit:
             raise RuntimeError("injected artifact promotion failure")
         self.originals[revision_id] = self.originals[staged.staging_key]
-        self.staged.pop(staged.staging_key, None)
-        self.originals.pop(staged.staging_key, None)
+        return ArtifactLocator(f"artifact:{revision_id}")
+
+    async def recover_original(self, staging_key: str, revision_id: str) -> ArtifactLocator:
+        self.originals.setdefault(revision_id, self.originals[staging_key])
         return ArtifactLocator(f"artifact:{revision_id}")
 
     async def discard_staged(self, staged: StagedOriginal) -> None:
-        self.staged.pop(staged.staging_key, None)
-        self.originals.pop(staged.staging_key, None)
+        await self.discard_staging(staged.staging_key)
+
+    async def discard_staging(self, staging_key: str) -> None:
+        self.staged.pop(staging_key, None)
+        self.originals.pop(staging_key, None)
 
 
 class MemoryDocumentRepository:
@@ -110,6 +115,10 @@ class MemoryDocumentRepository:
             revision_id=f"rev-{self._sequence}",
             dedupe_key=command.dedupe_key,
             document=None,
+            parser_version=command.parser_version,
+            chunker_version=command.chunker_version,
+            pipeline_version=command.pipeline_version,
+            staging_key=command.staging_key,
         )
         self.reservations_by_key[command.dedupe_key] = reservation
         return reservation
@@ -137,6 +146,14 @@ class MemoryDocumentRepository:
         return record
 
     async def abandon_upload(self, reservation_id: str, owner_token: str) -> None:
+        for key, reservation in tuple(self.reservations_by_key.items()):
+            if (
+                reservation.reservation_id == reservation_id
+                and reservation.owner_token == owner_token
+            ):
+                self.reservations_by_key.pop(key)
+
+    async def complete_upload_cleanup(self, reservation_id: str, owner_token: str) -> None:
         for key, reservation in tuple(self.reservations_by_key.items()):
             if (
                 reservation.reservation_id == reservation_id
@@ -259,7 +276,7 @@ def test_capacity_rejection_discards_only_the_current_staging_artifact() -> None
     asyncio.run(scenario())
 
 
-def test_artifact_promotion_failure_abandons_owned_reservation_and_staging() -> None:
+def test_artifact_promotion_failure_keeps_durable_reservation_and_staging_for_takeover() -> None:
     async def scenario() -> None:
         repository = MemoryDocumentRepository()
         artifacts = FakeArtifactStore()
@@ -269,9 +286,9 @@ def test_artifact_promotion_failure_abandons_owned_reservation_and_staging() -> 
         with pytest.raises(RuntimeError, match="injected artifact promotion failure"):
             await service.upload(markdown_upload("failure.md", b"failed promotion"))
 
-        assert artifacts.staged == {}
-        assert artifacts.originals == {}
-        assert repository.reservations_by_key == {}
+        assert set(artifacts.staged) == {"staged-1"}
+        assert set(artifacts.originals) == {"staged-1"}
+        assert len(repository.reservations_by_key) == 1
         assert repository.records_by_key == {}
 
     asyncio.run(scenario())

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, cast
 
 from tap.contracts.http import (
@@ -17,7 +17,6 @@ from tap.contracts.http import (
     DocumentSummary,
     IngestionStage,
 )
-from tap.interfaces.http.dependencies import UploadInput
 from tap.modules.knowledge.domain.documents import (
     MAX_UPLOAD_BYTES,
     DocumentId,
@@ -33,6 +32,7 @@ from tap.modules.knowledge.ports.documents import (
     DocumentRepository,
     ReservationState,
     ReserveUpload,
+    UploadStream,
 )
 
 PublicMediaType = Literal[
@@ -57,7 +57,7 @@ class DocumentService:
         self._artifacts = artifacts
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
-    async def upload(self, upload: UploadInput) -> DocumentAccepted:
+    async def upload(self, upload: UploadStream) -> DocumentAccepted:
         try:
             media_type = MediaType(upload.media_type)
         except ValueError as error:
@@ -75,27 +75,60 @@ class DocumentService:
             await _settle_cleanup(self._artifacts.discard_staged(staged))
             raise
         if reservation.state is ReservationState.DUPLICATE_ACTIVE:
-            await self._artifacts.discard_staged(staged)
+            await _settle_cleanup(self._artifacts.discard_staged(staged))
             if reservation.document is None:
                 raise RuntimeError("an active duplicate must include its durable document")
             return _accepted(reservation.document, duplicate=True)
-        try:
+        if reservation.state is ReservationState.DUPLICATE_PENDING:
+            await _settle_cleanup(self._artifacts.discard_staged(staged))
+            if reservation.staging_key is None:
+                raise RuntimeError("a pending duplicate must include its durable staging locator")
+            original = await self._artifacts.recover_original(
+                reservation.staging_key, reservation.revision_id
+            )
+        else:
             original = await self._artifacts.commit_original(staged, reservation.revision_id)
-            record = await self._repository.activate_upload(reservation, original)
-        except BaseException:
-            cleanup: list[Awaitable[object]] = [self._artifacts.discard_staged(staged)]
-            if reservation.state is ReservationState.OWNED:
-                cleanup.append(
-                    self._repository.abandon_upload(
-                        reservation.reservation_id, reservation.owner_token
-                    )
-                )
-            await _settle_cleanup(*cleanup)
-            raise
+        record = await self._repository.activate_upload(reservation, original)
+        if reservation.state is ReservationState.OWNED and reservation.staging_key is not None:
+            await _settle_cleanup(self._artifacts.discard_staged(staged))
+            await self._repository.complete_upload_cleanup(
+                reservation.reservation_id, reservation.owner_token
+            )
         return _accepted(
             record,
             duplicate=reservation.state is ReservationState.DUPLICATE_PENDING,
         )
+
+    async def recover_uploads(
+        self,
+        *,
+        worker_id: str,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> int:
+        recoveries = await self._repository.claim_upload_recoveries(
+            worker_id=worker_id,
+            lease_duration=lease_duration,
+            limit=limit,
+        )
+        recovered = 0
+        for recovery in recoveries:
+            reservation = recovery.reservation
+            if reservation.staging_key is None:
+                raise RuntimeError("a claimed recovery must include its staging locator")
+            if not recovery.activated:
+                original = reservation.promoted_locator
+                if original is None:
+                    original = await self._artifacts.recover_original(
+                        reservation.staging_key, reservation.revision_id
+                    )
+                await self._repository.activate_upload(reservation, original)
+            await _settle_cleanup(self._artifacts.discard_staging(reservation.staging_key))
+            await self._repository.complete_upload_cleanup(
+                reservation.reservation_id, reservation.owner_token
+            )
+            recovered += 1
+        return recovered
 
     async def list_documents(self, cursor: str | None, limit: int) -> DocumentPage:
         page = await self._repository.list_documents(
@@ -128,10 +161,15 @@ async def _settle_cleanup(*operations: Awaitable[object]) -> None:
     tasks = [asyncio.ensure_future(operation) for operation in operations]
     gathering = asyncio.gather(*tasks, return_exceptions=True)
     try:
-        await asyncio.shield(gathering)
+        results = await asyncio.shield(gathering)
     except asyncio.CancelledError:
         await gathering
         raise
+    failures = [result for result in results if isinstance(result, BaseException)]
+    if len(failures) == 1:
+        raise failures[0]
+    if failures:
+        raise BaseExceptionGroup("artifact cleanup failed", failures)
 
 
 def _iso(value: datetime) -> str:

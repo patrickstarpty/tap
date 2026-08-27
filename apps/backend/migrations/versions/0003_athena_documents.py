@@ -23,6 +23,13 @@ def upgrade() -> None:
         sa.Column("current_revision_id", sa.String(length=128), nullable=True),
         sa.Column("source_content_hash", sa.String(length=71), nullable=False),
         sa.Column("dedupe_key", sa.String(length=71), nullable=True),
+        sa.Column("staging_blob_locator", sa.String(length=1024), nullable=True),
+        sa.Column("promoted_blob_locator", sa.String(length=1024), nullable=True),
+        sa.Column("reservation_owner_token", sa.String(length=64), nullable=True),
+        sa.Column("reservation_expires_at", mysql.DATETIME(fsp=6), nullable=True),
+        sa.Column("reservation_parser_version", sa.String(length=128), nullable=False),
+        sa.Column("reservation_chunker_version", sa.String(length=128), nullable=False),
+        sa.Column("reservation_pipeline_version", sa.String(length=128), nullable=False),
         sa.Column("status", sa.String(length=24), nullable=False),
         sa.Column("stage", sa.String(length=24), nullable=False),
         sa.Column("chunk_count", sa.Integer(), server_default="0", nullable=False),
@@ -39,6 +46,12 @@ def upgrade() -> None:
         "ix_knowledge_document_status_updated_id",
         "knowledge_document",
         ["status", "updated_at", "document_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_knowledge_document_reservation_recovery",
+        "knowledge_document",
+        ["activated_at", "reservation_expires_at", "document_id"],
         unique=False,
     )
     op.create_table(
@@ -176,5 +189,6 @@ def downgrade() -> None:
     op.drop_index("ix_knowledge_job_status_retry_created", table_name="knowledge_ingestion_job")
     op.drop_table("knowledge_ingestion_job")
     op.drop_table("knowledge_document_revision")
+    op.drop_index("ix_knowledge_document_reservation_recovery", table_name="knowledge_document")
     op.drop_index("ix_knowledge_document_status_updated_id", table_name="knowledge_document")
     op.drop_table("knowledge_document")

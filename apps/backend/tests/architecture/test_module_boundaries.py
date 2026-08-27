@@ -289,6 +289,23 @@ def test_framework_free_knowledge_layers_do_not_import_framework_or_provider_sdk
         ), path
 
 
+def test_stable_knowledge_layers_do_not_import_interface_adapters() -> None:
+    """An HTTP upload type in application/ports/domain reverses the dependency direction."""
+    stable_roots = (
+        KNOWLEDGE / "domain",
+        KNOWLEDGE / "application",
+        KNOWLEDGE / "ports",
+    )
+
+    for root in stable_roots:
+        for path in recursive_python_files(root):
+            assert not any(
+                reference.module == "tap.interfaces"
+                or reference.module.startswith("tap.interfaces.")
+                for reference in _imports(path)
+            ), path
+
+
 def test_only_milvus_transport_imports_pymilvus() -> None:
     """Importing SDK objects outside transport would leak capabilities across the adapter."""
     transport = KNOWLEDGE / "adapters" / "milvus" / "transport.py"
