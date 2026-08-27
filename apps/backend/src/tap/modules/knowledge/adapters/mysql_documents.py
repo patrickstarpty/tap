@@ -78,6 +78,8 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.platform.db.schema import metadata, outbox
 
+CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
+
 knowledge_document = Table(
     "knowledge_document",
     metadata,
@@ -918,21 +920,33 @@ class MysqlDocumentRepository:
                     and ingestion["lease_until"] is not None
                     and cast(datetime, ingestion["lease_until"]) > database_now
                 )
-                await session.execute(
-                    update(knowledge_ingestion_job)
-                    .where(
-                        knowledge_ingestion_job.c.job_id == ingestion["job_id"],
-                        knowledge_ingestion_job.c.status != JobState.COMPLETED.value,
-                    )
-                    .values(
-                        status=JobState.CANCELLED.value,
-                        lease_owner=ingestion["lease_owner"] if lease_is_active else None,
-                        lease_token=ingestion["lease_token"] if lease_is_active else None,
-                        lease_until=ingestion["lease_until"] if lease_is_active else None,
-                        updated_at=database_now,
-                        completed_at=None if lease_is_active else database_now,
-                    )
+                cancelled_barrier_exists = (
+                    ingestion["status"] == JobState.CANCELLED.value
+                    and ingestion["lease_token"] is not None
+                    and ingestion["lease_until"] is not None
                 )
+                if not cancelled_barrier_exists:
+                    retained_until = None
+                    if lease_is_active:
+                        retained_until = max(
+                            cast(datetime, ingestion["lease_until"]),
+                            database_now + CANCELLED_OWNER_SETTLEMENT_LEASE,
+                        )
+                    await session.execute(
+                        update(knowledge_ingestion_job)
+                        .where(
+                            knowledge_ingestion_job.c.job_id == ingestion["job_id"],
+                            knowledge_ingestion_job.c.status != JobState.COMPLETED.value,
+                        )
+                        .values(
+                            status=JobState.CANCELLED.value,
+                            lease_owner=ingestion["lease_owner"] if lease_is_active else None,
+                            lease_token=ingestion["lease_token"] if lease_is_active else None,
+                            lease_until=retained_until,
+                            updated_at=database_now,
+                            completed_at=None if lease_is_active else database_now,
+                        )
+                    )
             await session.execute(
                 update(knowledge_document)
                 .where(knowledge_document.c.document_id == document_id)
@@ -1215,6 +1229,39 @@ class MysqlDocumentRepository:
                     lease_token=None,
                     lease_until=None,
                     completed_at=database_now,
+                    updated_at=database_now,
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_lease_lost(job_id)
+
+    async def renew_cancelled_job_settlement(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        del now
+        _validate_job_lease("cancelled-owner", lease_duration)
+        async with self._sessions() as session, session.begin():
+            database_now = await _database_now(session)
+            result = await session.execute(
+                update(knowledge_ingestion_job)
+                .where(
+                    knowledge_ingestion_job.c.job_id == job_id,
+                    knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
+                    knowledge_ingestion_job.c.status == JobState.CANCELLED.value,
+                    knowledge_ingestion_job.c.lease_token == lease_token,
+                    knowledge_ingestion_job.c.stage == expected_stage.value,
+                    knowledge_ingestion_job.c.lease_until > database_now,
+                )
+                .values(
+                    lease_until=func.greatest(
+                        knowledge_ingestion_job.c.lease_until,
+                        database_now + lease_duration,
+                    ),
                     updated_at=database_now,
                 )
             )

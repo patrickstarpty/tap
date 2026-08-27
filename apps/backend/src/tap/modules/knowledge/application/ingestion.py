@@ -230,8 +230,10 @@ class IngestionWorker:
                 raise _SafeStageError(stage, "parser-unavailable") from error
             if normalized.source_hash != work.source_content_hash:
                 raise _SafeStageError(stage, "invalid-document")
-            locator = await self._artifact_call(
-                stage, self._artifacts.write_normalized(work.revision_id, normalized)
+            locator = await self._artifact_write(
+                job,
+                stage,
+                lambda: self._artifacts.write_normalized(work.revision_id, normalized),
             )
             await self._commit(job, stage, normalized_locator=locator)
             return
@@ -249,8 +251,10 @@ class IngestionWorker:
             if not chunks:
                 raise _SafeStageError(stage, "empty-document")
             manifest = self._manifest(work, chunks)
-            locator = await self._artifact_call(
-                stage, self._artifacts.write_chunks(work.revision_id, chunks)
+            locator = await self._artifact_write(
+                job,
+                stage,
+                lambda: self._artifacts.write_chunks(work.revision_id, chunks),
             )
             await self._commit(
                 job,
@@ -283,8 +287,10 @@ class IngestionWorker:
                 or len(artifact.vectors) != len(chunks)
             ):
                 raise _SafeStageError(stage, "embedding-dimension-mismatch")
-            locator = await self._artifact_call(
-                stage, self._artifacts.write_embeddings(work.revision_id, artifact)
+            locator = await self._artifact_write(
+                job,
+                stage,
+                lambda: self._artifacts.write_embeddings(work.revision_id, artifact),
             )
             await self._commit(job, stage, embeddings_locator=locator)
             return
@@ -349,7 +355,11 @@ class IngestionWorker:
             await self._commit(job, stage)
             return
         if stage is JobStage.PARSING:
-            await self._artifact_call(stage, self._artifacts.delete_revision_artifacts(target))
+            await self._artifact_write(
+                job,
+                stage,
+                lambda: self._artifacts.delete_revision_artifacts(target),
+            )
             await self._commit(job, stage)
             return
         if stage is JobStage.READY:
@@ -438,6 +448,21 @@ class IngestionWorker:
         except Exception as error:
             raise _SafeStageError(stage, "artifact-unavailable") from error
 
+    async def _artifact_write(
+        self,
+        job: ClaimedIngestionJob,
+        stage: JobStage,
+        operation: Callable[[], Coroutine[object, object, T]],
+    ) -> T:
+        try:
+            return await self._provider_call(job, stage, operation)
+        except JobLeaseLost:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise _SafeStageError(stage, "artifact-unavailable") from error
+
     async def _settle_cancelled_owner(self, job: ClaimedIngestionJob, stage: JobStage) -> None:
         settlement = asyncio.create_task(
             self._repository.settle_cancelled_job(
@@ -503,13 +528,23 @@ class IngestionWorker:
             await self._clock.sleep(HEARTBEAT_SECONDS)
             if provider.done():
                 return
-            await self._repository.renew_lease(
-                job.job_id,
-                job.lease_token,
-                stage,
-                self._clock.now(),
-                LEASE_DURATION,
-            )
+            try:
+                await self._repository.renew_lease(
+                    job.job_id,
+                    job.lease_token,
+                    stage,
+                    self._clock.now(),
+                    LEASE_DURATION,
+                )
+            except JobLeaseLost:
+                await self._repository.renew_cancelled_job_settlement(
+                    job.job_id,
+                    job.lease_token,
+                    stage,
+                    self._clock.now(),
+                    LEASE_DURATION,
+                )
+                provider.cancel()
 
 
 async def _cancel_and_settle(task: asyncio.Task[object]) -> None:

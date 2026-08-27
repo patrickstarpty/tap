@@ -91,21 +91,26 @@ async def run_worker_loop(
         raise ValueError("max_iterations must be positive")
     iterations = 0
     while not stop.is_set():
-        await worker.run_once(limit=settings.job_batch_size)
+        wakeup_failed = False
         try:
             wakeup = await wakeups.wait(
                 max_wait_seconds=min(settings.poll_seconds, settings.wakeup_seconds)
             )
         except Exception:
             wakeup = None
+            wakeup_failed = True
+        if stop.is_set():
+            break
+        await worker.run_once(limit=settings.job_batch_size)
+        if wakeup is not None:
+            await wakeups.ack(wakeup)
+        if wakeup_failed:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
             except TimeoutError:
                 pass
         if stop.is_set():
             break
-        if wakeup is not None:
-            await wakeups.ack(wakeup)
         iterations += 1
         if max_iterations is not None and iterations >= max_iterations:
             return
@@ -142,6 +147,7 @@ async def run(
     runtime = await runtime_factory(settings)
     stop = asyncio.Event()
     remove_handlers = signal_installer(stop)
+    errors: list[BaseException] = []
     try:
         await run_worker_loop(
             worker=runtime.worker,
@@ -150,11 +156,24 @@ async def run(
             stop=stop,
             max_iterations=max_iterations,
         )
-    finally:
-        if remove_handlers is not None:
+    except BaseException as error:
+        errors.append(error)
+    if remove_handlers is not None:
+        try:
             remove_handlers()
-        for resource in reversed(runtime.resources):
+        except BaseException as error:
+            errors.append(error)
+    for resource in reversed(runtime.resources):
+        try:
             await resource.aclose()
+        except BaseException as error:
+            errors.append(error)
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        if all(isinstance(error, Exception) for error in errors):
+            raise ExceptionGroup("Athena worker lifecycle failed", cast(list[Exception], errors))
+        raise BaseExceptionGroup("Athena worker lifecycle failed", errors)
 
 
 def main(environment: Mapping[str, str] | None = None) -> None:

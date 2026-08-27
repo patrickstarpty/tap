@@ -183,6 +183,18 @@ class StatefulRepository:
         if job_id != self.job.job_id or lease_token != self.job.lease_token:
             raise JobLeaseLost(job_id)
 
+    async def renew_cancelled_job_settlement(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        del expected_stage, now, lease_duration
+        if job_id != self.job.job_id or lease_token != self.job.lease_token:
+            raise JobLeaseLost(job_id)
+
     async def fail_job(self, failure: JobFailure) -> None:
         if failure.lease_token != self.work.lease_token:
             raise JobLeaseLost(failure.job_id)
@@ -242,6 +254,42 @@ class StatefulArtifacts:
         for locator in target.artifact_locators:
             self.values.pop(str(locator), None)
             self.deleted.add(str(locator))
+
+
+class BlockingWriteArtifacts(StatefulArtifacts):
+    def __init__(self, blocked_write: str) -> None:
+        super().__init__()
+        self.blocked_write = blocked_write
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.settled = asyncio.Event()
+
+    async def _block(self, write_name: str) -> None:
+        if self.blocked_write != write_name:
+            return
+        self.started.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.settled.set()
+
+    async def write_normalized(
+        self, revision_id: str, artifact: NormalizedArtifact
+    ) -> ArtifactLocator:
+        await self._block("normalized")
+        return await super().write_normalized(revision_id, artifact)
+
+    async def write_chunks(
+        self, revision_id: str, chunks: tuple[ChunkDraft, ...]
+    ) -> ArtifactLocator:
+        await self._block("chunks")
+        return await super().write_chunks(revision_id, chunks)
+
+    async def write_embeddings(
+        self, revision_id: str, artifact: EmbeddingArtifact
+    ) -> ArtifactLocator:
+        await self._block("embeddings")
+        return await super().write_embeddings(revision_id, artifact)
 
 
 class Parser:
@@ -693,7 +741,9 @@ async def test_lease_lost_during_embedding_settles_provider_and_writes_no_result
     """An old owner must stop before artifact/checkpoint/index writes after takeover."""
 
     worker, repository, _, embeddings, index, _ = worker_parts()
-    repository.lose_on_renewal = 2
+    # Normalized/chunks writes now consume two fenced renewals each; the sixth
+    # renewal is the embedding heartbeat after the provider has started.
+    repository.lose_on_renewal = 6
     embeddings.release = asyncio.Event()
 
     task = asyncio.create_task(worker.run_once(limit=1))
@@ -704,6 +754,37 @@ async def test_lease_lost_during_embedding_settles_provider_and_writes_no_result
     assert result.lease_lost == 1
     assert repository.work.embeddings_locator is None
     assert repository.commits == [JobStage.STORED, JobStage.PARSING, JobStage.CHUNKING]
+    assert index.rows == {}
+
+
+@pytest.mark.parametrize(
+    ("blocked_write", "lost_renewal", "locator_name"),
+    [
+        ("normalized", 2, "normalized_locator"),
+        ("chunks", 4, "chunks_locator"),
+        ("embeddings", 8, "embeddings_locator"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_every_artifact_write_is_cancelled_and_settled_on_lease_loss(
+    blocked_write: str,
+    lost_renewal: int,
+    locator_name: str,
+) -> None:
+    """Bypassing the shared external-write boundary permits late revision artifacts."""
+
+    _, repository, _, embeddings, index, clock = worker_parts()
+    artifacts = BlockingWriteArtifacts(blocked_write)
+    repository.lose_on_renewal = lost_renewal
+    worker = build_worker(repository, artifacts, embeddings, index, clock)
+    task = asyncio.create_task(worker.run_once(limit=1))
+    await wait_until_provider_started_or_worker_stopped(task, artifacts.started)
+
+    result = await task
+
+    assert result.lease_lost == 1
+    assert artifacts.settled.is_set()
+    assert getattr(repository.work, locator_name) is None
     assert index.rows == {}
 
 

@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timedelta
 
 from sqlalchemy import text
 
 from tap.entrypoints import athena_ingestion_worker
+from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+from tap.modules.knowledge.application import ingestion
 from tap.modules.knowledge.application.ingestion import IngestionWorker
-from tap.modules.knowledge.domain.documents import DocumentId
+from tap.modules.knowledge.domain.documents import ChunkDraft, DocumentId
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     EmbeddingArtifact,
@@ -115,6 +118,7 @@ class BlockingIndex(RecordingIndex):
     def __init__(self) -> None:
         super().__init__()
         self.started = asyncio.Event()
+        self.cancel_seen = asyncio.Event()
         self.release = asyncio.Event()
         self.settled = asyncio.Event()
         self.fenced_revisions: set[str] = set()
@@ -122,7 +126,11 @@ class BlockingIndex(RecordingIndex):
     async def upsert_revision(self, work, chunks, embeddings, *, index_version):  # type: ignore[no-untyped-def]
         self.started.set()
         try:
-            await self.release.wait()
+            while not self.release.is_set():
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancel_seen.set()
             if work.revision_id not in self.fenced_revisions:
                 self.rows = {str(chunk.chunk_id) for chunk in chunks}
             return IndexReceipt(work.revision_id, index_version, len(chunks))
@@ -138,6 +146,53 @@ class BlockingIndex(RecordingIndex):
 
     async def count_revision(self, target):  # type: ignore[no-untyped-def]
         return sum(chunk_id in self.rows for chunk_id in target.chunk_ids)
+
+
+class BlockingChunkArtifacts:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancel_seen = asyncio.Event()
+        self.release = asyncio.Event()
+        self.settled = asyncio.Event()
+        self.revision_artifacts: set[str] = set()
+
+    async def read_normalized(self, locator):  # type: ignore[no-untyped-def]
+        del locator
+        return object()
+
+    async def write_chunks(self, revision_id, chunks):  # type: ignore[no-untyped-def]
+        del chunks
+        self.started.set()
+        try:
+            while not self.release.is_set():
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancel_seen.set()
+            self.revision_artifacts.add(str(revision_id))
+            return ArtifactLocator(f"artifact:{revision_id}:chunks")
+        finally:
+            self.settled.set()
+
+    async def delete_revision_artifacts(self, target):  # type: ignore[no-untyped-def]
+        self.revision_artifacts.discard(target.revision_id)
+
+
+class OneChunk:
+    def chunk(self, artifact):  # type: ignore[no-untyped-def]
+        del artifact
+        return (
+            ChunkDraft(
+                chunk_id="chunk-blocked-artifact",  # type: ignore[arg-type]
+                logical_chunk_id="logical-blocked-artifact",  # type: ignore[arg-type]
+                root_id=DocumentId(self.document_id),
+                parent_id=None,
+                content="late artifact",
+                anchor_json='{"blockId":"blocked"}',
+                source_content_hash="sha256:" + "7" * 64,
+                chunk_content_hash="sha256:" + "6" * 64,
+            ),
+        )
 
 
 def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
@@ -330,6 +385,35 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
             deletion = await repository.request_delete(
                 DocumentId(reservation.document_id), datetime.now()
             )
+            async with engine.connect() as connection:
+                barrier_after_first_delete = tuple(
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT lease_token, lease_until "
+                                "FROM knowledge_ingestion_job WHERE job_id=:job_id"
+                            ),
+                            {"job_id": ingestion.job_id},
+                        )
+                    ).one()
+                )
+            repeated = await repository.request_delete(
+                DocumentId(reservation.document_id), datetime.now()
+            )
+            assert repeated.job_id == deletion.job_id
+            async with engine.connect() as connection:
+                barrier_after_repeated_delete = tuple(
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT lease_token, lease_until "
+                                "FROM knowledge_ingestion_job WHERE job_id=:job_id"
+                            ),
+                            {"job_id": ingestion.job_id},
+                        )
+                    ).one()
+                )
+            assert barrier_after_repeated_delete == barrier_after_first_delete
 
             blocked = await repository.claim_jobs(
                 worker_id="deletion-owner",
@@ -338,6 +422,33 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
                 limit=10,
             )
             assert blocked == ()
+
+            async with engine.connect() as connection:
+                lease_before_renewal = (
+                    await connection.execute(
+                        text(
+                            "SELECT lease_until FROM knowledge_ingestion_job WHERE job_id=:job_id"
+                        ),
+                        {"job_id": ingestion.job_id},
+                    )
+                ).scalar_one()
+            await repository.renew_cancelled_job_settlement(
+                ingestion.job_id,
+                ingestion.lease_token,
+                ingestion.stage,
+                datetime.now(),
+                timedelta(seconds=1),
+            )
+            async with engine.connect() as connection:
+                lease_after_renewal = (
+                    await connection.execute(
+                        text(
+                            "SELECT lease_until FROM knowledge_ingestion_job WHERE job_id=:job_id"
+                        ),
+                        {"job_id": ingestion.job_id},
+                    )
+                ).scalar_one()
+            assert lease_after_renewal >= lease_before_renewal
 
             await repository.settle_cancelled_job(
                 ingestion.job_id,
@@ -359,8 +470,98 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
     asyncio.run(scenario())
 
 
-def test_real_mysql_blocked_publish_cannot_resurrect_after_delete() -> None:
+def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Without a live heartbeat, a crashed cancelled owner releases deletion by lease expiry."""
+
+    short_lease = timedelta(milliseconds=180)
+    monkeypatch.setattr(
+        mysql_documents,
+        "CANCELLED_OWNER_SETTLEMENT_LEASE",
+        short_lease,
+    )
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await _clean(engine)
+        try:
+            repository = MysqlDocumentRepository(sessions)
+            reservation = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="crashed-owner.md",
+                    media_type="text/markdown",
+                    source_content_hash="sha256:" + "5" * 64,
+                    size=12,
+                    now=datetime.now(),
+                    staging_key="staging:crashed-owner",
+                )
+            )
+            await repository.activate_upload(reservation, ArtifactLocator("artifact:original"))
+            await repository.claim_jobs(
+                worker_id="owner-that-crashes",
+                now=datetime.now(),
+                lease_duration=short_lease,
+                limit=1,
+            )
+            deletion = await repository.request_delete(
+                DocumentId(reservation.document_id), datetime.now()
+            )
+            assert (
+                await repository.claim_jobs(
+                    worker_id="deletion-before-expiry",
+                    now=datetime.now(),
+                    lease_duration=timedelta(seconds=30),
+                    limit=1,
+                )
+            ) == ()
+            async with engine.connect() as connection:
+                retained_until = (
+                    await connection.execute(
+                        text(
+                            "SELECT lease_until FROM knowledge_ingestion_job "
+                            "WHERE revision_id=:revision_id AND kind='ingestion'"
+                        ),
+                        {"revision_id": reservation.revision_id},
+                    )
+                ).scalar_one()
+            async with asyncio.timeout(1):
+                while True:
+                    async with engine.connect() as connection:
+                        database_now = (
+                            await connection.execute(text("SELECT UTC_TIMESTAMP(6)"))
+                        ).scalar_one()
+                    if database_now > retained_until:
+                        break
+                    await asyncio.sleep(0.01)
+
+            claimed = await repository.claim_jobs(
+                worker_id="deletion-after-crash-expiry",
+                now=datetime.now(),
+                lease_duration=timedelta(seconds=30),
+                limit=1,
+            )
+            assert [job.job_id for job in claimed] == [deletion.job_id]
+        finally:
+            await _clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
     """Delete may finish only after the old publisher settles, then fencing keeps zero durable."""
+
+    short_lease = timedelta(milliseconds=180)
+    monkeypatch.setattr(ingestion, "LEASE_DURATION", short_lease)
+    monkeypatch.setattr(ingestion, "HEARTBEAT_SECONDS", 0.03)
+    monkeypatch.setattr(
+        mysql_documents,
+        "CANCELLED_OWNER_SETTLEMENT_LEASE",
+        short_lease,
+    )
 
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
@@ -480,7 +681,26 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete() -> None:
             publish_task = asyncio.create_task(publisher.run_once(limit=1))
             await index.started.wait()
             await repository.request_delete(DocumentId(reservation.document_id), datetime.now())
+            async with engine.connect() as connection:
+                retained_until = (
+                    await connection.execute(
+                        text(
+                            "SELECT lease_until FROM knowledge_ingestion_job WHERE job_id=:job_id"
+                        ),
+                        {"job_id": preparation.job_id},
+                    )
+                ).scalar_one()
+            async with asyncio.timeout(1):
+                while True:
+                    async with engine.connect() as connection:
+                        database_now = (
+                            await connection.execute(text("SELECT UTC_TIMESTAMP(6)"))
+                        ).scalar_one()
+                    if database_now > retained_until:
+                        break
+                    await asyncio.sleep(0.01)
             assert (await deleting_worker.run_once(limit=1)).claimed == 0
+            assert index.cancel_seen.is_set()
 
             index.release.set()
             publish_result = await publish_task
@@ -500,6 +720,159 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete() -> None:
                 is None
             )
         finally:
+            await _clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """A late chunks write must stay fenced past its original lease and be cleaned after settle."""
+
+    short_lease = timedelta(milliseconds=180)
+    monkeypatch.setattr(ingestion, "LEASE_DURATION", short_lease)
+    monkeypatch.setattr(ingestion, "HEARTBEAT_SECONDS", 0.03)
+    monkeypatch.setattr(
+        mysql_documents,
+        "CANCELLED_OWNER_SETTLEMENT_LEASE",
+        short_lease,
+        raising=False,
+    )
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        await _clean(engine)
+        old_task: asyncio.Task | None = None
+        artifacts = BlockingChunkArtifacts()
+        try:
+            repository = MysqlDocumentRepository(sessions)
+            reservation = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="blocked-artifact.md",
+                    media_type="text/markdown",
+                    source_content_hash="sha256:" + "7" * 64,
+                    size=12,
+                    now=datetime.now(),
+                    staging_key="staging:blocked-artifact",
+                )
+            )
+            await repository.activate_upload(reservation, ArtifactLocator("artifact:original"))
+            preparation = (
+                await repository.claim_jobs(
+                    worker_id="artifact-preparation",
+                    now=datetime.now(),
+                    lease_duration=timedelta(seconds=60),
+                    limit=1,
+                )
+            )[0]
+            await repository.commit_stage(
+                JobStageCommit(
+                    preparation.job_id,
+                    preparation.lease_token,
+                    JobStage.STORED,
+                    datetime.now(),
+                )
+            )
+            await repository.commit_stage(
+                JobStageCommit(
+                    preparation.job_id,
+                    preparation.lease_token,
+                    JobStage.PARSING,
+                    datetime.now(),
+                    normalized_locator=ArtifactLocator("artifact:normalized"),
+                )
+            )
+            await repository.fail_job(
+                JobFailure(
+                    preparation.job_id,
+                    preparation.lease_token,
+                    JobStage.CHUNKING,
+                    "artifact-unavailable",
+                    datetime.now(),
+                )
+            )
+            await repository.retry_failed(DocumentId(reservation.document_id), datetime.now())
+
+            completed = NeverCalled()
+            chunker = OneChunk()
+            chunker.document_id = reservation.document_id
+            index = BlockingIndex()
+            old_owner = IngestionWorker(
+                repository=repository,
+                artifacts=artifacts,  # type: ignore[arg-type]
+                parser=completed,
+                chunker=chunker,
+                embeddings=completed,
+                index=index,  # type: ignore[arg-type]
+                worker_id="blocked-artifact-owner",
+                embedding_model_alias="athena-embedding",
+                embedding_dimension=3,
+                index_version="athena-doc-v1",
+            )
+            deletion_owner = IngestionWorker(
+                repository=MysqlDocumentRepository(sessions),
+                artifacts=artifacts,  # type: ignore[arg-type]
+                parser=completed,
+                chunker=chunker,
+                embeddings=completed,
+                index=index,  # type: ignore[arg-type]
+                worker_id="artifact-deletion-owner",
+                embedding_model_alias="athena-embedding",
+                embedding_dimension=3,
+                index_version="athena-doc-v1",
+            )
+
+            old_task = asyncio.create_task(old_owner.run_once(limit=1))
+            await artifacts.started.wait()
+            await repository.request_delete(DocumentId(reservation.document_id), datetime.now())
+            async with engine.connect() as connection:
+                retained_until = (
+                    await connection.execute(
+                        text(
+                            "SELECT lease_until FROM knowledge_ingestion_job WHERE job_id=:job_id"
+                        ),
+                        {"job_id": preparation.job_id},
+                    )
+                ).scalar_one()
+
+            async with asyncio.timeout(1):
+                while True:
+                    async with engine.connect() as connection:
+                        database_now = (
+                            await connection.execute(text("SELECT UTC_TIMESTAMP(6)"))
+                        ).scalar_one()
+                    if database_now > retained_until:
+                        break
+                    await asyncio.sleep(0.01)
+
+            assert (await deletion_owner.run_once(limit=1)).claimed == 0
+            assert artifacts.cancel_seen.is_set()
+
+            artifacts.release.set()
+            old_result = await old_task
+            assert old_result.lease_lost == 1
+            assert artifacts.settled.is_set()
+            assert artifacts.revision_artifacts == {reservation.revision_id}
+
+            delete_result = await deletion_owner.run_once(limit=1)
+            assert delete_result.deleted == 1
+            assert artifacts.revision_artifacts == set()
+            assert index.rows == set()
+            assert (
+                await repository.get_document(
+                    DocumentId(reservation.document_id), include_deleting=True
+                )
+                is None
+            )
+        finally:
+            artifacts.release.set()
+            if old_task is not None and not old_task.done():
+                old_task.cancel()
+            if old_task is not None:
+                with suppress(BaseException):
+                    await old_task
             await _clean(engine)
             await engine.dispose()
 

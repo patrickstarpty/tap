@@ -79,12 +79,66 @@ class Closeable:
         self.closed = True
 
 
+class OrderedWorker(ScanningWorker):
+    def __init__(self, events: list[str], *, fail: bool = False) -> None:
+        super().__init__()
+        self.events = events
+        self.fail = fail
+
+    async def run_once(self, limit: int) -> WorkerRun:
+        del limit
+        self.events.append("db-scan")
+        if self.fail:
+            raise ValueError("worker-failed")
+        return await super().run_once(1)
+
+
+class CancelledWorker(OrderedWorker):
+    async def run_once(self, limit: int) -> WorkerRun:
+        del limit
+        self.events.append("db-scan")
+        raise asyncio.CancelledError("worker-cancelled")
+
+
+class OrderedWakeups(LostWakeups):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+        self.wakeup = object()
+
+    async def wait(self, *, max_wait_seconds: float):
+        del max_wait_seconds
+        self.events.append("wait")
+        return self.wakeup
+
+    async def ack(self, wakeup):  # type: ignore[no-untyped-def]
+        assert wakeup is self.wakeup
+        self.events.append("ack")
+
+
+class RecordingCloseable:
+    def __init__(self, name: str, events: list[str], *, fail: bool = False) -> None:
+        self.name = name
+        self.events = events
+        self.fail = fail
+
+    async def aclose(self) -> None:
+        self.events.append(f"close:{self.name}")
+        if self.fail:
+            raise RuntimeError(f"close-failed:{self.name}")
+
+
 class MysqlClaimWorker:
-    def __init__(self, repository: MysqlDocumentRepository) -> None:
+    def __init__(
+        self, repository: MysqlDocumentRepository, events: list[str] | None = None
+    ) -> None:
         self.repository = repository
+        self.events = events
         self.claimed: tuple[str, ...] = ()
 
     async def run_once(self, limit: int) -> WorkerRun:
+        if self.events is not None:
+            self.events.append("db-scan")
         jobs = await self.repository.claim_jobs(
             worker_id="redis-order-worker",
             now=datetime.now(),
@@ -93,6 +147,21 @@ class MysqlClaimWorker:
         )
         self.claimed = tuple(job.job_id for job in jobs)
         return WorkerRun(len(jobs), 0, 0, 0, 0)
+
+
+class RecordingWakeups:
+    def __init__(self, consumer: RedisWakeupConsumer, events: list[str]) -> None:
+        self.consumer = consumer
+        self.events = events
+
+    async def wait(self, *, max_wait_seconds: float):
+        wakeup = await self.consumer.wait(max_wait_seconds=max_wait_seconds)
+        self.events.append("wakeup" if wakeup is not None else "timeout")
+        return wakeup
+
+    async def ack(self, wakeup):  # type: ignore[no-untyped-def]
+        await self.consumer.ack(wakeup)
+        self.events.append("ack")
 
 
 @pytest.mark.asyncio
@@ -142,6 +211,26 @@ async def test_worker_keeps_scanning_when_redis_is_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_relevant_wakeup_is_followed_by_db_scan_before_ack() -> None:
+    """Moving the scan before wait can ACK a job hint before its first DB claim attempt."""
+
+    events: list[str] = []
+    await athena_ingestion_worker.run_worker_loop(
+        worker=OrderedWorker(events),
+        wakeups=OrderedWakeups(events),  # type: ignore[arg-type]
+        settings=replace(
+            athena_ingestion_worker.load_settings({}),
+            poll_seconds=0.01,
+            wakeup_seconds=0.01,
+        ),
+        stop=asyncio.Event(),
+        max_iterations=1,
+    )
+
+    assert events == ["wait", "db-scan", "ack"]
+
+
+@pytest.mark.asyncio
 async def test_run_builds_signal_driven_runtime_and_closes_every_resource() -> None:
     """The process entrypoint must own stop handlers and finally-close its runtime."""
 
@@ -167,6 +256,86 @@ async def test_run_builds_signal_driven_runtime_and_closes_every_resource() -> N
     assert worker.runs == 1
     assert len(installed) == 1
     assert resource.closed is True
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_attempts_every_cleanup_and_preserves_all_errors() -> None:
+    """A handler or late resource failure cannot strand earlier runtime resources."""
+
+    events: list[str] = []
+    resources = (
+        RecordingCloseable("first", events),
+        RecordingCloseable("middle", events, fail=True),
+        RecordingCloseable("last", events),
+    )
+
+    async def factory(settings):  # type: ignore[no-untyped-def]
+        del settings
+        return athena_ingestion_worker.WorkerRuntime(
+            OrderedWorker(events, fail=True),
+            LostWakeups(),
+            resources,
+        )
+
+    def install(stop: asyncio.Event):  # type: ignore[no-untyped-def]
+        del stop
+
+        def remove() -> None:
+            events.append("remove-handlers")
+            raise RuntimeError("remove-handlers-failed")
+
+        return remove
+
+    with pytest.raises(BaseExceptionGroup) as captured:
+        await athena_ingestion_worker.run(
+            runtime_factory=factory,
+            environment={
+                "TAP_ATHENA_POLL_SECONDS": "0.01",
+                "TAP_ATHENA_WAKEUP_SECONDS": "0.01",
+            },
+            signal_installer=install,
+            max_iterations=1,
+        )
+
+    assert events == [
+        "db-scan",
+        "remove-handlers",
+        "close:last",
+        "close:middle",
+        "close:first",
+    ]
+    errors = tuple(str(error) for error in captured.value.exceptions)
+    assert errors == ("worker-failed", "remove-handlers-failed", "close-failed:middle")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_preserves_worker_cancellation_while_finishing_cleanup() -> None:
+    events: list[str] = []
+
+    async def factory(settings):  # type: ignore[no-untyped-def]
+        del settings
+        return athena_ingestion_worker.WorkerRuntime(
+            CancelledWorker(events),
+            LostWakeups(),
+            (
+                RecordingCloseable("first", events),
+                RecordingCloseable("last", events, fail=True),
+            ),
+        )
+
+    with pytest.raises(BaseExceptionGroup) as captured:
+        await athena_ingestion_worker.run(
+            runtime_factory=factory,
+            environment={
+                "TAP_ATHENA_POLL_SECONDS": "0.01",
+                "TAP_ATHENA_WAKEUP_SECONDS": "0.01",
+            },
+            max_iterations=1,
+        )
+
+    assert events == ["db-scan", "close:last", "close:first"]
+    assert isinstance(captured.value.exceptions[0], asyncio.CancelledError)
+    assert str(captured.value.exceptions[1]) == "close-failed:last"
 
 
 def test_main_fails_closed_when_runtime_factory_is_not_configured() -> None:
@@ -244,10 +413,11 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
                 },
             )
 
-            worker = MysqlClaimWorker(repository)
+            events: list[str] = []
+            worker = MysqlClaimWorker(repository, events)
             await athena_ingestion_worker.run_worker_loop(
                 worker=worker,
-                wakeups=consumer,
+                wakeups=RecordingWakeups(consumer, events),  # type: ignore[arg-type]
                 settings=replace(
                     athena_ingestion_worker.load_settings({}),
                     poll_seconds=0.05,
@@ -258,6 +428,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
             )
 
             assert len(worker.claimed) == 1
+            assert events == ["wakeup", "db-scan", "ack"]
             pending_after_claim = await redis.xpending(stream, "athena-ingestion")
             assert pending_after_claim["pending"] == 0
             assert unrelated_id != relevant_id
@@ -281,10 +452,11 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
                 )
             )
             await repository.activate_upload(second, ArtifactLocator("artifact:redis-reset"))
-            reset_worker = MysqlClaimWorker(repository)
+            reset_events: list[str] = []
+            reset_worker = MysqlClaimWorker(repository, reset_events)
             await athena_ingestion_worker.run_worker_loop(
                 worker=reset_worker,
-                wakeups=reset_consumer,
+                wakeups=RecordingWakeups(reset_consumer, reset_events),  # type: ignore[arg-type]
                 settings=replace(
                     athena_ingestion_worker.load_settings({}),
                     poll_seconds=0.05,
@@ -294,6 +466,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
                 max_iterations=1,
             )
             assert len(reset_worker.claimed) == 1
+            assert reset_events == ["timeout", "db-scan"]
         finally:
             await redis.delete(stream)
             await redis.aclose()

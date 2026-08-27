@@ -624,6 +624,15 @@ class DocumentRepository(Protocol):
         settled_at: datetime,
     ) -> None: ...
 
+    async def renew_cancelled_job_settlement(
+        self,
+        job_id: str,
+        lease_token: str,
+        expected_stage: JobStage,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None: ...
+
     async def checkpoint(self, checkpoint: JobCheckpoint) -> None: ...
 
     async def fail_job(self, failure: JobFailure) -> None: ...
