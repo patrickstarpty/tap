@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from collections.abc import Mapping
+from typing import Never, cast
 
 import pytest
+from fastapi.testclient import TestClient
 from test_milvus_mapping import doc_target
 from test_milvus_search_strict import descriptor
 
 from tap.interfaces.http.app import create_app
+from tap.interfaces.http.dependencies import HttpServices, KnowledgeHttpService
 from tap.modules.knowledge.adapters.milvus.readiness import (
     MilvusReadinessCanary,
     MilvusReadinessProbe,
@@ -150,7 +152,25 @@ async def test_readiness_timeout_is_bounded_and_provider_neutral() -> None:
     assert raised.value.__cause__ is None
 
 
-def test_http_liveness_construction_has_no_milvus_dependency() -> None:
-    """Adding a provider parameter would couple process liveness to search readiness."""
-    assert tuple(inspect.signature(create_app).parameters) == ()
-    assert create_app().title == "TAP API"
+class UnavailableKnowledgeService:
+    """Fail if an unrelated route reaches the deferred knowledge dependency."""
+
+    def __init__(self) -> None:
+        self.accessed = False
+
+    def __getattr__(self, name: str) -> Never:
+        self.accessed = True
+        msg = f"liveness must not access the knowledge service ({name})"
+        raise AssertionError(msg)
+
+
+def test_http_liveness_does_not_access_search_or_knowledge_readiness() -> None:
+    """Resolving search readiness from liveness would make process health depend on Milvus."""
+    service = UnavailableKnowledgeService()
+    client = TestClient(create_app(HttpServices(knowledge=cast(KnowledgeHttpService, service))))
+
+    response = client.get("/health/live")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert service.accessed is False
