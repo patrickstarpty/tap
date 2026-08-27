@@ -6,7 +6,9 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from tap.modules.chat.adapters.mysql import metadata
+from tap.modules.chat.adapters import mysql as _chat_schema  # noqa: F401
+from tap.modules.knowledge.adapters import mysql_documents as _knowledge_schema  # noqa: F401
+from tap.platform.db.schema import metadata
 
 config = context.config
 if config.config_file_name is not None:
