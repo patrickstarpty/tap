@@ -1069,9 +1069,7 @@ export interface operations {
     knowledge_upload_document: {
         parameters: {
             query?: never;
-            header?: {
-                "content-length"?: number | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };

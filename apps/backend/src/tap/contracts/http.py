@@ -528,7 +528,7 @@ class RetrievalAnswerResponse(ContractModel):
         paragraphs = _answer_paragraph_spans(self.answer)
         previous_end = 0
         for claim in self.claims:
-            if not self.abstained and not set(claim.citation_ids) <= citation_ids:
+            if not set(claim.citation_ids) <= citation_ids:
                 raise ValueError("claim citations must exist in the answer citation set")
             if "\n\n" in claim.text:
                 raise ValueError("claim text must not contain a paragraph separator")

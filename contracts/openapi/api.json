@@ -2375,25 +2375,6 @@
       },
       "post": {
         "operationId": "knowledge_upload_document",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "content-length",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Content-Length"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "multipart/form-data": {

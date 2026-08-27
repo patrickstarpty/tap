@@ -5,7 +5,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, File, Header, Query, Request, UploadFile, status
+from fastapi import APIRouter, File, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from tap.contracts.http import DocumentAccepted, DocumentDetail, DocumentPage
@@ -14,7 +14,6 @@ from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response
 
 router = APIRouter(prefix="/v1/knowledge/documents", tags=["knowledge"])
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
-MAX_MULTIPART_OVERHEAD_BYTES = 16 * 1024
 READ_CHUNK_BYTES = 1_048_576
 _MEDIA_TYPES_BY_EXTENSION = {
     ".pdf": "application/pdf",
@@ -71,11 +70,11 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
 async def upload_document(
     request: Request,
     upload: UploadFile = File(...),
-    content_length: int | None = Header(default=None, ge=0),
 ) -> DocumentAccepted:
-    if content_length is not None and content_length > (
-        MAX_DOCUMENT_BYTES + MAX_MULTIPART_OVERHEAD_BYTES
-    ):
+    form = await request.form()
+    if set(form) != {"upload"} or len(form.getlist("upload")) != 1:
+        raise InvalidDocumentUpload("invalid multipart request")
+    if upload.size is not None and upload.size > MAX_DOCUMENT_BYTES:
         raise InvalidDocumentUpload("document-too-large")
     filename, media_type = sanitize_upload_metadata(upload.filename, upload.content_type)
     return await knowledge_service(request).upload(

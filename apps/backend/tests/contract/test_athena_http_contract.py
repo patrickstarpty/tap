@@ -244,6 +244,33 @@ def test_non_abstained_claims_require_existing_bounded_citations() -> None:
     assert schema["properties"]["citations"]["maxItems"] == 20
 
 
+def test_abstained_claims_cannot_reference_missing_citations() -> None:
+    """Abstention must not open a hole in the public claim-to-citation graph."""
+    payload = {
+        "traceId": "trace-1",
+        "queryPlanId": "plan-1",
+        "contextSnapshotId": "snapshot-1",
+        "corpusVersion": "corpus-1",
+        "retrievalProfileId": "quick-hybrid-v1",
+        "degradedMode": False,
+        "answer": "Grounded paragraph.",
+        "abstained": True,
+        "claims": [
+            {
+                "claimId": "claim-1",
+                "text": "Grounded paragraph.",
+                "answerStart": 0,
+                "answerEnd": 19,
+                "citationIds": ["missing-citation"],
+            }
+        ],
+        "citations": [],
+    }
+
+    with pytest.raises(ValidationError):
+        RetrievalAnswerResponse.model_validate(payload)
+
+
 def test_claim_text_must_be_exactly_one_unique_answer_paragraph() -> None:
     """Substring matches or embedded paragraph separators would make spans ambiguous."""
     payload = {
@@ -286,6 +313,14 @@ def test_multipart_upload_uses_streamed_file_bytes_not_total_body_length() -> No
     )
     assert exact.status_code == 202
     assert service.byte_count == MAX_DOCUMENT_BYTES
+
+    extra_part = client.post(
+        "/v1/knowledge/documents",
+        data={"ignored": "x" * (20 * 1024)},
+        files={"upload": ("exact.txt", b"x" * MAX_DOCUMENT_BYTES, "text/plain")},
+    )
+    assert extra_part.status_code == 422
+    assert extra_part.headers["content-type"].startswith("application/problem+json")
 
     oversized = client.post(
         "/v1/knowledge/documents",
