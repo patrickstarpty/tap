@@ -174,7 +174,7 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "derivedFromChunkIds",
         },
     ),
-    (RetrievalClaim, {"claimId", "text", "citationIds"}),
+    (RetrievalClaim, {"claimId", "text", "answerStart", "answerEnd", "citationIds"}),
     (
         RetrievalSearchResponse,
         {

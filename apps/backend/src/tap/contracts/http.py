@@ -58,6 +58,43 @@ class AbstentionReason(str, Enum):
     REVISION_MISMATCH = "revision_mismatch"
 
 
+class DocumentStatus(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+    DELETING = "deleting"
+
+
+class IngestionStage(str, Enum):
+    STORED = "stored"
+    PARSING = "parsing"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
+    PUBLISHING = "publishing"
+    READY = "ready"
+
+
+class DocumentStageState(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class HealthComponentName(str, Enum):
+    MYSQL = "mysql"
+    REDIS = "redis"
+    BLOB = "blob"
+    MILVUS = "milvus"
+    MODELS = "models"
+
+
+class HealthComponentState(str, Enum):
+    OK = "ok"
+    FAILED = "failed"
+
+
 ShortIdentifier = Annotated[
     str,
     Field(strict=True, min_length=1, max_length=256),
@@ -106,6 +143,93 @@ NonNegativeAnchorInteger = Annotated[
 TopK = Annotated[StrictInt, Field(ge=1, le=100)]
 BoundingBoxCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 FiniteScore = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+
+class DocumentStageSnapshot(ContractModel):
+    stage: IngestionStage
+    state: DocumentStageState
+    completed_at: TimestampValue | None = None
+    error_code: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+
+
+class DocumentSummary(ContractModel):
+    document_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    media_type: Literal[
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/markdown",
+        "text/plain",
+    ]
+    status: DocumentStatus
+    stage: IngestionStage
+    chunk_count: Annotated[StrictInt, Field(ge=0, le=10_000)]
+    updated_at: TimestampValue
+    error_code: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+    error_summary: Annotated[str, Field(strict=True, min_length=1, max_length=240)] | None = None
+
+
+class DocumentAccepted(ContractModel):
+    document: DocumentSummary
+    job_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    duplicate: bool
+
+
+class DocumentPage(ContractModel):
+    items: Annotated[list[DocumentSummary], Field(max_length=50)]
+    next_cursor: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
+
+
+class DocumentDetail(DocumentSummary):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_content_hash: CanonicalSha256
+    stages: Annotated[list[DocumentStageSnapshot], Field(min_length=1, max_length=6)]
+    normalized_preview: Annotated[str, Field(strict=True, max_length=4_000)] | None = None
+
+    @model_validator(mode="after")
+    def validate_failure_fields(self) -> Self:
+        fields_present = self.error_code is not None or self.error_summary is not None
+        if self.status is DocumentStatus.FAILED and (
+            self.error_code is None or self.error_summary is None
+        ):
+            raise ValueError("failed documents require a public error code and summary")
+        if self.status is not DocumentStatus.FAILED and fields_present:
+            raise ValueError("only failed documents may expose public error fields")
+        return self
+
+
+class CitationPreview(ContractModel):
+    citation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    document_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    source_content_hash: CanonicalSha256
+    chunk_content_hash: CanonicalSha256
+    anchor: StructuralAnchor
+    quote: Annotated[str, Field(strict=True, min_length=1, max_length=4_000)]
+    prefix: Annotated[str, Field(strict=True, max_length=500)] = ""
+    suffix: Annotated[str, Field(strict=True, max_length=500)] = ""
+
+
+class HealthComponent(ContractModel):
+    name: HealthComponentName
+    state: HealthComponentState
+    remediation_code: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+
+
+class LiveHealth(ContractModel):
+    status: Literal["ok"]
+
+
+class ReadyHealth(ContractModel):
+    status: Literal["ready", "unready"]
+    components: Annotated[list[HealthComponent], Field(min_length=5, max_length=5)]
+
+    @model_validator(mode="after")
+    def validate_component_coverage(self) -> Self:
+        if {component.name for component in self.components} != set(HealthComponentName):
+            raise ValueError("readiness must report every fixed dependency exactly once")
+        return self
 
 
 class DocumentAnchor(ContractModel):
@@ -347,6 +471,8 @@ class RetrievalCitation(ContractModel):
 class RetrievalClaim(ContractModel):
     claim_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    answer_start: NonNegativeAnchorInteger
+    answer_end: NonNegativeAnchorInteger
     citation_ids: list[str]
 
 
@@ -374,6 +500,27 @@ class RetrievalAnswerResponse(ContractModel):
     abstention_reason: AbstentionReason | None = None
     claims: list[RetrievalClaim]
     citations: list[RetrievalCitation]
+
+    @model_validator(mode="after")
+    def validate_claim_spans(self) -> Self:
+        previous_end = 0
+        for claim in self.claims:
+            if claim.answer_end < claim.answer_start:
+                raise ValueError("claim answer offsets must be ordered")
+            if claim.answer_start < previous_end:
+                raise ValueError("claim answer spans must not overlap")
+            if claim.answer_end > len(self.answer):
+                raise ValueError("claim answer span exceeds the answer")
+            if self.answer[claim.answer_start : claim.answer_end] != claim.text:
+                raise ValueError("claim text must match its answer span")
+            if claim.answer_start != 0 and not self.answer[: claim.answer_start].endswith("\n\n"):
+                raise ValueError("claim answer span must start on a paragraph boundary")
+            if claim.answer_end != len(self.answer) and not self.answer[
+                claim.answer_end :
+            ].startswith("\n\n"):
+                raise ValueError("claim answer span must end on a paragraph boundary")
+            previous_end = claim.answer_end
+        return self
 
 
 class ChatTurnAccepted(ContractModel):

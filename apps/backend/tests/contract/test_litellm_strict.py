@@ -513,6 +513,11 @@ async def test_fixed_profiles_output_tokens_and_retry_identity_cannot_be_caller_
     assert all(
         payload["metadata"] == {"tapAnswerProfile": "grounded-answer-v2"} for payload in payloads
     )
+    assert all(
+        "every claim text must be copied exactly as one complete paragraph in answer"
+        in payload["messages"][0]["content"]
+        for payload in payloads
+    )
     assert requests[0].headers["x-tap-request-id"] == requests[1].headers["x-tap-request-id"]
     assert result.provider_request_id == "provider-request-17"
     assert result.gateway_call_id == "gateway-call-17"

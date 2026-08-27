@@ -69,6 +69,10 @@ def test_exporter_generates_byte_identical_openapi_with_stable_turn_operation_id
         json.loads(first_openapi)["paths"]["/v1/chats/{chat_id}/turns"]["post"]["operationId"]
         == "chat_create_turn"
     )
+    paths = json.loads(first_openapi)["paths"]
+    assert paths["/v1/knowledge/documents"]["post"]["operationId"] == "knowledge_upload_document"
+    assert paths["/v1/knowledge/answers"]["post"]["operationId"] == "knowledge_create_answer"
+    assert paths["/v1/citations/{citation_id}"]["get"]["operationId"] == "citation_get_preview"
 
 
 def test_exporter_generates_sse_envelope_with_required_recovery_fields(tmp_path: Path) -> None:

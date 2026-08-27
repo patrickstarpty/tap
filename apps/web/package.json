@@ -1,0 +1,14 @@
+{
+  "name": "@tap/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "contracts": "node scripts/generate-api.mjs",
+    "contracts:check": "node scripts/generate-api.mjs --check"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

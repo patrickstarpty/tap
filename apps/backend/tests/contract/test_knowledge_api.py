@@ -357,6 +357,8 @@ async def test_knowledge_answer_cites_each_claim_and_abstains_without_evidence()
         Claim(
             claim_id="claim-1",
             text="Policy facts are verified server-side.",
+            answer_start=0,
+            answer_end=38,
             citation_ids=("citation-1",),
         ),
     )

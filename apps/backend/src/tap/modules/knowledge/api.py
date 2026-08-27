@@ -183,6 +183,8 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
             HttpClaim(
                 claim_id=item.claim_id,
                 text=item.text,
+                answer_start=item.answer_start,
+                answer_end=item.answer_end,
                 citation_ids=list(item.citation_ids),
             )
             for item in response.claims

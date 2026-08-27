@@ -171,14 +171,28 @@ class AuthorizedRetrieval:
                     run.response,
                     AbstentionReason.INSUFFICIENT_EVIDENCE,
                 )
+            span = self._complete_paragraph_span(generation.text, generated_claim.text)
+            if span is None:
+                return self._abstain(
+                    run.response,
+                    AbstentionReason.INSUFFICIENT_EVIDENCE,
+                )
             claims.append(
                 Claim(
                     claim_id=self._id_factory(),
                     text=generated_claim.text,
+                    answer_start=span[0],
+                    answer_end=span[1],
                     citation_ids=citation_ids,
                 )
             )
         if generation.text and not claims:
+            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+
+        claims.sort(key=lambda item: (item.answer_start, item.answer_end))
+        if any(
+            later.answer_start < earlier.answer_end for earlier, later in zip(claims, claims[1:])
+        ):
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
 
         return AnswerResponse(
@@ -194,6 +208,19 @@ class AuthorizedRetrieval:
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
         )
+
+    @staticmethod
+    def _complete_paragraph_span(answer: str, claim_text: str) -> tuple[int, int] | None:
+        """Locate one claim only when it is exactly one complete answer paragraph."""
+        start = answer.find(claim_text)
+        if start < 0 or answer.find(claim_text, start + 1) >= 0:
+            return None
+        end = start + len(claim_text)
+        if (start != 0 and not answer[:start].endswith("\n\n")) or (
+            end != len(answer) and not answer[end:].startswith("\n\n")
+        ):
+            return None
+        return start, end
 
     async def _retrieve(
         self,

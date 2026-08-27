@@ -68,6 +68,20 @@
         "title": "BddAnchor",
         "type": "object"
       },
+      "Body_knowledge_upload_document": {
+        "properties": {
+          "upload": {
+            "format": "binary",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_knowledge_upload_document",
+        "type": "object"
+      },
       "ChatTurnAccepted": {
         "additionalProperties": false,
         "description": "The durable identity returned after a turn has been accepted for processing.",
@@ -178,6 +192,82 @@
         "title": "ChatTurnRequest",
         "type": "object"
       },
+      "CitationPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/StructuralAnchor"
+          },
+          "chunkContentHash": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Chunkcontenthash",
+            "type": "string"
+          },
+          "citationId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Citationid",
+            "type": "string"
+          },
+          "documentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Documentid",
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "prefix": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Prefix",
+            "type": "string"
+          },
+          "quote": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Quote",
+            "type": "string"
+          },
+          "revisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "sourceContentHash": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "suffix": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Suffix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citationId",
+          "documentId",
+          "revisionId",
+          "filename",
+          "sourceContentHash",
+          "chunkContentHash",
+          "anchor",
+          "quote"
+        ],
+        "title": "CitationPreview",
+        "type": "object"
+      },
       "CodeAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -242,6 +332,31 @@
         ],
         "title": "ContentRole",
         "type": "string"
+      },
+      "DocumentAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentSummary"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "boolean"
+          },
+          "jobId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Jobid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "jobId",
+          "duplicate"
+        ],
+        "title": "DocumentAccepted",
+        "type": "object"
       },
       "DocumentAnchor": {
         "additionalProperties": false,
@@ -335,6 +450,310 @@
         "title": "DocumentAnchor",
         "type": "object"
       },
+      "DocumentDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkCount": {
+            "maximum": 10000,
+            "minimum": 0,
+            "title": "Chunkcount",
+            "type": "integer"
+          },
+          "documentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Documentid",
+            "type": "string"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errorcode"
+          },
+          "errorSummary": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errorsummary"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "mediaType": {
+            "enum": [
+              "application/pdf",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "text/markdown",
+              "text/plain"
+            ],
+            "title": "Mediatype",
+            "type": "string"
+          },
+          "normalizedPreview": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Normalizedpreview"
+          },
+          "revisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "sourceContentHash": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/IngestionStage"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentStageSnapshot"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Stages",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          },
+          "updatedAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "filename",
+          "mediaType",
+          "status",
+          "stage",
+          "chunkCount",
+          "updatedAt",
+          "revisionId",
+          "sourceContentHash",
+          "stages"
+        ],
+        "title": "DocumentDetail",
+        "type": "object"
+      },
+      "DocumentPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSummary"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "DocumentPage",
+        "type": "object"
+      },
+      "DocumentStageSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Completedat"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errorcode"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/IngestionStage"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DocumentStageState"
+          }
+        },
+        "required": [
+          "stage",
+          "state"
+        ],
+        "title": "DocumentStageSnapshot",
+        "type": "object"
+      },
+      "DocumentStageState": {
+        "enum": [
+          "pending",
+          "processing",
+          "completed",
+          "failed"
+        ],
+        "title": "DocumentStageState",
+        "type": "string"
+      },
+      "DocumentStatus": {
+        "enum": [
+          "queued",
+          "processing",
+          "ready",
+          "failed",
+          "deleting"
+        ],
+        "title": "DocumentStatus",
+        "type": "string"
+      },
+      "DocumentSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkCount": {
+            "maximum": 10000,
+            "minimum": 0,
+            "title": "Chunkcount",
+            "type": "integer"
+          },
+          "documentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Documentid",
+            "type": "string"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errorcode"
+          },
+          "errorSummary": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errorsummary"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "mediaType": {
+            "enum": [
+              "application/pdf",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "text/markdown",
+              "text/plain"
+            ],
+            "title": "Mediatype",
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/IngestionStage"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          },
+          "updatedAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "filename",
+          "mediaType",
+          "status",
+          "stage",
+          "chunkCount",
+          "updatedAt"
+        ],
+        "title": "DocumentSummary",
+        "type": "object"
+      },
       "FailureAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -399,6 +818,83 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "HealthComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/HealthComponentName"
+          },
+          "remediationCode": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Remediationcode"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HealthComponentState"
+          }
+        },
+        "required": [
+          "name",
+          "state"
+        ],
+        "title": "HealthComponent",
+        "type": "object"
+      },
+      "HealthComponentName": {
+        "enum": [
+          "mysql",
+          "redis",
+          "blob",
+          "milvus",
+          "models"
+        ],
+        "title": "HealthComponentName",
+        "type": "string"
+      },
+      "HealthComponentState": {
+        "enum": [
+          "ok",
+          "failed"
+        ],
+        "title": "HealthComponentState",
+        "type": "string"
+      },
+      "IngestionStage": {
+        "enum": [
+          "stored",
+          "parsing",
+          "chunking",
+          "embedding",
+          "publishing",
+          "ready"
+        ],
+        "title": "IngestionStage",
+        "type": "string"
+      },
+      "LiveHealth": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "LiveHealth",
+        "type": "object"
+      },
       "OpenApiAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -433,6 +929,34 @@
           "jsonPointer"
         ],
         "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "ReadyHealth": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/HealthComponent"
+            },
+            "maxItems": 5,
+            "minItems": 5,
+            "title": "Components",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "unready"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "components"
+        ],
+        "title": "ReadyHealth",
         "type": "object"
       },
       "ResourceMode": {
@@ -752,6 +1276,18 @@
       "RetrievalClaim": {
         "additionalProperties": false,
         "properties": {
+          "answerEnd": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Answerend",
+            "type": "integer"
+          },
+          "answerStart": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "title": "Answerstart",
+            "type": "integer"
+          },
           "citationIds": {
             "items": {
               "type": "string"
@@ -773,6 +1309,8 @@
         "required": [
           "claimId",
           "text",
+          "answerStart",
+          "answerEnd",
           "citationIds"
         ],
         "title": "RetrievalClaim",
@@ -1203,6 +1741,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/health/live": {
+      "get": {
+        "operationId": "health_get_live",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveHealth"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Live Health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "health_get_ready",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyHealth"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ready Health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
     "/v1/chats/{chat_id}/turns": {
       "post": {
         "description": "Reserve the public route until the durable turn workflow is implemented.",
@@ -1347,6 +1927,999 @@
           }
         },
         "summary": "Create Chat Turn"
+      }
+    },
+    "/v1/citations/{citation_id}": {
+      "get": {
+        "operationId": "citation_get_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "citation_id",
+            "required": true,
+            "schema": {
+              "title": "Citation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid citation ID"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Get Citation",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/v1/knowledge/answers": {
+      "post": {
+        "operationId": "knowledge_create_answer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrievalAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrievalAnswerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599.0,
+                      "minimum": 100.0,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid answer request"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599.0,
+                      "minimum": 100.0,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Create Answer",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/v1/knowledge/documents": {
+      "get": {
+        "operationId": "knowledge_list_documents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid list request"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "List Documents",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "knowledge_upload_document",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "content-length",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Content-Length"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_knowledge_upload_document"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid document upload"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Upload Document",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/v1/knowledge/documents/{document_id}": {
+      "delete": {
+        "operationId": "knowledge_delete_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid document ID"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Delete Document",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "get": {
+        "operationId": "knowledge_get_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid document ID"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Get Document",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/v1/knowledge/documents/{document_id}/retry": {
+      "post": {
+        "operationId": "knowledge_retry_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid document ID"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "RFC 9457 problem details returned by the public HTTP interface.",
+                  "properties": {
+                    "detail": {
+                      "minLength": 1,
+                      "title": "Detail",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Instance"
+                    },
+                    "status": {
+                      "maximum": 599,
+                      "minimum": 100,
+                      "title": "Status",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "title": "Title",
+                      "type": "string"
+                    },
+                    "type": {
+                      "pattern": "^https://",
+                      "title": "Type",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "detail"
+                  ],
+                  "title": "ProblemDetails",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Retry Document",
+        "tags": [
+          "knowledge"
+        ]
       }
     }
   }

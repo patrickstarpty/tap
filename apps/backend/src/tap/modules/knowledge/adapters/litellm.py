@@ -219,7 +219,8 @@ class LiteLLMAdapter:
                                 "content": (
                                     "Answer only from supplied evidence. Return JSON with exactly "
                                     "answer and claims; every claim must contain current "
-                                    "evidenceLabels."
+                                    "evidenceLabels, and every claim text must be copied exactly "
+                                    "as one complete paragraph in answer."
                                 ),
                             },
                             {

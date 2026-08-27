@@ -20,6 +20,12 @@ if str(BACKEND_SOURCE) not in sys.path:
 
 from tap.contracts.chat_stream import ChatEventEnvelope  # noqa: E402
 from tap.contracts.http import (  # noqa: E402
+    CitationPreview,
+    DocumentAccepted,
+    DocumentDetail,
+    DocumentPage,
+    LiveHealth,
+    ReadyHealth,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
     RetrievalSearchRequest,
@@ -30,6 +36,12 @@ from tap.interfaces.http.app import create_app  # noqa: E402
 KNOWLEDGE_HTTP_MODELS: tuple[
     tuple[type[BaseModel], Literal["validation", "serialization"]], ...
 ] = (
+    (DocumentAccepted, "serialization"),
+    (DocumentPage, "serialization"),
+    (DocumentDetail, "serialization"),
+    (CitationPreview, "serialization"),
+    (LiveHealth, "serialization"),
+    (ReadyHealth, "serialization"),
     (RetrievalSearchRequest, "validation"),
     (RetrievalSearchResponse, "serialization"),
     (RetrievalAnswerRequest, "validation"),

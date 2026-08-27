@@ -545,7 +545,15 @@ class Citation:
 class Claim:
     claim_id: str
     text: str
+    answer_start: int
+    answer_end: int
     citation_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _strict_int("claim answer start", self.answer_start, minimum=0)
+        _strict_int("claim answer end", self.answer_end, minimum=0)
+        if self.answer_end < self.answer_start:
+            raise ValueError("claim answer offsets must be ordered")
 
 
 @dataclass(frozen=True, slots=True)
