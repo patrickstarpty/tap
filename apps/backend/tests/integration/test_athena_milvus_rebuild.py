@@ -47,6 +47,12 @@ async def test_real_milvus_rebuild_has_exact_parity_and_atomic_alias_switch(
     assert receipt.row_count == 2
     assert receipt.physical_collection.startswith(ATHENA_PHYSICAL_COLLECTION + "_")
     assert await provisioner.describe_alias(ATHENA_ALIAS) == receipt.physical_collection
+    assert await provisioner.collection_exists(ATHENA_PHYSICAL_COLLECTION)
+    assert await provisioner.collection_aliases(ATHENA_PHYSICAL_COLLECTION) == ()
+    reader_grants = await provisioner.collection_grants(ATHENA_PHYSICAL_COLLECTION, "tap_reader")
+    writer_grants = await provisioner.collection_grants(ATHENA_PHYSICAL_COLLECTION, "tap_writer")
+    assert reader_grants == frozenset()
+    assert writer_grants == frozenset()
 
 
 @pytest.mark.asyncio

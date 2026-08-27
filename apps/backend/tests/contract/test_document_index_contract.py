@@ -129,6 +129,7 @@ class MemoryProjectionCoordinator:
         self.cleanup: dict[str, int] = {}
         self.owned: dict[str, ProjectionOwnershipReceipt] = {}
         self.cancel_activation = False
+        self.activate_error_before_success = False
         self.activate_error_after_success = False
         self.cancel_release_after_body = False
 
@@ -205,6 +206,9 @@ class MemoryProjectionCoordinator:
         if self.cancel_activation:
             self.cancel_activation = False
             raise asyncio.CancelledError
+        if self.activate_error_before_success:
+            self.activate_error_before_success = False
+            raise RuntimeError("activation failed before durable commit")
         current = self.owned.get(receipt.physical_collection)
         if (
             current != receipt
@@ -261,7 +265,7 @@ class MemoryMilvus:
         self.upsert_batches: list[int] = []
         self.delete_batches: list[int] = []
         self.descriptor_model = ATHENA_EMBEDDING_MODEL
-        self.cancel_retirement = False
+        self.retirement_outcome: str | None = None
         self.fail_index_creations = 0
         self.fail_after_index_creations: int | None = None
         self.create_alias_error_after_success = False
@@ -349,9 +353,16 @@ class MemoryMilvus:
         self.grants.setdefault((name, role_name), set()).update(privileges)
 
     async def revoke_collection(self, name: str, role_name: str) -> None:
+        self.events.append(f"revoke:{role_name}:{name}")
+        if self.retirement_outcome == "error_before" and name == ATHENA_PHYSICAL_COLLECTION:
+            self.retirement_outcome = None
+            raise RuntimeError("injected retirement interruption")
         self.grants[(name, role_name)] = set()
-        if self.cancel_retirement and name == ATHENA_PHYSICAL_COLLECTION:
-            self.cancel_retirement = False
+        if self.retirement_outcome == "error_after" and name == ATHENA_PHYSICAL_COLLECTION:
+            self.retirement_outcome = None
+            raise RuntimeError("injected lost retirement response")
+        if self.retirement_outcome == "cancel_after" and name == ATHENA_PHYSICAL_COLLECTION:
+            self.retirement_outcome = None
             raise asyncio.CancelledError
 
     async def collection_grants(self, name: str, role_name: str) -> frozenset[MilvusScopedGrant]:
@@ -543,6 +554,9 @@ async def test_rebuild_uses_fresh_physical_and_switches_alias_only_after_exact_p
         READER_TARGET_PRIVILEGES
     )
     assert memory.grants[(receipt.physical_collection, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert await memory.collection_aliases(ATHENA_PHYSICAL_COLLECTION) == ()
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set()
 
     restarted = index_for(memory)
     assert (await restarted.ensure_target()).physical_collection == receipt.physical_collection
@@ -559,6 +573,35 @@ async def test_rebuild_uses_fresh_physical_and_switches_alias_only_after_exact_p
             ),
             index_version="athena-v1",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retirement_outcome", "expected_error"),
+    (
+        ("error_before", RebuildRejected),
+        ("error_after", RebuildRejected),
+        ("cancel_after", asyncio.CancelledError),
+    ),
+)
+async def test_rebuild_retirement_interruption_restores_old_alias_and_exact_grants(
+    retirement_outcome: str,
+    expected_error: type[BaseException],
+) -> None:
+    """Any uncertain precommit old-grant revoke must remain rollback-safe."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    memory.retirement_outcome = retirement_outcome
+
+    with pytest.raises(expected_error):
+        await index.rebuild((ready_record(),))
+
+    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set(
+        READER_TARGET_PRIVILEGES
+    )
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
 
 
 def ready_record(revision_id: str = "rev_a", index: int = 1) -> ReadyRevisionArtifacts:
@@ -1032,6 +1075,26 @@ async def test_rebuild_returns_receipt_on_postcommit_lease_exit_cancellation() -
     assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
     assert memory.coordinator.physical == receipt.physical_collection
     assert memory.coordinator.owned[receipt.physical_collection].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_activation_failure_restores_old_alias_and_exact_grants() -> None:
+    """A failure after old retirement but before durable activation must roll back."""
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    memory.coordinator.activate_error_before_success = True
+
+    with pytest.raises(RebuildRejected):
+        await index.rebuild((ready_record(),))
+
+    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set(
+        READER_TARGET_PRIVILEGES
+    )
+    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert f"revoke:tap_reader:{ATHENA_PHYSICAL_COLLECTION}" in memory.events
+    assert f"revoke:tap_writer:{ATHENA_PHYSICAL_COLLECTION}" in memory.events
 
 
 @pytest.mark.asyncio

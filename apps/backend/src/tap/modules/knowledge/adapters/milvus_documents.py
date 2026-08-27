@@ -507,6 +507,7 @@ class MilvusDocumentIndex:
                 raise IndexReconciliationFailed("Athena alias switch did not persist")
 
             old_ownership = await authority.ownership(old)
+            await self._revoke_exact_grants(old)
             await self._activate_build_resolved(authority, ownership)
         except asyncio.CancelledError as cancellation:
             cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
@@ -619,6 +620,12 @@ class MilvusDocumentIndex:
             privileges = frozenset(item.privilege for item in grants)
             if privileges != expected:
                 raise IndexUnavailable("Athena Milvus scoped privileges are not exact")
+
+    async def _revoke_exact_grants(self, physical: str) -> None:
+        for role in ("tap_reader", "tap_writer"):
+            await self._provisioner.revoke_collection(physical, role)
+            if await self._provisioner.collection_grants(physical, role):
+                raise IndexUnavailable("Athena retired Milvus scoped privileges remain")
 
     async def _require_loaded(self, physical: str) -> None:
         await self._provisioner.ensure_loaded(physical)
