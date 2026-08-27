@@ -19,6 +19,10 @@ class ModelUnavailable(Exception):
     """The selected model route is unavailable or returned invalid data."""
 
 
+class KnowledgeRuntimeUnavailable(Exception):
+    """A provider-neutral knowledge repository or artifact runtime is unavailable."""
+
+
 class ArtifactError(Exception):
     """A provider-neutral document artifact read could not satisfy its contract."""
 

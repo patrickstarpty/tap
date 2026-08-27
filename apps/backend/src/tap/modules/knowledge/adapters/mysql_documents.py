@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import NoReturn, cast
 from uuid import uuid4
@@ -94,6 +95,8 @@ from tap.platform.db.schema import metadata, outbox
 CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
 ANSWER_SNAPSHOT_RETENTION = 1_000
 ANSWER_SNAPSHOT_LOCK_NAME = "tap:athena:answer-snapshot-retention:v1"
+ANSWER_SNAPSHOT_LOCK_ACQUIRE_DEADLINE_SECONDS = 6.0
+ANSWER_SNAPSHOT_LOCK_RELEASE_DEADLINE_SECONDS = 2.0
 
 knowledge_document = Table(
     "knowledge_document",
@@ -279,36 +282,114 @@ async def _database_now(session: AsyncSession) -> datetime:
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class _NamedLockOutcome:
+    value: object | None
+    error: BaseException | None
+    cancellations: tuple[asyncio.CancelledError, ...]
+
+
+def _observe_task(task: asyncio.Task[object]) -> None:
+    try:
+        task.exception()
+    except BaseException:
+        pass
+
+
+async def _bounded_named_lock_query(
+    connection: AsyncConnection,
+    statement: str,
+    parameters: dict[str, object],
+    *,
+    timeout_seconds: float,
+) -> _NamedLockOutcome:
+    task = asyncio.create_task(connection.scalar(text(statement), parameters))
+    cancellations: list[asyncio.CancelledError] = []
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            task.cancel()
+            task.add_done_callback(_observe_task)
+            return _NamedLockOutcome(
+                value=None,
+                error=TimeoutError("named lock operation exceeded its client deadline"),
+                cancellations=tuple(cancellations),
+            )
+        try:
+            done, _pending = await asyncio.wait({task}, timeout=remaining)
+            if not done:
+                task.cancel()
+                task.add_done_callback(_observe_task)
+                return _NamedLockOutcome(
+                    value=None,
+                    error=TimeoutError("named lock operation exceeded its client deadline"),
+                    cancellations=tuple(cancellations),
+                )
+        except asyncio.CancelledError as cancellation:
+            cancellations.append(cancellation)
+    try:
+        return _NamedLockOutcome(
+            value=task.result(),
+            error=None,
+            cancellations=tuple(cancellations),
+        )
+    except BaseException as error:
+        return _NamedLockOutcome(
+            value=None,
+            error=error,
+            cancellations=tuple(cancellations),
+        )
+
+
+def _terminate_named_lock_connection(connection: AsyncConnection, error: BaseException) -> None:
+    """Synchronously detach and terminate the exact pooled physical connection."""
+    sync_connection = connection.sync_connection
+    if sync_connection is None:
+        raise AnswerSnapshotUnavailable("answer snapshot connection is not started")
+    sync_connection.invalidate(error)
+    # Invalidation deliberately retains SQLAlchemy's transaction marker. Clear it
+    # without reconnecting so context-manager exit cannot procure a replacement.
+    sync_connection.rollback()
+
+
 async def _release_named_lock(
     connection: AsyncConnection, lock_name: str, *, ownership_confirmed: bool
 ) -> None:
-    """Settle RELEASE_LOCK on the owning pooled connection even during caller cancellation."""
+    """Release a confirmed lock or terminate a connection with uncertain ownership."""
     if connection.invalidated:
-        # Cancellation inside the driver invalidates and physically closes the DBAPI
-        # connection, which also releases any MySQL connection-scoped lock. Clear
-        # SQLAlchemy's failed transaction marker without reconnecting so cleanup does
-        # not replace the original cancellation with PendingRollbackError.
-        await connection.rollback()
         return
-    cancelled = False
-    task = asyncio.create_task(
-        connection.scalar(
-            text("SELECT RELEASE_LOCK(:lock_name)"),
-            {"lock_name": lock_name},
+    if not ownership_confirmed:
+        _terminate_named_lock_connection(
+            connection,
+            AnswerSnapshotUnavailable("answer snapshot lock ownership is uncertain"),
         )
+        return
+    outcome = await _bounded_named_lock_query(
+        connection,
+        "SELECT RELEASE_LOCK(:lock_name)",
+        {"lock_name": lock_name},
+        timeout_seconds=ANSWER_SNAPSHOT_LOCK_RELEASE_DEADLINE_SECONDS,
     )
-    while not task.done():
+    failure: AnswerSnapshotUnavailable | None = None
+    if outcome.error is not None:
+        failure = AnswerSnapshotUnavailable("answer snapshot serialization lock release failed")
+    elif outcome.value != 1:
+        failure = AnswerSnapshotUnavailable("answer snapshot serialization lock was lost")
+    if failure is not None:
         try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
-    released = task.result()
-    if ownership_confirmed and released != 1:
-        raise AnswerSnapshotUnavailable("answer snapshot serialization lock was lost")
-    if not ownership_confirmed and released not in {None, 0, 1}:
-        raise AnswerSnapshotUnavailable("answer snapshot serialization lock was malformed")
-    if cancelled:
-        raise asyncio.CancelledError
+            _terminate_named_lock_connection(connection, outcome.error or failure)
+        except BaseException as termination_error:
+            if outcome.cancellations:
+                raise outcome.cancellations[0]
+            raise AnswerSnapshotUnavailable(
+                "answer snapshot connection termination failed"
+            ) from termination_error
+        if outcome.cancellations:
+            raise outcome.cancellations[0]
+        raise failure from outcome.error
+    if outcome.cancellations:
+        raise outcome.cancellations[0]
 
 
 def _job_id() -> str:
@@ -403,8 +484,11 @@ class MysqlDocumentRepository:
             # cannot migrate after the business transaction commits.
             async with self._engine.connect() as connection:
                 ownership_confirmed = False
+                acquisition_settled = False
+                first_cancellation: asyncio.CancelledError | None = None
                 try:
                     acquired = await self._acquire_answer_snapshot_lock(connection)
+                    acquisition_settled = True
                     if acquired != 1:
                         raise AnswerSnapshotUnavailable(
                             "answer snapshot serialization is unavailable"
@@ -416,25 +500,56 @@ class MysqlDocumentRepository:
                     await connection.commit()
                     async with self._sessions(bind=connection) as session, session.begin():
                         await self._save_answer_snapshot(session, snapshot)
+                except asyncio.CancelledError as cancellation:
+                    first_cancellation = cancellation
                 finally:
                     # The GET_LOCK await can be cancelled after MySQL granted ownership but
-                    # before the driver returns. Always attempt same-connection release; only
-                    # require a `1` result once ownership was observed by this coroutine.
-                    await _release_named_lock(
-                        connection,
-                        ANSWER_SNAPSHOT_LOCK_NAME,
-                        ownership_confirmed=ownership_confirmed,
-                    )
+                    # before an override returns. A settled non-grant owns no lock; every
+                    # other state must release or physically terminate this connection.
+                    if ownership_confirmed or not acquisition_settled:
+                        try:
+                            await _release_named_lock(
+                                connection,
+                                ANSWER_SNAPSHOT_LOCK_NAME,
+                                ownership_confirmed=ownership_confirmed,
+                            )
+                        except asyncio.CancelledError as cancellation:
+                            if first_cancellation is None:
+                                first_cancellation = cancellation
+                        except BaseException:
+                            if first_cancellation is None:
+                                raise
+                    if first_cancellation is not None:
+                        raise first_cancellation
         except (DocumentStateChanged, AnswerSnapshotUnavailable, asyncio.CancelledError):
             raise
         except Exception as error:
             raise AnswerSnapshotUnavailable("answer snapshot transaction failed") from error
 
     async def _acquire_answer_snapshot_lock(self, connection: AsyncConnection) -> object:
-        return await connection.scalar(
-            text("SELECT GET_LOCK(:lock_name, 5)"),
+        outcome = await _bounded_named_lock_query(
+            connection,
+            "SELECT GET_LOCK(:lock_name, 5)",
             {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+            timeout_seconds=ANSWER_SNAPSHOT_LOCK_ACQUIRE_DEADLINE_SECONDS,
         )
+        malformed = outcome.error is None and outcome.value not in {None, 0, 1}
+        if outcome.error is not None or malformed or outcome.cancellations:
+            failure = AnswerSnapshotUnavailable(
+                "answer snapshot serialization lock acquisition failed"
+            )
+            try:
+                _terminate_named_lock_connection(connection, outcome.error or failure)
+            except BaseException as termination_error:
+                if outcome.cancellations:
+                    raise outcome.cancellations[0]
+                raise AnswerSnapshotUnavailable(
+                    "answer snapshot connection termination failed"
+                ) from termination_error
+            if outcome.cancellations:
+                raise outcome.cancellations[0]
+            raise failure from outcome.error
+        return outcome.value
 
     async def _save_answer_snapshot(self, session: AsyncSession, snapshot: AnswerSnapshot) -> None:
         expected = snapshot.selected_revisions

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 
 from tap.contracts.http import (
     DocumentAccepted,
@@ -26,14 +26,18 @@ from tap.modules.knowledge.domain.documents import (
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
+    DocumentCapacityExceeded,
     DocumentCursor,
     DocumentNotFound,
     DocumentRecord,
     DocumentRepository,
+    InvalidDocumentCursor,
     ReservationState,
     ReserveUpload,
+    RetryNotAllowed,
     UploadStream,
 )
+from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 PublicMediaType = Literal[
     "application/pdf",
@@ -41,6 +45,7 @@ PublicMediaType = Literal[
     "text/markdown",
     "text/plain",
 ]
+_T = TypeVar("_T")
 
 
 class DocumentService:
@@ -58,6 +63,9 @@ class DocumentService:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     async def upload(self, upload: UploadStream) -> DocumentAccepted:
+        return await _document_runtime_boundary(self._upload(upload))
+
+    async def _upload(self, upload: UploadStream) -> DocumentAccepted:
         try:
             media_type = MediaType(upload.media_type)
         except ValueError as error:
@@ -136,6 +144,9 @@ class DocumentService:
         return recovered
 
     async def list_documents(self, cursor: str | None, limit: int) -> DocumentPage:
+        return await _document_runtime_boundary(self._list_documents(cursor, limit))
+
+    async def _list_documents(self, cursor: str | None, limit: int) -> DocumentPage:
         page = await self._repository.list_documents(
             DocumentCursor(cursor) if cursor is not None else None,
             limit,
@@ -146,12 +157,18 @@ class DocumentService:
         )
 
     async def get_document(self, document_id: str) -> DocumentDetail:
+        return await _document_runtime_boundary(self._get_document(document_id))
+
+    async def _get_document(self, document_id: str) -> DocumentDetail:
         record = await self._repository.get_document(DocumentId(document_id), include_deleting=True)
         if record is None:
             raise DocumentNotFound(document_id)
         return _detail(record)
 
     async def retry_document(self, document_id: str) -> DocumentAccepted:
+        return await _document_runtime_boundary(self._retry_document(document_id))
+
+    async def _retry_document(self, document_id: str) -> DocumentAccepted:
         if (
             await self._repository.get_document(DocumentId(document_id), include_deleting=True)
             is None
@@ -164,12 +181,33 @@ class DocumentService:
         return DocumentAccepted(document=_summary(record), job_id=job.job_id, duplicate=False)
 
     async def delete_document(self, document_id: str) -> None:
+        await _document_runtime_boundary(self._delete_document(document_id))
+
+    async def _delete_document(self, document_id: str) -> None:
         if (
             await self._repository.get_document(DocumentId(document_id), include_deleting=True)
             is None
         ):
             raise DocumentNotFound(document_id)
         await self._repository.request_delete(DocumentId(document_id), self._clock())
+
+
+async def _document_runtime_boundary(operation: Awaitable[_T]) -> _T:
+    try:
+        return await operation
+    except asyncio.CancelledError:
+        raise
+    except (
+        DocumentParseRejected,
+        DocumentCapacityExceeded,
+        DocumentNotFound,
+        InvalidDocumentCursor,
+        RetryNotAllowed,
+        KnowledgeRuntimeUnavailable,
+    ):
+        raise
+    except Exception as error:
+        raise KnowledgeRuntimeUnavailable("knowledge document runtime is unavailable") from error
 
 
 async def _settle_cleanup(*operations: Awaitable[object]) -> None:

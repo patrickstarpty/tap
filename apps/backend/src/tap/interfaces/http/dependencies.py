@@ -16,6 +16,7 @@ from tap.contracts.http import (
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
 )
+from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,10 +49,6 @@ class HttpServices:
     """Optional service assembly used by routes without eager infrastructure startup."""
 
     knowledge: KnowledgeHttpService | None = None
-
-
-class KnowledgeRuntimeUnavailable(Exception):
-    """The contract-only HTTP application has not been wired to a runtime service."""
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:

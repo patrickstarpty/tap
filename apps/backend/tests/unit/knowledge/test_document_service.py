@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from tap.interfaces.http.dependencies import UploadInput
+from tap.interfaces.http.dependencies import KnowledgeRuntimeUnavailable, UploadInput
 from tap.modules.knowledge.application.documents import DocumentService
 from tap.modules.knowledge.domain.documents import MAX_UPLOAD_BYTES
 from tap.modules.knowledge.ports.documents import (
@@ -27,6 +27,7 @@ from tap.modules.knowledge.ports.documents import (
     StagedOriginal,
     UploadReservation,
 )
+from tap.modules.knowledge.ports.errors import ArtifactUnavailable
 
 
 async def _content(value: bytes) -> AsyncIterable[bytes]:
@@ -321,9 +322,10 @@ def test_artifact_promotion_failure_keeps_durable_reservation_and_staging_for_ta
         artifacts.fail_commit = True
         service = DocumentService(repository=repository, artifacts=artifacts)
 
-        with pytest.raises(RuntimeError, match="injected artifact promotion failure"):
+        with pytest.raises(KnowledgeRuntimeUnavailable) as caught:
             await service.upload(markdown_upload("failure.md", b"failed promotion"))
 
+        assert "injected artifact promotion failure" not in str(caught.value)
         assert set(artifacts.staged) == {"staged-1"}
         assert set(artifacts.originals) == {"staged-1"}
         assert len(repository.reservations_by_key) == 1
@@ -374,5 +376,63 @@ def test_missing_document_commands_fail_as_not_found_before_mutation() -> None:
             await service.retry_document("missing")
         with pytest.raises(DocumentNotFound):
             await service.delete_document("missing")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("operation", "failing_method"),
+    [
+        ("upload", "reserve_upload"),
+        ("list", "list_documents"),
+        ("detail", "get_document"),
+        ("retry", "get_document"),
+        ("delete", "get_document"),
+    ],
+)
+def test_document_repository_outages_cross_one_provider_neutral_boundary(
+    operation: str,
+    failing_method: str,
+) -> None:
+    async def scenario() -> None:
+        repository = MemoryDocumentRepository()
+
+        async def unavailable(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("mysql password=secret")
+
+        setattr(repository, failing_method, unavailable)
+        service = DocumentService(repository=repository, artifacts=FakeArtifactStore())
+
+        with pytest.raises(KnowledgeRuntimeUnavailable) as caught:
+            if operation == "upload":
+                await service.upload(markdown_upload("policy.md", b"# Policy"))
+            elif operation == "list":
+                await service.list_documents(None, 25)
+            elif operation == "detail":
+                await service.get_document("doc-a")
+            elif operation == "retry":
+                await service.retry_document("doc-a")
+            else:
+                await service.delete_document("doc-a")
+
+        assert "secret" not in str(caught.value)
+
+    asyncio.run(scenario())
+
+
+def test_document_artifact_outage_crosses_the_same_provider_neutral_boundary() -> None:
+    async def scenario() -> None:
+        artifacts = FakeArtifactStore()
+
+        async def unavailable(*_args: object, **_kwargs: object) -> None:
+            raise ArtifactUnavailable("azure credential=secret")
+
+        artifacts.stage_original = unavailable  # type: ignore[method-assign]
+        service = DocumentService(repository=MemoryDocumentRepository(), artifacts=artifacts)
+
+        with pytest.raises(KnowledgeRuntimeUnavailable) as caught:
+            await service.upload(markdown_upload("policy.md", b"# Policy"))
+
+        assert "secret" not in str(caught.value)
 
     asyncio.run(scenario())

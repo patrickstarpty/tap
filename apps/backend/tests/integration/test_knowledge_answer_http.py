@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -31,7 +33,11 @@ from tap.modules.knowledge.ports.documents import (
     InvalidDocumentCursor,
     RetryNotAllowed,
 )
-from tap.modules.knowledge.ports.errors import ModelUnavailable, SearchUnavailable
+from tap.modules.knowledge.ports.errors import (
+    ArtifactUnavailable,
+    ModelUnavailable,
+    SearchUnavailable,
+)
 
 
 class Documents:
@@ -127,7 +133,10 @@ def harness() -> Harness:
         citations=citations,
     )
     return Harness(
-        client=TestClient(create_app(HttpServices(knowledge=service))),
+        client=TestClient(
+            create_app(HttpServices(knowledge=service)),
+            raise_server_exceptions=False,
+        ),
         documents=documents,
         answers=answers,
         citations=citations,
@@ -382,3 +391,63 @@ def test_citation_failures_are_redacted_stable_problems(
     assert response.status_code == status
     assert response.json()["type"] == problem_type
     assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("post", "/v1/knowledge/documents"),
+        ("get", "/v1/knowledge/documents"),
+        ("get", "/v1/knowledge/documents/doc-a"),
+        ("post", "/v1/knowledge/documents/doc-a/retry"),
+        ("delete", "/v1/knowledge/documents/doc-a"),
+    ],
+)
+def test_document_provider_outages_are_redacted_rfc9457_503(
+    method: str,
+    path: str,
+) -> None:
+    app = harness()
+    app.documents.error = ArtifactUnavailable("azure credential=secret")
+
+    kwargs = (
+        {"files": {"upload": ("policy.md", b"# Policy", "text/markdown")}}
+        if method == "post" and path == "/v1/knowledge/documents"
+        else {}
+    )
+    response = app.client.request(method, path, **kwargs)
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"] == ("https://tap.example/problems/knowledge-runtime-unavailable")
+    assert "secret" not in response.text
+
+
+def test_unexpected_rest_failure_is_a_redacted_rfc9457_fallback() -> None:
+    app = harness()
+    app.answers.error = RuntimeError("provider token=secret")
+
+    response = app.client.post("/v1/knowledge/answers", json=answer_payload("doc-a"))
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"] == ("https://tap.example/problems/knowledge-runtime-unavailable")
+    assert "secret" not in response.text
+
+
+def test_unexpected_rest_fallback_does_not_consume_caller_cancellation() -> None:
+    async def scenario() -> None:
+        documents = Documents()
+        answers = Answers()
+        answers.error = asyncio.CancelledError("caller disconnected")
+        service = KnowledgeHttpService(
+            documents=documents,
+            answers=answers,
+            citations=Citations(),
+        )
+        transport = httpx.ASGITransport(app=create_app(HttpServices(knowledge=service)))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with pytest.raises(asyncio.CancelledError, match="caller disconnected"):
+                await client.post("/v1/knowledge/answers", json=answer_payload("doc-a"))
+
+    asyncio.run(scenario())

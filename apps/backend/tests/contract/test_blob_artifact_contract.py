@@ -14,6 +14,7 @@ from azure.core.exceptions import (
     ResourceExistsError,
     ResourceModifiedError,
     ResourceNotFoundError,
+    ServiceRequestError,
 )
 from pydantic import SecretStr
 
@@ -316,8 +317,15 @@ class _Upload:
 
 
 class _BlobDouble:
-    def __init__(self, *, fail_upload: bool = False, slow_delete: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_upload: bool = False,
+        slow_upload: bool = False,
+        slow_delete: bool = False,
+    ) -> None:
         self.fail_upload = fail_upload
+        self.slow_upload = slow_upload
         self.slow_delete = slow_delete
         self.upload_streamed = False
         self.uploaded = b""
@@ -328,6 +336,8 @@ class _BlobDouble:
         del args, kwargs
         if self.fail_upload:
             raise RuntimeError("injected upload failure")
+        if self.slow_upload:
+            await asyncio.Event().wait()
         self.upload_streamed = not isinstance(data, (bytes, bytearray)) and hasattr(data, "read")
         if not self.upload_streamed:
             raise AssertionError("original upload was materialized before provider streaming")
@@ -421,7 +431,36 @@ async def test_artifact_reads_translate_provider_failure_to_neutral_unavailable(
         await store.read_normalized(locator)
 
     assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
     assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_closed_artifact_store_is_unavailable_not_stale_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    locator = ArtifactLocator(f"athena-artifacts/revisions/{REVISION}/normalized-v1.json")
+    await store.close()
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await store.read_normalized(locator)
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
+
+
+@pytest.mark.asyncio
+async def test_stage_timeout_remains_provider_unavailable_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble(slow_upload=True), timeout=0.01)
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await store.stage_original(_Upload((b"abc",)), max_bytes=3)
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
 
 
 @pytest.mark.asyncio
@@ -448,7 +487,7 @@ async def test_stage_original_cleanup_deadline_cancels_and_settles_provider_call
     blob = _BlobDouble(fail_upload=True, slow_delete=True)
     store = _store_with_double(monkeypatch, blob, timeout=0.01)
 
-    with pytest.raises(ArtifactIntegrityError):
+    with pytest.raises(ArtifactUnavailable):
         await store.stage_original(_Upload((b"abc",)), max_bytes=3)
 
     assert blob.delete_cancelled
@@ -464,8 +503,10 @@ async def test_provider_timeout_with_cancelled_child_keeps_safe_deadline_error(
     async def never() -> None:
         await asyncio.Event().wait()
 
-    with pytest.raises(ArtifactIntegrityError, match="deadline"):
+    with pytest.raises(ArtifactUnavailable, match="deadline") as caught:
         await store._bounded(never())
+
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
 
 
 @pytest.mark.asyncio
@@ -503,7 +544,7 @@ async def test_spontaneously_cancelled_provider_child_is_not_caller_cancellation
     async def provider_cancelled() -> None:
         raise asyncio.CancelledError("provider-internal")
 
-    with pytest.raises(ArtifactIntegrityError):
+    with pytest.raises(ArtifactUnavailable):
         await store._bounded(provider_cancelled())
 
 
@@ -673,6 +714,164 @@ async def test_uncertain_copy_response_recovers_owned_success_from_destination_m
 
 
 @pytest.mark.asyncio
+async def test_copy_recovery_outage_is_not_downgraded_to_the_original_integrity_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    source = object()
+
+    class Destination:
+        async def exists(self) -> bool:
+            return False
+
+        async def start_copy_from_url(self, url: str, **kwargs: object) -> None:
+            del url, kwargs
+            raise ArtifactIntegrityError("malformed copy response")
+
+    destination = Destination()
+    staged = StagedOriginal(
+        staging_key="staging/task6-recovery-outage",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else destination,
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+
+    async def recovery_unavailable(*_args: object, **_kwargs: object) -> bool:
+        raise ArtifactProviderUnavailable("provider offline during recovery")
+
+    monkeypatch.setattr(store, "_resolve_copy_destination", recovery_unavailable)
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await store.commit_original(staged, "rev_task6_recovery_outage")
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("commit", "recover"))
+async def test_promotion_preflight_translates_missing_staging_blob_to_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    staged = StagedOriginal(
+        staging_key="staging/task6-missing-preflight",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+
+    async def missing(_key: str) -> None:
+        raise ResourceNotFoundError(message="azure account-key=secret")
+
+    monkeypatch.setattr(store, "_staging_properties", missing)
+
+    with pytest.raises(ArtifactIntegrityFailure) as caught:
+        if operation == "commit":
+            await store.commit_original(staged, "rev_task6_missing_preflight")
+        else:
+            await store.recover_original(staged.staging_key, "rev_task6_missing_preflight")
+
+    assert isinstance(caught.value, ArtifactIntegrityError)
+    assert not isinstance(caught.value, ArtifactUnavailable)
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_promotion_preflight_translates_destination_outage_to_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble())
+    source = object()
+
+    class Destination:
+        async def exists(self) -> bool:
+            raise ServiceRequestError("azure account-key=secret")
+
+    staged = StagedOriginal(
+        staging_key="staging/task6-destination-outage",
+        filename="policy.md",
+        media_type="text/markdown",
+        size=3,
+        source_content_hash=canonical_sha256(b"abc"),
+    )
+    monkeypatch.setattr(
+        store,
+        "_blob",
+        lambda _container, name: source if name == staged.staging_key else Destination(),
+    )
+    monkeypatch.setattr(
+        store,
+        "_staging_properties",
+        lambda _key: _async_value(
+            SimpleNamespace(
+                size=3,
+                metadata={
+                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
+                    "size": "3",
+                },
+            )
+        ),
+    )
+    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await store.commit_original(staged, "rev_task6_destination_outage")
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_copy_terminal_client_deadline_is_unavailable_not_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=0.01)
+    owner_token = "f" * 64
+
+    class PendingDestination:
+        async def get_blob_properties(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                metadata={"copyowner": owner_token},
+                copy=SimpleNamespace(status="pending", id="copy-pending"),
+            )
+
+    with pytest.raises(ArtifactUnavailable) as caught:
+        await store._wait_copy_terminal(  # pyright: ignore[reportPrivateUsage]
+            PendingDestination(),  # type: ignore[arg-type]
+            owner_token,
+            "copy-pending",
+        )
+
+    assert isinstance(caught.value, ArtifactProviderUnavailable)
+    assert not isinstance(caught.value, ArtifactIntegrityFailure)
+
+
+@pytest.mark.asyncio
 async def test_cancellation_after_uncertain_copy_acceptance_aborts_and_deletes_owned_partial(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -823,7 +1022,7 @@ async def test_scavenger_list_page_uses_deadline_cancel_and_terminal_settlement(
         )
     )
 
-    with pytest.raises(ArtifactIntegrityError, match="deadline"):
+    with pytest.raises(ArtifactUnavailable, match="deadline"):
         await store.scavenge_staging(
             now=datetime.now(timezone.utc),
             visible_staging_keys=frozenset(),
@@ -896,7 +1095,7 @@ async def test_scavenger_uses_one_absolute_deadline_across_all_deletes(
         )
     )
 
-    with pytest.raises(ArtifactIntegrityError, match="deadline"):
+    with pytest.raises(ArtifactUnavailable, match="deadline"):
         await store.scavenge_staging(now=now, visible_staging_keys=frozenset(), limit=2)
 
     assert cancelled == ["staging/slow-1"]

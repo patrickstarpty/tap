@@ -25,6 +25,7 @@ from tap.modules.knowledge.ports.documents import (
 from tap.modules.knowledge.ports.errors import (
     SEARCH_EXECUTION_REJECTED_TYPE,
     SEARCH_UNAVAILABLE_TYPE,
+    ArtifactUnavailable,
     ModelUnavailable,
     SearchBoundsExceeded,
     SearchUnavailable,
@@ -181,8 +182,9 @@ def register_problem_handlers(app: FastAPI) -> None:
         return problem_response(VALIDATION_PROBLEM)
 
     @app.exception_handler(KnowledgeRuntimeUnavailable)
+    @app.exception_handler(ArtifactUnavailable)
     async def knowledge_runtime_unavailable_problem(
-        _request: Request, _error: KnowledgeRuntimeUnavailable
+        _request: Request, _error: KnowledgeRuntimeUnavailable | ArtifactUnavailable
     ) -> JSONResponse:
         return problem_response(KNOWLEDGE_RUNTIME_UNAVAILABLE_PROBLEM)
 
@@ -279,3 +281,7 @@ def register_problem_handlers(app: FastAPI) -> None:
         _request: Request, _error: SearchBoundsExceeded
     ) -> JSONResponse:
         return problem_response(SEARCH_EXECUTION_REJECTED_PROBLEM)
+
+    @app.exception_handler(Exception)
+    async def unexpected_rest_problem(_request: Request, _error: Exception) -> JSONResponse:
+        return problem_response(KNOWLEDGE_RUNTIME_UNAVAILABLE_PROBLEM)

@@ -19,6 +19,7 @@ from tap.modules.knowledge.ports.documents import (
     ReserveUpload,
     StagedOriginal,
 )
+from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.platform.db.session import create_engine_and_session_factory
 
 DATABASE_URL = os.getenv(
@@ -202,8 +203,9 @@ def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery() -
             service = DocumentService(
                 repository=MysqlDocumentRepository(sessions), artifacts=artifacts
             )
-            with pytest.raises(RuntimeError, match="durable staging cleanup failure"):
+            with pytest.raises(KnowledgeRuntimeUnavailable) as caught:
                 await service.upload(markdown_upload("cleanup.md", b"# cleanup fact"))
+            assert "durable staging cleanup failure" not in str(caught.value)
 
             async with engine.connect() as connection:
                 recovery_locator = await connection.scalar(

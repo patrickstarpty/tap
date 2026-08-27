@@ -10,7 +10,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 from sqlalchemy.sql.selectable import Select
 
-from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+from tap.modules.knowledge.adapters.mysql_documents import (
+    ANSWER_SNAPSHOT_LOCK_NAME,
+    MysqlDocumentRepository,
+    _release_named_lock,
+)
 from tap.modules.knowledge.application.answers import AnswerService
 from tap.modules.knowledge.domain.documents import DocumentId, RevisionId, chunk_id_for
 from tap.modules.knowledge.domain.models import (
@@ -615,6 +619,53 @@ def test_cancellation_while_waiting_for_named_lock_settles_connection() -> None:
             )
         finally:
             await clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_uncertain_named_lock_ownership_terminates_physical_connection_before_reuse() -> None:
+    async def scenario() -> None:
+        engine, _sessions = create_engine_and_session_factory(DATABASE_URL)
+        first_connection_id: int | None = None
+        try:
+            async with engine.connect() as connection:
+                first_connection_id = await connection.scalar(text("SELECT CONNECTION_ID()"))
+                assert (
+                    await connection.scalar(
+                        text("SELECT GET_LOCK(:lock_name, 5)"),
+                        {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                    )
+                    == 1
+                )
+                await connection.commit()
+
+                await _release_named_lock(
+                    connection,
+                    ANSWER_SNAPSHOT_LOCK_NAME,
+                    ownership_confirmed=False,
+                )
+
+                assert connection.invalidated is True
+
+            async with engine.connect() as replacement:
+                replacement_connection_id = await replacement.scalar(text("SELECT CONNECTION_ID()"))
+                assert replacement_connection_id != first_connection_id
+                assert (
+                    await replacement.scalar(
+                        text("SELECT GET_LOCK(:lock_name, 5)"),
+                        {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                    )
+                    == 1
+                )
+                assert (
+                    await replacement.scalar(
+                        text("SELECT RELEASE_LOCK(:lock_name)"),
+                        {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+                    )
+                    == 1
+                )
+        finally:
             await engine.dispose()
 
     asyncio.run(scenario())
