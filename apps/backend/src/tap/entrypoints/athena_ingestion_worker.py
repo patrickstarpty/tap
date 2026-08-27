@@ -126,6 +126,14 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
         except NotImplementedError:
             # Windows and embedded event loops can still cancel the outer task.
             continue
+        except BaseException as error:
+            errors = [error]
+            for installed_signum in reversed(installed):
+                try:
+                    loop.remove_signal_handler(installed_signum)
+                except BaseException as rollback_error:
+                    errors.append(rollback_error)
+            _raise_collected_errors("Athena signal installation failed", errors)
 
     def remove_handlers() -> None:
         for signum in installed:
@@ -146,9 +154,10 @@ async def run(
     settings = load_settings(environment)
     runtime = await runtime_factory(settings)
     stop = asyncio.Event()
-    remove_handlers = signal_installer(stop)
     errors: list[BaseException] = []
+    remove_handlers: Callable[[], None] | None = None
     try:
+        remove_handlers = signal_installer(stop)
         await run_worker_loop(
             worker=runtime.worker,
             wakeups=runtime.wakeups,
@@ -168,12 +177,16 @@ async def run(
             await resource.aclose()
         except BaseException as error:
             errors.append(error)
+    _raise_collected_errors("Athena worker lifecycle failed", errors)
+
+
+def _raise_collected_errors(message: str, errors: list[BaseException]) -> None:
     if len(errors) == 1:
         raise errors[0]
     if errors:
         if all(isinstance(error, Exception) for error in errors):
-            raise ExceptionGroup("Athena worker lifecycle failed", cast(list[Exception], errors))
-        raise BaseExceptionGroup("Athena worker lifecycle failed", errors)
+            raise ExceptionGroup(message, cast(list[Exception], errors))
+        raise BaseExceptionGroup(message, errors)
 
 
 def main(environment: Mapping[str, str] | None = None) -> None:

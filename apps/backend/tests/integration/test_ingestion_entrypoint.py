@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 from dataclasses import replace
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -256,6 +257,118 @@ async def test_run_builds_signal_driven_runtime_and_closes_every_resource() -> N
     assert worker.runs == 1
     assert len(installed) == 1
     assert resource.closed is True
+
+
+@pytest.mark.asyncio
+async def test_signal_install_failure_closes_runtime_before_preserving_error() -> None:
+    """Once a factory returns resources, later initialization cannot leak them."""
+
+    events: list[str] = []
+    install_error = RuntimeError("signal-install-failed")
+    resources = (
+        RecordingCloseable("first", events),
+        RecordingCloseable("last", events),
+    )
+
+    async def factory(settings):  # type: ignore[no-untyped-def]
+        del settings
+        return athena_ingestion_worker.WorkerRuntime(
+            OrderedWorker(events),
+            LostWakeups(),
+            resources,
+        )
+
+    def install(stop: asyncio.Event):  # type: ignore[no-untyped-def]
+        del stop
+        events.append("install-signals")
+        raise install_error
+
+    with pytest.raises(RuntimeError) as captured:
+        await athena_ingestion_worker.run(
+            runtime_factory=factory,
+            environment={
+                "TAP_ATHENA_POLL_SECONDS": "0.01",
+                "TAP_ATHENA_WAKEUP_SECONDS": "0.01",
+            },
+            signal_installer=install,
+            max_iterations=1,
+        )
+
+    assert captured.value is install_error
+    assert events == ["install-signals", "close:last", "close:first"]
+
+
+@pytest.mark.asyncio
+async def test_signal_install_and_close_failures_do_not_skip_other_resources() -> None:
+    """A close failure must aggregate without hiding the initialization failure."""
+
+    events: list[str] = []
+    resources = (
+        RecordingCloseable("first", events),
+        RecordingCloseable("middle", events, fail=True),
+        RecordingCloseable("last", events),
+    )
+
+    async def factory(settings):  # type: ignore[no-untyped-def]
+        del settings
+        return athena_ingestion_worker.WorkerRuntime(
+            OrderedWorker(events),
+            LostWakeups(),
+            resources,
+        )
+
+    def install(stop: asyncio.Event):  # type: ignore[no-untyped-def]
+        del stop
+        events.append("install-signals")
+        raise RuntimeError("signal-install-failed")
+
+    with pytest.raises(BaseExceptionGroup) as captured:
+        await athena_ingestion_worker.run(
+            runtime_factory=factory,
+            environment={
+                "TAP_ATHENA_POLL_SECONDS": "0.01",
+                "TAP_ATHENA_WAKEUP_SECONDS": "0.01",
+            },
+            signal_installer=install,
+            max_iterations=1,
+        )
+
+    assert events == [
+        "install-signals",
+        "close:last",
+        "close:middle",
+        "close:first",
+    ]
+    errors = tuple(str(error) for error in captured.value.exceptions)
+    assert errors == ("signal-install-failed", "close-failed:middle")
+
+
+def test_signal_install_rolls_back_handlers_after_partial_failure(monkeypatch) -> None:
+    """A later add failure cannot leave an earlier process handler installed."""
+
+    events: list[str] = []
+
+    class PartiallyFailingLoop:
+        def add_signal_handler(self, signum, callback) -> None:  # type: ignore[no-untyped-def]
+            del callback
+            events.append(f"add:{signum.name}")
+            if signum is signal.SIGTERM:
+                raise RuntimeError("signal-install-failed")
+
+        def remove_signal_handler(self, signum) -> bool:  # type: ignore[no-untyped-def]
+            events.append(f"remove:{signum.name}")
+            return True
+
+    monkeypatch.setattr(
+        athena_ingestion_worker.asyncio,
+        "get_running_loop",
+        lambda: PartiallyFailingLoop(),
+    )
+
+    with pytest.raises(RuntimeError, match="signal-install-failed"):
+        athena_ingestion_worker.install_signal_handlers(asyncio.Event())
+
+    assert events == ["add:SIGINT", "add:SIGTERM", "remove:SIGINT"]
 
 
 @pytest.mark.asyncio
