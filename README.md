@@ -1,6 +1,6 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库保存可评审、可演进的技术架构基线；Phase 1 workspace、公共 HTTP/SSE 契约、授权 Knowledge 纵向切片与本地 Milvus 检索实验已经建立，Web 应用、共享环境部署与生产加固仍未完成。
+TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库同时包含可评审、可演进的技术架构基线，以及 Python/FastAPI Backend、React/Vite Web、公共契约和本地运行工具。Athena 本地知识工作区已经打通“上传文档 → 可恢复索引 → 限定来源问答 → 核验引用”的 `doc` 纵向切片；完整 Phase 1、共享环境部署与生产加固仍在推进。
 
 ## 一句话架构
 
@@ -40,6 +40,9 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - RAG 知识问答简图：[draw.io 源文件](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.drawio) / [SVG 预览](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.svg)：用知识建设与在线问答两条主线说明从数据源到可溯源回答的完整链路。
 - [整体架构评审](docs/reviews/2026-08-21-architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。
 - [Milvus 本地检索实验评审](docs/reviews/2026-08-27-milvus-local-search-experiment.md)：记录真实数据库、空卷重建、embedding 预算证据与严格的决策边界。
+- [Athena 本地知识 Demo RFC](docs/proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md)：本地来源优先工作区、运行边界与验收标准。
+- [Athena 本地知识 Demo 计划](docs/plans/2026-08-27-athena-local-knowledge-demo.md)：纵向实现步骤与确定性门禁。
+- [Athena 本地知识 Demo 验收](docs/reviews/2026-08-27-athena-local-knowledge-demo.md)：本地中间件、浏览器、持久化和可选真实模型的证据记录。
 - [Phase 1：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
 - [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
 - [Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
@@ -64,46 +67,88 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 当前状态
 
 - 架构状态：`v0.3 integrated platform + RAG baseline / review-ready`
-- 实现状态：`Phase 1 backend slices active; web/shared/production pending`
+- 实现状态：`Athena local doc Q&A slice implemented; full Phase 1/shared/production active`
 - 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
 - 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-## 本地中间件预置
+## Athena 本地知识工作区
 
-Phase 1 默认本地 profile 仅预置确实存在替身的中间件：MySQL、Redis、Azurite Blob 和 LiteLLM Proxy；Milvus 通过独立实验 profile 按需启动。Azure AI Search、Entra ID 与 Key Vault 没有本地替身；单元测试应使用 fake/stub，集成测试与安全验收应连接受控 Azure 测试资源，而不是引入 Elasticsearch/OpenSearch、假身份服务或秘密库模拟器。
+Athena 是来源优先的本地 Demo 产品外壳，不是完整 Knowledge Chat。当前页面可上传、查看六阶段 ingestion、选择 ready 来源、发起单次非流式问答并打开逐条引用；没有登录、Conversation/history、SSE、停止/队列、Trace、Feedback 或 OCR。API、Web 和所有中间件只绑定精确 loopback；无身份验证仅适用于单机开发，不能开放到局域网或生产环境。Azure AI Search、Entra ID 与 Key Vault 没有本地替身，本地 Milvus 也不改变企业 Azure 四索引基线。
 
-首次启动前复制环境模板并按需填入 LiteLLM provider 凭据：
+支持文本可提取的 PDF、DOCX、Markdown（MD）和 TXT。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
+
+首次启动：
 
 ```sh
 cp .env.example .env
-docker compose config
-docker compose up -d --wait --wait-timeout 120
-bash scripts/check-local-services.sh
-docker compose ps
+# 在 .env 中填入实际 provider credential；不要提交该文件
+make bootstrap
+make demo-up
+make demo-check
+make demo-dev
 ```
 
-默认端口与用途：
+`make demo-up` 启动并初始化 MySQL、Redis、Azurite、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay 与 Athena Ingestion Worker。默认本地端口如下：
 
-| 服务 | 默认宿主端口 | 用途 |
+| 组件 | 默认 loopback 端口 | 职责 |
 | --- | --- | --- |
-| MySQL 8.4 LTS | `3306` | Phase 1 业务事实、Outbox、权限与运行元数据 |
-| Redis 7.4 | `6379` | 可重建分发、短时 fanout、非权威 live 状态 |
-| Azurite Blob | `10000` | 本地 Blob 兼容接口与开发期对象读写 |
-| LiteLLM Proxy | `4000` | 本地模型路由代理与统一 API 面 |
+| MySQL 8.4 LTS | `3306` | 文档/revision/job/manifest、query hash/所选 revision/citation 核验快照与 Outbox；不保存回答正文/history |
+| Redis 7.4 | `6379` | 可重建命令分发与任务唤醒 |
+| Azurite Blob | `10000` | 原文件、normalized/chunk/embedding artifact |
+| LiteLLM Proxy | `4000` | 固定 Chat/Embedding alias 路由 |
+| Milvus | `19530` / `9091` | 本地 `doc` 可重建检索投影与健康端口 |
+| FastAPI / Vite | `8000` / `5173` | Knowledge HTTP API 与 Athena Web |
 
-停止并保留数据卷：
+模型配置只来自服务端环境，不在 UI 暴露。固定公共配置是 `ATHENA_MODEL_BACKEND=litellm`、`ATHENA_CHAT_ALIAS=athena-chat`、`ATHENA_EMBEDDING_ALIAS=athena-embedding` 与 `ATHENA_EMBEDDING_DIMENSION=1536`；LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`LITELLM_MODEL`、`OPENAI_API_KEY`、`LITELLM_EMBEDDING_MODEL`、`LITELLM_EMBEDDING_API_KEY` 和 `LITELLM_EMBEDDING_API_BASE` 注入实际路由与凭据。
 
-```sh
-docker compose down
-```
-
-清理包含持久卷的本地状态：
+页面刷新会重新读取已提交的文档、ingestion/index 状态和必要的可重建状态；API/Web/Worker 进程重启与普通 Compose 停止/再次启动后也从这些持久事实恢复。当前渲染的回答只存在于 Web 页面内存，刷新会清空，本版没有历史回答恢复 API；用户可以基于仍为 `ready` 的持久来源重新提问。普通停止/再次启动保留具名卷：
 
 ```sh
-docker compose down -v
+make demo-down
+make demo-up
+make demo-dev
 ```
+
+只有下面的 guarded 命令会不可逆删除精确 Compose project `tap-athena-demo` 的 MySQL、Redis、Azurite 和 Milvus 卷；命令拒绝其他 project 名称：
+
+```sh
+TAP_ATHENA_COMPOSE_PROJECT=tap-athena-demo \
+  TAP_ALLOW_ATHENA_VOLUME_RESET=1 make demo-reset
+```
+
+### `demo-check` 故障定位
+
+`make demo-check` 独立检查五个组件，只输出组件、结果和安全修复码：
+
+| 组件 / 修复码 | 处理方式 |
+| --- | --- |
+| MySQL / `start-mysql` | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。 |
+| Redis / `start-redis` | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:6379/0`。 |
+| Blob / `start-blob` | 运行 `make demo-up`；确认 `AZURE_STORAGE_CONNECTION_STRING` 指向 loopback Azurite，两个容器保持 private。 |
+| Milvus / `start-milvus` | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。 |
+| Models / `configure-models` | 在 ignored `.env` 填入 Chat/Embedding provider credential 与 raw model route，重启 `make demo-up`，再确认两个固定 alias 都出现在 LiteLLM `/v1/models`。 |
+
+### 确定性 E2E 与真实模型 smoke
+
+日常验收使用隔离 project、真实本地中间件和 deterministic fake 模型，不消耗 provider 配额：
+
+```sh
+make demo-e2e
+```
+
+真实模型 smoke 是单独的显式 opt-in；它要求本地生产图已 ready、知识库至少有一份 ready 文档，并验证一次真实 embedding、一次 grounded answer 及全部 citation resolution。未设置 opt-in 时测试精确 skip；一旦 opt-in，缺凭据、provider `401`、维度错误、claim 格式错误或 citation 无法解析都算失败，不会转为 skip：
+
+```sh
+set -a
+. ./.env
+set +a
+TAP_RUN_ATHENA_REAL_MODEL_SMOKE=1 uv run --project apps/backend pytest \
+  apps/backend/tests/smoke/test_athena_real_model.py -v
+```
+
+本次验收 checkout 未提供 `.env`，因此记录为 `not-run: credentials not provided`；LiteLLM 可运行路由已经配置，但真实 provider smoke 尚未验证。
 
 ### 实验性 Milvus 检索门禁
 
@@ -138,4 +183,4 @@ make test
 
 `make contracts` 从 FastAPI 路由元数据和公共 Pydantic 模型确定性导出并检查 `contracts/openapi/api.json` 与 `contracts/events/chat-stream.schema.json`：JSON 使用排序键、两空格缩进、一个末尾换行，且不写入时间戳。HTTP DTO 与 SSE event models 是彼此独立的模型图；浏览器可见的 SSE schema 不描述 `text/event-stream` framing。
 
-当前工作区尚未建立 `apps/web/`，因此本阶段只导出和校验上述 OpenAPI/SSE artifacts；Task 6 在其拥有的 `apps/web/src/shared/api/generated/` 目录中连接 TypeScript 生成。冻结安装使用 `uv sync --frozen --all-groups` 和 `corepack pnpm install --frozen-lockfile`，不依赖全局 pnpm。
+`make contracts` 同时更新并检查 `apps/web/src/shared/api/generated/` 的 TypeScript client/type。冻结安装使用 `uv sync --frozen --all-groups` 和 `corepack pnpm install --frozen-lockfile`，不依赖全局 pnpm。

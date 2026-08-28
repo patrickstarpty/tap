@@ -1,6 +1,6 @@
 ---
 id: RFC-005
-status: accepted
+status: implemented
 date: 2026-08-27
 related-adrs:
   - ADR-004
@@ -17,9 +17,11 @@ related-adrs:
 
 Demo 复用现有 `KnowledgeAPI`、provider-neutral `SearchPort`、Milvus adapter、LiteLLM adapter、MySQL Outbox 与本地中间件，不另建一套简化 RAG。用户体验以 NotebookLM 的来源优先问答为主参考，知识导入与故障处理吸收 RAGFlow 和 Dify 的成熟模式，本地上传路径参考 AnythingLLM 与 Open WebUI。`Athena` 仍只作为产品和 Web 外壳名称；后端领域与公共 API 使用稳定的 `knowledge` 命名。
 
+实施结果：Tasks 1–10 的 runnable vertical slice、mandatory deterministic/local-middleware gate、跨应用/Compose 重启的文档与 ingestion/index 状态恢复、实际手工视觉/键盘验收和文档门禁均已完成，本 RFC 因此为 `implemented`。当前回答正文只在 Web 页面内存中，刷新会清空且本版没有 history 恢复 API。当前验收 checkout 没有 `.env`，真实模型项保持 `not-run: credentials not provided`；runnable LiteLLM route configured, provider unverified。此状态不关闭仍为 `active` 的完整 Phase 1，也不表示真实 provider、完整 Knowledge Chat、Azure AI Search 四 family 或共享/生产部署已验证。
+
 ## 背景
 
-仓库已经实现公共契约、Turn/Outbox 持久层、可信 Policy 边界、授权 Knowledge 检索、Azure AI Search adapter 与 Milvus 本地检索实验，但尚无 `apps/web/`、用户上传入口、真实 ingestion worker 或可完成问答的 HTTP 纵向链路。当前 Phase 1 计划面向完整企业交付，包含身份、可恢复 Chat/SSE、四类索引、Trace、反馈、AKS 与容量门禁；若把全部能力作为 Demo 前置条件，无法尽快验证用户是否愿意使用 Athena 完成“喂资料、限定来源、核验回答”的核心任务。
+本 RFC 形成时，仓库已经实现公共契约、Turn/Outbox 持久层、可信 Policy 边界、授权 Knowledge 检索、Azure AI Search adapter 与 Milvus 本地检索实验，但尚无 `apps/web/`、用户上传入口、真实 ingestion worker 或可完成问答的 HTTP 纵向链路。当前 Phase 1 计划面向完整企业交付，包含身份、可恢复 Chat/SSE、四类索引、Trace、反馈、AKS 与容量门禁；若把全部能力作为 Demo 前置条件，无法尽快验证用户是否愿意使用 Athena 完成“喂资料、限定来源、核验回答”的核心任务。
 
 Athena 不是只在聊天框旁增加上传按钮。它必须把来源建设、可用状态、回答范围和证据核验放在同一个工作区内，同时保持 RAG 的数据、检索和引用边界可演进到正式 Phase 1。
 

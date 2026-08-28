@@ -15,6 +15,28 @@ Phase 1 不把它扩展为通用 Agent：没有工具执行、多 Agent 规划�
 
 Phase 1.5 的 Codex Research（以及受限管理员发起的 Knowledge Enrichment）是显式异步 Agent Job，不是聊天回答背后的隐藏路径。普通 `quick/deep` 问答都由确定性 Retrieval Pipeline 完成；关闭 Codex Runtime 不影响本页面。Test IR/代码生成在 Phase 2 工作台接入。
 
+### 1.1 Athena 本地工作区与正式 Knowledge Chat 的边界
+
+当前仓库已交付的 Athena 本地工作区复用了本设计的来源、claim citation 和证据侧栏原则，但采用更窄的来源优先信息架构：
+
+```text
+┌─ Ready Sources ─┬──── 单次来源限定问答 ────┬─ Citation Preview ─┐
+│ 搜索 / 勾选      │ 当前选中来源 / 问题       │ 文件 / revision     │
+│ processing 禁选  │ 非流式 grounded answer   │ quote / anchor      │
+│ failed 可重试    │ inline citation          │ 关闭后焦点返回      │
+└─────────────────┴─────────────────────────┴─────────────────────┘
+                  知识库：上传 / 六阶段状态 / 重试 / 删除
+```
+
+- Athena 只有固定本地知识空间，不创建 Project/Conversation，也不把回答快照冒充 Chat history。
+- Athena 当前渲染回答只保存在页面内存；刷新会清空回答，但会重新读取持久的文档/ingestion/index 状态，用户可基于仍为 `ready` 的来源重新提问。本版没有历史回答恢复 API。
+- 问答使用一次 JSON 响应；没有 SSE、answer delta、停止、排队追问、`@resource`、fork 或断线游标恢复。
+- 普通用户可选择最多 20 份 ready 文档并打开行内引用；processing/failed/deleting 文档不可进入选择范围。
+- 知识库把上传和运维从 composer 分离，直接显示 `stored → parsing → chunking → embedding → publishing → ready` 六阶段，以及失败重试与删除。
+- 本地 Demo 无身份验证、Trace、Feedback 或当前 ACL 重授权，只允许精确 loopback 使用；正式 Knowledge Chat 仍必须实现 Entra/Project Policy、历史权限收紧与受限诊断。
+
+这一区分是产品边界，不是临时命名差异：Athena 验证“喂资料、限定来源、核验回答”，下面章节继续描述 active Phase 1 的 durable Conversation/SSE/queue/stop/Trace/Feedback/auth 目标。
+
 ## 2. 页面布局
 
 ```text

@@ -7,13 +7,19 @@ date: 2026-08-23
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 从当前纯文档仓库交付可部署、可恢复、可观测且通过权限与容量验收的 Phase 1 RAG Foundation 和 Athena Knowledge Chat。
+**Goal:** 在同一仓库中交付可部署、可恢复、可观测且通过权限与容量验收的 Phase 1 RAG Foundation 和 Athena Knowledge Chat。
 
 **Architecture:** 在单仓库中建立 Vite/React Web 与单 Python package 的 FastAPI 模块化单体，通过独立 entrypoint/image target 运行 API/SSE 和各类 worker。MySQL 是业务事实与 Outbox 的 SoR，Redis 只承担可重建分发和 live fanout，Azure AI Search 是可重建检索投影；浏览器使用 REST snapshot + fetch-based SSE tail，所有 Knowledge 调用都携带服务端构造并在使用时复验的策略上下文。
 
 **Tech Stack:** Python 3.13、uv、FastAPI/ASGI、Pydantic v2、SQLAlchemy 2、Alembic、pytest；Node.js 22 LTS、pnpm 10、Vite、React、TypeScript、Ant Design、Tailwind CSS、TanStack Query、Vitest、Testing Library、Playwright；MySQL、Redis、Azure AI Search、Blob Storage、LiteLLM、Entra ID、Key Vault、AKS、OpenTelemetry。
 
 **Spec:** `docs/proposals/2026-08-23-rfc-003-phase-1-application-structure.md`
+
+## Current Reusable Athena Baseline
+
+独立的 [Athena 本地知识 Demo 计划](2026-08-27-athena-local-knowledge-demo.md) 已经交付 Python/FastAPI 与 React/Vite workspace、确定性 OpenAPI/TypeScript 生成、MySQL document/job/manifest 与 Outbox、Redis Relay/worker 唤醒、Azurite artifact、PDF/DOCX/MD/TXT typed ingestion、本地 Milvus `doc` 投影、固定 LiteLLM alias、来源限定 answer/citation，以及真实本地中间件上的浏览器、失败恢复和文档/ingestion/index 持久化门禁。这些能力可被本计划复用，不应再建立第二套 DTO、文档身份、RAG 或 worker 状态机；当前回答正文只在 Web 页面内存中，不具备 history 恢复能力。
+
+该 baseline 只有 loopback/no-auth/no-OCR 的固定本地知识空间和单次非流式问答。它不完成本计划要求的 Entra/Project Policy、Azure AI Search 四 family、durable Conversation/Turn/Queue、REST snapshot + SSE tail、stop/fork/feedback/Trace、AKS/OTel/容量与 Golden Dataset。故本计划继续保持 `active`，下列 Task 的未完成 checkbox 与 Phase 1 出口标准不因本地 Demo GREEN 自动改变；RFC-003 仍为 `accepted`，RFC-004 仍为 `draft`。
 
 ## Global Constraints
 

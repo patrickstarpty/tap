@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 date: 2026-08-27
 ---
 
@@ -9,11 +9,13 @@ date: 2026-08-27
 
 **Goal:** 交付一个可在开发机长期保存数据的 Athena Web Demo，让用户上传可提取文本的 PDF、DOCX、Markdown 与 TXT，观察真实 ingestion 状态，限定来源问答，并点击引用核验同一文档 revision 的原文。
 
-**Architecture:** 在现有 provider-neutral `KnowledgeAPI` 外增加 document ledger、artifact storage、ingestion worker、answer snapshot/citation resolver 与薄 HTTP 层；MySQL 是事实与 job checkpoint，Azurite 保存原文件及派生 artifact，Milvus 是可重建投影，Redis 只做唤醒，LiteLLM 固定提供 chat/embedding alias。Web 采用来源优先的 Athena 工作区，不建立第二套 Chat/RAG，也不把本地 Demo 约定扩展为共享环境或生产基线。
+**Architecture:** 在现有 provider-neutral `KnowledgeAPI` 外增加 document ledger、artifact storage、ingestion worker、只含 query/所选 revisions 的 answer resolver snapshot、citation resolver 与薄 HTTP 层；MySQL 是事实与 job checkpoint，但不保存回答正文/history，Azurite 保存原文件及派生 artifact，Milvus 是可重建投影，Redis 只做唤醒，LiteLLM 固定提供 chat/embedding alias。Web 采用来源优先的 Athena 工作区，不建立第二套 Chat/RAG，也不把本地 Demo 约定扩展为共享环境或生产基线。
 
 **Tech Stack:** Python 3.13.12、FastAPI、Pydantic v2、SQLAlchemy 2、Alembic、Azure Blob SDK、PyPDF、python-docx、tiktoken、PyMilvus、LiteLLM、MySQL 8.4、Redis 7.4、Azurite、Milvus 2.6；Node 22.22.0、pnpm 10.15.1、Vite、React、TypeScript、Ant Design、Tailwind CSS、TanStack Query、React Markdown、Vitest、Testing Library、Playwright。
 
 **Spec:** `docs/proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md`
+
+**Acceptance result:** Tasks 1–10 已完成 mandatory deterministic/local-middleware、实际手工视觉/键盘与文档门禁，本计划因此为 `completed`，RFC-005 为 `implemented`。当前 checkout 没有 `.env`，可选真实模型项准确记录为 `not-run: credentials not provided`；runnable LiteLLM route configured, provider unverified，这不等于真实 provider 已验证。完整 Phase 1 仍为 `active`。
 
 ## Global Constraints
 
@@ -27,7 +29,7 @@ date: 2026-08-27
 - 问答必须调用现有 `KnowledgeAPI.answer()`，固定 demo policy 只能由服务端构造，浏览器不能提交 tenant、group、classification、environment、corpus 或任意 provider filter。
 - LiteLLM 公共模型名固定为 `athena-chat` 与 `athena-embedding`；raw provider model、API key、base URL、Blob locator、Milvus physical collection 和 SDK 异常都不能进入公共响应。
 - 首版 answer 使用单次 JSON 响应；citation/claim 校验和最小 snapshot 提交成功前不能向浏览器返回未验证 answer delta。
-- 服务端固定 query 最长 `8,000` 字符、列表默认 `25`/最大 `50`、cursor 最长 `512` 字符、answer citation 最多 `20` 个、quote 最长 `4,000` 字符且前后文各 `500` 字符；只保留最近 `1,000` 个 answer snapshots；Web 不提供修改这些上限的入口。
+- 服务端固定 query 最长 `8,000` 字符、列表默认 `25`/最大 `50`、cursor 最长 `512` 字符、answer citation 最多 `20` 个、quote 最长 `4,000` 字符且前后文各 `500` 字符；只保留最近 `1,000` 个 answer resolver snapshots（query hash/所选 revisions，不含回答正文/history）；Web 不提供修改这些上限的入口。
 - 所有非拒答实质 claim 至少包含一个可解析 citation；revision/hash/anchor 不一致或文档删除时返回 `citation-stale`，不能展示近似内容。
 - 无身份 Demo 的 Web/API 只绑定 `127.0.0.1`，Vite 使用同源 proxy；不开放任意 CORS origin。
 - `make demo-down` 必须保留 MySQL、Redis、Azurite 与 Milvus 命名卷；任何清空命令都要独立命名并要求显式 opt-in 环境变量。
@@ -1720,7 +1722,7 @@ git commit -m "feat: run athena knowledge demo locally"
 - Consumes: completed runnable vertical slice and every automated gate from Tasks 1–9.
 - Produces: evidence-backed acceptance report, current README/AGENTS/architecture/contracts, lifecycle updates, and a separately authorized real-provider smoke result.
 
-- [ ] **Step 1: Write the real-model smoke before running it**
+- [x] **Step 1: Write the real-model smoke before running it**
 
 The opt-in test must execute one embedding and one grounded answer through LiteLLM and assert public aliases plus citations:
 
@@ -1739,7 +1741,7 @@ async def test_real_athena_aliases_produce_grounded_cited_answer(runtime) -> Non
 
 Emit only alias, success/failure and monotonic elapsed milliseconds. Do not log query, original text, answer, vector, endpoint, request ID, provider model or credential.
 
-- [ ] **Step 2: Run the complete deterministic gate from a clean process state**
+- [x] **Step 2: Run the complete deterministic gate from a clean process state**
 
 ```sh
 make bootstrap
@@ -1751,9 +1753,9 @@ make demo-e2e
 git diff --check
 ```
 
-Expected: all commands exit `0`, Backend reports no unexpected skips inside selected integration suites, Web has no warnings, generated contracts are unchanged, and Playwright proves upload/answer/citation/retry/delete/persistence on real local middleware.
+Expected: all commands exit `0`, Backend reports no unexpected skips inside selected integration suites, Web has no warnings, generated contracts are unchanged, and Playwright proves upload/answer/citation/retry/delete plus document/ingestion/index persistence on real local middleware. The rendered answer remains page-local state: refresh clears it, no answer-history recovery API is part of this Demo, and the user can ask again from persisted `ready` sources.
 
-- [ ] **Step 3: Run the real-provider smoke only with explicit local credentials**
+- [x] **Step 3: Run the real-provider smoke only with explicit local credentials**
 
 ```sh
 set -a
@@ -1765,11 +1767,13 @@ TAP_RUN_ATHENA_REAL_MODEL_SMOKE=1 uv run --project apps/backend pytest \
 
 If credentials are not configured, record `not-run: credentials not provided` in the review and do not imply a real-provider GREEN. If configured, require the test to pass; provider `401`, wrong dimension, malformed claims or unresolvable citations are failures, not skips.
 
-- [ ] **Step 4: Perform manual visual and keyboard acceptance**
+完成记录：已检查本 checkout 的 credential 前置条件，`.env` 不存在，故按本步骤规则未调用 provider，并记录 `not-run: credentials not provided`。本 checkbox 只表示凭据检查与必需记录已完成，不表示 real-provider GREEN。
+
+- [x] **Step 4: Perform manual visual and keyboard acceptance**
 
 Open the loopback Web at desktop and 390px widths. Verify the approved Athena visual hierarchy, tab order, focus rings, upload keyboard flow, source checkbox labels, inline citation focus, right-panel close/return focus, six-stage statuses, Chinese/English wrapping and no horizontal overflow. Save screenshots only to the review evidence directory; commit screenshots only if they materially clarify a documented UI change.
 
-- [ ] **Step 5: Update current developer and architecture documentation**
+- [x] **Step 5: Update current developer and architecture documentation**
 
 Make these statements exact and non-overlapping:
 
@@ -1785,9 +1789,9 @@ contracts:     document statuses/stages/routes/Problem Details, answer claim spa
 roadmap/Phase1: credit only reused capabilities; do not mark complete Chat/SSE/auth/Trace tasks done.
 ```
 
-README must include supported formats, 25 MiB, 50/20 limits, model environment names, persistence across refresh/restart/down-up, `demo-reset` danger, deterministic E2E versus real-model smoke, and troubleshooting for each `demo-check` component.
+README must include supported formats, 25 MiB, 50/20 limits, model environment names, document/ingestion/index persistence across refresh/restart/down-up, the page-local answer/no-history boundary, `demo-reset` danger, deterministic E2E versus real-model smoke, and troubleshooting for each `demo-check` component.
 
-- [ ] **Step 6: Write the evidence review and apply lifecycle rules**
+- [x] **Step 6: Write the evidence review and apply lifecycle rules**
 
 The review contains a table for contract generation, Backend unit/contract/integration, Web component/build, four-format Playwright, duplicate/concurrency, three fail-once stages, source exclusion, citation tamper, delete cleanup, app restart, `demo-down/up` persistence, loopback binding and real-model smoke. Record the exact command, exit status, test count, skipped count and sanitized evidence artifact hash for each run.
 
@@ -1804,7 +1808,7 @@ all existing ADR statuses and semantics: unchanged
 
 If the optional real-model smoke is not run, RFC-005 may still be implemented only when the review explicitly says the runnable route is configured but provider smoke is unverified; never label it real-model validated.
 
-- [ ] **Step 7: Validate documentation and full diff**
+- [x] **Step 7: Validate documentation and full diff**
 
 ```sh
 rg --files README.md AGENTS.md docs apps scripts contracts
@@ -1817,10 +1821,13 @@ git diff --exit-code -- contracts/ apps/web/src/shared/api/generated/
 
 Expected: no stale documentation-only claim, lifecycle metadata follows governance, relative links resolve in the rendered preview, and regeneration remains clean.
 
-- [ ] **Step 8: Commit the accepted implementation evidence**
+- [x] **Step 8: Commit the accepted implementation evidence**
+
+fresh whole-branch review 已以 Critical/Important/Minor 全部为 `0` 的 `APPROVED` 结束；root 通过本次提交完成验收证据回填。Task 10 implementer 未 commit、push 或 merge，root 也未 push 或 merge。
 
 ```sh
-git add README.md AGENTS.md apps/backend/tests/smoke docs
+git add README.md AGENTS.md apps/backend/tests/smoke \
+  apps/web/vite.config.ts apps/web/src/shared/testing/productionBuild.test.ts docs
 git commit -m "docs: record athena demo acceptance"
 ```
 

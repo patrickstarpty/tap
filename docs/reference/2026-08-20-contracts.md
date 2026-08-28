@@ -895,3 +895,62 @@ GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 - Markdown、代码块、链接和 source preview 必须经过 allowlist sanitizer 与安全 URL resolver；禁止模型生成的任意 URL 直接成为可点击引用。
 
 页面行为与验收标准见 [TAP Knowledge Chat](../architecture/2026-08-21-knowledge-chat-ui.md)。
+
+## 10. Athena 本地 Document/Answer/Citation HTTP Contract
+
+Athena 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为 Phase 1 stub，当前只返回 `501 turn-not-implemented`，不计入 Athena 九个已实现操作。
+
+### 10.1 文档与 ingestion 状态
+
+```typescript
+type DocumentStatus = "queued" | "processing" | "ready" | "failed" | "deleting";
+type IngestionStage =
+  | "stored"
+  | "parsing"
+  | "chunking"
+  | "embedding"
+  | "publishing"
+  | "ready";
+type DocumentStageState = "pending" | "processing" | "completed" | "failed";
+```
+
+- `queued` 表示 document/revision/job/Outbox 已持久化但 worker 尚未推进；`processing` 必须带当前闭合 stage；`ready` 才允许进入回答来源；`failed` 必须同时给出有界 `errorCode` 与最多 240 字符的安全 `errorSummary`；`deleting` 在新检索前即不可选。
+- `DocumentDetail.stages` 按六阶段返回 `1..6` 个 snapshot；每项包含 stage/state，可选 `completedAt`，失败项可带最多 64 字符的公共错误码。`normalizedPreview` 最多 4,000 个 Unicode 字符。
+- 支持 media type 只有 `application/pdf`、DOCX Open XML、`text/markdown` 与 `text/plain`；单文件最多 25 MiB、最多 50 份未删除文档。列表一页最多 50 项，回答 `resourceRefs` 最多 20 项。
+
+### 10.2 九个已实现操作与响应状态
+
+| 操作 | 成功 | 公开错误状态 |
+| --- | --- | --- |
+| `GET /health/live` | `200 LiveHealth` | 无业务错误 |
+| `GET /health/ready` | `200 ReadyHealth`（依赖失败仍以 body `unready` 表示） | 无业务错误 |
+| `POST /v1/knowledge/documents` | `202 DocumentAccepted` | `400`, `413`, `422`, `429`, `503` |
+| `GET /v1/knowledge/documents?cursor=&limit=` | `200 DocumentPage` | `422`, `503` |
+| `GET /v1/knowledge/documents/{document_id}` | `200 DocumentDetail` | `404`, `422`, `503` |
+| `POST /v1/knowledge/documents/{document_id}/retry` | `202 DocumentAccepted` | `404`, `409`, `422`, `503` |
+| `DELETE /v1/knowledge/documents/{document_id}` | `204`，无 body | `404`, `409`, `422`, `503` |
+| `POST /v1/knowledge/answers` | `200 RetrievalAnswerResponse` | `400`, `409`, `422`, `503` |
+| `GET /v1/citations/{citation_id}` | `200 CitationPreview` | `404`, `422`, `503` |
+
+除 `204` 外，错误统一使用 RFC 9457 `application/problem+json`，闭合字段为 HTTPS `type`、非空 `title`、HTTP `status`、非空 `detail` 与可选 `instance`；未知字段被拒绝。九个已实现操作的稳定问题类型（`type` URL 的末段 slug）闭合为 `request-validation`、`knowledge-runtime-unavailable`、`search-unavailable`、`search-execution-rejected`、`unsupported-document`、`empty-document`、`document-too-large`、`document-not-found`、`document-not-retryable`、`document-state-changed`、`document-limit-reached`、`source-selection-required`、`unsupported-answer-control`、`embedding-unavailable`、`answer-snapshot-unavailable`、`citation-stale`、`citation-unavailable`；保留的 Phase 1 Chat stub 另使用 `turn-not-implemented`。公共 problem 不包含堆栈、provider 原始错误、credential、endpoint、Blob locator、Milvus target 或内部 filter。
+
+### 10.3 回答 claim 与 citation 边界
+
+- `RetrievalAnswerResponse` 最多返回 20 个 Citation。非拒答回答必须有 claim，且每个 claim 的 `citationIds` 为 `1..20` 个非空 ID，并全部属于同一响应的 Citation 集合。
+- `answerStart`/`answerEnd` 是 Python/Unicode code-point offset，不是 UTF-8 byte 或 JavaScript UTF-16 code-unit offset；范围为 `0..2,147,483,647`。`text` 必须恰好等于 `answer[answerStart:answerEnd]`，占据唯一、完整、以两个换行分隔的段落。claim 按回答顺序排列、不能重叠，也不能跨段落。
+- 每个回答 Citation 固定 `citationId/evidenceLabel/chunkId/logicalChunkId/source/chunkContentHash/contentRole`，可选 `derivedFromChunkIds`；`source` 绑定 `sourceId/sourceType/revisionKind/revision/sourceContentHash/StructuralAnchor`。物理 collection、Blob URI 和 raw provider model 不进入响应。
+- `CitationPreview` 重新核对回答快照、当前 document revision、source/chunk hash 与 anchor；失配返回 `404 citation-stale`，不会用相似内容兜底。preview 的 `citationId`/`documentId` 最多 64 字符、`revisionId` 最多 128、`filename` 最多 255；两个 hash 都是精确 `sha256:` 加 64 位小写十六进制。`quote` 为 `1..4,000` 字符，`prefix` 与 `suffix` 各 `0..500` 字符。document anchor 的 heading path 最多 32 段，page 从 1 开始，bbox 精确 4 个有限数，字符 offsets 从 0 开始且有序。
+
+### 10.4 Readiness Contract
+
+`GET /health/ready` 总是覆盖以下五个组件且各出现一次；全为 `ok` 时 body 为 `ready`，任一失败则为 `unready`。失败项必须返回与组件精确匹配的 remediation code，成功项不返回 remediation：
+
+| 组件 | 实际检查 | 失败 remediation |
+| --- | --- | --- |
+| `mysql` | `SELECT 1` 与 Alembic head | `start-mysql` |
+| `redis` | `PING` | `start-redis` |
+| `blob` | originals/artifacts 两个 private container | `start-blob` |
+| `milvus` | alias/schema/model/dimension 绑定及有界读探针 | `start-milvus` |
+| `models` | LiteLLM `/v1/models` 同时包含 `athena-chat` 与 `athena-embedding` | `configure-models` |
+
+本节的规范性生成物是 [OpenAPI](../../contracts/openapi/api.json) 与 Web generated client/type；修改 Python DTO 或路由后必须运行 `make contracts` 并要求生成 diff 可解释、再次生成无 diff。

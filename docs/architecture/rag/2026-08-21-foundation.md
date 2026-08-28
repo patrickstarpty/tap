@@ -146,6 +146,18 @@ Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 
 
 首版可以共享一个 Python package 和数据库迁移，但使用独立 entrypoint/Deployment。FastAPI 在线 handler 只做异步 I/O；parser/OCR/AST、本地模型和大对象处理不在 event loop 或进程内 Background Task 运行。完整性能、容量与 AKS 边界见 [总体技术架构](../2026-08-20-overview.md#11-可靠性性能与容量)。
 
+### 3.4 Athena 本地 `doc` 切片的已交付能力
+
+Athena 本地 Demo 已经交付一组可被完整 Phase 1 复用、但范围严格受限的 RAG 能力：
+
+- provider-neutral Knowledge HTTP/API、Search/Model/Citation ports 与公共 OpenAPI/TypeScript 生成链；
+- PDF/DOCX/MD/TXT 文档的有界上传、稳定 revision/chunk 身份、typed parse/chunk、可恢复 job/lease/retry/delete 和 MySQL Outbox/Redis 唤醒；
+- 原文件及 normalized/chunk/embedding artifact 的 private Azurite 持久化，以及本地 Milvus 单一 `doc` family 的 alias、schema/model/dimension 绑定、发布/删除/重建投影；
+- fixed demo policy 下的来源限定检索、grounded answer、whole-paragraph claim spans、citation snapshot 与 revision/hash/anchor 原文解析；
+- 浏览器刷新、应用进程重启和普通 Compose `down/up` 后恢复文档目录与来源可用状态、ingestion/index 状态和 citation resolver 所需的持久事实。当前渲染回答只在页面内存中，刷新会清空；本版不提供历史回答恢复，但可基于持久的 `ready` 来源重新提问。
+
+该切片不包含 `code`、`bdd`、`failure` family，也没有 Azure AI Search 四索引、Entra/Project ACL、classification/environment security trimming、Conversation/SSE/Trace/Feedback、OCR 或 AKS 生产治理。它证明同一领域与端口边界可以承载本地来源优先路径；本文件其余章节仍是 active 企业 Phase 1 的规范性目标，不能用本地 deterministic E2E 或 Milvus `doc` GREEN 替代其出口标准。
+
 ## 4. 四索引设计
 
 ### 4.1 公共字段
