@@ -50,6 +50,12 @@ NEXT_STAGE = {
     JobStage.EMBEDDING: JobStage.PUBLISHING,
     JobStage.PUBLISHING: JobStage.READY,
 }
+_INJECTABLE_STAGES = frozenset({JobStage.PARSING, JobStage.EMBEDDING, JobStage.PUBLISHING})
+_INJECTED_STAGE_CODES = {
+    JobStage.PARSING: "parser-unavailable",
+    JobStage.EMBEDDING: "embedding-unavailable",
+    JobStage.PUBLISHING: "index-unavailable",
+}
 
 
 class WorkerClock(Protocol):
@@ -64,6 +70,25 @@ class SystemWorkerClock:
 
     async def sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
+
+
+class IngestionStageHook(Protocol):
+    async def before_stage(self, stage: JobStage) -> None: ...
+
+
+class IngestionStageFailure(Exception):
+    """Closed provider-neutral request to fail one exact ingestion stage safely."""
+
+    def __init__(self, stage: JobStage) -> None:
+        if stage not in _INJECTABLE_STAGES:
+            raise ValueError("stage failure must use one injectable ingestion stage")
+        self.stage = stage
+        super().__init__(stage.value)
+
+
+class _NoopIngestionStageHook:
+    async def before_stage(self, stage: JobStage) -> None:
+        del stage
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +130,7 @@ class IngestionWorker:
         embedding_dimension: int,
         index_version: str,
         clock: WorkerClock | None = None,
+        stage_hook: IngestionStageHook | None = None,
     ) -> None:
         if not isinstance(worker_id, str) or not worker_id.strip():
             raise ValueError("worker_id must be nonblank")
@@ -125,6 +151,7 @@ class IngestionWorker:
         self._embedding_model_alias = embedding_model_alias
         self._embedding_dimension = embedding_dimension
         self._index_version = index_version
+        self._stage_hook = stage_hook or _NoopIngestionStageHook()
 
     async def run_once(self, limit: int) -> WorkerRun:
         if type(limit) is not int or not 1 <= limit <= MAX_WORKER_BATCH:
@@ -197,6 +224,16 @@ class IngestionWorker:
                 if job.kind is JobKind.DELETION:
                     await self._run_deletion_stage(job, work)
                 else:
+                    if stage in _INJECTABLE_STAGES:
+                        try:
+                            await self._stage_hook.before_stage(stage)
+                        except asyncio.CancelledError:
+                            raise
+                        except (IngestionStageFailure, Exception):
+                            raise _SafeStageError(
+                                stage,
+                                _INJECTED_STAGE_CODES[stage],
+                            ) from None
                     await self._run_ingestion_stage(job, work)
             except JobLeaseLost as error:
                 raise _StageLeaseLost(job.job_id, stage) from error

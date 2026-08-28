@@ -9,8 +9,12 @@ import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 
-from tap.modules.knowledge.adapters.milvus.transport import MilvusCollectionDescriptor
+from tap.modules.knowledge.adapters.milvus.transport import (
+    CollectionBaseSchemaMismatch,
+    MilvusCollectionDescriptor,
+)
 from tap.modules.knowledge.domain.documents import (
     MAX_CHUNKS_PER_DOCUMENT,
     PARSER_VERSION,
@@ -156,6 +160,56 @@ class RebuildRejected(IndexReconciliationFailed):
         super().__init__("Athena index rebuild failed before activation")
 
 
+class _IndexTargetStage(StrEnum):
+    AUTHORITY = "authority"
+    DISCOVERY = "discovery"
+    COLLECTION_CREATE = "collection-create"
+    COLLECTION_SCHEMA_OBSERVE = "collection-schema-observe"
+    COLLECTION_SCHEMA_ENVELOPE = "collection-schema-envelope"
+    COLLECTION_SCHEMA_PROPERTIES = "collection-schema-properties"
+    COLLECTION_SCHEMA_ALIASES = "collection-schema-aliases"
+    COLLECTION_SCHEMA_IDENTITY = "collection-schema-identity"
+    COLLECTION_SCHEMA_METADATA = "collection-schema-metadata"
+    COLLECTION_SCHEMA_FIELDS = "collection-schema-fields"
+    COLLECTION_SCHEMA_FUNCTIONS = "collection-schema-functions"
+    COLLECTION_SCHEMA_VECTOR = "collection-schema-vector"
+    COLLECTION_SCHEMA_BINDING = "collection-schema-binding"
+    INDEXES = "indexes"
+    LOAD = "load"
+    GRANTS = "grants"
+    ALIAS = "alias"
+    AUTHORITY_SYNC = "authority-sync"
+    CLEANUP = "cleanup"
+
+
+class _IndexTargetStageTracker:
+    __slots__ = ("_stage",)
+
+    def __init__(self) -> None:
+        self._stage = _IndexTargetStage.AUTHORITY
+
+    @property
+    def stage(self) -> _IndexTargetStage:
+        return self._stage
+
+    def set(self, stage: _IndexTargetStage) -> None:
+        if not isinstance(stage, _IndexTargetStage):
+            raise TypeError("Athena Milvus target stage is outside the closed set")
+        self._stage = stage
+
+
+class IndexTargetProvisioningFailed(IndexUnavailable):
+    """Safe, closed failure discriminator for the exact target ensure operation."""
+
+    __slots__ = ("stage",)
+
+    def __init__(self, stage: _IndexTargetStage) -> None:
+        if not isinstance(stage, _IndexTargetStage):
+            raise TypeError("Athena Milvus target failure requires a closed stage")
+        self.stage = stage
+        super().__init__("Athena Milvus target provisioning failed")
+
+
 class MilvusDocumentIndex:
     """A durable mutable projection with exact post-write reconciliation."""
 
@@ -177,15 +231,16 @@ class MilvusDocumentIndex:
         self._coordinator = coordinator
 
     async def ensure_target(self) -> IndexTargetReceipt:
+        stage = _IndexTargetStageTracker()
         try:
             async with self._coordinator.mutation(self._config.alias) as authority:
-                return await self._ensure_target_locked(authority)
+                return await self._ensure_target_locked(authority, stage)
         except asyncio.CancelledError:
             raise
-        except IndexUnavailable:
+        except IndexTargetProvisioningFailed:
             raise
-        except Exception as error:
-            raise IndexUnavailable("Athena Milvus target provisioning failed") from error
+        except Exception:
+            raise IndexTargetProvisioningFailed(stage.stage) from None
 
     async def upsert_revision(
         self,
@@ -319,34 +374,58 @@ class MilvusDocumentIndex:
     async def _ensure_target_locked(
         self,
         authority: ProjectionMutationLease,
+        stage: _IndexTargetStageTracker,
     ) -> IndexTargetReceipt:
+        if not isinstance(stage, _IndexTargetStageTracker):
+            raise TypeError("Athena Milvus target ensure requires a per-call stage tracker")
         physical = self._config.physical_collection
-        alias_target = await self._provisioner.describe_alias(self._config.alias)
+        stage.set(_IndexTargetStage.DISCOVERY)
+        alias_target = await self._reader.describe_alias(self._config.alias)
         if alias_target is None:
-            if not await self._provisioner.collection_exists(physical):
+            if not await self._reader.collection_exists(physical):
+                stage.set(_IndexTargetStage.COLLECTION_CREATE)
                 await self._provisioner.create_collection(physical, self._schema())
-            await self._require_base_descriptor(physical)
+            stage.set(_IndexTargetStage.COLLECTION_SCHEMA_OBSERVE)
+            try:
+                await self._require_base_descriptor(physical)
+            except CollectionBaseSchemaMismatch as error:
+                stage.set(_IndexTargetStage(f"collection-schema-{error.component.value}"))
+                raise
+            except IndexUnavailable:
+                stage.set(_IndexTargetStage.COLLECTION_SCHEMA_BINDING)
+                raise
+            stage.set(_IndexTargetStage.INDEXES)
             try:
                 await self._require_descriptor(physical)
             except Exception:
                 await self._provisioner.create_indexes(physical, self._schema())
                 await self._require_descriptor(physical)
+            stage.set(_IndexTargetStage.LOAD)
             await self._require_loaded(physical)
+            stage.set(_IndexTargetStage.GRANTS)
             await self._ensure_exact_grants(physical)
+            stage.set(_IndexTargetStage.ALIAS)
             try:
                 await self._provisioner.create_alias(self._config.alias, physical)
             except Exception:
-                if await self._provisioner.describe_alias(self._config.alias) != physical:
+                if await self._reader.describe_alias(self._config.alias) != physical:
                     raise
-            alias_target = await self._provisioner.describe_alias(self._config.alias)
+            alias_target = await self._reader.describe_alias(self._config.alias)
+        stage.set(_IndexTargetStage.ALIAS)
         self._require_target_name(alias_target)
         assert isinstance(alias_target, str)
-        if not await self._provisioner.collection_exists(alias_target):
+        stage.set(_IndexTargetStage.DISCOVERY)
+        if not await self._reader.collection_exists(alias_target):
             raise IndexUnavailable("Athena alias target does not exist")
+        stage.set(_IndexTargetStage.INDEXES)
         await self._require_descriptor(alias_target)
+        stage.set(_IndexTargetStage.LOAD)
         await self._require_loaded(alias_target)
+        stage.set(_IndexTargetStage.GRANTS)
         await self._ensure_exact_grants(alias_target)
+        stage.set(_IndexTargetStage.AUTHORITY_SYNC)
         await self._synchronize_authority(authority, alias_target)
+        stage.set(_IndexTargetStage.CLEANUP)
         await self._reconcile_cleanup_locked(authority, alias_target, limit=1)
         return IndexTargetReceipt(alias_target, self._config.alias)
 
@@ -374,9 +453,11 @@ class MilvusDocumentIndex:
             await self._activate_build_resolved(authority, ownership)
 
     async def _current_target_locked(self, authority: ProjectionMutationLease) -> str:
-        target = await self._provisioner.describe_alias(self._config.alias)
+        target = await self._reader.describe_alias(self._config.alias)
         if target is None:
-            target = (await self._ensure_target_locked(authority)).physical_collection
+            target = (
+                await self._ensure_target_locked(authority, _IndexTargetStageTracker())
+            ).physical_collection
         self._require_target_name(target)
         assert isinstance(target, str)
         await self._require_descriptor(target)
@@ -414,10 +495,10 @@ class MilvusDocumentIndex:
                 raise IndexUnavailable("Athena owned cleanup unexpectedly targets active alias")
             if not await authority.verify_cleanup(ownership):
                 raise IndexUnavailable("Athena projection cleanup ownership changed")
-            if await self._provisioner.collection_aliases(physical):
+            if await self._reader.describe_alias(self._config.alias) == physical:
                 facts.append(f"cleanup_still_aliased:{physical}")
                 continue
-            if await self._provisioner.collection_exists(physical):
+            if await self._reader.collection_exists(physical):
                 await self._provisioner.revoke_collection(physical, "tap_reader")
                 await self._provisioner.revoke_collection(physical, "tap_writer")
                 await self._provisioner.drop_collection(physical)
@@ -503,9 +584,9 @@ class MilvusDocumentIndex:
             try:
                 await self._provisioner.alter_alias(self._config.alias, fresh)
             except Exception:
-                if await self._provisioner.describe_alias(self._config.alias) != fresh:
+                if await self._reader.describe_alias(self._config.alias) != fresh:
                     raise
-            if await self._provisioner.describe_alias(self._config.alias) != fresh:
+            if await self._reader.describe_alias(self._config.alias) != fresh:
                 raise IndexReconciliationFailed("Athena alias switch did not persist")
 
             old_ownership = await authority.ownership(old)
@@ -542,7 +623,7 @@ class MilvusDocumentIndex:
         except BaseException:
             _, recorded = await authority.state()
             actual = await authority.ownership(ownership.physical_collection)
-            alias_target = await self._provisioner.describe_alias(self._config.alias)
+            alias_target = await self._reader.describe_alias(self._config.alias)
             if (
                 recorded == ownership.physical_collection
                 and actual is not None
@@ -578,11 +659,15 @@ class MilvusDocumentIndex:
             raise IndexUnavailable("Athena alias targets an untrusted physical collection")
 
     async def _require_descriptor(self, physical: str) -> None:
-        descriptor = await self._provisioner.describe_collection(physical)
+        descriptor = await self._reader.describe_collection_schema(
+            physical,
+            self._schema(),
+        )
         self._require_descriptor_value(descriptor)
+        await self._provisioner.validate_collection_indexes(physical, self._schema())
 
     async def _require_base_descriptor(self, physical: str) -> None:
-        descriptor = await self._provisioner.describe_collection_schema(
+        descriptor = await self._reader.describe_collection_schema(
             physical,
             self._schema(),
         )
@@ -921,7 +1006,7 @@ class MilvusDocumentIndex:
         facts: list[str] = []
         alias_target: str | None = None
         try:
-            alias_target = await self._provisioner.describe_alias(self._config.alias)
+            alias_target = await self._reader.describe_alias(self._config.alias)
         except Exception:
             facts.append(f"alias_state_unknown:{self._config.alias}")
         if alias_target == fresh:
@@ -930,9 +1015,9 @@ class MilvusDocumentIndex:
                 try:
                     await self._provisioner.alter_alias(self._config.alias, old)
                 except Exception:
-                    if await self._provisioner.describe_alias(self._config.alias) != old:
+                    if await self._reader.describe_alias(self._config.alias) != old:
                         raise
-                if await self._provisioner.describe_alias(self._config.alias) != old:
+                if await self._reader.describe_alias(self._config.alias) != old:
                     raise IndexReconciliationFailed("Athena old alias restoration did not persist")
                 alias_target = old
             except Exception:
@@ -957,11 +1042,11 @@ class MilvusDocumentIndex:
                     raise IndexReconciliationFailed("Athena owned partial cleanup receipt changed")
                 await self._provisioner.revoke_collection(fresh, "tap_reader")
                 await self._provisioner.revoke_collection(fresh, "tap_writer")
-                if await self._provisioner.collection_aliases(fresh):
+                if await self._reader.describe_alias(self._config.alias) == fresh:
                     raise IndexReconciliationFailed(
                         "Athena owned partial collection is still aliased"
                     )
-                if await self._provisioner.collection_exists(fresh):
+                if await self._reader.collection_exists(fresh):
                     await self._provisioner.drop_collection(fresh)
                 await authority.complete_owned_cleanup(current_ownership)
                 facts.append(f"dropped_owned_physical:{fresh}")

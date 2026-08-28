@@ -500,19 +500,25 @@ def build_worker(
     *,
     parser: Parser | None = None,
     chunker: Chunker | None = None,
+    stage_hook: object | None = None,
 ) -> IngestionWorker:
-    return IngestionWorker(
-        repository=repository,
-        artifacts=artifacts,
-        parser=parser or Parser(),
-        chunker=chunker or Chunker(),
-        embeddings=embeddings,
-        index=index,
-        clock=clock,
-        worker_id="worker-a",
-        embedding_model_alias="athena-embedding",
-        embedding_dimension=3,
-        index_version="athena-doc-v1",
+    values = {
+        "repository": repository,
+        "artifacts": artifacts,
+        "parser": parser or Parser(),
+        "chunker": chunker or Chunker(),
+        "embeddings": embeddings,
+        "index": index,
+        "clock": clock,
+        "worker_id": "worker-a",
+        "embedding_model_alias": "athena-embedding",
+        "embedding_dimension": 3,
+        "index_version": "athena-doc-v1",
+    }
+    if stage_hook is not None:
+        values["stage_hook"] = stage_hook
+    return IngestionWorker(  # type: ignore[arg-type]
+        **values,
     )
 
 
@@ -559,6 +565,103 @@ async def test_ingestion_persists_every_stage_and_ready_projection() -> None:
             repository.work.embeddings_locator,
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_optional_stage_hook_observes_only_three_provider_stages_in_order() -> None:
+    worker, repository, artifacts, embeddings, index, clock = worker_parts()
+    observed: list[JobStage] = []
+
+    class Hook:
+        async def before_stage(self, stage: JobStage) -> None:
+            observed.append(stage)
+
+    worker = build_worker(
+        repository,
+        artifacts,
+        embeddings,
+        index,
+        clock,
+        stage_hook=Hook(),
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert observed == [JobStage.PARSING, JobStage.EMBEDDING, JobStage.PUBLISHING]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stage", "code", "commits", "embedding_calls"),
+    [
+        (JobStage.PARSING, "parser-unavailable", [JobStage.STORED], 0),
+        (
+            JobStage.EMBEDDING,
+            "embedding-unavailable",
+            [JobStage.STORED, JobStage.PARSING, JobStage.CHUNKING],
+            0,
+        ),
+        (
+            JobStage.PUBLISHING,
+            "index-unavailable",
+            [JobStage.STORED, JobStage.PARSING, JobStage.CHUNKING, JobStage.EMBEDDING],
+            1,
+        ),
+    ],
+)
+async def test_stage_hook_fails_before_stage_io_once_and_retry_resumes_checkpoint(
+    stage: JobStage,
+    code: str,
+    commits: list[JobStage],
+    embedding_calls: int,
+) -> None:
+    from tap.modules.knowledge.application.ingestion import IngestionStageFailure
+
+    worker, repository, artifacts, embeddings, index, clock = worker_parts()
+
+    class FailOnceHook:
+        consumed = False
+
+        async def before_stage(self, current: JobStage) -> None:
+            if current is stage and not self.consumed:
+                self.consumed = True
+                raise IngestionStageFailure(stage)
+
+    hook = FailOnceHook()
+    worker = build_worker(
+        repository,
+        artifacts,
+        embeddings,
+        index,
+        clock,
+        stage_hook=hook,
+    )
+
+    first = await worker.run_once(limit=1)
+
+    assert first.failed == 1
+    assert repository.failed is not None
+    assert repository.failed.expected_stage is stage
+    assert repository.failed.error_code == code
+    assert repository.commits == commits
+    assert embeddings.calls == embedding_calls
+    assert index.upsert_calls == 0
+
+    repository.failed = None
+    repository.pending = True
+    resumed = build_worker(
+        repository,
+        artifacts,
+        embeddings,
+        index,
+        clock,
+        stage_hook=hook,
+    )
+    second = await resumed.run_once(limit=1)
+
+    assert second.ready == 1
+    assert repository.document_status is DocumentState.READY
 
 
 @pytest.mark.asyncio

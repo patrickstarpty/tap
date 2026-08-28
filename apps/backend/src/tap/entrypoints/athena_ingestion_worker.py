@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-import math
 import os
 import signal
-import socket
+import sys
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from typing import Protocol, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol, cast
 
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.platform.messaging.redis_wakeup import WakeupConsumer
+
+if TYPE_CHECKING:
+    from tap.entrypoints.athena_runtime import AthenaSettings
 
 
 class BoundedWorker(Protocol):
@@ -26,8 +27,8 @@ class AsyncCloseable(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class WorkerSettings:
-    database_url: str
-    redis_url: str
+    database_url: str = field(repr=False)
+    redis_url: str = field(repr=False)
     job_batch_size: int
     poll_seconds: float
     wakeup_seconds: float
@@ -43,39 +44,33 @@ class WorkerRuntime:
     resources: tuple[AsyncCloseable, ...] = ()
 
 
-RuntimeFactory = Callable[[WorkerSettings], Awaitable[WorkerRuntime]]
+RuntimeFactory = Callable[["AthenaSettings"], Awaitable[WorkerRuntime]]
 SignalInstaller = Callable[[asyncio.Event], Callable[[], None] | None]
 
 
 def load_settings(environment: Mapping[str, str] | None = None) -> WorkerSettings:
-    values = os.environ if environment is None else environment
-    batch_size = int(values.get("TAP_ATHENA_JOB_BATCH_SIZE", "10"))
-    if not 1 <= batch_size <= 50:
-        raise ValueError("TAP_ATHENA_JOB_BATCH_SIZE must be between 1 and 50")
-    poll_seconds = _bounded_seconds(
-        values.get("TAP_ATHENA_POLL_SECONDS", "1"), "TAP_ATHENA_POLL_SECONDS"
-    )
-    wakeup_seconds = _bounded_seconds(
-        values.get("TAP_ATHENA_WAKEUP_SECONDS", "1"), "TAP_ATHENA_WAKEUP_SECONDS"
-    )
-    worker_id = values.get("TAP_ATHENA_WORKER_ID", socket.gethostname())
-    if not worker_id.strip():
-        raise ValueError("TAP_ATHENA_WORKER_ID must be nonblank")
-    stream_name = values.get("TAP_REDIS_COMMAND_STREAM", "tap:commands")
-    if not stream_name.strip():
-        raise ValueError("TAP_REDIS_COMMAND_STREAM must be nonblank")
+    from tap.entrypoints.athena_runtime import AthenaSettings
+
+    values = dict(os.environ) if environment is None else dict(environment)
+    return worker_settings_from_athena(AthenaSettings.from_mapping(values))
+
+
+def worker_settings_from_athena(settings: AthenaSettings) -> WorkerSettings:
+    """Derive loop controls from the one fully validated process snapshot."""
+
+    from tap.entrypoints.athena_runtime import AthenaSettings
+
+    if not isinstance(settings, AthenaSettings):
+        raise TypeError("worker settings require validated Athena settings")
     return WorkerSettings(
-        database_url=values.get(
-            "TAP_DATABASE_URL",
-            "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-        ),
-        redis_url=values.get("TAP_REDIS_URL", "redis://127.0.0.1:6379/0"),
-        job_batch_size=batch_size,
-        poll_seconds=poll_seconds,
-        wakeup_seconds=wakeup_seconds,
-        stream_name=stream_name,
+        database_url=settings.database_url,
+        redis_url=settings.redis_url,
+        job_batch_size=settings.job_batch_size,
+        poll_seconds=settings.poll_seconds,
+        wakeup_seconds=settings.poll_seconds,
+        stream_name=settings.redis_stream,
         group_name="athena-ingestion",
-        worker_id=worker_id,
+        worker_id=settings.worker_id,
     )
 
 
@@ -136,8 +131,13 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
             _raise_collected_errors("Athena signal installation failed", errors)
 
     def remove_handlers() -> None:
-        for signum in installed:
-            loop.remove_signal_handler(signum)
+        errors: list[BaseException] = []
+        for signum in reversed(installed):
+            try:
+                loop.remove_signal_handler(signum)
+            except BaseException as error:
+                errors.append(error)
+        _raise_collected_errors("Athena signal removal failed", errors)
 
     return remove_handlers
 
@@ -145,13 +145,13 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
 async def run(
     *,
     runtime_factory: RuntimeFactory,
-    environment: Mapping[str, str] | None = None,
+    settings: AthenaSettings,
     signal_installer: SignalInstaller = install_signal_handlers,
     max_iterations: int | None = None,
 ) -> None:
     """Own one complete worker process lifecycle around an injected composition root."""
 
-    settings = load_settings(environment)
+    worker_settings = worker_settings_from_athena(settings)
     runtime = await runtime_factory(settings)
     stop = asyncio.Event()
     errors: list[BaseException] = []
@@ -161,7 +161,7 @@ async def run(
         await run_worker_loop(
             worker=runtime.worker,
             wakeups=runtime.wakeups,
-            settings=settings,
+            settings=worker_settings,
             stop=stop,
             max_iterations=max_iterations,
         )
@@ -190,27 +190,28 @@ def _raise_collected_errors(message: str, errors: list[BaseException]) -> None:
 
 
 def main(environment: Mapping[str, str] | None = None) -> None:
-    values = os.environ if environment is None else environment
-    factory_path = values.get("TAP_ATHENA_RUNTIME_FACTORY")
-    if factory_path is None or not factory_path.strip():
-        raise RuntimeError(
-            "TAP_ATHENA_RUNTIME_FACTORY must name a Task 5 composition factory as module:attribute"
+    from tap.entrypoints.athena_runtime import AthenaSettings, create_worker_runtime
+    from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
+
+    values = dict(os.environ) if environment is None else dict(environment)
+    settings = AthenaSettings.from_mapping(values)
+    with suppress_pymilvus_rpc_logging():
+        asyncio.run(run(runtime_factory=create_worker_runtime, settings=settings))
+
+
+def cli(environment: Mapping[str, str] | None = None) -> int:
+    try:
+        main(environment)
+    except KeyboardInterrupt:
+        return 130
+    except BaseException:
+        print(
+            "Athena ingestion worker failed; check local provider configuration.",
+            file=sys.stderr,
         )
-    module_name, separator, attribute_name = factory_path.partition(":")
-    if not separator or not module_name or not attribute_name:
-        raise RuntimeError("TAP_ATHENA_RUNTIME_FACTORY must use module:attribute syntax")
-    factory = getattr(importlib.import_module(module_name), attribute_name, None)
-    if not callable(factory):
-        raise RuntimeError("TAP_ATHENA_RUNTIME_FACTORY must resolve to a callable")
-    asyncio.run(run(runtime_factory=cast(RuntimeFactory, factory), environment=values))
-
-
-def _bounded_seconds(value: str, name: str) -> float:
-    seconds = float(value)
-    if not math.isfinite(seconds) or not 0 < seconds <= 60:
-        raise ValueError(f"{name} must be between 0 and 60")
-    return seconds
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(cli())

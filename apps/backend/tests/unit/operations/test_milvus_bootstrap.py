@@ -819,6 +819,88 @@ def sdk_admin(client: RoleGrantInventoryClient) -> PyMilvusAdmin:
     )
 
 
+async def test_sdk_admin_reconciles_persisted_grants_in_the_configured_database() -> None:
+    physical = "kb_doc_v1_corpus_fixture_v1"
+
+    class DatabaseScopedClient(RoleGrantInventoryClient):
+        def __init__(self) -> None:
+            super().__init__(
+                "tap_reader",
+                [
+                    role_grant("tap_reader", "Global", "*", "DescribeAlias"),
+                    role_grant("tap_reader", "Global", "*", "UnknownPrivilege"),
+                    role_grant("tap_reader", "Collection", physical, "Query"),
+                    role_grant("tap_reader", "Collection", physical, "Search"),
+                ],
+            )
+            self.database_calls: list[tuple[str, object]] = []
+
+        def describe_role(self, role_name: str, **kwargs: object) -> dict[str, object]:
+            database_name = kwargs.get("db_name")
+            self.database_calls.append(("describe", database_name))
+            raw = super().describe_role(role_name, **kwargs)
+            if database_name != "default":
+                raw["privileges"] = [
+                    {key: value for key, value in item.items() if key != "db_name"}
+                    for item in self.privileges
+                ]
+            return raw
+
+        def revoke_privilege_v2(
+            self,
+            role_name: str,
+            privilege: str,
+            object_name: str,
+            **kwargs: object,
+        ) -> None:
+            self.database_calls.append(("revoke", kwargs.get("db_name")))
+            super().revoke_privilege_v2(
+                role_name,
+                privilege,
+                object_name,
+                **kwargs,
+            )
+
+        def grant_privilege_v2(
+            self,
+            role_name: str,
+            privilege: str,
+            object_name: str,
+            **kwargs: object,
+        ) -> None:
+            self.database_calls.append(("grant", kwargs.get("db_name")))
+            super().grant_privilege_v2(
+                role_name,
+                privilege,
+                object_name,
+                **kwargs,
+            )
+
+    client = DatabaseScopedClient()
+    admin = sdk_admin(client)
+    expected = frozenset(
+        {
+            MilvusGrant("instance", "*", "DescribeAlias"),
+            MilvusGrant("instance", "*", "DescribeCollection"),
+        }
+    )
+
+    await admin.replace_role_grants("tap_reader", expected)
+    await admin.replace_role_grants("tap_reader", expected)
+
+    assert client.database_calls == [
+        ("describe", "default"),
+        ("revoke", "default"),
+        ("grant", "default"),
+        ("describe", "default"),
+    ]
+    assert {
+        (item["object_name"], item["privilege"])
+        for item in client.privileges
+        if item["object_name"] != "*"
+    } == {(physical, "Query"), (physical, "Search")}
+
+
 async def test_sdk_admin_preserves_active_reader_target_across_repeated_bootstrap() -> None:
     physical = "kb_doc_v1_corpus_fixture_v1"
     client = RoleGrantInventoryClient(
@@ -1150,6 +1232,32 @@ async def test_admin_connection_uses_initial_root_only_with_explicit_opt_in() ->
         ("rotate", "root"),
         ("authenticate", "tap-local-rotated-root"),
     ]
+    assert admin.authenticated_with_initial_root is False
+
+
+async def test_admin_connection_prefers_persisted_rotated_root_even_with_initial_opt_in() -> None:
+    attempted_passwords: list[str] = []
+    server = AuthenticationServer("tap-local-rotated-root")
+
+    def factory(**kwargs: object) -> AuthenticationClient:
+        password = kwargs["password"]
+        assert isinstance(password, str)
+        attempted_passwords.append(password)
+        return AuthenticationClient(server, password)
+
+    admin = await connect_local_admin(
+        {
+            "MILVUS_URI": "http://127.0.0.1:19530",
+            "MILVUS_DATABASE": "default",
+            "MILVUS_ROOT_PASSWORD": "tap-local-rotated-root",
+            "MILVUS_INITIAL_ROOT_PASSWORD": "initial-root-secret",
+            "TAP_ALLOW_INITIAL_MILVUS_ROOT": "1",
+        },
+        client_factory=factory,
+    )
+
+    assert attempted_passwords == ["tap-local-rotated-root"]
+    assert server.events == [("authenticate", "tap-local-rotated-root")]
     assert admin.authenticated_with_initial_root is False
 
 

@@ -20,6 +20,7 @@ dependencies = [
   "tiktoken==0.14.0",
   "azure-storage-blob==12.30.0",
   "aiohttp==3.14.3",
+  "uvicorn==0.52.4",
 ]
 
 [dependency-groups]
@@ -27,6 +28,7 @@ dev = [
   "mypy==1.17.1",
   "pytest==8.4.1",
   "pytest-asyncio==1.1.0",
+  "pyyaml==6.0.3",
   "reportlab==5.0.1",
   "ruff==0.12.10",
 ]

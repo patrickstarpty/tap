@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Annotated
 
-from tap.contracts.http import (
-    HealthComponent,
-    HealthComponentName,
-    HealthComponentState,
-    HealthRemediationCode,
-    LiveHealth,
-    ReadyHealth,
-)
+from fastapi import APIRouter, Depends
+
+from tap.contracts.http import LiveHealth, ReadyHealth
+from tap.interfaces.http.dependencies import ReadinessHttpService, readiness_service
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -22,17 +18,7 @@ async def get_live_health() -> LiveHealth:
 
 
 @router.get("/ready", operation_id="health_get_ready", response_model=ReadyHealth)
-async def get_ready_health() -> ReadyHealth:
-    return ReadyHealth(
-        status="unready",
-        components=[
-            HealthComponent(name=name, state=HealthComponentState.FAILED, remediation_code=code)
-            for name, code in (
-                (HealthComponentName.MYSQL, HealthRemediationCode.START_MYSQL),
-                (HealthComponentName.REDIS, HealthRemediationCode.START_REDIS),
-                (HealthComponentName.BLOB, HealthRemediationCode.START_BLOB),
-                (HealthComponentName.MILVUS, HealthRemediationCode.START_MILVUS),
-                (HealthComponentName.MODELS, HealthRemediationCode.CONFIGURE_MODELS),
-            )
-        ],
-    )
+async def get_ready_health(
+    service: Annotated[ReadinessHttpService, Depends(readiness_service)],
+) -> ReadyHealth:
+    return await service.check()

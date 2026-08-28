@@ -53,13 +53,12 @@ services:
       - --blobHost
       - 0.0.0.0
       - --blobPort
-      - "10000"
+      - "${AZURITE_BLOB_PORT:-10000}"
       - --location
       - /data
-      - --debug
-      - /data/debug.log
+      - --silent
     ports:
-      - "127.0.0.1:${AZURITE_BLOB_PORT:-10000}:10000"
+      - "127.0.0.1:${AZURITE_BLOB_PORT:-10000}:${AZURITE_BLOB_PORT:-10000}"
     volumes:
       - azurite-data:/data
     healthcheck:
@@ -70,7 +69,7 @@ services:
         - |
           const http = require("http");
           const req = http.get(
-            "http://127.0.0.1:10000/devstoreaccount1?comp=list&maxresults=1",
+            "http://127.0.0.1:${AZURITE_BLOB_PORT:-10000}/devstoreaccount1?comp=list&maxresults=1",
             (res) => process.exit(/azurite-blob/i.test(String(res.headers.server || "")) ? 0 : 1),
           );
           req.on("error", () => process.exit(1));
@@ -101,6 +100,9 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-tap-local-master-key}
       LITELLM_MODEL: ${LITELLM_MODEL:-openai/gpt-4o-mini}
+      LITELLM_EMBEDDING_MODEL: ${LITELLM_EMBEDDING_MODEL:-text-embedding-v4}
+      LITELLM_EMBEDDING_API_KEY: ${LITELLM_EMBEDDING_API_KEY:-}
+      LITELLM_EMBEDDING_API_BASE: ${LITELLM_EMBEDDING_API_BASE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "127.0.0.1:${LITELLM_PORT:-4000}:4000"

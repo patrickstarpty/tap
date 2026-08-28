@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import yaml
 
 from tap.modules.knowledge.ports.models import Embedding, EmbeddingUsage
 from tap.operations.milvus import embeddings as embedding_module
@@ -1334,14 +1335,29 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     assert environment["LITELLM_EMBEDDING_API_KEY"] == ""
     assert environment["LITELLM_EMBEDDING_API_BASE"] == ""
 
-    compose = (repository / "compose.yaml").read_text(encoding="utf-8")
-    gateway = (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
-    assert "LITELLM_EMBEDDING_MODEL:" not in compose
-    assert "LITELLM_EMBEDDING_API_KEY:" not in compose
-    assert "LITELLM_EMBEDDING_API_BASE:" not in compose
-    assert "research-embedding-v1" not in gateway
-    assert "text-embedding-v4" not in gateway
-    assert "LITELLM_EMBEDDING_API_BASE" not in gateway
+    compose = yaml.safe_load((repository / "compose.yaml").read_text(encoding="utf-8"))
+    gateway = yaml.safe_load(
+        (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
+    )
+    compose_environment = compose["services"]["litellm"]["environment"]
+    assert {
+        key: value
+        for key, value in compose_environment.items()
+        if key.startswith("LITELLM_EMBEDDING_")
+    } == {
+        "LITELLM_EMBEDDING_MODEL": ("${LITELLM_EMBEDDING_MODEL:-text-embedding-v4}"),
+        "LITELLM_EMBEDDING_API_KEY": "${LITELLM_EMBEDDING_API_KEY:-}",
+        "LITELLM_EMBEDDING_API_BASE": "${LITELLM_EMBEDDING_API_BASE:-}",
+    }
+    embedding_route = next(
+        item for item in gateway["model_list"] if item["model_name"] == "athena-embedding"
+    )
+    assert embedding_route["litellm_params"] == {
+        "model": "os.environ/LITELLM_EMBEDDING_MODEL",
+        "api_key": "os.environ/LITELLM_EMBEDDING_API_KEY",
+        "api_base": "os.environ/LITELLM_EMBEDDING_API_BASE",
+    }
+    assert "research-embedding-v1" not in str(gateway)
 
 
 def test_make_paid_target_fails_explicitly_instead_of_skipping() -> None:

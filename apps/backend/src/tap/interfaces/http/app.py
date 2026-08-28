@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+
 from fastapi import FastAPI, status
 
 from tap.contracts.http import ChatTurnAccepted, ChatTurnRequest, ProblemDetails
@@ -24,9 +27,16 @@ NOT_IMPLEMENTED_PROBLEM = ProblemDetails(
 )
 
 
-def create_app(services: HttpServices | None = None) -> FastAPI:
+Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
+
+
+def create_app(
+    services: HttpServices | None = None,
+    *,
+    lifespan: Lifespan | None = None,
+) -> FastAPI:
     """Build the HTTP application without starting middleware or external clients."""
-    app = FastAPI(title="TAP API", version="0.1.0")
+    app = FastAPI(title="TAP API", version="0.1.0", lifespan=lifespan)
     app.state.http_services = services or HttpServices()
     register_problem_handlers(app)
 

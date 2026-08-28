@@ -7,22 +7,31 @@ import json
 import threading
 import time
 import weakref
+from collections import UserDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 
 import pytest
 from pydantic import SecretStr
+from pymilvus.client.abstract import CollectionSchema  # type: ignore[import-untyped]
 from pymilvus.client.search_result import SearchResult  # type: ignore[import-untyped]
 from pymilvus.client.types import DataType  # type: ignore[import-untyped]
-from pymilvus.grpc_gen import schema_pb2  # type: ignore[import-untyped]
+from pymilvus.grpc_gen import (  # type: ignore[import-untyped]
+    common_pb2,
+    milvus_pb2,
+    schema_pb2,
+)
 
 from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget, MilvusSearchConfig
 from tap.modules.knowledge.adapters.milvus.targets import bind_target
 from tap.modules.knowledge.adapters.milvus.transport import (
     MILVUS_OUTPUT_FIELDS,
+    CollectionBaseSchemaMismatch,
     MilvusChannelRequest,
     MilvusHybridRequest,
     MilvusQueryRequest,
     PyMilvusReader,
+    _CollectionBaseSchemaComponent,
+    collection_base_descriptor,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.modules.knowledge.ports.errors import SearchUnavailable
@@ -175,14 +184,18 @@ def _schema_digest() -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
-def _metadata_description(*, claimed_digest: str | None = None) -> str:
+def _metadata_description(
+    *,
+    claimed_digest: str | None = None,
+    vector_dimension: object = 1536,
+) -> str:
     metadata = {
         "family": "doc",
         "schemaVersion": "doc-schema-v1",
         "schemaSha256": claimed_digest or _schema_digest(),
         "corpusVersion": "corpus-fixture-v1",
         "embeddingModelVersion": "research-embedding-v1",
-        "vectorDimension": 1536,
+        "vectorDimension": vector_dimension,
     }
     return "tap-collection-metadata-v1:" + json.dumps(
         metadata,
@@ -224,11 +237,73 @@ def _raw_collection(*, claimed_digest: str | None = None) -> dict[str, object]:
         "collection_id": 123,
         "consistency_level": 0,
         "consistency_level_name": "Strong",
-        "properties": {},
+        "properties": {"timezone": "UTC"},
         "num_partitions": 1,
         "enable_dynamic_field": False,
         "enable_namespace": False,
     }
+
+
+def _base_expected_schema(*, description: str | None = None) -> dict[str, object]:
+    canonical = _canonical_schema()
+    return {
+        "description": description or _metadata_description(),
+        "fields": canonical["fields"],
+    }
+
+
+@pytest.mark.parametrize(
+    "component",
+    (
+        "envelope",
+        "properties",
+        "aliases",
+        "identity",
+        "metadata",
+        "fields",
+        "functions",
+        "vector",
+    ),
+)
+def test_collection_base_schema_mismatch_reports_only_closed_component(
+    component: str,
+) -> None:
+    raw = _raw_collection()
+    expected = _base_expected_schema()
+    if component == "envelope":
+        raw["provider-secret-extra"] = "provider-secret-envelope"
+    elif component == "properties":
+        raw["properties"] = {"provider-secret": "provider-secret-properties"}
+    elif component == "aliases":
+        raw["aliases"] = ["unsafe/provider-secret-alias"]
+    elif component == "identity":
+        raw["collection_name"] = "provider_secret_other"
+    elif component == "metadata":
+        raw["consistency_level_name"] = "Eventually"
+    elif component == "fields":
+        raw["fields"] = []
+    elif component == "functions":
+        raw["functions"] = []
+    elif component == "vector":
+        description = _metadata_description(vector_dimension="provider-secret-vector")
+        raw["description"] = description
+        expected["description"] = description
+    else:
+        raise AssertionError(component)
+
+    with pytest.raises(CollectionBaseSchemaMismatch) as captured:
+        collection_base_descriptor(
+            raw,
+            expected_collection="kb_doc_v1_corpus_fixture_v1",
+            expected_schema=expected,
+        )
+
+    assert captured.value.component.value == component
+    assert str(captured.value) == "Milvus collection base schema does not match"
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    assert "provider-secret" not in repr(captured.value)
+    assert _CollectionBaseSchemaComponent(component) is captured.value.component
 
 
 def _raw_indexes() -> dict[str, dict[str, object]]:
@@ -763,6 +838,109 @@ async def test_transport_rejects_widened_collection_semantics(field: str) -> Non
 
     with pytest.raises(SearchUnavailable, match="invalid collection"):
         await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize("value", ([], None, {}, ["unexpected"]))
+@pytest.mark.asyncio
+async def test_public_client_transport_rejects_any_unconverted_struct_array_metadata(
+    value: object,
+) -> None:
+    client = RecordingSDKClient()
+    client.collection["struct_array_fields"] = value
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize(
+    "properties",
+    (
+        None,
+        [],
+        {},
+        {"Timezone": "UTC"},
+        {"timezone": "utc"},
+        {"timezone": 1},
+        {"timezone": "UTC", "unexpected": "widened"},
+        UserDict({"timezone": "UTC"}),
+        {type("ProviderString", (str,), {})("timezone"): "UTC"},
+        {"timezone": type("ProviderString", (str,), {})("UTC")},
+    ),
+)
+@pytest.mark.asyncio
+async def test_transport_requires_exact_utc_public_collection_properties(
+    properties: object,
+) -> None:
+    client = RecordingSDKClient()
+    client.collection["properties"] = properties
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+def test_base_descriptor_accepts_exact_pinned_public_sdk_timezone_properties() -> None:
+    response = milvus_pb2.DescribeCollectionResponse(
+        schema=schema_pb2.CollectionSchema(name="kb_doc_v1_corpus_fixture_v1"),
+        collection_name="kb_doc_v1_corpus_fixture_v1",
+        properties=[common_pb2.KeyValuePair(key="timezone", value="UTC")],
+    )
+    public = CollectionSchema(response).dict()
+    public.pop("struct_array_fields")
+    assert type(public["properties"]) is dict
+    assert public["properties"] == {"timezone": "UTC"}
+    raw = _raw_collection()
+    raw["properties"] = public["properties"]
+
+    descriptor = collection_base_descriptor(
+        raw,
+        expected_collection="kb_doc_v1_corpus_fixture_v1",
+        expected_schema=_base_expected_schema(),
+    )
+
+    assert descriptor.collection_name == "kb_doc_v1_corpus_fixture_v1"
+
+
+@pytest.mark.parametrize(
+    "aliases",
+    (
+        None,
+        "kb_doc_active",
+        ["kb_doc_active", "kb_doc_active"],
+        ["unsafe/alias"],
+        [1],
+        [f"kb_doc_alias_{index}" for index in range(65)],
+    ),
+)
+@pytest.mark.asyncio
+async def test_transport_rejects_malformed_widened_or_duplicate_alias_inventory(
+    aliases: object,
+) -> None:
+    client = RecordingSDKClient()
+    client.collection["aliases"] = aliases
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    with pytest.raises(SearchUnavailable, match="invalid collection"):
+        await reader.describe_collection(resolved)
+
+
+@pytest.mark.parametrize("aliases", ([], ["kb_doc_active", "kb_doc_previous"]))
+@pytest.mark.asyncio
+async def test_transport_accepts_bounded_safe_alias_inventory_before_or_after_publication(
+    aliases: list[str],
+) -> None:
+    client = RecordingSDKClient()
+    client.collection["aliases"] = aliases
+    reader = PyMilvusReader(_config(), client=client)
+    resolved = await reader.describe_alias("kb_doc_active")
+
+    descriptor = await reader.describe_collection(resolved)
+
+    assert descriptor.collection_name == "kb_doc_v1_corpus_fixture_v1"
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,8 @@ from tap.modules.knowledge.domain.models import (
     AnswerResponse,
     ResourceMode,
     ResourceRef,
+    SearchRequest,
+    SearchResponse,
     SourceFamily,
 )
 from tap.modules.knowledge.ports.answers import (
@@ -49,6 +51,10 @@ class AnswerSelectionRejected(ValueError):
 
 
 class KnowledgeAnswerGateway(Protocol):
+    async def search(
+        self, request: SearchRequest, policy: RetrievalPolicyContext
+    ) -> SearchResponse: ...
+
     async def answer(
         self, request: AnswerRequest, policy: RetrievalPolicyContext
     ) -> AnswerResponse: ...
@@ -66,33 +72,27 @@ class AnswerService:
         self._repository = repository
         self._knowledge = knowledge
 
+    async def search(self, request: SearchRequest) -> SearchResponse:
+        """Run internal E2E evidence verification through the answer authority graph."""
+
+        document_ids = validate_search_selection(request)
+        ordered = await self._load_selected_revisions(document_ids)
+        trusted = SearchRequest(
+            query=request.query,
+            answer_mode=AnswerMode.QUICK,
+            source_families=(SourceFamily.DOC,),
+            resource_refs=_scope_refs(ordered),
+        )
+        return await self._knowledge.search(trusted, build_demo_policy_context(ordered))
+
     async def answer(self, request: AnswerRequest) -> AnswerResponse:
         document_ids = validate_answer_selection(request)
-        try:
-            rows = await self._repository.load_ready_revisions(document_ids)
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            raise PolicyUnavailable("current document policy is unavailable") from error
-        if (
-            len(rows) != len(document_ids)
-            or len({row.document_id for row in rows}) != len(rows)
-            or set(document_ids) != {row.document_id for row in rows}
-        ):
-            raise DocumentStateChanged("selected document is not ready and current")
-        ordered = tuple(sorted(rows, key=lambda item: item.document_id))
+        ordered = await self._load_selected_revisions(document_ids)
         trusted = AnswerRequest(
             query=request.query,
             answer_mode=AnswerMode.QUICK,
             source_families=(SourceFamily.DOC,),
-            resource_refs=tuple(
-                ResourceRef(
-                    family=SourceFamily.DOC,
-                    source_id=row.document_id,
-                    mode=ResourceMode.SCOPE,
-                )
-                for row in ordered
-            ),
+            resource_refs=_scope_refs(ordered),
         )
         policy = build_demo_policy_context(ordered)
         response = await self._knowledge.answer(trusted, policy)
@@ -112,11 +112,40 @@ class AnswerService:
             raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
         return response
 
+    async def _load_selected_revisions(
+        self, document_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]:
+        try:
+            rows = await self._repository.load_ready_revisions(document_ids)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise PolicyUnavailable("current document policy is unavailable") from error
+        if (
+            len(rows) != len(document_ids)
+            or len({row.document_id for row in rows}) != len(rows)
+            or set(document_ids) != {row.document_id for row in rows}
+        ):
+            raise DocumentStateChanged("selected document is not ready and current")
+        return tuple(sorted(rows, key=lambda item: item.document_id))
+
 
 def validate_answer_selection(request: AnswerRequest) -> tuple[str, ...]:
     """Validate the closed browser-selectable request shape without provider I/O."""
     if not isinstance(request, AnswerRequest):
         raise TypeError("answer service requires a framework-free AnswerRequest")
+    return _validate_selection(request)
+
+
+def validate_search_selection(request: SearchRequest) -> tuple[str, ...]:
+    """Validate the same closed selection for internal real-search verification."""
+
+    if not isinstance(request, SearchRequest):
+        raise TypeError("answer service search requires a framework-free SearchRequest")
+    return _validate_selection(request)
+
+
+def _validate_selection(request: AnswerRequest | SearchRequest) -> tuple[str, ...]:
     refs = request.resource_refs
     if not 1 <= len(refs) <= 20 or len({ref.source_id for ref in refs}) != len(refs):
         raise AnswerSelectionRejected("source-selection-required")
@@ -136,3 +165,16 @@ def validate_answer_selection(request: AnswerRequest) -> tuple[str, ...]:
     ):
         raise AnswerSelectionRejected("unsupported-answer-control")
     return tuple(ref.source_id for ref in refs)
+
+
+def _scope_refs(
+    rows: tuple[ReadyDocumentRevision, ...],
+) -> tuple[ResourceRef, ...]:
+    return tuple(
+        ResourceRef(
+            family=SourceFamily.DOC,
+            source_id=row.document_id,
+            mode=ResourceMode.SCOPE,
+        )
+        for row in rows
+    )

@@ -19,8 +19,8 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusCollectionDescriptor,
     MilvusHybridRequest,
     MilvusQueryRequest,
-    _collection_descriptor,
     collection_base_descriptor,
+    validate_collection_indexes,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.async_call import deadline_then_settle_blocking_call
@@ -37,6 +37,7 @@ from tap.operations.milvus.contracts import (
     MilvusProbeClients,
     MilvusRoleCredentials,
     MilvusScopedGrant,
+    validate_milvus_role_usernames,
 )
 
 _TIMEOUT_SECONDS = 10.0
@@ -113,6 +114,8 @@ class MilvusSdk:
 
 class _SyncClient(Protocol):
     def list_collections(self, **kwargs: object) -> object: ...
+
+    def has_collection(self, collection_name: str, **kwargs: object) -> object: ...
 
     def list_aliases(self, **kwargs: object) -> object: ...
 
@@ -293,7 +296,13 @@ class PyMilvusAdmin:
         expected = _expected_base_grants(role_name)
         if grants != expected:
             raise ValueError("Milvus bootstrap grants are outside the managed base contract")
-        raw = await _call(lambda: self._client.describe_role(role_name, timeout=_TIMEOUT_SECONDS))
+        raw = await _call(
+            lambda: self._client.describe_role(
+                role_name,
+                db_name=self._database_name,
+                timeout=_TIMEOUT_SECONDS,
+            )
+        )
         records = _role_grant_records(raw, role_name=role_name)
         current = _validated_base_grants(
             records,
@@ -307,6 +316,7 @@ class PyMilvusAdmin:
                     role_name,
                     grant.privilege,
                     grant.resource_name,
+                    db_name=self._database_name,
                     timeout=_TIMEOUT_SECONDS,
                 )
 
@@ -318,6 +328,7 @@ class PyMilvusAdmin:
                     role_name,
                     grant.privilege,
                     grant.resource_name,
+                    db_name=self._database_name,
                     timeout=_TIMEOUT_SECONDS,
                 )
 
@@ -538,48 +549,6 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
         self._database_name = database_name
         self._schemas: dict[str, Mapping[str, object]] = {}
 
-    async def list_collections(self) -> tuple[str, ...]:
-        raw = await _doc_call(lambda: self._client.list_collections(timeout=_DOC_TIMEOUT_SECONDS))
-        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
-            raise RuntimeError("Milvus returned malformed collection inventory")
-        if any(not isinstance(item, str) for item in raw):
-            raise RuntimeError("Milvus returned malformed collection inventory")
-        return tuple(cast(Sequence[str], raw))
-
-    async def collection_exists(self, name: str) -> bool:
-        return name in await self.list_collections()
-
-    async def collection_aliases(self, name: str) -> tuple[str, ...]:
-        raw = await _doc_call(
-            lambda: self._client.list_aliases(
-                collection_name=name,
-                timeout=_DOC_TIMEOUT_SECONDS,
-            )
-        )
-        if isinstance(raw, Mapping):
-            if (
-                set(raw) != {"aliases", "collection_name", "db_name"}
-                or raw.get("collection_name") != name
-                or raw.get("db_name") != self._database_name
-            ):
-                raise RuntimeError("Milvus returned malformed alias inventory")
-            raw = raw.get("aliases")
-        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
-            raise RuntimeError("Milvus returned malformed alias inventory")
-        aliases: list[str] = []
-        for item in raw:
-            alias = (
-                item
-                if isinstance(item, str)
-                else item.get("alias")
-                if isinstance(item, Mapping)
-                else None
-            )
-            if not isinstance(alias, str):
-                raise RuntimeError("Milvus returned malformed alias inventory")
-            aliases.append(alias)
-        return tuple(aliases)
-
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
         if not isinstance(schema, Mapping) or schema.get("consistency_level") != "Strong":
             raise ValueError("Milvus doc schema is malformed")
@@ -749,6 +718,11 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
             )
         )
         records = _role_grant_records(raw, role_name=role_name)
+        for record in records:
+            if record.database_name != self._database_name or (
+                record.object_name == name and record.object_type != "Collection"
+            ):
+                raise RuntimeError("Milvus returned ambiguous grant metadata")
         return frozenset(
             MilvusScopedGrant(
                 role_name=record.role_name,
@@ -761,12 +735,12 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
             if record.object_type == "Collection" and record.object_name == name
         )
 
-    async def describe_collection(self, name: str) -> MilvusCollectionDescriptor:
-        raw_collection = await _doc_call(
-            lambda: self._client.describe_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
-        )
-        raw_indexes = []
-        for index_name in (
+    async def validate_collection_indexes(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> None:
+        index_names = (
             "dense_vector",
             "bm25_sparse",
             "tenant_id",
@@ -776,7 +750,19 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
             "environment",
             "corpus_version",
             "deleted",
+        )
+        raw_inventory = await _doc_call(
+            lambda: self._client.list_indexes(name, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        if (
+            isinstance(raw_inventory, (str, bytes))
+            or not isinstance(raw_inventory, Sequence)
+            or any(not isinstance(item, str) for item in raw_inventory)
+            or set(cast(Sequence[str], raw_inventory)) != set(index_names)
         ):
+            raise ValueError("collection indexes do not match the canonical schema")
+        raw_indexes = []
+        for index_name in index_names:
 
             def describe_index(index_name: str = index_name) -> object:
                 return self._client.describe_index(
@@ -786,23 +772,8 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
                 )
 
             raw_indexes.append(await _doc_call(describe_index))
-        return _collection_descriptor(
-            raw_collection,
+        validate_collection_indexes(
             tuple(raw_indexes),
-            expected_collection=name,
-        )
-
-    async def describe_collection_schema(
-        self,
-        name: str,
-        schema: Mapping[str, object],
-    ) -> MilvusCollectionDescriptor:
-        raw = await _doc_call(
-            lambda: self._client.describe_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
-        )
-        return collection_base_descriptor(
-            raw,
-            expected_collection=name,
             expected_schema=schema,
         )
 
@@ -816,9 +787,6 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
         )
 
     async def alter_alias(self, alias: str, collection_name: str) -> None:
-        if await self.describe_alias(alias) is None:
-            await self.create_alias(alias, collection_name)
-            return
         await _doc_call(
             lambda: self._client.alter_alias(
                 collection_name,
@@ -826,31 +794,6 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
                 timeout=_DOC_TIMEOUT_SECONDS,
             )
         )
-
-    async def describe_alias(self, alias: str) -> str | None:
-        raw_aliases = await _doc_call(
-            lambda: self._client.list_aliases(timeout=_DOC_TIMEOUT_SECONDS)
-        )
-        if isinstance(raw_aliases, Mapping):
-            if set(raw_aliases) != {"aliases", "db_name"}:
-                raise RuntimeError("Milvus returned malformed alias inventory")
-            raw_aliases = raw_aliases.get("aliases")
-        if isinstance(raw_aliases, (str, bytes)) or not isinstance(raw_aliases, Sequence):
-            raise RuntimeError("Milvus returned malformed alias inventory")
-        names = {
-            item
-            if isinstance(item, str)
-            else item.get("alias")
-            if isinstance(item, Mapping)
-            else None
-            for item in raw_aliases
-        }
-        if alias not in names:
-            return None
-        raw = await _doc_call(
-            lambda: self._client.describe_alias(alias, timeout=_DOC_TIMEOUT_SECONDS)
-        )
-        return _alias_collection(raw)
 
     async def drop_alias(self, alias: str) -> None:
         await _doc_call(lambda: self._client.drop_alias(alias, timeout=_DOC_TIMEOUT_SECONDS))
@@ -903,8 +846,50 @@ class PyMilvusWriter:
 class PyMilvusDocReader:
     """Strong-consistency persisted-row reader for projection reconciliation."""
 
-    def __init__(self, client: _SyncClient) -> None:
+    def __init__(self, client: _SyncClient, *, database_name: str) -> None:
+        if not isinstance(database_name, str) or not database_name or len(database_name) > 255:
+            raise ValueError("Milvus document reader database must be bounded")
         self._client = client
+        self._database_name = database_name
+
+    async def collection_exists(self, name: str) -> bool:
+        raw = await _doc_call(
+            lambda: self._client.has_collection(
+                collection_name=name,
+                timeout=_DOC_TIMEOUT_SECONDS,
+            )
+        )
+        if not isinstance(raw, bool):
+            raise RuntimeError("Milvus returned malformed collection existence")
+        return raw
+
+    async def describe_alias(self, alias: str) -> str | None:
+        # DescribeCollection accepts an alias and returns False for an absent exact
+        # identity.  This avoids the independently privileged ListAliases RPC.
+        if not await self.collection_exists(alias):
+            return None
+        raw = await _doc_call(
+            lambda: self._client.describe_alias(alias, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        return _exact_doc_alias_collection(
+            raw,
+            expected_alias=alias,
+            expected_database=self._database_name,
+        )
+
+    async def describe_collection_schema(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> MilvusCollectionDescriptor:
+        raw = await _doc_call(
+            lambda: self._client.describe_collection(name, timeout=_DOC_TIMEOUT_SECONDS)
+        )
+        return collection_base_descriptor(
+            raw,
+            expected_collection=name,
+            expected_schema=schema,
+        )
 
     async def query_persisted_rows(
         self,
@@ -946,6 +931,112 @@ class PyMilvusDocReader:
 
     async def close(self) -> None:
         await _doc_call(self._client.close)
+
+
+@dataclass(frozen=True, slots=True)
+class AthenaDocumentMilvusClients:
+    """Three role-isolated clients owned transitively by one document index."""
+
+    provisioner: PyMilvusDocProvisioner
+    writer: PyMilvusWriter
+    reader: PyMilvusDocReader
+
+
+async def create_athena_document_clients(
+    *,
+    uri: str,
+    database: str,
+    provisioner_username: str,
+    provisioner_password: SecretStr,
+    writer_username: str,
+    writer_password: SecretStr,
+    reader_username: str,
+    reader_password: SecretStr,
+    sdk: MilvusSdk | None = None,
+) -> AthenaDocumentMilvusClients:
+    """Connect exact role clients and settle every partial construction failure."""
+
+    for name, value in {
+        "uri": uri,
+        "database": database,
+        "provisioner username": provisioner_username,
+        "writer username": writer_username,
+        "reader username": reader_username,
+    }.items():
+        if not isinstance(value, str) or not value or len(value) > 1_024:
+            raise ValueError(f"Milvus {name} must be a bounded non-empty setting")
+    for name, secret in {
+        "provisioner password": provisioner_password,
+        "writer password": writer_password,
+        "reader password": reader_password,
+    }.items():
+        if not isinstance(secret, SecretStr) or not secret.get_secret_value():
+            raise ValueError(f"Milvus {name} must be a non-empty secret")
+    validate_milvus_role_usernames(
+        reader_username=reader_username,
+        writer_username=writer_username,
+        provisioner_username=provisioner_username,
+    )
+    if sdk is None:
+        from tap.modules.knowledge.adapters.milvus.transport import (
+            create_operations_milvus_sdk,
+        )
+
+        sdk = cast(MilvusSdk, create_operations_milvus_sdk())
+    if not isinstance(sdk, MilvusSdk):
+        raise TypeError("Milvus document clients require fixed SDK bindings")
+
+    raw_clients: list[_SyncClient] = []
+
+    async def connect(username: str, password: SecretStr) -> _SyncClient:
+        def acquire() -> _SyncClient:
+            client = cast(
+                _SyncClient,
+                sdk.client_factory(
+                    uri=uri,
+                    user=username,
+                    password=password.get_secret_value(),
+                    db_name=database,
+                    timeout=_DOC_TIMEOUT_SECONDS,
+                ),
+            )
+            raw_clients.append(client)
+            return client
+
+        client = cast(
+            _SyncClient,
+            await _doc_call(acquire),
+        )
+        return client
+
+    try:
+        provisioner_client = await connect(provisioner_username, provisioner_password)
+        writer_client = await connect(writer_username, writer_password)
+        reader_client = await connect(reader_username, reader_password)
+        return AthenaDocumentMilvusClients(
+            provisioner=PyMilvusDocProvisioner(
+                provisioner_client,
+                sdk,
+                database_name=database,
+            ),
+            writer=PyMilvusWriter(writer_client),
+            reader=PyMilvusDocReader(reader_client, database_name=database),
+        )
+    except BaseException as primary:
+        errors: list[BaseException] = [primary]
+        for client in reversed(raw_clients):
+            try:
+                await _doc_call(client.close)
+            except BaseException as close_error:
+                errors.append(close_error)
+        if len(errors) == 1:
+            raise primary
+        if all(isinstance(error, Exception) for error in errors):
+            raise ExceptionGroup(
+                "Milvus document client construction failed",
+                cast(list[Exception], errors),
+            )
+        raise BaseExceptionGroup("Milvus document client construction failed", errors)
 
 
 class PyMilvusProbeReader:
@@ -1563,6 +1654,29 @@ def _alias_collection(raw: object) -> str:
     if not isinstance(raw, Mapping) or not isinstance(raw.get("collection_name"), str):
         raise RuntimeError("Milvus returned malformed alias metadata")
     return cast(str, raw["collection_name"])
+
+
+def _exact_doc_alias_collection(
+    raw: object,
+    *,
+    expected_alias: str,
+    expected_database: str,
+) -> str:
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "alias",
+        "collection_name",
+        "db_name",
+    }:
+        raise RuntimeError("Milvus returned malformed alias metadata")
+    collection_name = raw.get("collection_name")
+    if (
+        raw.get("alias") != expected_alias
+        or raw.get("db_name") != expected_database
+        or not isinstance(collection_name, str)
+        or _PUBLISHER_COLLECTION_NAME.fullmatch(collection_name) is None
+    ):
+        raise RuntimeError("Milvus returned malformed alias metadata")
+    return collection_name
 
 
 def _is_loaded_state(raw: object) -> bool:

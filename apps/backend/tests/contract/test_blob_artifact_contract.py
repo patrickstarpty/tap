@@ -17,6 +17,7 @@ from azure.core.exceptions import (
     ResourceNotFoundError,
     ServiceRequestError,
 )
+from azure.storage.blob import ContainerProperties
 from pydantic import SecretStr
 
 from tap.modules.knowledge.adapters.blob_artifacts import (
@@ -475,6 +476,87 @@ def _store_with_provider_failure(
     return AzureBlobArtifactStore(
         AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
     )
+
+
+def _store_with_container_properties(
+    monkeypatch: pytest.MonkeyPatch,
+    properties: object,
+) -> AzureBlobArtifactStore:
+    class Container:
+        async def get_container_properties(self) -> object:
+            return properties
+
+    class Service(_ServiceDouble):
+        def get_container_client(self, _container: str) -> Container:
+            return Container()
+
+    service = Service(_BlobDouble())
+    monkeypatch.setattr(
+        "tap.modules.knowledge.adapters.blob_artifacts.BlobServiceClient.from_connection_string",
+        lambda *args, **kwargs: service,
+    )
+    return AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+    )
+
+
+@pytest.mark.asyncio
+async def test_container_properties_normalizes_actual_pinned_sdk_model_to_closed_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_container_properties(monkeypatch, ContainerProperties())
+
+    properties = await store.container_properties(ORIGINALS_CONTAINER)
+
+    assert type(properties) is dict
+    assert properties == {"public_access": None}
+
+
+@pytest.mark.parametrize("public_access", (None, "blob", "container"))
+@pytest.mark.asyncio
+async def test_container_properties_accepts_only_closed_sdk_public_access_values(
+    monkeypatch: pytest.MonkeyPatch,
+    public_access: str | None,
+) -> None:
+    store = _store_with_container_properties(
+        monkeypatch,
+        {"public_access": public_access},
+    )
+
+    properties = await store.container_properties(ORIGINALS_CONTAINER)
+
+    assert properties == {"public_access": public_access}
+
+
+class _SecretBearingMalformedContainerProperties:
+    def __getitem__(self, _key: str) -> object:
+        raise RuntimeError("azure-provider-secret-properties")
+
+
+@pytest.mark.parametrize(
+    "properties",
+    (
+        {},
+        {"public_access": "azure-provider-secret-expanded-value"},
+        {"public_access": 1},
+        _SecretBearingMalformedContainerProperties(),
+    ),
+)
+@pytest.mark.asyncio
+async def test_container_properties_fail_closed_and_redact_malformed_provider_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    properties: object,
+) -> None:
+    store = _store_with_container_properties(monkeypatch, properties)
+
+    with pytest.raises(ArtifactUnavailable) as captured:
+        await store.container_properties(ORIGINALS_CONTAINER)
+
+    assert isinstance(captured.value, ArtifactProviderUnavailable)
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    rendered = "".join(traceback.format_exception(captured.value))
+    assert "provider-secret" not in rendered
 
 
 @pytest.mark.parametrize("provider_error", (ServiceRequestError, ValueError, TypeError))

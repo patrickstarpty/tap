@@ -8,7 +8,29 @@ from typing import Literal, Protocol
 
 from pydantic import SecretStr
 
-from tap.modules.knowledge.adapters.milvus.transport import MilvusReader
+from tap.modules.knowledge.adapters.milvus.transport import (
+    MilvusCollectionDescriptor,
+    MilvusReader,
+)
+
+
+def validate_milvus_role_usernames(
+    *,
+    reader_username: str,
+    writer_username: str,
+    provisioner_username: str,
+) -> None:
+    """Require three distinct non-root identities before opening any client."""
+
+    usernames = (reader_username, writer_username, provisioner_username)
+    if any(not isinstance(username, str) for username in usernames):
+        raise TypeError("Milvus RBAC identities must be strings")
+    normalized = tuple(username.casefold() for username in usernames)
+    if (
+        any(not username or username == "root" for username in normalized)
+        or len(set(normalized)) != 3
+    ):
+        raise ValueError("Milvus RBAC requires three unique non-root identities")
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,17 +44,11 @@ class MilvusRoleCredentials:
     provisioner_password: SecretStr = field(repr=False)
 
     def __post_init__(self) -> None:
-        usernames = (
-            self.reader_username,
-            self.writer_username,
-            self.provisioner_username,
+        validate_milvus_role_usernames(
+            reader_username=self.reader_username,
+            writer_username=self.writer_username,
+            provisioner_username=self.provisioner_username,
         )
-        normalized = tuple(username.casefold() for username in usernames)
-        if (
-            any(not username or username == "root" for username in normalized)
-            or len(set(normalized)) != 3
-        ):
-            raise ValueError("Milvus RBAC requires three unique non-root identities")
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,22 +168,8 @@ class MilvusProvisioner(Protocol):
     async def drop_collection(self, name: str) -> None: ...
 
 
-class MilvusDocProvisioner(MilvusProvisioner, Protocol):
-    async def collection_exists(self, name: str) -> bool: ...
-
-    async def collection_grants(
-        self,
-        name: str,
-        role_name: str,
-    ) -> frozenset[MilvusScopedGrant]: ...
-
-    async def describe_collection(self, name: str) -> Mapping[str, object] | object: ...
-
-    async def describe_collection_schema(
-        self,
-        name: str,
-        schema: Mapping[str, object],
-    ) -> Mapping[str, object] | object: ...
+class MilvusDocProvisioner(Protocol):
+    async def create_collection(self, name: str, schema: Mapping[str, object]) -> None: ...
 
     async def create_indexes(
         self,
@@ -175,13 +177,33 @@ class MilvusDocProvisioner(MilvusProvisioner, Protocol):
         schema: Mapping[str, object] | None = None,
     ) -> None: ...
 
+    async def validate_collection_indexes(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> None: ...
+
     async def ensure_loaded(self, name: str) -> None: ...
 
     async def is_loaded(self, name: str) -> bool: ...
 
-    async def list_collections(self) -> tuple[str, ...]: ...
+    async def grant_collection(self, name: str, role_name: str) -> None: ...
 
-    async def collection_aliases(self, name: str) -> tuple[str, ...]: ...
+    async def revoke_collection(self, name: str, role_name: str) -> None: ...
+
+    async def collection_grants(
+        self,
+        name: str,
+        role_name: str,
+    ) -> frozenset[MilvusScopedGrant]: ...
+
+    async def create_alias(self, alias: str, collection_name: str) -> None: ...
+
+    async def alter_alias(self, alias: str, collection_name: str) -> None: ...
+
+    async def drop_alias(self, alias: str) -> None: ...
+
+    async def drop_collection(self, name: str) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -199,6 +221,16 @@ class MilvusWriter(Protocol):
 
 
 class MilvusDocReader(Protocol):
+    async def collection_exists(self, name: str) -> bool: ...
+
+    async def describe_alias(self, alias: str) -> str | None: ...
+
+    async def describe_collection_schema(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> MilvusCollectionDescriptor: ...
+
     async def query_persisted_rows(
         self,
         collection_name: str,

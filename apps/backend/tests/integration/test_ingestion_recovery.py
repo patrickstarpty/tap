@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 from contextlib import suppress
-from dataclasses import replace
 from datetime import datetime, timedelta
 
 from sqlalchemy import text
@@ -322,10 +321,15 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
             await athena_ingestion_worker.run_worker_loop(
                 worker=restarted,
                 wakeups=UnavailableWakeups(),  # type: ignore[arg-type]
-                settings=replace(
-                    athena_ingestion_worker.load_settings({}),
+                settings=athena_ingestion_worker.WorkerSettings(
+                    database_url=DATABASE_URL,
+                    redis_url="redis://127.0.0.1:16379/0",
+                    job_batch_size=10,
                     poll_seconds=0.01,
                     wakeup_seconds=0.01,
+                    stream_name="tap-athena-e2e:commands",
+                    group_name="athena-ingestion",
+                    worker_id="recovery-worker",
                 ),
                 stop=asyncio.Event(),
                 max_iterations=1,

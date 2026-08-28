@@ -13,6 +13,11 @@ from tap.contracts.http import (
     DocumentAccepted,
     DocumentDetail,
     DocumentPage,
+    HealthComponent,
+    HealthComponentName,
+    HealthComponentState,
+    HealthRemediationCode,
+    ReadyHealth,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
 )
@@ -44,11 +49,36 @@ class KnowledgeHttpService(Protocol):
     async def citation(self, citation_id: str) -> CitationPreview: ...
 
 
+class ReadinessHttpService(Protocol):
+    async def check(self) -> ReadyHealth: ...
+
+
+class _UnconfiguredReadiness:
+    async def check(self) -> ReadyHealth:
+        return ReadyHealth(
+            status="unready",
+            components=[
+                HealthComponent(name=name, state=HealthComponentState.FAILED, remediation_code=code)
+                for name, code in (
+                    (HealthComponentName.MYSQL, HealthRemediationCode.START_MYSQL),
+                    (HealthComponentName.REDIS, HealthRemediationCode.START_REDIS),
+                    (HealthComponentName.BLOB, HealthRemediationCode.START_BLOB),
+                    (HealthComponentName.MILVUS, HealthRemediationCode.START_MILVUS),
+                    (HealthComponentName.MODELS, HealthRemediationCode.CONFIGURE_MODELS),
+                )
+            ],
+        )
+
+
+_UNCONFIGURED_READINESS = _UnconfiguredReadiness()
+
+
 @dataclass(frozen=True, slots=True)
 class HttpServices:
     """Optional service assembly used by routes without eager infrastructure startup."""
 
     knowledge: KnowledgeHttpService | None = None
+    readiness: ReadinessHttpService | None = None
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:
@@ -57,3 +87,9 @@ def knowledge_service(request: Request) -> KnowledgeHttpService:
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service
+
+
+def readiness_service(request: Request) -> ReadinessHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.readiness if isinstance(services, HttpServices) else None
+    return service or _UNCONFIGURED_READINESS

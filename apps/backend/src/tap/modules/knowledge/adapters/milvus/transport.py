@@ -12,10 +12,18 @@ import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import Literal, Protocol, cast
 
-from pymilvus import AnnSearchRequest, MilvusClient, RRFRanker  # type: ignore[import-untyped]
+from pymilvus import (  # type: ignore[import-untyped]
+    AnnSearchRequest,
+    DataType,
+    Function,
+    FunctionType,
+    MilvusClient,
+    MilvusException,
+    RRFRanker,
+)
 
 from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget, MilvusSearchConfig
 from tap.modules.knowledge.domain.models import SourceFamily
@@ -44,6 +52,29 @@ MILVUS_OUTPUT_FIELDS = (
     "derived_from_chunk_ids",
 )
 
+
+def create_operations_milvus_sdk() -> object:
+    """Expose pinned SDK bindings without widening the sole pymilvus import boundary."""
+
+    from tap.operations.milvus.client import MilvusSdk
+
+    return MilvusSdk(
+        client_factory=MilvusClient,
+        create_schema=MilvusClient.create_schema,
+        function_factory=Function,
+        ann_search_request_factory=AnnSearchRequest,
+        ranker_factory=RRFRanker,
+        varchar_type=DataType.VARCHAR,
+        sparse_vector_type=DataType.SPARSE_FLOAT_VECTOR,
+        float_vector_type=DataType.FLOAT_VECTOR,
+        array_type=DataType.ARRAY,
+        int64_type=DataType.INT64,
+        bool_type=DataType.BOOL,
+        bm25_function_type=FunctionType.BM25,
+        permission_error=MilvusException,
+    )
+
+
 _OUTPUT_FIELD_SET = frozenset(MILVUS_OUTPUT_FIELDS)
 _INDEX_FIELDS = (
     "dense_vector",
@@ -62,6 +93,7 @@ _METADATA_PREFIX = "tap-collection-metadata-v1:"
 _MAX_NORMALIZATION_DEPTH = 16
 _MAX_NORMALIZATION_ITEMS = 20_000
 _MAX_NORMALIZATION_BYTES = 4 * 1024 * 1024
+_MAX_COLLECTION_ALIASES = 64
 _METADATA_FIELDS = frozenset(
     {
         "family",
@@ -219,6 +251,29 @@ class MilvusCollectionDescriptor:
     vector_dimension: int
     dynamic_fields_enabled: bool
     consistency_level: str
+
+
+class _CollectionBaseSchemaComponent(StrEnum):
+    ENVELOPE = "envelope"
+    PROPERTIES = "properties"
+    ALIASES = "aliases"
+    IDENTITY = "identity"
+    METADATA = "metadata"
+    FIELDS = "fields"
+    FUNCTIONS = "functions"
+    VECTOR = "vector"
+
+
+class CollectionBaseSchemaMismatch(ValueError):
+    """Closed provider-schema discriminator without raw provider detail."""
+
+    __slots__ = ("component",)
+
+    def __init__(self, component: _CollectionBaseSchemaComponent) -> None:
+        if not isinstance(component, _CollectionBaseSchemaComponent):
+            raise TypeError("Milvus base schema mismatch requires a closed component")
+        self.component = component
+        super().__init__("Milvus collection base schema does not match")
 
 
 class MilvusReader(Protocol):
@@ -611,6 +666,7 @@ def _collection_descriptor(
     collection = _mapping(raw_collection)
     if set(collection) - _COLLECTION_FIELDS:
         raise ValueError("collection description is widened")
+    _validate_collection_envelope(collection)
     if collection.get("collection_name") != expected_collection:
         raise ValueError("collection identity does not match")
     if (
@@ -677,57 +733,157 @@ def collection_base_descriptor(
 ) -> MilvusCollectionDescriptor:
     """Validate immutable collection facts before repairing any missing indexes."""
 
-    collection = _mapping(raw_collection)
-    if set(collection) - _COLLECTION_FIELDS:
-        raise ValueError("collection description is widened")
-    if collection.get("collection_name") != expected_collection:
-        raise ValueError("collection identity does not match")
-    if (
-        collection.get("auto_id") is not False
-        or collection.get("enable_dynamic_field") is not False
-        or collection.get("enable_namespace") is not False
-        or collection.get("consistency_level_name") != "Strong"
-        or collection.get("description") != expected_schema.get("description")
-    ):
-        raise ValueError("collection base metadata does not match")
-    metadata = _collection_metadata(collection.get("description"))
-    fields = _canonical_fields(collection.get("fields"))
-    expected_fields = [
-        dict(cast(Mapping[str, object], item))
-        for item in cast(Sequence[object], expected_schema.get("fields"))
-    ]
-    if fields != expected_fields:
-        raise ValueError("collection fields do not match the canonical schema")
-    functions = _canonical_functions(collection.get("functions"))
-    if functions != [
-        {
-            "input_field_names": ["content"],
-            "name": "content_bm25_v1",
-            "output_field_names": ["bm25_sparse"],
-            "params": {},
-            "type": 1,
-        }
-    ]:
-        raise ValueError("collection functions do not match the canonical schema")
-    vector_dimension = metadata["vectorDimension"]
-    dense_fields = [field for field in fields if field["name"] == "dense_vector"]
-    if (
-        type(vector_dimension) is not int
-        or len(dense_fields) != 1
-        or dense_fields[0]["params"] != {"dim": vector_dimension}
-    ):
-        raise ValueError("vector dimension does not match dense field")
+    try:
+        collection = _mapping(raw_collection)
+        if set(collection) - _COLLECTION_FIELDS:
+            raise ValueError("collection description is widened")
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.ENVELOPE) from None
+    try:
+        _validate_collection_properties(collection)
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.PROPERTIES) from None
+    try:
+        _validate_collection_aliases(collection)
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.ALIASES) from None
+    try:
+        if collection.get("collection_name") != expected_collection:
+            raise ValueError("collection identity does not match")
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.IDENTITY) from None
+    try:
+        if (
+            collection.get("auto_id") is not False
+            or collection.get("enable_dynamic_field") is not False
+            or collection.get("enable_namespace") is not False
+            or collection.get("consistency_level_name") != "Strong"
+            or collection.get("description") != expected_schema.get("description")
+        ):
+            raise ValueError("collection base metadata does not match")
+        metadata = _collection_metadata(collection.get("description"))
+        family = SourceFamily(cast(str, metadata["family"]))
+        schema_version = _metadata_string(metadata, "schemaVersion")
+        schema_sha256 = _metadata_digest(metadata, "schemaSha256")
+        corpus_version = _metadata_string(metadata, "corpusVersion")
+        embedding_model_version = _metadata_string(metadata, "embeddingModelVersion")
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.METADATA) from None
+    try:
+        fields = _canonical_fields(collection.get("fields"))
+        expected_fields = [
+            dict(cast(Mapping[str, object], item))
+            for item in cast(Sequence[object], expected_schema.get("fields"))
+        ]
+        if fields != expected_fields:
+            raise ValueError("collection fields do not match the canonical schema")
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.FIELDS) from None
+    try:
+        functions = _canonical_functions(collection.get("functions"))
+        if functions != [
+            {
+                "input_field_names": ["content"],
+                "name": "content_bm25_v1",
+                "output_field_names": ["bm25_sparse"],
+                "params": {},
+                "type": 1,
+            }
+        ]:
+            raise ValueError("collection functions do not match the canonical schema")
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.FUNCTIONS) from None
+    try:
+        vector_dimension = metadata["vectorDimension"]
+        dense_fields = [field for field in fields if field["name"] == "dense_vector"]
+        if (
+            type(vector_dimension) is not int
+            or len(dense_fields) != 1
+            or dense_fields[0]["params"] != {"dim": vector_dimension}
+        ):
+            raise ValueError("vector dimension does not match dense field")
+    except Exception:
+        raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent.VECTOR) from None
     return MilvusCollectionDescriptor(
         collection_name=expected_collection,
-        family=SourceFamily(cast(str, metadata["family"])),
-        schema_version=_metadata_string(metadata, "schemaVersion"),
-        schema_sha256=cast(str, metadata["schemaSha256"]),
-        corpus_version=_metadata_string(metadata, "corpusVersion"),
-        embedding_model_version=_metadata_string(metadata, "embeddingModelVersion"),
+        family=family,
+        schema_version=schema_version,
+        schema_sha256=schema_sha256,
+        corpus_version=corpus_version,
+        embedding_model_version=embedding_model_version,
         vector_dimension=vector_dimension,
         dynamic_fields_enabled=False,
         consistency_level="Strong",
     )
+
+
+def _validate_collection_envelope(collection: Mapping[str, object]) -> None:
+    _validate_collection_properties(collection)
+    _validate_collection_aliases(collection)
+
+
+def _validate_collection_properties(collection: Mapping[str, object]) -> None:
+    properties = collection.get("properties")
+    if type(properties) is not dict or len(properties) != 1:
+        raise ValueError("collection properties are widened")
+    key, value = next(iter(properties.items()))
+    if type(key) is not str or key != "timezone" or type(value) is not str or value != "UTC":
+        raise ValueError("collection properties are widened")
+
+
+def _validate_collection_aliases(collection: Mapping[str, object]) -> None:
+    aliases = collection.get("aliases")
+    if (
+        isinstance(aliases, (str, bytes))
+        or not isinstance(aliases, Sequence)
+        or len(aliases) > _MAX_COLLECTION_ALIASES
+        or any(
+            not isinstance(alias, str) or _SAFE_COLLECTION_NAME.fullmatch(alias) is None
+            for alias in aliases
+        )
+        or len(set(cast(Sequence[str], aliases))) != len(aliases)
+    ):
+        raise ValueError("collection alias inventory is malformed")
+
+
+def validate_collection_indexes(
+    raw_indexes: tuple[object, ...],
+    *,
+    expected_schema: Mapping[str, object],
+) -> None:
+    """Validate exact index details without requiring collection-observer authority."""
+
+    configured = expected_schema.get("indexes")
+    if not isinstance(configured, Mapping) or set(configured) != set(_INDEX_FIELDS):
+        raise ValueError("expected index schema is outside the closed doc family")
+    expected: list[dict[str, object]] = []
+    for field_name, raw_definition in configured.items():
+        if not isinstance(field_name, str) or not isinstance(raw_definition, Mapping):
+            raise ValueError("expected index schema is malformed")
+        definition = dict(raw_definition)
+        if not set(definition) <= {"index_type", "metric_type", "params"}:
+            raise ValueError("expected index schema is widened")
+        index_type = definition.get("index_type")
+        metric_type = definition.get("metric_type")
+        params = definition.get("params", {})
+        if (
+            not isinstance(index_type, str)
+            or (metric_type is not None and not isinstance(metric_type, str))
+            or not isinstance(params, Mapping)
+        ):
+            raise ValueError("expected index schema is malformed")
+        expected.append(
+            {
+                "field_name": field_name,
+                "index_name": field_name,
+                "index_type": index_type,
+                "metric_type": metric_type,
+                "params": dict(params),
+            }
+        )
+    expected.sort(key=lambda item: cast(str, item["field_name"]))
+    if _canonical_indexes(raw_indexes) != expected:
+        raise ValueError("collection indexes do not match the canonical schema")
 
 
 def _collection_metadata(raw: object) -> dict[str, object]:

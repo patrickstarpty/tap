@@ -1,4 +1,6 @@
 architecture-fixtures/
 dist/
+playwright-report/
 scripts/generate-api.mjs
 src/shared/api/generated/
+test-results/

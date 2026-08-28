@@ -777,7 +777,12 @@ class AzureBlobArtifactStore:
         properties = await self._bounded(
             self._service.get_container_client(container).get_container_properties()
         )
-        return cast(Mapping[str, object], properties)
+        public_access = properties["public_access"]
+        if public_access is not None and (
+            not isinstance(public_access, str) or public_access not in {"blob", "container"}
+        ):
+            raise ArtifactProviderUnavailable("Azure Blob container properties are malformed")
+        return {"public_access": public_access}
 
     @_artifact_boundary
     async def close(self) -> None:

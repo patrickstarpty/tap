@@ -36,6 +36,8 @@ from tap.modules.knowledge.domain.models import (
     ResourceRef,
     RetrievalProfileId,
     RevisionKind,
+    SearchRequest,
+    SearchResponse,
     SourceFamily,
     SourceRevisionRef,
 )
@@ -180,6 +182,33 @@ class Gateway:
         self.requests: list[AnswerRequest] = []
         self.policies: list[RetrievalPolicyContext] = []
         self.error: Exception | None = None
+
+    async def search(
+        self, request: SearchRequest, policy: RetrievalPolicyContext
+    ) -> SearchResponse:
+        self.requests.append(
+            AnswerRequest(
+                query=request.query,
+                answer_mode=request.answer_mode,
+                source_families=request.source_families,
+                resource_refs=request.resource_refs,
+                requested_environment=request.requested_environment,
+                requested_corpus_version=request.requested_corpus_version,
+                top_k=request.top_k,
+            )
+        )
+        self.policies.append(policy)
+        if self.error is not None:
+            raise self.error
+        return SearchResponse(
+            trace_id=self.response.trace_id,
+            query_plan_id=self.response.query_plan_id,
+            context_snapshot_id=self.response.context_snapshot_id,
+            corpus_version=self.response.corpus_version,
+            retrieval_profile_id=self.response.retrieval_profile_id,
+            evidence=(),
+            embedding_provenance=self.response.embedding_provenance,
+        )
 
     async def answer(
         self, request: AnswerRequest, policy: RetrievalPolicyContext
@@ -392,6 +421,31 @@ def test_answer_uses_only_trusted_selected_rows_and_preserves_gateway_response()
             "citation-b",
         )
         assert snapshot.query_hash.startswith("sha256:")
+
+    asyncio.run(scenario())
+
+
+def test_internal_search_uses_the_same_current_selected_revision_authority() -> None:
+    async def scenario() -> None:
+        rows = (ready("doc_b", "rev_b", SECOND_HASH), ready())
+        answer_service, repository, gateway = service(rows)
+
+        response = await answer_service.search(
+            SearchRequest(
+                query="What is the rule?",
+                resource_refs=request_for("doc_b", "doc_a").resource_refs,
+            )
+        )
+
+        assert response.evidence == ()
+        assert repository.load_requests == [("doc_b", "doc_a")]
+        assert len(gateway.requests) == 1
+        trusted = gateway.requests[0]
+        assert trusted.source_families == (SourceFamily.DOC,)
+        assert tuple(ref.source_id for ref in trusted.resource_refs) == ("doc_a", "doc_b")
+        assert all(ref.mode is ResourceMode.SCOPE for ref in trusted.resource_refs)
+        assert gateway.policies[0].resource_grants[0].source_id == "doc_a"
+        assert repository.snapshots == []
 
     asyncio.run(scenario())
 

@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 
 import pytest
 
-from tap.modules.knowledge.adapters.milvus.transport import MilvusCollectionDescriptor
+from tap.modules.knowledge.adapters.milvus.transport import (
+    CollectionBaseSchemaMismatch,
+    MilvusCollectionDescriptor,
+    _CollectionBaseSchemaComponent,
+)
 from tap.modules.knowledge.adapters.milvus_documents import (
     ATHENA_ALIAS,
     ATHENA_CORPUS_VERSION,
@@ -19,6 +24,7 @@ from tap.modules.knowledge.adapters.milvus_documents import (
     ATHENA_SCHEMA_VERSION,
     AthenaMilvusConfig,
     IndexFenced,
+    IndexTargetProvisioningFailed,
     IndexUnavailable,
     MilvusDocumentIndex,
     ReadyRevisionArtifacts,
@@ -344,6 +350,16 @@ class MemoryMilvus:
             raise RuntimeError("indexes are incomplete")
         return await self.describe_collection_schema(name, self.schemas[name])
 
+    async def validate_collection_indexes(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> None:
+        self.events.append(f"describe-indexes:{name}")
+        assert schema == self.schemas[name]
+        if self.indexes.get(name) != EXPECTED_INDEXES:
+            raise RuntimeError("indexes are incomplete")
+
     async def grant_collection(self, name: str, role_name: str) -> None:
         self.events.append(f"grant:{role_name}:{name}")
         privileges = {
@@ -443,14 +459,214 @@ class MemoryMilvus:
         return None
 
 
+class MutationOnlyProvisioner:
+    """Fail immediately if the index asks its provisioner to observe global state."""
+
+    def __init__(self, memory: MemoryMilvus) -> None:
+        self._memory = memory
+
+    def __getattr__(self, name: str) -> object:
+        if name in {
+            "collection_aliases",
+            "collection_exists",
+            "describe_alias",
+            "describe_collection",
+            "describe_collection_schema",
+            "list_collections",
+        }:
+            raise AssertionError(f"provisioner observation is forbidden: {name}")
+        return getattr(self._memory, name)
+
+
+class ReaderObserver:
+    def __init__(self, memory: MemoryMilvus) -> None:
+        self._memory = memory
+
+    async def describe_alias(self, alias: str) -> str | None:
+        self._memory.events.append(f"reader-alias:{alias}")
+        return await self._memory.describe_alias(alias)
+
+    async def collection_exists(self, name: str) -> bool:
+        self._memory.events.append(f"reader-exists:{name}")
+        return await self._memory.collection_exists(name)
+
+    async def describe_collection_schema(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> MilvusCollectionDescriptor:
+        self._memory.events.append(f"reader-schema:{name}")
+        return await self._memory.describe_collection_schema(name, schema)
+
+    async def query_persisted_rows(
+        self,
+        collection_name: str,
+        filter_expression: str,
+        output_fields: tuple[str, ...],
+        limit: int,
+    ) -> tuple[Mapping[str, object], ...]:
+        return await self._memory.query_persisted_rows(
+            collection_name,
+            filter_expression,
+            output_fields,
+            limit,
+        )
+
+    async def close(self) -> None:
+        await self._memory.close()
+
+
 def index_for(memory: MemoryMilvus) -> MilvusDocumentIndex:
     return MilvusDocumentIndex(
         config=AthenaMilvusConfig(),
-        provisioner=memory,
+        provisioner=MutationOnlyProvisioner(memory),  # type: ignore[arg-type]
         writer=memory,
-        reader=memory,
+        reader=ReaderObserver(memory),
         coordinator=memory.coordinator,
     )
+
+
+class _StageFailureCoordinator(MemoryProjectionCoordinator):
+    def __init__(self, stage: str) -> None:
+        super().__init__()
+        self._stage = stage
+
+    @asynccontextmanager
+    async def mutation(self, alias: str):  # type: ignore[no-untyped-def]
+        if self._stage == "authority":
+            raise RuntimeError("provider-secret-authority")
+        async with super().mutation(alias) as lease:
+            yield lease
+
+    async def initialize(self, physical: str) -> tuple[int, str]:
+        if self._stage == "authority-sync":
+            raise RuntimeError("provider-secret-authority-sync")
+        return await super().initialize(physical)
+
+    async def owned_cleanup(self, limit: int) -> tuple[ProjectionOwnershipReceipt, ...]:
+        if self._stage == "cleanup":
+            raise RuntimeError("provider-secret-cleanup")
+        return await super().owned_cleanup(limit)
+
+
+class _StageFailureMilvus(MemoryMilvus):
+    def __init__(self, stage: str) -> None:
+        super().__init__()
+        self._stage = stage
+        self.coordinator = _StageFailureCoordinator(stage)
+        if stage == "collection-schema-binding":
+            self.descriptor_model = "provider-secret-binding"
+
+    async def describe_alias(self, alias: str) -> str | None:
+        if self._stage == "discovery":
+            raise RuntimeError("provider-secret-discovery")
+        return await super().describe_alias(alias)
+
+    async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
+        if self._stage == "collection-create":
+            raise RuntimeError("provider-secret-collection-create")
+        await super().create_collection(name, schema)
+
+    async def describe_collection_schema(
+        self,
+        name: str,
+        schema: Mapping[str, object],
+    ) -> MilvusCollectionDescriptor:
+        if self._stage == "collection-schema-observe":
+            raise RuntimeError("provider-secret-collection-schema-observe")
+        prefix = "collection-schema-"
+        if self._stage.startswith(prefix) and self._stage != "collection-schema-binding":
+            component = self._stage.removeprefix(prefix)
+            raise CollectionBaseSchemaMismatch(_CollectionBaseSchemaComponent(component))
+        return await super().describe_collection_schema(name, schema)
+
+    async def create_indexes(
+        self,
+        name: str,
+        schema: Mapping[str, object] | None = None,
+    ) -> None:
+        if self._stage == "indexes":
+            raise RuntimeError("provider-secret-indexes")
+        await super().create_indexes(name, schema)
+
+    async def ensure_loaded(self, name: str) -> None:
+        if self._stage == "load":
+            raise RuntimeError("provider-secret-load")
+        await super().ensure_loaded(name)
+
+    async def grant_collection(self, name: str, role_name: str) -> None:
+        if self._stage == "grants":
+            raise RuntimeError("provider-secret-grants")
+        await super().grant_collection(name, role_name)
+
+    async def create_alias(self, alias: str, collection_name: str) -> None:
+        if self._stage == "alias":
+            raise RuntimeError("provider-secret-alias")
+        await super().create_alias(alias, collection_name)
+
+
+@pytest.mark.parametrize(
+    "stage",
+    (
+        "authority",
+        "discovery",
+        "collection-create",
+        "collection-schema-observe",
+        "collection-schema-envelope",
+        "collection-schema-properties",
+        "collection-schema-aliases",
+        "collection-schema-identity",
+        "collection-schema-metadata",
+        "collection-schema-fields",
+        "collection-schema-functions",
+        "collection-schema-vector",
+        "collection-schema-binding",
+        "indexes",
+        "load",
+        "grants",
+        "alias",
+        "authority-sync",
+        "cleanup",
+    ),
+)
+@pytest.mark.asyncio
+async def test_ensure_target_reports_only_its_closed_current_stage(stage: str) -> None:
+    with pytest.raises(IndexTargetProvisioningFailed) as captured:
+        await index_for(_StageFailureMilvus(stage)).ensure_target()
+
+    assert captured.value.stage.value == stage
+    assert str(captured.value) == "Athena Milvus target provisioning failed"
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    rendered = "".join(traceback.format_exception(captured.value))
+    assert "provider-secret" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ensure_failures_keep_per_call_stage_labels_isolated() -> None:
+    results = await asyncio.gather(
+        index_for(_StageFailureMilvus("collection-create")).ensure_target(),
+        index_for(_StageFailureMilvus("grants")).ensure_target(),
+        return_exceptions=True,
+    )
+
+    assert [type(result) for result in results] == [
+        IndexTargetProvisioningFailed,
+        IndexTargetProvisioningFailed,
+    ]
+    assert [result.stage.value for result in results] == [  # type: ignore[union-attr]
+        "collection-create",
+        "grants",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ensure_target_preserves_cancellation_instead_of_labeling_it() -> None:
+    memory = MemoryMilvus()
+    memory.coordinator.cancel_release_after_body = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await index_for(memory).ensure_target()
 
 
 @pytest.mark.asyncio
@@ -828,18 +1044,19 @@ async def test_wrong_alias_and_stale_collection_metadata_fail_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_ensure_validates_full_descriptor_before_any_grant_or_alias_publish() -> None:
-    """Reader authority or stable discovery must never precede index/metadata validation."""
+    """Reader metadata plus provisioner index facts must precede publication."""
     memory = MemoryMilvus()
 
     await index_for(memory).ensure_target()
 
-    full = memory.events.index(f"describe-full:{ATHENA_PHYSICAL_COLLECTION}")
+    base = memory.events.index(f"reader-schema:{ATHENA_PHYSICAL_COLLECTION}")
+    indexes = memory.events.index(f"describe-indexes:{ATHENA_PHYSICAL_COLLECTION}")
     loaded = memory.events.index(f"load-state:{ATHENA_PHYSICAL_COLLECTION}")
     reader_grant = memory.events.index(f"grant:tap_reader:{ATHENA_PHYSICAL_COLLECTION}")
     writer_grant = memory.events.index(f"grant:tap_writer:{ATHENA_PHYSICAL_COLLECTION}")
     alias = memory.events.index(f"create-alias:{ATHENA_PHYSICAL_COLLECTION}")
-    assert full < loaded < reader_grant < alias
-    assert full < loaded < writer_grant < alias
+    assert base < indexes < loaded < reader_grant < alias
+    assert base < indexes < loaded < writer_grant < alias
 
 
 @pytest.mark.asyncio
@@ -930,8 +1147,11 @@ async def test_external_legal_alias_drift_never_manufactures_cleanup_ownership()
     memory.loaded.add(external)
     memory.aliases[ATHENA_ALIAS] = external
 
-    with pytest.raises(IndexUnavailable, match="ownership"):
+    with pytest.raises(IndexTargetProvisioningFailed) as captured:
         await index.ensure_target()
+
+    assert captured.value.stage.value == "authority-sync"
+    assert captured.value.__cause__ is None
 
     assert ATHENA_PHYSICAL_COLLECTION in memory.collections
     assert f"drop-collection:{ATHENA_PHYSICAL_COLLECTION}" not in memory.events

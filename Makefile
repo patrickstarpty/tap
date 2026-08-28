@@ -1,16 +1,20 @@
 TAP_MILVUS_COMPOSE_PROJECT ?= tap-milvus-local-experiment
 export TAP_MILVUS_COMPOSE_PROJECT
+TAP_ATHENA_COMPOSE_PROJECT ?= tap-athena-demo
+export TAP_ATHENA_COMPOSE_PROJECT
+override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: bootstrap check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty
+.PHONY: bootstrap check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
 	corepack pnpm install --frozen-lockfile
 
 check: ## lint, format-check, typecheck, architecture checks
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py
-	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/athena_collection.py scripts/check-athena-demo.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/athena_collection.py scripts/check-athena-demo.py
+	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/athena_collection.py scripts/check-athena-demo.py
+	bash -n scripts/run-athena-dev.sh scripts/run-athena-e2e.sh
 	uv run --project apps/backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/web run contracts:check
 	corepack pnpm --filter @tap/web run check
@@ -82,3 +86,57 @@ test-milvus-rebuild-empty: ## delete only the opted-in project volumes and rebui
 	}
 	docker compose -p "$(TAP_MILVUS_COMPOSE_PROJECT)" --profile milvus down -v --remove-orphans
 	$(MAKE) test-milvus TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
+
+demo-up: ## start durable Athena middleware and initialize exact owned resources
+	@set -eu; \
+	athena_demo_project="$${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"; \
+	case "$$athena_demo_project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Athena Compose project" >&2; exit 2;; esac; \
+	[ "$${#athena_demo_project}" -ge 3 ] && [ "$${#athena_demo_project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
+	readonly athena_demo_project; \
+	if [ -f "$(TAP_REPO_ROOT)/.env" ]; then set -a; . "$(TAP_REPO_ROOT)/.env"; set +a; fi; \
+	export TAP_ATHENA_COMPOSE_PROJECT="$$athena_demo_project"; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$athena_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
+	uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head; \
+	TAP_ALLOW_INITIAL_MILVUS_ROOT=1 uv run --project apps/backend python scripts/milvus_bootstrap.py; \
+	uv run --project apps/backend python scripts/athena_collection.py ensure
+
+demo-check: ## check exact Athena dependencies without exposing provider details
+	@set -eu; \
+	athena_demo_project="$${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"; \
+	case "$$athena_demo_project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Athena Compose project" >&2; exit 2;; esac; \
+	[ "$${#athena_demo_project}" -ge 3 ] && [ "$${#athena_demo_project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
+	readonly athena_demo_project; \
+	if [ -f "$(TAP_REPO_ROOT)/.env" ]; then set -a; . "$(TAP_REPO_ROOT)/.env"; set +a; fi; \
+	export TAP_ATHENA_COMPOSE_PROJECT="$$athena_demo_project"; \
+	uv run --project apps/backend python scripts/check-athena-demo.py
+
+demo-dev: ## run API, relay, ingestion worker, and Web on strict loopback ports
+	@set -eu; \
+	project="$${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"; \
+	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Athena Compose project" >&2; exit 2;; esac; \
+	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
+	bash scripts/run-athena-dev.sh
+
+demo-e2e: ## run the isolated deterministic browser and persistence journey
+	@set -eu; \
+	project="$${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"; \
+	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Athena Compose project" >&2; exit 2;; esac; \
+	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
+	bash scripts/run-athena-e2e.sh
+
+demo-down: ## stop only the selected Athena project and preserve named volumes
+	@set -eu; \
+	project="$${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"; \
+	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Athena Compose project" >&2; exit 2;; esac; \
+	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus down --remove-orphans
+
+demo-reset: ## explicitly remove only the default Athena project's volumes
+	@set -eu; \
+	project="$${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"; \
+	allow_reset="$${TAP_ALLOW_ATHENA_VOLUME_RESET:-0}"; \
+	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Athena Compose project" >&2; exit 2;; esac; \
+	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
+	[ "$$project" = tap-athena-demo ] || { echo "Athena volume reset requires exact project tap-athena-demo" >&2; exit 2; }; \
+	[ "$$allow_reset" = 1 ] || { echo "Athena volume reset requires TAP_ALLOW_ATHENA_VOLUME_RESET=1" >&2; exit 2; }; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$project" --profile milvus down --volumes --remove-orphans
