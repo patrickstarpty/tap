@@ -61,6 +61,7 @@ function asProblemDetails(value: unknown, status: number): ProblemDetails {
     typeof candidate.type !== "string" ||
     typeof candidate.title !== "string" ||
     typeof candidate.status !== "number" ||
+    candidate.status !== status ||
     typeof candidate.detail !== "string"
   ) {
     return fallbackProblem(status);
@@ -225,9 +226,10 @@ export function createKnowledgeClient(
       }
     },
 
-    async createAnswer(request) {
+    async createAnswer(request, signal) {
       const result = await http.POST("/v1/knowledge/answers", {
         body: request,
+        signal,
       });
       if (result.error !== undefined) {
         throw new KnowledgeClientError(
@@ -237,9 +239,10 @@ export function createKnowledgeClient(
       return result.data;
     },
 
-    async getCitation(citationId) {
+    async getCitation(citationId, signal) {
       const result = await http.GET("/v1/citations/{citation_id}", {
         params: { path: { citation_id: citationId } },
+        signal,
       });
       if (result.error !== undefined) {
         throw new KnowledgeClientError(

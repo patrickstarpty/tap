@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createKnowledgeClient, KnowledgeClientError } from "./client";
+import type { RetrievalAnswerRequest } from "./types";
 
 class TestUploadRequest {
   readonly upload: { onprogress: ((event: ProgressEvent) => void) | null } = {
@@ -174,5 +175,88 @@ describe("KnowledgeClient", () => {
 
     await expect(upload).rejects.toMatchObject({ name: "AbortError" });
     expect(request.aborted).toBe(true);
+  });
+
+  it("passes AbortSignal through the generated answer and citation requests", async () => {
+    const requests: Request[] = [];
+    const fetch = async (request: Request): Promise<Response> => {
+      requests.push(request);
+      if (request.url.includes("/v1/knowledge/answers")) {
+        return Response.json({
+          traceId: "trace-a",
+          queryPlanId: "plan-a",
+          contextSnapshotId: "snapshot-a",
+          corpusVersion: "athena-demo-v1",
+          retrievalProfileId: "quick-hybrid-v1",
+          degradedMode: false,
+          degradationReasons: null,
+          answer: "",
+          abstained: true,
+          abstentionReason: "insufficient_evidence",
+          claims: [],
+          citations: [],
+        });
+      }
+      return Response.json({
+        citationId: "citation-a",
+        documentId: "doc-a",
+        revisionId: "rev-a",
+        filename: "policy.md",
+        sourceContentHash: `sha256:${"a".repeat(64)}`,
+        chunkContentHash: `sha256:${"b".repeat(64)}`,
+        anchor: {
+          type: "document",
+          headingPath: ["Policy"],
+          page: 1,
+          bbox: null,
+          startOffset: 0,
+          endOffset: 8,
+        },
+        quote: "Evidence",
+        prefix: "",
+        suffix: "",
+      });
+    };
+    const client = createKnowledgeClient({ fetch });
+    const controller = new AbortController();
+    const answerRequest: RetrievalAnswerRequest = {
+      query: "退款需要几人审批？",
+      answerMode: "quick",
+      sources: ["doc"],
+      resourceRefs: [{ family: "doc", sourceId: "doc-a", mode: "scope" }],
+    };
+
+    await client.createAnswer(answerRequest, controller.signal);
+    await client.getCitation("citation-a", controller.signal);
+    controller.abort();
+
+    expect(requests).toHaveLength(2);
+    expect(requests.every((request) => request.signal.aborted)).toBe(true);
+    await expect(requests[0]?.json()).resolves.toEqual(answerRequest);
+  });
+
+  it("uses the HTTP status as authority when a Problem body claims another status", async () => {
+    const fetch = async (): Promise<Response> =>
+      Response.json(
+        {
+          type: "https://tap.example/problems/citation-stale",
+          title: "Citation stale",
+          status: 404,
+          detail: "provider secret",
+        },
+        {
+          status: 503,
+          headers: { "content-type": "application/problem+json" },
+        },
+      );
+    const client = createKnowledgeClient({ fetch });
+
+    const error = await client
+      .getCitation("citation-a")
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(KnowledgeClientError);
+    expect(error).toMatchObject({ code: "request-failed", status: 503 });
+    expect(String(error)).not.toContain("provider secret");
   });
 });

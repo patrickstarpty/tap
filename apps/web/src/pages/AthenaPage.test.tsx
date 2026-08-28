@@ -1,6 +1,9 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { defaultScheduler, notifyManager } from "@tanstack/react-query";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import { useDocumentListQuery } from "../features/knowledge/api/queries";
 
 import {
   document,
@@ -8,6 +11,15 @@ import {
 } from "../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../features/knowledge/testing/renderKnowledgeApp";
 import { AthenaPage } from "./AthenaPage";
+
+function DocumentPollingProbe({ pollIntervalMs }: { pollIntervalMs: number }) {
+  const documentsQuery = useDocumentListQuery({ pollIntervalMs });
+  return (
+    <output aria-label="共享文档状态">
+      {documentsQuery.data?.items[0]?.status ?? "pending"}
+    </output>
+  );
+}
 
 describe("AthenaPage", () => {
   it("keeps the terminal document cache across primary navigation changes", async () => {
@@ -17,17 +29,48 @@ describe("AthenaPage", () => {
     ]);
     renderKnowledgeApp(<AthenaPage />, { api });
     await user.click(screen.getByRole("tab", { name: "知识库" }));
-    expect(await screen.findByText("handbook.md")).toBeVisible();
+    const libraryPanel = screen.getByRole("tabpanel", { name: "知识库" });
+    expect(await within(libraryPanel).findByText("handbook.md")).toBeVisible();
     expect(api.listCalls).toBe(1);
 
     await user.click(screen.getByRole("tab", { name: "问答" }));
-    expect(screen.getByText("从已就绪的来源开始提问")).toBeVisible();
+    expect(
+      within(screen.getByRole("tabpanel", { name: "问答" })).getByRole(
+        "heading",
+        { name: "问答" },
+      ),
+    ).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "知识库" }));
 
-    expect(screen.getByText("handbook.md")).toBeVisible();
+    expect(within(libraryPanel).getByText("handbook.md")).toBeVisible();
   });
 
-  it("shows cached processing state immediately after tab return and resumes polling", async () => {
+  it("shows cached processing state immediately after tab return", async () => {
+    const api = fakeKnowledgeClient().withDocuments([
+      document({ status: "processing", stage: "embedding" }),
+    ]);
+    renderKnowledgeApp(<AthenaPage knowledgePollIntervalMs={60_000} />, {
+      api,
+    });
+    expect(
+      await within(screen.getByRole("tabpanel", { name: "问答" })).findByText(
+        "正在生成向量",
+      ),
+    ).toBeVisible();
+    expect(api.listCalls).toBe(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: "知识库" }));
+    const libraryPanel = screen.getByRole("tabpanel", { name: "知识库" });
+    expect(within(libraryPanel).getByText("正在生成向量")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "问答" }));
+    fireEvent.click(screen.getByRole("tab", { name: "知识库" }));
+    expect(within(libraryPanel).getByText("正在生成向量")).toBeVisible();
+    expect(api.listCalls).toBe(1);
+  });
+
+  it("polls the shared processing snapshot to terminal with controlled time", async () => {
+    vi.useFakeTimers();
+    notifyManager.setScheduler((callback) => callback());
     const api = fakeKnowledgeClient()
       .listOnce([document({ status: "processing", stage: "embedding" })])
       .listOnce([
@@ -37,35 +80,27 @@ describe("AthenaPage", () => {
           errorCode: "embedding-unavailable",
         }),
       ]);
-    const { queryClient } = renderKnowledgeApp(
-      <AthenaPage knowledgePollIntervalMs={25} />,
+    const rendered = renderKnowledgeApp(
+      <DocumentPollingProbe pollIntervalMs={25} />,
       { api },
     );
-    const tabs = screen.getByRole("tablist");
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(screen.getByLabelText("共享文档状态")).toHaveTextContent(
+        "processing",
+      );
+      expect(api.listCalls).toBe(1);
 
-    fireEvent.click(screen.getByRole("tab", { name: "知识库" }));
-    expect(await screen.findByText("正在生成向量")).toBeVisible();
-    fireEvent.click(screen.getByRole("tab", { name: "问答" }));
-    fireEvent.click(screen.getByRole("tab", { name: "知识库" }));
-    expect(screen.getByText("正在生成向量")).toBeVisible();
+      await act(async () => vi.advanceTimersByTimeAsync(25));
+      expect(screen.getByLabelText("共享文档状态")).toHaveTextContent("failed");
+      expect(api.listCalls).toBe(2);
 
-    await waitFor(
-      () =>
-        expect(
-          queryClient.getQueryData<{ items: Array<{ status: string }> }>([
-            "knowledge",
-            "documents",
-          ])?.items[0]?.status,
-        ).toBe("failed"),
-      { timeout: 1_000 },
-    );
-    await waitFor(() =>
-      expect(screen.queryByText("处理失败")).toBeInTheDocument(),
-    );
-    expect(api.listCalls).toBe(2);
-    const retryLabel = screen.getByText("重试");
-    expect(retryLabel).toBeVisible();
-    expect(retryLabel.closest("button")).toBeEnabled();
-    expect(tabs).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(100));
+      expect(api.listCalls).toBe(2);
+    } finally {
+      rendered.unmount();
+      notifyManager.setScheduler(defaultScheduler);
+      vi.useRealTimers();
+    }
   });
 });

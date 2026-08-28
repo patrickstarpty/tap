@@ -1,24 +1,8 @@
-import { Tabs, Typography } from "antd";
+import { Tabs } from "antd";
 
 import { KnowledgeLibrary } from "../features/knowledge/components/KnowledgeLibrary";
 import { COPY } from "../features/knowledge/copy";
-
-function AskShell() {
-  return (
-    <section className="athena-ask-shell" aria-labelledby="ask-shell-heading">
-      <div className="athena-ask-rule" aria-hidden />
-      <Typography.Text className="athena-eyebrow">
-        {COPY.workspaceName}
-      </Typography.Text>
-      <Typography.Title level={2} id="ask-shell-heading">
-        {COPY.askTitle}
-      </Typography.Title>
-      <Typography.Paragraph type="secondary">
-        {COPY.askDescription}
-      </Typography.Paragraph>
-    </section>
-  );
-}
+import { AthenaWorkspace } from "../widgets/athena/AthenaWorkspace";
 
 export function AthenaPage({
   knowledgePollIntervalMs,
@@ -37,7 +21,13 @@ export function AthenaPage({
           defaultActiveKey="ask"
           destroyOnHidden={false}
           items={[
-            { key: "ask", label: COPY.askTab, children: <AskShell /> },
+            {
+              key: "ask",
+              label: COPY.askTab,
+              children: (
+                <AthenaWorkspace pollIntervalMs={knowledgePollIntervalMs} />
+              ),
+            },
             {
               key: "library",
               label: COPY.libraryTab,

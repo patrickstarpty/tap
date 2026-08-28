@@ -6,6 +6,7 @@ import type {
   DocumentStageSnapshot,
   DocumentSummary,
   KnowledgeClient,
+  RetrievalAnswerRequest,
   RetrievalAnswerResponse,
 } from "../api/types";
 
@@ -69,9 +70,110 @@ export function markdownFile(name = "policy.md", sizeInBytes?: number): File {
   });
 }
 
-interface PendingOperation {
-  promise: Promise<void>;
-  resolve: () => void;
+type RetrievalCitation = RetrievalAnswerResponse["citations"][number];
+
+const SOURCE_HASH = `sha256:${"a".repeat(64)}`;
+const CHUNK_HASH = `sha256:${"b".repeat(64)}`;
+
+export function retrievalCitation(
+  citationId = "citation-a",
+  overrides: Partial<RetrievalCitation> = {},
+): RetrievalCitation {
+  return {
+    citationId,
+    evidenceLabel: "S1",
+    chunkId: "chunk-a",
+    logicalChunkId: "logical-a",
+    source: {
+      sourceId: "doc-a",
+      sourceType: "document",
+      revisionKind: "blob_version",
+      revision: "rev-a",
+      sourceContentHash: SOURCE_HASH,
+      anchor: {
+        type: "document",
+        headingPath: ["退款政策"],
+        page: 1,
+        bbox: null,
+        startOffset: 0,
+        endOffset: 10,
+      },
+    },
+    chunkContentHash: CHUNK_HASH,
+    contentRole: "source",
+    derivedFromChunkIds: null,
+    ...overrides,
+  };
+}
+
+export function answerResponse(
+  overrides: Partial<RetrievalAnswerResponse> = {},
+): RetrievalAnswerResponse {
+  return {
+    traceId: "trace-a",
+    queryPlanId: "plan-a",
+    contextSnapshotId: "snapshot-a",
+    corpusVersion: "athena-demo-v1",
+    retrievalProfileId: "quick-hybrid-v1",
+    degradedMode: false,
+    degradationReasons: null,
+    answer: "😀退款需要两人审批。",
+    abstained: false,
+    abstentionReason: null,
+    claims: [
+      {
+        claimId: "claim-a",
+        text: "😀退款需要两人审批。",
+        answerStart: 0,
+        answerEnd: 10,
+        citationIds: ["citation-a"],
+      },
+    ],
+    citations: [retrievalCitation()],
+    ...overrides,
+  };
+}
+
+export function citationPreview(
+  overrides: Partial<CitationPreview> = {},
+): CitationPreview {
+  return {
+    citationId: "citation-a",
+    documentId: "doc-a",
+    revisionId: "rev-a",
+    filename: "policy.md",
+    sourceContentHash: SOURCE_HASH,
+    chunkContentHash: CHUNK_HASH,
+    anchor: {
+      type: "document",
+      headingPath: ["退款政策"],
+      page: 1,
+      bbox: null,
+      startOffset: 0,
+      endOffset: 10,
+    },
+    prefix: "前文",
+    quote: "退款需要两人审批。",
+    suffix: "后文",
+    ...overrides,
+  };
+}
+
+interface PendingOperation<T = void> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+  ignoreAbort: boolean;
+}
+
+function pendingOperation<T>(ignoreAbort = false): PendingOperation<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((finish, fail) => {
+    resolve = finish;
+    reject = fail;
+  });
+  return { promise, resolve, reject, ignoreAbort };
 }
 
 export interface FakeKnowledgeClient extends KnowledgeClient {
@@ -79,9 +181,15 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   listInputs: Array<{ cursor?: string; limit: number }>;
   listSignals: Array<AbortSignal | undefined>;
   uploadCalls: number;
+  answerCalls: RetrievalAnswerRequest[];
+  answerSignals: Array<AbortSignal | undefined>;
+  citationCalls: string[];
+  citationSignals: Array<AbortSignal | undefined>;
   retryCalls: string[];
   deleteCalls: string[];
   uploadAborted: boolean;
+  answerAborted: boolean;
+  citationAborted: boolean;
   listOnce(items: DocumentSummary[]): FakeKnowledgeClient;
   withDocuments(items: DocumentSummary[]): FakeKnowledgeClient;
   withDetail(detail: DocumentDetail): FakeKnowledgeClient;
@@ -89,6 +197,15 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   withUploadProblem(problem: unknown): FakeKnowledgeClient;
   withListProblem(problem: unknown): FakeKnowledgeClient;
   withDeleteProblem(problem: unknown): FakeKnowledgeClient;
+  withAnswer(response: RetrievalAnswerResponse): FakeKnowledgeClient;
+  withAnswerProblem(problem: unknown): FakeKnowledgeClient;
+  withCitation(preview: CitationPreview): FakeKnowledgeClient;
+  withCitationProblem(problem: unknown): FakeKnowledgeClient;
+  deferAnswer(options?: { ignoreAbort?: boolean }): FakeKnowledgeClient;
+  deferCitation(
+    citationId: string,
+    options?: { ignoreAbort?: boolean },
+  ): FakeKnowledgeClient;
   deferDelete(): FakeKnowledgeClient;
   deferList(): FakeKnowledgeClient;
   deferRetry(): FakeKnowledgeClient;
@@ -97,6 +214,9 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   finishList(): void;
   finishRetry(): void;
   finishUpload(): void;
+  finishAnswer(response?: RetrievalAnswerResponse): void;
+  finishAnswerAt(callIndex: number, response?: RetrievalAnswerResponse): void;
+  finishCitation(citationId: string, preview?: CitationPreview): void;
 }
 
 export function fakeKnowledgeClient(): FakeKnowledgeClient {
@@ -107,6 +227,14 @@ export function fakeKnowledgeClient(): FakeKnowledgeClient {
   let uploadProblem: unknown;
   let listProblem: unknown;
   let deleteProblem: unknown;
+  let answerResult = answerResponse();
+  const citationById = new Map<string, CitationPreview>();
+  let answerProblem: unknown;
+  let citationProblem: unknown;
+  const pendingAnswerQueue: Array<PendingOperation<RetrievalAnswerResponse>> =
+    [];
+  const answerOperations: Array<PendingOperation<RetrievalAnswerResponse>> = [];
+  const pendingCitations = new Map<string, PendingOperation<CitationPreview>>();
   let pendingDelete: PendingOperation | undefined;
   let pendingList: PendingOperation | undefined;
   let pendingRetry: PendingOperation | undefined;
@@ -117,9 +245,15 @@ export function fakeKnowledgeClient(): FakeKnowledgeClient {
     listInputs: [],
     listSignals: [],
     uploadCalls: 0,
+    answerCalls: [],
+    answerSignals: [],
+    citationCalls: [],
+    citationSignals: [],
     retryCalls: [],
     deleteCalls: [],
     uploadAborted: false,
+    answerAborted: false,
+    citationAborted: false,
     listOnce(items) {
       listQueue.push(items);
       return api;
@@ -153,49 +287,69 @@ export function fakeKnowledgeClient(): FakeKnowledgeClient {
       deleteProblem = problem;
       return api;
     },
+    withAnswer(response) {
+      answerResult = response;
+      return api;
+    },
+    withAnswerProblem(problem) {
+      answerProblem = problem;
+      return api;
+    },
+    withCitation(preview) {
+      citationById.set(preview.citationId, preview);
+      return api;
+    },
+    withCitationProblem(problem) {
+      citationProblem = problem;
+      return api;
+    },
+    deferAnswer(options = {}) {
+      pendingAnswerQueue.push(pendingOperation(options.ignoreAbort ?? false));
+      return api;
+    },
+    deferCitation(citationId, options = {}) {
+      pendingCitations.set(
+        citationId,
+        pendingOperation(options.ignoreAbort ?? false),
+      );
+      return api;
+    },
     deferDelete() {
-      let resolve = () => {};
-      const promise = new Promise<void>((finish) => {
-        resolve = () => finish();
-      });
-      pendingDelete = { promise, resolve };
+      pendingDelete = pendingOperation();
       return api;
     },
     deferList() {
-      let resolve = () => {};
-      const promise = new Promise<void>((finish) => {
-        resolve = () => finish();
-      });
-      pendingList = { promise, resolve };
+      pendingList = pendingOperation();
       return api;
     },
     deferRetry() {
-      let resolve = () => {};
-      const promise = new Promise<void>((finish) => {
-        resolve = () => finish();
-      });
-      pendingRetry = { promise, resolve };
+      pendingRetry = pendingOperation();
       return api;
     },
     deferUpload() {
-      let resolve = () => {};
-      const promise = new Promise<void>((finish) => {
-        resolve = () => finish();
-      });
-      pendingUpload = { promise, resolve };
+      pendingUpload = pendingOperation();
       return api;
     },
     finishDelete() {
-      pendingDelete?.resolve();
+      pendingDelete?.resolve(undefined);
     },
     finishList() {
-      pendingList?.resolve();
+      pendingList?.resolve(undefined);
     },
     finishRetry() {
-      pendingRetry?.resolve();
+      pendingRetry?.resolve(undefined);
     },
     finishUpload() {
-      pendingUpload?.resolve();
+      pendingUpload?.resolve(undefined);
+    },
+    finishAnswer(response = answerResult) {
+      answerOperations.at(-1)?.resolve(response);
+    },
+    finishAnswerAt(callIndex, response = answerResult) {
+      answerOperations[callIndex]?.resolve(response);
+    },
+    finishCitation(citationId, preview = citationPreview({ citationId })) {
+      pendingCitations.get(citationId)?.resolve(preview);
     },
     async listDocuments(input): Promise<DocumentPage> {
       api.listCalls += 1;
@@ -291,11 +445,49 @@ export function fakeKnowledgeClient(): FakeKnowledgeClient {
       documents = documents.filter((item) => item.documentId !== documentId);
       detailById.delete(documentId);
     },
-    async createAnswer(): Promise<RetrievalAnswerResponse> {
-      throw new Error("Task 8 owns answer behavior.");
+    async createAnswer(request, signal): Promise<RetrievalAnswerResponse> {
+      api.answerCalls.push(request);
+      api.answerSignals.push(signal);
+      if (answerProblem !== undefined) throw answerProblem;
+      const pending = pendingAnswerQueue.shift();
+      if (pending === undefined) return answerResult;
+      answerOperations.push(pending);
+      const abort = () => {
+        api.answerAborted = true;
+        if (!pending.ignoreAbort) {
+          pending.reject(new DOMException("Answer aborted", "AbortError"));
+        }
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      try {
+        return await pending.promise;
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
     },
-    async getCitation(): Promise<CitationPreview> {
-      throw new Error("Task 8 owns citation behavior.");
+    async getCitation(citationId, signal): Promise<CitationPreview> {
+      api.citationCalls.push(citationId);
+      api.citationSignals.push(signal);
+      if (citationProblem !== undefined) throw citationProblem;
+      const pending = pendingCitations.get(citationId);
+      if (pending === undefined) {
+        return citationById.get(citationId) ?? citationPreview({ citationId });
+      }
+      const abort = () => {
+        api.citationAborted = true;
+        if (!pending.ignoreAbort) {
+          pending.reject(new DOMException("Citation aborted", "AbortError"));
+        }
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      try {
+        return await pending.promise;
+      } finally {
+        signal?.removeEventListener("abort", abort);
+        if (pendingCitations.get(citationId) === pending) {
+          pendingCitations.delete(citationId);
+        }
+      }
     },
   };
 

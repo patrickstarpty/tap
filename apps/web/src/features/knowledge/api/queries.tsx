@@ -6,12 +6,16 @@ import {
 } from "@tanstack/react-query";
 import { createContext, useContext, type ReactNode } from "react";
 
+import { KnowledgeClientError } from "./client";
 import type {
+  CitationPreview,
   DocumentAccepted,
   DocumentDetail,
   DocumentPage,
   DocumentSummary,
   KnowledgeClient,
+  RetrievalAnswerRequest,
+  RetrievalAnswerResponse,
 } from "./types";
 
 const DOCUMENT_LIMIT = 50;
@@ -70,6 +74,9 @@ export const knowledgeKeys = {
   documents: () => ["knowledge", "documents"] as const,
   detail: (documentId: string) =>
     ["knowledge", "documents", documentId] as const,
+  citations: () => ["knowledge", "citations"] as const,
+  citation: (citationId: string, generation = 0) =>
+    ["knowledge", "citations", citationId, generation] as const,
 };
 
 function isNonTerminal(document: DocumentSummary): boolean {
@@ -309,6 +316,42 @@ export function useRetryDocumentMutation() {
   return useMutation({
     mutationFn: (documentId: string) => client.retryDocument(documentId),
     onSuccess: (receipt) => settleReceipt(queryClient, receipt),
+  });
+}
+
+export interface CreateAnswerCommand {
+  request: RetrievalAnswerRequest;
+  signal?: AbortSignal;
+}
+
+export function useCreateAnswerMutation() {
+  const client = useKnowledgeClient();
+  const queryClient = useQueryClient();
+  return useMutation<RetrievalAnswerResponse, Error, CreateAnswerCommand>({
+    mutationFn: ({ request, signal }) => client.createAnswer(request, signal),
+    onError: async (error) => {
+      if (
+        error instanceof KnowledgeClientError &&
+        error.code === "document-state-changed"
+      ) {
+        await queryClient.invalidateQueries({
+          queryKey: knowledgeKeys.documents(),
+          exact: true,
+          refetchType: "active",
+        });
+      }
+    },
+  });
+}
+
+export function useCitationQuery(citationId: string | null, generation = 0) {
+  const client = useKnowledgeClient();
+  return useQuery<CitationPreview>({
+    queryKey: knowledgeKeys.citation(citationId ?? "none", generation),
+    queryFn: ({ signal }) => client.getCitation(citationId ?? "", signal),
+    enabled: citationId !== null,
+    staleTime: 0,
+    retry: false,
   });
 }
 

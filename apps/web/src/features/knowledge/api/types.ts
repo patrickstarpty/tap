@@ -39,6 +39,10 @@ export interface KnowledgeClient {
   deleteDocument(documentId: string): Promise<void>;
   createAnswer(
     request: RetrievalAnswerRequest,
+    signal?: AbortSignal,
   ): Promise<RetrievalAnswerResponse>;
-  getCitation(citationId: string): Promise<CitationPreview>;
+  getCitation(
+    citationId: string,
+    signal?: AbortSignal,
+  ): Promise<CitationPreview>;
 }

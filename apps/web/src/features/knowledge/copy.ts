@@ -57,6 +57,42 @@ export const COPY = {
   detailFailure: "暂时无法加载来源详情，请稍后重试。",
   actionFailure: "操作未完成，请稍后重试。",
   uploadFailure: "文档未能添加，请检查文件后重试。",
+  sourcesTitle: "来源",
+  sourcesDescription: "选择本次回答可以使用的已就绪文档。",
+  selectedSources: (count: number) => `已选择 ${count} 个来源`,
+  searchSources: "搜索来源",
+  selectAllReady: "选择全部已就绪来源",
+  clearSelection: "清除选择",
+  sourceLimit: "一次最多选择 20 个来源。",
+  sourcesLoading: "正在加载来源",
+  sourcesEmpty: "还没有可用来源",
+  sourcesEmptyDescription: "请先在知识库添加文档并等待处理完成。",
+  sourcesFailure: "暂时无法加载来源，请稍后重试。",
+  questionTitle: "问答",
+  questionDescription: "Athena 只依据当前选择的来源组织可核验回答。",
+  questionLabel: "输入问题",
+  questionPlaceholder: "输入一个关于所选来源的问题",
+  ask: "提问",
+  queryRequired: "请输入问题。",
+  queryTooLong: "问题最多包含 8,000 个字符。",
+  pendingSearch: "检索所选来源",
+  pendingAnswer: "组织可核验回答",
+  answerEmpty: "选择来源并提问后，回答会显示在这里。",
+  citationTitle: "原文",
+  citationEmpty: "选择回答中的引用以核验原文。",
+  citationEvidence: "原文依据",
+  citationLoading: "正在核验原文",
+  closeCitation: "关闭原文",
+  retryCitation: "重新核验",
+  citationStale: "引用已失效，来源可能已经变化，请重新提交问题。",
+  citationUnavailable: "原文暂时无法核验，请稍后重试。",
+  citationInvalid: "原文校验失败，请重新提交问题。",
+  citationGenericFailure: "原文核验未完成，请稍后重试。",
+  sourceContentHash: "Source content SHA-256",
+  chunkContentHash: "Chunk content SHA-256",
+  headingPath: "标题路径",
+  page: "页码",
+  offsets: "字符范围",
 } as const;
 
 export const STATUS_COPY: Readonly<Record<DocumentStatus, string>> = {
@@ -113,6 +149,46 @@ export function safeProblemCopy(
   if (fallback === "detail") return COPY.detailFailure;
   if (fallback === "upload") return COPY.uploadFailure;
   return COPY.actionFailure;
+}
+
+const ANSWER_PROBLEM_COPY: Readonly<Record<string, string>> = {
+  "400:source-selection-required": "请选择 1 到 20 个已就绪来源。",
+  "400:unsupported-answer-control": "当前问答请求包含不受支持的设置。",
+  "409:document-state-changed": "所选来源状态已经变化，请确认来源后重新提问。",
+  "422:request-validation": "问题或来源选择不符合要求，请检查后重试。",
+  "503:embedding-unavailable": "向量服务暂时不可用，请稍后重试。",
+  "503:search-unavailable": "检索服务暂时不可用，请稍后重试。",
+  "503:answer-snapshot-unavailable": "回答暂时无法安全保存，请稍后重试。",
+  "503:knowledge-runtime-unavailable": "知识服务暂时不可用，请稍后重试。",
+};
+
+export function safeAnswerProblemCopy(error: unknown): string {
+  if (error instanceof KnowledgeClientError) {
+    const copy = ANSWER_PROBLEM_COPY[`${error.status}:${error.code}`];
+    if (copy !== undefined) return copy;
+  }
+  return "回答未完成，请稍后重试。";
+}
+
+export type CitationProblemKind = "stale" | "retryable" | "generic";
+
+export function safeCitationProblem(error: unknown): {
+  kind: CitationProblemKind;
+  message: string;
+} {
+  if (error instanceof KnowledgeClientError) {
+    if (error.status === 404 && error.code === "citation-stale") {
+      return { kind: "stale", message: COPY.citationStale };
+    }
+    if (
+      error.status === 503 &&
+      (error.code === "citation-unavailable" ||
+        error.code === "knowledge-runtime-unavailable")
+    ) {
+      return { kind: "retryable", message: COPY.citationUnavailable };
+    }
+  }
+  return { kind: "generic", message: COPY.citationGenericFailure };
 }
 
 export function mediaTypeCopy(mediaType: string): string {

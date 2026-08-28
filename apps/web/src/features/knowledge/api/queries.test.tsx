@@ -5,19 +5,28 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestQueryClient } from "../../../shared/testing/renderApp";
 import {
+  answerResponse,
+  citationPreview,
   document,
   documentDetail,
   fakeKnowledgeClient,
 } from "../testing/fakeKnowledgeClient";
+import { KnowledgeClientError } from "./client";
 import {
   KnowledgeClientProvider,
   knowledgeKeys,
+  useCitationQuery,
+  useCreateAnswerMutation,
   useDocumentListQuery,
   useDeleteDocumentMutation,
   useRetryDocumentMutation,
   useUploadDocumentMutation,
 } from "./queries";
-import type { DocumentPage } from "./types";
+import type {
+  DocumentPage,
+  KnowledgeClient,
+  RetrievalAnswerRequest,
+} from "./types";
 
 const POLL_INTERVAL_MS = 2_000;
 const OVERLAY_REGRESSION_TIME = new Date("2026-08-28T07:32:01Z");
@@ -683,5 +692,121 @@ describe("knowledge query mutations", () => {
     expect(
       queryClient.getQueryState(knowledgeKeys.documents())?.isInvalidated,
     ).toBe(true);
+  });
+});
+
+describe("grounded answer queries", () => {
+  const request: RetrievalAnswerRequest = {
+    query: "退款需要几人审批？",
+    answerMode: "quick",
+    sources: ["doc"],
+    resourceRefs: [{ family: "doc", sourceId: "doc-a", mode: "scope" }],
+  };
+
+  it("passes the caller signal through the answer mutation", async () => {
+    const base = fakeKnowledgeClient();
+    const signals: Array<AbortSignal | undefined> = [];
+    const api: KnowledgeClient = {
+      ...base,
+      async createAnswer(_request, signal) {
+        signals.push(signal);
+        return answerResponse();
+      },
+    };
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(() => useCreateAnswerMutation(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <KnowledgeClientProvider client={api}>
+            {children}
+          </KnowledgeClientProvider>
+        </QueryClientProvider>
+      ),
+    });
+    const controller = new AbortController();
+
+    await act(async () =>
+      result.current.mutateAsync({ request, signal: controller.signal }),
+    );
+
+    expect(signals).toEqual([controller.signal]);
+  });
+
+  it("invalidates the shared document snapshot after document-state-changed", async () => {
+    const base = fakeKnowledgeClient();
+    const api: KnowledgeClient = {
+      ...base,
+      async createAnswer() {
+        throw new KnowledgeClientError({
+          type: "https://tap.example/problems/document-state-changed",
+          title: "provider secret",
+          status: 409,
+          detail: "provider secret",
+        });
+      },
+    };
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(knowledgeKeys.documents(), {
+      items: [document({ documentId: "doc-a", status: "ready" })],
+      nextCursor: null,
+    });
+    const { result } = renderHook(() => useCreateAnswerMutation(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <KnowledgeClientProvider client={api}>
+            {children}
+          </KnowledgeClientProvider>
+        </QueryClientProvider>
+      ),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ request }).catch(() => undefined);
+    });
+
+    expect(
+      queryClient.getQueryState(knowledgeKeys.documents())?.isInvalidated,
+    ).toBe(true);
+  });
+
+  it("uses an uncached, abortable citation resolution query", async () => {
+    const base = fakeKnowledgeClient();
+    const signals: Array<AbortSignal | undefined> = [];
+    const api: KnowledgeClient = {
+      ...base,
+      getCitation: (_citationId, signal) => {
+        signals.push(signal);
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Citation aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    };
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      knowledgeKeys.citation("citation-a"),
+      citationPreview({ citationId: "citation-a" }),
+    );
+    const { result, unmount } = renderHook(
+      () => useCitationQuery("citation-a"),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+
+    await waitFor(() => expect(signals).toHaveLength(1));
+    expect(result.current.isFetching).toBe(true);
+    unmount();
+
+    expect(signals[0]?.aborted).toBe(true);
   });
 });
