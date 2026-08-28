@@ -13,9 +13,11 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py
 	uv run --project apps/backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/web run contracts:check
+	corepack pnpm --filter @tap/web run check
 
 test: ## unit, integration, and contract tests
 	uv run --project apps/backend pytest apps/backend/tests -v
+	corepack pnpm --filter @tap/web test -- --run
 
 contracts: ## export OpenAPI/SSE schema and generate TypeScript
 	uv run --project apps/backend python scripts/export_contracts.py

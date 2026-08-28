@@ -1,0 +1,4 @@
+architecture-fixtures/
+dist/
+scripts/generate-api.mjs
+src/shared/api/generated/

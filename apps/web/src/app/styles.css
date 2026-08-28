@@ -1,0 +1,305 @@
+@import "tailwindcss";
+
+:root {
+  color: #252525;
+  background: #f7f6f3;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-size: 14px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: #f7f6f3;
+}
+
+button,
+[role="button"],
+[tabindex="0"] {
+  outline: none;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+[tabindex="0"]:focus-visible {
+  outline: 3px solid rgb(79 70 229 / 30%);
+  outline-offset: 2px;
+}
+
+.athena-shell {
+  background: #f7f6f3;
+}
+
+.athena-header {
+  border-bottom: 1px solid #dedbd4;
+  background: rgb(255 254 250 / 94%);
+}
+
+.athena-wordmark {
+  color: #252525;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.athena-workspace-name,
+.athena-eyebrow {
+  color: #67635d;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.athena-primary-tabs > .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.athena-primary-tabs > .ant-tabs-content-holder {
+  padding-top: 28px;
+}
+
+.athena-ask-shell {
+  min-height: 62vh;
+  max-width: 760px;
+  padding: clamp(52px, 9vw, 112px) 10px 40px;
+}
+
+.athena-ask-shell .ant-typography {
+  max-width: 620px;
+}
+
+.athena-ask-rule {
+  width: 44px;
+  height: 3px;
+  margin-bottom: 28px;
+  background: #4f46e5;
+}
+
+.athena-library {
+  min-height: 64vh;
+}
+
+.athena-library-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.athena-library-toolbar h2.ant-typography {
+  margin: 0 0 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.athena-library-toolbar p.ant-typography {
+  margin-bottom: 12px;
+}
+
+.athena-library-alert {
+  margin-bottom: 14px;
+}
+
+.athena-library-loading,
+.athena-empty-state {
+  min-height: 320px;
+  padding: 72px 24px;
+  border: 1px solid #e2dfd8;
+  background: #fffefa;
+}
+
+.athena-empty-state .ant-empty-description > div {
+  display: grid;
+  gap: 7px;
+}
+
+.athena-empty-state .ant-empty-description span {
+  color: #77736c;
+}
+
+.athena-document-table .ant-table {
+  border: 1px solid #e2dfd8;
+  border-radius: 8px;
+  background: #fffefa;
+}
+
+.athena-document-table .ant-table-tbody > tr {
+  cursor: pointer;
+}
+
+.athena-document-table .ant-table-tbody > tr[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.athena-filename {
+  max-width: 340px;
+  font-weight: 610;
+}
+
+.athena-status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 7px;
+}
+
+.athena-safe-summary {
+  width: 100%;
+  color: #80605e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.athena-stage-copy {
+  width: 100%;
+  color: #5f5b55;
+  font-size: 12px;
+}
+
+.athena-safe-code {
+  color: #7a4a48;
+  font-size: 11px;
+}
+
+.athena-detail-stack {
+  display: grid;
+  gap: 30px;
+}
+
+.athena-hash {
+  overflow-wrap: anywhere;
+}
+
+.athena-timeline-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.athena-timeline-item small {
+  color: #77736c;
+}
+
+.athena-preview {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid #e2dfd8;
+  border-radius: 7px;
+  background: #f7f5f0;
+  padding: 16px;
+  color: #393734;
+  font: inherit;
+  line-height: 1.65;
+}
+
+.athena-drop-zone {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 210px;
+  border: 1px dashed #aaa4c9;
+  border-radius: 8px;
+  background: #faf9ff;
+  color: #4f46e5;
+  cursor: pointer;
+  text-align: center;
+}
+
+.athena-drop-zone > .anticon {
+  margin-bottom: 4px;
+  font-size: 30px;
+}
+
+.athena-drop-zone .ant-typography {
+  display: block;
+  margin: 0;
+}
+
+.athena-drop-zone[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.athena-drop-formats {
+  margin-top: 5px !important;
+  font-size: 12px;
+}
+
+.athena-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.athena-selected-file,
+.athena-upload-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.athena-selected-file span,
+.athena-upload-progress span {
+  color: #77736c;
+  font-size: 12px;
+}
+
+.athena-upload-progress .ant-progress {
+  flex: 1;
+}
+
+.athena-dialog-alert {
+  margin-top: 14px;
+}
+
+@media (max-width: 640px) {
+  .athena-primary-tabs > .ant-tabs-content-holder {
+    padding-top: 20px;
+  }
+
+  .athena-library-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .athena-library-toolbar > .ant-btn {
+    width: 100%;
+  }
+
+  .athena-document-table .ant-table-cell {
+    padding: 12px 10px;
+  }
+
+  .athena-drop-zone {
+    min-height: 190px;
+  }
+}

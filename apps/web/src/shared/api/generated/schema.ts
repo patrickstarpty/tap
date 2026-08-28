@@ -162,12 +162,12 @@ export interface components {
              * Scenarioid
              * @default null
              */
-            scenarioId: string | null;
+            scenarioId?: string | null;
             /**
              * Stepid
              * @default null
              */
-            stepId: string | null;
+            stepId?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -203,7 +203,7 @@ export interface components {
          */
         ChatTurnRequest: {
             /** @default quick */
-            answerMode: components["schemas"]["AnswerMode"];
+            answerMode?: components["schemas"]["AnswerMode"];
             /** Clientrequestid */
             clientRequestId: string;
             /** Message */
@@ -232,7 +232,7 @@ export interface components {
              * Prefix
              * @default
              */
-            prefix: string;
+            prefix?: string;
             /** Quote */
             quote: string;
             /** Revisionid */
@@ -243,7 +243,7 @@ export interface components {
              * Suffix
              * @default
              */
-            suffix: string;
+            suffix?: string;
         };
         /** CodeAnchor */
         CodeAnchor: {
@@ -259,7 +259,7 @@ export interface components {
              * Symbol
              * @default null
              */
-            symbol: string | null;
+            symbol?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -285,27 +285,27 @@ export interface components {
              * Bbox
              * @default null
              */
-            bbox: number[] | null;
+            bbox?: number[] | null;
             /**
              * Endoffset
              * @default null
              */
-            endOffset: number | null;
+            endOffset?: number | null;
             /**
              * Headingpath
              * @default null
              */
-            headingPath: string[] | null;
+            headingPath?: string[] | null;
             /**
              * Page
              * @default null
              */
-            page: number | null;
+            page?: number | null;
             /**
              * Startoffset
              * @default null
              */
-            startOffset: number | null;
+            startOffset?: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -322,12 +322,12 @@ export interface components {
              * Errorcode
              * @default null
              */
-            errorCode: string | null;
+            errorCode?: string | null;
             /**
              * Errorsummary
              * @default null
              */
-            errorSummary: string | null;
+            errorSummary?: string | null;
             /** Filename */
             filename: string;
             /**
@@ -339,7 +339,7 @@ export interface components {
              * Normalizedpreview
              * @default null
              */
-            normalizedPreview: string | null;
+            normalizedPreview?: string | null;
             /** Revisionid */
             revisionId: string;
             /** Sourcecontenthash */
@@ -359,7 +359,7 @@ export interface components {
              * Nextcursor
              * @default null
              */
-            nextCursor: string | null;
+            nextCursor?: string | null;
         };
         /** DocumentStageSnapshot */
         DocumentStageSnapshot: {
@@ -367,12 +367,12 @@ export interface components {
              * Completedat
              * @default null
              */
-            completedAt: string | null;
+            completedAt?: string | null;
             /**
              * Errorcode
              * @default null
              */
-            errorCode: string | null;
+            errorCode?: string | null;
             stage: components["schemas"]["IngestionStage"];
             state: components["schemas"]["DocumentStageState"];
         };
@@ -396,12 +396,12 @@ export interface components {
              * Errorcode
              * @default null
              */
-            errorCode: string | null;
+            errorCode?: string | null;
             /**
              * Errorsummary
              * @default null
              */
-            errorSummary: string | null;
+            errorSummary?: string | null;
             /** Filename */
             filename: string;
             /**
@@ -422,17 +422,17 @@ export interface components {
              * Runid
              * @default null
              */
-            runId: string | null;
+            runId?: string | null;
             /**
              * Timeend
              * @default null
              */
-            timeEnd: string | null;
+            timeEnd?: string | null;
             /**
              * Timestart
              * @default null
              */
-            timeStart: string | null;
+            timeStart?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -443,7 +443,7 @@ export interface components {
         HealthComponent: {
             name: components["schemas"]["HealthComponentName"];
             /** @default null */
-            remediationCode: components["schemas"]["HealthRemediationCode"] | null;
+            remediationCode?: components["schemas"]["HealthRemediationCode"] | null;
             state: components["schemas"]["HealthComponentState"];
         };
         /**
@@ -509,15 +509,15 @@ export interface components {
          */
         ResourceRef: {
             /** @default null */
-            anchor: components["schemas"]["StructuralAnchor"] | null;
+            anchor?: components["schemas"]["StructuralAnchor"] | null;
             family: components["schemas"]["SourceFamily"];
             /** @default preferred */
-            mode: components["schemas"]["ResourceMode"];
+            mode?: components["schemas"]["ResourceMode"];
             /**
              * Requestedrevision
              * @default null
              */
-            requestedRevision: string | null;
+            requestedRevision?: string | null;
             /** Sourceid */
             sourceId: string;
         };
@@ -527,41 +527,41 @@ export interface components {
          */
         RetrievalAnswerRequest: {
             /** @default quick */
-            answerMode: components["schemas"]["AnswerMode"];
+            answerMode?: components["schemas"]["AnswerMode"];
             /** Query */
             query: string;
             /**
              * Requestedcorpusversion
              * @default null
              */
-            requestedCorpusVersion: string | null;
+            requestedCorpusVersion?: string | null;
             /**
              * Requestedenvironment
              * @default null
              */
-            requestedEnvironment: string | null;
+            requestedEnvironment?: string | null;
             /**
              * Resourcerefs
              * @default null
              */
-            resourceRefs: components["schemas"]["ResourceRef"][] | null;
+            resourceRefs?: components["schemas"]["ResourceRef"][] | null;
             /**
              * Sources
              * @default null
              */
-            sources: components["schemas"]["SourceFamily"][] | null;
+            sources?: components["schemas"]["SourceFamily"][] | null;
             /**
              * Topk
              * @default null
              */
-            topK: number | null;
+            topK?: number | null;
         };
         /** RetrievalAnswerResponse */
         RetrievalAnswerResponse: {
             /** Abstained */
             abstained: boolean;
             /** @default null */
-            abstentionReason: components["schemas"]["AbstentionReason"] | null;
+            abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
             /** Citations */
@@ -576,7 +576,7 @@ export interface components {
              * Degradationreasons
              * @default null
              */
-            degradationReasons: string[] | null;
+            degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
             /** Queryplanid */
@@ -599,7 +599,7 @@ export interface components {
              * Derivedfromchunkids
              * @default null
              */
-            derivedFromChunkIds: string[] | null;
+            derivedFromChunkIds?: string[] | null;
             /** Evidencelabel */
             evidenceLabel: string;
             /** Logicalchunkid */
@@ -647,7 +647,7 @@ export interface components {
              * Title
              * @default null
              */
-            title: string | null;
+            title?: string | null;
         };
         /** RetrievalScores */
         RetrievalScores: {
@@ -655,27 +655,27 @@ export interface components {
              * Bm25
              * @default null
              */
-            bm25: number | null;
+            bm25?: number | null;
             /**
              * Exact
              * @default null
              */
-            exact: number | null;
+            exact?: number | null;
             /**
              * Rerank
              * @default null
              */
-            rerank: number | null;
+            rerank?: number | null;
             /**
              * Rrf
              * @default null
              */
-            rrf: number | null;
+            rrf?: number | null;
             /**
              * Vector
              * @default null
              */
-            vector: number | null;
+            vector?: number | null;
         };
         /**
          * RetrievalSearchRequest
@@ -683,34 +683,34 @@ export interface components {
          */
         RetrievalSearchRequest: {
             /** @default quick */
-            answerMode: components["schemas"]["AnswerMode"];
+            answerMode?: components["schemas"]["AnswerMode"];
             /** Query */
             query: string;
             /**
              * Requestedcorpusversion
              * @default null
              */
-            requestedCorpusVersion: string | null;
+            requestedCorpusVersion?: string | null;
             /**
              * Requestedenvironment
              * @default null
              */
-            requestedEnvironment: string | null;
+            requestedEnvironment?: string | null;
             /**
              * Resourcerefs
              * @default null
              */
-            resourceRefs: components["schemas"]["ResourceRef"][] | null;
+            resourceRefs?: components["schemas"]["ResourceRef"][] | null;
             /**
              * Sources
              * @default null
              */
-            sources: components["schemas"]["SourceFamily"][] | null;
+            sources?: components["schemas"]["SourceFamily"][] | null;
             /**
              * Topk
              * @default null
              */
-            topK: number | null;
+            topK?: number | null;
         };
         /** RetrievalSearchResponse */
         RetrievalSearchResponse: {
@@ -722,7 +722,7 @@ export interface components {
              * Degradationreasons
              * @default null
              */
-            degradationReasons: string[] | null;
+            degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
             /** Hits */

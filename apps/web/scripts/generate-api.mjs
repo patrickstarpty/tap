@@ -11,7 +11,11 @@ const outputPath = resolve(scriptDirectory, "../src/shared/api/generated/schema.
 const check = process.argv.slice(2).join(" ") === "--check";
 
 async function generatedSchema() {
-  return astToString(await openapiTS(pathToFileURL(openapiPath)));
+  return astToString(
+    await openapiTS(pathToFileURL(openapiPath), {
+      defaultNonNullable: false,
+    }),
+  );
 }
 
 async function main() {

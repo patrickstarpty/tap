@@ -8,6 +8,8 @@
 .venv/
 .mypy_cache/
 node_modules/
+apps/web/dist/
+apps/web/tsconfig.tsbuildinfo
 .pytest_cache/
 .ruff_cache/
 __pycache__/

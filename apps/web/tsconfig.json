@@ -3,8 +3,18 @@
     "noEmit": true,
     "strict": true,
     "target": "ES2024",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext"
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
 }
