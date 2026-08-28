@@ -17,12 +17,9 @@ import type {
 const DOCUMENT_LIMIT = 50;
 const POLL_INTERVAL_MS = 2_000;
 const TERMINAL_CACHE_MS = 30_000;
-const RECEIPT_OVERLAY_TTL_MS = 2 * 60_000;
-const DELETE_OVERLAY_TTL_MS = 2 * 60_000;
 
 interface ReceiptOverlay {
   document: DocumentSummary;
-  expiresAt: number;
 }
 
 interface PendingDeleteOverlay {
@@ -32,7 +29,6 @@ interface PendingDeleteOverlay {
 
 interface CommittedDeleteOverlay {
   document: DocumentSummary | undefined;
-  expiresAt: number;
   state: "committed";
 }
 
@@ -109,14 +105,9 @@ function mergeConsistencyOverlays(
   page: DocumentPage,
 ): DocumentPage {
   const overlays = overlaysFor(queryClient);
-  const now = Date.now();
   const items = [...page.items];
 
   for (const [documentId, overlay] of overlays.receipts) {
-    if (overlay.expiresAt <= now) {
-      overlays.receipts.delete(documentId);
-      continue;
-    }
     const index = items.findIndex((item) => item.documentId === documentId);
     const serverDocument = index === -1 ? undefined : items[index];
     if (
@@ -134,8 +125,6 @@ function mergeConsistencyOverlays(
     const index = items.findIndex((item) => item.documentId === documentId);
     if (overlay.state === "committed") {
       if (index === -1) {
-        overlays.deletions.delete(documentId);
-      } else if (overlay.expiresAt <= now) {
         overlays.deletions.delete(documentId);
       } else {
         items.splice(index, 1);
@@ -161,7 +150,6 @@ function rememberReceipt(
 ): void {
   overlaysFor(queryClient).receipts.set(document.documentId, {
     document,
-    expiresAt: Date.now() + RECEIPT_OVERLAY_TTL_MS,
   });
 }
 
@@ -181,7 +169,6 @@ function commitDelete(queryClient: QueryClient, documentId: string): void {
   const pending = overlays.deletions.get(documentId);
   overlays.deletions.set(documentId, {
     document: pending?.document,
-    expiresAt: Date.now() + DELETE_OVERLAY_TTL_MS,
     state: "committed",
   });
   overlays.receipts.delete(documentId);

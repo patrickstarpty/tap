@@ -14,9 +14,28 @@ import {
   knowledgeKeys,
   useDocumentListQuery,
   useDeleteDocumentMutation,
+  useRetryDocumentMutation,
   useUploadDocumentMutation,
 } from "./queries";
 import type { DocumentPage } from "./types";
+
+const POLL_INTERVAL_MS = 2_000;
+const OVERLAY_REGRESSION_TIME = new Date("2026-08-28T07:32:01Z");
+
+async function advanceOnePoll(): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+  });
+}
+
+function cachedDocument(
+  queryClient: ReturnType<typeof createTestQueryClient>,
+  documentId: string,
+) {
+  return queryClient
+    .getQueryData<DocumentPage>(knowledgeKeys.documents())
+    ?.items.find((item) => item.documentId === documentId);
+}
 
 describe("knowledge query mutations", () => {
   it("polls every two seconds only until a nonterminal list settles", async () => {
@@ -212,7 +231,95 @@ describe("knowledge query mutations", () => {
     ).toMatchObject({ items: [{ filename: "new.md" }] });
   });
 
-  it("keeps a canonical duplicate receipt across one stale list until the server catches up", async () => {
+  it("keeps an accepted upload across repeated stale polls beyond 121 seconds and clears after catch-up", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T07:30:00Z"));
+    const background = document({
+      documentId: "doc-background",
+      filename: "background.md",
+      status: "processing",
+      stage: "embedding",
+    });
+    const accepted = document({
+      documentId: "doc-2",
+      filename: "new-source.md",
+    });
+    const authoritative = document({
+      ...accepted,
+      chunkCount: 7,
+      status: "processing",
+      stage: "embedding",
+      updatedAt: "2026-08-28T08:00:00Z",
+    });
+    const staleAfterCatchUp = document({
+      documentId: accepted.documentId,
+      filename: "stale-after-catch-up.md",
+      updatedAt: "2026-08-28T07:00:00Z",
+    });
+    const api = fakeKnowledgeClient()
+      .listOnce([background])
+      .listOnce([background])
+      .listOnce([background])
+      .listOnce([background])
+      .listOnce([authoritative, background])
+      .listOnce([staleAfterCatchUp, background]);
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(
+      () => ({
+        list: useDocumentListQuery(),
+        upload: useUploadDocumentMutation(),
+      }),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    let uploadPromise!: Promise<unknown>;
+    act(() => {
+      uploadPromise = result.current.upload.mutateAsync({
+        file: new File(["# New"], accepted.filename),
+        onProgress: () => undefined,
+      });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+      await uploadPromise;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.listCalls).toBe(2);
+    expect(cachedDocument(queryClient, accepted.documentId)?.filename).toBe(
+      accepted.filename,
+    );
+
+    vi.setSystemTime(OVERLAY_REGRESSION_TIME);
+    await advanceOnePoll();
+    await advanceOnePoll();
+    expect(api.listCalls).toBe(4);
+    expect(cachedDocument(queryClient, accepted.documentId)?.filename).toBe(
+      accepted.filename,
+    );
+
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, accepted.documentId)).toMatchObject({
+      chunkCount: 7,
+      updatedAt: "2026-08-28T08:00:00Z",
+    });
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, accepted.documentId)?.filename).toBe(
+      staleAfterCatchUp.filename,
+    );
+  });
+
+  it("keeps a canonical duplicate receipt across repeated stale polls beyond 121 seconds and clears after catch-up", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T07:30:00Z"));
     const staleDocument = document({
       documentId: "doc-existing",
       filename: "old-name.md",
@@ -228,10 +335,19 @@ describe("knowledge query mutations", () => {
       chunkCount: 8,
       updatedAt: "2026-08-28T08:00:00Z",
     });
+    const background = document({
+      documentId: "doc-background",
+      filename: "background.md",
+      status: "processing",
+      stage: "embedding",
+    });
     const api = fakeKnowledgeClient()
-      .listOnce([staleDocument])
-      .listOnce([staleDocument])
-      .listOnce([authoritativeDocument])
+      .listOnce([staleDocument, background])
+      .listOnce([staleDocument, background])
+      .listOnce([staleDocument, background])
+      .listOnce([staleDocument, background])
+      .listOnce([authoritativeDocument, background])
+      .listOnce([staleDocument, background])
       .withDuplicateUpload();
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
@@ -249,34 +365,116 @@ describe("knowledge query mutations", () => {
         ),
       },
     );
-    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
 
-    await act(async () =>
-      result.current.upload.mutateAsync({
+    let uploadPromise!: Promise<unknown>;
+    act(() => {
+      uploadPromise = result.current.upload.mutateAsync({
         file: new File(["# Duplicate"], "renamed.md"),
         onProgress: () => undefined,
-      }),
+      });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+      await uploadPromise;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.listCalls).toBe(2);
+
+    vi.setSystemTime(OVERLAY_REGRESSION_TIME);
+    await advanceOnePoll();
+    await advanceOnePoll();
+    expect(api.listCalls).toBe(4);
+    expect(cachedDocument(queryClient, "doc-existing")?.filename).toBe(
+      "handbook.md",
     );
-    await waitFor(() => expect(api.listCalls).toBe(2));
-    expect(
-      queryClient.getQueryData<DocumentPage>(knowledgeKeys.documents()),
-    ).toMatchObject({
-      items: [
-        {
-          documentId: "doc-existing",
-          filename: "handbook.md",
-          updatedAt: "2026-08-28T07:30:00Z",
-        },
-      ],
+
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, "doc-existing")).toMatchObject({
+      filename: "handbook.md",
+      chunkCount: 8,
+    });
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, "doc-existing")?.filename).toBe(
+      "old-name.md",
+    );
+  });
+
+  it("keeps a retry receipt across repeated stale polls beyond 121 seconds and clears after catch-up", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T07:30:00Z"));
+    const failed = document({
+      documentId: "doc-retry",
+      filename: "retry.md",
+      status: "failed",
+      stage: "embedding",
+      errorCode: "embedding-unavailable",
+      errorSummary: "向量服务暂时不可用。",
+      updatedAt: "2026-08-28T07:00:00Z",
+    });
+    const background = document({
+      documentId: "doc-background",
+      filename: "background.md",
+      status: "processing",
+      stage: "embedding",
+    });
+    const authoritative = document({
+      documentId: failed.documentId,
+      filename: failed.filename,
+      chunkCount: 6,
+      status: "processing",
+      stage: "publishing",
+      updatedAt: "2026-08-28T08:00:00Z",
+    });
+    const api = fakeKnowledgeClient()
+      .listOnce([failed, background])
+      .listOnce([failed, background])
+      .listOnce([failed, background])
+      .listOnce([failed, background])
+      .listOnce([authoritative, background])
+      .listOnce([failed, background]);
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(
+      () => ({
+        list: useDocumentListQuery(),
+        retry: useRetryDocumentMutation(),
+      }),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    await act(async () => result.current.retry.mutateAsync(failed.documentId));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(api.listCalls).toBe(2);
+
+    vi.setSystemTime(OVERLAY_REGRESSION_TIME);
+    await advanceOnePoll();
+    await advanceOnePoll();
+    expect(api.listCalls).toBe(4);
+    expect(cachedDocument(queryClient, failed.documentId)).toMatchObject({
+      status: "queued",
+      stage: "stored",
+      updatedAt: "2026-08-28T07:30:00Z",
     });
 
-    await queryClient.refetchQueries({
-      queryKey: knowledgeKeys.documents(),
-      exact: true,
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, failed.documentId)).toMatchObject({
+      chunkCount: 6,
+      status: "processing",
+      stage: "publishing",
     });
-    expect(
-      queryClient.getQueryData<DocumentPage>(knowledgeKeys.documents()),
-    ).toMatchObject({ items: [{ filename: "handbook.md", chunkCount: 8 }] });
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, failed.documentId)?.status).toBe(
+      "failed",
+    );
   });
 
   it("marks a deleting row unavailable immediately and removes it after 204", async () => {
@@ -381,14 +579,28 @@ describe("knowledge query mutations", () => {
     }
   });
 
-  it("does not resurrect a deleted row when the first list after 204 is stale", async () => {
+  it("does not resurrect a deleted row across repeated stale polls beyond 121 seconds and clears after absence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-28T07:30:00Z"));
     const existing = document({
       documentId: "doc-delete",
       filename: "retire.md",
       status: "ready",
       stage: "ready",
     });
-    const api = fakeKnowledgeClient().listOnce([existing]).listOnce([existing]);
+    const background = document({
+      documentId: "doc-background",
+      filename: "background.md",
+      status: "processing",
+      stage: "embedding",
+    });
+    const api = fakeKnowledgeClient()
+      .listOnce([existing, background])
+      .listOnce([existing, background])
+      .listOnce([existing, background])
+      .listOnce([existing, background])
+      .listOnce([background])
+      .listOnce([existing, background]);
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
@@ -405,14 +617,25 @@ describe("knowledge query mutations", () => {
         ),
       },
     );
-    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
 
     await act(async () => result.current.remove.mutateAsync("doc-delete"));
-    await waitFor(() => expect(api.listCalls).toBe(2));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(api.listCalls).toBe(2);
+    expect(cachedDocument(queryClient, existing.documentId)).toBeUndefined();
 
-    expect(
-      queryClient.getQueryData<DocumentPage>(knowledgeKeys.documents()),
-    ).toMatchObject({ items: [] });
+    vi.setSystemTime(OVERLAY_REGRESSION_TIME);
+    await advanceOnePoll();
+    await advanceOnePoll();
+    expect(api.listCalls).toBe(4);
+    expect(cachedDocument(queryClient, existing.documentId)).toBeUndefined();
+
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, existing.documentId)).toBeUndefined();
+    await advanceOnePoll();
+    expect(cachedDocument(queryClient, existing.documentId)?.filename).toBe(
+      existing.filename,
+    );
   });
 
   it("rolls back an optimistic delete and invalidates the list when the server rejects it", async () => {

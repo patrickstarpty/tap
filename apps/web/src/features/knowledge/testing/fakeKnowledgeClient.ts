@@ -277,6 +277,7 @@ export function fakeKnowledgeClient(): FakeKnowledgeClient {
         errorSummary: null,
         stage: "stored" as const,
         status: "queued" as const,
+        updatedAt: NOW,
       };
       documents = documents.map((item) =>
         item.documentId === documentId ? retried : item,
