@@ -12,11 +12,13 @@ import threading
 import weakref
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from decimal import Decimal, InvalidOperation
 from enum import IntEnum, StrEnum
 from typing import Any, Literal, Protocol, cast
 
-from pymilvus import (  # type: ignore[import-untyped]
+import pymilvus  # type: ignore[import-untyped]
+from pymilvus import (
     AnnSearchRequest,
     AsyncMilvusClient,
     DataType,
@@ -25,6 +27,15 @@ from pymilvus import (  # type: ignore[import-untyped]
     MilvusClient,
     MilvusException,
     RRFRanker,
+)
+from pymilvus.client.async_grpc_handler import (  # type: ignore[import-untyped]
+    AsyncGrpcHandler,
+)
+from pymilvus.client.connection_manager import (  # type: ignore[import-untyped]
+    AsyncConnectionManager,
+    AsyncRegularStrategy,
+    ConnectionConfig,
+    ManagedConnection,
 )
 
 from tap.modules.knowledge.adapters.milvus.config import (
@@ -322,6 +333,76 @@ class _AsyncMilvusClient(Protocol):
     async def close(self) -> None: ...
 
 
+class _AsyncConnectionStrategy(Protocol):
+    def create_handler(self, config: ConnectionConfig) -> AsyncGrpcHandler: ...
+
+    async def close_async(self, managed: ManagedConnection) -> None: ...
+
+
+class _TransactionalAsyncMilvusClient(AsyncMilvusClient):  # type: ignore[misc]
+    """Own a pinned dedicated handler from allocation through client publication."""
+
+    _handler: AsyncGrpcHandler | None
+    _manager: AsyncConnectionManager | None
+    _dedicated: bool
+    _config: ConnectionConfig
+    _timeout: float | None
+    _closed: bool
+    _using: str | None
+    is_self_hosted: bool | None
+
+    async def _connect(self) -> None:
+        if self._handler is not None:
+            return
+        if self._dedicated is not True:
+            raise RuntimeError("Milvus reader requires a dedicated async handler")
+        if type(self._config) is not ConnectionConfig or self._config.is_global:
+            raise RuntimeError("Milvus reader requires a pinned regular connection")
+        manager = _require_pinned_async_manager(AsyncConnectionManager.get_instance())
+        manager_lock = manager._get_lock()
+        if type(manager_lock) is not asyncio.Lock:
+            raise RuntimeError("pinned Milvus async manager lock shape changed")
+        async with manager_lock:
+            if self._handler is not None:
+                return
+            if self._closed:
+                raise RuntimeError("Milvus reader closed during connection")
+            strategy = _require_pinned_async_strategy(manager._get_strategy(self._config))
+            handler = strategy.create_handler(self._config)
+            managed: ManagedConnection | None = None
+            try:
+                if type(handler) is not AsyncGrpcHandler:
+                    raise RuntimeError("pinned Milvus async handler shape changed")
+                managed = ManagedConnection(
+                    handler=handler,
+                    config=self._config,
+                    strategy=strategy,
+                    connect_timeout=self._timeout,
+                )
+                manager._register_error_callback(handler)
+                await handler.ensure_channel_ready(timeout=self._timeout)
+                if self._closed:
+                    raise RuntimeError("Milvus reader closed during connection")
+                server_type = handler.get_server_type()
+                managed.add_client(self)
+                manager._dedicated[id(handler)] = managed
+                self._manager = manager
+                self._handler = handler
+                self._using = f"cm-async-{id(handler)}"
+                self.is_self_hosted = bool(server_type == "milvus")
+            except BaseException as primary:
+                if manager._dedicated.get(id(handler)) is managed:
+                    manager._dedicated.pop(id(handler), None)
+                if self._handler is handler:
+                    self._handler = None
+                if self._manager is manager:
+                    self._manager = None
+                if managed is None:
+                    await _close_unmanaged_handler(handler, primary)
+                await _close_unpublished_handler(managed, primary)
+                raise AssertionError("unpublished handler settlement unexpectedly returned")
+
+
 class _ResolvedCollectionName(str):
     """Opaque reader-owned capability for one resolved physical collection."""
 
@@ -591,7 +672,7 @@ class PyMilvusReader:
         if self._client is None:
             self._client = cast(
                 _AsyncMilvusClient,
-                AsyncMilvusClient(
+                _TransactionalAsyncMilvusClient(
                     uri=self._config.uri,
                     user=self._config.username,
                     password=self._config.password.get_secret_value(),
@@ -714,6 +795,71 @@ async def _wait_task_terminal[T](task: asyncio.Task[T]) -> None:
         task.result()
     except BaseException:
         pass
+
+
+async def _close_unpublished_handler(
+    managed: ManagedConnection,
+    primary: BaseException,
+) -> None:
+    cleanup = asyncio.create_task(managed.strategy.close_async(managed))
+    await _wait_task_terminal(cleanup)
+    try:
+        cleanup.result()
+    except BaseException:
+        raise primary from SearchUnavailable("search provider provisional close failed")
+    raise primary
+
+
+async def _close_unmanaged_handler(handler: object, primary: BaseException) -> None:
+    try:
+        close = cast(Callable[[], Coroutine[Any, Any, None]], getattr(handler, "close"))
+        cleanup = asyncio.create_task(close())
+    except BaseException:
+        raise primary from SearchUnavailable("search provider provisional close failed")
+    await _wait_task_terminal(cleanup)
+    try:
+        cleanup.result()
+    except BaseException:
+        raise primary from SearchUnavailable("search provider provisional close failed")
+    raise primary
+
+
+def _require_pinned_async_manager(manager: object) -> AsyncConnectionManager:
+    if (
+        pymilvus.__version__ != "2.6.17"
+        or type(manager) is not AsyncConnectionManager
+        or type(manager._dedicated) is not dict
+        or type(manager._registry) is not dict
+        or not callable(manager._get_lock)
+        or not callable(manager._get_strategy)
+        or not callable(manager._register_error_callback)
+        or not inspect.iscoroutinefunction(manager.release)
+        or not inspect.iscoroutinefunction(AsyncGrpcHandler.ensure_channel_ready)
+        or not inspect.iscoroutinefunction(AsyncGrpcHandler.close)
+        or tuple(item.name for item in dataclass_fields(ManagedConnection))
+        != (
+            "handler",
+            "config",
+            "strategy",
+            "created_at",
+            "last_used_at",
+            "clients",
+            "recovery_gen",
+            "connect_timeout",
+        )
+    ):
+        raise RuntimeError("pinned Milvus async manager shape changed")
+    return cast(AsyncConnectionManager, manager)
+
+
+def _require_pinned_async_strategy(strategy: object) -> _AsyncConnectionStrategy:
+    create_handler = getattr(strategy, "create_handler", None)
+    close_async = getattr(strategy, "close_async", None)
+    if type(strategy) is not AsyncRegularStrategy or (
+        not callable(create_handler) or not inspect.iscoroutinefunction(close_async)
+    ):
+        raise RuntimeError("pinned Milvus async strategy shape changed")
+    return cast(_AsyncConnectionStrategy, strategy)
 
 
 async def _settle_owned_tasks(

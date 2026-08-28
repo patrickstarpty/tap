@@ -9,9 +9,14 @@ import weakref
 from collections import UserDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 
+import grpc
 import pytest
 from pydantic import SecretStr
 from pymilvus.client.abstract import CollectionSchema  # type: ignore[import-untyped]
+from pymilvus.client.async_grpc_handler import AsyncGrpcHandler  # type: ignore[import-untyped]
+from pymilvus.client.connection_manager import (  # type: ignore[import-untyped]
+    AsyncConnectionManager,
+)
 from pymilvus.client.search_result import SearchResult  # type: ignore[import-untyped]
 from pymilvus.client.types import DataType  # type: ignore[import-untyped]
 from pymilvus.grpc_gen import (  # type: ignore[import-untyped]
@@ -1633,6 +1638,207 @@ async def test_close_rechecks_the_dedicated_channel_after_lazy_connect_cancellat
 
 
 @pytest.mark.asyncio
+async def test_real_pinned_lazy_connect_cancellation_closes_unpublished_dedicated_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    captured: list[tuple[AsyncGrpcHandler, grpc.aio.Channel]] = []
+
+    async def block_channel_readiness(
+        handler: AsyncGrpcHandler,
+        timeout: float | None = None,
+    ) -> None:
+        assert timeout == 0.2
+        channel = handler._async_channel
+        assert isinstance(channel, grpc.aio.Channel)
+        captured.append((handler, channel))
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(AsyncGrpcHandler, "ensure_channel_ready", block_channel_readiness)
+    manager = AsyncConnectionManager.get_instance()
+    reader = PyMilvusReader(_config(timeout_seconds=0.2))
+    call = asyncio.create_task(reader.describe_alias("kb_doc_active"))
+    await asyncio.wait_for(started.wait(), timeout=0.1)
+    call.cancel("cancel-real-pinned-lazy-connect")
+
+    try:
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await call
+        await reader.close()
+
+        assert caught.value.args == ("cancel-real-pinned-lazy-connect",)
+        assert len(captured) == 1
+        handler, channel = captured[0]
+        assert handler._async_channel is None
+        assert channel.get_state(try_to_connect=False) is grpc.ChannelConnectivity.SHUTDOWN
+        assert id(handler) not in manager._dedicated
+    finally:
+        if captured and captured[0][0]._async_channel is not None:
+            await captured[0][0].close()
+
+
+@pytest.mark.asyncio
+async def test_real_pinned_lazy_connect_publishes_then_closes_one_owned_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[AsyncGrpcHandler, grpc.aio.Channel]] = []
+
+    async def complete_channel_readiness(
+        handler: AsyncGrpcHandler,
+        timeout: float | None = None,
+    ) -> None:
+        assert timeout == 0.2
+        channel = handler._async_channel
+        assert isinstance(channel, grpc.aio.Channel)
+        captured.append((handler, channel))
+
+    monkeypatch.setattr(AsyncGrpcHandler, "ensure_channel_ready", complete_channel_readiness)
+    manager = AsyncConnectionManager.get_instance()
+    client = transport_module._TransactionalAsyncMilvusClient(
+        uri="http://127.0.0.1:19530",
+        user="tap_reader",
+        password="reader-secret",
+        db_name="tap_local",
+        timeout=0.2,
+        dedicated=True,
+    )
+
+    try:
+        await client._connect()
+
+        assert len(captured) == 1
+        handler, channel = captured[0]
+        assert client._handler is handler
+        assert manager._dedicated[id(handler)].handler is handler
+
+        await client.close()
+
+        assert id(handler) not in manager._dedicated
+        assert handler._async_channel is None
+        assert channel.get_state(try_to_connect=False) is grpc.ChannelConnectivity.SHUTDOWN
+    finally:
+        if captured:
+            handler, _ = captured[0]
+            manager._dedicated.pop(id(handler), None)
+            if handler._async_channel is not None:
+                await handler.close()
+
+
+@pytest.mark.asyncio
+async def test_transactional_client_rejects_global_strategy_before_handler_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    allocated = False
+    original = transport_module.AsyncRegularStrategy.create_handler
+
+    def record_allocation(
+        strategy: object,
+        config: object,
+    ) -> object:
+        nonlocal allocated
+        allocated = True
+        return original(strategy, config)
+
+    monkeypatch.setattr(
+        transport_module.AsyncRegularStrategy,
+        "create_handler",
+        record_allocation,
+    )
+    client = transport_module._TransactionalAsyncMilvusClient(
+        uri="https://global-cluster.example.invalid",
+        user="tap_reader",
+        password="reader-secret",
+        db_name="tap_local",
+        timeout=0.2,
+        dedicated=True,
+    )
+
+    with pytest.raises(RuntimeError, match="pinned regular connection"):
+        await client._connect()
+
+    assert allocated is False
+
+
+@pytest.mark.asyncio
+async def test_owner_close_during_real_pinned_lazy_connect_closes_provisional_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    captured: list[tuple[AsyncGrpcHandler, grpc.aio.Channel]] = []
+
+    async def block_channel_readiness(
+        handler: AsyncGrpcHandler,
+        timeout: float | None = None,
+    ) -> None:
+        assert timeout == 0.2
+        channel = handler._async_channel
+        assert isinstance(channel, grpc.aio.Channel)
+        captured.append((handler, channel))
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(AsyncGrpcHandler, "ensure_channel_ready", block_channel_readiness)
+    reader = PyMilvusReader(_config(timeout_seconds=0.2))
+    call = asyncio.create_task(reader.describe_alias("kb_doc_active"))
+    await asyncio.wait_for(started.wait(), timeout=0.1)
+
+    try:
+        await reader.close()
+        with pytest.raises(SearchUnavailable, match="reader is closed"):
+            await call
+
+        assert len(captured) == 1
+        handler, channel = captured[0]
+        assert handler._async_channel is None
+        assert channel.get_state(try_to_connect=False) is grpc.ChannelConnectivity.SHUTDOWN
+    finally:
+        if captured and captured[0][0]._async_channel is not None:
+            await captured[0][0].close()
+
+
+@pytest.mark.parametrize("failure", ("deadline", "provider-error"))
+@pytest.mark.asyncio
+async def test_real_pinned_lazy_connect_failure_closes_provisional_channel(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    started = asyncio.Event()
+    captured: list[tuple[AsyncGrpcHandler, grpc.aio.Channel]] = []
+
+    async def fail_channel_readiness(
+        handler: AsyncGrpcHandler,
+        timeout: float | None = None,
+    ) -> None:
+        assert timeout == 0.02
+        channel = handler._async_channel
+        assert isinstance(channel, grpc.aio.Channel)
+        captured.append((handler, channel))
+        started.set()
+        if failure == "provider-error":
+            raise RuntimeError("provider-secret-unpublished-handler")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(AsyncGrpcHandler, "ensure_channel_ready", fail_channel_readiness)
+    reader = PyMilvusReader(_config(timeout_seconds=0.02))
+
+    try:
+        message = "deadline exceeded" if failure == "deadline" else "provider call failed"
+        with pytest.raises(SearchUnavailable, match=message) as caught:
+            await reader.describe_alias("kb_doc_active")
+        await reader.close()
+
+        assert "provider-secret" not in str(caught.value) + repr(caught.value)
+        assert len(captured) == 1
+        handler, channel = captured[0]
+        assert handler._async_channel is None
+        assert channel.get_state(try_to_connect=False) is grpc.ChannelConnectivity.SHUTDOWN
+    finally:
+        if captured and captured[0][0]._async_channel is not None:
+            await captured[0][0].close()
+
+
+@pytest.mark.asyncio
 async def test_released_bound_targets_do_not_accumulate_reader_capabilities() -> None:
     reader = PyMilvusReader(_config(), client=RecordingSDKClient())
 
@@ -1757,7 +1963,7 @@ async def test_lazy_reader_client_owns_one_dedicated_closeable_channel(
         constructed.append(kwargs)
         return client
 
-    monkeypatch.setattr(transport_module, "AsyncMilvusClient", client_factory)
+    monkeypatch.setattr(transport_module, "_TransactionalAsyncMilvusClient", client_factory)
     reader = PyMilvusReader(_config())
 
     assert await reader.describe_alias("kb_doc_active") == client.alias_target
