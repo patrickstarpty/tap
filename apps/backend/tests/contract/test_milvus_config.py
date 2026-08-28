@@ -122,6 +122,11 @@ def test_milvus_target_requires_canonical_schema_hash_and_positive_dimension(
         replace(doc_target(), **{field: value})
 
 
+def test_milvus_target_exact_generation_mode_requires_an_exact_boolean() -> None:
+    with pytest.raises(TypeError, match="exact generation names"):
+        replace(doc_target(), exact_generation_names=1)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (

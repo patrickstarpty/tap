@@ -4,7 +4,6 @@ import asyncio
 import gc
 import hashlib
 import json
-import threading
 import time
 import weakref
 from collections import UserDict
@@ -21,6 +20,7 @@ from pymilvus.grpc_gen import (  # type: ignore[import-untyped]
     schema_pb2,
 )
 
+from tap.modules.knowledge.adapters.milvus import transport as transport_module
 from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget, MilvusSearchConfig
 from tap.modules.knowledge.adapters.milvus.targets import bind_target
 from tap.modules.knowledge.adapters.milvus.transport import (
@@ -339,27 +339,37 @@ def _flatten_bm25(
     return bm25
 
 
-def _config(*, timeout_seconds: float = 1.0) -> MilvusSearchConfig:
+def _config(
+    *,
+    timeout_seconds: float = 1.0,
+    target: MilvusIndexTarget | None = None,
+) -> MilvusSearchConfig:
     return MilvusSearchConfig(
         uri="http://127.0.0.1:19530",
         database="tap_local",
         username="tap_reader",
         password=SecretStr("uri-password-secret"),
-        targets={SourceFamily.DOC: _target()},
+        targets={SourceFamily.DOC: target or _target()},
         timeout_seconds=timeout_seconds,
     )
 
 
-def _target(*, schema_sha256: str | None = None) -> MilvusIndexTarget:
+def _target(
+    *,
+    schema_sha256: str | None = None,
+    physical_name_prefix: str = "kb_doc_v1_",
+    exact_generation_names: bool = False,
+) -> MilvusIndexTarget:
     return MilvusIndexTarget(
         family=SourceFamily.DOC,
         alias="kb_doc_active",
-        physical_name_prefix="kb_doc_v1_",
+        physical_name_prefix=physical_name_prefix,
         schema_version="doc-schema-v1",
         schema_sha256=schema_sha256 or _schema_digest(),
         corpus_version="corpus-fixture-v1",
         embedding_model_version="research-embedding-v1",
         vector_dimension=1536,
+        exact_generation_names=exact_generation_names,
     )
 
 
@@ -412,6 +422,7 @@ class RecordingSDKClient:
         self.indexes = _raw_indexes()
         self.calls: list[tuple[str, object]] = []
         self.alias_target = "kb_doc_v1_corpus_fixture_v1"
+        self.alias_database = "tap_local"
         self.hybrid_result: list[list[dict[str, object]]] = [
             [
                 {
@@ -425,11 +436,15 @@ class RecordingSDKClient:
         ]
         self.query_result: list[dict[str, object]] = [{"chunk_id": "h_" + "1" * 64}]
 
-    def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
+    async def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
         self.calls.append(("describe_alias", {"alias": alias, **kwargs}))
-        return {"alias": alias, "collection_name": self.alias_target, "db_name": "tap_local"}
+        return {
+            "alias": alias,
+            "collection_name": self.alias_target,
+            "db_name": self.alias_database,
+        }
 
-    def describe_collection(
+    async def describe_collection(
         self,
         collection_name: str,
         **kwargs: object,
@@ -437,7 +452,7 @@ class RecordingSDKClient:
         self.calls.append(("describe_collection", {"collection_name": collection_name, **kwargs}))
         return self.collection
 
-    def describe_index(
+    async def describe_index(
         self,
         collection_name: str,
         index_name: str,
@@ -451,15 +466,15 @@ class RecordingSDKClient:
         )
         return self.indexes[index_name]
 
-    def hybrid_search(self, **kwargs: object) -> list[list[dict[str, object]]]:
+    async def hybrid_search(self, **kwargs: object) -> list[list[dict[str, object]]]:
         self.calls.append(("hybrid_search", kwargs))
         return self.hybrid_result
 
-    def query(self, **kwargs: object) -> list[dict[str, object]]:
+    async def query(self, **kwargs: object) -> list[dict[str, object]]:
         self.calls.append(("query", kwargs))
         return self.query_result
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self.calls.append(("close", {}))
 
 
@@ -490,7 +505,7 @@ class PinnedHybridShapeSDKClient(RecordingSDKClient):
         super().__init__()
         self.duplicate_primary = duplicate_primary
 
-    def hybrid_search(self, **kwargs: object) -> SearchResult:
+    async def hybrid_search(self, **kwargs: object) -> SearchResult:
         self.calls.append(("hybrid_search", kwargs))
         return _pinned_named_primary_hybrid_result(duplicate_primary=self.duplicate_primary)
 
@@ -509,6 +524,45 @@ class RepeatedNames(Sequence[str]):
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._values)
+
+
+@pytest.mark.asyncio
+async def test_reader_rejects_alias_observed_in_a_different_database() -> None:
+    client = RecordingSDKClient()
+    client.alias_database = "other_database"
+    reader = PyMilvusReader(_config(), client=client)
+
+    with pytest.raises(SearchUnavailable, match="invalid alias"):
+        await reader.describe_alias("kb_doc_active")
+
+
+@pytest.mark.asyncio
+async def test_strict_reader_rejects_prefix_sharing_unowned_physical_name() -> None:
+    base = "kb_doc_v1_athena_demo"
+    target = _target(physical_name_prefix=base, exact_generation_names=True)
+    client = RecordingSDKClient()
+    client.alias_target = base + "_unowned"
+    reader = PyMilvusReader(_config(target=target), client=client)
+
+    with pytest.raises(SearchUnavailable, match="invalid alias"):
+        await reader.describe_alias("kb_doc_active")
+
+
+@pytest.mark.parametrize(
+    "physical_name",
+    ("kb_doc_v1_athena_demo", "kb_doc_v1_athena_demo_0123456789ab"),
+)
+@pytest.mark.asyncio
+async def test_strict_reader_accepts_only_base_or_exact_generation_name(
+    physical_name: str,
+) -> None:
+    base = "kb_doc_v1_athena_demo"
+    target = _target(physical_name_prefix=base, exact_generation_names=True)
+    client = RecordingSDKClient()
+    client.alias_target = physical_name
+    reader = PyMilvusReader(_config(target=target), client=client)
+
+    assert await reader.describe_alias("kb_doc_active") == physical_name
 
 
 @pytest.mark.asyncio
@@ -1373,38 +1427,38 @@ class FailingSDKClient(RecordingSDKClient):
         if self.operation == operation:
             raise self.error_factory()
 
-    def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
+    async def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
         self._fail("describe_alias")
-        return super().describe_alias(alias, **kwargs)
+        return await super().describe_alias(alias, **kwargs)
 
-    def describe_collection(
+    async def describe_collection(
         self,
         collection_name: str,
         **kwargs: object,
     ) -> dict[str, object]:
         self._fail("describe_collection")
-        return super().describe_collection(collection_name, **kwargs)
+        return await super().describe_collection(collection_name, **kwargs)
 
-    def describe_index(
+    async def describe_index(
         self,
         collection_name: str,
         index_name: str,
         **kwargs: object,
     ) -> dict[str, object]:
         self._fail("describe_index")
-        return super().describe_index(collection_name, index_name, **kwargs)
+        return await super().describe_index(collection_name, index_name, **kwargs)
 
-    def hybrid_search(self, **kwargs: object) -> list[list[dict[str, object]]]:
+    async def hybrid_search(self, **kwargs: object) -> list[list[dict[str, object]]]:
         self._fail("hybrid_search")
-        return super().hybrid_search(**kwargs)
+        return await super().hybrid_search(**kwargs)
 
-    def query(self, **kwargs: object) -> list[dict[str, object]]:
+    async def query(self, **kwargs: object) -> list[dict[str, object]]:
         self._fail("query")
-        return super().query(**kwargs)
+        return await super().query(**kwargs)
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self._fail("close")
-        super().close()
+        await super().close()
 
 
 @pytest.mark.parametrize(
@@ -1455,9 +1509,9 @@ async def test_every_sdk_failure_is_normalized_without_echoing_sensitive_values(
 
 
 class SlowSDKClient(RecordingSDKClient):
-    def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
-        time.sleep(0.05)
-        return super().describe_alias(alias, **kwargs)
+    async def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
+        await asyncio.sleep(0.05)
+        return await super().describe_alias(alias, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -1473,25 +1527,109 @@ async def test_provider_deadline_is_normalized_without_sensitive_request_data() 
 class BlockingSDKClient(RecordingSDKClient):
     def __init__(self) -> None:
         super().__init__()
-        self.started = threading.Event()
-        self.release = threading.Event()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
 
-    def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
+    async def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
         self.started.set()
-        self.release.wait(timeout=1)
-        return super().describe_alias(alias, **kwargs)
+        await self.release.wait()
+        return await super().describe_alias(alias, **kwargs)
 
 
 class BlockingQuerySDKClient(RecordingSDKClient):
     def __init__(self) -> None:
         super().__init__()
-        self.started = threading.Event()
-        self.release = threading.Event()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
 
-    def query(self, **kwargs: object) -> list[dict[str, object]]:
+    async def query(self, **kwargs: object) -> list[dict[str, object]]:
         self.started.set()
-        self.release.wait(timeout=1)
-        return super().query(**kwargs)
+        await self.release.wait()
+        return await super().query(**kwargs)
+
+
+class CloseInterruptsBlockingSDKClient(RecordingSDKClient):
+    """Model a cancellable dedicated aio channel with a slow cancellation handler."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.close_requested = asyncio.Event()
+        self.finished = asyncio.Event()
+        self.closed = asyncio.Event()
+        self.calls: list[str] = []
+
+    async def describe_alias(self, alias: str, **_kwargs: object) -> dict[str, object]:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            await self.close_requested.wait()
+            raise
+        finally:
+            self.finished.set()
+        return await super().describe_alias(alias)
+
+    async def close(self) -> None:
+        self.calls.append("close")
+        self.close_requested.set()
+        await self.finished.wait()
+        self.closed.set()
+
+
+class LateConnectingSDKClient(RecordingSDKClient):
+    """Model an async handler published just after the first close checks state."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.first_close_seen = asyncio.Event()
+        self.connected = False
+        self.closed = False
+        self.close_calls = 0
+
+    async def describe_alias(self, alias: str, **_kwargs: object) -> dict[str, object]:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await self.first_close_seen.wait()
+            self.connected = True
+            raise
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self.close_calls == 1:
+            self.first_close_seen.set()
+            return
+        if self.connected:
+            self.closed = True
+
+
+def test_reader_rejects_a_synchronous_sdk_client_before_any_call_can_block() -> None:
+    class SynchronousClient:
+        def describe_alias(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("synchronous provider call must not be admitted")
+
+    with pytest.raises(TypeError, match="native async client"):
+        PyMilvusReader(_config(), client=SynchronousClient())
+
+
+@pytest.mark.asyncio
+async def test_close_rechecks_the_dedicated_channel_after_lazy_connect_cancellation() -> None:
+    client = LateConnectingSDKClient()
+    reader = PyMilvusReader(_config(), client=client)
+    call = asyncio.create_task(reader.describe_alias("kb_doc_active"))
+    await client.started.wait()
+
+    await reader.close()
+
+    with pytest.raises(SearchUnavailable, match="reader is closed"):
+        await call
+    assert client.close_calls == 2
+    assert client.closed is True
 
 
 @pytest.mark.asyncio
@@ -1559,6 +1697,75 @@ async def test_caller_cancellation_is_never_swallowed_as_provider_unavailability
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_runtime_owner_close_terminally_settles_a_cancelled_blocking_sdk_call() -> None:
+    from tap.entrypoints.athena_runtime import OwnedResources
+
+    client = CloseInterruptsBlockingSDKClient()
+    reader = PyMilvusReader(_config(timeout_seconds=0.2), client=client)
+    resources = OwnedResources(close_timeout_seconds=0.3)
+    resources.push(reader)
+    task = asyncio.create_task(reader.describe_alias("kb_doc_active"))
+    await asyncio.wait_for(client.started.wait(), timeout=0.1)
+
+    task.cancel()
+    await asyncio.wait_for(client.cancelled.wait(), timeout=0.1)
+    started = time.monotonic()
+    await resources.aclose()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert time.monotonic() - started < 0.3
+    assert client.finished.is_set()
+    assert client.closed.is_set()
+    assert client.calls == ["close", "close"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_owner_close_settles_a_deadlined_sdk_call_without_replacing_deadline() -> (
+    None
+):
+    from tap.entrypoints.athena_runtime import OwnedResources
+
+    client = CloseInterruptsBlockingSDKClient()
+    reader = PyMilvusReader(_config(timeout_seconds=0.02), client=client)
+    resources = OwnedResources(close_timeout_seconds=0.3)
+    resources.push(reader)
+    task = asyncio.create_task(reader.describe_alias("kb_doc_active"))
+    await asyncio.wait_for(client.started.wait(), timeout=0.1)
+    await asyncio.wait_for(client.cancelled.wait(), timeout=0.1)
+
+    await resources.aclose()
+
+    with pytest.raises(SearchUnavailable, match="deadline exceeded"):
+        await task
+    assert client.finished.is_set()
+    assert client.closed.is_set()
+    assert client.calls == ["close", "close"]
+
+
+@pytest.mark.asyncio
+async def test_lazy_reader_client_owns_one_dedicated_closeable_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[dict[str, object]] = []
+    client = RecordingSDKClient()
+
+    def client_factory(**kwargs: object) -> RecordingSDKClient:
+        constructed.append(kwargs)
+        return client
+
+    monkeypatch.setattr(transport_module, "AsyncMilvusClient", client_factory)
+    reader = PyMilvusReader(_config())
+
+    assert await reader.describe_alias("kb_doc_active") == client.alias_target
+    await reader.close()
+
+    assert len(constructed) == 1
+    assert constructed[0]["dedicated"] is True
+    assert [name for name, _ in client.calls].count("close") == 1
 
 
 def test_transport_repr_never_contains_configured_credentials() -> None:

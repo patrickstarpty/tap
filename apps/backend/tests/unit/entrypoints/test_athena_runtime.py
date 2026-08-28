@@ -1111,6 +1111,7 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
         assert search._config.targets[target.family] is target
         assert target.alias == settings.alias
         assert target.vector_dimension == 1536
+        assert target.exact_generation_names is True
         assert models_probe is not None
     finally:
         await models_probe.aclose()

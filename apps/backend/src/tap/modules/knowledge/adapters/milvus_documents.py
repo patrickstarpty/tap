@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
+from tap.modules.knowledge.adapters.milvus.config import is_owned_physical_collection
 from tap.modules.knowledge.adapters.milvus.transport import (
     CollectionBaseSchemaMismatch,
     MilvusCollectionDescriptor,
@@ -648,13 +649,10 @@ class MilvusDocumentIndex:
         )
 
     def _require_target_name(self, target: object) -> None:
-        if not isinstance(target, str) or not (
-            target == self._config.physical_collection
-            or (
-                target.startswith(self._config.physical_collection + "_")
-                and len(target) == len(self._config.physical_collection) + 13
-                and all(character in "0123456789abcdef" for character in target[-12:])
-            )
+        if not is_owned_physical_collection(
+            self._config.physical_collection,
+            target,
+            exact_generation_names=True,
         ):
             raise IndexUnavailable("Athena alias targets an untrusted physical collection")
 

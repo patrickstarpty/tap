@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import math
 import re
 import threading
 import weakref
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import IntEnum, StrEnum
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from pymilvus import (  # type: ignore[import-untyped]
     AnnSearchRequest,
+    AsyncMilvusClient,
     DataType,
     Function,
     FunctionType,
@@ -25,7 +27,11 @@ from pymilvus import (  # type: ignore[import-untyped]
     RRFRanker,
 )
 
-from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget, MilvusSearchConfig
+from tap.modules.knowledge.adapters.milvus.config import (
+    MilvusIndexTarget,
+    MilvusSearchConfig,
+    is_owned_physical_collection,
+)
 from tap.modules.knowledge.domain.models import SourceFamily
 from tap.modules.knowledge.ports.errors import SearchError, SearchUnavailable
 
@@ -297,23 +303,23 @@ class MilvusReader(Protocol):
     async def close(self) -> None: ...
 
 
-class _SyncMilvusClient(Protocol):
-    def describe_alias(self, alias: str, **kwargs: object) -> object: ...
+class _AsyncMilvusClient(Protocol):
+    async def describe_alias(self, alias: str, **kwargs: object) -> object: ...
 
-    def describe_collection(self, collection_name: str, **kwargs: object) -> object: ...
+    async def describe_collection(self, collection_name: str, **kwargs: object) -> object: ...
 
-    def describe_index(
+    async def describe_index(
         self,
         collection_name: str,
         index_name: str,
         **kwargs: object,
     ) -> object: ...
 
-    def hybrid_search(self, **kwargs: object) -> object: ...
+    async def hybrid_search(self, **kwargs: object) -> object: ...
 
-    def query(self, **kwargs: object) -> object: ...
+    async def query(self, **kwargs: object) -> object: ...
 
-    def close(self) -> None: ...
+    async def close(self) -> None: ...
 
 
 class _ResolvedCollectionName(str):
@@ -329,7 +335,7 @@ class _CollectionCapability:
 
 
 class PyMilvusReader:
-    """Async, deadline-bounded wrapper around the synchronous PyMilvus client."""
+    """Deadline-bounded owner of one dedicated native-async PyMilvus channel."""
 
     def __init__(
         self,
@@ -340,30 +346,38 @@ class PyMilvusReader:
         if not isinstance(config, MilvusSearchConfig):
             raise TypeError("Milvus reader requires validated configuration")
         self._config = config
-        self._client = cast(_SyncMilvusClient | None, client)
-        self._client_lock = threading.RLock()
+        self._client = _validated_async_client(client)
         self._binding_lock = threading.Lock()
+        self._operation_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._active_calls: set[asyncio.Task[object]] = set()
         self._capabilities: dict[int, _CollectionCapability] = {}
         self._closed = False
+        self._close_complete = False
         self._generation = 0
 
     async def describe_alias(self, alias: str) -> str:
         target = self._target_for_alias(alias)
         raw = await self._sdk_call(
-            lambda: self._sync_client().describe_alias(
+            lambda: self._async_client().describe_alias(
                 alias,
                 timeout=self._config.timeout_seconds,
             )
         )
         try:
             value = _mapping(raw)
-            if set(value) - {"alias", "collection_name", "db_name"}:
+            if set(value) != {"alias", "collection_name", "db_name"}:
                 raise ValueError("alias description is widened")
             if value.get("alias") != alias:
                 raise ValueError("alias identity does not match")
+            if value.get("db_name") != self._config.database:
+                raise ValueError("alias database does not match")
             physical_collection = value.get("collection_name")
-            _collection_name(physical_collection)
-            if not cast(str, physical_collection).startswith(target.physical_name_prefix):
+            if not is_owned_physical_collection(
+                target.physical_name_prefix,
+                physical_collection,
+                exact_generation_names=target.exact_generation_names,
+            ):
                 raise ValueError("alias target is outside the configured prefix")
             return self._register_resolved(cast(str, physical_collection), target)
         except SearchError:
@@ -378,7 +392,7 @@ class PyMilvusReader:
         resolved, target = self._resolved_target(collection_name)
         physical_collection = str(resolved)
         raw_collection = await self._sdk_call(
-            lambda: self._sync_client().describe_collection(
+            lambda: self._async_client().describe_collection(
                 physical_collection,
                 timeout=self._config.timeout_seconds,
             )
@@ -386,8 +400,8 @@ class PyMilvusReader:
         raw_indexes = []
         for index_name in _INDEX_FIELDS:
 
-            def describe_index(index_name: str = index_name) -> object:
-                return self._sync_client().describe_index(
+            def describe_index(index_name: str = index_name) -> Coroutine[Any, Any, object]:
+                return self._async_client().describe_index(
                     physical_collection,
                     index_name,
                     timeout=self._config.timeout_seconds,
@@ -420,7 +434,7 @@ class PyMilvusReader:
         physical_collection = self._validated_collection(request.collection_name)
         collection_name = str(physical_collection)
 
-        def call() -> object:
+        def call() -> Coroutine[Any, Any, object]:
             sdk_requests = [
                 AnnSearchRequest(
                     data=[request.channels[0].query],
@@ -437,7 +451,7 @@ class PyMilvusReader:
                     expr=request.channels[1].filter_expression,
                 ),
             ]
-            return self._sync_client().hybrid_search(
+            return self._async_client().hybrid_search(
                 collection_name=collection_name,
                 reqs=sdk_requests,
                 ranker=RRFRanker(),
@@ -469,7 +483,7 @@ class PyMilvusReader:
         physical_collection = self._validated_collection(request.collection_name)
         collection_name = str(physical_collection)
         raw = await self._sdk_call(
-            lambda: self._sync_client().query(
+            lambda: self._async_client().query(
                 collection_name=collection_name,
                 filter=request.filter_expression,
                 output_fields=list(request.output_fields),
@@ -491,45 +505,102 @@ class PyMilvusReader:
             raise SearchUnavailable("search provider returned invalid query rows") from None
 
     async def close(self) -> None:
-        with self._binding_lock:
-            if self._closed:
-                return
-            self._closed = True
-            self._generation += 1
-            self._capabilities.clear()
-
-        def call() -> None:
-            with self._client_lock:
-                client = self._client
-                if client is None:
+        async with self._close_lock:
+            with self._binding_lock:
+                if self._close_complete:
                     return
-                client.close()
-                self._client = None
+                if not self._closed:
+                    self._closed = True
+                    self._generation += 1
+                    self._capabilities.clear()
+            client = self._client
+            calls = tuple(self._active_calls)
+            close_task = asyncio.create_task(client.close()) if client is not None else None
+            for call in calls:
+                call.cancel()
+            tasks = (*calls, *((close_task,) if close_task is not None else ()))
+            try:
+                results = await _settle_owned_tasks(tasks)
+            except asyncio.CancelledError as cancellation:
+                if client is not None:
+                    retry_close = asyncio.create_task(client.close())
+                    await _wait_task_terminal(retry_close)
+                raise cancellation
+            retry_result: object | BaseException | None = None
+            if client is not None and calls:
+                retry_result = (await _settle_owned_tasks((asyncio.create_task(client.close()),)))[
+                    0
+                ]
+            async with self._operation_lock:
+                pass
+            if close_task is not None:
+                close_result = results[-1]
+                if isinstance(close_result, asyncio.CancelledError):
+                    raise SearchUnavailable("search provider close was cancelled") from None
+                if isinstance(close_result, BaseException):
+                    raise SearchUnavailable("search provider close failed") from None
+            if isinstance(retry_result, asyncio.CancelledError):
+                raise SearchUnavailable("search provider close was cancelled") from None
+            if isinstance(retry_result, BaseException):
+                raise SearchUnavailable("search provider close failed") from None
+            self._client = None
+            self._close_complete = True
 
-        await _bounded_call(self._config.timeout_seconds, call)
-
-    async def _sdk_call[T](self, call: Callable[[], T]) -> T:
-        def guarded_call() -> T:
-            with self._client_lock:
-                self._ensure_open()
-                return call()
-
-        return await _bounded_call(self._config.timeout_seconds, guarded_call)
-
-    def _sync_client(self) -> _SyncMilvusClient:
-        with self._client_lock:
-            if self._client is None:
-                self._client = cast(
-                    _SyncMilvusClient,
-                    MilvusClient(
-                        uri=self._config.uri,
-                        user=self._config.username,
-                        password=self._config.password.get_secret_value(),
-                        db_name=self._config.database,
-                        timeout=self._config.timeout_seconds,
-                    ),
+    async def _sdk_call[T](self, call: Callable[[], Coroutine[Any, Any, T]]) -> T:
+        async with self._operation_lock:
+            self._ensure_open()
+            try:
+                operation = call()
+            except SearchError:
+                raise
+            except Exception:
+                raise SearchUnavailable("search provider call failed") from None
+            worker: asyncio.Task[T] = asyncio.create_task(operation)
+            tracked = cast(asyncio.Task[object], worker)
+            self._active_calls.add(tracked)
+            worker.add_done_callback(self._active_calls.discard)
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(worker),
+                    timeout=self._config.timeout_seconds,
                 )
-            return self._client
+            except asyncio.CancelledError as cancellation:
+                caller = asyncio.current_task()
+                if (
+                    worker.done()
+                    and worker.cancelled()
+                    and caller is not None
+                    and not caller.cancelling()
+                ):
+                    self._ensure_open()
+                    raise SearchUnavailable("search provider call was cancelled") from None
+                worker.cancel()
+                await _wait_task_terminal(worker)
+                raise cancellation
+            except TimeoutError:
+                worker.cancel()
+                await _wait_task_terminal(worker)
+                raise SearchUnavailable("search provider deadline exceeded") from None
+            except SearchError:
+                raise
+            except Exception:
+                raise SearchUnavailable("search provider call failed") from None
+
+    def _async_client(self) -> _AsyncMilvusClient:
+        self._ensure_open()
+        if self._client is None:
+            self._client = cast(
+                _AsyncMilvusClient,
+                AsyncMilvusClient(
+                    uri=self._config.uri,
+                    user=self._config.username,
+                    password=self._config.password.get_secret_value(),
+                    db_name=self._config.database,
+                    timeout=self._config.timeout_seconds,
+                    dedicated=True,
+                ),
+            )
+        return self._client
 
     def _target_for_alias(self, alias: str) -> MilvusIndexTarget:
         targets = tuple(target for target in self._config.targets.values() if target.alias == alias)
@@ -629,16 +700,57 @@ class PyMilvusReader:
             raise SearchUnavailable("search provider reader is closed")
 
 
-async def _bounded_call[T](timeout_seconds: float, call: Callable[[], T]) -> T:
+async def _wait_task_terminal[T](task: asyncio.Task[T]) -> None:
+    """Retain ownership until one cancelled native-async provider call is terminal."""
+
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except BaseException:
+            break
     try:
-        async with asyncio.timeout(timeout_seconds):
-            return await asyncio.to_thread(call)
-    except TimeoutError:
-        raise SearchUnavailable("search provider deadline exceeded") from None
-    except SearchError:
-        raise
-    except Exception:
-        raise SearchUnavailable("search provider call failed") from None
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _settle_owned_tasks(
+    tasks: tuple[asyncio.Task[object] | asyncio.Task[None], ...],
+) -> tuple[object | BaseException, ...]:
+    if not tasks:
+        return ()
+    settlement = asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        return tuple(await asyncio.shield(settlement))
+    except asyncio.CancelledError as cancellation:
+        for task in tasks:
+            task.cancel()
+        while not settlement.done():
+            try:
+                await asyncio.shield(settlement)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        raise cancellation
+
+
+def _validated_async_client(client: object | None) -> _AsyncMilvusClient | None:
+    if client is None:
+        return None
+    methods = (
+        "describe_alias",
+        "describe_collection",
+        "describe_index",
+        "hybrid_search",
+        "query",
+        "close",
+    )
+    if any(not inspect.iscoroutinefunction(getattr(client, method, None)) for method in methods):
+        raise TypeError("Milvus reader requires a native async client")
+    return cast(_AsyncMilvusClient, client)
 
 
 def _descriptor_matches_target(

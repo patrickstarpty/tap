@@ -105,3 +105,25 @@ async def test_bind_target_rejects_a_physical_name_outside_the_configured_prefix
         await bind_target(reader, doc_target())
 
     assert reader.collection_calls == []
+
+
+@pytest.mark.asyncio
+async def test_strict_bind_target_rejects_a_prefix_sharing_unowned_name() -> None:
+    base = "kb_doc_v1_athena_demo"
+
+    class ForgedAliasReader(AliasReader):
+        async def describe_alias(self, alias: str) -> str:
+            self.alias_calls.append(alias)
+            return base + "_unowned"
+
+    reader = ForgedAliasReader()
+    target = replace(
+        doc_target(),
+        physical_name_prefix=base,
+        exact_generation_names=True,
+    )
+
+    with pytest.raises(SearchUnavailable, match="alias resolved outside configured target"):
+        await bind_target(reader, target)
+
+    assert reader.collection_calls == []

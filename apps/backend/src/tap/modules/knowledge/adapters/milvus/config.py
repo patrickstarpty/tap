@@ -27,6 +27,7 @@ class MilvusIndexTarget:
     corpus_version: str
     embedding_model_version: str
     vector_dimension: int
+    exact_generation_names: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.family, SourceFamily):
@@ -39,6 +40,29 @@ class MilvusIndexTarget:
         _bounded_string("embedding model version", self.embedding_model_version)
         if type(self.vector_dimension) is not int or self.vector_dimension < 1:
             raise ValueError("vector dimension must be a positive integer")
+        if type(self.exact_generation_names) is not bool:
+            raise TypeError("exact generation names must be a boolean")
+
+
+def is_owned_physical_collection(
+    base_name: str,
+    candidate: object,
+    *,
+    exact_generation_names: bool,
+) -> bool:
+    """Apply the single configured physical-name authority for reader and writer."""
+
+    if not isinstance(candidate, str) or _SAFE_MILVUS_NAME.fullmatch(candidate) is None:
+        return False
+    if exact_generation_names:
+        generation_prefix = base_name + "_"
+        suffix = candidate.removeprefix(generation_prefix)
+        return candidate == base_name or (
+            candidate.startswith(generation_prefix)
+            and len(suffix) == 12
+            and all(character in "0123456789abcdef" for character in suffix)
+        )
+    return candidate.startswith(base_name)
 
 
 @dataclass(frozen=True, slots=True)

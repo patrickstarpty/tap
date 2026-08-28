@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
-from tap.modules.knowledge.adapters.milvus.config import MilvusIndexTarget
+from tap.modules.knowledge.adapters.milvus.config import (
+    MilvusIndexTarget,
+    is_owned_physical_collection,
+)
 from tap.modules.knowledge.adapters.milvus.transport import MilvusReader
 from tap.modules.knowledge.ports.errors import SearchUnavailable
-
-_SAFE_COLLECTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,10 +24,10 @@ async def bind_target(
 ) -> BoundMilvusTarget:
     """Resolve an alias once and validate the immutable target description."""
     physical_collection = await reader.describe_alias(target.alias)
-    if (
-        not isinstance(physical_collection, str)
-        or _SAFE_COLLECTION_NAME.fullmatch(physical_collection) is None
-        or not physical_collection.startswith(target.physical_name_prefix)
+    if not is_owned_physical_collection(
+        target.physical_name_prefix,
+        physical_collection,
+        exact_generation_names=target.exact_generation_names,
     ):
         raise SearchUnavailable("Milvus alias resolved outside configured target")
 

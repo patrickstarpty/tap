@@ -817,6 +817,7 @@ async def _create_search(
         corpus_version=settings.corpus_version,
         embedding_model_version=settings.embedding_alias,
         vector_dimension=settings.embedding_dimension,
+        exact_generation_names=True,
     )
     config = MilvusSearchConfig(
         uri=settings.milvus_uri,
