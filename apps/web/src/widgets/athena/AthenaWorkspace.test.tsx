@@ -203,7 +203,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
     ]);
   });
 
-  it("shows one honest pending block and synchronously suppresses duplicate submits", async () => {
+  it("submits once on plain Enter without adding a newline", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient()
       .withDocuments([readyDocument("doc-a")])
@@ -212,16 +212,72 @@ describe("AthenaWorkspace answer lifecycle", () => {
     await selectSource(user, /doc-a/u);
     const textbox = screen.getByRole("textbox", { name: "输入问题" });
     await user.type(textbox, "退款规则是什么？");
-    await user.type(textbox, "{Enter}");
-    expect(api.answerCalls).toHaveLength(0);
-    const form = textbox.closest("form");
-    expect(form).not.toBeNull();
 
-    act(() => {
-      fireEvent.submit(form as HTMLFormElement);
-      fireEvent.submit(form as HTMLFormElement);
+    fireEvent.keyDown(textbox, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => expect(api.answerCalls).toHaveLength(1));
+    expect(textbox).toHaveValue("退款规则是什么？");
+  });
+
+  it("keeps Shift+Enter as a multiline edit without submitting", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withDocuments([readyDocument("doc-a")]);
+    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    await selectSource(user, /doc-a/u);
+    const textbox = screen.getByRole("textbox", { name: "输入问题" });
+    await user.type(textbox, "第一行");
+
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(textbox, "第二行");
+
+    expect(textbox).toHaveValue("第一行\n第二行");
+    expect(api.answerCalls).toHaveLength(0);
+  });
+
+  it("does not submit an Enter key event during IME composition", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withDocuments([readyDocument("doc-a")]);
+    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    await selectSource(user, /doc-a/u);
+    const textbox = screen.getByRole("textbox", { name: "输入问题" });
+    await user.type(textbox, "退款规则");
+
+    const compositionEnterWasNotCancelled = fireEvent.keyDown(textbox, {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      keyCode: 229,
     });
 
+    expect(compositionEnterWasNotCancelled).toBe(true);
+    expect(api.answerCalls).toHaveLength(0);
+    expect(textbox).toHaveValue("退款规则");
+  });
+
+  it("shows one honest pending block and synchronously suppresses duplicate Enter, form, and click submits", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient()
+      .withDocuments([readyDocument("doc-a")])
+      .deferAnswer();
+    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    await selectSource(user, /doc-a/u);
+    const textbox = screen.getByRole("textbox", { name: "输入问题" });
+    await user.type(textbox, "退款规则是什么？");
+    const form = textbox.closest("form");
+    expect(form).not.toBeNull();
+    const button = screen.getByRole("button", { name: "提问" });
+    let enterWasNotCancelled = true;
+
+    act(() => {
+      enterWasNotCancelled = fireEvent.keyDown(textbox, {
+        key: "Enter",
+        code: "Enter",
+      });
+      fireEvent.submit(form as HTMLFormElement);
+      fireEvent.click(button);
+    });
+
+    expect(enterWasNotCancelled).toBe(false);
     await waitFor(() => expect(api.answerCalls).toHaveLength(1));
     const pending = screen.getByText("检索所选来源").closest("[aria-live]");
     expect(pending).toHaveAttribute("aria-live", "polite");
@@ -385,6 +441,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
     ["conflicting_sources", "所选来源之间存在冲突，暂时无法给出可靠回答。"],
     ["revision_mismatch", "来源版本已经变化，请重新提交问题。"],
   ] as const)("renders the %s abstention honestly", (reason, copy) => {
+    const onOpenCitation = vi.fn();
     renderKnowledgeApp(
       <GroundedAnswer
         response={answerResponse({
@@ -392,9 +449,9 @@ describe("AthenaWorkspace answer lifecycle", () => {
           abstained: true,
           abstentionReason: reason,
           claims: [],
-          citations: [],
+          citations: [retrievalCitation(`citation-${reason}`)],
         })}
-        onOpenCitation={() => undefined}
+        onOpenCitation={onOpenCitation}
       />,
       { api: fakeKnowledgeClient() },
     );
@@ -403,7 +460,34 @@ describe("AthenaWorkspace answer lifecycle", () => {
     expect(
       screen.queryByRole("button", { name: /引用/u }),
     ).not.toBeInTheDocument();
+    expect(onOpenCitation).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+  ])(
+    "renders a controlled format error for a successful %s answer body",
+    async (_name, body) => {
+      const user = userEvent.setup();
+      const api = fakeKnowledgeClient()
+        .withDocuments([readyDocument("doc-a")])
+        .withAnswer(body as unknown as RetrievalAnswerResponse);
+      renderKnowledgeApp(<AthenaWorkspace />, { api });
+      await selectSource(user, /doc-a/u);
+      await ask(user, "退款规则是什么？");
+
+      expect(
+        await screen.findByText("回答格式无法核验，请重新提问。"),
+      ).toBeVisible();
+      expect(
+        screen.queryByText("选择来源并提问后，回答会显示在这里。"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /引用/u }),
+      ).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("AthenaWorkspace claim and citation integrity", () => {

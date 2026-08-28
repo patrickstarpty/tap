@@ -21,10 +21,16 @@ import {
 
 type RetrievalCitation = RetrievalAnswerResponse["citations"][number];
 
-interface AnswerState {
-  response: RetrievalAnswerResponse;
-  selectionSignature: string;
-}
+type AnswerState =
+  | {
+      kind: "response";
+      response: RetrievalAnswerResponse;
+      selectionSignature: string;
+    }
+  | {
+      kind: "format-error";
+      selectionSignature: string;
+    };
 
 interface ActiveCitation {
   citation: RetrievalCitation;
@@ -41,6 +47,12 @@ function isAbortError(error: unknown): boolean {
     (error instanceof DOMException && error.name === "AbortError") ||
     (error instanceof Error && error.name === "AbortError")
   );
+}
+
+function isAnswerResponseObject(
+  value: unknown,
+): value is RetrievalAnswerResponse {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function AthenaWorkspace({
@@ -77,9 +89,9 @@ export function AthenaWorkspace({
   const selectionIsCurrent =
     effectiveSelectedIds.length === selection.selectedIds.length;
   selectionSignatureRef.current = signature(selection.selectedIds);
-  const visibleAnswer =
+  const visibleAnswerState =
     selectionIsCurrent && answer?.selectionSignature === effectiveSignature
-      ? answer.response
+      ? answer
       : null;
 
   const clearCitation = useCallback(
@@ -180,7 +192,15 @@ export function AthenaWorkspace({
         ) {
           return;
         }
-        setAnswer({ response, selectionSignature: requestSignature });
+        setAnswer(
+          isAnswerResponseObject(response)
+            ? {
+                kind: "response",
+                response,
+                selectionSignature: requestSignature,
+              }
+            : { kind: "format-error", selectionSignature: requestSignature },
+        );
       })
       .catch((error: unknown) => {
         if (
@@ -202,8 +222,16 @@ export function AthenaWorkspace({
   };
 
   const openCitation = (citationId: string, trigger: HTMLElement) => {
-    if (visibleAnswer === null) return;
-    const citation = visibleAnswer.citations.find(
+    if (visibleAnswerState?.kind !== "response") return;
+    const response = visibleAnswerState.response;
+    if (
+      typeof response !== "object" ||
+      response === null ||
+      !Array.isArray(response.citations)
+    ) {
+      return;
+    }
+    const citation = response.citations.find(
       (candidate) => candidate.citationId === citationId,
     );
     if (citation === undefined) return;
@@ -256,13 +284,19 @@ export function AthenaWorkspace({
           {answerError !== null ? (
             <Alert type="error" showIcon title={answerError} />
           ) : null}
-          {visibleAnswer !== null ? (
+          {visibleAnswerState !== null ? (
             <GroundedAnswer
-              response={visibleAnswer}
+              response={
+                visibleAnswerState.kind === "response"
+                  ? visibleAnswerState.response
+                  : null
+              }
               onOpenCitation={openCitation}
             />
           ) : null}
-          {!answerPending && answerError === null && visibleAnswer === null ? (
+          {!answerPending &&
+          answerError === null &&
+          visibleAnswerState === null ? (
             <p className="athena-panel-placeholder">{COPY.answerEmpty}</p>
           ) : null}
         </div>
@@ -274,7 +308,7 @@ export function AthenaWorkspace({
       </section>
 
       <CitationViewer
-        active={visibleAnswer === null ? null : activeCitation}
+        active={visibleAnswerState?.kind === "response" ? activeCitation : null}
         onClose={() => clearCitation(true)}
       />
     </section>

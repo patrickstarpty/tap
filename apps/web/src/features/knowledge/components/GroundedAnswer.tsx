@@ -54,6 +54,25 @@ function FormatError() {
   return <Alert type="error" showIcon title="回答格式无法核验，请重新提问。" />;
 }
 
+function hasValidCitationIdentities(
+  citations: readonly RetrievalCitation[],
+): boolean {
+  const citationIds = new Set<string>();
+  for (const citation of citations) {
+    if (
+      typeof citation !== "object" ||
+      citation === null ||
+      typeof citation.citationId !== "string" ||
+      citation.citationId.length === 0 ||
+      citationIds.has(citation.citationId)
+    ) {
+      return false;
+    }
+    citationIds.add(citation.citationId);
+  }
+  return true;
+}
+
 function isParagraphBoundary(
   points: readonly string[],
   start: number,
@@ -219,10 +238,14 @@ export function GroundedAnswer({
   response,
   onOpenCitation,
 }: {
-  response: RetrievalAnswerResponse;
+  response: RetrievalAnswerResponse | null | undefined;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
 }) {
-  if (typeof response.abstained !== "boolean") {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    typeof response.abstained !== "boolean"
+  ) {
     return <FormatError />;
   }
   if (response.abstained) {
@@ -233,7 +256,7 @@ export function GroundedAnswer({
       !Array.isArray(response.claims) ||
       response.claims.length !== 0 ||
       !Array.isArray(response.citations) ||
-      response.citations.length !== 0 ||
+      !hasValidCitationIdentities(response.citations) ||
       typeof reason !== "string" ||
       !Object.hasOwn(ABSTENTION_COPY, reason)
     ) {

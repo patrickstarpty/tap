@@ -39,6 +39,18 @@ export function QuestionComposer({
         rows={5}
         disabled={pending}
         onChange={(event) => setQuestion(event.target.value)}
+        onKeyDown={(event) => {
+          if (
+            event.key !== "Enter" ||
+            event.shiftKey ||
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229
+          ) {
+            return;
+          }
+          event.preventDefault();
+          event.currentTarget.form?.requestSubmit();
+        }}
       />
       <div className="athena-composer-footer" id="athena-question-help">
         <span>{`${trimmedLength.toLocaleString("zh-CN")} / 8,000`}</span>

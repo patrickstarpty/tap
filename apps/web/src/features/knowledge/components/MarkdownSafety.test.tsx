@@ -184,6 +184,53 @@ describe("GroundedAnswer closed graph", () => {
       } as unknown as RetrievalAnswerResponse,
     ],
     [
+      "null abstention citations",
+      {
+        ...answerResponse({
+          answer: "",
+          abstained: true,
+          abstentionReason: "insufficient_evidence",
+          claims: [],
+        }),
+        citations: null,
+      } as unknown as RetrievalAnswerResponse,
+    ],
+    [
+      "non-array abstention citations",
+      {
+        ...answerResponse({
+          answer: "",
+          abstained: true,
+          abstentionReason: "insufficient_evidence",
+          claims: [],
+        }),
+        citations: {},
+      } as unknown as RetrievalAnswerResponse,
+    ],
+    [
+      "duplicate abstention citation IDs",
+      answerResponse({
+        answer: "",
+        abstained: true,
+        abstentionReason: "conflicting_sources",
+        claims: [],
+        citations: [
+          retrievalCitation("citation-duplicate"),
+          retrievalCitation("citation-duplicate"),
+        ],
+      }),
+    ],
+    [
+      "empty abstention citation ID",
+      answerResponse({
+        answer: "",
+        abstained: true,
+        abstentionReason: "revision_mismatch",
+        claims: [],
+        citations: [retrievalCitation("")],
+      }),
+    ],
+    [
       "non-boolean abstained flag",
       {
         ...answerResponse(),
