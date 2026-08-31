@@ -25,7 +25,7 @@
 
 ## 本地 Demo 决策
 
-- [ADR-017：Athena 本地回答端口可选 Codex CLI](2026-08-31-adr-017-athena-local-codex-answer-backend.md)（`proposed`）
+- [ADR-017：Athena 本地回答端口可选 Codex CLI](2026-08-31-adr-017-athena-local-codex-answer-backend.md)（`accepted`）
 
 ## 文档治理决策
 

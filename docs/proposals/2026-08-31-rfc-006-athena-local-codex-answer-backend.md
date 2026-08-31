@@ -1,6 +1,6 @@
 ---
 id: RFC-006
-status: in-review
+status: accepted
 date: 2026-08-31
 related-adrs:
   - ADR-017
