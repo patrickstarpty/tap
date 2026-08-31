@@ -1019,6 +1019,316 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
 
 
 @pytest.mark.asyncio
+async def test_codex_api_composes_litellm_embeddings_and_codex_answers(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """The selected answer backend must not replace query Embedding."""
+
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    events: list[str] = []
+
+    class Resource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            events.append(self.name)
+
+    engine = Resource("engine")
+    blob = Resource("blob")
+    redis = Resource("redis")
+    embeddings = Resource("embeddings")
+    codex = Resource("codex")
+    search = Resource("search")
+
+    async def database(_settings):  # type: ignore[no-untyped-def]
+        return engine, object()
+
+    async def create_search(_settings):  # type: ignore[no-untyped-def]
+        return search, object(), object()
+
+    def legacy_model(_settings):  # type: ignore[no-untyped-def]
+        raise AssertionError("legacy combined model factory called")
+
+    monkeypatch.setattr(module, "_create_database", database)
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
+    monkeypatch.setattr(module, "_create_model", legacy_model, raising=False)
+    monkeypatch.setattr(
+        module,
+        "_create_embeddings",
+        lambda _settings: embeddings,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "_create_answer_backend",
+        lambda _settings, *, embeddings: module.AthenaAnswerBackend(
+            generator=codex,
+            readiness=codex.aclose,
+            owner=codex,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_create_search", create_search)
+    monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
+    monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
+
+    graph = await module.create_api_runtime(settings)
+    retrieval = graph.http_services.knowledge._answers._knowledge._retrieval
+
+    assert retrieval._embeddings is embeddings
+    assert retrieval._answers is codex
+    await graph.aclose()
+    await graph.aclose()
+    assert events == ["search", "codex", "embeddings", "redis", "blob", "engine"]
+
+
+def test_litellm_answer_backend_reuses_the_embedding_adapter_without_a_second_owner() -> None:
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(valid_settings())
+    embeddings = object()
+
+    backend = module._create_answer_backend(settings, embeddings=embeddings)
+
+    assert backend.generator is embeddings
+    assert backend.readiness is None
+    assert backend.owner is None
+
+
+def test_codex_answer_backend_uses_only_the_resolved_login_location(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.modules.knowledge.adapters.codex_exec import CodexExecAnswerAdapter
+    from tap.modules.knowledge.adapters.codex_target import (
+        NativeCodexTarget,
+        NativeTargetHeader,
+        NativeTargetIdentity,
+    )
+
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    command = tmp_path / "codex"
+    command.write_bytes(b"native-candidate")
+    command.chmod(0o700)
+    command_stat = command.stat()
+    target = NativeCodexTarget(
+        executable=command.resolve(),
+        install_root=tmp_path.resolve(),
+        version="0.149.0",
+        identity=NativeTargetIdentity(
+            device=command_stat.st_dev,
+            inode=command_stat.st_ino,
+            size=command_stat.st_size,
+            mtime_ns=command_stat.st_mtime_ns,
+        ),
+        header=NativeTargetHeader(
+            format="mach-o",
+            magic=b"\xcf\xfa\xed\xfe",
+            bits=64,
+            byteorder="little",
+            machine=0x0100000C,
+        ),
+    )
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    auth = codex_home / "auth.json"
+    auth.write_text("PRIVATE_AUTH_CONTENT", encoding="utf-8")
+    resolver_calls: list[tuple[Path, str, str, str, int]] = []
+
+    def resolve(
+        path: Path,
+        *,
+        system: str,
+        machine: str,
+        expected_version: str,
+        uid: int,
+    ) -> NativeCodexTarget:
+        resolver_calls.append((path, system, machine, expected_version, uid))
+        return target
+
+    original_read_text = Path.read_text
+
+    def forbid_auth_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path == auth:
+            raise AssertionError("runtime read Codex auth content")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(shutil, "which", lambda name: str(command) if name == "codex" else None)
+    monkeypatch.setattr(
+        module,
+        "resolve_native_codex_target",
+        resolve,
+        raising=False,
+    )
+    monkeypatch.setattr(Path, "read_text", forbid_auth_read)
+
+    backend = module._create_answer_backend(settings, embeddings=object())
+
+    assert isinstance(backend.generator, CodexExecAnswerAdapter)
+    assert backend.readiness == backend.generator.check_ready
+    assert backend.owner is backend.generator
+    assert backend.generator.config.target is target
+    assert backend.generator.config.codex_home == codex_home.resolve()
+    assert backend.generator.config.model_id == "gpt-5.6-sol"
+    assert backend.generator.config.reasoning_effort == "ultra"
+    assert backend.generator.config.timeout_seconds == 300.0
+    assert backend.generator.config.profile_id == "quick-hybrid-v1"
+    assert resolver_calls == [
+        (
+            command,
+            module.platform.system(),
+            module.platform.machine(),
+            "0.149.0",
+            module.os.getuid(),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_answer_backend_starts_unavailable_without_exposing_a_login_path(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.modules.knowledge.ports.errors import AnswerUnavailable
+
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    backend = module._create_answer_backend(settings, embeddings=object())
+
+    assert backend.owner is None
+    assert backend.readiness is not None
+    with pytest.raises(AnswerUnavailable) as readiness:
+        await backend.readiness()
+    with pytest.raises(AnswerUnavailable) as request:
+        await backend.generator.answer("query", (), "quick-hybrid-v1")
+
+    assert str(readiness.value) == "Codex answer backend is unavailable"
+    assert str(request.value) == "Codex answer backend is unavailable"
+    assert "/" not in str(readiness.value)
+
+
+@pytest.mark.parametrize("failure", ["missing", "resolve-rejected", "config-rejected"])
+@pytest.mark.asyncio
+async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
+    monkeypatch,
+    failure: str,
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.modules.knowledge.adapters.codex_target import CodexTargetRejected
+
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    events: list[str] = []
+
+    class Resource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            events.append(self.name)
+
+    class UnavailableKnowledge:
+        def __init__(self, answers) -> None:  # type: ignore[no-untyped-def]
+            self._answers = answers
+
+        async def answer(self, request):  # type: ignore[no-untyped-def]
+            return await self._answers.answer(request.query, (), "quick-hybrid-v1")
+
+    async def create_database(_settings):  # type: ignore[no-untyped-def]
+        return Resource("engine"), object()
+
+    async def create_search(_settings):  # type: ignore[no-untyped-def]
+        return Resource("search"), object(), object()
+
+    def assemble(**kwargs):  # type: ignore[no-untyped-def]
+        return HttpServices(
+            knowledge=UnavailableKnowledge(kwargs["answers"]),
+            readiness=kwargs["readiness"],
+        )
+
+    if failure == "missing":
+        monkeypatch.setattr(shutil, "which", lambda name: None if name == "codex" else None)
+    elif failure == "resolve-rejected":
+        private_path = "/private/login/bin/codex"
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name: private_path if name == "codex" else None,
+        )
+
+        def reject(*_args: object, **_kwargs: object) -> None:
+            raise CodexTargetRejected(f"rejected {private_path}")
+
+        monkeypatch.setattr(module, "resolve_native_codex_target", reject)
+    else:
+        private_path = "/private/login/bin/codex"
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name: private_path if name == "codex" else None,
+        )
+        monkeypatch.setattr(
+            module, "resolve_native_codex_target", lambda *_args, **_kwargs: object()
+        )
+
+        def reject_config(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(f"unusable login location {private_path}")
+
+        monkeypatch.setattr(module, "_codex_config", reject_config)
+
+    monkeypatch.setattr(module, "_create_database", create_database)
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: Resource("blob"))
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: Resource("redis"))
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: Resource("embeddings"))
+    monkeypatch.setattr(module, "_create_search", create_search)
+    monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
+    monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
+    monkeypatch.setattr(module, "_assemble_http_services", assemble)
+
+    runtime = await module.create_api_runtime(settings)
+    try:
+        client = TestClient(create_app(runtime.http_services), raise_server_exceptions=False)
+
+        liveness = client.get("/health/live")
+        response = client.post(
+            "/v1/knowledge/answers",
+            json={
+                "query": "What is the rule?",
+                "resourceRefs": [{"family": "doc", "sourceId": "doc-a", "mode": "scope"}],
+            },
+        )
+
+        assert liveness.status_code == 200
+        assert liveness.json() == {"status": "ok"}
+        assert response.status_code == 503
+        assert response.json() == {
+            "type": "https://tap.example/problems/answer-unavailable",
+            "title": "Answer unavailable",
+            "status": 503,
+            "detail": "The answer service is currently unavailable.",
+        }
+        assert "private" not in response.text
+        assert "login" not in response.text
+    finally:
+        await runtime.aclose()
+        await runtime.aclose()
+
+    assert events == ["search", "embeddings", "redis", "blob", "engine"]
+
+
+@pytest.mark.asyncio
 async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     module = _runtime()
     settings = module.AthenaSettings.from_mapping(valid_settings())
@@ -1051,7 +1361,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
     monkeypatch.setattr(module, "_create_search", create_search)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: models_probe)
     monkeypatch.setattr(
@@ -1105,7 +1415,7 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: artifacts)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
     monkeypatch.setattr(module, "_create_search", create_search)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
     monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
@@ -1182,7 +1492,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
 
     async def fail_search(_settings):  # type: ignore[no-untyped-def]
         raise primary
@@ -1197,6 +1507,58 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
 
 
 @pytest.mark.asyncio
+async def test_codex_owner_closes_once_when_api_construction_fails_after_selection(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    events: list[str] = []
+    primary = RuntimeError("search-construction-failed")
+
+    class Resource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            events.append(self.name)
+
+    engine = Resource("engine")
+    blob = Resource("blob")
+    redis = Resource("redis")
+    embeddings = Resource("embeddings")
+    codex = Resource("codex")
+
+    async def create_database(_settings):  # type: ignore[no-untyped-def]
+        return engine, object()
+
+    async def fail_search(_settings):  # type: ignore[no-untyped-def]
+        raise primary
+
+    monkeypatch.setattr(module, "_create_database", create_database)
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: embeddings)
+    monkeypatch.setattr(
+        module,
+        "_create_answer_backend",
+        lambda _settings, *, embeddings: module.AthenaAnswerBackend(
+            generator=codex,
+            readiness=codex.aclose,
+            owner=codex,
+        ),
+    )
+    monkeypatch.setattr(module, "_create_search", fail_search)
+
+    with pytest.raises(RuntimeError) as captured:
+        await module.create_api_runtime(settings)
+
+    assert captured.value is primary
+    assert events == ["codex", "embeddings", "redis", "blob", "engine"]
+
+
+@pytest.mark.asyncio
 async def test_real_adapter_helpers_build_only_closed_configs_without_provider_io() -> None:
     module = _runtime()
     settings = module.AthenaSettings.from_mapping(valid_settings())
@@ -1204,7 +1566,7 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
     engine, repository = await module._create_database(settings)
     blob = module._create_blob(settings)
     redis = module._create_redis(settings)
-    model = module._create_model(settings)
+    model = module._create_embeddings(settings)
     search, reader, target = await module._create_search(settings)
     models_probe = module._create_models_probe_client(settings)
     try:
@@ -1291,7 +1653,7 @@ def test_fake_adapter_is_lazy_exact_gate_and_needs_no_models_probe() -> None:
         valid_settings() | {"TAP_DEMO_MODE": "e2e", "ATHENA_MODEL_BACKEND": "fake"}
     )
 
-    model = module._create_model(settings)
+    model = module._create_embeddings(settings)
 
     assert type(model).__module__ == "tap.testing.deterministic_model"
     assert module._create_models_probe_client(settings) is None
@@ -1306,7 +1668,7 @@ async def test_runtime_litellm_allows_each_exact_body_and_gateway_label_and_near
 
     module = _runtime()
     settings = module.AthenaSettings.from_mapping(valid_settings())
-    configured = module._create_model(settings)
+    configured = module._create_embeddings(settings)
     config = configured._config
     await configured.close()
 
@@ -1504,7 +1866,7 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
         settings=settings,
         repository=repository,
         artifacts=artifacts,
-        model=model,
+        embeddings=model,
         index=index,
         redis=redis,
         resources=resources,
@@ -1521,6 +1883,61 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
     assert runtime.wakeups._consumer_name == settings.worker_id
     assert runtime.wakeups._aggregate_type == "knowledge_document"
     assert runtime.resources == (resources,)
+
+
+@pytest.mark.asyncio
+async def test_codex_worker_constructs_only_litellm_embeddings(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+
+    class Resource:
+        async def aclose(self) -> None:
+            return None
+
+    async def database(_settings):  # type: ignore[no-untyped-def]
+        return Resource(), object()
+
+    async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
+        return Resource()
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("worker attempted answer backend construction or discovery")
+
+    original_which = shutil.which
+
+    def forbid_codex_discovery(name: str, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        if name == "codex":
+            forbidden(name)
+        return original_which(name, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_create_database", database)
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: Resource())
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: Resource())
+    monkeypatch.setattr(module, "_create_model", forbidden, raising=False)
+    monkeypatch.setattr(
+        module,
+        "_create_embeddings",
+        lambda _settings: Resource(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "_create_answer_backend",
+        forbidden,
+        raising=False,
+    )
+    monkeypatch.setattr(shutil, "which", forbid_codex_discovery)
+    monkeypatch.setattr(module, "_create_document_index", document_index)
+    monkeypatch.setattr(module, "_create_stage_controller", lambda *_args: None)
+
+    graph = await module.create_worker_runtime(settings)
+
+    assert graph.worker is not None
+    await graph.resources[0].aclose()
 
 
 @pytest.mark.asyncio
@@ -1554,7 +1971,7 @@ async def test_create_worker_runtime_registers_only_index_and_closes_outer_graph
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
     monkeypatch.setattr(module, "_create_document_index", document_index)
     monkeypatch.setattr(module, "_create_stage_controller", lambda *_args: None)
 
@@ -1614,7 +2031,7 @@ async def test_worker_outer_owner_closes_real_document_index_roles_transitively(
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
     monkeypatch.setattr(module, "_create_document_index", document_index)
     monkeypatch.setattr(module, "_create_stage_controller", lambda *_args: None)
 
@@ -1663,7 +2080,7 @@ async def test_create_worker_runtime_partial_index_failure_closes_prior_owners(
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
     monkeypatch.setattr(module, "_create_document_index", fail_index)
 
     with pytest.raises(RuntimeError) as captured:
@@ -1797,7 +2214,7 @@ async def test_worker_assembly_failure_closes_complete_index_before_prior_owners
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_model", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
     monkeypatch.setattr(module, "_create_document_index", document_index)
     monkeypatch.setattr(
         module,
@@ -2169,7 +2586,12 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
         engine=Engine(),
         redis=Redis(),
         artifacts=Blob(),
-        model=object(),
+        embeddings=object(),
+        answer_backend=module.AthenaAnswerBackend(
+            generator=object(),
+            readiness=None,
+            owner=None,
+        ),
         milvus_reader=Milvus(),
         milvus_target=target,
         models_probe_client=ModelsClient(),
@@ -2185,6 +2607,193 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
     assert calls.count("models:v1/models") == 1
     assert all("embedding" not in item or item == "models:v1/models" for item in calls)
     await reader.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_models_readiness_checks_embedding_before_non_generating_cli() -> None:
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    readiness_calls: list[str] = []
+
+    class Response:
+        status_code = 200
+        content = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "athena-embedding",
+                        "object": "model",
+                        "created": 1,
+                        "owned_by": "litellm",
+                    }
+                ],
+            }
+        ).encode()
+
+        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
+            yield self.content
+
+    class ResponseContext:
+        async def __aenter__(self) -> Response:
+            return Response()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class ModelsClient:
+        def stream(self, method: str, path: str) -> ResponseContext:
+            assert (method, path) == ("GET", "v1/models")
+            return ResponseContext()
+
+    async def codex_ready() -> None:
+        readiness_calls.append("codex-ready")
+
+    service = module._create_readiness(
+        settings=settings,
+        engine=object(),
+        redis=object(),
+        artifacts=object(),
+        embeddings=object(),
+        answer_backend=module.AthenaAnswerBackend(
+            generator=object(),
+            readiness=codex_ready,
+            owner=object(),
+        ),
+        milvus_reader=object(),
+        milvus_target=object(),
+        models_probe_client=ModelsClient(),
+    )
+
+    assert await service._checks[4]() is True
+    assert readiness_calls == ["codex-ready"]
+
+
+@pytest.mark.asyncio
+async def test_codex_models_readiness_skips_cli_when_embedding_alias_is_missing() -> None:
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    readiness_calls: list[str] = []
+
+    class Response:
+        status_code = 200
+        content = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "athena-chat",
+                        "object": "model",
+                        "created": 1,
+                        "owned_by": "litellm",
+                    }
+                ],
+            }
+        ).encode()
+
+        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
+            yield self.content
+
+    class ResponseContext:
+        async def __aenter__(self) -> Response:
+            return Response()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class ModelsClient:
+        def stream(self, _method: str, _path: str) -> ResponseContext:
+            return ResponseContext()
+
+    async def forbidden_readiness() -> None:
+        readiness_calls.append("unexpected")
+        raise AssertionError("Codex readiness ran before embedding alias validation")
+
+    service = module._create_readiness(
+        settings=settings,
+        engine=object(),
+        redis=object(),
+        artifacts=object(),
+        embeddings=object(),
+        answer_backend=module.AthenaAnswerBackend(
+            generator=object(),
+            readiness=forbidden_readiness,
+            owner=None,
+        ),
+        milvus_reader=object(),
+        milvus_target=object(),
+        models_probe_client=ModelsClient(),
+    )
+
+    assert await service._checks[4]() is False
+    assert readiness_calls == []
+
+
+@pytest.mark.asyncio
+async def test_codex_readiness_failure_stays_on_the_closed_models_remediation() -> None:
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+
+    class Response:
+        status_code = 200
+        content = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "athena-embedding",
+                        "object": "model",
+                        "created": 1,
+                        "owned_by": "litellm",
+                    }
+                ],
+            }
+        ).encode()
+
+        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
+            yield self.content
+
+    class ResponseContext:
+        async def __aenter__(self) -> Response:
+            return Response()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class ModelsClient:
+        def stream(self, _method: str, _path: str) -> ResponseContext:
+            return ResponseContext()
+
+    async def fail_codex() -> None:
+        raise RuntimeError("login=/Users/operator/.codex/auth.json provider-secret")
+
+    service = module._create_readiness(
+        settings=settings,
+        engine=object(),
+        redis=object(),
+        artifacts=object(),
+        embeddings=object(),
+        answer_backend=module.AthenaAnswerBackend(
+            generator=object(),
+            readiness=fail_codex,
+            owner=None,
+        ),
+        milvus_reader=object(),
+        milvus_target=object(),
+        models_probe_client=ModelsClient(),
+    )
+
+    result = await service.check()
+    models = next(item for item in result.components if item.name.value == "models")
+    assert models.state.value == "failed"
+    assert models.remediation_code.value == "configure-models"
+    assert "provider-secret" not in result.model_dump_json()
 
 
 def test_deterministic_vectors_are_normalized_distinct_and_cross_process_stable() -> None:

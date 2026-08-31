@@ -14,12 +14,16 @@ from sqlalchemy import text
 
 from tap.entrypoints.athena_runtime import (
     AthenaSettings,
+    OwnedResources,
+    _create_answer_backend,
     _create_blob,
     _create_database,
+    _create_embeddings,
     _create_models_probe_client,
     _create_redis,
     _discover_alembic_head,
     _is_private_blob_container,
+    _push_if_owned,
     _read_models_labels,
 )
 from tap.modules.knowledge.adapters.blob_artifacts import (
@@ -47,11 +51,7 @@ _REMEDIATION = {
     "milvus": "start-milvus",
     "models": "configure-models",
 }
-_PROVIDER_SETTINGS = (
-    "OPENAI_API_KEY",
-    "LITELLM_EMBEDDING_API_KEY",
-    "LITELLM_EMBEDDING_API_BASE",
-)
+_PROVIDER_SETTINGS = ("DASHSCOPE_API_KEY",)
 
 Probe = Callable[[AthenaSettings, Mapping[str, str]], Awaitable[bool]]
 
@@ -169,17 +169,29 @@ async def _check_models(settings: AthenaSettings, values: Mapping[str, str]) -> 
         )
     if any(not values.get(name, "").strip() for name in _PROVIDER_SETTINGS):
         return False
-    client = _create_models_probe_client(settings)
-    if client is None:
-        return False
+    resources = OwnedResources()
     try:
-        labels = await _read_models_labels(client)
-        return (
-            labels is not None
-            and {settings.chat_alias, settings.embedding_alias} <= labels
-        )
-    finally:
-        await client.aclose()
+        embeddings = _create_embeddings(settings)
+        _push_if_owned(resources, embeddings)
+        answer_backend = _create_answer_backend(settings, embeddings=embeddings)
+        _push_if_owned(resources, answer_backend.owner)
+        client = _create_models_probe_client(settings)
+        _push_if_owned(resources, client)
+        if client is None:
+            healthy = False
+        else:
+            labels = await _read_models_labels(client)
+            required_labels = {settings.embedding_alias}
+            if settings.answer_backend == "litellm":
+                required_labels.add(settings.chat_alias)
+            healthy = labels is not None and required_labels <= labels
+            if healthy and answer_backend.readiness is not None:
+                await answer_backend.readiness()
+    except BaseException as error:
+        await resources.aclose(error)
+        raise AssertionError("model check settlement unexpectedly returned")
+    await resources.aclose()
+    return healthy
 
 
 async def _safe_probe(

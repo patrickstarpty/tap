@@ -431,7 +431,7 @@ case " $* " in
     [ "$middleware_ports" = 13306:16379:11000:14000 ] || exit 82
     app_ports="$MILVUS_PORT:$MILVUS_HEALTH_PORT:$ATHENA_API_PORT:$ATHENA_WEB_PORT"
     [ "$app_ports" = 29530:19091:18000:15173 ] || exit 83
-    [ "$TAP_DEMO_MODE:$ATHENA_MODEL_BACKEND" = e2e:fake ] || exit 84
+    [ "$TAP_DEMO_MODE:$ATHENA_MODEL_BACKEND:$ATHENA_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 84
     expected_database='mysql+asyncmy://tap:tap-e2e@127.0.0.1:13306/tap?charset=utf8mb4'
     [ "$TAP_DATABASE_URL" = "$expected_database" ] || exit 85
     [ "$TAP_REDIS_URL" = 'redis://127.0.0.1:16379/0' ] || exit 86
@@ -1121,6 +1121,46 @@ def test_athena_ensure_cli_reports_configuration_failure_before_any_resource_sta
     assert "provider-secret-invalid-host" not in output.err
 
 
+def test_athena_ensure_parses_codex_selection_without_discovery(
+    monkeypatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    import shutil
+
+    spec = importlib.util.spec_from_file_location(
+        "athena_collection_codex_configuration_contract",
+        ROOT / "scripts/athena_collection.py",
+    )
+    assert spec is not None and spec.loader is not None
+    athena_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(athena_collection)
+    seen: list[str] = []
+
+    async def ensure(settings, **_kwargs):  # type: ignore[no-untyped-def]
+        seen.append(settings.answer_backend)
+
+    def forbidden_discovery(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("collection ensure performed Codex discovery")
+
+    monkeypatch.setattr(shutil, "which", forbidden_discovery)
+    monkeypatch.setattr(athena_collection, "ensure", ensure)
+
+    result = athena_collection.main(
+        ["ensure"],
+        {
+            "ATHENA_ANSWER_BACKEND": "codex",
+            "LITELLM_MODEL": "openai/test-chat",
+            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        },
+    )
+
+    output = capsys.readouterr()
+    assert result == 0
+    assert seen == ["codex"]
+    assert output.out == "Athena resources ready.\n"
+    assert output.err == ""
+
+
 def test_athena_ensure_cli_redacts_provider_failures(
     monkeypatch,
     capsys,
@@ -1704,18 +1744,191 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
         transport=httpx.MockTransport(handler),
     )
     monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda _settings: client)
-    assert "_create_model" not in vars(safe_check)
-    provider = {
-        "OPENAI_API_KEY": "configured",
-        "LITELLM_EMBEDDING_API_KEY": "configured",
-        "LITELLM_EMBEDDING_API_BASE": "https://provider.invalid/v1",
-    }
+    provider = {"DASHSCOPE_API_KEY": "configured"}
 
     assert asyncio.run(safe_check._check_models(settings, {})) is False
     assert requests == []
     assert asyncio.run(safe_check._check_models(settings, provider)) is True
     assert requests == [("GET", "/v1/models")]
     assert client.is_closed
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected", "readiness_calls"),
+    [
+        (("athena-embedding",), True, 1),
+        (("athena-chat",), False, 0),
+    ],
+)
+def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
+    monkeypatch,
+    labels: tuple[str, ...],
+    expected: bool,
+    readiness_calls: int,
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.athena_runtime import AthenaAnswerBackend, AthenaSettings
+
+    safe_check = _load_safe_check_module()
+    settings = AthenaSettings.from_mapping(
+        {
+            "ATHENA_ANSWER_BACKEND": "codex",
+            "LITELLM_MODEL": "openai/test-chat",
+            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        }
+    )
+    events: list[str] = []
+
+    class Response:
+        status_code = 200
+        content = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": label,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": "tap",
+                    }
+                    for label in labels
+                ],
+            }
+        ).encode()
+
+        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
+            events.append("models")
+            yield self.content
+
+    class ResponseContext:
+        async def __aenter__(self) -> Response:
+            return Response()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class ModelsClient:
+        def stream(self, method: str, path: str) -> ResponseContext:
+            assert (method, path) == ("GET", "v1/models")
+            return ResponseContext()
+
+        async def aclose(self) -> None:
+            events.append("close:models")
+
+    class Embeddings:
+        async def aclose(self) -> None:
+            events.append("close:embeddings")
+
+    class Codex:
+        async def check_ready(self) -> None:
+            events.append("codex-ready")
+
+        async def aclose(self) -> None:
+            events.append("close:codex")
+
+    embeddings = Embeddings()
+    codex = Codex()
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
+    monkeypatch.setattr(
+        safe_check,
+        "_create_answer_backend",
+        lambda _settings, *, embeddings: AthenaAnswerBackend(
+            generator=codex,
+            readiness=codex.check_ready,
+            owner=codex,
+        ),
+    )
+    monkeypatch.setattr(
+        safe_check,
+        "_create_models_probe_client",
+        lambda _settings: ModelsClient(),
+    )
+
+    assert (
+        asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
+        is expected
+    )
+    assert events.count("codex-ready") == readiness_calls
+    assert events[-3:] == ["close:models", "close:codex", "close:embeddings"]
+
+
+def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.athena_runtime import AthenaAnswerBackend, AthenaSettings
+
+    safe_check = _load_safe_check_module()
+    settings = AthenaSettings.from_mapping(
+        {
+            "ATHENA_ANSWER_BACKEND": "codex",
+            "LITELLM_MODEL": "openai/test-chat",
+            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        }
+    )
+    events: list[str] = []
+
+    class Response:
+        status_code = 200
+        content = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "athena-embedding",
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": "tap",
+                    }
+                ],
+            }
+        ).encode()
+
+        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
+            yield self.content
+
+    class ResponseContext:
+        async def __aenter__(self) -> Response:
+            return Response()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Owner:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            events.append(f"close:{self.name}")
+
+    class ModelsClient(Owner):
+        def stream(self, _method: str, _path: str) -> ResponseContext:
+            return ResponseContext()
+
+    class Codex(Owner):
+        async def check_ready(self) -> None:
+            raise RuntimeError("login=/private/auth.json provider-secret")
+
+    embeddings = Owner("embeddings")
+    codex = Codex("codex")
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
+    monkeypatch.setattr(
+        safe_check,
+        "_create_answer_backend",
+        lambda _settings, *, embeddings: AthenaAnswerBackend(
+            generator=codex,
+            readiness=codex.check_ready,
+            owner=codex,
+        ),
+    )
+    monkeypatch.setattr(
+        safe_check,
+        "_create_models_probe_client",
+        lambda _settings: ModelsClient("models"),
+    )
+
+    with pytest.raises(RuntimeError, match="provider-secret"):
+        asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
+
+    assert events == ["close:models", "close:codex", "close:embeddings"]
 
 
 def test_litellm_exposes_exactly_the_two_fixed_athena_aliases() -> None:
@@ -1732,9 +1945,8 @@ def test_litellm_exposes_exactly_the_two_fixed_athena_aliases() -> None:
         "api_key": "os.environ/OPENAI_API_KEY",
     }
     assert config["model_list"][1]["litellm_params"] == {
-        "model": "os.environ/LITELLM_EMBEDDING_MODEL",
-        "api_key": "os.environ/LITELLM_EMBEDDING_API_KEY",
-        "api_base": "os.environ/LITELLM_EMBEDDING_API_BASE",
+        "model": "os.environ/LITELLM_ATHENA_EMBEDDING_MODEL",
+        "api_key": "os.environ/DASHSCOPE_API_KEY",
     }
 
 
@@ -1792,6 +2004,8 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
     assert set(services["milvus"]["depends_on"]) == {"milvus-etcd", "milvus-minio"}
     for name in ("mysql", "redis", "azurite", "litellm", "milvus"):
         assert "healthcheck" in services[name]
+    assert services["litellm"]["environment"]["DASHSCOPE_API_KEY"] == ("${DASHSCOPE_API_KEY:-}")
+    assert "CODEX_API_KEY" not in services["litellm"]["environment"]
 
 
 def test_vite_config_is_strict_and_exposes_only_same_origin_api_proxies() -> None:
@@ -1960,7 +2174,9 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "LITELLM_BASE_URL",
         "LITELLM_MASTER_KEY",
         "LITELLM_MODEL",
+        "LITELLM_ATHENA_EMBEDDING_MODEL",
         "LITELLM_EMBEDDING_MODEL",
+        "DASHSCOPE_API_KEY",
         "MILVUS_URI",
         "MILVUS_READER_PASSWORD",
         "MILVUS_WRITER_PASSWORD",
@@ -1974,12 +2190,26 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "ATHENA_WORKER_ID",
         "ATHENA_API_PORT",
         "ATHENA_WEB_PORT",
+        "ATHENA_ANSWER_BACKEND",
+        "ATHENA_CODEX_MODEL",
+        "ATHENA_CODEX_REASONING_EFFORT",
+        "ATHENA_CODEX_TIMEOUT_SECONDS",
     }
     assert required <= values.keys()
     assert values["ATHENA_MODEL_BACKEND"] == "litellm"
+    assert values["ATHENA_ANSWER_BACKEND"] == "litellm"
+    assert values["ATHENA_CODEX_MODEL"] == "gpt-5.6-sol"
+    assert values["ATHENA_CODEX_REASONING_EFFORT"] == "ultra"
+    assert values["ATHENA_CODEX_TIMEOUT_SECONDS"] == "300"
+    assert values["LITELLM_ATHENA_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert values["DASHSCOPE_API_KEY"] == ""
     assert values["TAP_DEMO_MODE"] == ""
     assert values["TAP_ALLOW_INITIAL_MILVUS_ROOT"] == "0"
     assert values["OPENAI_API_KEY"] == ""
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "query and selected Evidence are sent to OpenAI" in example
+    assert "Embedding content is sent to Alibaba Bailian" in example
+    assert "Codex uses local ChatGPT login; it does not require OPENAI_API_KEY" in example
 
     sourced = subprocess.run(
         [
@@ -2302,6 +2532,34 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
     assert "provider-secret" not in completed.stdout + completed.stderr + "\n".join(calls)
     assert not (runner.parents[1] / "tmp/tap-athena-e2e.lock").exists()
     assert list((runner.parents[1] / "tmp").glob("tap-athena-e2e.*")) == []
+
+
+@pytest.mark.parametrize("source", ["caller", "dotenv"])
+def test_e2e_runner_rejects_codex_after_loading_the_final_environment(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    runner, environment, log = _e2e_runner_fixture(tmp_path)
+    if source == "caller":
+        environment["ATHENA_ANSWER_BACKEND"] = "codex"
+    else:
+        with (runner.parents[1] / ".env").open("a", encoding="utf-8") as handle:
+            handle.write("ATHENA_ANSWER_BACKEND=codex\n")
+
+    completed = subprocess.run(
+        ["/bin/bash", str(runner), "--preflight-only"],
+        cwd=runner.parents[1],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == "Athena E2E does not allow the Codex answer backend.\n"
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
 
 
 @pytest.mark.parametrize(

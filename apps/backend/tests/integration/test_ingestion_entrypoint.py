@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import signal
 import time
 from dataclasses import replace
@@ -598,6 +599,31 @@ def test_main_uses_only_the_fixed_runtime_factory_and_one_settings_snapshot(
     assert len(seen) == 1
     assert seen[0].worker_id == "entrypoint-worker"
     assert seen[0].database_url.endswith("127.0.0.1:13306/tap?charset=utf8mb4")
+
+
+def test_worker_entrypoint_parses_codex_selection_without_discovery(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    seen: list[AthenaSettings] = []
+
+    async def fixed_run(*, runtime_factory, settings, **_kwargs):  # type: ignore[no-untyped-def]
+        assert runtime_factory is create_worker_runtime
+        seen.append(settings)
+
+    def forbidden_discovery(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("worker entrypoint performed Codex discovery")
+
+    runner = asyncio.Runner()
+    monkeypatch.setattr(shutil, "which", forbidden_discovery)
+    monkeypatch.setattr(athena_ingestion_worker, "run", fixed_run)
+    monkeypatch.setattr(athena_ingestion_worker.asyncio, "run", runner.run)
+    try:
+        athena_ingestion_worker.main(_athena_environment(ATHENA_ANSWER_BACKEND="codex"))
+    finally:
+        runner.close()
+
+    assert len(seen) == 1
+    assert seen[0].answer_backend == "codex"
 
 
 def test_worker_main_suppresses_worker_thread_rpc_details_for_the_full_process_lifetime(

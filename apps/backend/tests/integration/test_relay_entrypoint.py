@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import signal
 
 import pytest
@@ -68,6 +69,17 @@ def test_relay_settings_derive_provider_and_identity_values_from_athena_snapshot
     assert "tap:test" not in repr(settings)
     assert "13306" not in repr(settings)
     assert "16379" not in repr(settings)
+
+
+def test_relay_parses_codex_selection_without_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def forbidden_discovery(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("relay performed Codex discovery")
+
+    monkeypatch.setattr(shutil, "which", forbidden_discovery)
+
+    settings = relay_reconciler.load_settings(_athena_environment(ATHENA_ANSWER_BACKEND="codex"))
+
+    assert settings.worker_id == "relay-e2e-worker"
 
 
 def test_relay_invalid_provider_settings_fail_before_any_constructor(monkeypatch) -> None:  # type: ignore[no-untyped-def]

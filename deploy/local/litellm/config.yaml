@@ -5,9 +5,8 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
   - model_name: athena-embedding
     litellm_params:
-      model: os.environ/LITELLM_EMBEDDING_MODEL
-      api_key: os.environ/LITELLM_EMBEDDING_API_KEY
-      api_base: os.environ/LITELLM_EMBEDDING_API_BASE
+      model: os.environ/LITELLM_ATHENA_EMBEDDING_MODEL
+      api_key: os.environ/DASHSCOPE_API_KEY
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 

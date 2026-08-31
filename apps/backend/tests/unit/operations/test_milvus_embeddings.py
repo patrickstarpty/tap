@@ -1331,31 +1331,28 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     }
 
     assert environment["LITELLM_BASE_URL"] == "http://127.0.0.1:4000"
+    assert environment["LITELLM_ATHENA_EMBEDDING_MODEL"] == ("dashscope/text-embedding-v4")
     assert environment["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert environment["LITELLM_EMBEDDING_API_KEY"] == ""
     assert environment["LITELLM_EMBEDDING_API_BASE"] == ""
+    assert environment["DASHSCOPE_API_KEY"] == ""
 
     compose = yaml.safe_load((repository / "compose.yaml").read_text(encoding="utf-8"))
     gateway = yaml.safe_load(
         (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
     )
     compose_environment = compose["services"]["litellm"]["environment"]
-    assert {
-        key: value
-        for key, value in compose_environment.items()
-        if key.startswith("LITELLM_EMBEDDING_")
-    } == {
-        "LITELLM_EMBEDDING_MODEL": ("${LITELLM_EMBEDDING_MODEL:-text-embedding-v4}"),
-        "LITELLM_EMBEDDING_API_KEY": "${LITELLM_EMBEDDING_API_KEY:-}",
-        "LITELLM_EMBEDDING_API_BASE": "${LITELLM_EMBEDDING_API_BASE:-}",
-    }
+    assert compose_environment["LITELLM_ATHENA_EMBEDDING_MODEL"] == (
+        "${LITELLM_ATHENA_EMBEDDING_MODEL:-dashscope/text-embedding-v4}"
+    )
+    assert not any(key.startswith("LITELLM_EMBEDDING_") for key in compose_environment)
+    assert compose_environment["DASHSCOPE_API_KEY"] == "${DASHSCOPE_API_KEY:-}"
     embedding_route = next(
         item for item in gateway["model_list"] if item["model_name"] == "athena-embedding"
     )
     assert embedding_route["litellm_params"] == {
-        "model": "os.environ/LITELLM_EMBEDDING_MODEL",
-        "api_key": "os.environ/LITELLM_EMBEDDING_API_KEY",
-        "api_base": "os.environ/LITELLM_EMBEDDING_API_BASE",
+        "model": "os.environ/LITELLM_ATHENA_EMBEDDING_MODEL",
+        "api_key": "os.environ/DASHSCOPE_API_KEY",
     }
     assert "research-embedding-v1" not in str(gateway)
 

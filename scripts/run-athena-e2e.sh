@@ -33,6 +33,11 @@ if [ -f "$athena_e2e_repo_root/.env" ]; then
   set +a
 fi
 
+if [ "${ATHENA_ANSWER_BACKEND:-litellm}" = codex ]; then
+  echo "Athena E2E does not allow the Codex answer backend." >&2
+  exit 2
+fi
+
 athena_e2e_state_root="${TMPDIR:-/tmp}"
 athena_e2e_state_dir=""
 athena_e2e_lock_dir="$athena_e2e_state_root/tap-athena-e2e.lock"
@@ -54,6 +59,7 @@ export ATHENA_WEB_HOST=127.0.0.1
 export ATHENA_WEB_PORT=15173
 export TAP_DEMO_MODE=e2e
 export ATHENA_MODEL_BACKEND=fake
+export ATHENA_ANSWER_BACKEND=litellm
 
 export MYSQL_ROOT_PASSWORD=tap-e2e-root
 export MYSQL_DATABASE=tap
@@ -105,6 +111,7 @@ export ATHENA_MILVUS_TIMEOUT_SECONDS=30
 readonly TAP_ATHENA_COMPOSE_PROJECT MYSQL_PORT REDIS_PORT AZURITE_BLOB_PORT
 readonly LITELLM_PORT MILVUS_PORT MILVUS_HEALTH_PORT ATHENA_API_HOST ATHENA_API_PORT
 readonly ATHENA_WEB_HOST ATHENA_WEB_PORT TAP_DEMO_MODE ATHENA_MODEL_BACKEND
+readonly ATHENA_ANSWER_BACKEND
 readonly MYSQL_ROOT_PASSWORD MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD
 readonly TAP_DATABASE_URL TAP_ALEMBIC_DATABASE_URL TAP_REDIS_URL TAP_REDIS_COMMAND_STREAM
 readonly AZURE_STORAGE_CONNECTION_STRING LITELLM_BASE_URL LITELLM_MASTER_KEY

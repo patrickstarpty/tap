@@ -7,11 +7,14 @@ import inspect
 import ipaddress
 import json
 import math
+import os
+import platform
 import re
+import shutil
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.contracts.http import (
@@ -22,18 +25,29 @@ from tap.contracts.http import (
     ReadyHealth,
 )
 from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
+from tap.modules.knowledge.adapters.codex_exec import (
+    CodexExecAnswerAdapter,
+    CodexExecConfig,
+)
+from tap.modules.knowledge.adapters.codex_target import (
+    CodexTargetRejected,
+    NativeCodexTarget,
+    resolve_native_codex_target,
+)
+from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.adapters.milvus.audit import (
     MilvusSearchAuditEvent,
     SearchAuditSink,
 )
+from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import (
     DocumentEmbeddingPort,
 )
-from tap.modules.knowledge.ports.models import RedactionResult
+from tap.modules.knowledge.ports.errors import AnswerUnavailable
+from tap.modules.knowledge.ports.models import AnswerGeneration, RedactionResult
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
-    ModelPort,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -354,8 +368,35 @@ class _AsyncCloseable(Protocol):
 CloseCallback = Callable[[], Awaitable[object] | object]
 
 
-class AthenaModel(ModelPort, DocumentEmbeddingPort, Protocol):
-    """One adapter implements query, answer, and document embedding needs."""
+class AthenaEmbeddingPort(QueryEmbeddingPort, DocumentEmbeddingPort, Protocol):
+    """The one real or fake adapter shared by query and document Embedding."""
+
+
+@dataclass(frozen=True, slots=True)
+class AthenaAnswerBackend:
+    """Selected generator plus its optional readiness and ownership boundaries."""
+
+    generator: AnswerGenerationPort
+    readiness: Callable[[], Awaitable[None]] | None
+    owner: object | None
+
+
+class _UnavailableCodexAnswers:
+    """Fail closed without retaining startup discovery or login details."""
+
+    _MESSAGE = "Codex answer backend is unavailable"
+
+    async def answer(
+        self,
+        query: str,
+        evidence: tuple[Evidence, ...],
+        profile_id: str,
+    ) -> AnswerGeneration:
+        del query, evidence, profile_id
+        raise AnswerUnavailable(self._MESSAGE)
+
+    async def check_ready(self) -> None:
+        raise AnswerUnavailable(self._MESSAGE)
 
 
 class AthenaFailureController(Protocol):
@@ -556,8 +597,10 @@ async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
         redis = _create_redis(settings)
         resources.push(redis)
         failure_controller = _create_stage_controller(settings, redis)
-        model = _create_model(settings)
-        _push_if_owned(resources, model)
+        embeddings = _create_embeddings(settings)
+        _push_if_owned(resources, embeddings)
+        answer_backend = _create_answer_backend(settings, embeddings=embeddings)
+        _push_if_owned(resources, answer_backend.owner)
         search, reader, target = await _create_search(settings)
         resources.push(search)
         models_probe_client = _create_models_probe_client(settings)
@@ -567,7 +610,8 @@ async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
             engine=engine,
             redis=redis,
             artifacts=artifacts,
-            model=model,
+            embeddings=embeddings,
+            answer_backend=answer_backend,
             milvus_reader=reader,
             milvus_target=target,
             models_probe_client=models_probe_client,
@@ -576,8 +620,8 @@ async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
             repository=repository,
             artifacts=artifacts,
             search=search,
-            embeddings=model,
-            answers=model,
+            embeddings=embeddings,
+            answers=answer_backend.generator,
             readiness=readiness,
             redactor=LocalEgressRedactor(),
         )
@@ -604,8 +648,8 @@ async def create_worker_runtime(settings: AthenaSettings) -> WorkerRuntime:
         resources.push(artifacts)
         redis = _create_redis(settings)
         resources.push(redis)
-        model = _create_model(settings)
-        _push_if_owned(resources, model)
+        embeddings = _create_embeddings(settings)
+        _push_if_owned(resources, embeddings)
         index = await _create_document_index(settings, engine)
         # MilvusDocumentIndex transitively owns all three role clients and the
         # projection coordinator.  Register only this complete aggregate.
@@ -615,7 +659,7 @@ async def create_worker_runtime(settings: AthenaSettings) -> WorkerRuntime:
             settings=settings,
             repository=repository,
             artifacts=artifacts,
-            model=model,
+            embeddings=embeddings,
             index=index,
             redis=redis,
             resources=resources,
@@ -725,31 +769,100 @@ def _create_redis(settings: AthenaSettings) -> Redis:
     )
 
 
-def _create_model(settings: AthenaSettings) -> AthenaModel:
+def _create_litellm_adapter(settings: AthenaSettings) -> LiteLLMAdapter:
+    return LiteLLMAdapter(
+        LiteLLMConfig(
+            base_url=settings.litellm_base_url,
+            api_key=settings.litellm_api_key,
+            embedding_model_id=settings.embedding_alias,
+            answer_model_id=settings.chat_alias,
+            answer_profile_id=settings.retrieval_profile,
+            embedding_dimension=settings.embedding_dimension,
+            allowed_embedding_model_labels=settings.allowed_embedding_model_labels,
+            allowed_answer_model_labels=settings.allowed_answer_model_labels,
+            allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
+            deadline_seconds=settings.model_timeout_seconds,
+            read_timeout_seconds=min(10.0, settings.model_timeout_seconds),
+        )
+    )
+
+
+def _create_model(settings: AthenaSettings) -> LiteLLMAdapter:
+    """Retain the legacy real-model smoke seam without using it in runtime assembly."""
+
+    return _create_litellm_adapter(settings)
+
+
+def _create_embeddings(settings: AthenaSettings) -> AthenaEmbeddingPort:
     if settings.e2e_mode:
         from tap.testing.deterministic_model import DeterministicAthenaModel
 
-        return cast(AthenaModel, DeterministicAthenaModel())
+        return cast(AthenaEmbeddingPort, DeterministicAthenaModel())
 
-    from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
+    return cast(AthenaEmbeddingPort, _create_litellm_adapter(settings))
 
-    return cast(
-        AthenaModel,
-        LiteLLMAdapter(
-            LiteLLMConfig(
-                base_url=settings.litellm_base_url,
-                api_key=settings.litellm_api_key,
-                embedding_model_id=settings.embedding_alias,
-                answer_model_id=settings.chat_alias,
-                answer_profile_id=settings.retrieval_profile,
-                embedding_dimension=settings.embedding_dimension,
-                allowed_embedding_model_labels=settings.allowed_embedding_model_labels,
-                allowed_answer_model_labels=settings.allowed_answer_model_labels,
-                allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
-                deadline_seconds=settings.model_timeout_seconds,
-                read_timeout_seconds=min(10.0, settings.model_timeout_seconds),
-            )
+
+def _codex_config(
+    settings: AthenaSettings,
+    target: NativeCodexTarget,
+) -> CodexExecConfig:
+    configured_home = os.environ.get("CODEX_HOME")
+    candidate = Path(configured_home) if configured_home is not None else Path.home() / ".codex"
+    codex_home = candidate.resolve(strict=True)
+    return CodexExecConfig(
+        target=target,
+        codex_home=codex_home,
+        model_id=settings.codex_model,
+        reasoning_effort=cast(
+            Literal["low", "medium", "high", "xhigh", "max", "ultra"],
+            settings.codex_reasoning_effort,
         ),
+        profile_id=settings.retrieval_profile,
+        allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
+        timeout_seconds=settings.codex_timeout_seconds,
+    )
+
+
+def _create_answer_backend(
+    settings: AthenaSettings,
+    *,
+    embeddings: AthenaEmbeddingPort,
+) -> AthenaAnswerBackend:
+    if settings.e2e_mode or settings.answer_backend == "litellm":
+        return AthenaAnswerBackend(
+            generator=cast(AnswerGenerationPort, embeddings),
+            readiness=None,
+            owner=None,
+        )
+
+    try:
+        command = shutil.which("codex")
+        if command is None:
+            return _unavailable_codex_backend()
+        target = resolve_native_codex_target(
+            Path(command),
+            system=platform.system(),
+            machine=platform.machine(),
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+        adapter = CodexExecAnswerAdapter(_codex_config(settings, target))
+    except (AttributeError, CodexTargetRejected, OSError, RuntimeError, ValueError):
+        return _unavailable_codex_backend()
+
+    return AthenaAnswerBackend(
+        generator=adapter,
+        readiness=adapter.check_ready,
+        owner=adapter,
+    )
+
+
+def _unavailable_codex_backend() -> AthenaAnswerBackend:
+    unavailable = _UnavailableCodexAnswers()
+    return AthenaAnswerBackend(
+        generator=unavailable,
+        readiness=unavailable.check_ready,
+        owner=None,
     )
 
 
@@ -928,7 +1041,8 @@ def _create_readiness(
     engine: AsyncEngine,
     redis: Redis,
     artifacts: AzureBlobArtifactStore,
-    model: AthenaModel,
+    embeddings: QueryEmbeddingPort,
+    answer_backend: AthenaAnswerBackend,
     milvus_reader: MilvusReader,
     milvus_target: MilvusIndexTarget,
     models_probe_client: httpx.AsyncClient | None,
@@ -976,7 +1090,7 @@ def _create_readiness(
 
     async def models_ready() -> bool:
         if settings.e2e_mode:
-            embedding = await model.embed("Athena deterministic readiness")
+            embedding = await embeddings.embed("Athena deterministic readiness")
             vector = embedding.vector
             return (
                 embedding.model_id == settings.embedding_alias
@@ -992,7 +1106,14 @@ def _create_readiness(
         if models_probe_client is None:
             return False
         labels = await _read_models_labels(models_probe_client)
-        return labels is not None and {settings.chat_alias, settings.embedding_alias} <= labels
+        required_labels = {settings.embedding_alias}
+        if settings.answer_backend == "litellm":
+            required_labels.add(settings.chat_alias)
+        if labels is None or not required_labels <= labels:
+            return False
+        if answer_backend.readiness is not None:
+            await answer_backend.readiness()
+        return True
 
     return ReadinessService(
         mysql=mysql_ready,
@@ -1133,7 +1254,7 @@ def _assemble_worker_runtime(
     settings: AthenaSettings,
     repository: MysqlDocumentRepository,
     artifacts: AzureBlobArtifactStore,
-    model: AthenaModel,
+    embeddings: AthenaEmbeddingPort,
     index: MilvusDocumentIndex,
     redis: Redis,
     resources: OwnedResources,
@@ -1159,7 +1280,7 @@ def _assemble_worker_runtime(
         artifacts=cast(ArtifactStore, artifacts),
         parser=ParserRegistry(),
         chunker=StructuralChunker(),
-        embeddings=cast(DocumentEmbeddingPort, model),
+        embeddings=cast(DocumentEmbeddingPort, embeddings),
         index=cast(DocumentIndexPort, index),
         worker_id=settings.worker_id,
         embedding_model_alias=settings.embedding_alias,
