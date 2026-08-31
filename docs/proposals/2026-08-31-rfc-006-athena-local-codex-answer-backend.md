@@ -1,6 +1,6 @@
 ---
 id: RFC-006
-status: draft
+status: in-review
 date: 2026-08-31
 related-adrs:
   - ADR-017
