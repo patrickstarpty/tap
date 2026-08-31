@@ -64,6 +64,8 @@ _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _MODEL_ROUTE = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?:/[A-Za-z0-9][A-Za-z0-9._:-]{0,127})*\Z"
 )
+_CODEX_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
+_CODEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
 _FIXED_COLLECTION = "kb_doc_v1_athena_demo"
 _FIXED_ALIAS = "kb_doc_athena_demo_active"
 _FIXED_CORPUS = "athena-demo-v1"
@@ -86,6 +88,10 @@ class AthenaSettings:
     web_host: str
     web_port: int
     model_backend: str
+    answer_backend: str
+    codex_model: str
+    codex_reasoning_effort: str
+    codex_timeout_seconds: float
     embedding_dimension: int
     poll_seconds: float
     job_batch_size: int
@@ -144,6 +150,33 @@ class AthenaSettings:
             raise ValueError(
                 "ATHENA_MODEL_BACKEND=fake requires exact TAP_DEMO_MODE=e2e and vice versa"
             )
+        answer_backend = _fixed_choice(
+            values,
+            "ATHENA_ANSWER_BACKEND",
+            default="litellm",
+            choices=frozenset({"litellm", "codex"}),
+        )
+        if backend == "fake" and answer_backend == "codex":
+            raise ValueError(
+                "ATHENA_ANSWER_BACKEND=codex is unavailable with the fake model backend"
+            )
+        codex_model = _value(values, "ATHENA_CODEX_MODEL", "gpt-5.6-sol")
+        if _CODEX_MODEL.fullmatch(codex_model) is None:
+            raise ValueError("ATHENA_CODEX_MODEL is outside the closed syntax")
+        codex_reasoning_effort = _fixed_choice(
+            values,
+            "ATHENA_CODEX_REASONING_EFFORT",
+            default="ultra",
+            choices=_CODEX_REASONING_EFFORTS,
+        )
+        codex_timeout_seconds = _duration(
+            values,
+            "ATHENA_CODEX_TIMEOUT_SECONDS",
+            300.0,
+            maximum=900,
+        )
+        if codex_timeout_seconds < 30:
+            raise ValueError("ATHENA_CODEX_TIMEOUT_SECONDS is outside the closed bound")
 
         api_host = _loopback_host(values, "ATHENA_API_HOST", "127.0.0.1")
         web_host = _loopback_host(values, "ATHENA_WEB_HOST", "127.0.0.1")
@@ -253,6 +286,10 @@ class AthenaSettings:
             web_host=web_host,
             web_port=_integer(values, "ATHENA_WEB_PORT", 5173, minimum=1, maximum=65535),
             model_backend=backend,
+            answer_backend=answer_backend,
+            codex_model=codex_model,
+            codex_reasoning_effort=codex_reasoning_effort,
+            codex_timeout_seconds=codex_timeout_seconds,
             embedding_dimension=dimension,
             poll_seconds=_duration(values, "ATHENA_POLL_SECONDS", 1.0, maximum=60),
             job_batch_size=_integer(

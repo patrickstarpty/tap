@@ -7,6 +7,8 @@ import json
 import logging
 import math
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -106,6 +108,111 @@ def valid_settings() -> dict[str, str]:
         "MILVUS_PROVISIONER_USERNAME": "tap_provisioner",
         "MILVUS_PROVISIONER_PASSWORD": "provisioner-secret",
     }
+
+
+def test_answer_backend_defaults_to_litellm_without_codex_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda _name: (_ for _ in ()).throw(AssertionError("unexpected discovery")),
+    )
+
+    settings = _runtime().AthenaSettings.from_mapping(valid_settings())
+
+    assert settings.answer_backend == "litellm"
+
+
+def test_codex_settings_accept_the_approved_configuration() -> None:
+    settings = _runtime().AthenaSettings.from_mapping(
+        valid_settings()
+        | {
+            "ATHENA_ANSWER_BACKEND": "codex",
+            "ATHENA_CODEX_MODEL": "gpt-5.6-sol",
+            "ATHENA_CODEX_REASONING_EFFORT": "ultra",
+            "ATHENA_CODEX_TIMEOUT_SECONDS": "300",
+        }
+    )
+
+    assert (
+        settings.answer_backend,
+        settings.codex_model,
+        settings.codex_reasoning_effort,
+        settings.codex_timeout_seconds,
+    ) == ("codex", "gpt-5.6-sol", "ultra", 300.0)
+
+
+@pytest.mark.parametrize("backend", ["", "Codex", "codex ", "codex/litellm", "fake"])
+def test_codex_settings_reject_an_unapproved_answer_backend(backend: str) -> None:
+    with pytest.raises(ValueError, match="ATHENA_ANSWER_BACKEND"):
+        _runtime().AthenaSettings.from_mapping(
+            valid_settings() | {"ATHENA_ANSWER_BACKEND": backend}
+        )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "GPT-5.6-sol",
+        "gpt 5.6-sol",
+        "openai/gpt-5.6-sol",
+        "gpt-5.6-sol\n",
+        "a" * 129,
+    ],
+)
+def test_codex_settings_reject_a_widened_model_name(model: str) -> None:
+    with pytest.raises(ValueError, match="ATHENA_CODEX_MODEL"):
+        _runtime().AthenaSettings.from_mapping(valid_settings() | {"ATHENA_CODEX_MODEL": model})
+
+
+@pytest.mark.parametrize("effort", ["", "HIGH", "highest"])
+def test_codex_settings_reject_an_unsupported_reasoning_effort(effort: str) -> None:
+    with pytest.raises(ValueError, match="ATHENA_CODEX_REASONING_EFFORT"):
+        _runtime().AthenaSettings.from_mapping(
+            valid_settings() | {"ATHENA_CODEX_REASONING_EFFORT": effort}
+        )
+
+
+@pytest.mark.parametrize("timeout", ["29.9", "901", "NaN", "Infinity"])
+def test_codex_settings_reject_an_unsafe_timeout(timeout: str) -> None:
+    with pytest.raises(ValueError, match="ATHENA_CODEX_TIMEOUT_SECONDS"):
+        _runtime().AthenaSettings.from_mapping(
+            valid_settings() | {"ATHENA_CODEX_TIMEOUT_SECONDS": timeout}
+        )
+
+
+def test_codex_settings_reject_a_boolean_timeout() -> None:
+    values = valid_settings()
+    values["ATHENA_CODEX_TIMEOUT_SECONDS"] = True  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="ATHENA_CODEX_TIMEOUT_SECONDS"):
+        _runtime().AthenaSettings.from_mapping(values)
+
+
+def test_codex_settings_reject_the_fake_model_backend() -> None:
+    with pytest.raises(ValueError, match="ATHENA_ANSWER_BACKEND"):
+        _runtime().AthenaSettings.from_mapping(
+            valid_settings()
+            | {
+                "TAP_DEMO_MODE": "e2e",
+                "ATHENA_MODEL_BACKEND": "fake",
+                "ATHENA_ANSWER_BACKEND": "codex",
+            }
+        )
+
+
+def test_codex_settings_parse_without_cli_or_network_probes(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def unexpected_probe(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("settings parsing performed a runtime probe")
+
+    monkeypatch.setattr(shutil, "which", unexpected_probe)
+    monkeypatch.setattr(subprocess, "run", unexpected_probe)
+    monkeypatch.setattr(socket, "create_connection", unexpected_probe)
+
+    settings = _runtime().AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+
+    assert settings.answer_backend == "codex"
 
 
 def test_settings_close_the_exact_runtime_defaults_and_aliases() -> None:
