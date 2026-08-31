@@ -321,6 +321,36 @@ def test_only_milvus_transport_imports_pymilvus() -> None:
     assert consumers == {transport}
 
 
+def test_only_codex_answer_adapter_owns_native_process_capability() -> None:
+    """A second process-capable model adapter would bypass the fixed Codex boundary."""
+    codex_adapter = KNOWLEDGE / "adapters" / "codex_exec.py"
+    process_callers: set[Path] = set()
+    for path in recursive_python_files(BACKEND_SOURCE):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if any(
+            isinstance(node, ast.Attribute)
+            and node.attr in {"create_subprocess_exec", "create_subprocess_shell", "Popen"}
+            for node in ast.walk(tree)
+        ):
+            process_callers.add(path)
+
+    assert process_callers == {codex_adapter}
+    imports = _imports(codex_adapter)
+    assert (
+        ImportReference(
+            module="tap.modules.knowledge.ports.search",
+            symbol="AnswerGenerationPort",
+            alias=None,
+        )
+        in imports
+    )
+    assert not any(
+        reference.module == "tap.modules.knowledge.adapters.litellm"
+        or reference.symbol in {"QueryEmbeddingPort", "ModelPort", "Embedding"}
+        for reference in imports
+    )
+
+
 def test_stable_layers_do_not_import_milvus_adapter_modules() -> None:
     """A provider adapter import in domain, application, or contracts would change public DTOs."""
     stable_roots = (
