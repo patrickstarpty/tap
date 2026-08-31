@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, dataclass, replace
 from typing import Any
 
 import pytest
@@ -188,6 +188,45 @@ class RecordingModel:
         )
 
 
+class RecordingQueryEmbeddings:
+    embedding_model_id = "tap-embed-fixed-v1"
+    embedding_dimension = 2
+
+    def __init__(self, *, vector: tuple[float, ...]) -> None:
+        self._vector = vector
+        self.queries: list[str] = []
+
+    async def embed(self, query: str) -> Embedding:
+        self.queries.append(query)
+        return Embedding(
+            vector=self._vector,
+            model_id=self.embedding_model_id,
+            provider_request_id="embed-request-17",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerCall:
+    query: str
+    evidence: tuple[Any, ...]
+    profile_id: str
+
+
+class RecordingAnswerGenerator:
+    def __init__(self, generation: AnswerGeneration) -> None:
+        self._generation = generation
+        self.calls: list[AnswerCall] = []
+
+    async def answer(
+        self,
+        query: str,
+        evidence: tuple[Any, ...],
+        profile_id: str,
+    ) -> AnswerGeneration:
+        self.calls.append(AnswerCall(query=query, evidence=evidence, profile_id=profile_id))
+        return self._generation
+
+
 class RecordingSearch:
     def __init__(self, hits: tuple[SearchHit, ...] = ()) -> None:
         self.hits = hits
@@ -217,7 +256,8 @@ def knowledge_api(
     )
     return KnowledgeAPI(
         search=search,
-        model=model,
+        embeddings=model,
+        answers=model,
         policy_verifier=verifier,
         redactor=redactor,
         id_factory=lambda: next(identifiers),
@@ -255,6 +295,102 @@ def search_hit() -> SearchHit:
         embedding_model_version="tap-embed-fixed-v1",
         score=0.9,
     )
+
+
+@pytest.mark.asyncio
+async def test_answer_uses_independent_embedding_and_answer_ports() -> None:
+    """Coupling either retrieval call to the other port must break this answer."""
+    current = policy_context()
+    embeddings = RecordingQueryEmbeddings(vector=(0.0, 1.0))
+    answers = RecordingAnswerGenerator(
+        AnswerGeneration(
+            text="退款审批需要两名审批人。",
+            claims=(GeneratedClaim("退款审批需要两名审批人。", ("S1",)),),
+            model_id="answer-only",
+            profile_id="grounded-answer-v2",
+            provider_request_id=None,
+        )
+    )
+    identifiers = iter(
+        (
+            "operation-17",
+            "query-plan-17",
+            "context-snapshot-17",
+            "trace-17",
+            "citation-17",
+            "claim-17",
+        )
+    )
+    api = KnowledgeAPI(
+        search=RecordingSearch((search_hit(),)),
+        embeddings=embeddings,
+        answers=answers,
+        policy_verifier=CurrentPolicyVerifier(current),
+        redactor=RecordingRedactor(
+            RedactionResult(
+                sanitized_text="What is the 退款 approval rule?",
+                redaction_version="redaction-v3",
+            )
+        ),
+        id_factory=lambda: next(identifiers),
+    )
+
+    response = await api.answer(
+        AnswerRequest(query="What is the 退款 approval rule?"),
+        current,
+    )
+
+    assert embeddings.queries == ["What is the 退款 approval rule?"]
+    assert answers.calls[0].query == "What is the 退款 approval rule?"
+    assert answers.calls[0].evidence
+    assert response.claims[0].citation_ids
+
+
+@pytest.mark.asyncio
+async def test_answer_accepts_ports_that_lack_each_others_method() -> None:
+    """An embedding-only or answer-only adapter must be sufficient at its own boundary."""
+    current = policy_context()
+    embeddings = RecordingQueryEmbeddings(vector=(0.0, 1.0))
+    answers = RecordingAnswerGenerator(
+        AnswerGeneration(
+            text="退款审批需要两名审批人。",
+            claims=(GeneratedClaim("退款审批需要两名审批人。", ("S1",)),),
+            model_id="answer-only",
+            profile_id="grounded-answer-v2",
+            provider_request_id=None,
+        )
+    )
+    api = KnowledgeAPI(
+        search=RecordingSearch((search_hit(),)),
+        embeddings=embeddings,
+        answers=answers,
+        policy_verifier=CurrentPolicyVerifier(current),
+        redactor=RecordingRedactor(
+            RedactionResult(
+                sanitized_text="What is the 退款 approval rule?",
+                redaction_version="redaction-v3",
+            )
+        ),
+        id_factory=iter(
+            (
+                "operation-17",
+                "query-plan-17",
+                "context-snapshot-17",
+                "trace-17",
+                "citation-17",
+                "claim-17",
+            )
+        ).__next__,
+    )
+
+    response = await api.answer(
+        AnswerRequest(query="What is the 退款 approval rule?"),
+        current,
+    )
+
+    assert not hasattr(embeddings, "answer")
+    assert not hasattr(answers, "embed")
+    assert response.abstained is False
 
 
 def provenance_hit(

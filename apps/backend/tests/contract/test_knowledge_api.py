@@ -249,7 +249,8 @@ def api(search: FakeSearchPort, model: FakeModelPort) -> KnowledgeAPI:
     )
     return KnowledgeAPI(
         search=search,
-        model=model,
+        embeddings=model,
+        answers=model,
         policy_verifier=CurrentPolicyVerifier(),
         redactor=PassthroughRedactor(),
         id_factory=lambda: next(ids),

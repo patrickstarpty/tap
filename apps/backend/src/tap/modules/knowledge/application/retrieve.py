@@ -54,7 +54,11 @@ from tap.modules.knowledge.ports.models import (
     SearchHit,
 )
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
-from tap.modules.knowledge.ports.search import ModelPort, SearchPort
+from tap.modules.knowledge.ports.search import (
+    AnswerGenerationPort,
+    QueryEmbeddingPort,
+    SearchPort,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,13 +117,15 @@ class AuthorizedRetrieval:
         self,
         *,
         search: SearchPort,
-        model: ModelPort,
+        embeddings: QueryEmbeddingPort,
+        answers: AnswerGenerationPort,
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
     ) -> None:
         self._search = search
-        self._model = model
+        self._embeddings = embeddings
+        self._answers = answers
         self._policy_verifier = policy_verifier
         self._redactor = redactor
         self._id_factory = id_factory
@@ -149,7 +155,7 @@ class AuthorizedRetrieval:
             return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
         current = await self._verify_current(run.policy)
         self._validate_binding(current, run.plan, run.context_snapshot)
-        generation = await self._model.answer(
+        generation = await self._answers.answer(
             run.plan.sanitized_query,
             run.response.evidence,
             run.response.retrieval_profile_id.value,
@@ -259,8 +265,8 @@ class AuthorizedRetrieval:
             sanitized_query=redaction.sanitized_text,
             sanitized_query_hash=self._text_hash(redaction.sanitized_text),
             redaction_version=redaction.redaction_version,
-            embedding_model_id=self._model.embedding_model_id,
-            embedding_dimension=self._model.embedding_dimension,
+            embedding_model_id=self._embeddings.embedding_model_id,
+            embedding_dimension=self._embeddings.embedding_dimension,
         )
         context_snapshot = ContextSnapshot(
             context_snapshot_id=self._id_factory(),
@@ -283,7 +289,7 @@ class AuthorizedRetrieval:
 
         current = await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
-        embedding = await self._model.embed(plan.sanitized_query)
+        embedding = await self._embeddings.embed(plan.sanitized_query)
         self._validate_embedding(embedding, plan)
         current = await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
@@ -374,8 +380,8 @@ class AuthorizedRetrieval:
             or not context_snapshot_binds_query_plan(plan, snapshot)
             or plan.corpus_version != policy.active_corpus_version
             or not {item.value for item in plan.source_families} <= policy.allowed_source_families
-            or plan.embedding_model_id != self._model.embedding_model_id
-            or plan.embedding_dimension != self._model.embedding_dimension
+            or plan.embedding_model_id != self._embeddings.embedding_model_id
+            or plan.embedding_dimension != self._embeddings.embedding_dimension
             or plan.sanitized_query_hash != self._text_hash(plan.sanitized_query)
         ):
             raise AuthorizationDenied("policy, query plan, and context snapshot are not bound")

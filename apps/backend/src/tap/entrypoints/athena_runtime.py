@@ -31,7 +31,12 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.modules.knowledge.ports.models import RedactionResult
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
-from tap.modules.knowledge.ports.search import ModelPort, SearchPort
+from tap.modules.knowledge.ports.search import (
+    AnswerGenerationPort,
+    ModelPort,
+    QueryEmbeddingPort,
+    SearchPort,
+)
 from tap.operations.milvus.contracts import validate_milvus_role_usernames
 
 if TYPE_CHECKING:
@@ -534,7 +539,8 @@ async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
             repository=repository,
             artifacts=artifacts,
             search=search,
-            model=model,
+            embeddings=model,
+            answers=model,
             readiness=readiness,
             redactor=LocalEgressRedactor(),
         )
@@ -1034,7 +1040,8 @@ def _assemble_http_services(
     repository: MysqlDocumentRepository,
     artifacts: AzureBlobArtifactStore,
     search: SearchPort,
-    model: ModelPort,
+    embeddings: QueryEmbeddingPort,
+    answers: AnswerGenerationPort,
     readiness: ReadinessHttpService,
     redactor: EgressRedactionPort,
 ) -> HttpServices:
@@ -1059,7 +1066,8 @@ def _assemble_http_services(
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
         search=search,
-        model=model,
+        embeddings=embeddings,
+        answers=answers,
         policy_verifier=DemoCurrentPolicyVerifier(repository),
         redactor=redactor,
     )

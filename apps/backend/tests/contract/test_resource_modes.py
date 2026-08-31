@@ -197,7 +197,8 @@ def knowledge(search: StaticSearch, model: GroundedModel) -> KnowledgeAPI:
     identifiers = iter(f"id-{index}" for index in range(100))
     return KnowledgeAPI(
         search=search,
-        model=model,
+        embeddings=model,
+        answers=model,
         policy_verifier=SamePolicyVerifier(),
         redactor=StaticRedactor(),
         id_factory=lambda: next(identifiers),

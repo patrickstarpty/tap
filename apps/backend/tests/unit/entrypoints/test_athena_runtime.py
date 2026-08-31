@@ -886,7 +886,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
         repository=repository,
         artifacts=artifacts,
         search=search,
-        model=model,
+        embeddings=model,
+        answers=model,
         readiness=readiness,
         redactor=redactor,
     )
@@ -904,7 +905,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
     assert citations._artifacts is artifacts
     retrieval = answers._knowledge._retrieval
     assert retrieval._search is search
-    assert retrieval._model is model
+    assert retrieval._embeddings is model
+    assert retrieval._answers is model
     assert retrieval._policy_verifier._repository is repository
     assert retrieval._redactor is redactor
 
@@ -1208,6 +1210,7 @@ async def test_runtime_litellm_allows_each_exact_body_and_gateway_label_and_near
                 headers={"x-litellm-model-id": header_label},
                 json={
                     "id": "embedding-runtime-label",
+                    "object": "list",
                     "model": body_label,
                     "data": [{"embedding": [0.0] * 1536, "index": 0}],
                     "usage": {"prompt_tokens": 1, "total_tokens": 1},

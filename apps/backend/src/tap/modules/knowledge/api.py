@@ -74,7 +74,11 @@ from tap.modules.knowledge.domain.models import (
     StructuralAnchor,
 )
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
-from tap.modules.knowledge.ports.search import ModelPort, SearchPort
+from tap.modules.knowledge.ports.search import (
+    AnswerGenerationPort,
+    QueryEmbeddingPort,
+    SearchPort,
+)
 
 __all__ = [
     "AnswerRequest",
@@ -93,14 +97,16 @@ class KnowledgeAPI:
         self,
         *,
         search: SearchPort,
-        model: ModelPort,
+        embeddings: QueryEmbeddingPort,
+        answers: AnswerGenerationPort,
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._retrieval = AuthorizedRetrieval(
             search=search,
-            model=model,
+            embeddings=embeddings,
+            answers=answers,
             policy_verifier=policy_verifier,
             redactor=redactor,
             id_factory=id_factory or (lambda: str(uuid4())),

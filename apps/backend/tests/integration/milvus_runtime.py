@@ -332,9 +332,11 @@ class PublishedFixture:
         adapter = MilvusSearchAdapter(self._search_config(), reader, _AuditSink())
         search = _RecordingSearch(adapter)
         identifiers = itertools.count(1)
+        model = _SnapshotModel(self.cases, self.snapshot)
         knowledge = KnowledgeAPI(
             search=search,
-            model=_SnapshotModel(self.cases, self.snapshot),
+            embeddings=model,
+            answers=model,
             policy_verifier=_PolicyVerifier(),
             redactor=_Redactor(),
             id_factory=lambda: f"milvus-gate-{next(identifiers)}",
