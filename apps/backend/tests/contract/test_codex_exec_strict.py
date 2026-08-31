@@ -1478,6 +1478,168 @@ async def test_codex_exec_cleanup_bounds_owned_tree_teardown(
 
 
 @pytest.mark.asyncio
+async def test_codex_exec_aclose_shares_pending_spawn_failure_and_blocks_new_calls(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    spawn_entered = asyncio.Event()
+    spawn_cancelled = asyncio.Event()
+    spawn_release = asyncio.Event()
+
+    async def nonsettling_spawn(*_args: object, **_kwargs: object) -> Any:
+        spawn_entered.set()
+        while not spawn_release.is_set():
+            try:
+                await spawn_release.wait()
+            except asyncio.CancelledError:
+                spawn_cancelled.set()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(codex_exec.asyncio, "create_subprocess_exec", nonsettling_spawn)
+    answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    await asyncio.wait_for(spawn_entered.wait(), timeout=2)
+    invocation = next(iter(adapter._invocations))
+    close_one = asyncio.create_task(adapter.aclose())
+    close_two = asyncio.create_task(adapter.aclose())
+
+    try:
+        done, pending = await asyncio.wait({close_one, close_two}, timeout=1.5)
+        assert pending == set()
+        close_results = await asyncio.gather(*done, return_exceptions=True)
+        assert all(isinstance(result, AnswerUnavailable) for result in close_results)
+        assert spawn_cancelled.is_set()
+        assert invocation in adapter._invocations
+        assert invocation.request.path.exists()
+        assert invocation.spawn_task is not None and not invocation.spawn_task.done()
+        with pytest.raises(AnswerUnavailable):
+            await asyncio.wait_for(adapter.aclose(), timeout=1)
+        before = len(adapter._invocations)
+        with pytest.raises(AnswerUnavailable):
+            await adapter.answer("new", (evidence(),), "quick-hybrid-v1")
+        assert len(adapter._invocations) == before
+    finally:
+        spawn_release.set()
+        await asyncio.gather(close_one, close_two, answer_task, return_exceptions=True)
+        if invocation.spawn_task is not None and not invocation.spawn_task.done():
+            invocation.spawn_task.cancel()
+            await asyncio.gather(invocation.spawn_task, return_exceptions=True)
+        shutil.rmtree(invocation.request.path, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_aclose_fails_boundedly_when_leader_wait_does_not_settle(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_codex.mode("probe_hang")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    invocation = await adapter._create_invocation("tap-codex-answer-")
+    request_dir = invocation.request.path
+    request_home = codex_exec._private_directory(request_dir / "home")
+    request_tmp = codex_exec._private_directory(request_dir / "tmp")
+    request_cwd = codex_exec._private_directory(request_dir / "cwd")
+    process = await adapter._spawn(
+        invocation,
+        (str(fake_codex.target.executable), "--version"),
+        cwd=request_cwd,
+        environment=codex_exec._minimal_environment(
+            home=request_home,
+            tmp=request_tmp,
+            codex_home=fake_codex.codex_home,
+        ),
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    await fake_codex.wait_for("probe-pid")
+    original_wait = process.wait
+    wait_entered = asyncio.Event()
+    wait_cancelled = asyncio.Event()
+    wait_release = asyncio.Event()
+
+    async def nonsettling_wait() -> int:
+        wait_entered.set()
+        while not wait_release.is_set():
+            try:
+                await wait_release.wait()
+            except asyncio.CancelledError:
+                wait_cancelled.set()
+        return await original_wait()
+
+    monkeypatch.setattr(process, "wait", nonsettling_wait)
+    close_task = asyncio.create_task(adapter.aclose())
+
+    try:
+        await asyncio.wait_for(wait_entered.wait(), timeout=2)
+        done, pending = await asyncio.wait({close_task}, timeout=1.5)
+        assert pending == set()
+        close_result = (await asyncio.gather(*done, return_exceptions=True))[0]
+        assert isinstance(close_result, AnswerUnavailable)
+        assert wait_cancelled.is_set()
+        assert invocation in adapter._invocations
+        assert process in adapter._processes
+        with pytest.raises(AnswerUnavailable):
+            await asyncio.wait_for(adapter.aclose(), timeout=1)
+        before = len(adapter._invocations)
+        with pytest.raises(AnswerUnavailable):
+            await adapter.answer("new", (evidence(),), "quick-hybrid-v1")
+        assert len(adapter._invocations) == before
+    finally:
+        wait_release.set()
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+        with suppress(BaseException):
+            await asyncio.wait_for(original_wait(), timeout=2)
+        await asyncio.gather(close_task, return_exceptions=True)
+        shutil.rmtree(request_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_moved_owned_root_is_cleanup_failure_while_inode_survives(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_finish = adapter._finish_invocation
+    moved_root = fake_codex.root / "moved-owned-request"
+    captured_invocations: list[Any] = []
+
+    async def move_before_cleanup(invocation: Any, *, terminate: bool) -> bool:
+        captured_invocations.append(invocation)
+        sentinel = invocation.request.path / "private-sentinel"
+        sentinel.write_text("PRIVATE_MOVED_CONTENT", encoding="utf-8")
+        invocation.request.path.rename(moved_root)
+        return await original_finish(invocation, terminate=terminate)
+
+    monkeypatch.setattr(adapter, "_finish_invocation", move_before_cleanup)
+
+    try:
+        answer_error: BaseException | None = None
+        try:
+            await adapter.answer("question", (evidence(),), "quick-hybrid-v1")
+        except BaseException as error:
+            answer_error = error
+        assert isinstance(answer_error, AnswerUnavailable)
+        invocation = captured_invocations[0]
+        assert moved_root.stat().st_ino == invocation.request.inode
+        assert (moved_root / "private-sentinel").read_text(encoding="utf-8") == (
+            "PRIVATE_MOVED_CONTENT"
+        )
+        assert invocation in adapter._invocations
+        close_results = await asyncio.gather(
+            adapter.aclose(),
+            adapter.aclose(),
+            return_exceptions=True,
+        )
+        assert all(isinstance(result, AnswerUnavailable) for result in close_results)
+        assert invocation in adapter._invocations
+    finally:
+        shutil.rmtree(moved_root, ignore_errors=True)
+        for invocation in captured_invocations:
+            shutil.rmtree(invocation.request.path, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_codex_exec_aclose_cannot_miss_a_directory_being_registered(
     fake_codex: FakeCodex,
     monkeypatch: pytest.MonkeyPatch,
@@ -1602,12 +1764,12 @@ async def test_codex_exec_cancelled_close_caller_does_not_restart_shared_cleanup
     termination_release = asyncio.Event()
     termination_calls = 0
 
-    async def gated_termination(process: asyncio.subprocess.Process) -> None:
+    async def gated_termination(process: asyncio.subprocess.Process) -> Any:
         nonlocal termination_calls
         termination_calls += 1
         termination_entered.set()
         await termination_release.wait()
-        await original_terminate(process)
+        return await original_terminate(process)
 
     monkeypatch.setattr(adapter, "_terminate_process_group", gated_termination)
     answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))

@@ -202,10 +202,31 @@ class _Invocation:
     spawn_task: asyncio.Task[asyncio.subprocess.Process] | None = None
     process: asyncio.subprocess.Process | None = None
     communication_tasks: tuple[asyncio.Task[Any], ...] = ()
+    leader_wait_task: asyncio.Task[int] | None = None
+    pipe_settle_task: asyncio.Task[None] | None = None
+    tree_remove_task: asyncio.Task[bool] | None = None
+    late_cleanup_task: asyncio.Task[None] | None = None
     terminate_requested: bool = False
     group_terminal: bool = False
     cleanup_task: asyncio.Task[None] | None = None
     cleanup_ok: bool = True
+    spawn_settled: bool = False
+    process_settled: bool = False
+    communication_settled: bool = False
+    pipes_settled: bool = False
+    tree_removed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _SpawnSettlement:
+    settled: bool
+    process: asyncio.subprocess.Process | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessSettlement:
+    settled: bool
+    wait_task: asyncio.Task[int] | None
 
 
 def build_exec_argv(
@@ -729,7 +750,10 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             invocation.process = process
             self._processes.add(process)
 
-    async def _terminate_process_group(self, process: asyncio.subprocess.Process) -> None:
+    async def _terminate_process_group(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> _ProcessSettlement:
         process_group = process.pid
         if process.stdin is not None:
             process.stdin.close()
@@ -741,9 +765,18 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             await asyncio.sleep(_TERMINATION_GRACE_SECONDS)
             with suppress(ProcessLookupError):
                 os.killpg(process_group, signal.SIGKILL)
-        with suppress(ProcessLookupError, TimeoutError):
-            async with asyncio.timeout(_PROCESS_REAP_SECONDS):
-                await process.wait()
+        wait_task = asyncio.create_task(process.wait())
+        if not await _wait_task_bounded(wait_task, timeout=_PROCESS_REAP_SECONDS):
+            wait_task.add_done_callback(_consume_task_result)
+            return _ProcessSettlement(settled=False, wait_task=wait_task)
+        try:
+            return_code = wait_task.result()
+        except BaseException:
+            return _ProcessSettlement(settled=False, wait_task=None)
+        return _ProcessSettlement(
+            settled=type(return_code) is int and process.returncode is not None,
+            wait_task=None,
+        )
 
     async def _create_invocation(self, prefix: str) -> _Invocation:
         async with self._state_lock:
@@ -788,41 +821,190 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         process: asyncio.subprocess.Process | None = invocation.process
         try:
             async with asyncio.timeout(_CLEANUP_TOTAL_SECONDS):
-                process = await self._settle_spawn(invocation)
-                if (
-                    process is not None
-                    and invocation.terminate_requested
-                    and not invocation.group_terminal
-                ):
-                    await self._terminate_process_group(process)
-                invocation.group_terminal = True
-                if process is not None:
-                    _close_parent_pipes(process)
-                await _cancel_and_settle_tasks(invocation.communication_tasks)
-                invocation.communication_tasks = ()
-                if process is not None:
-                    async with asyncio.timeout(_PIPE_SETTLE_SECONDS):
-                        await _settle_process_pipes(process)
-        except Exception:
+                spawn = await self._settle_spawn(invocation)
+                invocation.spawn_settled = spawn.settled
+                process = spawn.process
+                if spawn.settled:
+                    await self._settle_known_process(invocation, process)
+        except (asyncio.CancelledError, Exception):
             invocation.cleanup_ok = False
         finally:
-            invocation.group_terminal = True
             if process is not None:
                 _close_parent_pipes(process)
                 _clear_process_buffers(process)
             for task in invocation.communication_tasks:
-                task.cancel()
+                if not task.done():
+                    task.cancel()
                 if task.done():
                     _consume_task_result(task)
+            invocation.communication_tasks = tuple(
+                task for task in invocation.communication_tasks if not task.done()
+            )
+            if invocation.spawn_settled:
+                try:
+                    invocation.tree_removed = await self._settle_owned_tree(invocation)
+                except (asyncio.CancelledError, Exception):
+                    invocation.tree_removed = False
+            invocation.cleanup_ok = _invocation_resources_settled(invocation)
+            if invocation.cleanup_ok:
+                await self._release_tracking(invocation)
+            elif not invocation.spawn_settled:
+                self._start_late_spawn_cleanup(invocation)
+            elif _invocation_has_pending_tasks(invocation):
+                self._start_late_known_cleanup(invocation, process)
+
+    async def _settle_known_process(
+        self,
+        invocation: _Invocation,
+        process: asyncio.subprocess.Process | None,
+    ) -> None:
+        if process is None:
+            invocation.process_settled = True
+            invocation.communication_settled = True
+            invocation.pipes_settled = True
+            invocation.group_terminal = True
+            return
+        try:
+            if invocation.terminate_requested or process.returncode is None:
+                termination = await self._terminate_process_group(process)
+                invocation.process_settled = termination.settled
+                invocation.leader_wait_task = termination.wait_task
+            else:
+                invocation.process_settled = True
+        finally:
+            invocation.group_terminal = True
+            _close_parent_pipes(process)
+        invocation.communication_settled = await _cancel_and_settle_tasks(
+            invocation.communication_tasks
+        )
+        if invocation.communication_settled:
             invocation.communication_tasks = ()
-            removed = False
+        else:
+            invocation.communication_tasks = tuple(
+                task for task in invocation.communication_tasks if not task.done()
+            )
+        invocation.pipes_settled = await self._settle_parent_pipes(invocation, process)
+
+    async def _settle_parent_pipes(
+        self,
+        invocation: _Invocation,
+        process: asyncio.subprocess.Process,
+    ) -> bool:
+        task = asyncio.create_task(_settle_process_pipes(process))
+        if not await _wait_task_bounded(task, timeout=_PIPE_SETTLE_SECONDS):
+            task.add_done_callback(_consume_task_result)
+            invocation.pipe_settle_task = task
+            return False
+        try:
+            task.result()
+        except BaseException:
+            return False
+        invocation.pipe_settle_task = None
+        return True
+
+    async def _settle_owned_tree(self, invocation: _Invocation) -> bool:
+        task = asyncio.create_task(_remove_owned_tree(invocation.request))
+        if not await _wait_task_bounded(task, timeout=_TREE_TEARDOWN_SECONDS):
+            task.add_done_callback(_consume_task_result)
+            invocation.tree_remove_task = task
+            return False
+        try:
+            removed = task.result()
+        except BaseException:
+            return False
+        invocation.tree_remove_task = None
+        return removed is True
+
+    def _start_late_spawn_cleanup(self, invocation: _Invocation) -> None:
+        if invocation.late_cleanup_task is not None:
+            return
+        task = asyncio.create_task(self._complete_late_spawn(invocation))
+        task.add_done_callback(_consume_task_result)
+        invocation.late_cleanup_task = task
+
+    async def _complete_late_spawn(self, invocation: _Invocation) -> None:
+        spawn_task = invocation.spawn_task
+        if spawn_task is None:
+            return
+        process: asyncio.subprocess.Process | None = None
+        try:
+            process = await asyncio.shield(spawn_task)
+        except asyncio.CancelledError:
+            if not spawn_task.done():
+                return
+            _consume_task_result(spawn_task)
+        except Exception:
+            _consume_task_result(spawn_task)
+        invocation.spawn_settled = True
+        if process is not None:
             try:
-                async with asyncio.timeout(_TREE_TEARDOWN_SECONDS):
-                    removed = await _remove_owned_tree(invocation.request)
+                await self._remember_process(invocation, process)
+                await self._settle_known_process(invocation, process)
             except (asyncio.CancelledError, Exception):
-                removed = False
-            if not removed:
-                invocation.cleanup_ok = False
+                return
+        else:
+            invocation.process_settled = True
+            invocation.communication_settled = True
+            invocation.pipes_settled = True
+            invocation.group_terminal = True
+        try:
+            invocation.tree_removed = await self._settle_owned_tree(invocation)
+        except (asyncio.CancelledError, Exception):
+            invocation.tree_removed = False
+        if _invocation_has_pending_tasks(invocation):
+            await self._await_late_phase_tasks(invocation, process)
+        if _invocation_resources_settled(invocation):
+            await self._release_tracking(invocation)
+
+    def _start_late_known_cleanup(
+        self,
+        invocation: _Invocation,
+        process: asyncio.subprocess.Process | None,
+    ) -> None:
+        if invocation.late_cleanup_task is not None:
+            return
+        task = asyncio.create_task(self._await_late_phase_tasks(invocation, process))
+        task.add_done_callback(_consume_task_result)
+        invocation.late_cleanup_task = task
+
+    async def _await_late_phase_tasks(
+        self,
+        invocation: _Invocation,
+        process: asyncio.subprocess.Process | None,
+    ) -> None:
+        tasks = _invocation_pending_tasks(invocation)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        invocation.communication_tasks = tuple(
+            task for task in invocation.communication_tasks if not task.done()
+        )
+        invocation.communication_settled = not invocation.communication_tasks
+        if invocation.leader_wait_task is not None and invocation.leader_wait_task.done():
+            _consume_task_result(invocation.leader_wait_task)
+            invocation.process_settled = process is None or process.returncode is not None
+            invocation.leader_wait_task = None
+        if invocation.pipe_settle_task is not None and invocation.pipe_settle_task.done():
+            try:
+                invocation.pipe_settle_task.result()
+            except BaseException:
+                pass
+            else:
+                invocation.pipes_settled = True
+            invocation.pipe_settle_task = None
+        if invocation.tree_remove_task is not None and invocation.tree_remove_task.done():
+            try:
+                invocation.tree_removed = invocation.tree_remove_task.result() is True
+            except BaseException:
+                invocation.tree_removed = False
+            invocation.tree_remove_task = None
+        if process is not None:
+            _close_parent_pipes(process)
+            _clear_process_buffers(process)
+        if _invocation_resources_settled(invocation):
+            await self._release_tracking(invocation)
+
+    async def _release_tracking(self, invocation: _Invocation) -> None:
+        async with self._state_lock:
             if invocation.process is not None:
                 self._processes.discard(invocation.process)
             self._invocations.discard(invocation)
@@ -830,23 +1012,22 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
     async def _settle_spawn(
         self,
         invocation: _Invocation,
-    ) -> asyncio.subprocess.Process | None:
+    ) -> _SpawnSettlement:
         if invocation.process is not None:
-            return invocation.process
+            return _SpawnSettlement(settled=True, process=invocation.process)
         spawn_task = invocation.spawn_task
         if spawn_task is None:
-            return None
+            return _SpawnSettlement(settled=True, process=None)
         if not spawn_task.done():
             spawn_task.cancel()
+        if not await _wait_task_bounded(spawn_task, timeout=_SPAWN_SETTLE_SECONDS):
+            return _SpawnSettlement(settled=False, process=None)
         try:
-            async with asyncio.timeout(_SPAWN_SETTLE_SECONDS):
-                process = await asyncio.shield(spawn_task)
-        except (asyncio.CancelledError, Exception):
-            if spawn_task.done():
-                _consume_task_result(spawn_task)
-            return None
+            process = spawn_task.result()
+        except BaseException:
+            return _SpawnSettlement(settled=True, process=None)
         await self._remember_process(invocation, process)
-        return process
+        return _SpawnSettlement(settled=True, process=process)
 
     def _ensure_before_deadline(self, deadline_at: float) -> None:
         if asyncio.get_running_loop().time() >= deadline_at:
@@ -873,13 +1054,53 @@ async def _await_shared_task(task: asyncio.Task[None]) -> None:
     task.result()
 
 
-async def _cancel_and_settle_tasks(tasks: tuple[asyncio.Task[Any], ...]) -> None:
+async def _wait_task_bounded(task: asyncio.Task[Any], *, timeout: float) -> bool:
+    done, _pending = await asyncio.wait((task,), timeout=timeout)
+    if task in done:
+        return True
+    task.cancel()
+    return False
+
+
+async def _cancel_and_settle_tasks(tasks: tuple[asyncio.Task[Any], ...]) -> bool:
     for task in tasks:
         if not task.done():
             task.cancel()
-    if tasks:
-        async with asyncio.timeout(_PIPE_SETTLE_SECONDS):
-            await asyncio.gather(*tasks, return_exceptions=True)
+    if not tasks:
+        return True
+    done, pending = await asyncio.wait(tasks, timeout=_PIPE_SETTLE_SECONDS)
+    for task in done:
+        _consume_task_result(task)
+    for task in pending:
+        task.cancel()
+        task.add_done_callback(_consume_task_result)
+    return not pending
+
+
+def _invocation_pending_tasks(invocation: _Invocation) -> tuple[asyncio.Task[Any], ...]:
+    candidates: tuple[asyncio.Task[Any] | None, ...] = (
+        *invocation.communication_tasks,
+        invocation.leader_wait_task,
+        invocation.pipe_settle_task,
+        invocation.tree_remove_task,
+    )
+    return tuple(task for task in candidates if task is not None and not task.done())
+
+
+def _invocation_has_pending_tasks(invocation: _Invocation) -> bool:
+    return bool(_invocation_pending_tasks(invocation))
+
+
+def _invocation_resources_settled(invocation: _Invocation) -> bool:
+    return (
+        invocation.spawn_settled
+        and invocation.process_settled
+        and invocation.group_terminal
+        and invocation.communication_settled
+        and invocation.pipes_settled
+        and invocation.tree_removed
+        and not _invocation_has_pending_tasks(invocation)
+    )
 
 
 def _consume_task_result(task: asyncio.Task[Any]) -> None:
@@ -913,7 +1134,7 @@ async def _remove_owned_tree(request: _OwnedDirectory) -> bool:
     try:
         descriptor = os.open(request.path, flags)
     except FileNotFoundError:
-        return True
+        return False
     except OSError:
         return False
     try:
