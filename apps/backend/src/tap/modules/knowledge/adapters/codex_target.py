@@ -16,6 +16,8 @@ _VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\
 _NODE_SHEBANG = b"#!/usr/bin/env node\n"
 _MAX_PACKAGE_METADATA_BYTES = 64 * 1024
 _NATIVE_HEADER_BYTES = 20
+_RESOLVER_CODEX_VERSION = "0.149.0"
+_NPM_GLOBAL_LINK_TARGET = "../lib/node_modules/@openai/codex/bin/codex.js"
 
 
 class CodexTargetRejected(RuntimeError):
@@ -66,15 +68,17 @@ _PLATFORM_TARGETS = {
     ("Darwin", "arm64"): (
         "@openai/codex-darwin-arm64",
         "aarch64-apple-darwin",
+        "0.149.0-darwin-arm64",
         _MACHO_ARM64_HEADER,
     ),
     ("Linux", "x86_64"): (
         "@openai/codex-linux-x64",
         "x86_64-unknown-linux-musl",
+        "0.149.0-linux-x64",
         _ELF_X86_64_HEADER,
     ),
 }
-_TRUSTED_HEADERS = frozenset(target[2] for target in _PLATFORM_TARGETS.values())
+_TRUSTED_HEADERS = frozenset(target[3] for target in _PLATFORM_TARGETS.values())
 
 
 def resolve_native_codex_target(
@@ -90,13 +94,17 @@ def resolve_native_codex_target(
     platform_target = _PLATFORM_TARGETS.get((system, machine))
     if platform_target is None:
         raise CodexTargetRejected("unsupported platform for the local Codex target")
-    if not isinstance(expected_version, str) or _VERSION.fullmatch(expected_version) is None:
+    if (
+        not isinstance(expected_version, str)
+        or _VERSION.fullmatch(expected_version) is None
+        or expected_version != _RESOLVER_CODEX_VERSION
+    ):
         raise CodexTargetRejected("expected Codex version is not canonical")
     if isinstance(uid, bool) or not isinstance(uid, int) or uid < 0:
         raise CodexTargetRejected("current uid is invalid")
 
-    package, triple, expected_header = platform_target
-    command = _validated_resolved_path(command_path, uid=uid, label="command")
+    package, triple, platform_version, expected_header = platform_target
+    command = _validated_command_path(command_path, uid=uid)
     command_stat = _lstat(command)
     if _read_prefix(command, len(expected_header.magic)) == expected_header.magic:
         native_stat = _validate_native_executable(
@@ -143,8 +151,8 @@ def resolve_native_codex_target(
         raise CodexTargetRejected("Codex platform package path escaped the install root")
     _validate_package_metadata(
         platform_package_root / "package.json",
-        expected_name=package,
-        expected_version=expected_version,
+        expected_name="@openai/codex",
+        expected_version=platform_version,
         uid=uid,
     )
 
@@ -162,7 +170,7 @@ def resolve_native_codex_target(
     if not triple_root.is_relative_to(package_root):
         raise CodexTargetRejected("Codex vendor triple path escaped the install root")
 
-    native = triple_root / "codex" / "codex"
+    native = triple_root / "bin" / "codex"
     try:
         native = _validated_resolved_path(native, uid=uid, label="native target")
     except CodexTargetRejected as error:
@@ -366,6 +374,56 @@ def _validated_resolved_path(path: Path, *, uid: int, label: str) -> Path:
     return resolved
 
 
+def _validated_command_path(path: Path, *, uid: int) -> Path:
+    lexical = _absolute_lexical_path(path)
+    if ".." in lexical.parts:
+        raise CodexTargetRejected("command contains a path escape")
+    try:
+        command_stat = _lstat(lexical)
+    except (FileNotFoundError, NotADirectoryError, OSError) as error:
+        raise CodexTargetRejected("command is missing") from error
+    if not stat.S_ISLNK(command_stat.st_mode):
+        return _validated_resolved_path(lexical, uid=uid, label="command")
+    if lexical.name != "codex" or lexical.parent.name != "bin":
+        raise CodexTargetRejected("command symlink shape is unsupported")
+
+    parent = _validated_resolved_path(lexical.parent, uid=uid, label="command parent")
+    _validate_owner(lexical, command_stat, uid=uid)
+    try:
+        link_target = os.readlink(lexical)
+    except OSError as error:
+        raise CodexTargetRejected("command symlink is unreadable") from error
+    if link_target != _NPM_GLOBAL_LINK_TARGET:
+        raise CodexTargetRejected("command symlink target is unsupported")
+
+    expected = parent.parent / "lib" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    target = _validated_resolved_path(expected, uid=uid, label="command symlink target")
+    try:
+        resolved_from_link = lexical.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise CodexTargetRejected("command symlink target is missing") from error
+    if resolved_from_link != target:
+        raise CodexTargetRejected("command symlink escaped its canonical package")
+
+    final_parent = _validated_resolved_path(lexical.parent, uid=uid, label="command parent")
+    final_stat = _lstat(lexical)
+    _validate_owner(lexical, final_stat, uid=uid)
+    try:
+        final_link_target = os.readlink(lexical)
+        final_resolved = lexical.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise CodexTargetRejected("command symlink identity changed") from error
+    if (
+        final_parent != parent
+        or not stat.S_ISLNK(final_stat.st_mode)
+        or _identity(final_stat) != _identity(command_stat)
+        or final_link_target != link_target
+        or final_resolved != target
+    ):
+        raise CodexTargetRejected("command symlink identity changed")
+    return target
+
+
 def _absolute_lexical_path(path: Path) -> Path:
     candidate = Path(path)
     if candidate.is_absolute():
@@ -384,10 +442,14 @@ def _validate_component(path: Path, *, uid: int, label: str) -> None:
 
 
 def _validate_owner_and_mode(path: Path, path_stat: os.stat_result, *, uid: int) -> None:
-    if path_stat.st_uid not in {0, uid}:
-        raise CodexTargetRejected(f"{path} has an untrusted owner")
+    _validate_owner(path, path_stat, uid=uid)
     if path_stat.st_mode & 0o022:
         raise CodexTargetRejected(f"{path} is group/world-writable")
+
+
+def _validate_owner(path: Path, path_stat: os.stat_result, *, uid: int) -> None:
+    if path_stat.st_uid not in {0, uid}:
+        raise CodexTargetRejected(f"{path} has an untrusted owner")
 
 
 def _read_first_line(path: Path) -> bytes:

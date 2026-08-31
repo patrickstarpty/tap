@@ -74,12 +74,21 @@ def fake_codex_install(
     )
 
     platform_package_root = package_root / "node_modules" / package
-    native = platform_package_root / "vendor" / triple / "codex" / "codex"
+    native = platform_package_root / "vendor" / triple / "bin" / "codex"
     native.parent.mkdir(parents=True)
     native.write_bytes(native_header)
     native.chmod(0o755)
+    platform_suffix = {
+        "@openai/codex-darwin-arm64": "darwin-arm64",
+        "@openai/codex-linux-x64": "linux-x64",
+    }.get(package, "unsupported")
     (platform_package_root / "package.json").write_text(
-        json.dumps({"name": package, "version": version}),
+        json.dumps(
+            {
+                "name": "@openai/codex",
+                "version": f"{version}-{platform_suffix}",
+            }
+        ),
         encoding="utf-8",
     )
     return FakeCodexInstall(
@@ -135,6 +144,32 @@ def test_nvm_js_launcher_resolves_to_same_package_native_binary(
         target.header.byteorder,
         target.header.machine,
     ) == ("mach-o", 64, "little", 0x0100000C)
+
+
+def canonical_global_command(tree: FakeCodexInstall) -> Path:
+    prefix = tree.package_root.parents[3]
+    command = prefix / "bin" / "codex"
+    command.parent.mkdir(exist_ok=True)
+    command.symlink_to("../lib/node_modules/@openai/codex/bin/codex.js")
+    return command
+
+
+def test_canonical_npm_global_bin_link_resolves_to_same_package_native_binary(
+    tmp_path: Path,
+) -> None:
+    tree = fake_codex_install(tmp_path)
+    command = canonical_global_command(tree)
+
+    target = resolve_native_codex_target(
+        command,
+        system="Darwin",
+        machine="arm64",
+        expected_version="0.149.0",
+        uid=os.getuid(),
+    )
+
+    assert target.executable == tree.native.resolve()
+    assert target.install_root == tree.package_root.resolve()
 
 
 def test_direct_native_target_is_permitted_only_as_the_execution_target(tmp_path: Path) -> None:
@@ -316,6 +351,122 @@ def test_command_symlink_fails_closed(tmp_path: Path) -> None:
     command.symlink_to(tree.javascript)
 
     with pytest.raises(CodexTargetRejected, match="symlink"):
+        resolve_native_codex_target(
+            command,
+            system="Darwin",
+            machine="arm64",
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+
+
+@pytest.mark.parametrize(
+    "link_target",
+    (
+        "/outside/codex.js",
+        "../lib/node_modules/@openai/codex/bin/../bin/codex.js",
+        "../../outside/codex.js",
+    ),
+    ids=("absolute", "alternate", "outside"),
+)
+def test_noncanonical_global_bin_link_fails_closed(
+    tmp_path: Path,
+    link_target: str,
+) -> None:
+    tree = fake_codex_install(tmp_path)
+    command = tree.package_root.parents[3] / "bin" / "codex"
+    command.parent.mkdir(exist_ok=True)
+    command.symlink_to(link_target)
+
+    with pytest.raises(CodexTargetRejected, match="symlink"):
+        resolve_native_codex_target(
+            command,
+            system="Darwin",
+            machine="arm64",
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+
+
+def test_canonical_global_bin_link_rejects_a_second_symlink_hop(tmp_path: Path) -> None:
+    tree = fake_codex_install(tmp_path)
+    real_javascript = tree.javascript.with_name("codex-real.js")
+    tree.javascript.rename(real_javascript)
+    tree.javascript.symlink_to(real_javascript)
+    command = canonical_global_command(tree)
+
+    with pytest.raises(CodexTargetRejected, match="symlink"):
+        resolve_native_codex_target(
+            command,
+            system="Darwin",
+            machine="arm64",
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+
+
+def test_canonical_global_bin_link_rejects_writable_parent(tmp_path: Path) -> None:
+    tree = fake_codex_install(tmp_path)
+    command = canonical_global_command(tree)
+    command.parent.chmod(0o775)
+
+    with pytest.raises(CodexTargetRejected, match="group/world-writable"):
+        resolve_native_codex_target(
+            command,
+            system="Darwin",
+            machine="arm64",
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+
+
+def test_canonical_global_bin_link_rejects_untrusted_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree = fake_codex_install(tmp_path)
+    command = canonical_global_command(tree)
+    real_lstat = codex_target._lstat
+
+    def lstat_with_untrusted_link_owner(path: Path):  # type: ignore[no-untyped-def]
+        result = real_lstat(path)
+        if path == command:
+            return _stat_with(result, st_uid=os.getuid() + 1)
+        return result
+
+    monkeypatch.setattr(codex_target, "_lstat", lstat_with_untrusted_link_owner)
+
+    with pytest.raises(CodexTargetRejected, match="owner"):
+        resolve_native_codex_target(
+            command,
+            system="Darwin",
+            machine="arm64",
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+
+
+def test_canonical_global_bin_link_rejects_identity_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree = fake_codex_install(tmp_path)
+    command = canonical_global_command(tree)
+    real_lstat = codex_target._lstat
+    link_reads = 0
+
+    def lstat_with_swapped_link(path: Path):  # type: ignore[no-untyped-def]
+        nonlocal link_reads
+        result = real_lstat(path)
+        if path == command:
+            link_reads += 1
+            if link_reads > 1:
+                return _stat_with(result, st_ino=result.st_ino + 1)
+        return result
+
+    monkeypatch.setattr(codex_target, "_lstat", lstat_with_swapped_link)
+
+    with pytest.raises(CodexTargetRejected, match="identity"):
         resolve_native_codex_target(
             command,
             system="Darwin",
