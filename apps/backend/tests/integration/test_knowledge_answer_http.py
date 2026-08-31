@@ -41,6 +41,7 @@ from tap.modules.knowledge.ports.documents import (
     UploadReservation,
 )
 from tap.modules.knowledge.ports.errors import (
+    AnswerUnavailable,
     ArtifactUnavailable,
     ModelUnavailable,
     SearchUnavailable,
@@ -374,6 +375,22 @@ def test_answer_failures_are_redacted_stable_problems(
     assert response.status_code == status
     assert response.json()["type"] == problem_type
     assert "secret" not in response.text
+
+
+def test_litellm_answer_failure_is_not_reported_as_embedding_failure() -> None:
+    app = harness()
+    app.answers.error = AnswerUnavailable("private provider detail")
+
+    response = app.client.post("/v1/knowledge/answers", json=answer_payload("doc-a"))
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "type": "https://tap.example/problems/answer-unavailable",
+        "title": "Answer unavailable",
+        "status": 503,
+        "detail": "The answer service is currently unavailable.",
+    }
+    assert "private provider detail" not in response.text
 
 
 @pytest.mark.parametrize(

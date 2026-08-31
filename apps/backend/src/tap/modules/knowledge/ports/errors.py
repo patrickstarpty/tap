@@ -19,6 +19,10 @@ class ModelUnavailable(Exception):
     """The selected model route is unavailable or returned invalid data."""
 
 
+class AnswerUnavailable(ModelUnavailable):
+    """The selected answer backend is unavailable or returned invalid grounded output."""
+
+
 class KnowledgeRuntimeUnavailable(Exception):
     """A provider-neutral knowledge repository or artifact runtime is unavailable."""
 

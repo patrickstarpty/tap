@@ -157,6 +157,7 @@ const ANSWER_PROBLEM_COPY: Readonly<Record<string, string>> = {
   "409:document-state-changed": "所选来源状态已经变化，请确认来源后重新提问。",
   "422:request-validation": "问题或来源选择不符合要求，请检查后重试。",
   "503:embedding-unavailable": "向量服务暂时不可用，请稍后重试。",
+  "503:answer-unavailable": "回答模型暂时不可用，请稍后重试。",
   "503:search-unavailable": "检索服务暂时不可用，请稍后重试。",
   "503:answer-snapshot-unavailable": "回答暂时无法安全保存，请稍后重试。",
   "503:knowledge-runtime-unavailable": "知识服务暂时不可用，请稍后重试。",

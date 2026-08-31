@@ -434,6 +434,30 @@ describe("AthenaWorkspace answer lifecycle", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders the safe answer-backend outage copy", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient()
+      .withDocuments([readyDocument("doc-a")])
+      .withAnswerProblem(
+        new KnowledgeClientError({
+          type: "https://tap.example/problems/answer-unavailable",
+          title: "provider=/srv/private",
+          status: 503,
+          detail: "secret=sk-provider",
+        }),
+      );
+    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    await selectSource(user, /doc-a/u);
+    await ask(user, "退款规则是什么？");
+
+    expect(
+      await screen.findByText("回答模型暂时不可用，请稍后重试。"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/sk-provider|\/srv\/private/u),
+    ).not.toBeInTheDocument();
+  });
+
   it.each([
     ["insufficient_evidence", "所选来源中没有足够证据回答这个问题。"],
     ["conflicting_sources", "所选来源之间存在冲突，暂时无法给出可靠回答。"],

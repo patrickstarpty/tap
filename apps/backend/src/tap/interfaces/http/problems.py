@@ -25,6 +25,7 @@ from tap.modules.knowledge.ports.documents import (
 from tap.modules.knowledge.ports.errors import (
     SEARCH_EXECUTION_REJECTED_TYPE,
     SEARCH_UNAVAILABLE_TYPE,
+    AnswerUnavailable,
     ArtifactUnavailable,
     ModelUnavailable,
     SearchBoundsExceeded,
@@ -115,6 +116,12 @@ EMBEDDING_UNAVAILABLE_PROBLEM = ProblemDetails(
     title="Embedding unavailable",
     status=status.HTTP_503_SERVICE_UNAVAILABLE,
     detail="The embedding service is currently unavailable.",
+)
+ANSWER_UNAVAILABLE_PROBLEM = ProblemDetails(
+    type="https://tap.example/problems/answer-unavailable",
+    title="Answer unavailable",
+    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    detail="The answer service is currently unavailable.",
 )
 ANSWER_SNAPSHOT_UNAVAILABLE_PROBLEM = ProblemDetails(
     type="https://tap.example/problems/answer-snapshot-unavailable",
@@ -253,6 +260,12 @@ def register_problem_handlers(app: FastAPI) -> None:
         _request: Request, _error: ModelUnavailable
     ) -> JSONResponse:
         return problem_response(EMBEDDING_UNAVAILABLE_PROBLEM)
+
+    @app.exception_handler(AnswerUnavailable)
+    async def answer_unavailable_problem(
+        _request: Request, _error: AnswerUnavailable
+    ) -> JSONResponse:
+        return problem_response(ANSWER_UNAVAILABLE_PROBLEM)
 
     @app.exception_handler(AnswerSnapshotUnavailable)
     async def answer_snapshot_unavailable_problem(
