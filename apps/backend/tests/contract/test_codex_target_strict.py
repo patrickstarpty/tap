@@ -19,6 +19,21 @@ from tap.modules.knowledge.adapters.codex_target import (
     resolve_native_codex_target,
 )
 
+_MACHO_ARM64_HEADER = bytes.fromhex("cffaedfe0c000001") + b"\x00" * 24
+_MACHO_X86_64_HEADER = bytes.fromhex("cffaedfe07000001") + b"\x00" * 24
+_ELF_X86_64_HEADER = bytes.fromhex(
+    "7f454c4602010100000000000000000002003e00010000000000000000000000"
+)
+_ELF_ARM64_HEADER = bytes.fromhex(
+    "7f454c460201010000000000000000000200b700010000000000000000000000"
+)
+_ELF32_X86_HEADER = bytes.fromhex(
+    "7f454c4601010100000000000000000002000300010000000000000000000000"
+)
+_ELF64_BIG_ENDIAN_X86_HEADER = bytes.fromhex(
+    "7f454c460202010000000000000000000002003e000000010000000000000000"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FakeCodexInstall:
@@ -34,7 +49,7 @@ def fake_codex_install(
     *,
     package: str = "@openai/codex-darwin-arm64",
     triple: str = "aarch64-apple-darwin",
-    native_magic: bytes = b"\xcf\xfa\xed\xfe",
+    native_header: bytes = _MACHO_ARM64_HEADER,
     version: str = "0.149.0",
     launcher: bytes = b"#!/usr/bin/env node\n",
 ) -> FakeCodexInstall:
@@ -61,7 +76,7 @@ def fake_codex_install(
     platform_package_root = package_root / "node_modules" / package
     native = platform_package_root / "vendor" / triple / "codex" / "codex"
     native.parent.mkdir(parents=True)
-    native.write_bytes(native_magic + b"\x00" * 28)
+    native.write_bytes(native_header)
     native.chmod(0o755)
     (platform_package_root / "package.json").write_text(
         json.dumps({"name": package, "version": version}),
@@ -97,7 +112,7 @@ def test_nvm_js_launcher_resolves_to_same_package_native_binary(
         tmp_path,
         package="@openai/codex-darwin-arm64",
         triple="aarch64-apple-darwin",
-        native_magic=b"\xcf\xfa\xed\xfe",
+        native_header=_MACHO_ARM64_HEADER,
     )
 
     def unexpected_execution(*_args: object, **_kwargs: object) -> None:
@@ -114,12 +129,18 @@ def test_nvm_js_launcher_resolves_to_same_package_native_binary(
     assert target.identity.inode == tree.native.stat().st_ino
     assert target.identity.size == tree.native.stat().st_size
     assert target.identity.mtime_ns == tree.native.stat().st_mtime_ns
+    assert (
+        target.header.format,
+        target.header.bits,
+        target.header.byteorder,
+        target.header.machine,
+    ) == ("mach-o", 64, "little", 0x0100000C)
 
 
 def test_direct_native_target_is_permitted_only_as_the_execution_target(tmp_path: Path) -> None:
     native = tmp_path / "standalone" / "codex"
     native.parent.mkdir()
-    native.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 28)
+    native.write_bytes(_MACHO_ARM64_HEADER)
     native.chmod(0o755)
 
     target = resolve_native_codex_target(
@@ -142,6 +163,80 @@ def test_target_identity_change_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(CodexTargetRejected, match="identity changed"):
         assert_target_unchanged(target)
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "wrong_header"),
+    [
+        ("Darwin", "arm64", _MACHO_X86_64_HEADER),
+        ("Linux", "x86_64", _ELF_ARM64_HEADER),
+        ("Linux", "x86_64", _ELF32_X86_HEADER),
+        ("Linux", "x86_64", _ELF64_BIG_ENDIAN_X86_HEADER),
+    ],
+)
+def test_direct_native_target_rejects_wrong_architecture_header(
+    tmp_path: Path,
+    system: str,
+    machine: str,
+    wrong_header: bytes,
+) -> None:
+    native = tmp_path / "standalone" / "codex"
+    native.parent.mkdir()
+    native.write_bytes(wrong_header)
+    native.chmod(0o755)
+
+    with pytest.raises(CodexTargetRejected, match="architecture|header"):
+        resolve_native_codex_target(
+            native,
+            system=system,
+            machine=machine,
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("package", "triple", "system", "machine", "wrong_header"),
+    [
+        (
+            "@openai/codex-darwin-arm64",
+            "aarch64-apple-darwin",
+            "Darwin",
+            "arm64",
+            _MACHO_X86_64_HEADER,
+        ),
+        (
+            "@openai/codex-linux-x64",
+            "x86_64-unknown-linux-musl",
+            "Linux",
+            "x86_64",
+            _ELF_ARM64_HEADER,
+        ),
+    ],
+)
+def test_package_native_target_rejects_wrong_architecture_header(
+    tmp_path: Path,
+    package: str,
+    triple: str,
+    system: str,
+    machine: str,
+    wrong_header: bytes,
+) -> None:
+    tree = fake_codex_install(
+        tmp_path,
+        package=package,
+        triple=triple,
+        native_header=wrong_header,
+    )
+
+    with pytest.raises(CodexTargetRejected, match="architecture|header"):
+        resolve_native_codex_target(
+            tree.command,
+            system=system,
+            machine=machine,
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -287,9 +382,16 @@ def test_non_root_non_current_component_owner_fails_closed(tmp_path: Path, monke
         resolve_darwin(tree)
 
 
-@pytest.mark.parametrize("magic", [b"MZ\x90\x00", b"\x7fELF", b"\xfe\xed\xfa\xcf"])
-def test_wrong_native_magic_fails_closed(tmp_path: Path, magic: bytes) -> None:
-    tree = fake_codex_install(tmp_path, native_magic=magic)
+@pytest.mark.parametrize(
+    "header",
+    [
+        b"MZ\x90\x00" + b"\x00" * 28,
+        _ELF_X86_64_HEADER,
+        b"\xfe\xed\xfa\xcf" + b"\x00" * 28,
+    ],
+)
+def test_wrong_native_magic_fails_closed(tmp_path: Path, header: bytes) -> None:
+    tree = fake_codex_install(tmp_path, native_header=header)
 
     with pytest.raises(CodexTargetRejected, match="magic"):
         resolve_darwin(tree)
@@ -300,7 +402,7 @@ def test_linux_elf_target_uses_the_exact_package_and_triple(tmp_path: Path) -> N
         tmp_path,
         package="@openai/codex-linux-x64",
         triple="x86_64-unknown-linux-musl",
-        native_magic=b"\x7fELF",
+        native_header=_ELF_X86_64_HEADER,
     )
 
     target = resolve_native_codex_target(
@@ -341,10 +443,87 @@ def test_nonregular_native_target_fails_closed(tmp_path: Path) -> None:
         resolve_darwin(tree)
 
 
-def test_revalidation_repeats_permissions_and_magic_checks(tmp_path: Path) -> None:
+def test_revalidation_rejects_permissions_changed_before_the_call(tmp_path: Path) -> None:
     tree = fake_codex_install(tmp_path)
     target = resolve_darwin(tree)
     tree.native.chmod(stat.S_IMODE(tree.native.stat().st_mode) | stat.S_IWGRP)
 
     with pytest.raises(CodexTargetRejected, match="group/world-writable"):
         assert_target_unchanged(target)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("owner", "owner"),
+        ("write", "group/world-writable"),
+        ("type", "regular"),
+        ("execute", "executable"),
+    ],
+)
+def test_revalidation_rechecks_the_final_stat_after_reading_the_header(
+    tmp_path: Path,
+    monkeypatch,
+    mutation: str,
+    message: str,
+) -> None:  # type: ignore[no-untyped-def]
+    tree = fake_codex_install(tmp_path)
+    target = resolve_darwin(tree)
+    real_lstat = codex_target._lstat
+    target_calls = 0
+
+    def lstat_with_final_state_change(path: Path):  # type: ignore[no-untyped-def]
+        nonlocal target_calls
+        result = real_lstat(path)
+        if path != target.executable:
+            return result
+        target_calls += 1
+        if target_calls < 3:
+            return result
+        changes = {
+            "owner": {"st_uid": os.getuid() + 1},
+            "write": {"st_mode": result.st_mode | stat.S_IWGRP},
+            "type": {
+                "st_mode": stat.S_IFDIR | stat.S_IMODE(result.st_mode),
+            },
+            "execute": {"st_mode": result.st_mode & ~0o111},
+        }[mutation]
+        return _stat_with(result, **changes)
+
+    monkeypatch.setattr(codex_target, "_lstat", lstat_with_final_state_change)
+
+    with pytest.raises(CodexTargetRejected, match=message):
+        assert_target_unchanged(target)
+
+
+@pytest.mark.parametrize("replacement", [_MACHO_X86_64_HEADER, _ELF_X86_64_HEADER])
+def test_revalidation_preserves_the_exact_original_architecture_contract(
+    tmp_path: Path,
+    replacement: bytes,
+) -> None:
+    tree = fake_codex_install(tmp_path)
+    target = resolve_darwin(tree)
+    original_stat = tree.native.stat()
+    tree.native.write_bytes(replacement)
+    os.utime(
+        tree.native,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+
+    assert tree.native.stat().st_size == target.identity.size
+    assert tree.native.stat().st_mtime_ns == target.identity.mtime_ns
+    with pytest.raises(CodexTargetRejected, match="architecture|header|magic"):
+        assert_target_unchanged(target)
+
+
+def _stat_with(result, **changes: int):  # type: ignore[no-untyped-def]
+    values = {
+        "st_mode": result.st_mode,
+        "st_uid": result.st_uid,
+        "st_dev": result.st_dev,
+        "st_ino": result.st_ino,
+        "st_size": result.st_size,
+        "st_mtime_ns": result.st_mtime_ns,
+    }
+    values.update(changes)
+    return SimpleNamespace(**values)

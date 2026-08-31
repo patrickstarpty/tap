@@ -8,26 +8,14 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 SUPPORTED_CODEX_CLI_VERSIONS: frozenset[str] = frozenset()
 
 _VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
-_PLATFORM_TARGETS = {
-    ("Darwin", "arm64"): (
-        "@openai/codex-darwin-arm64",
-        "aarch64-apple-darwin",
-        b"\xcf\xfa\xed\xfe",
-    ),
-    ("Linux", "x86_64"): (
-        "@openai/codex-linux-x64",
-        "x86_64-unknown-linux-musl",
-        b"\x7fELF",
-    ),
-}
-_NATIVE_MAGICS = frozenset(target[2] for target in _PLATFORM_TARGETS.values())
 _NODE_SHEBANG = b"#!/usr/bin/env node\n"
 _MAX_PACKAGE_METADATA_BYTES = 64 * 1024
+_NATIVE_HEADER_BYTES = 20
 
 
 class CodexTargetRejected(RuntimeError):
@@ -43,11 +31,50 @@ class NativeTargetIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeTargetHeader:
+    format: Literal["mach-o", "elf"]
+    magic: bytes
+    bits: int
+    byteorder: Literal["little", "big"]
+    machine: int
+
+
+@dataclass(frozen=True, slots=True)
 class NativeCodexTarget:
     executable: Path
     install_root: Path
     version: str
     identity: NativeTargetIdentity
+    header: NativeTargetHeader
+
+
+_MACHO_ARM64_HEADER = NativeTargetHeader(
+    format="mach-o",
+    magic=b"\xcf\xfa\xed\xfe",
+    bits=64,
+    byteorder="little",
+    machine=0x0100000C,
+)
+_ELF_X86_64_HEADER = NativeTargetHeader(
+    format="elf",
+    magic=b"\x7fELF",
+    bits=64,
+    byteorder="little",
+    machine=62,
+)
+_PLATFORM_TARGETS = {
+    ("Darwin", "arm64"): (
+        "@openai/codex-darwin-arm64",
+        "aarch64-apple-darwin",
+        _MACHO_ARM64_HEADER,
+    ),
+    ("Linux", "x86_64"): (
+        "@openai/codex-linux-x64",
+        "x86_64-unknown-linux-musl",
+        _ELF_X86_64_HEADER,
+    ),
+}
+_TRUSTED_HEADERS = frozenset(target[2] for target in _PLATFORM_TARGETS.values())
 
 
 def resolve_native_codex_target(
@@ -68,14 +95,14 @@ def resolve_native_codex_target(
     if isinstance(uid, bool) or not isinstance(uid, int) or uid < 0:
         raise CodexTargetRejected("current uid is invalid")
 
-    package, triple, expected_magic = platform_target
+    package, triple, expected_header = platform_target
     command = _validated_resolved_path(command_path, uid=uid, label="command")
     command_stat = _lstat(command)
-    if _read_prefix(command, len(expected_magic)) == expected_magic:
+    if _read_prefix(command, len(expected_header.magic)) == expected_header.magic:
         native_stat = _validate_native_executable(
             command,
             uid=uid,
-            expected_magics=frozenset({expected_magic}),
+            expected_header=expected_header,
             checked_stat=command_stat,
         )
         return _target(
@@ -83,6 +110,7 @@ def resolve_native_codex_target(
             install_root=command.parent,
             version=expected_version,
             native_stat=native_stat,
+            header=expected_header,
         )
 
     package_root = _launcher_package_root(command)
@@ -146,13 +174,14 @@ def resolve_native_codex_target(
     native_stat = _validate_native_executable(
         native,
         uid=uid,
-        expected_magics=frozenset({expected_magic}),
+        expected_header=expected_header,
     )
     return _target(
         executable=native,
         install_root=package_root,
         version=expected_version,
         native_stat=native_stat,
+        header=expected_header,
     )
 
 
@@ -161,6 +190,8 @@ def assert_target_unchanged(target: NativeCodexTarget) -> None:
 
     if not isinstance(target, NativeCodexTarget):
         raise TypeError("target must be a NativeCodexTarget")
+    if target.header not in _TRUSTED_HEADERS:
+        raise CodexTargetRejected("native Codex target header contract is unsupported")
     uid = os.getuid()
     install_root = _validated_resolved_path(
         target.install_root,
@@ -174,12 +205,33 @@ def assert_target_unchanged(target: NativeCodexTarget) -> None:
     )
     if not executable.is_relative_to(install_root):
         raise CodexTargetRejected("native Codex target path escaped the install root")
-    native_stat = _validate_native_executable(
+    initial_stat = _validate_native_executable(
         executable,
         uid=uid,
-        expected_magics=_NATIVE_MAGICS,
+        expected_header=target.header,
     )
-    if _identity(native_stat) != target.identity:
+    final_install_root = _validated_resolved_path(
+        target.install_root,
+        uid=uid,
+        label="install root",
+    )
+    final_executable = _validated_resolved_path(
+        target.executable,
+        uid=uid,
+        label="native target",
+    )
+    if (
+        final_install_root != install_root
+        or final_executable != executable
+        or not final_executable.is_relative_to(final_install_root)
+    ):
+        raise CodexTargetRejected("native Codex target containment changed")
+    final_stat = _validate_native_executable(
+        final_executable,
+        uid=uid,
+        expected_header=target.header,
+    )
+    if _identity(initial_stat) != _identity(final_stat) or _identity(final_stat) != target.identity:
         raise CodexTargetRejected("native Codex target identity changed")
 
 
@@ -189,12 +241,14 @@ def _target(
     install_root: Path,
     version: str,
     native_stat: os.stat_result,
+    header: NativeTargetHeader,
 ) -> NativeCodexTarget:
     return NativeCodexTarget(
         executable=executable,
         install_root=install_root,
         version=version,
         identity=_identity(native_stat),
+        header=header,
     )
 
 
@@ -246,19 +300,44 @@ def _validate_native_executable(
     path: Path,
     *,
     uid: int,
-    expected_magics: frozenset[bytes],
+    expected_header: NativeTargetHeader,
     checked_stat: os.stat_result | None = None,
 ) -> os.stat_result:
     path_stat = checked_stat or _lstat(path)
     _validate_owner_and_mode(path, path_stat, uid=uid)
     _validate_regular_executable(path, path_stat)
-    magic = _read_prefix(path, 4)
-    if magic not in expected_magics:
-        raise CodexTargetRejected("native Codex target has unsupported magic")
+    header = _read_prefix(path, _NATIVE_HEADER_BYTES)
+    _validate_native_header(header, expected_header)
     final_stat = _lstat(path)
+    _validate_owner_and_mode(path, final_stat, uid=uid)
+    _validate_regular_executable(path, final_stat)
     if _identity(final_stat) != _identity(path_stat):
         raise CodexTargetRejected("native Codex target identity changed during validation")
     return final_stat
+
+
+def _validate_native_header(header: bytes, expected: NativeTargetHeader) -> None:
+    if len(header) < _NATIVE_HEADER_BYTES:
+        raise CodexTargetRejected("native Codex target architecture/header is incomplete")
+    if header[:4] != expected.magic:
+        raise CodexTargetRejected("native Codex target has unsupported magic")
+    if expected.format == "mach-o":
+        machine = int.from_bytes(header[4:8], byteorder=expected.byteorder)
+        if expected.bits != 64 or machine != expected.machine:
+            raise CodexTargetRejected("native Codex target architecture/header is unsupported")
+        return
+    if expected.format == "elf":
+        expected_class = {32: 1, 64: 2}.get(expected.bits)
+        expected_data = {"little": 1, "big": 2}.get(expected.byteorder)
+        if expected_class is None or expected_data is None:
+            raise CodexTargetRejected("native Codex target header contract is unsupported")
+        if header[4] != expected_class or header[5] != expected_data or header[6] != 1:
+            raise CodexTargetRejected("native Codex target architecture/header is unsupported")
+        machine = int.from_bytes(header[18:20], byteorder=expected.byteorder)
+        if machine != expected.machine:
+            raise CodexTargetRejected("native Codex target architecture/header is unsupported")
+        return
+    raise CodexTargetRejected("native Codex target header contract is unsupported")
 
 
 def _validate_regular_executable(path: Path, path_stat: os.stat_result) -> None:
