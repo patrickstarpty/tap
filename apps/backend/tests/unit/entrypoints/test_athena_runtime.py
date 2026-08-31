@@ -1791,7 +1791,7 @@ def test_fake_adapter_is_lazy_exact_gate_and_needs_no_models_probe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_litellm_allows_each_exact_body_and_gateway_label_and_nearby_none() -> None:
+async def test_runtime_litellm_binds_body_labels_and_gateway_group_separately() -> None:
     import httpx
 
     from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
@@ -1803,11 +1803,14 @@ async def test_runtime_litellm_allows_each_exact_body_and_gateway_label_and_near
     config = configured._config
     await configured.close()
 
-    async def exercise(body_label: str, header_label: str) -> bool:
+    async def exercise(body_label: str, model_group: str) -> bool:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
-                headers={"x-litellm-model-id": header_label},
+                headers={
+                    "x-litellm-model-id": "opaque-deployment-17",
+                    "x-litellm-model-group": model_group,
+                },
                 json={
                     "id": "embedding-runtime-label",
                     "object": "list",
@@ -1821,8 +1824,10 @@ async def test_runtime_litellm_allows_each_exact_body_and_gateway_label_and_near
             await LiteLLMAdapter(config, client=client).embed("runtime label contract")
         return True
 
-    for label in settings.allowed_embedding_model_labels:
-        assert await exercise(label, label)
+    assert await exercise(settings.embedding_alias, settings.embedding_alias)
+    for label in settings.allowed_embedding_model_labels - {settings.embedding_alias}:
+        with pytest.raises(ModelUnavailable):
+            await exercise(label, settings.embedding_alias)
     with pytest.raises(ModelUnavailable):
         await exercise("gpt-4o-min", settings.embedding_alias)
     with pytest.raises(ModelUnavailable):

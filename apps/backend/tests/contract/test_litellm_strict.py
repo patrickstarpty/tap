@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from decimal import Decimal
 
@@ -146,7 +147,7 @@ def document_evidence(content: str) -> Evidence:
 def embedding_response(
     *,
     vector: list[object] | None = None,
-    model: str = "provider-embed-v1",
+    model: str = "tap-embed-fixed-v1",
 ) -> dict[str, object]:
     return {
         "id": "embedding-17",
@@ -159,7 +160,7 @@ def embedding_response(
 def batch_embedding_response(
     rows: list[dict[str, object]],
     *,
-    model: str = "provider-embed-v1",
+    model: str = "athena-embedding",
 ) -> dict[str, object]:
     return {
         "id": "embedding-batch-17",
@@ -173,8 +174,9 @@ def batch_embedding_response(
 def embedding_response_with_usage(
     *,
     usage: object | None = None,
+    model: str = "tap-embed-fixed-v1",
 ) -> dict[str, object]:
-    body = embedding_response()
+    body = embedding_response(model=model)
     body["usage"] = {"prompt_tokens": 4, "total_tokens": 4} if usage is None else usage
     return body
 
@@ -183,7 +185,7 @@ def answer_response(
     *,
     answer: object = "Grounded answer.",
     claims: object | None = None,
-    model: str = "provider-answer-v1",
+    model: str = "tap-answer-fixed-v1",
 ) -> dict[str, object]:
     generated = {
         "answer": answer,
@@ -544,25 +546,27 @@ async def test_embedding_rejects_unknown_top_level_field_without_optional_id() -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("body_model", "gateway_model"),
+    ("body_model", "gateway_model_group"),
     [
-        ("provider-answer-v1", "gateway-embed-v1"),
-        ("provider-embed-v1", "gateway-answer-v1"),
-        ("provider-embed-v1", "unknown-gateway-model"),
+        ("provider-answer-v1", "tap-embed-fixed-v1"),
+        ("provider-embed-v1", "tap-answer-fixed-v1"),
+        ("provider-embed-v1", "unknown-gateway-model-group"),
     ],
-    ids=("answer-body-on-embedding", "answer-gateway-on-embedding", "unknown-gateway"),
+    ids=("answer-body-on-embedding", "answer-group-on-embedding", "unknown-group"),
 )
 async def test_embedding_rejects_cross_route_body_and_gateway_model_labels(
     body_model: str,
-    gateway_model: str,
+    gateway_model_group: str,
 ) -> None:
     """A same-dimension vector from the wrong route must not be relabeled as configured."""
+    body = embedding_response_with_usage()
+    body["model"] = body_model
 
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"x-litellm-model-id": gateway_model},
-            json=embedding_response(model=body_model),
+            headers={"x-litellm-model-group": gateway_model_group},
+            json=body,
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -572,7 +576,127 @@ async def test_embedding_rejects_cross_route_body_and_gateway_model_labels(
 
     assert "not-a-real-key" not in str(caught.value)
     assert body_model not in str(caught.value)
-    assert gateway_model not in str(caught.value)
+    assert gateway_model_group not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_embedding_preserves_bounded_opaque_deployment_id_with_exact_model_group() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "x-litellm-model-id": "opaque-deployment-17",
+                "x-litellm-model-group": "tap-embed-fixed-v1",
+            },
+            json=embedding_response_with_usage(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+    assert result.gateway_model_id == "opaque-deployment-17"
+
+
+@pytest.mark.asyncio
+async def test_embedding_requires_body_model_to_equal_requested_alias() -> None:
+    body = embedding_response_with_usage(model="provider-embed-v1")
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-group": "tap-embed-fixed-v1"},
+            json=body,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+async def test_embedding_exact_body_alias_is_not_mislabeled_as_provider_identity() -> None:
+    body = embedding_response_with_usage()
+    body["model"] = "tap-embed-fixed-v1"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+    assert result.provider_model_id is None
+
+
+@pytest.mark.asyncio
+async def test_embedding_huge_integer_vector_fails_as_model_unavailable() -> None:
+    body = embedding_response_with_usage()
+    body["model"] = "tap-embed-fixed-v1"
+    body["data"] = [{"embedding": [10**400, 0.5], "index": 0}]
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+async def test_embedding_normal_integer_and_float_values_convert_to_finite_floats() -> None:
+    body = embedding_response_with_usage()
+    body["data"] = [{"embedding": [1, 0.5], "index": 0}]
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+    assert result.vector == (1.0, 0.5)
+    assert all(type(value) is float and math.isfinite(value) for value in result.vector)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "deployment_id",
+    ["", "x" * 257],
+    ids=("empty", "oversize"),
+)
+async def test_embedding_rejects_malformed_deployment_id_header(
+    deployment_id: str,
+) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "x-litellm-model-id": deployment_id,
+                "x-litellm-model-group": "tap-embed-fixed-v1",
+            },
+            json=embedding_response_with_usage(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_group",
+    ["", "tap-answer-fixed-v1", "unknown-model-group", "x" * 257],
+    ids=("empty", "wrong-route", "unknown", "oversize"),
+)
+async def test_embedding_rejects_nonexact_model_group_header(model_group: str) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-group": model_group},
+            json=embedding_response_with_usage(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
 
 
 @pytest.mark.asyncio
@@ -602,6 +726,111 @@ async def test_embedding_parses_standard_usage_and_exact_decimal_response_cost()
         "input": "authorization [REDACTED]",
         "dimensions": 2,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extension",
+    [
+        {"completion_tokens": 0},
+        {"prompt_tokens_details": None},
+        {"completion_tokens_details": None},
+        {
+            "completion_tokens": 0,
+            "prompt_tokens_details": None,
+            "completion_tokens_details": None,
+        },
+    ],
+    ids=("completion", "prompt-details", "completion-details", "litellm-1.87"),
+)
+async def test_embedding_accepts_closed_litellm_usage_extensions(
+    extension: dict[str, object],
+) -> None:
+    body = embedding_response_with_usage(usage={"prompt_tokens": 4, "total_tokens": 4} | extension)
+    assert isinstance(body["data"], list)
+    body["data"][0]["object"] = "embedding"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+    assert result.vector == (0.25, 0.5)
+    assert result.usage is not None
+    assert result.usage.input_tokens == 4
+    assert result.usage.total_tokens == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extension",
+    [
+        {"completion_tokens": True},
+        {"completion_tokens": 1},
+        {"completion_tokens": 0.0},
+        {"prompt_tokens_details": {}},
+        {"prompt_tokens_details": False},
+        {"completion_tokens_details": {}},
+        {"completion_tokens_details": 0},
+    ],
+    ids=(
+        "completion-boolean",
+        "completion-nonzero",
+        "completion-float",
+        "prompt-details-object",
+        "prompt-details-boolean",
+        "completion-details-object",
+        "completion-details-integer",
+    ),
+)
+async def test_embedding_rejects_noncanonical_litellm_usage_extensions(
+    extension: dict[str, object],
+) -> None:
+    body = embedding_response_with_usage(usage={"prompt_tokens": 4, "total_tokens": 4} | extension)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"embedding": [0.25, 0.5]},
+        {"embedding": [0.25, 0.5], "index": True},
+        {"embedding": [0.25, 0.5], "index": 1},
+        {"embedding": [0.25, 0.5], "index": 0, "object": " embedding"},
+        {"embedding": [0.25, 0.5], "index": 0, "object": "embedding "},
+        {"embedding": [0.25, 0.5], "index": 0, "object": True},
+        {"embedding": [0.25, 0.5], "index": 0, "provider_extension": 1},
+    ],
+    ids=(
+        "missing-index",
+        "boolean-index",
+        "wrong-index",
+        "leading-space-object",
+        "trailing-space-object",
+        "boolean-object",
+        "unknown-field",
+    ),
+)
+async def test_embedding_rejects_noncanonical_single_row(
+    row: dict[str, object],
+) -> None:
+    body = embedding_response_with_usage()
+    body["data"] = [row]
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
 
 
 @pytest.mark.asyncio
@@ -794,24 +1023,24 @@ def test_litellm_config_rejects_nonexact_loopback_http(base_url: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("body_model", "gateway_model"),
+    ("body_model", "gateway_model_group"),
     [
-        ("provider-embed-v1", "gateway-answer-v1"),
-        ("provider-answer-v1", "gateway-embed-v1"),
-        ("provider-answer-v1", "unknown-gateway-model"),
+        ("provider-embed-v1", "tap-answer-fixed-v1"),
+        ("provider-answer-v1", "tap-embed-fixed-v1"),
+        ("provider-answer-v1", "unknown-gateway-model-group"),
     ],
-    ids=("embedding-body-on-answer", "embedding-gateway-on-answer", "unknown-gateway"),
+    ids=("embedding-body-on-answer", "embedding-group-on-answer", "unknown-group"),
 )
 async def test_answer_rejects_cross_route_body_and_gateway_model_labels(
     body_model: str,
-    gateway_model: str,
+    gateway_model_group: str,
 ) -> None:
     """Answer parsing must bind both provider and gateway identities to its route."""
 
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"x-litellm-model-id": gateway_model},
+            headers={"x-litellm-model-group": gateway_model_group},
             json=answer_response(model=body_model),
         )
 
@@ -826,7 +1055,25 @@ async def test_answer_rejects_cross_route_body_and_gateway_model_labels(
 
     assert "not-a-real-key" not in str(caught.value)
     assert body_model not in str(caught.value)
-    assert gateway_model not in str(caught.value)
+    assert gateway_model_group not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_answer_requires_body_model_to_equal_requested_alias() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-group": "tap-answer-fixed-v1"},
+            json=answer_response(model="provider-answer-v1"),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).answer(
+                "authorization [REDACTED]",
+                (evidence(),),
+                "quick-hybrid-v1",
+            )
 
 
 def test_embedding_and_answer_route_model_allowlists_must_be_disjoint() -> None:
@@ -863,7 +1110,8 @@ async def test_fixed_profiles_output_tokens_and_retry_identity_cannot_be_caller_
             headers={
                 "x-request-id": "provider-request-17",
                 "x-litellm-call-id": "gateway-call-17",
-                "x-litellm-model-id": "gateway-answer-v1",
+                "x-litellm-model-id": "opaque-deployment-17",
+                "x-litellm-model-group": "tap-answer-fixed-v1",
                 "x-untrusted-header": "must-not-cross",
             },
             json=answer_response(),
@@ -898,8 +1146,8 @@ async def test_fixed_profiles_output_tokens_and_retry_identity_cannot_be_caller_
     assert requests[0].headers["x-tap-request-id"] == requests[1].headers["x-tap-request-id"]
     assert result.provider_request_id == "provider-request-17"
     assert result.gateway_call_id == "gateway-call-17"
-    assert result.gateway_model_id == "gateway-answer-v1"
-    assert result.provider_model_id == "provider-answer-v1"
+    assert result.gateway_model_id == "opaque-deployment-17"
+    assert result.provider_model_id is None
 
     calls_before_unknown = attempts
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1277,6 +1525,120 @@ async def test_embed_many_accepts_valid_response_without_optional_top_level_id()
 
 
 @pytest.mark.asyncio
+async def test_embed_many_accepts_closed_litellm_row_and_usage_extensions() -> None:
+    body = batch_embedding_response(
+        [
+            {"embedding": [0.3, 0.4], "index": 1, "object": "embedding"},
+            {"embedding": [0.1, 0.2], "index": 0, "object": "embedding"},
+        ]
+    )
+    body["usage"] = {
+        "prompt_tokens": 4,
+        "total_tokens": 4,
+        "completion_tokens": 0,
+        "prompt_tokens_details": None,
+        "completion_tokens_details": None,
+    }
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-group": "athena-embedding"},
+            json=body,
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        results = await LiteLLMAdapter(fixed, client=client).embed_many(("first", "second"))
+
+    assert tuple(item.vector for item in results) == ((0.1, 0.2), (0.3, 0.4))
+
+
+@pytest.mark.asyncio
+async def test_embed_many_requires_body_model_to_equal_requested_alias() -> None:
+    body = batch_embedding_response(
+        [
+            {"embedding": [0.3, 0.4], "index": 1},
+            {"embedding": [0.1, 0.2], "index": 0},
+        ],
+        model="provider-embed-v1",
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-group": "athena-embedding"},
+            json=body,
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(fixed, client=client).embed_many(("first", "second"))
+
+
+@pytest.mark.asyncio
+async def test_embed_many_huge_integer_vector_fails_as_model_unavailable() -> None:
+    body = batch_embedding_response(
+        [
+            {"embedding": [10**400, 0.4], "index": 0},
+            {"embedding": [0.1, 0.2], "index": 1},
+        ],
+        model="athena-embedding",
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(fixed, client=client).embed_many(("first", "second"))
+
+
+@pytest.mark.asyncio
+async def test_embed_many_rejects_wrong_model_group() -> None:
+    body = batch_embedding_response(
+        [
+            {"embedding": [0.3, 0.4], "index": 1},
+            {"embedding": [0.1, 0.2], "index": 0},
+        ]
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-group": "tap-answer-fixed-v1"},
+            json=body,
+        )
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(fixed, client=client).embed_many(("first", "second"))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "rows",
     [
@@ -1290,7 +1652,7 @@ async def test_embed_many_accepts_valid_response_without_optional_top_level_id()
             {"embedding": [0.75, 1.0], "index": 2},
         ],
         [
-            {"embedding": [0.25, 0.5], "index": 0, "object": "embedding"},
+            {"embedding": [0.25, 0.5], "index": 0, "object": " embedding"},
             {"embedding": [0.75, 1.0], "index": 1},
         ],
         [

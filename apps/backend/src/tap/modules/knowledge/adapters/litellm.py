@@ -30,6 +30,12 @@ _MAX_EMBEDDING_BATCH = 32
 _MAX_EMBEDDING_REQUEST_BYTES = 262_144
 _EMBEDDING_REQUIRED_FIELDS = frozenset({"object", "model", "data", "usage"})
 _EMBEDDING_OPTIONAL_FIELDS = frozenset({"id"})
+_EMBEDDING_ROW_REQUIRED_FIELDS = frozenset({"embedding", "index"})
+_EMBEDDING_ROW_OPTIONAL_FIELDS = frozenset({"object"})
+_EMBEDDING_USAGE_REQUIRED_FIELDS = frozenset({"prompt_tokens", "total_tokens"})
+_EMBEDDING_USAGE_OPTIONAL_FIELDS = frozenset(
+    {"completion_tokens", "prompt_tokens_details", "completion_tokens_details"}
+)
 _GROUNDED_ANSWER_INSTRUCTION = (
     "Answer only from supplied evidence. Return JSON with exactly answer and claims; "
     "every claim must contain current evidenceLabels, and every claim text must be "
@@ -194,7 +200,7 @@ class LiteLLMAdapter:
                         "dimensions": self._config.embedding_dimension,
                     },
                     deadline_at=deadline_at,
-                    allowed_model_labels=self._config.allowed_embedding_model_labels,
+                    expected_model_id=self._config.embedding_model_id,
                 )
                 result = self._parse_embedding(response)
                 if loop.time() >= deadline_at:
@@ -231,7 +237,7 @@ class LiteLLMAdapter:
                         "dimensions": self._config.embedding_dimension,
                     },
                     deadline_at=deadline_at,
-                    allowed_model_labels=self._config.allowed_embedding_model_labels,
+                    expected_model_id=self._config.embedding_model_id,
                     maximum_request_bytes=_MAX_EMBEDDING_REQUEST_BYTES,
                 )
                 result = self._parse_embedding_batch(response, expected_count=len(texts))
@@ -346,7 +352,7 @@ class LiteLLMAdapter:
                         },
                     },
                     deadline_at=deadline_at,
-                    allowed_model_labels=self._config.allowed_answer_model_labels,
+                    expected_model_id=self._config.answer_model_id,
                 )
                 result = self._parse_answer(response, evidence)
                 if loop.time() >= deadline_at:
@@ -417,7 +423,7 @@ class LiteLLMAdapter:
         payload: dict[str, object],
         *,
         deadline_at: float,
-        allowed_model_labels: frozenset[str],
+        expected_model_id: str,
         maximum_request_bytes: int | None = None,
     ) -> _GatewayResponse:
         try:
@@ -474,6 +480,7 @@ class LiteLLMAdapter:
                         )
                         gateway_call_id = _first_header(response, ("x-litellm-call-id",))
                         gateway_model_id = _bounded_model_header(response)
+                        _validate_model_group_header(response, expected_model_id)
                         response_cost_header = response.headers.get("x-litellm-response-cost")
             except httpx.TransportError as error:
                 if attempt == self._config.max_retries:
@@ -491,8 +498,6 @@ class LiteLLMAdapter:
                 raise ModelUnavailable("LiteLLM response must be a JSON object")
             if loop.time() >= deadline_at:
                 raise TimeoutError
-            if gateway_model_id is not None:
-                self._validate_model_label(gateway_model_id, allowed_model_labels)
             return _GatewayResponse(
                 body=body,
                 provider_request_id=provider_request_id,
@@ -507,28 +512,22 @@ class LiteLLMAdapter:
             body = response.body
             _validate_embedding_top_level(body)
             model = _required_body_string(body, "model", maximum=256)
-            self._validate_model_label(model, self._config.allowed_embedding_model_labels)
+            if model != self._config.embedding_model_id:
+                raise ValueError("embedding body model does not match the requested route")
             data = body.get("data")
             if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
                 raise ValueError("embedding data must contain exactly one item")
-            raw_vector = data[0].get("embedding")
-            if not isinstance(raw_vector, list) or len(raw_vector) != self.embedding_dimension:
-                raise ValueError("embedding dimension does not match the fixed route")
-            if any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                for value in raw_vector
-            ):
-                raise ValueError("embedding values must be finite numbers")
+            index, vector = _embedding_row(data[0], dimension=self.embedding_dimension)
+            if index != 0:
+                raise ValueError("embedding row index does not match the fixed route")
             usage = _embedding_usage(body, response.response_cost_header)
             return Embedding(
-                vector=tuple(float(value) for value in raw_vector),
+                vector=vector,
                 model_id=self.embedding_model_id,
                 provider_request_id=response.provider_request_id,
                 gateway_call_id=response.gateway_call_id,
                 gateway_model_id=response.gateway_model_id,
-                provider_model_id=model,
+                provider_model_id=None,
                 completion_id=_optional_body_string(body, "id", maximum=256),
                 usage=usage,
             )
@@ -545,38 +544,24 @@ class LiteLLMAdapter:
             body = response.body
             _validate_embedding_top_level(body)
             model = _required_body_string(body, "model", maximum=256)
-            self._validate_model_label(model, self._config.allowed_embedding_model_labels)
+            if model != self._config.embedding_model_id:
+                raise ValueError("embedding body model does not match the requested route")
             data = body["data"]
             if not isinstance(data, list) or len(data) != expected_count:
                 raise ValueError("embedding batch count is not exact")
             ordered: list[Embedding | None] = [None] * expected_count
             usage = _embedding_usage(body, response.response_cost_header)
             for raw in data:
-                if not isinstance(raw, dict) or set(raw) != {"embedding", "index"}:
-                    raise ValueError("embedding row fields are widened")
-                index = raw["index"]
-                vector = raw["embedding"]
-                if (
-                    type(index) is not int
-                    or not 0 <= index < expected_count
-                    or ordered[index] is not None
-                    or not isinstance(vector, list)
-                    or len(vector) != self.embedding_dimension
-                    or any(
-                        isinstance(value, bool)
-                        or not isinstance(value, (int, float))
-                        or not math.isfinite(value)
-                        for value in vector
-                    )
-                ):
+                index, vector = _embedding_row(raw, dimension=self.embedding_dimension)
+                if not 0 <= index < expected_count or ordered[index] is not None:
                     raise ValueError("embedding row identity or vector is malformed")
                 ordered[index] = Embedding(
-                    vector=tuple(float(value) for value in vector),
+                    vector=vector,
                     model_id=self.embedding_model_id,
                     provider_request_id=response.provider_request_id,
                     gateway_call_id=response.gateway_call_id,
                     gateway_model_id=response.gateway_model_id,
-                    provider_model_id=model,
+                    provider_model_id=None,
                     completion_id=_optional_body_string(body, "id", maximum=256),
                     usage=usage,
                 )
@@ -594,7 +579,8 @@ class LiteLLMAdapter:
         try:
             body = response.body
             model = _required_body_string(body, "model", maximum=256)
-            self._validate_model_label(model, self._config.allowed_answer_model_labels)
+            if model != self._config.answer_model_id:
+                raise ValueError("answer body model does not match the requested route")
             choices = body.get("choices")
             if (
                 not isinstance(choices, list)
@@ -630,7 +616,7 @@ class LiteLLMAdapter:
                 provider_request_id=response.provider_request_id,
                 gateway_call_id=response.gateway_call_id,
                 gateway_model_id=response.gateway_model_id,
-                provider_model_id=model,
+                provider_model_id=None,
                 completion_id=_optional_body_string(body, "id", maximum=256),
             )
         except (
@@ -642,11 +628,6 @@ class LiteLLMAdapter:
             ValueError,
         ) as error:
             raise ModelUnavailable("LiteLLM returned a malformed grounded answer") from error
-
-    @staticmethod
-    def _validate_model_label(value: str, allowed: frozenset[str]) -> None:
-        if value not in allowed:
-            raise ModelUnavailable("LiteLLM returned model metadata outside the fixed route")
 
 
 async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
@@ -702,8 +683,22 @@ def _embedding_usage(
     raw_cost: str | None,
 ) -> EmbeddingUsage:
     usage = body.get("usage")
-    if not isinstance(usage, dict) or set(usage) != {"prompt_tokens", "total_tokens"}:
+    if not isinstance(usage, dict):
         raise ValueError("embedding usage must be an object")
+    fields = frozenset(usage)
+    if (
+        not _EMBEDDING_USAGE_REQUIRED_FIELDS <= fields
+        or fields - _EMBEDDING_USAGE_REQUIRED_FIELDS - _EMBEDDING_USAGE_OPTIONAL_FIELDS
+    ):
+        raise ValueError("embedding usage fields are not closed")
+    if "completion_tokens" in usage and (
+        type(usage["completion_tokens"]) is not int or usage["completion_tokens"] != 0
+    ):
+        raise ValueError("embedding completion usage is malformed")
+    if "prompt_tokens_details" in usage and usage["prompt_tokens_details"] is not None:
+        raise ValueError("embedding prompt token details are malformed")
+    if "completion_tokens_details" in usage and usage["completion_tokens_details"] is not None:
+        raise ValueError("embedding completion token details are malformed")
     prompt_tokens = usage.get("prompt_tokens")
     total_tokens = usage.get("total_tokens")
     if (
@@ -719,6 +714,35 @@ def _embedding_usage(
         total_tokens=total_tokens,
         response_cost_usd=cost,
     )
+
+
+def _embedding_row(raw: object, *, dimension: int) -> tuple[int, tuple[float, ...]]:
+    if not isinstance(raw, dict):
+        raise ValueError("embedding row must be an object")
+    fields = frozenset(raw)
+    if (
+        not _EMBEDDING_ROW_REQUIRED_FIELDS <= fields
+        or fields - _EMBEDDING_ROW_REQUIRED_FIELDS - _EMBEDDING_ROW_OPTIONAL_FIELDS
+    ):
+        raise ValueError("embedding row fields are not closed")
+    if "object" in raw and (type(raw["object"]) is not str or raw["object"] != "embedding"):
+        raise ValueError("embedding row object is malformed")
+    index = raw["index"]
+    vector = raw["embedding"]
+    if type(index) is not int or not isinstance(vector, list) or len(vector) != dimension:
+        raise ValueError("embedding row identity or vector is malformed")
+    converted: list[float] = []
+    for value in vector:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("embedding row identity or vector is malformed")
+        try:
+            converted_value = float(value)
+        except (OverflowError, ValueError) as error:
+            raise ValueError("embedding row identity or vector is malformed") from error
+        if not math.isfinite(converted_value):
+            raise ValueError("embedding row identity or vector is malformed")
+        converted.append(converted_value)
+    return index, tuple(converted)
 
 
 def _validate_embedding_top_level(body: dict[str, Any]) -> None:
@@ -761,6 +785,14 @@ def _bounded_model_header(response: httpx.Response) -> str | None:
     if not isinstance(value, str) or not value or len(value) > 256:
         raise ModelUnavailable("LiteLLM returned malformed fixed-route metadata")
     return value
+
+
+def _validate_model_group_header(response: httpx.Response, expected_model_id: str) -> None:
+    value = response.headers.get("x-litellm-model-group")
+    if value is None:
+        return
+    if not isinstance(value, str) or not value or len(value) > 256 or value != expected_model_id:
+        raise ModelUnavailable("LiteLLM returned malformed fixed-route metadata")
 
 
 def _strict_int(name: str, value: object, *, minimum: int, maximum: int) -> None:

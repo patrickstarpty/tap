@@ -688,7 +688,7 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
             json={
                 "object": "list",
                 "id": "embedding-worker-1",
-                "model": "provider-embed-v1",
+                "model": "athena-embedding",
                 "data": [{"embedding": [0.0, 1.0, 2.0], "index": 0}],
                 "usage": {"prompt_tokens": 4, "total_tokens": 4},
             },

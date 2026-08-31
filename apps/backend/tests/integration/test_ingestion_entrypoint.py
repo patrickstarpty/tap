@@ -111,7 +111,7 @@ class EmbeddingEntrypointWorker:
 def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
     body = {
         "object": "list",
-        "model": "provider-embed-v1",
+        "model": "athena-embedding",
         "data": [{"embedding": [0.25, 0.5], "index": 0}],
         "usage": {"prompt_tokens": 1, "total_tokens": 1},
     }
