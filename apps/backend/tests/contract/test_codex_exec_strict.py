@@ -1478,6 +1478,332 @@ async def test_codex_exec_cleanup_bounds_owned_tree_teardown(
 
 
 @pytest.mark.asyncio
+async def test_codex_exec_root_rmdir_swap_cannot_report_owned_inode_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "owned-request"
+    request_path.mkdir(mode=0o700)
+    request_stat = request_path.lstat()
+    request = codex_exec._OwnedDirectory(
+        path=request_path,
+        device=request_stat.st_dev,
+        inode=request_stat.st_ino,
+        owner=request_stat.st_uid,
+    )
+    moved_root = tmp_path / "moved-owned-request"
+    original_rmdir = codex_exec.os.rmdir
+    swapped = False
+
+    def swap_exact_root_before_rmdir(path: Any, *, dir_fd: int | None = None) -> None:
+        nonlocal swapped
+        try:
+            candidate = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            candidate = None
+        if (
+            not swapped
+            and candidate is not None
+            and (candidate.st_dev, candidate.st_ino) == (request.device, request.inode)
+        ):
+            if dir_fd is None:
+                os.rename(path, moved_root)
+                os.mkdir(path, mode=0o700)
+            else:
+                os.rename(path, moved_root, src_dir_fd=dir_fd)
+                os.mkdir(path, mode=0o700, dir_fd=dir_fd)
+            swapped = True
+        if dir_fd is None:
+            original_rmdir(path)
+        else:
+            original_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(codex_exec.os, "rmdir", swap_exact_root_before_rmdir)
+
+    try:
+        removed = await codex_exec._remove_owned_tree(request)
+        assert swapped
+        assert moved_root.stat().st_ino == request.inode
+        assert not request_path.exists()
+        assert removed is False
+    finally:
+        monkeypatch.setattr(codex_exec.os, "rmdir", original_rmdir)
+        shutil.rmtree(request_path, ignore_errors=True)
+        shutil.rmtree(moved_root, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_recursive_rmdir_swap_cannot_report_owned_tree_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "owned-request"
+    request_path.mkdir(mode=0o700)
+    child_path = request_path / "private-child"
+    child_path.mkdir(mode=0o700)
+    child_stat = child_path.lstat()
+    request_stat = request_path.lstat()
+    request = codex_exec._OwnedDirectory(
+        path=request_path,
+        device=request_stat.st_dev,
+        inode=request_stat.st_ino,
+        owner=request_stat.st_uid,
+    )
+    moved_child = tmp_path / "moved-private-child"
+    original_rmdir = codex_exec.os.rmdir
+    swapped = False
+
+    def swap_exact_child_before_rmdir(path: Any, *, dir_fd: int | None = None) -> None:
+        nonlocal swapped
+        try:
+            candidate = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            candidate = None
+        if (
+            not swapped
+            and candidate is not None
+            and (candidate.st_dev, candidate.st_ino) == (child_stat.st_dev, child_stat.st_ino)
+        ):
+            assert dir_fd is not None
+            os.rename(path, moved_child, src_dir_fd=dir_fd)
+            (moved_child / "private-sentinel").write_text(
+                "PRIVATE_RECURSIVE_CONTENT",
+                encoding="utf-8",
+            )
+            os.mkdir(path, mode=0o700, dir_fd=dir_fd)
+            swapped = True
+        if dir_fd is None:
+            original_rmdir(path)
+        else:
+            original_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(codex_exec.os, "rmdir", swap_exact_child_before_rmdir)
+
+    try:
+        removed = await codex_exec._remove_owned_tree(request)
+        assert swapped
+        assert moved_child.stat().st_ino == child_stat.st_ino
+        assert (moved_child / "private-sentinel").read_text(encoding="utf-8") == (
+            "PRIVATE_RECURSIVE_CONTENT"
+        )
+        assert removed is False
+        assert request_path.exists()
+    finally:
+        monkeypatch.setattr(codex_exec.os, "rmdir", original_rmdir)
+        shutil.rmtree(request_path, ignore_errors=True)
+        shutil.rmtree(moved_child, ignore_errors=True)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin vnode proof contract")
+@pytest.mark.asyncio
+async def test_codex_exec_darwin_rename_then_delete_event_is_still_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "owned-request"
+    request_path.mkdir(mode=0o700)
+    request_stat = request_path.lstat()
+    request = codex_exec._OwnedDirectory(
+        path=request_path,
+        device=request_stat.st_dev,
+        inode=request_stat.st_ino,
+        owner=request_stat.st_uid,
+    )
+    moved_root = tmp_path / "moved-owned-request"
+    original_rmdir = codex_exec.os.rmdir
+    swapped = False
+
+    def rename_delete_then_remove_replacement(
+        path: Any,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        nonlocal swapped
+        try:
+            candidate = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            candidate = None
+        if (
+            not swapped
+            and candidate is not None
+            and (candidate.st_dev, candidate.st_ino) == (request.device, request.inode)
+        ):
+            if dir_fd is None:
+                os.rename(path, moved_root)
+                os.mkdir(path, mode=0o700)
+            else:
+                os.rename(path, moved_root, src_dir_fd=dir_fd)
+                os.mkdir(path, mode=0o700, dir_fd=dir_fd)
+            original_rmdir(moved_root)
+            swapped = True
+        if dir_fd is None:
+            original_rmdir(path)
+        else:
+            original_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(codex_exec.os, "rmdir", rename_delete_then_remove_replacement)
+
+    try:
+        removed = await codex_exec._remove_owned_tree(request)
+        assert swapped
+        assert removed is False
+        assert not request_path.exists()
+        assert not moved_root.exists()
+    finally:
+        monkeypatch.setattr(codex_exec.os, "rmdir", original_rmdir)
+        shutil.rmtree(request_path, ignore_errors=True)
+        shutil.rmtree(moved_root, ignore_errors=True)
+
+
+@pytest.mark.parametrize("poll_flag_name", ("KQ_EV_ERROR", "KQ_EV_EOF"))
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin vnode proof contract")
+@pytest.mark.asyncio
+async def test_codex_exec_darwin_unlink_proof_rejects_error_or_eof_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    poll_flag_name: str,
+) -> None:
+    request_path = tmp_path / "owned-request"
+    request_path.mkdir(mode=0o700)
+    request_stat = request_path.lstat()
+    request = codex_exec._OwnedDirectory(
+        path=request_path,
+        device=request_stat.st_dev,
+        inode=request_stat.st_ino,
+        owner=request_stat.st_uid,
+    )
+    poll_flag = getattr(codex_exec.select, poll_flag_name)
+
+    class ErrorPollQueue:
+        def __init__(self) -> None:
+            self.descriptor: int | None = None
+            self.closed = False
+
+        def control(
+            self,
+            changes: list[Any] | None,
+            _maximum: int,
+            _timeout: int,
+        ) -> list[Any]:
+            if changes is not None:
+                self.descriptor = changes[0].ident
+                return []
+            assert self.descriptor is not None
+            return [
+                codex_exec.select.kevent(
+                    self.descriptor,
+                    filter=codex_exec.select.KQ_FILTER_VNODE,
+                    flags=poll_flag,
+                    fflags=codex_exec.select.KQ_NOTE_DELETE,
+                )
+            ]
+
+        def close(self) -> None:
+            self.closed = True
+
+    queue = ErrorPollQueue()
+    monkeypatch.setattr(codex_exec.select, "kqueue", lambda: queue)
+
+    assert await codex_exec._remove_owned_tree(request) is False
+    assert not request_path.exists()
+    assert queue.closed
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin vnode proof contract")
+@pytest.mark.asyncio
+async def test_codex_exec_unlink_proof_close_failure_retains_adapter_tracking(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_finish = adapter._finish_invocation
+    original_kqueue = codex_exec.select.kqueue
+    captured_invocations: list[Any] = []
+    created_queues: list[Any] = []
+
+    class CloseFailQueue:
+        def __init__(self) -> None:
+            self.queue = original_kqueue()
+            self.closed = False
+            created_queues.append(self)
+
+        def control(
+            self,
+            changes: list[Any] | None,
+            maximum: int,
+            timeout: int,
+        ) -> list[Any]:
+            return self.queue.control(changes, maximum, timeout)
+
+        def close(self) -> None:
+            self.queue.close()
+            self.closed = True
+            raise OSError("injected kqueue close failure")
+
+    async def capture_before_cleanup(invocation: Any, *, terminate: bool) -> bool:
+        captured_invocations.append(invocation)
+        return await original_finish(invocation, terminate=terminate)
+
+    monkeypatch.setattr(codex_exec.select, "kqueue", CloseFailQueue)
+    monkeypatch.setattr(adapter, "_finish_invocation", capture_before_cleanup)
+
+    try:
+        with pytest.raises(AnswerUnavailable):
+            await adapter.answer("question", (evidence(),), "quick-hybrid-v1")
+        invocation = captured_invocations[0]
+        assert created_queues
+        assert all(queue.closed for queue in created_queues)
+        assert invocation in adapter._invocations
+        assert invocation.request.path.exists()
+        close_results = await asyncio.gather(
+            adapter.aclose(),
+            adapter.aclose(),
+            return_exceptions=True,
+        )
+        assert all(isinstance(result, AnswerUnavailable) for result in close_results)
+        before = len(adapter._invocations)
+        with pytest.raises(AnswerUnavailable):
+            await adapter.answer("new", (evidence(),), "quick-hybrid-v1")
+        assert len(adapter._invocations) == before
+    finally:
+        for invocation in captured_invocations:
+            shutil.rmtree(invocation.request.path, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_platform_unlink_proof_removes_nested_tree_without_fd_leak(
+    tmp_path: Path,
+) -> None:
+    def open_descriptors() -> frozenset[int]:
+        values: set[int] = set()
+        for descriptor in range(512):
+            try:
+                os.fstat(descriptor)
+            except OSError:
+                continue
+            values.add(descriptor)
+        return frozenset(values)
+
+    before_descriptors = open_descriptors()
+    request_path = tmp_path / "owned-request"
+    request_path.mkdir(mode=0o700)
+    private_child = request_path / "private-child"
+    private_child.mkdir(mode=0o700)
+    (private_child / "private-content").write_text("PRIVATE_CONTENT", encoding="utf-8")
+    request_stat = request_path.lstat()
+    request = codex_exec._OwnedDirectory(
+        path=request_path,
+        device=request_stat.st_dev,
+        inode=request_stat.st_ino,
+        owner=request_stat.st_uid,
+    )
+
+    assert await codex_exec._remove_owned_tree(request) is True
+    assert not request_path.exists()
+    assert open_descriptors() == before_descriptors
+
+
+@pytest.mark.asyncio
 async def test_codex_exec_aclose_shares_pending_spawn_failure_and_blocks_new_calls(
     fake_codex: FakeCodex,
     monkeypatch: pytest.MonkeyPatch,
@@ -1634,6 +1960,89 @@ async def test_codex_exec_moved_owned_root_is_cleanup_failure_while_inode_surviv
         assert all(isinstance(result, AnswerUnavailable) for result in close_results)
         assert invocation in adapter._invocations
     finally:
+        shutil.rmtree(moved_root, ignore_errors=True)
+        for invocation in captured_invocations:
+            shutil.rmtree(invocation.request.path, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_last_check_rmdir_swap_fails_answer_and_shared_close(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_finish = adapter._finish_invocation
+    original_rmdir = codex_exec.os.rmdir
+    moved_root = fake_codex.root / "last-check-moved-request"
+    captured_invocations: list[Any] = []
+    swapped = False
+
+    async def capture_before_cleanup(invocation: Any, *, terminate: bool) -> bool:
+        captured_invocations.append(invocation)
+        return await original_finish(invocation, terminate=terminate)
+
+    def swap_exact_root_before_rmdir(path: Any, *, dir_fd: int | None = None) -> None:
+        nonlocal swapped
+        invocation = captured_invocations[0] if captured_invocations else None
+        try:
+            candidate = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            candidate = None
+        if (
+            not swapped
+            and invocation is not None
+            and candidate is not None
+            and (candidate.st_dev, candidate.st_ino)
+            == (invocation.request.device, invocation.request.inode)
+        ):
+            if dir_fd is None:
+                os.rename(path, moved_root)
+                os.mkdir(path, mode=0o700)
+            else:
+                os.rename(path, moved_root, src_dir_fd=dir_fd)
+                os.mkdir(path, mode=0o700, dir_fd=dir_fd)
+            (moved_root / "private-sentinel").write_text(
+                "PRIVATE_LAST_CHECK_CONTENT",
+                encoding="utf-8",
+            )
+            swapped = True
+        if dir_fd is None:
+            original_rmdir(path)
+        else:
+            original_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(adapter, "_finish_invocation", capture_before_cleanup)
+    monkeypatch.setattr(codex_exec.os, "rmdir", swap_exact_root_before_rmdir)
+
+    try:
+        answer_error: BaseException | None = None
+        try:
+            await adapter.answer("question", (evidence(),), "quick-hybrid-v1")
+        except BaseException as error:
+            answer_error = error
+        assert isinstance(answer_error, AnswerUnavailable)
+        assert swapped
+        invocation = captured_invocations[0]
+        assert moved_root.stat().st_ino == invocation.request.inode
+        assert (moved_root / "private-sentinel").read_text(encoding="utf-8") == (
+            "PRIVATE_LAST_CHECK_CONTENT"
+        )
+        assert invocation in adapter._invocations
+        close_results = await asyncio.wait_for(
+            asyncio.gather(
+                adapter.aclose(),
+                adapter.aclose(),
+                return_exceptions=True,
+            ),
+            timeout=2,
+        )
+        assert all(isinstance(result, AnswerUnavailable) for result in close_results)
+        before = len(adapter._invocations)
+        with pytest.raises(AnswerUnavailable):
+            await adapter.answer("new", (evidence(),), "quick-hybrid-v1")
+        assert len(adapter._invocations) == before
+    finally:
+        monkeypatch.setattr(codex_exec.os, "rmdir", original_rmdir)
         shutil.rmtree(moved_root, ignore_errors=True)
         for invocation in captured_invocations:
             shutil.rmtree(invocation.request.path, ignore_errors=True)

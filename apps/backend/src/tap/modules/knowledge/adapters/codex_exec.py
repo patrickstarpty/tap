@@ -7,8 +7,10 @@ import json
 import math
 import os
 import re
+import select
 import signal
 import stat
+import sys
 from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -227,6 +229,15 @@ class _SpawnSettlement:
 class _ProcessSettlement:
     settled: bool
     wait_task: asyncio.Task[int] | None
+
+
+@dataclass(slots=True)
+class _DirectoryUnlinkProof:
+    queue: Any | None
+    note_delete: int
+    note_rename: int
+    event_error: int
+    event_eof: int
 
 
 def build_exec_argv(
@@ -1132,42 +1143,41 @@ async def _remove_owned_tree(request: _OwnedDirectory) -> bool:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(request.path, flags)
-    except FileNotFoundError:
-        return False
+        parent_descriptor = os.open(request.path.parent, flags)
     except OSError:
         return False
     try:
-        current = os.fstat(descriptor)
-        if (
-            not stat.S_ISDIR(current.st_mode)
-            or current.st_dev != request.device
-            or current.st_ino != request.inode
-            or current.st_uid != request.owner
-            or request.owner != os.getuid()
-            or stat.S_IMODE(current.st_mode) != 0o700
-            or not await _empty_owned_directory(descriptor)
-        ):
+        try:
+            descriptor = os.open(request.path.name, flags, dir_fd=parent_descriptor)
+        except OSError:
             return False
+        try:
+            current = os.fstat(descriptor)
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or current.st_dev != request.device
+                or current.st_ino != request.inode
+                or current.st_uid != request.owner
+                or request.owner != os.getuid()
+                or stat.S_IMODE(current.st_mode) != 0o700
+                or not await _empty_owned_directory(descriptor)
+            ):
+                return False
+            proof = _begin_directory_unlink_proof(descriptor)
+            if proof is None:
+                return False
+            return _unlink_open_directory(
+                parent_descriptor,
+                request.path.name,
+                descriptor,
+                proof=proof,
+                device=request.device,
+                inode=request.inode,
+            )
+        finally:
+            os.close(descriptor)
     finally:
-        os.close(descriptor)
-    try:
-        current_path = request.path.lstat()
-    except OSError:
-        return False
-    if (current_path.st_dev, current_path.st_ino) != (request.device, request.inode):
-        return False
-    try:
-        request.path.rmdir()
-    except OSError:
-        return False
-    try:
-        request.path.lstat()
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    return False
+        os.close(parent_descriptor)
 
 
 async def _empty_owned_directory(descriptor: int) -> bool:
@@ -1204,17 +1214,170 @@ async def _empty_owned_directory(descriptor: int) -> bool:
                 return False
             if not await _empty_owned_directory(child):
                 return False
+            proof = _begin_directory_unlink_proof(child)
+            if proof is None:
+                return False
+            if not _unlink_open_directory(
+                descriptor,
+                name,
+                child,
+                proof=proof,
+                device=opened.st_dev,
+                inode=opened.st_ino,
+            ):
+                return False
         finally:
             os.close(child)
-        try:
-            os.rmdir(name, dir_fd=descriptor)
-        except OSError:
-            return False
     try:
         with os.scandir(descriptor) as remaining:
             return next(remaining, None) is None
     except OSError:
         return False
+
+
+def _unlink_open_directory(
+    parent_descriptor: int,
+    name: str,
+    descriptor: int,
+    *,
+    proof: _DirectoryUnlinkProof,
+    device: int,
+    inode: int,
+) -> bool:
+    removed = False
+    try:
+        try:
+            current_path = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except OSError:
+            return False
+        if (current_path.st_dev, current_path.st_ino) != (device, inode):
+            return False
+        try:
+            os.rmdir(name, dir_fd=parent_descriptor)
+        except OSError:
+            return False
+        removed = _directory_unlink_is_proven(
+            descriptor,
+            proof=proof,
+            device=device,
+            inode=inode,
+        )
+    finally:
+        proof_closed = _close_directory_unlink_proof(proof)
+    return removed and proof_closed
+
+
+def _begin_directory_unlink_proof(descriptor: int) -> _DirectoryUnlinkProof | None:
+    """Anchor unlink proof to one exact directory on trusted local Linux/Darwin filesystems.
+
+    Linux exposes the unlink transition as a zero link count. Darwin/APFS retains a
+    directory link count while its fd is open, so the proof instead uses a vnode event;
+    directories cannot gain another hard link on this supported local filesystem boundary.
+    """
+
+    if sys.platform == "linux":
+        return _DirectoryUnlinkProof(
+            queue=None,
+            note_delete=0,
+            note_rename=0,
+            event_error=0,
+            event_eof=0,
+        )
+    if sys.platform != "darwin":
+        return None
+    queue_factory = getattr(select, "kqueue", None)
+    event_factory = getattr(select, "kevent", None)
+    vnode_filter = getattr(select, "KQ_FILTER_VNODE", None)
+    event_add = getattr(select, "KQ_EV_ADD", None)
+    event_clear = getattr(select, "KQ_EV_CLEAR", None)
+    event_error = getattr(select, "KQ_EV_ERROR", None)
+    event_eof = getattr(select, "KQ_EV_EOF", None)
+    note_delete = getattr(select, "KQ_NOTE_DELETE", None)
+    note_rename = getattr(select, "KQ_NOTE_RENAME", None)
+    if (
+        not callable(queue_factory)
+        or not callable(event_factory)
+        or not isinstance(vnode_filter, int)
+        or not isinstance(event_add, int)
+        or not isinstance(event_clear, int)
+        or not isinstance(event_error, int)
+        or not isinstance(event_eof, int)
+        or not isinstance(note_delete, int)
+        or not isinstance(note_rename, int)
+    ):
+        return None
+    queue: Any | None = None
+    try:
+        queue = queue_factory()
+        event = event_factory(
+            descriptor,
+            filter=vnode_filter,
+            flags=event_add | event_clear,
+            fflags=note_delete | note_rename,
+        )
+        queue.control([event], 0, 0)
+    except Exception:
+        if queue is not None:
+            with suppress(Exception):
+                queue.close()
+        return None
+    return _DirectoryUnlinkProof(
+        queue=queue,
+        note_delete=note_delete,
+        note_rename=note_rename,
+        event_error=event_error,
+        event_eof=event_eof,
+    )
+
+
+def _directory_unlink_is_proven(
+    descriptor: int,
+    *,
+    proof: _DirectoryUnlinkProof,
+    device: int,
+    inode: int,
+) -> bool:
+    try:
+        observed = os.fstat(descriptor)
+    except OSError:
+        return False
+    if (observed.st_dev, observed.st_ino) != (device, inode):
+        return False
+    if sys.platform == "linux":
+        return observed.st_nlink == 0
+    if sys.platform != "darwin" or proof.queue is None:
+        return False
+    try:
+        events = proof.queue.control(None, 8, 0)
+    except Exception:
+        return False
+    saw_delete = False
+    for event in events:
+        if getattr(event, "ident", None) != descriptor:
+            return False
+        status = getattr(event, "flags", None)
+        if not isinstance(status, int):
+            return False
+        if status & (proof.event_error | proof.event_eof):
+            return False
+        flags = getattr(event, "fflags", None)
+        if not isinstance(flags, int):
+            return False
+        if flags & proof.note_rename:
+            return False
+        if flags & proof.note_delete:
+            saw_delete = True
+    return saw_delete
+
+
+def _close_directory_unlink_proof(proof: _DirectoryUnlinkProof) -> bool:
+    if proof.queue is None:
+        return True
+    try:
+        proof.queue.close()
+    except Exception:
+        return False
+    return True
 
 
 def _raise_public_unavailable(message: str) -> NoReturn:
