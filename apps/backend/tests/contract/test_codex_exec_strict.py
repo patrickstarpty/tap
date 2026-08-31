@@ -87,6 +87,10 @@ DISABLED = (
     "workspace_dependencies", "auth_elicitation", "tool_call_mcp_elicitation",
     "tool_suggest",
 )
+FEATURE_OVERRIDES = tuple(
+    value for feature in DISABLED for value in ("--disable", feature)
+)
+FEATURE_LIST_ARGS = ("--enable", "multi_agent", *FEATURE_OVERRIDES, "features", "list")
 FLAGS = (
     "--ephemeral", "--ignore-user-config", "--ignore-rules",
     "--skip-git-repo-check", "--sandbox", "--model", "--strict-config",
@@ -111,15 +115,26 @@ def append_invocation(args: list[str]) -> None:
 
 
 def feature_rows(selected_mode: str) -> str:
-    names = list(DISABLED) + ["multi_agent"]
+    names = [*DISABLED, "multi_agent"]
     if selected_mode == "missing_feature":
         names.remove("shell_tool")
+    if selected_mode == "missing_multi_agent":
+        names.remove("multi_agent")
     rows = []
-    for name in names:
+    stages = ("stable", "experimental", "deprecated", "removed", "under development")
+    for index, name in enumerate(names):
         enabled = "true" if name == "multi_agent" else "false"
+        if selected_mode == "disabled_feature_enabled" and name == "shell_tool":
+            enabled = "true"
         if selected_mode == "multi_agent_disabled" and name == "multi_agent":
             enabled = "false"
-        stage = "stable unexpected" if selected_mode == "malformed_feature_columns" else "stable"
+        stage = (
+            "future"
+            if selected_mode == "unknown_feature_stage"
+            else "stable unexpected"
+            if selected_mode == "malformed_feature_columns"
+            else stages[index % len(stages)]
+        )
         rows.append(f"{name:<44} {stage:<18} {enabled}")
     return "\n".join(rows) + "\n"
 
@@ -480,9 +495,19 @@ def main() -> int:
             for flag in FLAGS
             if not (selected_mode == "missing_flag" and flag == "--json")
         ]
-        print("usage: codex exec " + " ".join(flags))
+        rendered_flags = [
+            (
+                f"{flag},"
+                if flag in {"-c", "-C"}
+                else flag
+            )
+            for flag in flags
+        ]
+        if selected_mode == "malformed_help_short_flag":
+            rendered_flags[rendered_flags.index("-c,")] = "-c,,"
+        print("usage: codex exec " + " ".join(rendered_flags))
         return 0
-    if args == ["features", "list"]:
+    if tuple(args) == FEATURE_LIST_ARGS:
         sys.stdout.write(feature_rows(selected_mode))
         return 0
     if args == ["login", "status"]:
@@ -900,7 +925,6 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
                             "type": "array",
                             "minItems": 1,
                             "maxItems": 16,
-                            "uniqueItems": True,
                             "items": {"type": "string", "minLength": 1, "maxLength": 64},
                         },
                     },
@@ -969,6 +993,34 @@ async def test_codex_exec_accepts_only_exact_internal_delegation_tools(
     )
     assert "sensitive" not in repr(adapter.last_audit)
     assert "delegate-" not in repr(adapter.last_audit)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_last_audit_ignores_an_older_concurrent_completion(
+    fake_codex: FakeCodex,
+) -> None:
+    fake_codex.mode("block")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    first = asyncio.create_task(adapter.answer("first", (evidence(),), "quick-hybrid-v1"))
+    await fake_codex.wait_for("started-1")
+    second = asyncio.create_task(adapter.answer("second", (evidence(),), "quick-hybrid-v1"))
+    await asyncio.sleep(0)
+
+    assert adapter.last_audit is None
+    fake_codex.release(1)
+    await fake_codex.wait_for("started-2")
+    assert adapter.last_audit is None
+
+    fake_codex.release(2)
+    await asyncio.gather(first, second)
+    assert adapter.last_audit == CodexEventAudit(
+        thread_started=1,
+        turn_started=1,
+        turn_completed=1,
+        delegation_started=0,
+        delegation_completed=0,
+        external_tool_events=0,
+    )
 
 
 def input_with_total_size(size: int) -> Evidence:
@@ -2338,8 +2390,12 @@ async def test_codex_exec_nonzero_exit_kills_a_surviving_child_process_group(
     [
         "version_mismatch",
         "missing_flag",
+        "malformed_help_short_flag",
         "missing_feature",
+        "disabled_feature_enabled",
+        "missing_multi_agent",
         "multi_agent_disabled",
+        "unknown_feature_stage",
         "malformed_feature_columns",
         "login_failure",
     ],
@@ -2366,10 +2422,13 @@ async def test_codex_exec_readiness_is_non_generating_and_uses_minimal_probe_env
     await adapter.check_ready()
 
     invocations = fake_codex.invocations()
+    feature_overrides = [
+        value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature)
+    ]
     assert [item["argv"] for item in invocations] == [
         ["--version"],
         ["exec", "--help"],
-        ["features", "list"],
+        ["--enable", "multi_agent", *feature_overrides, "features", "list"],
         ["login", "status"],
     ]
     for index, invocation in enumerate(invocations):
@@ -2379,6 +2438,7 @@ async def test_codex_exec_readiness_is_non_generating_and_uses_minimal_probe_env
         if index < 3:
             assert environment["CODEX_HOME"] != str(fake_codex.codex_home)
             assert invocation["codexHomeEntries"] == []
+            assert not Path(environment["CODEX_HOME"]).exists()
         else:
             assert environment["CODEX_HOME"] == str(fake_codex.codex_home)
             assert invocation["codexHomeEntries"] == ["auth.json"]

@@ -96,6 +96,16 @@ _REQUIRED_EXEC_HELP_FLAGS = frozenset(
         "-C",
     }
 )
+_COMMA_TERMINATED_EXEC_HELP_FLAGS = frozenset({"-c,", "-C,"})
+_FEATURE_INVENTORY_STAGES = frozenset(
+    {
+        ("stable",),
+        ("experimental",),
+        ("deprecated",),
+        ("removed",),
+        ("under", "development"),
+    }
+)
 _PROBE_MAX_STDOUT_BYTES = 262_144
 _PROBE_MAX_STDERR_BYTES = 65_536
 _TERMINATION_GRACE_SECONDS = 0.15
@@ -247,9 +257,6 @@ def build_exec_argv(
     schema_path: Path,
     output_path: Path,
 ) -> tuple[str, ...]:
-    disabled = tuple(
-        value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature)
-    )
     return (
         str(config.target.executable),
         "exec",
@@ -262,9 +269,7 @@ def build_exec_argv(
         "--model",
         config.model_id,
         "--strict-config",
-        "--enable",
-        "multi_agent",
-        *disabled,
+        *_feature_override_args(),
         "-c",
         f'model_reasoning_effort="{config.reasoning_effort}"',
         "-c",
@@ -280,6 +285,13 @@ def build_exec_argv(
         str(cwd),
         "-",
     )
+
+
+def _feature_override_args() -> tuple[str, ...]:
+    disabled = tuple(
+        value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature)
+    )
+    return ("--enable", "multi_agent", *disabled)
 
 
 def grounded_answer_schema(config: CodexExecConfig) -> dict[str, object]:
@@ -311,7 +323,6 @@ def grounded_answer_schema(config: CodexExecConfig) -> dict[str, object]:
                             "type": "array",
                             "minItems": 1,
                             "maxItems": config.max_labels_per_claim,
-                            "uniqueItems": True,
                             "items": {
                                 "type": "string",
                                 "minLength": 1,
@@ -335,8 +346,13 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         self._invocations: set[_Invocation] = set()
         self._closed = False
         self._close_task: asyncio.Task[None] | None = None
-        self.last_audit: CodexEventAudit | None = None
+        self._last_audit: CodexEventAudit | None = None
+        self._audit_generation = 0
         self._state_lock = asyncio.Lock()
+
+    @property
+    def last_audit(self) -> CodexEventAudit | None:
+        return self._last_audit
 
     async def answer(
         self,
@@ -344,7 +360,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         evidence: tuple[Evidence, ...],
         profile_id: str,
     ) -> AnswerGeneration:
-        self.last_audit = None
+        audit_generation = self._begin_audit()
         encoded_input = b""
         failed = False
         result: AnswerGeneration | None = None
@@ -362,6 +378,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                         encoded_input,
                         evidence,
                         deadline_at=deadline_at,
+                        audit_generation=audit_generation,
                     )
         except asyncio.CancelledError:
             query = ""
@@ -390,13 +407,17 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             if _without_one_line_ending(version) != _EXPECTED_VERSION_OUTPUT:
                 raise _CodexContractFailure("Codex version output is unsupported")
             help_output = await self._inventory_probe(("exec", "--help"))
-            help_tokens = frozenset(_decode_utf8(help_output).split())
+            help_tokens = _parse_exec_help_flags(help_output)
             if not _REQUIRED_EXEC_HELP_FLAGS <= help_tokens:
                 raise _CodexContractFailure("Codex exec flags are incomplete")
-            feature_output = await self._inventory_probe(("features", "list"))
+            feature_output = await self._inventory_probe(
+                (*_feature_override_args(), "features", "list")
+            )
             features = _parse_feature_inventory(feature_output)
-            if not set(CODEX_DISABLED_FEATURES) <= features.keys():
+            if not frozenset(CODEX_DISABLED_FEATURES) <= features.keys():
                 raise _CodexContractFailure("Codex feature inventory is incomplete")
+            if any(features[feature] is not False for feature in CODEX_DISABLED_FEATURES):
+                raise _CodexContractFailure("Codex disabled feature matrix is not effective")
             if features.get("multi_agent") is not True:
                 raise _CodexContractFailure("Codex multi_agent capability is not enabled")
             await self._login_probe()
@@ -439,6 +460,15 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
     def _ensure_open(self) -> None:
         if self._closed:
             raise _CodexContractFailure("Codex adapter is closed")
+
+    def _begin_audit(self) -> int:
+        self._audit_generation += 1
+        self._last_audit = None
+        return self._audit_generation
+
+    def _publish_audit(self, generation: int, audit: CodexEventAudit) -> None:
+        if generation == self._audit_generation:
+            self._last_audit = audit
 
     def _validate_target(self) -> None:
         assert_target_unchanged(self.config.target)
@@ -514,6 +544,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         evidence: tuple[Evidence, ...],
         *,
         deadline_at: float,
+        audit_generation: int,
     ) -> AnswerGeneration:
         invocation = await self._create_invocation("tap-codex-answer-")
         request_dir = invocation.request.path
@@ -553,7 +584,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 process,
                 encoded_input,
             )
-            self.last_audit = audit
+            self._publish_audit(audit_generation, audit)
             if return_code != 0:
                 raise _CodexContractFailure("Codex process returned a nonzero status")
             self._ensure_before_deadline(deadline_at)
@@ -622,7 +653,10 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             raise _CodexContractFailure("Codex process result is malformed")
         return return_code, audit
 
-    async def _inventory_probe(self, arguments: tuple[str, ...]) -> bytes:
+    async def _inventory_probe(
+        self,
+        arguments: tuple[str, ...],
+    ) -> bytes:
         async with asyncio.timeout(self.config.timeout_seconds):
             return await self._probe_with_directory(
                 arguments,
@@ -1758,21 +1792,29 @@ def _without_one_line_ending(value: bytes) -> bytes:
     return value
 
 
+def _parse_exec_help_flags(value: bytes) -> frozenset[str]:
+    result: set[str] = set()
+    for token in _decode_utf8(value).split():
+        if token in _COMMA_TERMINATED_EXEC_HELP_FLAGS:
+            result.add(token[:-1])
+        else:
+            result.add(token)
+    return frozenset(result)
+
+
 def _parse_feature_inventory(value: bytes) -> dict[str, bool]:
     result: dict[str, bool] = {}
     text = _decode_utf8(value)
     for line in text.splitlines():
         tokens = line.split()
-        if len(tokens) != 3 or tokens[2] not in {"true", "false"}:
-            raise _CodexContractFailure("Codex feature inventory row is malformed")
-        name, stage, enabled = tokens
         if (
-            not name.isascii()
-            or _MODEL_ID.fullmatch(name) is None
-            or not stage.isascii()
-            or _MODEL_ID.fullmatch(stage) is None
-            or name in result
+            len(tokens) < 3
+            or tokens[-1] not in {"true", "false"}
+            or tuple(tokens[1:-1]) not in _FEATURE_INVENTORY_STAGES
         ):
+            raise _CodexContractFailure("Codex feature inventory row is malformed")
+        name, enabled = tokens[0], tokens[-1]
+        if not name.isascii() or _MODEL_ID.fullmatch(name) is None or name in result:
             raise _CodexContractFailure("Codex feature inventory is not closed")
         result[name] = enabled == "true"
     if not result:
