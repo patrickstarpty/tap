@@ -1071,10 +1071,11 @@ def _assemble_http_services(
         policy_verifier=DemoCurrentPolicyVerifier(repository),
         redactor=redactor,
     )
-    answers = AnswerService(
+    answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
         knowledge=knowledge,
     )
+    search_service = answer_service
     citations = CitationResolver(
         repository=cast(CitationRepository, repository),
         artifacts=cast(CitationArtifactStore, artifacts),
@@ -1082,9 +1083,9 @@ def _assemble_http_services(
     return HttpServices(
         knowledge=KnowledgeHttpService(
             documents=documents,
-            answers=answers,
+            answers=answer_service,
             citations=citations,
-            searches=answers,
+            searches=search_service,
         ),
         readiness=readiness,
     )
