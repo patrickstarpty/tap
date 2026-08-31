@@ -11,6 +11,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,6 +86,7 @@ _FIXED_ALIAS = "kb_doc_athena_demo_active"
 _FIXED_CORPUS = "athena-demo-v1"
 _FIXED_CHAT_ALIAS = "athena-chat"
 _FIXED_EMBEDDING_ALIAS = "athena-embedding"
+_FIXED_LITELLM_EMBEDDING_ROUTE = "dashscope/text-embedding-v4"
 _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
 _FIXED_SCHEMA_VERSION = "doc-schema-v1"
 _FIXED_TENANT = "local"
@@ -237,7 +239,11 @@ class AthenaSettings:
         )
         if backend == "litellm":
             litellm_model = _model_route(values, "LITELLM_MODEL")
-            litellm_embedding_model = _model_route(values, "LITELLM_EMBEDDING_MODEL")
+            litellm_embedding_model = _fixed_value(
+                values,
+                "LITELLM_ATHENA_EMBEDDING_MODEL",
+                _FIXED_LITELLM_EMBEDDING_ROUTE,
+            )
             allowed_answer_labels = _model_labels(_FIXED_CHAT_ALIAS, litellm_model)
             allowed_embedding_labels = _model_labels(
                 _FIXED_EMBEDDING_ALIAS,
@@ -245,7 +251,7 @@ class AthenaSettings:
             )
             if allowed_answer_labels & allowed_embedding_labels:
                 raise ValueError(
-                    "LITELLM_EMBEDDING_MODEL must not overlap LITELLM_MODEL response labels"
+                    "LITELLM_ATHENA_EMBEDDING_MODEL must not overlap LITELLM_MODEL response labels"
                 )
         else:
             litellm_model = _FIXED_CHAT_ALIAS
@@ -397,6 +403,10 @@ class _UnavailableCodexAnswers:
 
     async def check_ready(self) -> None:
         raise AnswerUnavailable(self._MESSAGE)
+
+
+class _CodexConfigurationUnavailable(RuntimeError):
+    """Expected local login-location failure without sensitive detail retention."""
 
 
 class AthenaFailureController(Protocol):
@@ -787,12 +797,6 @@ def _create_litellm_adapter(settings: AthenaSettings) -> LiteLLMAdapter:
     )
 
 
-def _create_model(settings: AthenaSettings) -> LiteLLMAdapter:
-    """Retain the legacy real-model smoke seam without using it in runtime assembly."""
-
-    return _create_litellm_adapter(settings)
-
-
 def _create_embeddings(settings: AthenaSettings) -> AthenaEmbeddingPort:
     if settings.e2e_mode:
         from tap.testing.deterministic_model import DeterministicAthenaModel
@@ -806,9 +810,7 @@ def _codex_config(
     settings: AthenaSettings,
     target: NativeCodexTarget,
 ) -> CodexExecConfig:
-    configured_home = os.environ.get("CODEX_HOME")
-    candidate = Path(configured_home) if configured_home is not None else Path.home() / ".codex"
-    codex_home = candidate.resolve(strict=True)
+    codex_home = _resolve_codex_home()
     return CodexExecConfig(
         target=target,
         codex_home=codex_home,
@@ -823,6 +825,19 @@ def _codex_config(
     )
 
 
+def _resolve_codex_home() -> Path:
+    try:
+        configured_home = os.environ.get("CODEX_HOME")
+        candidate = Path(configured_home) if configured_home is not None else Path.home() / ".codex"
+        codex_home = candidate.resolve(strict=True)
+        codex_home_stat = codex_home.lstat()
+    except (OSError, RuntimeError, ValueError):
+        raise _CodexConfigurationUnavailable("Codex login location is unavailable") from None
+    if not stat.S_ISDIR(codex_home_stat.st_mode):
+        raise _CodexConfigurationUnavailable("Codex login location is unavailable")
+    return codex_home
+
+
 def _create_answer_backend(
     settings: AthenaSettings,
     *,
@@ -835,10 +850,10 @@ def _create_answer_backend(
             owner=None,
         )
 
+    command = shutil.which("codex")
+    if command is None:
+        return _unavailable_codex_backend()
     try:
-        command = shutil.which("codex")
-        if command is None:
-            return _unavailable_codex_backend()
         target = resolve_native_codex_target(
             Path(command),
             system=platform.system(),
@@ -846,9 +861,13 @@ def _create_answer_backend(
             expected_version="0.149.0",
             uid=os.getuid(),
         )
-        adapter = CodexExecAnswerAdapter(_codex_config(settings, target))
-    except (AttributeError, CodexTargetRejected, OSError, RuntimeError, ValueError):
+    except CodexTargetRejected:
         return _unavailable_codex_backend()
+    try:
+        config = _codex_config(settings, target)
+    except _CodexConfigurationUnavailable:
+        return _unavailable_codex_backend()
+    adapter = CodexExecAnswerAdapter(config)
 
     return AthenaAnswerBackend(
         generator=adapter,

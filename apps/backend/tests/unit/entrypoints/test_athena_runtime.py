@@ -98,6 +98,7 @@ def valid_settings() -> dict[str, str]:
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "LITELLM_MASTER_KEY": "model-secret",
         "LITELLM_MODEL": "openai/gpt-4o-mini",
+        "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "LITELLM_EMBEDDING_MODEL": "openai/text-embedding-3-small",
         "MILVUS_URI": "http://127.0.0.1:29530",
         "MILVUS_DATABASE": "default",
@@ -374,12 +375,58 @@ def test_real_model_response_labels_are_derived_from_two_exact_routes() -> None:
     assert settings.allowed_embedding_model_labels == frozenset(
         {
             "athena-embedding",
-            "openai/text-embedding-3-small",
-            "text-embedding-3-small",
+            "dashscope/text-embedding-v4",
+            "text-embedding-v4",
         }
     )
     assert "openai/gpt-4o-mini" not in repr(settings)
-    assert "openai/text-embedding-3-small" not in repr(settings)
+    assert "dashscope/text-embedding-v4" not in repr(settings)
+
+
+@pytest.mark.parametrize("answer_backend", ["litellm", "codex"])
+def test_athena_embedding_route_ignores_every_direct_research_setting(
+    answer_backend: str,
+) -> None:
+    values = valid_settings() | {
+        "ATHENA_ANSWER_BACKEND": answer_backend,
+        "LITELLM_EMBEDDING_MODEL": "direct-research-poison",
+        "LITELLM_EMBEDDING_API_KEY": "direct-research-key-poison",
+        "LITELLM_EMBEDDING_API_BASE": "https://direct-research-poison.invalid/v1",
+    }
+
+    settings = _runtime().AthenaSettings.from_mapping(values)
+
+    assert settings.litellm_embedding_model == "dashscope/text-embedding-v4"
+    assert settings.allowed_embedding_model_labels == frozenset(
+        {
+            "athena-embedding",
+            "dashscope/text-embedding-v4",
+            "text-embedding-v4",
+        }
+    )
+    rendered = repr(settings)
+    assert "direct-research" not in rendered
+
+
+def test_athena_embedding_route_does_not_require_direct_research_settings() -> None:
+    values = valid_settings()
+    for name in (
+        "LITELLM_EMBEDDING_MODEL",
+        "LITELLM_EMBEDDING_API_KEY",
+        "LITELLM_EMBEDDING_API_BASE",
+    ):
+        values.pop(name, None)
+
+    settings = _runtime().AthenaSettings.from_mapping(values)
+
+    assert settings.litellm_embedding_model == "dashscope/text-embedding-v4"
+
+
+def test_athena_embedding_gateway_route_rejects_drift() -> None:
+    with pytest.raises(ValueError, match="LITELLM_ATHENA_EMBEDDING_MODEL"):
+        _runtime().AthenaSettings.from_mapping(
+            valid_settings() | {"LITELLM_ATHENA_EMBEDDING_MODEL": "openai/text-embedding-3-small"}
+        )
 
 
 @pytest.mark.parametrize(
@@ -388,8 +435,8 @@ def test_real_model_response_labels_are_derived_from_two_exact_routes() -> None:
         ("LITELLM_MODEL", ""),
         ("LITELLM_MODEL", "openai/*"),
         ("LITELLM_MODEL", "openai/gpt-4o-mini,other"),
-        ("LITELLM_EMBEDDING_MODEL", "openai/gpt 4o"),
-        ("LITELLM_EMBEDDING_MODEL", "openai/gpt-4o-mini"),
+        ("LITELLM_ATHENA_EMBEDDING_MODEL", "openai/gpt 4o"),
+        ("LITELLM_ATHENA_EMBEDDING_MODEL", "openai/gpt-4o-mini"),
     ],
 )
 def test_real_model_routes_reject_widening_and_cross_route_overlap(name: str, value: str) -> None:
@@ -1099,6 +1146,10 @@ def test_litellm_answer_backend_reuses_the_embedding_adapter_without_a_second_ow
     assert backend.owner is None
 
 
+def test_runtime_has_no_legacy_combined_model_factory() -> None:
+    assert not hasattr(_runtime(), "_create_model")
+
+
 def test_codex_answer_backend_uses_only_the_resolved_login_location(
     monkeypatch,
     tmp_path: Path,
@@ -1218,10 +1269,19 @@ async def test_codex_answer_backend_starts_unavailable_without_exposing_a_login_
     assert "/" not in str(readiness.value)
 
 
-@pytest.mark.parametrize("failure", ["missing", "resolve-rejected", "config-rejected"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing",
+        "resolve-rejected",
+        "missing-codex-home",
+        "nondirectory-codex-home",
+    ],
+)
 @pytest.mark.asyncio
 async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
     monkeypatch,
+    tmp_path: Path,
     failure: str,
 ) -> None:  # type: ignore[no-untyped-def]
     from tap.modules.knowledge.adapters.codex_target import CodexTargetRejected
@@ -1282,11 +1342,10 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
         monkeypatch.setattr(
             module, "resolve_native_codex_target", lambda *_args, **_kwargs: object()
         )
-
-        def reject_config(*_args: object, **_kwargs: object) -> None:
-            raise RuntimeError(f"unusable login location {private_path}")
-
-        monkeypatch.setattr(module, "_codex_config", reject_config)
+        codex_home = tmp_path / "invalid-private-login"
+        if failure == "nondirectory-codex-home":
+            codex_home.write_text("not a login directory", encoding="utf-8")
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: Resource("blob"))
@@ -1326,6 +1385,78 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
         await runtime.aclose()
 
     assert events == ["search", "embeddings", "redis", "blob", "engine"]
+
+
+@pytest.mark.parametrize("stage", ["resolver", "config", "adapter"])
+@pytest.mark.parametrize(
+    "error_type",
+    [AttributeError, OSError, RuntimeError, ValueError],
+)
+def test_codex_factory_propagates_unrelated_programmer_failures(
+    monkeypatch,
+    stage: str,
+    error_type: type[Exception],
+) -> None:  # type: ignore[no-untyped-def]
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    primary = error_type(f"private-{stage}-bug")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/private/bin/codex")
+
+    if stage == "resolver":
+
+        def fail_resolver(*_args: object, **_kwargs: object) -> None:
+            raise primary
+
+        monkeypatch.setattr(module, "resolve_native_codex_target", fail_resolver)
+    else:
+        monkeypatch.setattr(
+            module,
+            "resolve_native_codex_target",
+            lambda *_args, **_kwargs: object(),
+        )
+
+    if stage == "config":
+
+        def fail_config(*_args: object, **_kwargs: object) -> None:
+            raise primary
+
+        monkeypatch.setattr(module, "_codex_config", fail_config)
+    elif stage == "adapter":
+        monkeypatch.setattr(module, "_codex_config", lambda *_args, **_kwargs: object())
+
+        def fail_adapter(*_args: object, **_kwargs: object) -> None:
+            raise primary
+
+        monkeypatch.setattr(module, "CodexExecAnswerAdapter", fail_adapter)
+
+    with pytest.raises(error_type) as raised:
+        module._create_answer_backend(settings, embeddings=object())
+
+    assert raised.value is primary
+
+
+@pytest.mark.parametrize("primary", [asyncio.CancelledError(), SystemExit(17)])
+def test_codex_factory_never_catches_process_control_failures(
+    monkeypatch,
+    primary: BaseException,
+) -> None:  # type: ignore[no-untyped-def]
+    module = _runtime()
+    settings = module.AthenaSettings.from_mapping(
+        valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: "/private/bin/codex")
+
+    def fail_resolver(*_args: object, **_kwargs: object) -> None:
+        raise primary
+
+    monkeypatch.setattr(module, "resolve_native_codex_target", fail_resolver)
+
+    with pytest.raises(type(primary)) as raised:
+        module._create_answer_backend(settings, embeddings=object())
+
+    assert raised.value is primary
 
 
 @pytest.mark.asyncio

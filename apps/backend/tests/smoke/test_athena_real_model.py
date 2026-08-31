@@ -20,7 +20,7 @@ from tap.contracts.http import (
 )
 from tap.entrypoints.athena_runtime import (
     AthenaSettings,
-    _create_model,
+    _create_embeddings,
     create_api_runtime,
 )
 from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
@@ -62,7 +62,7 @@ async def _embed_through_production_route() -> AthenaSettings:
     ):
         raise AssertionError("the fixed Athena model route is not configured")
 
-    model = _create_model(settings)
+    model = _create_embeddings(settings)
     if not isinstance(model, LiteLLMAdapter):
         raise AssertionError("the production model adapter is not LiteLLM")
     try:

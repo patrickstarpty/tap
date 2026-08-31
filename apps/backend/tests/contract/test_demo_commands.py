@@ -19,6 +19,41 @@ from pymilvus.decorators import _log_rpc_error
 
 ROOT = Path(__file__).resolve().parents[4]
 E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173)
+_RECORDED_ENVIRONMENT_NAMES = (
+    "ATHENA_API_HOST",
+    "AZURE_STORAGE_CONNECTION_STRING",
+    "CODEX_API_BASE",
+    "CODEX_API_KEY",
+    "CODEX_HOME",
+    "DASHSCOPE_API_BASE",
+    "DASHSCOPE_API_KEY",
+    "DASHSCOPE_BASE_URL",
+    "LITELLM_ATHENA_EMBEDDING_MODEL",
+    "LITELLM_EMBEDDING_API_BASE",
+    "LITELLM_EMBEDDING_API_KEY",
+    "LITELLM_EMBEDDING_MODEL",
+    "LITELLM_MASTER_KEY",
+    "MILVUS_READER_PASSWORD",
+    "MILVUS_WRITER_PASSWORD",
+    "OPENAI_API_BASE",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "TAP_DATABASE_URL",
+    "TAP_REDIS_URL",
+)
+
+
+def _write_environment_name_probe(directory: Path) -> None:
+    probe = directory / "athena-env-names"
+    pattern = "|".join(_RECORDED_ENVIRONMENT_NAMES)
+    probe.write_text(
+        f"""#!/bin/sh
+set -eu
+env | sed 's/=.*//' | grep -E '^({pattern})$' | LC_ALL=C sort | tr '\n' ','
+""",
+        encoding="utf-8",
+    )
+    probe.chmod(probe.stat().st_mode | stat.S_IXUSR)
 
 
 def _write_behavioral_socket_stub(root: Path) -> Path:
@@ -156,6 +191,7 @@ def _supervisor_fixture(
     scripts.mkdir(parents=True)
     vite_dir.mkdir(parents=True)
     fake_bin.mkdir()
+    _write_environment_name_probe(fake_bin)
     (root / "apps/web/index.html").write_text("<main>Athena</main>\n", encoding="utf-8")
     (root / "apps/web/vite.config.ts").write_text("export default {};\n", encoding="utf-8")
     supervisor = scripts / "run-athena-dev.sh"
@@ -172,6 +208,8 @@ def _supervisor_fixture(
 set -eu
 role="$1"
 printf 'start %s %s\n' "$role" "$$" >> "$ATHENA_CHILD_LOG"
+environment_names="$(athena-env-names)"
+printf 'env %s %s\n' "$role" "$environment_names" >> "$ATHENA_CHILD_LOG"
 trap '
   sleep "$ATHENA_STUB_TERM_DELAY"
   printf "term %s %s\\n" "$role" "$$" >> "$ATHENA_CHILD_LOG"
@@ -192,10 +230,14 @@ while :; do sleep 0.1; done
 set -eu
 case " $* " in
   *" python -c "*)
+    environment_names="$(athena-env-names)"
+    printf 'env validation %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
     [ "$TAP_ATHENA_COMPOSE_PROJECT" = "$ATHENA_EXPECTED_PROJECT" ] || exit 89
     exit 0
     ;;
   *" python - "*)
+    environment_names="$(athena-env-names)"
+    printf 'env readiness %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
     last=""
     for item in "$@"; do last="$item"; done
     grep -q '"status"[[:space:]]*:[[:space:]]*"ready"' "$last"
@@ -214,6 +256,8 @@ exit 99
     curl.write_text(
         """#!/bin/sh
 set -eu
+environment_names="$(athena-env-names)"
+printf 'env curl %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
 printf 'curl-argv %s\n' "$*" >> "$ATHENA_CHILD_LOG"
 printf '{"status":"%s"}\n' "$ATHENA_STUB_READY_STATUS"
 """,
@@ -234,6 +278,8 @@ set -eu
 [ "$7" = "$ATHENA_WEB_PORT" ] || exit 101
 [ "$8" = --strictPort ] || exit 102
 printf 'vite-root %s config %s\n' "$1" "$3" >> "$ATHENA_CHILD_LOG"
+environment_names="$(athena-env-names)"
+printf 'env web %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
 exec athena-child web
 """,
         encoding="utf-8",
@@ -302,6 +348,7 @@ def _e2e_runner_fixture(
     temporary = root / "tmp"
     scripts.mkdir(parents=True)
     stubs.mkdir()
+    _write_environment_name_probe(stubs)
     temporary.mkdir()
     socket_log = _write_behavioral_socket_stub(root)
     runner = scripts / "run-athena-e2e.sh"
@@ -335,6 +382,18 @@ MILVUS_URI=http://127.0.0.1:19530
 DOCKER_HOST=tcp://provider-secret.invalid:2375
 AZURE_STORAGE_CONNECTION_STRING=provider-secret
 OPENAI_API_KEY=provider-secret
+DASHSCOPE_API_KEY=provider-secret
+LITELLM_ATHENA_EMBEDDING_MODEL=provider-secret-route
+LITELLM_EMBEDDING_MODEL=provider-secret-model
+LITELLM_EMBEDDING_API_KEY=provider-secret
+LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/embedding
+CODEX_HOME=/provider-secret/codex-home
+CODEX_API_KEY=provider-secret
+OPENAI_BASE_URL=https://provider-secret.invalid/openai
+OPENAI_API_BASE=https://provider-secret.invalid/openai-api
+DASHSCOPE_BASE_URL=https://provider-secret.invalid/dashscope
+DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
+CODEX_API_BASE=https://provider-secret.invalid/codex-api
 LITELLM_MASTER_KEY=provider-secret
 MILVUS_READER_PASSWORD=provider-secret
 MILVUS_WRITER_PASSWORD=provider-secret
@@ -390,7 +449,19 @@ esac
         """#!/bin/sh
 set -eu
 case " $* " in
-  *" python -c "*) printf 'uv|settings\n' >> "$ATHENA_E2E_STUB_LOG" ;;
+  *" python -c "*)
+    printf 'uv|settings\n' >> "$ATHENA_E2E_STUB_LOG"
+    environment_names="$(athena-env-names)"
+    printf 'env|settings|%s\n' "$environment_names" >> "$ATHENA_E2E_STUB_LOG"
+    [ "$TAP_DEMO_MODE:$ATHENA_MODEL_BACKEND:$ATHENA_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    [ "$LITELLM_ATHENA_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
+    [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
+    [ "$OPENAI_API_KEY" = tap-e2e-unused ] || exit 74
+    [ "$DASHSCOPE_API_KEY" = tap-e2e-unused ] || exit 75
+    [ "$LITELLM_EMBEDDING_API_KEY" = tap-e2e-unused ] || exit 76
+    [ "$LITELLM_EMBEDDING_API_BASE" = http://127.0.0.1:14000 ] || exit 77
+    [ -z "${CODEX_HOME+x}${CODEX_API_KEY+x}" ] || exit 78
+    ;;
   *" python - "*)
     printf 'uv|probe\n' >> "$ATHENA_E2E_STUB_LOG"
     shift 4
@@ -1744,13 +1815,59 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
         transport=httpx.MockTransport(handler),
     )
     monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda _settings: client)
-    provider = {"DASHSCOPE_API_KEY": "configured"}
+    provider = {
+        "DASHSCOPE_API_KEY": "configured",
+        "OPENAI_API_KEY": "configured",
+    }
 
     assert asyncio.run(safe_check._check_models(settings, {})) is False
     assert requests == []
     assert asyncio.run(safe_check._check_models(settings, provider)) is True
     assert requests == [("GET", "/v1/models")]
     assert client.is_closed
+
+
+@pytest.mark.parametrize(
+    ("answer_backend", "provider"),
+    [
+        (
+            "litellm",
+            {"DASHSCOPE_API_KEY": "configured", "OPENAI_API_KEY": " \t"},
+        ),
+        (
+            "litellm",
+            {"DASHSCOPE_API_KEY": "\n", "OPENAI_API_KEY": "configured"},
+        ),
+        (
+            "codex",
+            {"DASHSCOPE_API_KEY": " ", "OPENAI_API_KEY": "configured"},
+        ),
+    ],
+)
+def test_safe_models_provider_gate_fails_before_construction_or_network(
+    monkeypatch,
+    answer_backend: str,
+    provider: dict[str, str],
+) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.athena_runtime import AthenaSettings
+
+    safe_check = _load_safe_check_module()
+    settings = AthenaSettings.from_mapping(
+        {
+            "ATHENA_ANSWER_BACKEND": answer_backend,
+            "LITELLM_MODEL": "openai/test-chat",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_EMBEDDING_MODEL": "direct-research-only",
+        }
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("provider construction occurred before credential gate")
+
+    monkeypatch.setattr(safe_check, "_create_embeddings", forbidden)
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", forbidden)
+
+    assert asyncio.run(safe_check._check_models(settings, provider)) is False
 
 
 @pytest.mark.parametrize(
@@ -2381,6 +2498,117 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     assert list((supervisor.parents[1] / "tmp").glob("tap-athena-ready.*")) == []
 
 
+@pytest.mark.parametrize("source", ["caller", "dotenv"])
+def test_dev_supervisor_scrubs_provider_environment_at_every_child_boundary(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    """Passing a provider credential through any non-API boundary reintroduces ambient auth."""
+
+    supervisor, environment, log = _supervisor_fixture(tmp_path)
+    environment.update(
+        {
+            "CODEX_HOME": "/caller/codex-home",
+            "OPENAI_API_KEY": "caller-openai-key",
+            "DASHSCOPE_API_KEY": "caller-dashscope-key",
+            "CODEX_API_KEY": "caller-codex-key",
+            "LITELLM_EMBEDDING_API_KEY": "caller-embedding-key",
+            "LITELLM_EMBEDDING_API_BASE": "https://caller.invalid/embedding",
+            "OPENAI_BASE_URL": "https://caller.invalid/openai",
+            "OPENAI_API_BASE": "https://caller.invalid/openai-api",
+            "DASHSCOPE_BASE_URL": "https://caller.invalid/dashscope",
+            "DASHSCOPE_API_BASE": "https://caller.invalid/dashscope-api",
+            "CODEX_API_BASE": "https://caller.invalid/codex-api",
+        }
+    )
+    if source == "dotenv":
+        environment["ATHENA_SUPERVISOR_ENV"] = ""
+        (supervisor.parents[1] / ".env").write_text(
+            """OPENAI_API_KEY=provider-secret
+DASHSCOPE_API_KEY=provider-secret
+CODEX_HOME=/provider-secret/codex-home
+CODEX_API_KEY=provider-secret
+LITELLM_EMBEDDING_API_KEY=provider-secret
+LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/embedding
+OPENAI_BASE_URL=https://provider-secret.invalid/openai
+OPENAI_API_BASE=https://provider-secret.invalid/openai-api
+DASHSCOPE_BASE_URL=https://provider-secret.invalid/dashscope
+DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
+CODEX_API_BASE=https://provider-secret.invalid/codex-api
+""",
+            encoding="utf-8",
+        )
+    process = subprocess.Popen(
+        ["/bin/bash", str(supervisor)],
+        cwd=supervisor.parents[1],
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    expected_roles = {"api", "relay", "worker", "web", "validation", "readiness", "curl"}
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if log.exists():
+            recorded_roles = {
+                line.split()[1]
+                for line in log.read_text(encoding="utf-8").splitlines()
+                if line.startswith("env ")
+            }
+            if expected_roles <= recorded_roles:
+                break
+        time.sleep(0.05)
+    else:
+        process.kill()
+        raise AssertionError("supervisor did not reach every environment boundary")
+
+    process.terminate()
+    stdout, stderr = process.communicate(timeout=8)
+
+    assert process.returncode == 143, stderr
+    environment_names = {
+        line.split(maxsplit=2)[1]: set(filter(None, line.split(maxsplit=2)[2].split(",")))
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.startswith("env ")
+    }
+    forbidden_provider_names = {
+        "OPENAI_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "CODEX_API_KEY",
+        "LITELLM_EMBEDDING_API_KEY",
+        "LITELLM_EMBEDDING_API_BASE",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_BASE",
+        "DASHSCOPE_BASE_URL",
+        "DASHSCOPE_API_BASE",
+        "CODEX_API_BASE",
+    }
+    assert "CODEX_HOME" in environment_names["api"]
+    for role, names in environment_names.items():
+        assert not forbidden_provider_names & names
+        if role != "api":
+            assert "CODEX_HOME" not in names
+    assert {
+        "TAP_DATABASE_URL",
+        "TAP_REDIS_URL",
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "LITELLM_MASTER_KEY",
+        "MILVUS_READER_PASSWORD",
+    } <= environment_names["api"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["relay"]
+    assert {
+        "TAP_DATABASE_URL",
+        "TAP_REDIS_URL",
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "LITELLM_MASTER_KEY",
+        "MILVUS_WRITER_PASSWORD",
+    } <= environment_names["worker"]
+    output = stdout + stderr + log.read_text(encoding="utf-8")
+    assert "caller-" not in output
+    assert "provider-secret" not in output
+    _assert_processes_are_gone(_started_child_pids(log))
+
+
 def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     tmp_path: Path,
 ) -> None:
@@ -2501,8 +2729,9 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
         f"127.0.0.1:{port}" for port in E2E_FIXED_PORTS
     ]
     calls = log.read_text(encoding="utf-8").splitlines()
-    assert calls[:4] == ["uv|settings", "uv|probe", "chromium", "context|show"]
-    assert calls[4] == "context|inspect"
+    behavior_calls = [line for line in calls if not line.startswith("env|")]
+    assert behavior_calls[:4] == ["uv|settings", "uv|probe", "chromium", "context|show"]
+    assert behavior_calls[4] == "context|inspect"
     compose_calls = [line for line in calls if line.startswith("docker|")]
     assert len(compose_calls) == 5
     assert all(
@@ -2560,6 +2789,74 @@ def test_e2e_runner_rejects_codex_after_loading_the_final_environment(
     assert completed.stdout == ""
     assert completed.stderr == "Athena E2E does not allow the Codex answer backend.\n"
     assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
+def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoints(
+    tmp_path: Path,
+) -> None:
+    """A preflight must validate only the fixed E2E configuration, never ambient providers."""
+
+    runner, environment, log = _e2e_runner_fixture(tmp_path)
+    environment.update(
+        {
+            "OPENAI_API_KEY": "caller-openai-key",
+            "DASHSCOPE_API_KEY": "caller-dashscope-key",
+            "CODEX_HOME": "/caller/codex-home",
+            "CODEX_API_KEY": "caller-codex-key",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "caller-secret-route",
+            "LITELLM_EMBEDDING_MODEL": "caller-secret-model",
+            "LITELLM_EMBEDDING_API_KEY": "caller-embedding-key",
+            "LITELLM_EMBEDDING_API_BASE": "https://caller.invalid/embedding",
+            "OPENAI_BASE_URL": "https://caller.invalid/openai",
+            "OPENAI_API_BASE": "https://caller.invalid/openai-api",
+            "DASHSCOPE_BASE_URL": "https://caller.invalid/dashscope",
+            "DASHSCOPE_API_BASE": "https://caller.invalid/dashscope-api",
+            "CODEX_API_BASE": "https://caller.invalid/codex-api",
+        }
+    )
+
+    completed = subprocess.run(
+        ["/bin/bash", str(runner), "--preflight-only"],
+        cwd=runner.parents[1],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    recorded = [
+        line
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.startswith("env|settings|")
+    ]
+    assert len(recorded) == 1
+    environment_names = set(filter(None, recorded[0].split("|", maxsplit=2)[2].split(",")))
+    assert {
+        "OPENAI_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "LITELLM_ATHENA_EMBEDDING_MODEL",
+        "LITELLM_EMBEDDING_MODEL",
+        "LITELLM_EMBEDDING_API_KEY",
+        "LITELLM_EMBEDDING_API_BASE",
+    } <= environment_names
+    assert (
+        not {
+            "CODEX_HOME",
+            "CODEX_API_KEY",
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
+            "DASHSCOPE_BASE_URL",
+            "DASHSCOPE_API_BASE",
+            "CODEX_API_BASE",
+        }
+        & environment_names
+    )
+    assert not any(
+        line.startswith("docker|") for line in log.read_text(encoding="utf-8").splitlines()
+    )
+    assert "caller-" not in completed.stdout + completed.stderr + log.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

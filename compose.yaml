@@ -84,7 +84,7 @@ services:
       start_period: 10s
 
   litellm:
-    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-v1.76.1-stable}
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:v1.87.0}
     restart: unless-stopped
     command:
       - --config

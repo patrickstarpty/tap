@@ -1,6 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
+unset athena_dev_caller_codex_home_set athena_dev_caller_codex_home_value
+athena_dev_caller_codex_home_set=0
+athena_dev_caller_codex_home_value=""
+if [ "${CODEX_HOME+x}" = x ]; then
+  athena_dev_caller_codex_home_set=1
+  athena_dev_caller_codex_home_value="$CODEX_HOME"
+fi
+unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
+unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
+unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
+unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
+readonly athena_dev_caller_codex_home_set athena_dev_caller_codex_home_value
+
 athena_dev_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 athena_dev_repo_root="$(CDPATH= cd -- "$athena_dev_script_dir/.." && pwd)"
 athena_dev_requested_project="${TAP_ATHENA_COMPOSE_PROJECT:-tap-athena-demo}"
@@ -30,6 +43,22 @@ export ATHENA_API_HOST="${ATHENA_API_HOST:-127.0.0.1}"
 export ATHENA_API_PORT="${ATHENA_API_PORT:-8000}"
 export ATHENA_WEB_HOST="${ATHENA_WEB_HOST:-127.0.0.1}"
 export ATHENA_WEB_PORT="${ATHENA_WEB_PORT:-5173}"
+
+unset athena_dev_codex_home_set athena_dev_codex_home_value
+athena_dev_codex_home_set=0
+athena_dev_codex_home_value=""
+if [ "${CODEX_HOME+x}" = x ]; then
+  athena_dev_codex_home_set=1
+  athena_dev_codex_home_value="$CODEX_HOME"
+elif [ "$athena_dev_caller_codex_home_set" -eq 1 ]; then
+  athena_dev_codex_home_set=1
+  athena_dev_codex_home_value="$athena_dev_caller_codex_home_value"
+fi
+unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
+unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
+unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
+unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
+readonly athena_dev_codex_home_set athena_dev_codex_home_value
 
 cd "$athena_dev_repo_root"
 
@@ -125,7 +154,12 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-(exec uv run --project apps/backend python -m tap.entrypoints.athena_api) &
+(
+  if [ "$athena_dev_codex_home_set" -eq 1 ]; then
+    export CODEX_HOME="$athena_dev_codex_home_value"
+  fi
+  exec uv run --project apps/backend python -m tap.entrypoints.athena_api
+) &
 athena_dev_api_pid=$!
 (exec uv run --project apps/backend python -m tap.entrypoints.relay_reconciler) &
 athena_dev_relay_pid=$!

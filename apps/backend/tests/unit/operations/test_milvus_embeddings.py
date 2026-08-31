@@ -1331,6 +1331,7 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     }
 
     assert environment["LITELLM_BASE_URL"] == "http://127.0.0.1:4000"
+    assert environment["LITELLM_IMAGE"] == "ghcr.io/berriai/litellm:v1.87.0"
     assert environment["LITELLM_ATHENA_EMBEDDING_MODEL"] == ("dashscope/text-embedding-v4")
     assert environment["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert environment["LITELLM_EMBEDDING_API_KEY"] == ""
@@ -1342,6 +1343,9 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
         (repository / "deploy/local/litellm/config.yaml").read_text(encoding="utf-8")
     )
     compose_environment = compose["services"]["litellm"]["environment"]
+    assert compose["services"]["litellm"]["image"] == (
+        "${LITELLM_IMAGE:-ghcr.io/berriai/litellm:v1.87.0}"
+    )
     assert compose_environment["LITELLM_ATHENA_EMBEDDING_MODEL"] == (
         "${LITELLM_ATHENA_EMBEDDING_MODEL:-dashscope/text-embedding-v4}"
     )
