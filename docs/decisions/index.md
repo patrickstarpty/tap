@@ -23,6 +23,10 @@
 - [ADR-014：Codex 作为可选、隔离的 Specialist Runtime](2026-08-21-adr-014-codex-specialist-runtime.md)
 - [ADR-015：前端采用 React/TypeScript，后端采用 Python/FastAPI，按运行角色隔离](2026-08-21-adr-015-react-typescript-python-fastapi.md)
 
+## 本地 Demo 决策
+
+- [ADR-017：Athena 本地回答端口可选 Codex CLI](2026-08-31-adr-017-athena-local-codex-answer-backend.md)（`proposed`）
+
 ## 文档治理决策
 
 - [ADR-016：采用文档信息架构](2026-08-22-adr-016-adopt-document-information-architecture.md)
