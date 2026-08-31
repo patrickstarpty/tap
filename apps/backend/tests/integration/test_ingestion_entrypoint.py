@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+import httpx
 import pytest
 from pymilvus.decorators import _log_rpc_error
 from redis.asyncio import Redis
@@ -18,6 +19,7 @@ from sqlalchemy import text
 
 from tap.entrypoints import athena_ingestion_worker
 from tap.entrypoints.athena_runtime import AthenaSettings, create_worker_runtime
+from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application.ingestion import WorkerRun
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload
@@ -89,6 +91,69 @@ class ScanningWorker:
     async def run_once(self, limit: int) -> WorkerRun:
         self.runs += 1
         return WorkerRun(1, 1, 0, 0, 0)
+
+
+class EmbeddingEntrypointWorker:
+    def __init__(self, adapter: LiteLLMAdapter) -> None:
+        self.adapter = adapter
+        self.status = "pending"
+
+    async def run_once(self, limit: int) -> WorkerRun:
+        assert limit == 1
+        result = await self.adapter.embed_many(("跨语言退款审批",))
+        assert result[0].completion_id is None
+        self.status = "ready"
+        return WorkerRun(1, 1, 0, 0, 0)
+
+
+@pytest.fixture
+def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
+    body = {
+        "object": "list",
+        "model": "provider-embed-v1",
+        "data": [{"embedding": [0.25, 0.5], "index": 0}],
+        "usage": {"prompt_tokens": 1, "total_tokens": 1},
+    }
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = LiteLLMAdapter(
+        LiteLLMConfig(
+            base_url="https://litellm.example",
+            api_key="not-a-real-key",
+            embedding_model_id="athena-embedding",
+            answer_model_id="athena-chat",
+            answer_profile_id="quick-hybrid-v1",
+            embedding_dimension=2,
+            allowed_embedding_model_labels=frozenset({"athena-embedding", "provider-embed-v1"}),
+            allowed_answer_model_labels=frozenset({"athena-chat", "provider-answer-v1"}),
+            allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
+            max_retries=0,
+        ),
+        client=client,
+    )
+    return EmbeddingEntrypointWorker(adapter), client
+
+
+@pytest.mark.asyncio
+async def test_worker_entrypoint_reaches_ready_without_optional_top_level_id(
+    worker_entrypoint: tuple[EmbeddingEntrypointWorker, httpx.AsyncClient],
+) -> None:
+    worker, client = worker_entrypoint
+    try:
+        await athena_ingestion_worker.run_worker_loop(
+            worker=worker,
+            wakeups=LostWakeups(),
+            settings=replace(_worker_settings(), job_batch_size=1),
+            stop=asyncio.Event(),
+            max_iterations=1,
+        )
+    finally:
+        await client.aclose()
+
+    assert worker.status == "ready"
 
 
 class LostWakeups:

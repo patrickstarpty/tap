@@ -148,6 +148,7 @@ def embedding_response(
 ) -> dict[str, object]:
     return {
         "id": "embedding-17",
+        "object": "list",
         "model": model,
         "data": [{"embedding": vector if vector is not None else [0.25, 0.5], "index": 0}],
     }
@@ -160,6 +161,7 @@ def batch_embedding_response(
 ) -> dict[str, object]:
     return {
         "id": "embedding-batch-17",
+        "object": "list",
         "model": model,
         "data": rows,
         "usage": {"prompt_tokens": 4, "total_tokens": 4},
@@ -241,6 +243,36 @@ async def test_embedding_rejects_wrong_vector_space_or_unknown_model(
         adapter = LiteLLMAdapter(config(), client=client)
         with pytest.raises(ModelUnavailable):
             await adapter.embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+async def test_embedding_accepts_valid_response_without_optional_top_level_id() -> None:
+    body = embedding_response_with_usage()
+    body.pop("id")
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"x-request-id": "request-17"}, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await LiteLLMAdapter(config(), client=client).embed("跨语言退款审批")
+
+    assert result.vector == (0.25, 0.5)
+    assert result.provider_request_id == "request-17"
+    assert result.completion_id is None
+
+
+@pytest.mark.asyncio
+async def test_embedding_rejects_unknown_top_level_field_without_optional_id() -> None:
+    body = embedding_response_with_usage()
+    body.pop("id")
+    body["provider_extension"] = "not-allowed"
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("跨语言退款审批")
 
 
 @pytest.mark.asyncio
@@ -944,6 +976,32 @@ async def test_embed_many_uses_exact_fixed_route_and_restores_provider_index_ord
         "input": ["first", "second"],
         "dimensions": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_embed_many_accepts_valid_response_without_optional_top_level_id() -> None:
+    body = batch_embedding_response(
+        [
+            {"embedding": [0.1, 0.2], "index": 1},
+            {"embedding": [0.3, 0.4], "index": 0},
+        ]
+    )
+    body.pop("id")
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    fixed = config(
+        embedding_model_id="athena-embedding",
+        allowed_embedding_model_labels=frozenset(
+            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        results = await LiteLLMAdapter(fixed, client=client).embed_many(("中文", "English"))
+
+    assert tuple(item.vector for item in results) == ((0.3, 0.4), (0.1, 0.2))
+    assert all(item.completion_id is None for item in results)
 
 
 @pytest.mark.asyncio

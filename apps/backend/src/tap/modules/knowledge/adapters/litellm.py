@@ -28,6 +28,8 @@ _CANONICAL_COST = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,18})?\Z")
 _ATHENA_EMBEDDING_ALIAS = "athena-embedding"
 _MAX_EMBEDDING_BATCH = 32
 _MAX_EMBEDDING_REQUEST_BYTES = 262_144
+_EMBEDDING_REQUIRED_FIELDS = frozenset({"object", "model", "data", "usage"})
+_EMBEDDING_OPTIONAL_FIELDS = frozenset({"id"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,6 +503,7 @@ class LiteLLMAdapter:
     def _parse_embedding(self, response: _GatewayResponse) -> Embedding:
         try:
             body = response.body
+            _validate_embedding_top_level(body)
             model = _required_body_string(body, "model", maximum=256)
             self._validate_model_label(model, self._config.allowed_embedding_model_labels)
             data = body.get("data")
@@ -538,8 +541,7 @@ class LiteLLMAdapter:
     ) -> tuple[Embedding, ...]:
         try:
             body = response.body
-            if not {"model", "data"} <= set(body) <= {"id", "model", "data", "usage"}:
-                raise ValueError("embedding response fields are widened")
+            _validate_embedding_top_level(body)
             model = _required_body_string(body, "model", maximum=256)
             self._validate_model_label(model, self._config.allowed_embedding_model_labels)
             data = body["data"]
@@ -741,6 +743,16 @@ def _embedding_usage(
         total_tokens=total_tokens,
         response_cost_usd=cost,
     )
+
+
+def _validate_embedding_top_level(body: dict[str, Any]) -> None:
+    fields = frozenset(body)
+    if not _EMBEDDING_REQUIRED_FIELDS <= fields:
+        raise ValueError("embedding response fields are incomplete")
+    if fields - _EMBEDDING_REQUIRED_FIELDS - _EMBEDDING_OPTIONAL_FIELDS:
+        raise ValueError("embedding response fields are not closed")
+    if body["object"] != "list":
+        raise ValueError("embedding response object is malformed")
 
 
 def _response_cost(value: str | None) -> Decimal | None:
