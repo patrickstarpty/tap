@@ -1333,11 +1333,12 @@ async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds
                 "x-request-id": "provider-answer-17",
                 "x-litellm-call-id": "gateway-call-17",
                 "x-litellm-model-id": "gateway-model-17",
+                "x-litellm-model-group": "tap-answer-fixed-v1",
                 "x-untrusted-diagnostic": "must-not-cross-port",
             },
             json={
                 "id": "body-request-id",
-                "model": "provider-model-17",
+                "model": "tap-answer-fixed-v1",
                 "choices": [
                     {
                         "message": {
@@ -1417,6 +1418,6 @@ async def test_litellm_adapter_uses_fixed_models_captures_request_ids_and_bounds
     assert result.provider_request_id == "provider-answer-17"
     assert result.gateway_call_id == "gateway-call-17"
     assert result.gateway_model_id == "gateway-model-17"
-    assert result.provider_model_id == "provider-model-17"
+    assert result.provider_model_id is None
     assert result.completion_id == "body-request-id"
     assert result.claims[0].evidence_labels == ("S1",)
