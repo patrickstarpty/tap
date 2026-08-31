@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -29,6 +30,14 @@ _CHAT_ALIAS = "athena-chat"
 _EMBEDDING_ALIAS = "athena-embedding"
 _EMBEDDING_DIMENSION = 1_536
 _SMOKE_QUERY = "请仅依据所选来源概括其主要内容，并给出可核验引用。"
+_CROSS_LANGUAGE_INPUTS = (
+    "退款审批需要几名审批人？",
+    "A refund requires two approvers.",
+    "The cafeteria closes at six.",
+    "What is the rollback time objective?",
+    "回滚时间目标是三十分钟。",
+    "办公区每周一清洁。",
+)
 
 _T = TypeVar("_T")
 
@@ -51,10 +60,20 @@ async def _timed_alias(alias: str, operation: Callable[[], Awaitable[_T]]) -> _T
     pytest.fail(failure, pytrace=False)
 
 
+def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    numerator = sum(x * y for x, y in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        raise AssertionError("the embedding route returned a zero vector")
+    return numerator / (left_norm * right_norm)
+
+
 async def _embed_through_production_route() -> AthenaSettings:
     settings = AthenaSettings.from_mapping(os.environ)
     if (
         settings.model_backend != "litellm"
+        or settings.answer_backend != "litellm"
         or settings.e2e_mode
         or settings.chat_alias != _CHAT_ALIAS
         or settings.embedding_alias != _EMBEDDING_ALIAS
@@ -65,16 +84,45 @@ async def _embed_through_production_route() -> AthenaSettings:
     model = _create_embeddings(settings)
     if not isinstance(model, LiteLLMAdapter):
         raise AssertionError("the production model adapter is not LiteLLM")
+    started = time.monotonic_ns()
     try:
-        embedding = await model.embed(_SMOKE_QUERY)
+        single = await model.embed(_CROSS_LANGUAGE_INPUTS[0])
+        embeddings = await model.embed_many(_CROSS_LANGUAGE_INPUTS)
     finally:
         await model.close()
-    if (
-        model.embedding_model_id != _EMBEDDING_ALIAS
-        or embedding.model_id != _EMBEDDING_ALIAS
-        or len(embedding.vector) != settings.embedding_dimension
-    ):
-        raise AssertionError("the fixed embedding route returned incompatible metadata")
+
+    for embedding in (*embeddings, single):
+        usage = embedding.usage
+        if (
+            model.embedding_model_id != _EMBEDDING_ALIAS
+            or embedding.model_id != _EMBEDDING_ALIAS
+            or len(embedding.vector) != settings.embedding_dimension
+            or any(not math.isfinite(value) for value in embedding.vector)
+            or usage is None
+            or usage.input_tokens < 1
+            or usage.total_tokens < usage.input_tokens
+        ):
+            raise AssertionError("the fixed embedding route returned incompatible metadata")
+
+    zh_to_en = _cosine(embeddings[0].vector, embeddings[1].vector) > _cosine(
+        embeddings[0].vector,
+        embeddings[2].vector,
+    )
+    en_to_zh = _cosine(embeddings[3].vector, embeddings[4].vector) > _cosine(
+        embeddings[3].vector,
+        embeddings[5].vector,
+    )
+    elapsed_ms = (time.monotonic_ns() - started) // 1_000_000
+    print(
+        f"alias={_EMBEDDING_ALIAS} zh_to_en={str(zh_to_en).lower()} "
+        f"en_to_zh={str(en_to_zh).lower()} elapsed_ms={elapsed_ms}"
+    )
+    if not zh_to_en or not en_to_zh:
+        pytest.fail(
+            f"alias={_EMBEDDING_ALIAS} zh_to_en={str(zh_to_en).lower()} "
+            f"en_to_zh={str(en_to_zh).lower()} elapsed_ms={elapsed_ms}",
+            pytrace=False,
+        )
     return settings
 
 
@@ -139,7 +187,7 @@ async def test_real_athena_aliases_produce_grounded_cited_answer() -> None:
     previous_log_disable = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
     try:
-        settings = await _timed_alias(_EMBEDDING_ALIAS, _embed_through_production_route)
+        settings = await _embed_through_production_route()
         await _timed_alias(
             _CHAT_ALIAS,
             lambda: _answer_through_production_graph(settings),
