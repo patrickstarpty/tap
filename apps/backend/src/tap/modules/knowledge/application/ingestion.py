@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -56,6 +58,26 @@ _INJECTED_STAGE_CODES = {
     JobStage.EMBEDDING: "embedding-unavailable",
     JobStage.PUBLISHING: "index-unavailable",
 }
+_DIAGNOSTIC_CODES = frozenset(
+    {
+        "injected-stage-failure",
+        "parser-rejected",
+        "parser-call-failed",
+        "chunker-rejected",
+        "chunker-call-failed",
+        "artifact-read-failed",
+        "artifact-write-failed",
+        "embedding-call-failed",
+        "embedding-contract-failed",
+        "index-call-failed",
+        "index-contract-failed",
+        "deletion-call-failed",
+    }
+)
+_EXCEPTION_TYPES = frozenset(
+    {"injected-failure", "parser-rejection", "provider-error", "artifact-error", "contract-error"}
+)
+logger = logging.getLogger(__name__)
 
 
 class WorkerClock(Protocol):
@@ -101,10 +123,41 @@ class WorkerRun:
 
 
 class _SafeStageError(Exception):
-    def __init__(self, stage: JobStage, code: str) -> None:
+    def __init__(
+        self, stage: JobStage, code: str, diagnostic_code: str, exception_type: str
+    ) -> None:
+        if diagnostic_code not in _DIAGNOSTIC_CODES or exception_type not in _EXCEPTION_TYPES:
+            raise ValueError("stage diagnostic is outside the closed model")
         self.stage = stage
         self.code = code
+        self.diagnostic_code = diagnostic_code
+        self.exception_type = exception_type
+        self.document_id: str | None = None
+        self.revision_id: str | None = None
         super().__init__(code)
+
+    def bind(self, work: IngestionWork) -> None:
+        self.document_id = work.document_id
+        self.revision_id = work.revision_id
+
+
+def _log_stage_failure(job: ClaimedIngestionJob, error: _SafeStageError, started_ns: int) -> None:
+    if error.document_id is None or error.revision_id is None:
+        raise RuntimeError("stage failure is missing durable work identity")
+    logger.error(
+        "athena.ingestion.stage_failed",
+        extra={
+            "document_id": error.document_id,
+            "revision_id": error.revision_id,
+            "job_id": job.job_id,
+            "attempt": job.attempt,
+            "stage": error.stage.value,
+            "safe_error_code": error.code,
+            "internal_diagnostic_code": error.diagnostic_code,
+            "exception_type": error.exception_type,
+            "duration_ms": max(0, (time.monotonic_ns() - started_ns) // 1_000_000),
+        },
+    )
 
 
 class _StageLeaseLost(JobLeaseLost):
@@ -164,6 +217,7 @@ class IngestionWorker:
         )
         ready = deleted = failed = lease_lost = 0
         for job in jobs:
+            started_ns = time.monotonic_ns()
             try:
                 outcome = await self._process_claimed(job)
             except _StageLeaseLost as error:
@@ -198,6 +252,7 @@ class IngestionWorker:
                         await self._settle_cancelled_owner(job, error.stage)
                     lease_lost += 1
                     continue
+                _log_stage_failure(job, error, started_ns)
                 failed += 1
                 continue
             if outcome == "ready":
@@ -233,8 +288,13 @@ class IngestionWorker:
                             raise _SafeStageError(
                                 stage,
                                 _INJECTED_STAGE_CODES[stage],
+                                "injected-stage-failure",
+                                "injected-failure",
                             ) from None
                     await self._run_ingestion_stage(job, work)
+            except _SafeStageError as error:
+                error.bind(work)
+                raise
             except JobLeaseLost as error:
                 raise _StageLeaseLost(job.job_id, stage) from error
             except asyncio.CancelledError:
@@ -265,11 +325,17 @@ class IngestionWorker:
                     )
                 )
             except DocumentParseRejected as error:
-                raise _SafeStageError(stage, _closed_parser_code(error.code)) from error
+                raise _SafeStageError(
+                    stage, _closed_parser_code(error.code), "parser-rejected", "parser-rejection"
+                ) from error
             except Exception as error:
-                raise _SafeStageError(stage, "parser-unavailable") from error
+                raise _SafeStageError(
+                    stage, "parser-unavailable", "parser-call-failed", "provider-error"
+                ) from error
             if normalized.source_hash != work.source_content_hash:
-                raise _SafeStageError(stage, "invalid-document")
+                raise _SafeStageError(
+                    stage, "invalid-document", "parser-rejected", "contract-error"
+                )
             locator = await self._artifact_write(
                 job,
                 stage,
@@ -285,11 +351,15 @@ class IngestionWorker:
             try:
                 chunks = self._chunker.chunk(normalized)
             except DocumentParseRejected as error:
-                raise _SafeStageError(stage, _closed_parser_code(error.code)) from error
+                raise _SafeStageError(
+                    stage, _closed_parser_code(error.code), "parser-rejected", "parser-rejection"
+                ) from error
             except Exception as error:
-                raise _SafeStageError(stage, "invalid-document") from error
+                raise _SafeStageError(
+                    stage, "invalid-document", "chunker-call-failed", "provider-error"
+                ) from error
             if not chunks:
-                raise _SafeStageError(stage, "empty-document")
+                raise _SafeStageError(stage, "empty-document", "chunker-rejected", "contract-error")
             manifest = self._manifest(work, chunks)
             locator = await self._artifact_write(
                 job,
@@ -321,14 +391,21 @@ class IngestionWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                raise _SafeStageError(stage, "embedding-unavailable") from error
+                raise _SafeStageError(
+                    stage, "embedding-unavailable", "embedding-call-failed", "provider-error"
+                ) from error
             if (
                 artifact.model_alias != self._embedding_model_alias
                 or artifact.dimension != self._embedding_dimension
                 or len(artifact.vectors) != len(chunks)
                 or artifact.chunk_ids != tuple(str(chunk.chunk_id) for chunk in chunks)
             ):
-                raise _SafeStageError(stage, "embedding-dimension-mismatch")
+                raise _SafeStageError(
+                    stage,
+                    "embedding-dimension-mismatch",
+                    "embedding-contract-failed",
+                    "contract-error",
+                )
             locator = await self._artifact_write(
                 job,
                 stage,
@@ -353,7 +430,12 @@ class IngestionWorker:
                 or len(embeddings.vectors) != len(work.manifest)
                 or embeddings.chunk_ids != tuple(item.chunk_id for item in work.manifest)
             ):
-                raise _SafeStageError(stage, "embedding-dimension-mismatch")
+                raise _SafeStageError(
+                    stage,
+                    "embedding-dimension-mismatch",
+                    "embedding-contract-failed",
+                    "contract-error",
+                )
             try:
                 receipt = await self._provider_call(
                     job,
@@ -370,13 +452,20 @@ class IngestionWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                raise _SafeStageError(stage, "index-unavailable") from error
+                raise _SafeStageError(
+                    stage, "index-unavailable", "index-call-failed", "provider-error"
+                ) from error
             if (
                 receipt.revision_id != work.revision_id
                 or receipt.index_version != self._index_version
                 or receipt.indexed_count != len(work.manifest)
             ):
-                raise _SafeStageError(stage, "index-reconciliation-failed")
+                raise _SafeStageError(
+                    stage,
+                    "index-reconciliation-failed",
+                    "index-contract-failed",
+                    "contract-error",
+                )
             await self._commit(job, stage)
             return
         await self._commit(job, stage, chunk_count=len(work.manifest))
@@ -396,17 +485,29 @@ class IngestionWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                raise _SafeStageError(stage, "index-unavailable") from error
+                raise _SafeStageError(
+                    stage, "index-unavailable", "deletion-call-failed", "provider-error"
+                ) from error
             if count != 0:
-                raise _SafeStageError(stage, "index-reconciliation-failed")
+                raise _SafeStageError(
+                    stage,
+                    "index-reconciliation-failed",
+                    "index-contract-failed",
+                    "contract-error",
+                )
             await self._commit(job, stage)
             return
         if stage is JobStage.PARSING:
-            await self._artifact_write(
-                job,
-                stage,
-                lambda: self._artifacts.delete_revision_artifacts(target),
-            )
+            try:
+                await self._artifact_write(
+                    job,
+                    stage,
+                    lambda: self._artifacts.delete_revision_artifacts(target),
+                )
+            except _SafeStageError as error:
+                raise _SafeStageError(
+                    stage, error.code, "deletion-call-failed", "provider-error"
+                ) from None
             await self._commit(job, stage)
             return
         if stage is JobStage.READY:
@@ -423,7 +524,9 @@ class IngestionWorker:
                 str(chunk.root_id) != work.document_id
                 or chunk.source_content_hash != work.source_content_hash
             ):
-                raise _SafeStageError(JobStage.CHUNKING, "invalid-document")
+                raise _SafeStageError(
+                    JobStage.CHUNKING, "invalid-document", "chunker-rejected", "contract-error"
+                )
             manifest.append(
                 ManifestChunk(
                     chunk_id=str(chunk.chunk_id),
@@ -465,20 +568,34 @@ class IngestionWorker:
             != str(chunk.chunk_id)
             for ordinal, (chunk, item) in enumerate(zip(chunks, work.manifest, strict=True))
         ):
-            raise _SafeStageError(stage, "artifact-unavailable")
+            raise _SafeStageError(
+                stage, "artifact-unavailable", "artifact-read-failed", "contract-error"
+            )
         return chunks
 
     def _validate_manifest_versions(self, work: IngestionWork, stage: JobStage) -> None:
         if not work.manifest or tuple(item.ordinal for item in work.manifest) != tuple(
             range(len(work.manifest))
         ):
-            raise _SafeStageError(stage, "artifact-unavailable")
+            raise _SafeStageError(
+                stage, "artifact-unavailable", "artifact-read-failed", "contract-error"
+            )
         if any(
             item.embedding_model_version != self._embedding_model_alias for item in work.manifest
         ):
-            raise _SafeStageError(stage, "embedding-dimension-mismatch")
+            raise _SafeStageError(
+                stage,
+                "embedding-dimension-mismatch",
+                "embedding-contract-failed",
+                "contract-error",
+            )
         if any(item.index_version != self._index_version for item in work.manifest):
-            raise _SafeStageError(stage, "index-reconciliation-failed")
+            raise _SafeStageError(
+                stage,
+                "index-reconciliation-failed",
+                "index-contract-failed",
+                "contract-error",
+            )
 
     async def _commit(
         self,
@@ -513,7 +630,9 @@ class IngestionWorker:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            raise _SafeStageError(stage, "artifact-unavailable") from error
+            raise _SafeStageError(
+                stage, "artifact-unavailable", "artifact-read-failed", "artifact-error"
+            ) from error
 
     async def _artifact_write(
         self,
@@ -528,7 +647,9 @@ class IngestionWorker:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            raise _SafeStageError(stage, "artifact-unavailable") from error
+            raise _SafeStageError(
+                stage, "artifact-unavailable", "artifact-write-failed", "artifact-error"
+            ) from error
 
     async def _settle_cancelled_owner(self, job: ClaimedIngestionJob, stage: JobStage) -> None:
         settlement = asyncio.create_task(
@@ -636,7 +757,9 @@ async def _wait_to_terminal(task: asyncio.Task[object]) -> None:
 
 def _required_locator(locator, stage: JobStage):  # type: ignore[no-untyped-def]
     if locator is None:
-        raise _SafeStageError(stage, "artifact-unavailable")
+        raise _SafeStageError(
+            stage, "artifact-unavailable", "artifact-read-failed", "contract-error"
+        )
     return locator
 
 

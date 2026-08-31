@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -118,6 +119,7 @@ class StatefulRepository:
         self.commits: list[JobStage] = []
         self.renewals = 0
         self.lose_on_renewal: int | None = None
+        self.lose_on_fail_persistence = False
 
     async def claim_jobs(self, **kwargs):  # type: ignore[no-untyped-def]
         if not self.pending:
@@ -201,6 +203,10 @@ class StatefulRepository:
             raise JobLeaseLost(job_id)
 
     async def fail_job(self, failure: JobFailure) -> None:
+        if self.lose_on_fail_persistence:
+            self.job = replace(self.job, lease_token="lease-b", lease_owner="worker-b")
+            self.work = replace(self.work, lease_token="lease-b")
+            raise JobLeaseLost(failure.job_id)
         if failure.lease_token != self.work.lease_token:
             raise JobLeaseLost(failure.job_id)
         self.failed = failure
@@ -260,7 +266,10 @@ class StatefulArtifacts:
     async def delete_revision_artifacts(self, target: DeletionTarget) -> None:
         if self.fail_delete_once:
             self.fail_delete_once = False
-            raise RuntimeError("credential=secret provider path")
+            raise RuntimeError(
+                "credential=secret filename=source.md endpoint=https://private.example "
+                "provider-response=private vector=(0.0, 1.0, 2.0)"
+            )
         for locator in target.artifact_locators:
             self.values.pop(str(locator), None)
             self.deleted.add(str(locator))
@@ -372,6 +381,7 @@ class Embeddings:
         self.started = asyncio.Event()
         self.release: asyncio.Event | None = None
         self.settled = asyncio.Event()
+        self.failure: Exception | None = None
 
     async def embed_documents(
         self,
@@ -385,6 +395,8 @@ class Embeddings:
         try:
             if self.release is not None:
                 await self.release.wait()
+            if self.failure is not None:
+                raise self.failure
             return EmbeddingArtifact(
                 model_alias=model_alias,
                 dimension=self.dimension,
@@ -674,6 +686,7 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
         return httpx.Response(
             200,
             json={
+                "object": "list",
                 "id": "embedding-worker-1",
                 "model": "provider-embed-v1",
                 "data": [{"embedding": [0.0, 1.0, 2.0], "index": 0}],
@@ -1054,7 +1067,64 @@ async def test_cancellation_settles_provider_without_recording_failure() -> None
 
 
 @pytest.mark.asyncio
-async def test_delete_failure_stays_deleting_and_automatically_retries_in_order() -> None:
+async def test_stage_failure_logs_one_redacted_event_after_durable_failure(caplog) -> None:
+    """Durable failure telemetry must be complete yet never expose provider or source data."""
+
+    _, repository, artifacts, embeddings, index, clock = worker_parts()
+    embeddings.failure = RuntimeError(
+        "secret-provider-body api_key=never-log filename=source.md "
+        "endpoint=https://private.example provider-response=private vector=(0.0, 1.0, 2.0)"
+    )
+    worker = build_worker(repository, artifacts, embeddings, index, clock)
+
+    with caplog.at_level(logging.ERROR, logger="tap.modules.knowledge.application.ingestion"):
+        result = await worker.run_once(limit=1)
+
+    records = [record for record in caplog.records if record.msg == "athena.ingestion.stage_failed"]
+    assert result.failed == 1
+    assert repository.failed is not None
+    assert len(records) == 1
+    assert records[0].document_id == DOCUMENT_ID
+    assert records[0].revision_id == REVISION_ID
+    assert records[0].job_id == repository.job.job_id
+    assert records[0].attempt == repository.job.attempt
+    assert records[0].stage == "embedding"
+    assert records[0].safe_error_code == "embedding-unavailable"
+    assert records[0].internal_diagnostic_code == "embedding-call-failed"
+    assert records[0].exception_type == "provider-error"
+    assert type(records[0].duration_ms) is int and records[0].duration_ms >= 0
+    for forbidden in (
+        "secret-provider-body",
+        "api_key=never-log",
+        "source.md",
+        "https://private.example",
+        "provider-response=private",
+        "vector=(0.0, 1.0, 2.0)",
+        SOURCE_BYTES.decode(),
+    ):
+        assert forbidden not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stage_failure_log_is_absent_when_failure_persistence_loses_lease(caplog) -> None:
+    """A stale owner cannot announce a failure that it did not durably record."""
+
+    _, repository, artifacts, embeddings, index, clock = worker_parts()
+    repository.lose_on_fail_persistence = True
+    embeddings.failure = RuntimeError("provider failed")
+    worker = build_worker(repository, artifacts, embeddings, index, clock)
+
+    with caplog.at_level(logging.ERROR, logger="tap.modules.knowledge.application.ingestion"):
+        result = await worker.run_once(limit=1)
+
+    assert result.lease_lost == 1
+    assert not [
+        record for record in caplog.records if record.msg == "athena.ingestion.stage_failed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(caplog) -> None:
     """Finalizing the ledger before projection/artifact cleanup leaves searchable ghosts."""
 
     worker, repository, artifacts, _, index, _ = worker_parts(kind=JobKind.DELETION)
@@ -1087,7 +1157,8 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
     index.rows["chunk-1"] = (0.0, 1.0, 2.0)
     artifacts.fail_delete_once = True
 
-    first = await worker.run_once(limit=1)
+    with caplog.at_level(logging.ERROR, logger="tap.modules.knowledge.application.ingestion"):
+        first = await worker.run_once(limit=1)
 
     assert first.failed == 1
     assert repository.document_status is DocumentState.DELETING
@@ -1095,6 +1166,25 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
     assert repository.retry.expected_stage is JobStage.PARSING
     assert index.rows == {}
     assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
+    records = [record for record in caplog.records if record.msg == "athena.ingestion.stage_failed"]
+    assert len(records) == 1
+    assert records[0].document_id == DOCUMENT_ID
+    assert records[0].revision_id == REVISION_ID
+    assert records[0].job_id == repository.job.job_id
+    assert records[0].attempt == repository.job.attempt
+    assert records[0].stage == "parsing"
+    assert records[0].safe_error_code == "artifact-unavailable"
+    assert records[0].internal_diagnostic_code == "deletion-call-failed"
+    assert records[0].exception_type == "provider-error"
+    assert type(records[0].duration_ms) is int and records[0].duration_ms >= 0
+    for forbidden in (
+        "credential=secret",
+        "source.md",
+        "https://private.example",
+        "provider-response=private",
+        "vector=(0.0, 1.0, 2.0)",
+    ):
+        assert forbidden not in caplog.text
 
     second = await worker.run_once(limit=1)
 
