@@ -29,6 +29,36 @@ _UNRESOLVED_DYNAMIC_IMPORT = "<unresolved-dynamic-import>"
 _IMPORT_MODULE_CALL = "import-module"
 _BUILTIN_IMPORT_CALL = "builtin-import"
 _AMBIGUOUS_IMPORT_CALL = "ambiguous-import"
+_NATIVE_PROCESS_SYMBOLS = {
+    "asyncio": frozenset({"create_subprocess_exec", "create_subprocess_shell"}),
+    "subprocess": frozenset(
+        {
+            "Popen",
+            "call",
+            "check_call",
+            "check_output",
+            "getoutput",
+            "getstatusoutput",
+            "run",
+        }
+    ),
+    "os": frozenset(
+        {
+            "popen",
+            "posix_spawn",
+            "posix_spawnp",
+            "spawnl",
+            "spawnle",
+            "spawnlp",
+            "spawnlpe",
+            "spawnv",
+            "spawnve",
+            "spawnvp",
+            "spawnvpe",
+            "system",
+        }
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +217,74 @@ def _literal_call_argument(
     return None
 
 
+def native_process_calls(path: Path) -> set[str]:
+    """Return recognized direct native-process calls, including imported aliases."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    module_aliases: dict[str, str] = {}
+    callable_aliases: dict[str, str] = {}
+    assignments: list[tuple[str, ast.expr]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _NATIVE_PROCESS_SYMBOLS:
+                    module_aliases[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module in _NATIVE_PROCESS_SYMBOLS:
+            for alias in node.names:
+                if alias.name in _NATIVE_PROCESS_SYMBOLS[node.module]:
+                    callable_aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Assign):
+            assignments.extend(
+                (target.id, node.value) for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                assignments.append((node.target.id, node.value))
+
+    changed = True
+    while changed:
+        changed = False
+        for target, value in assignments:
+            resolved = _native_process_reference(
+                value,
+                module_aliases=module_aliases,
+                callable_aliases=callable_aliases,
+            )
+            if resolved is not None and callable_aliases.get(target) != resolved:
+                callable_aliases[target] = resolved
+                changed = True
+
+    return {
+        resolved
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            resolved := _native_process_reference(
+                node.func,
+                module_aliases=module_aliases,
+                callable_aliases=callable_aliases,
+            )
+        )
+        is not None
+    }
+
+
+def _native_process_reference(
+    value: ast.expr,
+    *,
+    module_aliases: dict[str, str],
+    callable_aliases: dict[str, str],
+) -> str | None:
+    if isinstance(value, ast.Name):
+        return callable_aliases.get(value.id)
+    if not isinstance(value, ast.Attribute) or not isinstance(value.value, ast.Name):
+        return None
+    module = module_aliases.get(value.value.id)
+    if module is None or value.attr not in _NATIVE_PROCESS_SYMBOLS[module]:
+        return None
+    return f"{module}.{value.attr}"
+
+
 def recursive_python_files(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(path for path in root.rglob("*.py") if path.is_file()))
 
@@ -324,15 +422,9 @@ def test_only_milvus_transport_imports_pymilvus() -> None:
 def test_only_codex_answer_adapter_owns_native_process_capability() -> None:
     """A second process-capable model adapter would bypass the fixed Codex boundary."""
     codex_adapter = KNOWLEDGE / "adapters" / "codex_exec.py"
-    process_callers: set[Path] = set()
-    for path in recursive_python_files(BACKEND_SOURCE):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        if any(
-            isinstance(node, ast.Attribute)
-            and node.attr in {"create_subprocess_exec", "create_subprocess_shell", "Popen"}
-            for node in ast.walk(tree)
-        ):
-            process_callers.add(path)
+    process_callers = {
+        path for path in recursive_python_files(BACKEND_SOURCE) if native_process_calls(path)
+    }
 
     assert process_callers == {codex_adapter}
     imports = _imports(codex_adapter)
@@ -349,6 +441,48 @@ def test_only_codex_answer_adapter_owns_native_process_capability() -> None:
         or reference.symbol in {"QueryEmbeddingPort", "ModelPort", "Embedding"}
         for reference in imports
     )
+
+
+@pytest.mark.parametrize(
+    ("source_text", "expected"),
+    [
+        (
+            "import asyncio as aio\naio.create_subprocess_shell('unsafe')\n",
+            "asyncio.create_subprocess_shell",
+        ),
+        (
+            "from asyncio import create_subprocess_exec as launch\nlaunch('unsafe')\n",
+            "asyncio.create_subprocess_exec",
+        ),
+        ("import subprocess as sp\nsp.run(['unsafe'])\n", "subprocess.run"),
+        (
+            "from subprocess import Popen as launch\nlaunch(['unsafe'])\n",
+            "subprocess.Popen",
+        ),
+        ("import os as operating\noperating.system('unsafe')\n", "os.system"),
+        (
+            "from os import posix_spawn as launch\nlaunch('/unsafe', (), {})\n",
+            "os.posix_spawn",
+        ),
+    ],
+    ids=(
+        "asyncio-module-alias-shell",
+        "asyncio-direct-alias-exec",
+        "subprocess-run-alias",
+        "subprocess-popen-direct-alias",
+        "os-system-alias",
+        "os-posix-spawn-direct-alias",
+    ),
+)
+def test_native_process_scanner_catches_module_and_callable_aliases(
+    tmp_path: Path,
+    source_text: str,
+    expected: str,
+) -> None:
+    source = tmp_path / "process_escape.py"
+    source.write_text(source_text, encoding="utf-8")
+
+    assert native_process_calls(source) == {expected}
 
 
 def test_stable_layers_do_not_import_milvus_adapter_modules() -> None:

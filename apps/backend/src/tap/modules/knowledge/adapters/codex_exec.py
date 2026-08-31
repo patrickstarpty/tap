@@ -13,8 +13,8 @@ from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from tempfile import mkdtemp
+from typing import Any, Literal, NoReturn
 
 from tap.modules.knowledge.adapters import codex_target
 from tap.modules.knowledge.adapters.codex_target import (
@@ -97,6 +97,11 @@ _REQUIRED_EXEC_HELP_FLAGS = frozenset(
 _PROBE_MAX_STDOUT_BYTES = 262_144
 _PROBE_MAX_STDERR_BYTES = 65_536
 _TERMINATION_GRACE_SECONDS = 0.15
+_PROCESS_REAP_SECONDS = 0.15
+_PIPE_SETTLE_SECONDS = 0.15
+_SPAWN_SETTLE_SECONDS = 0.15
+_CLEANUP_TOTAL_SECONDS = 1.0
+_TREE_TEARDOWN_SECONDS = 0.25
 _READ_CHUNK_BYTES = 65_536
 
 
@@ -181,6 +186,26 @@ class _AuditState:
     delegation_completed: int = 0
     external_tool_events: int = 0
     phase: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnedDirectory:
+    path: Path
+    device: int
+    inode: int
+    owner: int
+
+
+@dataclass(slots=True, eq=False)
+class _Invocation:
+    request: _OwnedDirectory
+    spawn_task: asyncio.Task[asyncio.subprocess.Process] | None = None
+    process: asyncio.subprocess.Process | None = None
+    communication_tasks: tuple[asyncio.Task[Any], ...] = ()
+    terminate_requested: bool = False
+    group_terminal: bool = False
+    cleanup_task: asyncio.Task[None] | None = None
+    cleanup_ok: bool = True
 
 
 def build_exec_argv(
@@ -275,7 +300,9 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         self.config = config
         self._semaphore = asyncio.Semaphore(1)
         self._processes: set[asyncio.subprocess.Process] = set()
+        self._invocations: set[_Invocation] = set()
         self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
         self.last_audit: CodexEventAudit | None = None
         self._state_lock = asyncio.Lock()
 
@@ -286,32 +313,44 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         profile_id: str,
     ) -> AnswerGeneration:
         self.last_audit = None
-        if self._closed:
-            raise AnswerUnavailable("Codex answer route is unavailable")
-        loop = asyncio.get_running_loop()
-        deadline_at = loop.time() + self.config.timeout_seconds
+        encoded_input = b""
+        failed = False
+        result: AnswerGeneration | None = None
         try:
+            self._ensure_open()
+            loop = asyncio.get_running_loop()
+            deadline_at = loop.time() + self.config.timeout_seconds
             async with asyncio.timeout(self.config.timeout_seconds):
                 async with self._semaphore:
                     self._ensure_open()
                     self._validate_target()
                     encoded_input = self._build_input(query, evidence, profile_id)
                     self._ensure_before_deadline(deadline_at)
-                    return await self._answer_once(
+                    result = await self._answer_once(
                         encoded_input,
                         evidence,
                         deadline_at=deadline_at,
                     )
         except asyncio.CancelledError:
+            query = ""
+            evidence = ()
+            profile_id = ""
+            encoded_input = b""
             raise
-        except AnswerUnavailable:
-            raise
-        except (Exception, TimeoutError) as error:
-            raise AnswerUnavailable("Codex answer route is unavailable") from error
+        except Exception:
+            failed = True
+        query = ""
+        evidence = ()
+        profile_id = ""
+        encoded_input = b""
+        if failed or result is None:
+            _raise_public_unavailable("Codex answer route is unavailable")
+        return result
 
     async def check_ready(self) -> None:
         """Verify the closed native inventory without generating an answer."""
 
+        failed = False
         try:
             self._ensure_open()
             self._validate_target()
@@ -331,24 +370,39 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             await self._login_probe()
         except asyncio.CancelledError:
             raise
-        except AnswerUnavailable:
-            raise
-        except (Exception, TimeoutError) as error:
-            raise AnswerUnavailable("Codex readiness check failed") from error
+        except Exception:
+            failed = True
+        if failed:
+            _raise_public_unavailable("Codex readiness check failed")
 
     async def aclose(self) -> None:
         """Block new calls and terminate every exact process group owned by this adapter."""
 
         async with self._state_lock:
             self._closed = True
-            processes = tuple(self._processes)
-        if processes:
-            await asyncio.gather(
-                *(self._terminate_process_group(process) for process in processes),
-                return_exceptions=True,
-            )
-            async with self._state_lock:
-                self._processes.difference_update(processes)
+            if self._close_task is None:
+                self._close_task = asyncio.create_task(self._close_all_invocations())
+            close_task = self._close_task
+        failed = False
+        try:
+            await _await_shared_task(close_task)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            failed = True
+        if failed:
+            _raise_public_unavailable("Codex answer route is unavailable")
+
+    async def _close_all_invocations(self) -> None:
+        async with self._state_lock:
+            invocations = tuple(self._invocations)
+        cleanup_tasks = tuple(
+            [await self._request_cleanup(invocation, terminate=True) for invocation in invocations]
+        )
+        for cleanup_task in cleanup_tasks:
+            await _await_shared_task(cleanup_task)
+        if any(not invocation.cleanup_ok for invocation in invocations):
+            raise _CodexContractFailure("Codex cleanup did not complete safely")
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -429,9 +483,10 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         *,
         deadline_at: float,
     ) -> AnswerGeneration:
-        with TemporaryDirectory(prefix="tap-codex-answer-") as request_name:
-            request_dir = Path(request_name)
-            os.chmod(request_dir, 0o700)
+        invocation = await self._create_invocation("tap-codex-answer-")
+        request_dir = invocation.request.path
+        succeeded = False
+        try:
             request_home = _private_directory(request_dir / "home")
             request_tmp = _private_directory(request_dir / "tmp")
             request_cwd = _private_directory(request_dir / "cwd")
@@ -455,49 +510,59 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             )
             self._ensure_before_deadline(deadline_at)
             process = await self._spawn(
+                invocation,
                 argv,
                 cwd=request_cwd,
                 environment=environment,
                 stdin=asyncio.subprocess.PIPE,
             )
-            try:
-                return_code, audit = await self._communicate_answer(process, encoded_input)
-                self.last_audit = audit
-                if return_code != 0:
-                    if _process_group_exists(process.pid):
-                        await self._terminate_process_group(process)
-                    raise _CodexContractFailure("Codex process returned a nonzero status")
-                if _process_group_exists(process.pid):
-                    await self._terminate_process_group(process)
-                    raise _CodexContractFailure("Codex process group outlived its leader")
-                self._ensure_before_deadline(deadline_at)
-                raw_output = _read_trusted_output(output_path, self.config.max_output_bytes)
-                payload = _decode_closed_json(raw_output)
-                answer, claims = parse_grounded_answer_payload(
-                    payload,
-                    evidence,
-                    max_answer_chars=self.config.max_answer_chars,
-                    max_claims=self.config.max_claims,
-                    max_claim_chars=self.config.max_claim_chars,
-                    max_labels_per_claim=self.config.max_labels_per_claim,
-                )
-                self._ensure_before_deadline(deadline_at)
-                return AnswerGeneration(
-                    text=answer,
-                    claims=claims,
-                    model_id=self.config.model_id,
-                    profile_id=self.config.profile_id,
-                    provider_request_id=None,
-                    gateway_call_id=None,
-                    gateway_model_id=None,
-                    provider_model_id=None,
-                    completion_id=None,
-                )
-            finally:
-                await self._untrack(process)
+            return_code, audit = await self._communicate_answer(
+                invocation,
+                process,
+                encoded_input,
+            )
+            self.last_audit = audit
+            if return_code != 0:
+                raise _CodexContractFailure("Codex process returned a nonzero status")
+            self._ensure_before_deadline(deadline_at)
+            raw_output = _read_trusted_output(output_path, self.config.max_output_bytes)
+            payload = _decode_closed_json(raw_output)
+            raw_output = b""
+            answer, claims = parse_grounded_answer_payload(
+                payload,
+                evidence,
+                max_answer_chars=self.config.max_answer_chars,
+                max_claims=self.config.max_claims,
+                max_claim_chars=self.config.max_claim_chars,
+                max_labels_per_claim=self.config.max_labels_per_claim,
+            )
+            payload = None
+            self._ensure_before_deadline(deadline_at)
+            result = AnswerGeneration(
+                text=answer,
+                claims=claims,
+                model_id=self.config.model_id,
+                profile_id=self.config.profile_id,
+                provider_request_id=None,
+                gateway_call_id=None,
+                gateway_model_id=None,
+                provider_model_id=None,
+                completion_id=None,
+            )
+            succeeded = True
+            return result
+        finally:
+            encoded_input = b""
+            cleanup_ok = await self._finish_invocation(
+                invocation,
+                terminate=not succeeded,
+            )
+            if succeeded and not cleanup_ok:
+                raise _CodexContractFailure("Codex cleanup did not complete safely")
 
     async def _communicate_answer(
         self,
+        invocation: _Invocation,
         process: asyncio.subprocess.Process,
         encoded_input: bytes,
     ) -> tuple[int, CodexEventAudit]:
@@ -511,16 +576,14 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             ),
             asyncio.create_task(process.wait()),
         )
-        group = asyncio.gather(*tasks)
+        invocation.communication_tasks = tasks
         try:
-            values = await asyncio.shield(group)
-        except BaseException:
-            await self._terminate_process_group(process)
-            await asyncio.gather(*tasks, return_exceptions=True)
-            with suppress(BaseException):
-                await asyncio.shield(group)
-            await _settle_process_pipes(process)
-            raise
+            values = await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            raise _CodexContractFailure("Codex communication was interrupted") from None
         return_code = values[3]
         audit = values[1]
         if not isinstance(return_code, int) or not isinstance(audit, CodexEventAudit):
@@ -528,91 +591,100 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         return return_code, audit
 
     async def _inventory_probe(self, arguments: tuple[str, ...]) -> bytes:
-        with TemporaryDirectory(prefix="tap-codex-inventory-") as request_name:
-            request_dir = Path(request_name)
-            os.chmod(request_dir, 0o700)
+        async with asyncio.timeout(self.config.timeout_seconds):
+            return await self._probe_with_directory(
+                arguments,
+                prefix="tap-codex-inventory-",
+                real_codex_home=False,
+            )
+
+    async def _login_probe(self) -> None:
+        async with asyncio.timeout(self.config.timeout_seconds):
+            await self._probe_with_directory(
+                ("login", "status"),
+                prefix="tap-codex-login-",
+                real_codex_home=True,
+            )
+
+    async def _probe_with_directory(
+        self,
+        arguments: tuple[str, ...],
+        *,
+        prefix: str,
+        real_codex_home: bool,
+    ) -> bytes:
+        invocation = await self._create_invocation(prefix)
+        request_dir = invocation.request.path
+        succeeded = False
+        try:
             request_home = _private_directory(request_dir / "home")
             request_tmp = _private_directory(request_dir / "tmp")
             request_cwd = _private_directory(request_dir / "cwd")
-            empty_codex_home = _private_directory(request_dir / "codex-home")
-            return await self._run_probe(
+            selected_codex_home = (
+                self.config.codex_home
+                if real_codex_home
+                else _private_directory(request_dir / "codex-home")
+            )
+            result = await self._run_probe(
+                invocation,
                 arguments,
                 cwd=request_cwd,
                 environment=_minimal_environment(
                     home=request_home,
                     tmp=request_tmp,
-                    codex_home=empty_codex_home,
+                    codex_home=selected_codex_home,
                 ),
             )
-
-    async def _login_probe(self) -> None:
-        with TemporaryDirectory(prefix="tap-codex-login-") as request_name:
-            request_dir = Path(request_name)
-            os.chmod(request_dir, 0o700)
-            request_home = _private_directory(request_dir / "home")
-            request_tmp = _private_directory(request_dir / "tmp")
-            request_cwd = _private_directory(request_dir / "cwd")
-            await self._run_probe(
-                ("login", "status"),
-                cwd=request_cwd,
-                environment=_minimal_environment(
-                    home=request_home,
-                    tmp=request_tmp,
-                    codex_home=self.config.codex_home,
-                ),
+            succeeded = True
+            return result
+        finally:
+            cleanup_ok = await self._finish_invocation(
+                invocation,
+                terminate=not succeeded,
             )
+            if succeeded and not cleanup_ok:
+                raise _CodexContractFailure("Codex cleanup did not complete safely")
 
     async def _run_probe(
         self,
+        invocation: _Invocation,
         arguments: tuple[str, ...],
         *,
         cwd: Path,
         environment: dict[str, str],
     ) -> bytes:
-        async with asyncio.timeout(self.config.timeout_seconds):
-            process = await self._spawn(
-                (str(self.config.target.executable), *arguments),
-                cwd=cwd,
-                environment=environment,
-                stdin=asyncio.subprocess.DEVNULL,
-            )
-            if process.stdout is None or process.stderr is None:
-                await self._terminate_process_group(process)
-                await self._untrack(process)
-                raise _CodexContractFailure("Codex probe pipes are unavailable")
-            tasks: tuple[asyncio.Task[Any], ...] = (
-                asyncio.create_task(_read_bounded(process.stdout, maximum=_PROBE_MAX_STDOUT_BYTES)),
-                asyncio.create_task(
-                    _drain_bounded(process.stderr, maximum=_PROBE_MAX_STDERR_BYTES)
-                ),
-                asyncio.create_task(process.wait()),
-            )
-            group = asyncio.gather(*tasks)
-            try:
-                values = await asyncio.shield(group)
-            except BaseException:
-                await self._terminate_process_group(process)
-                await asyncio.gather(*tasks, return_exceptions=True)
-                with suppress(BaseException):
-                    await asyncio.shield(group)
-                await _settle_process_pipes(process)
+        process = await self._spawn(
+            invocation,
+            (str(self.config.target.executable), *arguments),
+            cwd=cwd,
+            environment=environment,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+        if process.stdout is None or process.stderr is None:
+            raise _CodexContractFailure("Codex probe pipes are unavailable")
+        tasks: tuple[asyncio.Task[Any], ...] = (
+            asyncio.create_task(_read_bounded(process.stdout, maximum=_PROBE_MAX_STDOUT_BYTES)),
+            asyncio.create_task(_drain_bounded(process.stderr, maximum=_PROBE_MAX_STDERR_BYTES)),
+            asyncio.create_task(process.wait()),
+        )
+        invocation.communication_tasks = tasks
+        try:
+            values = await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
                 raise
-            finally:
-                await self._untrack(process)
-            if values[2] != 0:
-                if _process_group_exists(process.pid):
-                    await self._terminate_process_group(process)
-                raise _CodexContractFailure("Codex probe returned a nonzero status")
-            if _process_group_exists(process.pid):
-                await self._terminate_process_group(process)
-                raise _CodexContractFailure("Codex probe process group did not exit")
-            stdout = values[0]
-            if not isinstance(stdout, bytes):
-                raise _CodexContractFailure("Codex probe output is malformed")
-            return stdout
+            raise _CodexContractFailure("Codex probe communication was interrupted") from None
+        if values[2] != 0:
+            raise _CodexContractFailure("Codex probe returned a nonzero status")
+        stdout = values[0]
+        if not isinstance(stdout, bytes):
+            raise _CodexContractFailure("Codex probe output is malformed")
+        return stdout
 
     async def _spawn(
         self,
+        invocation: _Invocation,
         argv: tuple[str, ...],
         *,
         cwd: Path,
@@ -633,46 +705,299 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                     start_new_session=True,
                 )
             )
-            try:
-                process = await asyncio.shield(spawn_task)
-            except BaseException:
-                spawned: asyncio.subprocess.Process | None = None
-                with suppress(BaseException):
-                    spawned = await asyncio.shield(spawn_task)
-                if spawned is not None:
-                    await self._terminate_process_group(spawned)
-                    await _settle_process_pipes(spawned)
+            invocation.spawn_task = spawn_task
+        try:
+            process = await asyncio.shield(spawn_task)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
                 raise
-            self._processes.add(process)
-            return process
+            raise _CodexContractFailure("Codex spawn was interrupted") from None
+        await self._remember_process(invocation, process)
+        if invocation.group_terminal or invocation.cleanup_task is not None:
+            raise _CodexContractFailure("Codex adapter closed during spawn")
+        return process
 
-    async def _untrack(self, process: asyncio.subprocess.Process) -> None:
+    async def _remember_process(
+        self,
+        invocation: _Invocation,
+        process: asyncio.subprocess.Process,
+    ) -> None:
         async with self._state_lock:
-            self._processes.discard(process)
+            if invocation.process is not None and invocation.process is not process:
+                raise _CodexContractFailure("Codex spawn identity changed")
+            invocation.process = process
+            self._processes.add(process)
 
     async def _terminate_process_group(self, process: asyncio.subprocess.Process) -> None:
         process_group = process.pid
         if process.stdin is not None:
             process.stdin.close()
-        if _process_group_exists(process_group):
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        else:
+            await asyncio.sleep(_TERMINATION_GRACE_SECONDS)
             with suppress(ProcessLookupError):
-                os.killpg(process_group, signal.SIGTERM)
-            loop = asyncio.get_running_loop()
-            grace_deadline = loop.time() + _TERMINATION_GRACE_SECONDS
-            while _process_group_exists(process_group) and loop.time() < grace_deadline:
-                await asyncio.sleep(0.01)
-            if _process_group_exists(process_group):
-                with suppress(ProcessLookupError):
-                    os.killpg(process_group, signal.SIGKILL)
-                kill_deadline = loop.time() + _TERMINATION_GRACE_SECONDS
-                while _process_group_exists(process_group) and loop.time() < kill_deadline:
-                    await asyncio.sleep(0.01)
-        with suppress(ProcessLookupError):
-            await process.wait()
+                os.killpg(process_group, signal.SIGKILL)
+        with suppress(ProcessLookupError, TimeoutError):
+            async with asyncio.timeout(_PROCESS_REAP_SECONDS):
+                await process.wait()
+
+    async def _create_invocation(self, prefix: str) -> _Invocation:
+        async with self._state_lock:
+            self._ensure_open()
+            request_path = Path(mkdtemp(prefix=prefix))
+            os.chmod(request_path, 0o700)
+            request_stat = request_path.lstat()
+            request = _OwnedDirectory(
+                path=request_path,
+                device=request_stat.st_dev,
+                inode=request_stat.st_ino,
+                owner=request_stat.st_uid,
+            )
+            invocation = _Invocation(request=request)
+            self._invocations.add(invocation)
+            return invocation
+
+    async def _request_cleanup(
+        self,
+        invocation: _Invocation,
+        *,
+        terminate: bool,
+    ) -> asyncio.Task[None]:
+        async with self._state_lock:
+            if terminate and not invocation.group_terminal:
+                invocation.terminate_requested = True
+            if invocation.cleanup_task is None:
+                invocation.cleanup_task = asyncio.create_task(self._cleanup_invocation(invocation))
+            return invocation.cleanup_task
+
+    async def _finish_invocation(
+        self,
+        invocation: _Invocation,
+        *,
+        terminate: bool,
+    ) -> bool:
+        cleanup_task = await self._request_cleanup(invocation, terminate=terminate)
+        await _await_shared_task(cleanup_task)
+        return invocation.cleanup_ok
+
+    async def _cleanup_invocation(self, invocation: _Invocation) -> None:
+        process: asyncio.subprocess.Process | None = invocation.process
+        try:
+            async with asyncio.timeout(_CLEANUP_TOTAL_SECONDS):
+                process = await self._settle_spawn(invocation)
+                if (
+                    process is not None
+                    and invocation.terminate_requested
+                    and not invocation.group_terminal
+                ):
+                    await self._terminate_process_group(process)
+                invocation.group_terminal = True
+                if process is not None:
+                    _close_parent_pipes(process)
+                await _cancel_and_settle_tasks(invocation.communication_tasks)
+                invocation.communication_tasks = ()
+                if process is not None:
+                    async with asyncio.timeout(_PIPE_SETTLE_SECONDS):
+                        await _settle_process_pipes(process)
+        except Exception:
+            invocation.cleanup_ok = False
+        finally:
+            invocation.group_terminal = True
+            if process is not None:
+                _close_parent_pipes(process)
+                _clear_process_buffers(process)
+            for task in invocation.communication_tasks:
+                task.cancel()
+                if task.done():
+                    _consume_task_result(task)
+            invocation.communication_tasks = ()
+            removed = False
+            try:
+                async with asyncio.timeout(_TREE_TEARDOWN_SECONDS):
+                    removed = await _remove_owned_tree(invocation.request)
+            except (asyncio.CancelledError, Exception):
+                removed = False
+            if not removed:
+                invocation.cleanup_ok = False
+            if invocation.process is not None:
+                self._processes.discard(invocation.process)
+            self._invocations.discard(invocation)
+
+    async def _settle_spawn(
+        self,
+        invocation: _Invocation,
+    ) -> asyncio.subprocess.Process | None:
+        if invocation.process is not None:
+            return invocation.process
+        spawn_task = invocation.spawn_task
+        if spawn_task is None:
+            return None
+        if not spawn_task.done():
+            spawn_task.cancel()
+        try:
+            async with asyncio.timeout(_SPAWN_SETTLE_SECONDS):
+                process = await asyncio.shield(spawn_task)
+        except (asyncio.CancelledError, Exception):
+            if spawn_task.done():
+                _consume_task_result(spawn_task)
+            return None
+        await self._remember_process(invocation, process)
+        return process
 
     def _ensure_before_deadline(self, deadline_at: float) -> None:
         if asyncio.get_running_loop().time() >= deadline_at:
             raise TimeoutError
+
+
+async def _await_shared_task(task: asyncio.Task[None]) -> None:
+    caller_cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                caller_cancelled = True
+                continue
+            break
+        except Exception:
+            break
+    if caller_cancelled:
+        if task.done():
+            _consume_task_result(task)
+        raise asyncio.CancelledError
+    task.result()
+
+
+async def _cancel_and_settle_tasks(tasks: tuple[asyncio.Task[Any], ...]) -> None:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        async with asyncio.timeout(_PIPE_SETTLE_SECONDS):
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    with suppress(BaseException):
+        task.result()
+
+
+def _close_parent_pipes(process: asyncio.subprocess.Process) -> None:
+    if process.stdin is not None:
+        process.stdin.close()
+    for reader in (process.stdout, process.stderr):
+        if reader is None:
+            continue
+        transport = getattr(reader, "_transport", None)
+        if transport is not None:
+            transport.close()
+
+
+def _clear_process_buffers(process: asyncio.subprocess.Process) -> None:
+    for reader in (process.stdout, process.stderr):
+        if reader is None:
+            continue
+        buffer = getattr(reader, "_buffer", None)
+        if isinstance(buffer, bytearray):
+            buffer.clear()
+
+
+async def _remove_owned_tree(request: _OwnedDirectory) -> bool:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(request.path, flags)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        current = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or current.st_dev != request.device
+            or current.st_ino != request.inode
+            or current.st_uid != request.owner
+            or request.owner != os.getuid()
+            or stat.S_IMODE(current.st_mode) != 0o700
+            or not await _empty_owned_directory(descriptor)
+        ):
+            return False
+    finally:
+        os.close(descriptor)
+    try:
+        current_path = request.path.lstat()
+    except OSError:
+        return False
+    if (current_path.st_dev, current_path.st_ino) != (request.device, request.inode):
+        return False
+    try:
+        request.path.rmdir()
+    except OSError:
+        return False
+    try:
+        request.path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+async def _empty_owned_directory(descriptor: int) -> bool:
+    try:
+        with os.scandir(descriptor) as entries:
+            names = tuple(entry.name for entry in entries)
+    except OSError:
+        return False
+    for name in names:
+        await asyncio.sleep(0)
+        try:
+            value = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if not stat.S_ISDIR(value.st_mode):
+            try:
+                os.unlink(name, dir_fd=descriptor)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return False
+            continue
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            child = os.open(name, flags, dir_fd=descriptor)
+        except OSError:
+            return False
+        try:
+            opened = os.fstat(child)
+            if (opened.st_dev, opened.st_ino) != (value.st_dev, value.st_ino):
+                return False
+            if not await _empty_owned_directory(child):
+                return False
+        finally:
+            os.close(child)
+        try:
+            os.rmdir(name, dir_fd=descriptor)
+        except OSError:
+            return False
+    try:
+        with os.scandir(descriptor) as remaining:
+            return next(remaining, None) is None
+    except OSError:
+        return False
+
+
+def _raise_public_unavailable(message: str) -> NoReturn:
+    raise AnswerUnavailable(message) from None
 
 
 def _private_directory(path: Path) -> Path:
@@ -710,8 +1035,10 @@ def _write_exclusive_file(path: Path, value: bytes) -> None:
 async def _write_stdin(writer: asyncio.StreamWriter, value: bytes) -> None:
     try:
         writer.write(value)
+        value = b""
         await writer.drain()
     finally:
+        value = b""
         writer.close()
         with suppress(BrokenPipeError, ConnectionResetError):
             await writer.wait_closed()
@@ -730,13 +1057,16 @@ async def _read_bounded(reader: asyncio.StreamReader, *, maximum: int) -> bytes:
 
 async def _drain_bounded(reader: asyncio.StreamReader, *, maximum: int) -> None:
     total = 0
+    chunk = b""
     while True:
         chunk = await reader.read(min(_READ_CHUNK_BYTES, maximum - total + 1))
         if not chunk:
             return
         total += len(chunk)
         if total > maximum:
+            chunk = b""
             raise _CodexContractFailure("Codex stderr exceeds the byte bound")
+        chunk = b""
 
 
 async def _settle_process_pipes(process: asyncio.subprocess.Process) -> None:
@@ -759,45 +1089,54 @@ async def _audit_jsonl(
     delegation_completions: set[str] = set()
     total = 0
     pending = bytearray()
-    while True:
-        chunk = await reader.read(min(_READ_CHUNK_BYTES, maximum - total + 1))
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > maximum:
-            raise _CodexContractFailure("Codex JSONL exceeds the byte bound")
-        pending.extend(chunk)
+    chunk = b""
+    line = b""
+    try:
         while True:
-            newline = pending.find(b"\n")
-            if newline < 0:
+            chunk = await reader.read(min(_READ_CHUNK_BYTES, maximum - total + 1))
+            if not chunk:
                 break
-            line = bytes(pending[:newline])
-            del pending[: newline + 1]
-            _audit_event(
-                _decode_closed_json(line),
-                state=state,
-                delegation_starts=delegation_starts,
-                delegation_completions=delegation_completions,
-            )
-    if pending:
-        raise _CodexContractFailure("Codex JSONL ended without a line boundary")
-    if (
-        state.thread_started != 1
-        or state.turn_started != 1
-        or state.turn_completed != 1
-        or state.phase != 3
-        or set(delegation_starts) != delegation_completions
-        or state.delegation_started != state.delegation_completed
-    ):
-        raise _CodexContractFailure("Codex JSONL lifecycle is incomplete")
-    return CodexEventAudit(
-        thread_started=state.thread_started,
-        turn_started=state.turn_started,
-        turn_completed=state.turn_completed,
-        delegation_started=state.delegation_started,
-        delegation_completed=state.delegation_completed,
-        external_tool_events=state.external_tool_events,
-    )
+            total += len(chunk)
+            if total > maximum:
+                raise _CodexContractFailure("Codex JSONL exceeds the byte bound")
+            pending.extend(chunk)
+            chunk = b""
+            while True:
+                newline = pending.find(b"\n")
+                if newline < 0:
+                    break
+                line = bytes(pending[:newline])
+                del pending[: newline + 1]
+                _audit_event(
+                    _decode_closed_json(line),
+                    state=state,
+                    delegation_starts=delegation_starts,
+                    delegation_completions=delegation_completions,
+                )
+                line = b""
+        if pending:
+            raise _CodexContractFailure("Codex JSONL ended without a line boundary")
+        if (
+            state.thread_started != 1
+            or state.turn_started != 1
+            or state.turn_completed != 1
+            or state.phase != 3
+            or set(delegation_starts) != delegation_completions
+            or state.delegation_started != state.delegation_completed
+        ):
+            raise _CodexContractFailure("Codex JSONL lifecycle is incomplete")
+        return CodexEventAudit(
+            thread_started=state.thread_started,
+            turn_started=state.turn_started,
+            turn_completed=state.turn_completed,
+            delegation_started=state.delegation_started,
+            delegation_completed=state.delegation_completed,
+            external_tool_events=state.external_tool_events,
+        )
+    finally:
+        chunk = b""
+        line = b""
+        pending.clear()
 
 
 def _audit_event(
@@ -873,7 +1212,8 @@ def _read_trusted_output(path: Path, maximum: int) -> bytes:
         initial = path.lstat()
     except OSError as error:
         raise _CodexContractFailure("Codex output is unavailable") from error
-    if not _trusted_output_stat(initial) or initial.st_size > maximum:
+    initial_snapshot = _trusted_output_snapshot(initial)
+    if initial_snapshot is None or initial_snapshot.size > maximum:
         raise _CodexContractFailure("Codex output file is untrusted or oversized")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -882,7 +1222,8 @@ def _read_trusted_output(path: Path, maximum: int) -> bytes:
         raise _CodexContractFailure("Codex output cannot be opened safely") from error
     try:
         opened = os.fstat(descriptor)
-        if not _same_file_identity(initial, opened) or not _trusted_output_stat(opened):
+        opened_snapshot = _trusted_output_snapshot(opened)
+        if opened_snapshot is None or opened_snapshot != initial_snapshot:
             raise _CodexContractFailure("Codex output identity changed")
         result = bytearray()
         while True:
@@ -893,28 +1234,51 @@ def _read_trusted_output(path: Path, maximum: int) -> bytes:
             if len(result) > maximum:
                 raise _CodexContractFailure("Codex output exceeds the byte bound")
         final = os.fstat(descriptor)
-        if (
-            not _same_file_identity(opened, final)
-            or not _trusted_output_stat(final)
-            or final.st_size != len(result)
-        ):
+        final_snapshot = _trusted_output_snapshot(final)
+        try:
+            final_path_snapshot = _trusted_output_snapshot(path.lstat())
+        except OSError:
+            final_path_snapshot = None
+        if final_snapshot != opened_snapshot or final_path_snapshot != final_snapshot:
             raise _CodexContractFailure("Codex output changed while reading")
+        if final_snapshot is None or final_snapshot.size != len(result):
+            raise _CodexContractFailure("Codex output size changed while reading")
         return bytes(result)
     finally:
         os.close(descriptor)
 
 
-def _trusted_output_stat(value: os.stat_result) -> bool:
-    return (
-        stat.S_ISREG(value.st_mode)
-        and value.st_uid == os.getuid()
-        and stat.S_IMODE(value.st_mode) == 0o600
-        and value.st_nlink == 1
+@dataclass(frozen=True, slots=True)
+class _TrustedOutputSnapshot:
+    device: int
+    inode: int
+    mode: int
+    owner: int
+    links: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+
+
+def _trusted_output_snapshot(value: os.stat_result) -> _TrustedOutputSnapshot | None:
+    mode = stat.S_IMODE(value.st_mode)
+    if (
+        not stat.S_ISREG(value.st_mode)
+        or value.st_uid != os.getuid()
+        or mode != 0o600
+        or value.st_nlink != 1
+    ):
+        return None
+    return _TrustedOutputSnapshot(
+        device=value.st_dev,
+        inode=value.st_ino,
+        mode=mode,
+        owner=value.st_uid,
+        links=value.st_nlink,
+        size=value.st_size,
+        mtime_ns=value.st_mtime_ns,
+        ctime_ns=value.st_ctime_ns,
     )
-
-
-def _same_file_identity(first: os.stat_result, second: os.stat_result) -> bool:
-    return (first.st_dev, first.st_ino) == (second.st_dev, second.st_ino)
 
 
 def _decode_closed_json(value: bytes) -> object:
@@ -922,6 +1286,7 @@ def _decode_closed_json(value: bytes) -> object:
         return json.loads(
             value.decode("utf-8"),
             parse_constant=_reject_json_constant,
+            parse_float=_finite_json_float,
             object_pairs_hook=_closed_pairs,
         )
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
@@ -939,6 +1304,13 @@ def _closed_pairs(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
 
 def _reject_json_constant(_value: str) -> None:
     raise ValueError("non-finite JSON number")
+
+
+def _finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("non-finite JSON number")
+    return parsed
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -1022,13 +1394,3 @@ def _parse_feature_inventory(value: bytes) -> dict[str, bool]:
     if not result:
         raise _CodexContractFailure("Codex feature inventory is empty")
     return result
-
-
-def _process_group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True

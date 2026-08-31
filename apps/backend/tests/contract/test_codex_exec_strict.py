@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shlex
+import shutil
 import signal
 import sys
 import time
@@ -175,6 +176,26 @@ def spawn_ignoring_child(index: int, *, close_pipes: bool = False) -> None:
             time.sleep(0.01)
 
 
+def spawn_detached_pipe_child(index: int) -> None:
+    child_code = (
+        "import os,signal,time,pathlib;"
+        f"root=pathlib.Path({str(ROOT)!r});"
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+        f"(root/'detached-pid-{index}').write_text(str(os.getpid()));"
+        f"(root/'detached-pgid-{index}').write_text(str(os.getpgid(0)));"
+        "time.sleep(3600)"
+    )
+    subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        close_fds=True,
+        start_new_session=True,
+    )
+    marker = ROOT / f"detached-pid-{index}"
+    deadline = time.monotonic() + 2
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 def events(selected_mode: str) -> bytes:
     values: list[object] = [
         {"type": "thread.started", "thread_id": "thread-secret"},
@@ -290,6 +311,12 @@ def events(selected_mode: str) -> bytes:
         return encoded + b'{"type":"turn.started","type":"turn.completed"}\n'
     if selected_mode == "nonfinite_jsonl":
         return encoded + b'{"type":"turn.started","value":NaN}\n'
+    if selected_mode == "nonfinite_exponent_jsonl":
+        return encoded.replace(
+            b'"text":"raw secret"',
+            b'"text":"raw secret","score":1e9999',
+            1,
+        )
     if selected_mode in {"stdout_exact", "stdout_over"}:
         target = 1_048_576 + (1 if selected_mode == "stdout_over" else 0)
         turn_completed = (
@@ -320,6 +347,8 @@ def output_bytes(selected_mode: str) -> bytes:
         return b'{"answer":"a","answer":"b","claims":[]}'
     if selected_mode == "nonfinite_output_json":
         return b'{"answer":NaN,"claims":[]}'
+    if selected_mode == "nonfinite_exponent_output":
+        return b'{"answer":-1e9999,"claims":[]}'
     if selected_mode == "invalid_output_utf8":
         return b"\xff"
     if selected_mode == "extra_output_field":
@@ -396,12 +425,22 @@ def run_answer(args: list[str], selected_mode: str) -> int:
         wait_forever()
     elif selected_mode == "nonzero_child":
         spawn_ignoring_child(index, close_pipes=True)
-    if selected_mode in {"stderr_exact", "stderr_over", "stderr_secret"}:
+    elif selected_mode == "detached_holds_pipes":
+        spawn_detached_pipe_child(index)
+    if selected_mode in {"stderr_exact", "stderr_over", "stderr_secret", "sensitive_failure"}:
         amount = 65_536 + (1 if selected_mode == "stderr_over" else 0)
-        stderr = b"PRIVATE_STDERR_CONTENT" if selected_mode == "stderr_secret" else b"s" * amount
+        if selected_mode == "stderr_secret":
+            stderr = b"PRIVATE_STDERR_CONTENT"
+        elif selected_mode == "sensitive_failure":
+            stderr = b"TRACE_SECRET_STDERR"
+        else:
+            stderr = b"s" * amount
         sys.stderr.buffer.write(stderr)
         sys.stderr.buffer.flush()
-    sys.stdout.buffer.write(events(selected_mode))
+    event_bytes = events(selected_mode)
+    if selected_mode == "sensitive_failure":
+        event_bytes += stdin + b"\n"
+    sys.stdout.buffer.write(event_bytes)
     sys.stdout.buffer.flush()
     if selected_mode == "symlink_output":
         output_path.unlink()
@@ -884,6 +923,7 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
         "malformed_jsonl",
         "duplicate_jsonl",
         "nonfinite_jsonl",
+        "nonfinite_exponent_jsonl",
         "incomplete_lifecycle",
         "collab_unknown_tool",
         "collab_incomplete",
@@ -1026,6 +1066,68 @@ async def test_codex_exec_rejects_invalid_exit_or_untrusted_output(
 
     assert len(fake_codex.invocations()) == 1
     assert not Path(fake_codex.read_capture().request_dir).exists()
+
+
+def test_codex_exec_trusted_output_rejects_same_inode_same_size_torn_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "output.json"
+    original = b'{"answer":"trusted"}'
+    output.write_bytes(original)
+    output.chmod(0o600)
+    initial_mtime = output.stat().st_mtime_ns
+    real_read = os.read
+    mutated = False
+
+    def mutating_read(descriptor: int, maximum: int) -> bytes:
+        nonlocal mutated
+        value = real_read(descriptor, maximum)
+        if value and not mutated:
+            mutated = True
+            with output.open("r+b", buffering=0) as stream:
+                stream.write(b"[" + original[1:])
+            os.utime(
+                output,
+                ns=(output.stat().st_atime_ns, initial_mtime + 1_000_000),
+            )
+        return value
+
+    monkeypatch.setattr(codex_exec.os, "read", mutating_read)
+
+    with pytest.raises(RuntimeError):
+        codex_exec._read_trusted_output(output, 1_048_576)
+
+
+def test_codex_exec_trusted_output_rejects_path_substitution_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "output.json"
+    displaced = tmp_path / "displaced.json"
+    replacement = tmp_path / "replacement.json"
+    original = b'{"answer":"trusted"}'
+    output.write_bytes(original)
+    replacement.write_bytes(b'{"answer":"hostile"}')
+    output.chmod(0o600)
+    replacement.chmod(0o600)
+    assert len(original) == replacement.stat().st_size
+    real_read = os.read
+    substituted = False
+
+    def substituting_read(descriptor: int, maximum: int) -> bytes:
+        nonlocal substituted
+        value = real_read(descriptor, maximum)
+        if value and not substituted:
+            substituted = True
+            output.rename(displaced)
+            replacement.rename(output)
+        return value
+
+    monkeypatch.setattr(codex_exec.os, "read", substituting_read)
+
+    with pytest.raises(RuntimeError):
+        codex_exec._read_trusted_output(output, 1_048_576)
 
 
 @pytest.mark.parametrize(
@@ -1209,6 +1311,221 @@ async def test_codex_exec_cancellation_during_spawn_reaps_the_created_process(
 
 
 @pytest.mark.asyncio
+async def test_codex_exec_late_spawn_cancellation_is_bounded_and_reaps_process(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_codex.mode("hang")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_spawn = asyncio.create_subprocess_exec
+    spawned = asyncio.Event()
+    release = asyncio.Event()
+    created: list[asyncio.subprocess.Process] = []
+
+    async def cancellation_resistant_spawn(
+        *args: object, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        process = await original_spawn(*args, **kwargs)  # type: ignore[arg-type]
+        created.append(process)
+        spawned.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            return process
+        return process
+
+    monkeypatch.setattr(
+        codex_exec.asyncio,
+        "create_subprocess_exec",
+        cancellation_resistant_spawn,
+    )
+    task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    await asyncio.wait_for(spawned.wait(), timeout=2)
+    task.cancel()
+    done, _pending = await asyncio.wait({task}, timeout=1.5)
+    process = created[0]
+    try:
+        assert task in done
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await assert_pid_gone(process.pid)
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            with suppress(BaseException):
+                await asyncio.wait_for(task, timeout=2)
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_cleanup_bounds_a_hanging_leader_wait(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex, timeout_seconds=0.3))
+    original_spawn = asyncio.create_subprocess_exec
+    release = asyncio.Event()
+    actual_processes: list[asyncio.subprocess.Process] = []
+
+    class HangingWaitProcess:
+        def __init__(self, process: asyncio.subprocess.Process) -> None:
+            self._process = process
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._process, name)
+
+        async def wait(self) -> int:
+            await release.wait()
+            return await self._process.wait()
+
+    async def hanging_wait_spawn(*args: object, **kwargs: object) -> object:
+        process = await original_spawn(*args, **kwargs)  # type: ignore[arg-type]
+        actual_processes.append(process)
+        return HangingWaitProcess(process)
+
+    monkeypatch.setattr(codex_exec.asyncio, "create_subprocess_exec", hanging_wait_spawn)
+    task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    done, _pending = await asyncio.wait({task}, timeout=1.5)
+    try:
+        assert task in done
+        with pytest.raises(AnswerUnavailable):
+            await task
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            with suppress(BaseException):
+                await asyncio.wait_for(task, timeout=2)
+        for process in actual_processes:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_detached_pipe_holder_cannot_make_cleanup_unbounded(
+    fake_codex: FakeCodex,
+) -> None:
+    fake_codex.mode("detached_holds_pipes")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    detached_group: int | None = None
+    owned_group: int | None = None
+
+    try:
+        detached_group = int(
+            (await fake_codex.wait_for("detached-pgid-1")).read_text(encoding="ascii")
+        )
+        owned_group = fake_codex.read_capture().pgid
+        task.cancel()
+        done, _pending = await asyncio.wait({task}, timeout=1.5)
+        assert task in done
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not Path(fake_codex.read_capture().request_dir).exists()
+    finally:
+        if detached_group is not None:
+            await force_process_group_gone(detached_group)
+        if owned_group is not None:
+            await force_process_group_gone(owned_group)
+        if not task.done():
+            task.cancel()
+            with suppress(BaseException):
+                await asyncio.wait_for(task, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_cleanup_bounds_owned_tree_teardown(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_remove = codex_exec._remove_owned_tree
+    removal_entered = asyncio.Event()
+    removal_release = asyncio.Event()
+
+    async def stalled_remove(request: Any) -> bool:
+        removal_entered.set()
+        try:
+            await removal_release.wait()
+        except asyncio.CancelledError:
+            await original_remove(request)
+            raise
+        return await original_remove(request)
+
+    monkeypatch.setattr(codex_exec, "_remove_owned_tree", stalled_remove)
+    task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+
+    try:
+        await asyncio.wait_for(removal_entered.wait(), timeout=2)
+        done, _pending = await asyncio.wait({task}, timeout=1.5)
+        assert task in done
+        with pytest.raises(AnswerUnavailable):
+            await task
+    finally:
+        removal_release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        capture_path = fake_codex.root / "capture.json"
+        if capture_path.exists():
+            shutil.rmtree(fake_codex.read_capture().request_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_aclose_cannot_miss_a_directory_being_registered(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    real_lock = asyncio.Lock()
+    answer_waiting = asyncio.Event()
+    release_answer = asyncio.Event()
+    created: list[Path] = []
+    answer_task: asyncio.Task[Any] | None = None
+
+    class GatedStateLock:
+        async def __aenter__(self) -> None:
+            if asyncio.current_task() is answer_task:
+                answer_waiting.set()
+                await release_answer.wait()
+            await real_lock.acquire()
+
+        async def __aexit__(self, *_args: object) -> None:
+            real_lock.release()
+
+    original_mkdtemp = codex_exec.mkdtemp
+
+    def recording_mkdtemp(*, prefix: str) -> str:
+        path = Path(original_mkdtemp(prefix=prefix))
+        created.append(path)
+        return str(path)
+
+    adapter._state_lock = GatedStateLock()  # type: ignore[assignment]
+    monkeypatch.setattr(codex_exec, "mkdtemp", recording_mkdtemp)
+    answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+
+    try:
+        await asyncio.wait_for(answer_waiting.wait(), timeout=2)
+        await asyncio.wait_for(adapter.aclose(), timeout=2)
+        assert all(not path.exists() for path in created)
+    finally:
+        release_answer.set()
+        await asyncio.gather(answer_task, return_exceptions=True)
+        for path in created:
+            shutil.rmtree(path, ignore_errors=True)
+
+    with pytest.raises(AnswerUnavailable):
+        await answer_task
+    assert created == []
+
+
+@pytest.mark.asyncio
 async def test_codex_exec_aclose_during_execution_settles_process_and_blocks_new_calls(
     fake_codex: FakeCodex,
 ) -> None:
@@ -1231,24 +1548,194 @@ async def test_codex_exec_aclose_during_execution_settles_process_and_blocks_new
 
 
 @pytest.mark.asyncio
-async def test_codex_exec_kills_term_ignoring_parent_and_child_process_group(
+async def test_codex_exec_concurrent_close_waits_for_complete_invocation_cleanup(
     fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_codex.mode("hang")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_settle = codex_exec._settle_process_pipes
+    settlement_entered = asyncio.Event()
+    settlement_release = asyncio.Event()
+
+    async def gated_settlement(process: asyncio.subprocess.Process) -> None:
+        await original_settle(process)
+        settlement_entered.set()
+        await settlement_release.wait()
+
+    monkeypatch.setattr(codex_exec, "_settle_process_pipes", gated_settlement)
+    answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    await fake_codex.wait_for("started-1")
+    capture = fake_codex.read_capture()
+    close_one = asyncio.create_task(adapter.aclose())
+    close_two = asyncio.create_task(adapter.aclose())
+
+    try:
+        await asyncio.wait_for(settlement_entered.wait(), timeout=2)
+        await asyncio.sleep(0)
+        assert not close_one.done()
+        assert not close_two.done()
+        settlement_release.set()
+        await asyncio.gather(close_one, close_two)
+        assert answer_task.done()
+        with pytest.raises(AnswerUnavailable):
+            await answer_task
+        assert not Path(capture.request_dir).exists()
+    finally:
+        settlement_release.set()
+        await asyncio.gather(close_one, close_two, return_exceptions=True)
+        if not answer_task.done():
+            answer_task.cancel()
+        await asyncio.gather(answer_task, return_exceptions=True)
+        await force_process_group_gone(capture.pgid)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_cancelled_close_caller_does_not_restart_shared_cleanup(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_codex.mode("hang")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    original_terminate = adapter._terminate_process_group
+    termination_entered = asyncio.Event()
+    termination_release = asyncio.Event()
+    termination_calls = 0
+
+    async def gated_termination(process: asyncio.subprocess.Process) -> None:
+        nonlocal termination_calls
+        termination_calls += 1
+        termination_entered.set()
+        await termination_release.wait()
+        await original_terminate(process)
+
+    monkeypatch.setattr(adapter, "_terminate_process_group", gated_termination)
+    answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    await fake_codex.wait_for("started-1")
+    capture = fake_codex.read_capture()
+    close_one = asyncio.create_task(adapter.aclose())
+
+    try:
+        await asyncio.wait_for(termination_entered.wait(), timeout=2)
+        close_one.cancel()
+        close_two = asyncio.create_task(adapter.aclose())
+        await asyncio.sleep(0)
+        assert termination_calls == 1
+        assert not close_one.done()
+        assert not close_two.done()
+        termination_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await close_one
+        await asyncio.wait_for(close_two, timeout=2)
+        with pytest.raises(AnswerUnavailable):
+            await answer_task
+        assert termination_calls == 1
+    finally:
+        termination_release.set()
+        if not close_one.done():
+            close_one.cancel()
+        if not answer_task.done():
+            answer_task.cancel()
+        await asyncio.gather(close_one, answer_task, return_exceptions=True)
+        await force_process_group_gone(capture.pgid)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_concurrent_close_and_error_signal_each_phase_once(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_codex.mode("ignore_term")
-    adapter = CodexExecAnswerAdapter(codex_config(fake_codex, timeout_seconds=1.0))
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    real_killpg = os.killpg
+    signals: list[int] = []
+
+    def recording_killpg(process_group: int, signal_number: int) -> None:
+        if signal_number in {signal.SIGTERM, signal.SIGKILL}:
+            signals.append(signal_number)
+        real_killpg(process_group, signal_number)
+
+    monkeypatch.setattr(codex_exec.os, "killpg", recording_killpg)
+    answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+    await fake_codex.wait_for("started-1")
+    capture = fake_codex.read_capture()
+
+    try:
+        await asyncio.gather(adapter.aclose(), adapter.aclose())
+        with pytest.raises(AnswerUnavailable):
+            await answer_task
+        assert signals.count(signal.SIGTERM) == 1
+        assert signals.count(signal.SIGKILL) == 1
+        terminal_signals = tuple(signals)
+        await adapter.aclose()
+        assert tuple(signals) == terminal_signals
+        with pytest.raises(ProcessLookupError):
+            real_killpg(capture.pgid, 0)
+    finally:
+        with suppress(ProcessLookupError):
+            real_killpg(capture.pgid, signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_never_probes_or_signals_after_group_terminal_lookup(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_codex.mode("hang")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex, timeout_seconds=0.3))
+    real_killpg = os.killpg
+    calls: list[int] = []
+
+    def terminal_term(process_group: int, signal_number: int) -> None:
+        calls.append(signal_number)
+        if signal_number == signal.SIGTERM:
+            with suppress(ProcessLookupError):
+                real_killpg(process_group, signal.SIGKILL)
+            raise ProcessLookupError
+        real_killpg(process_group, signal_number)
+
+    monkeypatch.setattr(codex_exec.os, "killpg", terminal_term)
 
     with pytest.raises(AnswerUnavailable):
         await adapter.answer("question", (evidence(),), "quick-hybrid-v1")
 
-    capture = fake_codex.read_capture()
-    child_pid = int((await fake_codex.wait_for("child-pid-1")).read_text(encoding="ascii"))
-    await assert_pid_gone(capture.pid)
-    await assert_pid_gone(child_pid)
-    assert capture.pid == capture.pgid
-    assert (fake_codex.root / "term-1").exists()
-    assert (fake_codex.root / "child-term-1").exists()
-    with pytest.raises(ProcessLookupError):
-        os.killpg(capture.pgid, 0)
+    assert calls == [signal.SIGTERM]
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_kills_term_ignoring_parent_and_child_process_group(
+    fake_codex: FakeCodex,
+) -> None:
+    fake_codex.mode("ignore_term")
+    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    process_group: int | None = None
+    task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
+
+    try:
+        child_pid = int(
+            (await fake_codex.wait_for("child-pid-1", timeout=4)).read_text(encoding="ascii")
+        )
+        capture = fake_codex.read_capture()
+        process_group = capture.pgid
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await assert_pid_gone(capture.pid)
+        await assert_pid_gone(child_pid)
+        assert capture.pid == capture.pgid
+        assert (fake_codex.root / "term-1").exists()
+        assert (fake_codex.root / "child-term-1").exists()
+        with pytest.raises(ProcessLookupError):
+            os.killpg(capture.pgid, 0)
+    finally:
+        capture_path = fake_codex.root / "capture.json"
+        if process_group is None and capture_path.exists():
+            process_group = fake_codex.read_capture().pgid
+        if process_group is not None:
+            await force_process_group_gone(process_group)
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -1419,6 +1906,62 @@ async def test_codex_exec_never_decodes_or_exposes_stderr(fake_codex: FakeCodex)
         causes.append(repr(current))
         current = current.__cause__
     assert "PRIVATE_STDERR_CONTENT" not in " ".join(causes)
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_public_failure_retains_no_raw_secret_or_exception_chain(
+    fake_codex: FakeCodex,
+) -> None:
+    fake_codex.mode("sensitive_failure")
+    sentinels = (
+        "TRACE_SECRET_PROMPT",
+        "TRACE_SECRET_EVIDENCE",
+        "TRACE_SECRET_STDERR",
+    )
+
+    with pytest.raises(AnswerUnavailable) as failure:
+        await CodexExecAnswerAdapter(codex_config(fake_codex)).answer(
+            sentinels[0],
+            (evidence(content=sentinels[1]),),
+            "quick-hybrid-v1",
+        )
+
+    error = failure.value
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert not any(sentinel in repr(error) for sentinel in sentinels)
+    traceback = error.__traceback__
+    while traceback is not None:
+        if (
+            Path(traceback.tb_frame.f_code.co_filename).resolve()
+            == Path(codex_exec.__file__).resolve()
+        ):
+            reachable = repr(traceback.tb_frame.f_locals)
+            assert not any(sentinel in reachable for sentinel in sentinels)
+        traceback = traceback.tb_next
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_final_json_rejects_overflowing_exponent_before_grounded_parser(
+    fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_codex.mode("nonfinite_exponent_output")
+    parser_called = False
+
+    def accepting_parser(*_args: object, **_kwargs: object) -> tuple[str, tuple[object, ...]]:
+        nonlocal parser_called
+        parser_called = True
+        return "must not be accepted", ()
+
+    monkeypatch.setattr(codex_exec, "parse_grounded_answer_payload", accepting_parser)
+
+    with pytest.raises(AnswerUnavailable):
+        await CodexExecAnswerAdapter(codex_config(fake_codex)).answer(
+            "question", (evidence(),), "quick-hybrid-v1"
+        )
+
+    assert parser_called is False
 
 
 @pytest.mark.parametrize("mode", ["probe_stdout_over", "probe_stderr_over"])
