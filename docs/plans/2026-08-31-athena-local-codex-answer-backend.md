@@ -1,5 +1,5 @@
 ---
-status: planned
+status: active
 date: 2026-08-31
 ---
 
