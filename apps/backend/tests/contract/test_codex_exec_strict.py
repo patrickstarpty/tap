@@ -772,6 +772,7 @@ def main() -> int:
     append_invocation(args)
     if args == ["--version"]:
         if selected_mode == "probe_hang":
+            (ROOT / "probe-pgid").write_text(str(os.getpgid(0)), encoding="ascii")
             (ROOT / "probe-pid").write_text(str(os.getpid()), encoding="ascii")
             install_term_handler(99, ignore=False)
             wait_forever()
@@ -1446,15 +1447,19 @@ async def test_codex_exec_last_audit_ignores_an_older_concurrent_completion(
     fake_codex: FakeCodex,
 ) -> None:
     fake_codex.mode("block")
-    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    marker_coordination_timeout_seconds = 4.0
+    adapter_timeout_seconds = marker_coordination_timeout_seconds + 1.0
+    adapter = CodexExecAnswerAdapter(
+        codex_config(fake_codex, timeout_seconds=adapter_timeout_seconds)
+    )
     first = asyncio.create_task(adapter.answer("first", (evidence(),), "quick-hybrid-v1"))
-    await fake_codex.wait_for("started-1")
+    await fake_codex.wait_for("started-1", timeout=marker_coordination_timeout_seconds)
     second = asyncio.create_task(adapter.answer("second", (evidence(),), "quick-hybrid-v1"))
     await asyncio.sleep(0)
 
     assert adapter.last_audit is None
     fake_codex.release(1)
-    await fake_codex.wait_for("started-2")
+    await fake_codex.wait_for("started-2", timeout=marker_coordination_timeout_seconds)
     assert adapter.last_audit is None
 
     fake_codex.release(2)
@@ -3155,15 +3160,44 @@ async def test_codex_exec_readiness_timeout_reaps_its_process_group(
     fake_codex: FakeCodex,
 ) -> None:
     fake_codex.mode("probe_hang")
-    adapter = CodexExecAnswerAdapter(codex_config(fake_codex, timeout_seconds=1.0))
+    marker_coordination_timeout_seconds = 4.0
+    adapter_timeout_seconds = marker_coordination_timeout_seconds + 1.0
+    adapter = CodexExecAnswerAdapter(
+        codex_config(fake_codex, timeout_seconds=adapter_timeout_seconds)
+    )
+    readiness = asyncio.create_task(adapter.check_ready())
+    probe_pid: int | None = None
 
-    with pytest.raises(AnswerUnavailable):
-        await adapter.check_ready()
+    try:
+        probe_pid = int(
+            (
+                await fake_codex.wait_for(
+                    "probe-pid",
+                    timeout=marker_coordination_timeout_seconds,
+                )
+            ).read_text(encoding="ascii")
+        )
+        probe_pgid = int((fake_codex.root / "probe-pgid").read_text(encoding="ascii"))
+        assert probe_pid == probe_pgid
 
-    probe_pid = int((await fake_codex.wait_for("probe-pid")).read_text(encoding="ascii"))
-    await assert_pid_gone(probe_pid)
-    assert (fake_codex.root / "term-99").exists()
-    assert adapter._processes == set()
+        with pytest.raises(AnswerUnavailable):
+            await readiness
+
+        await assert_pid_gone(probe_pid)
+        assert (fake_codex.root / "term-99").exists()
+        with pytest.raises(ProcessLookupError):
+            os.killpg(probe_pgid, 0)
+        assert adapter._processes == set()
+    finally:
+        if not readiness.done():
+            readiness.cancel()
+            await asyncio.gather(readiness, return_exceptions=True)
+        if probe_pid is None:
+            marker = fake_codex.root / "probe-pid"
+            if marker.exists():
+                probe_pid = int(marker.read_text(encoding="ascii"))
+        if probe_pid is not None:
+            await force_process_group_gone(probe_pid)
 
 
 @pytest.mark.asyncio
