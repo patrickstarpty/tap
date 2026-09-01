@@ -1253,9 +1253,19 @@ async def test_codex_answer_backend_starts_unavailable_without_exposing_a_login_
     settings = module.AthenaSettings.from_mapping(
         valid_settings() | {"ATHENA_ANSWER_BACKEND": "codex"}
     )
+
+    class Embeddings:
+        def __init__(self) -> None:
+            self.answer_calls = 0
+
+        async def answer(self, *_args: object, **_kwargs: object) -> None:
+            self.answer_calls += 1
+            raise AssertionError("LiteLLM answer fallback was called")
+
+    embeddings = Embeddings()
     monkeypatch.setattr(shutil, "which", lambda _name: None)
 
-    backend = module._create_answer_backend(settings, embeddings=object())
+    backend = module._create_answer_backend(settings, embeddings=embeddings)
 
     assert backend.owner is None
     assert backend.readiness is not None
@@ -1267,6 +1277,7 @@ async def test_codex_answer_backend_starts_unavailable_without_exposing_a_login_
     assert str(readiness.value) == "Codex answer backend is unavailable"
     assert str(request.value) == "Codex answer backend is unavailable"
     assert "/" not in str(readiness.value)
+    assert embeddings.answer_calls == 0
 
 
 @pytest.mark.parametrize(

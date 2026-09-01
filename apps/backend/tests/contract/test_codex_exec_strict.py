@@ -19,8 +19,6 @@ import pytest
 
 from tap.modules.knowledge.adapters import codex_exec, codex_target
 from tap.modules.knowledge.adapters.codex_exec import (
-    CODEX_DISABLED_FEATURES,
-    INTERNAL_DELEGATION_TOOLS,
     CodexEventAudit,
     CodexExecAnswerAdapter,
     CodexExecConfig,
@@ -62,6 +60,31 @@ EXACT_LIMITS = {
     "max_claim_chars": 4_000,
     "max_labels_per_claim": 16,
 }
+EXPECTED_DISABLED_FEATURES = (
+    "shell_tool",
+    "shell_snapshot",
+    "unified_exec",
+    "code_mode",
+    "code_mode_host",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "in_app_browser",
+    "computer_use",
+    "apps",
+    "enable_mcp_apps",
+    "plugins",
+    "skill_search",
+    "hooks",
+    "image_generation",
+    "view_image",
+    "workspace_dependencies",
+    "auth_elicitation",
+    "tool_call_mcp_elicitation",
+    "tool_suggest",
+    "multi_agent",
+    "multi_agent_v2",
+)
 
 
 _FAKE_DRIVER = r"""from __future__ import annotations
@@ -85,12 +108,12 @@ DISABLED = (
     "in_app_browser", "computer_use", "apps", "enable_mcp_apps", "plugins",
     "skill_search", "hooks", "image_generation", "view_image",
     "workspace_dependencies", "auth_elicitation", "tool_call_mcp_elicitation",
-    "tool_suggest",
+    "tool_suggest", "multi_agent", "multi_agent_v2",
 )
 FEATURE_OVERRIDES = tuple(
     value for feature in DISABLED for value in ("--disable", feature)
 )
-FEATURE_LIST_ARGS = ("--enable", "multi_agent", *FEATURE_OVERRIDES, "features", "list")
+FEATURE_LIST_ARGS = (*FEATURE_OVERRIDES, "features", "list")
 FLAGS = (
     "--ephemeral", "--ignore-user-config", "--ignore-rules",
     "--skip-git-repo-check", "--sandbox", "--model", "--strict-config",
@@ -115,19 +138,23 @@ def append_invocation(args: list[str]) -> None:
 
 
 def feature_rows(selected_mode: str) -> str:
-    names = [*DISABLED, "multi_agent"]
+    names = list(DISABLED)
     if selected_mode == "missing_feature":
         names.remove("shell_tool")
     if selected_mode == "missing_multi_agent":
         names.remove("multi_agent")
+    if selected_mode == "missing_multi_agent_v2":
+        names.remove("multi_agent_v2")
     rows = []
     stages = ("stable", "experimental", "deprecated", "removed", "under development")
     for index, name in enumerate(names):
-        enabled = "true" if name == "multi_agent" else "false"
+        enabled = "false"
         if selected_mode == "disabled_feature_enabled" and name == "shell_tool":
             enabled = "true"
-        if selected_mode == "multi_agent_disabled" and name == "multi_agent":
-            enabled = "false"
+        if selected_mode == "multi_agent_enabled" and name == "multi_agent":
+            enabled = "true"
+        if selected_mode == "multi_agent_v2_enabled" and name == "multi_agent_v2":
+            enabled = "true"
         stage = (
             "future"
             if selected_mode == "unknown_feature_stage"
@@ -297,6 +324,74 @@ def events(selected_mode: str) -> bytes:
         )
     elif selected_mode == "unknown_event":
         values.append({"type": "future.event"})
+    elif selected_mode == "missing_reasoning":
+        values.append(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "answer-1",
+                    "type": "agent_message",
+                    "text": "raw secret answer",
+                },
+            }
+        )
+    elif selected_mode == "missing_agent_message":
+        values.append(
+            {
+                "type": "item.completed",
+                "item": {"id": "reason-1", "type": "reasoning", "text": "raw secret"},
+            }
+        )
+    elif selected_mode == "duplicate_agent_message":
+        values.extend(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {"id": "reason-1", "type": "reasoning", "text": "raw secret"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "answer-1",
+                        "type": "agent_message",
+                        "text": "raw secret answer",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "answer-2",
+                        "type": "agent_message",
+                        "text": "raw secret duplicate answer",
+                    },
+                },
+            ]
+        )
+    elif selected_mode == "reasoning_after_agent_message":
+        values.extend(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {"id": "reason-1", "type": "reasoning", "text": "raw secret"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "answer-1",
+                        "type": "agent_message",
+                        "text": "raw secret answer",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "reason-2",
+                        "type": "reasoning",
+                        "text": "raw secret trailing reasoning",
+                    },
+                },
+            ]
+        )
     else:
         values.extend(
             [
@@ -334,15 +429,13 @@ def events(selected_mode: str) -> bytes:
         )
     if selected_mode in {"stdout_exact", "stdout_over"}:
         target = 1_048_576 + (1 if selected_mode == "stdout_over" else 0)
-        turn_completed = (
-            json.dumps(values[-1], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            + b"\n"
+        reasoning_text = b'"text":"raw secret"'
+        padding = b"x" * (len(b"raw secret") + target - len(encoded))
+        return encoded.replace(
+            reasoning_text,
+            b'"text":"' + padding + b'"',
+            1,
         )
-        encoded = encoded[: -len(turn_completed)]
-        prefix = b'{"type":"item.completed","item":{"id":"pad","type":"reasoning","text":"'
-        suffix = b'"}}\n'
-        pad = target - len(encoded) - len(prefix) - len(suffix) - len(turn_completed)
-        return encoded + prefix + (b"x" * pad) + suffix + turn_completed
     return encoded
 
 
@@ -517,6 +610,18 @@ def main() -> int:
         if selected_mode == "login_failure":
             print("not logged in", file=sys.stderr)
             return 1
+        if selected_mode == "login_api_key":
+            print("Logged in using an API key", file=sys.stderr)
+            return 0
+        if selected_mode == "login_stdout":
+            print("unexpected stdout")
+        if selected_mode == "login_chatgpt_extra":
+            print("Logged in using ChatGPT\nextra", file=sys.stderr)
+            return 0
+        if selected_mode == "login_stderr_over":
+            sys.stderr.buffer.write(b"e" * 65_537)
+            sys.stderr.buffer.flush()
+            return 0
         print("Logged in using ChatGPT", file=sys.stderr)
         return 0
     if args and args[0] == "exec":
@@ -872,7 +977,7 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
     schema = tmp_path / "schema.json"
     output = tmp_path / "output.json"
     disabled = tuple(
-        value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature)
+        value for feature in EXPECTED_DISABLED_FEATURES for value in ("--disable", feature)
     )
 
     assert build_exec_argv(config, cwd=cwd, schema_path=schema, output_path=output) == (
@@ -887,8 +992,6 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
         "--model",
         "gpt-5.6-sol",
         "--strict-config",
-        "--enable",
-        "multi_agent",
         *disabled,
         "-c",
         'model_reasoning_effort="ultra"',
@@ -952,6 +1055,11 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
         "collab_unknown_tool",
         "collab_incomplete",
         "collab_wrong_completion",
+        "internal_delegation",
+        "missing_reasoning",
+        "missing_agent_message",
+        "duplicate_agent_message",
+        "reasoning_after_agent_message",
     ],
 )
 @pytest.mark.asyncio
@@ -971,24 +1079,20 @@ async def test_codex_exec_rejects_external_or_unobservable_events(
 
 
 @pytest.mark.asyncio
-async def test_codex_exec_accepts_only_exact_internal_delegation_tools(
+async def test_codex_exec_accepts_only_parent_reasoning_and_final_message(
     fake_codex: FakeCodex,
 ) -> None:
-    fake_codex.mode("internal_delegation")
     adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
 
     result = await adapter.answer("sensitive query", (evidence(),), "quick-hybrid-v1")
 
     assert result.text == "退款需要双人审批。"
-    assert INTERNAL_DELEGATION_TOOLS == frozenset(
-        {"spawn_agent", "send_input", "resume_agent", "wait_agent", "close_agent"}
-    )
     assert adapter.last_audit == CodexEventAudit(
         thread_started=1,
         turn_started=1,
         turn_completed=1,
-        delegation_started=5,
-        delegation_completed=5,
+        delegation_started=0,
+        delegation_completed=0,
         external_tool_events=0,
     )
     assert "sensitive" not in repr(adapter.last_audit)
@@ -2394,10 +2498,16 @@ async def test_codex_exec_nonzero_exit_kills_a_surviving_child_process_group(
         "missing_feature",
         "disabled_feature_enabled",
         "missing_multi_agent",
-        "multi_agent_disabled",
+        "missing_multi_agent_v2",
+        "multi_agent_enabled",
+        "multi_agent_v2_enabled",
         "unknown_feature_stage",
         "malformed_feature_columns",
         "login_failure",
+        "login_api_key",
+        "login_stdout",
+        "login_chatgpt_extra",
+        "login_stderr_over",
     ],
 )
 @pytest.mark.asyncio
@@ -2423,12 +2533,12 @@ async def test_codex_exec_readiness_is_non_generating_and_uses_minimal_probe_env
 
     invocations = fake_codex.invocations()
     feature_overrides = [
-        value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature)
+        value for feature in EXPECTED_DISABLED_FEATURES for value in ("--disable", feature)
     ]
     assert [item["argv"] for item in invocations] == [
         ["--version"],
         ["exec", "--help"],
-        ["--enable", "multi_agent", *feature_overrides, "features", "list"],
+        [*feature_overrides, "features", "list"],
         ["login", "status"],
     ]
     for index, invocation in enumerate(invocations):

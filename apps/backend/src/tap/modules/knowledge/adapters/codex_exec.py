@@ -51,13 +51,13 @@ CODEX_DISABLED_FEATURES = (
     "auth_elicitation",
     "tool_call_mcp_elicitation",
     "tool_suggest",
-)
-INTERNAL_DELEGATION_TOOLS = frozenset(
-    {"spawn_agent", "send_input", "resume_agent", "wait_agent", "close_agent"}
+    "multi_agent",
+    "multi_agent_v2",
 )
 
 _EXPECTED_CODEX_VERSION = "0.149.0"
 _EXPECTED_VERSION_OUTPUT = b"codex-cli 0.149.0"
+_EXPECTED_LOGIN_STATUS_STDERR = b"Logged in using ChatGPT\n"
 _MODEL_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _PROFILE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
@@ -197,6 +197,8 @@ class _AuditState:
     delegation_started: int = 0
     delegation_completed: int = 0
     external_tool_events: int = 0
+    reasoning_completed: int = 0
+    agent_message_completed: int = 0
     phase: int = 0
 
 
@@ -239,6 +241,12 @@ class _SpawnSettlement:
 class _ProcessSettlement:
     settled: bool
     wait_task: asyncio.Task[int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProbeOutput:
+    stdout: bytes
+    stderr: bytes | None
 
 
 @dataclass(slots=True)
@@ -288,10 +296,7 @@ def build_exec_argv(
 
 
 def _feature_override_args() -> tuple[str, ...]:
-    disabled = tuple(
-        value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature)
-    )
-    return ("--enable", "multi_agent", *disabled)
+    return tuple(value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature))
 
 
 def grounded_answer_schema(config: CodexExecConfig) -> dict[str, object]:
@@ -418,8 +423,6 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 raise _CodexContractFailure("Codex feature inventory is incomplete")
             if any(features[feature] is not False for feature in CODEX_DISABLED_FEATURES):
                 raise _CodexContractFailure("Codex disabled feature matrix is not effective")
-            if features.get("multi_agent") is not True:
-                raise _CodexContractFailure("Codex multi_agent capability is not enabled")
             await self._login_probe()
         except asyncio.CancelledError:
             raise
@@ -658,19 +661,26 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         arguments: tuple[str, ...],
     ) -> bytes:
         async with asyncio.timeout(self.config.timeout_seconds):
-            return await self._probe_with_directory(
+            result = await self._probe_with_directory(
                 arguments,
                 prefix="tap-codex-inventory-",
                 real_codex_home=False,
+                capture_stderr=False,
             )
+        if result.stderr is not None:
+            raise _CodexContractFailure("Codex inventory probe output is malformed")
+        return result.stdout
 
     async def _login_probe(self) -> None:
         async with asyncio.timeout(self.config.timeout_seconds):
-            await self._probe_with_directory(
+            result = await self._probe_with_directory(
                 ("login", "status"),
                 prefix="tap-codex-login-",
                 real_codex_home=True,
+                capture_stderr=True,
             )
+        if result.stdout != b"" or result.stderr != _EXPECTED_LOGIN_STATUS_STDERR:
+            raise _CodexContractFailure("Codex login status is not ChatGPT")
 
     async def _probe_with_directory(
         self,
@@ -678,7 +688,8 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         *,
         prefix: str,
         real_codex_home: bool,
-    ) -> bytes:
+        capture_stderr: bool,
+    ) -> _ProbeOutput:
         invocation = await self._create_invocation(prefix)
         request_dir = invocation.request.path
         succeeded = False
@@ -700,6 +711,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                     tmp=request_tmp,
                     codex_home=selected_codex_home,
                 ),
+                capture_stderr=capture_stderr,
             )
             succeeded = True
             return result
@@ -718,7 +730,8 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         *,
         cwd: Path,
         environment: dict[str, str],
-    ) -> bytes:
+        capture_stderr: bool,
+    ) -> _ProbeOutput:
         process = await self._spawn(
             invocation,
             (str(self.config.target.executable), *arguments),
@@ -728,9 +741,28 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         )
         if process.stdout is None or process.stderr is None:
             raise _CodexContractFailure("Codex probe pipes are unavailable")
+        stderr_task = (
+            asyncio.create_task(
+                _read_bounded(
+                    process.stderr,
+                    maximum=_PROBE_MAX_STDERR_BYTES,
+                    stream_name="stderr",
+                )
+            )
+            if capture_stderr
+            else asyncio.create_task(
+                _drain_bounded(process.stderr, maximum=_PROBE_MAX_STDERR_BYTES)
+            )
+        )
         tasks: tuple[asyncio.Task[Any], ...] = (
-            asyncio.create_task(_read_bounded(process.stdout, maximum=_PROBE_MAX_STDOUT_BYTES)),
-            asyncio.create_task(_drain_bounded(process.stderr, maximum=_PROBE_MAX_STDERR_BYTES)),
+            asyncio.create_task(
+                _read_bounded(
+                    process.stdout,
+                    maximum=_PROBE_MAX_STDOUT_BYTES,
+                    stream_name="stdout",
+                )
+            ),
+            stderr_task,
             asyncio.create_task(process.wait()),
         )
         invocation.communication_tasks = tasks
@@ -746,7 +778,13 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         stdout = values[0]
         if not isinstance(stdout, bytes):
             raise _CodexContractFailure("Codex probe output is malformed")
-        return stdout
+        stderr = values[1]
+        if capture_stderr:
+            if not isinstance(stderr, bytes):
+                raise _CodexContractFailure("Codex probe output is malformed")
+        elif stderr is not None:
+            raise _CodexContractFailure("Codex probe output is malformed")
+        return _ProbeOutput(stdout=stdout, stderr=stderr)
 
     async def _spawn(
         self,
@@ -1462,7 +1500,12 @@ async def _write_stdin(writer: asyncio.StreamWriter, value: bytes) -> None:
             await writer.wait_closed()
 
 
-async def _read_bounded(reader: asyncio.StreamReader, *, maximum: int) -> bytes:
+async def _read_bounded(
+    reader: asyncio.StreamReader,
+    *,
+    maximum: int,
+    stream_name: Literal["stdout", "stderr"],
+) -> bytes:
     result = bytearray()
     while True:
         chunk = await reader.read(min(_READ_CHUNK_BYTES, maximum - len(result) + 1))
@@ -1470,7 +1513,7 @@ async def _read_bounded(reader: asyncio.StreamReader, *, maximum: int) -> bytes:
             return bytes(result)
         result.extend(chunk)
         if len(result) > maximum:
-            raise _CodexContractFailure("Codex stdout exceeds the byte bound")
+            raise _CodexContractFailure(f"Codex {stream_name} exceeds the byte bound")
 
 
 async def _drain_bounded(reader: asyncio.StreamReader, *, maximum: int) -> None:
@@ -1503,8 +1546,6 @@ async def _audit_jsonl(
     maximum: int,
 ) -> CodexEventAudit:
     state = _AuditState()
-    delegation_starts: dict[str, str] = {}
-    delegation_completions: set[str] = set()
     total = 0
     pending = bytearray()
     chunk = b""
@@ -1528,8 +1569,6 @@ async def _audit_jsonl(
                 _audit_event(
                     _decode_closed_json(line),
                     state=state,
-                    delegation_starts=delegation_starts,
-                    delegation_completions=delegation_completions,
                 )
                 line = b""
         if pending:
@@ -1538,9 +1577,11 @@ async def _audit_jsonl(
             state.thread_started != 1
             or state.turn_started != 1
             or state.turn_completed != 1
-            or state.phase != 3
-            or set(delegation_starts) != delegation_completions
-            or state.delegation_started != state.delegation_completed
+            or state.phase != 4
+            or state.reasoning_completed < 1
+            or state.agent_message_completed != 1
+            or state.delegation_started != 0
+            or state.delegation_completed != 0
         ):
             raise _CodexContractFailure("Codex JSONL lifecycle is incomplete")
         return CodexEventAudit(
@@ -1561,8 +1602,6 @@ def _audit_event(
     raw: object,
     *,
     state: _AuditState,
-    delegation_starts: dict[str, str],
-    delegation_completions: set[str],
 ) -> None:
     if not isinstance(raw, dict):
         raise _CodexContractFailure("Codex JSONL event must be an object")
@@ -1581,42 +1620,29 @@ def _audit_event(
         state.phase = 2
         return
     if event_type == "turn.completed":
-        if state.phase != 2 or state.turn_completed != 0:
+        if state.phase != 3 or state.turn_completed != 0:
             raise _CodexContractFailure("Codex turn completion is out of order")
         state.turn_completed = 1
-        state.phase = 3
+        state.phase = 4
         return
-    if event_type not in {"item.started", "item.completed"} or state.phase != 2:
+    if event_type != "item.completed" or state.phase != 2:
         raise _CodexContractFailure("Codex emitted an unknown lifecycle event")
     item = raw.get("item")
     if not isinstance(item, dict):
         raise _CodexContractFailure("Codex item event is malformed")
-    item_id = _bounded_event_value(item.get("id"), "item id")
+    _bounded_event_value(item.get("id"), "item id")
     item_type = item.get("type")
-    if item_type in {"reasoning", "agent_message"}:
+    if item_type == "reasoning":
+        state.reasoning_completed += 1
         return
-    if item_type != "collab_tool_call":
-        state.external_tool_events += 1
-        raise _CodexContractFailure("Codex emitted an external or unknown tool event")
-    tool = _bounded_event_value(item.get("tool"), "delegation tool")
-    status_value = _bounded_event_value(item.get("status"), "delegation status")
-    if tool not in INTERNAL_DELEGATION_TOOLS:
-        state.external_tool_events += 1
-        raise _CodexContractFailure("Codex emitted an unapproved delegation tool")
-    if event_type == "item.started":
-        if status_value != "in_progress" or item_id in delegation_starts:
-            raise _CodexContractFailure("Codex delegation start is malformed")
-        delegation_starts[item_id] = tool
-        state.delegation_started += 1
+    if item_type == "agent_message":
+        if state.reasoning_completed < 1 or state.agent_message_completed != 0:
+            raise _CodexContractFailure("Codex final message lifecycle is malformed")
+        state.agent_message_completed = 1
+        state.phase = 3
         return
-    if (
-        status_value != "completed"
-        or delegation_starts.get(item_id) != tool
-        or item_id in delegation_completions
-    ):
-        raise _CodexContractFailure("Codex delegation completion is malformed")
-    delegation_completions.add(item_id)
-    state.delegation_completed += 1
+    state.external_tool_events += 1
+    raise _CodexContractFailure("Codex emitted an external or unknown tool event")
 
 
 def _bounded_event_value(value: object, name: str) -> str:
