@@ -110,8 +110,8 @@ def resolve_darwin(tree: FakeCodexInstall):  # type: ignore[no-untyped-def]
     )
 
 
-def test_supported_versions_remain_closed_until_real_conformance() -> None:
-    assert SUPPORTED_CODEX_CLI_VERSIONS == frozenset()
+def test_supported_versions_are_exactly_real_conformance_versions() -> None:
+    assert SUPPORTED_CODEX_CLI_VERSIONS == frozenset({"0.149.0"})
 
 
 def test_nvm_js_launcher_resolves_to_same_package_native_binary(

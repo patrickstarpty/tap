@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-SUPPORTED_CODEX_CLI_VERSIONS: frozenset[str] = frozenset()
+SUPPORTED_CODEX_CLI_VERSIONS: frozenset[str] = frozenset({"0.149.0"})
 
 _VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 _NODE_SHEBANG = b"#!/usr/bin/env node\n"
