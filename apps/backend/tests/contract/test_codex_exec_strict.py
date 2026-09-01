@@ -1904,14 +1904,23 @@ async def test_codex_exec_detached_pipe_holder_cannot_make_cleanup_unbounded(
     fake_codex: FakeCodex,
 ) -> None:
     fake_codex.mode("detached_holds_pipes")
-    adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
+    marker_coordination_timeout_seconds = 4.0
+    adapter_timeout_seconds = marker_coordination_timeout_seconds + 1.0
+    adapter = CodexExecAnswerAdapter(
+        codex_config(fake_codex, timeout_seconds=adapter_timeout_seconds)
+    )
     task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
     detached_group: int | None = None
     owned_group: int | None = None
 
     try:
         detached_group = int(
-            (await fake_codex.wait_for("detached-pgid-1")).read_text(encoding="ascii")
+            (
+                await fake_codex.wait_for(
+                    "detached-pgid-1",
+                    timeout=marker_coordination_timeout_seconds,
+                )
+            ).read_text(encoding="ascii")
         )
         owned_group = fake_codex.read_capture().pgid
         task.cancel()
