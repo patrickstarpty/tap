@@ -59,6 +59,15 @@ CODEX_DISABLED_FEATURES = (
 _EXPECTED_CODEX_VERSION = "0.149.0"
 _EXPECTED_VERSION_OUTPUT = b"codex-cli 0.149.0"
 _EXPECTED_LOGIN_STATUS_STDERR = b"Logged in using ChatGPT\n"
+_GRPC_FORK_POLL_DIAGNOSTIC_PREFIX = re.compile(
+    rb"\AI"
+    rb"(?:0[1-9]|1[0-2])"
+    rb"(?:0[1-9]|[12][0-9]|3[01]) "
+    rb"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]{6} "
+    rb"[0-9]{1,20} ev_poll_posix\.cc:593\] "
+    rb"FD from fork parent still in poll list: "
+    rb"fd\([0-9]{1,10}, generation: [0-9]{1,20}\)\n"
+)
 _EXPECTED_MODEL_ID = "gpt-5.6-sol"
 _TOOL_FREE_BASE_INSTRUCTIONS = (
     "You are a tool-free grounded answer generator. Use only the supplied evidence and "
@@ -812,7 +821,12 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 capture_stderr=True,
                 include_model_catalog=False,
             )
-        if result.stdout != b"" or result.stderr != _EXPECTED_LOGIN_STATUS_STDERR:
+        if (
+            result.stdout != b""
+            or result.stderr is None
+            or _without_one_exact_grpc_fork_poll_diagnostic(result.stderr)
+            != _EXPECTED_LOGIN_STATUS_STDERR
+        ):
             raise _CodexContractFailure("Codex login status is not ChatGPT")
 
     async def _probe_with_directory(
@@ -1981,6 +1995,16 @@ def _without_one_line_ending(value: bytes) -> bytes:
     if value.endswith(b"\n"):
         return value[:-1]
     return value
+
+
+def _without_one_exact_grpc_fork_poll_diagnostic(value: bytes) -> bytes:
+    matched = _GRPC_FORK_POLL_DIAGNOSTIC_PREFIX.match(value)
+    if matched is None:
+        return value
+    remainder = value[matched.end() :]
+    if remainder != _EXPECTED_LOGIN_STATUS_STDERR:
+        return value
+    return remainder
 
 
 def _parse_exec_help_flags(value: bytes) -> frozenset[str]:

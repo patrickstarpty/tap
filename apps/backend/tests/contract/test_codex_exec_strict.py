@@ -861,6 +861,10 @@ def main() -> int:
         sys.stdout.write(json.dumps(rendered, ensure_ascii=False, separators=(",", ":")))
         return 0
     if args == ["login", "status"]:
+        grpc_fork_diagnostic = (
+            "I0901 22:19:34.891656 499653400 ev_poll_posix.cc:593] "
+            "FD from fork parent still in poll list: fd(13, generation: 1)\n"
+        )
         if selected_mode == "login_failure_child":
             spawn_ignoring_child(98, close_pipes=True)
             return 1
@@ -872,6 +876,30 @@ def main() -> int:
             return 0
         if selected_mode == "login_stdout":
             print("unexpected stdout")
+        if selected_mode == "login_grpc_fork_diagnostic":
+            sys.stderr.write(grpc_fork_diagnostic)
+        if selected_mode == "login_grpc_fork_diagnostic_other_values":
+            sys.stderr.write(
+                "I1231 00:00:00.000006 7 ev_poll_posix.cc:593] "
+                "FD from fork parent still in poll list: fd(0, generation: 42)\n"
+            )
+        if selected_mode == "login_grpc_fork_diagnostic_unbounded_thread":
+            sys.stderr.write(
+                "I1231 00:00:00.000006 123456789012345678901 ev_poll_posix.cc:593] "
+                "FD from fork parent still in poll list: fd(0, generation: 42)\n"
+            )
+        if selected_mode == "login_grpc_fork_diagnostic_wrong_source":
+            sys.stderr.write(grpc_fork_diagnostic.replace("cc:593]", "cc:594]"))
+        if selected_mode == "login_grpc_fork_diagnostic_duplicate":
+            sys.stderr.write(grpc_fork_diagnostic * 2)
+        if selected_mode == "login_grpc_fork_diagnostic_extra":
+            sys.stderr.write(grpc_fork_diagnostic + "unrelated diagnostic\n")
+        if selected_mode == "login_grpc_fork_diagnostic_api_key":
+            sys.stderr.write(grpc_fork_diagnostic + "Logged in using an API key\n")
+            return 0
+        if selected_mode == "login_grpc_fork_diagnostic_stdout":
+            sys.stdout.write("unexpected stdout\n")
+            sys.stderr.write(grpc_fork_diagnostic)
         if selected_mode == "login_chatgpt_extra":
             print("Logged in using ChatGPT\nextra", file=sys.stderr)
             return 0
@@ -2871,6 +2899,12 @@ async def test_codex_exec_nonzero_exit_kills_a_surviving_child_process_group(
         "login_stdout",
         "login_chatgpt_extra",
         "login_stderr_over",
+        "login_grpc_fork_diagnostic_wrong_source",
+        "login_grpc_fork_diagnostic_duplicate",
+        "login_grpc_fork_diagnostic_extra",
+        "login_grpc_fork_diagnostic_api_key",
+        "login_grpc_fork_diagnostic_stdout",
+        "login_grpc_fork_diagnostic_unbounded_thread",
     ],
 )
 @pytest.mark.asyncio
@@ -2884,6 +2918,22 @@ async def test_codex_exec_readiness_fails_closed_on_inventory_or_login(
         await CodexExecAnswerAdapter(codex_config(fake_codex)).check_ready()
 
     assert all(invocation["argv"] != ["exec"] for invocation in fake_codex.invocations())
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["login_grpc_fork_diagnostic", "login_grpc_fork_diagnostic_other_values"],
+)
+@pytest.mark.asyncio
+async def test_codex_exec_readiness_accepts_one_exact_native_grpc_fork_diagnostic(
+    fake_codex: FakeCodex,
+    mode: str,
+) -> None:
+    fake_codex.mode(mode)
+
+    await CodexExecAnswerAdapter(codex_config(fake_codex)).check_ready()
+
+    assert fake_codex.invocations()[-1]["argv"] == ["login", "status"]
 
 
 @pytest.mark.asyncio
