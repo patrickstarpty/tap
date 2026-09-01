@@ -84,7 +84,85 @@ EXPECTED_DISABLED_FEATURES = (
     "tool_suggest",
     "multi_agent",
     "multi_agent_v2",
+    "goals",
 )
+EXPECTED_TOOL_FREE_CONFIG_OVERRIDES = (
+    "tools.update_plan.enabled=false",
+    "tools.experimental_request_user_input.enabled=false",
+    "agents.enabled=false",
+)
+EXPECTED_TOOL_FREE_MODEL_CATALOG = {
+    "client_version": "0.149.0",
+    "models": [
+        {
+            "slug": "gpt-5.6-sol",
+            "display_name": "GPT-5.6-Sol",
+            "description": "Latest frontier agentic coding model.",
+            "base_instructions": (
+                "You are a tool-free grounded answer generator. Use only the supplied "
+                "evidence and return the requested structured answer. Do not call tools "
+                "or delegate."
+            ),
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [
+                {"effort": "low", "description": "Fast responses with lighter reasoning"},
+                {
+                    "effort": "medium",
+                    "description": ("Balances speed and reasoning depth for everyday tasks"),
+                },
+                {
+                    "effort": "high",
+                    "description": "Greater reasoning depth for complex problems",
+                },
+                {
+                    "effort": "xhigh",
+                    "description": "Extra high reasoning depth for complex problems",
+                },
+                {
+                    "effort": "max",
+                    "description": "Maximum reasoning depth for the hardest problems",
+                },
+                {"effort": "ultra", "description": "Maximum reasoning depth"},
+            ],
+            "shell_type": "shell_command",
+            "visibility": "list",
+            "supported_in_api": True,
+            "priority": 1,
+            "additional_speed_tiers": ["fast"],
+            "service_tiers": [
+                {
+                    "id": "priority",
+                    "name": "Fast",
+                    "description": "1.5x speed, increased usage",
+                }
+            ],
+            "availability_nux": None,
+            "upgrade": None,
+            "include_skills_usage_instructions": False,
+            "include_plugin_usage_instructions": False,
+            "include_apps_usage_instructions": False,
+            "default_reasoning_summary": "none",
+            "support_verbosity": True,
+            "default_verbosity": "low",
+            "apply_patch_tool_type": None,
+            "web_search_tool_type": "text_and_image",
+            "truncation_policy": {"mode": "tokens", "limit": 10_000},
+            "supports_image_detail_original": True,
+            "context_window": 272_000,
+            "max_context_window": 872_000,
+            "comp_hash": "3000",
+            "effective_context_window_percent": 95,
+            "experimental_supported_tools": [],
+            "input_modalities": ["text", "image"],
+            "supports_search_tool": False,
+            "use_responses_lite": True,
+            "node_repl_auto_review_required": False,
+            "node_repl_disabled": True,
+            "tool_mode": None,
+            "multi_agent_version": None,
+        }
+    ],
+}
 
 
 _FAKE_DRIVER = r"""from __future__ import annotations
@@ -108,7 +186,12 @@ DISABLED = (
     "in_app_browser", "computer_use", "apps", "enable_mcp_apps", "plugins",
     "skill_search", "hooks", "image_generation", "view_image",
     "workspace_dependencies", "auth_elicitation", "tool_call_mcp_elicitation",
-    "tool_suggest", "multi_agent", "multi_agent_v2",
+    "tool_suggest", "multi_agent", "multi_agent_v2", "goals",
+)
+TOOL_FREE_CONFIG_OVERRIDES = (
+    "tools.update_plan.enabled=false",
+    "tools.experimental_request_user_input.enabled=false",
+    "agents.enabled=false",
 )
 FEATURE_OVERRIDES = tuple(
     value for feature in DISABLED for value in ("--disable", feature)
@@ -126,12 +209,29 @@ def mode() -> str:
     return MODE_FILE.read_text(encoding="utf-8").strip() if MODE_FILE.exists() else "good"
 
 
+def model_catalog_path(args: list[str]) -> Path | None:
+    for index, value in enumerate(args[:-1]):
+        if value == "-c" and args[index + 1].startswith("model_catalog_json="):
+            encoded_path = args[index + 1].split("=", 1)[1]
+            decoded_path = json.loads(encoded_path)
+            return Path(decoded_path) if isinstance(decoded_path, str) else None
+    return None
+
+
 def append_invocation(args: list[str]) -> None:
+    catalog_path = model_catalog_path(args)
     value = {
         "argv": args,
         "environment": dict(os.environ),
         "cwd": os.getcwd(),
         "codexHomeEntries": sorted(os.listdir(os.environ["CODEX_HOME"])),
+        "catalogPath": str(catalog_path) if catalog_path is not None else None,
+        "catalogMode": (
+            stat.S_IMODE(catalog_path.stat().st_mode) if catalog_path is not None else None
+        ),
+        "catalog": (
+            catalog_path.read_text(encoding="utf-8") if catalog_path is not None else None
+        ),
     }
     with INVOCATIONS.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
@@ -145,6 +245,8 @@ def feature_rows(selected_mode: str) -> str:
         names.remove("multi_agent")
     if selected_mode == "missing_multi_agent_v2":
         names.remove("multi_agent_v2")
+    if selected_mode == "missing_goals":
+        names.remove("goals")
     rows = []
     stages = ("stable", "experimental", "deprecated", "removed", "under development")
     for index, name in enumerate(names):
@@ -154,6 +256,8 @@ def feature_rows(selected_mode: str) -> str:
         if selected_mode == "multi_agent_enabled" and name == "multi_agent":
             enabled = "true"
         if selected_mode == "multi_agent_v2_enabled" and name == "multi_agent_v2":
+            enabled = "true"
+        if selected_mode == "goals_enabled" and name == "goals":
             enabled = "true"
         stage = (
             "future"
@@ -324,7 +428,7 @@ def events(selected_mode: str) -> bytes:
         )
     elif selected_mode == "unknown_event":
         values.append({"type": "future.event"})
-    elif selected_mode == "missing_reasoning":
+    elif selected_mode == "no_reasoning":
         values.append(
             {
                 "type": "item.completed",
@@ -334,6 +438,83 @@ def events(selected_mode: str) -> bytes:
                     "text": "raw secret answer",
                 },
             }
+        )
+    elif selected_mode == "multiple_reasoning":
+        values.extend(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {"id": "reason-1", "type": "reasoning", "text": "raw secret"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "reason-2",
+                        "type": "reasoning",
+                        "text": "raw secret second reasoning",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "answer-1",
+                        "type": "agent_message",
+                        "text": "raw secret answer",
+                    },
+                },
+            ]
+        )
+    elif selected_mode in {"duplicate_reasoning_id", "message_reuses_reasoning_id"}:
+        values.extend(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {"id": "reused-1", "type": "reasoning", "text": "raw secret"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "reused-1",
+                        "type": (
+                            "reasoning"
+                            if selected_mode == "duplicate_reasoning_id"
+                            else "agent_message"
+                        ),
+                        "text": "raw secret duplicate item",
+                    },
+                },
+                *(
+                    [
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "answer-1",
+                                "type": "agent_message",
+                                "text": "raw secret answer",
+                            },
+                        }
+                    ]
+                    if selected_mode == "duplicate_reasoning_id"
+                    else []
+                ),
+            ]
+        )
+    elif selected_mode == "reasoning_started":
+        values.extend(
+            [
+                {
+                    "type": "item.started",
+                    "item": {"id": "reason-1", "type": "reasoning", "text": "raw secret"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "answer-1",
+                        "type": "agent_message",
+                        "text": "raw secret answer",
+                    },
+                },
+            ]
         )
     elif selected_mode == "missing_agent_message":
         values.append(
@@ -497,6 +678,7 @@ def run_answer(args: list[str], selected_mode: str) -> int:
     index = answer_invocation_index()
     schema_path = Path(args[args.index("--output-schema") + 1])
     output_path = Path(args[args.index("--output-last-message") + 1])
+    catalog_path = model_catalog_path(args)
     requested_cwd = Path(args[args.index("-C") + 1])
     stdin = sys.stdin.buffer.read()
     capture = {
@@ -510,10 +692,17 @@ def run_answer(args: list[str], selected_mode: str) -> int:
         "schema": schema_path.read_text(encoding="utf-8"),
         "schema_path": str(schema_path),
         "output_path": str(output_path),
+        "catalog": (
+            catalog_path.read_text(encoding="utf-8") if catalog_path is not None else None
+        ),
+        "catalog_path": str(catalog_path) if catalog_path is not None else None,
         "request_dir": str(schema_path.parent),
         "requestMode": stat.S_IMODE(schema_path.parent.stat().st_mode),
         "schemaMode": stat.S_IMODE(schema_path.stat().st_mode),
         "outputMode": stat.S_IMODE(output_path.stat().st_mode),
+        "catalogMode": (
+            stat.S_IMODE(catalog_path.stat().st_mode) if catalog_path is not None else None
+        ),
         "homeMode": stat.S_IMODE(Path(os.environ["HOME"]).stat().st_mode),
         "tmpMode": stat.S_IMODE(Path(os.environ["TMPDIR"]).stat().st_mode),
         "pid": os.getpid(),
@@ -603,6 +792,60 @@ def main() -> int:
     if tuple(args) == FEATURE_LIST_ARGS:
         sys.stdout.write(feature_rows(selected_mode))
         return 0
+    if args[:2] == ["debug", "models"]:
+        catalog_path = model_catalog_path(args)
+        if catalog_path is None:
+            return 65
+        config_values = [
+            args[index + 1]
+            for index, value in enumerate(args[:-1])
+            if value == "-c"
+        ]
+        expected_configs = [
+            value for value in config_values if value.startswith("model_catalog_json=")
+        ] + list(TOOL_FREE_CONFIG_OVERRIDES)
+        if config_values != expected_configs or len(expected_configs) != 4:
+            return 65
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        rendered_model = dict(catalog["models"][0])
+        rendered_model.pop("tool_mode")
+        rendered_model.pop("multi_agent_version")
+        rendered_model["model_messages"] = None
+        rendered = {"models": [rendered_model]}
+        if selected_mode == "catalog_extra_field":
+            rendered_model["unexpected"] = True
+        elif selected_mode == "catalog_extra_model":
+            rendered["models"].append(dict(rendered_model))
+        elif selected_mode == "catalog_wrong_slug":
+            rendered_model["slug"] = "gpt-5.6-sol-other"
+        elif selected_mode == "catalog_tool_mode":
+            rendered_model["tool_mode"] = "code_mode_only"
+        elif selected_mode == "catalog_multi_agent":
+            rendered_model["multi_agent_version"] = "v2"
+        elif selected_mode == "catalog_apply_patch":
+            rendered_model["apply_patch_tool_type"] = "freeform"
+        elif selected_mode == "catalog_plugin_instructions":
+            rendered_model["include_plugin_usage_instructions"] = True
+        elif selected_mode == "catalog_apps_instructions":
+            rendered_model["include_apps_usage_instructions"] = True
+        elif selected_mode == "catalog_search":
+            rendered_model["supports_search_tool"] = True
+        elif selected_mode == "catalog_node_repl":
+            rendered_model["node_repl_disabled"] = False
+        elif selected_mode == "catalog_base_instructions":
+            rendered_model["base_instructions"] = "drifted"
+        elif selected_mode == "catalog_boolean_as_integer":
+            rendered_model["include_plugin_usage_instructions"] = 0
+        elif selected_mode == "catalog_missing_apply_patch":
+            rendered_model.pop("apply_patch_tool_type")
+        elif selected_mode == "catalog_duplicate_json":
+            sys.stdout.write('{"models":[],"models":[]}')
+            return 0
+        elif selected_mode == "catalog_nonfinite_json":
+            sys.stdout.write('{"models":[],"value":NaN}')
+            return 0
+        sys.stdout.write(json.dumps(rendered, ensure_ascii=False, separators=(",", ":")))
+        return 0
     if args == ["login", "status"]:
         if selected_mode == "login_failure_child":
             spawn_ignoring_child(98, close_pipes=True)
@@ -645,10 +888,13 @@ class Capture:
     schema: str
     schema_path: str
     output_path: str
+    catalog: str | None
+    catalog_path: str | None
     request_dir: str
     request_mode: int
     schema_mode: int
     output_mode: int
+    catalog_mode: int | None
     home_mode: int
     tmp_mode: int
     pid: int
@@ -677,10 +923,13 @@ class FakeCodex:
             schema=value["schema"],
             schema_path=value["schema_path"],
             output_path=value["output_path"],
+            catalog=value["catalog"],
+            catalog_path=value["catalog_path"],
             request_dir=value["request_dir"],
             request_mode=value["requestMode"],
             schema_mode=value["schemaMode"],
             output_mode=value["outputMode"],
+            catalog_mode=value["catalogMode"],
             home_mode=value["homeMode"],
             tmp_mode=value["tmpMode"],
             pid=value["pid"],
@@ -878,12 +1127,14 @@ async def test_codex_exec_uses_fixed_argv_minimal_env_and_stdin(
     result = await adapter.answer("退款 approval 条件?", (item,), "quick-hybrid-v1")
     capture = fake_codex.read_capture()
 
+    assert capture.catalog_path is not None
     assert capture.argv == list(
         build_exec_argv(
             adapter.config,
             cwd=Path(capture.cwd),
             schema_path=Path(capture.schema_path),
             output_path=Path(capture.output_path),
+            catalog_path=Path(capture.catalog_path),
         )[1:]
     )
     assert set(capture.environment) == {"LANG", "LC_ALL", "HOME", "TMPDIR", "CODEX_HOME"}
@@ -911,7 +1162,9 @@ async def test_codex_exec_uses_fixed_argv_minimal_env_and_stdin(
     assert Path(capture.process_cwd).resolve() == Path(capture.cwd).resolve()
     assert capture.cwd_entries == []
     assert capture.request_mode == capture.home_mode == capture.tmp_mode == 0o700
-    assert capture.schema_mode == capture.output_mode == 0o600
+    assert capture.schema_mode == capture.output_mode == capture.catalog_mode == 0o600
+    assert Path(capture.catalog_path).parent == Path(capture.request_dir)
+    assert capture.catalog == canonical_json(EXPECTED_TOOL_FREE_MODEL_CATALOG)
     assert json.loads(capture.schema) == grounded_answer_schema(adapter.config)
     assert capture.schema == canonical_json(grounded_answer_schema(adapter.config))
     assert not Path(capture.request_dir).exists()
@@ -938,6 +1191,7 @@ def test_codex_exec_config_is_closed_and_does_not_read_auth_content(
     ("change", "value"),
     [
         ("model_id", "UPPERCASE"),
+        ("model_id", "gpt-5.6"),
         ("reasoning_effort", "extreme"),
         ("profile_id", ""),
         ("allowed_retrieval_profile_ids", frozenset()),
@@ -971,16 +1225,35 @@ def test_codex_exec_config_requires_resolved_absolute_codex_home(
         codex_config(fake_codex, codex_home=unresolved)
 
 
+def test_codex_exec_config_rejects_string_subclass_model_id(fake_codex: FakeCodex) -> None:
+    class PretendApprovedModel(str):
+        def __eq__(self, _other: object) -> bool:
+            return True
+
+        def __ne__(self, _other: object) -> bool:
+            return False
+
+    with pytest.raises(ValueError):
+        codex_config(fake_codex, model_id=PretendApprovedModel("not-approved"))
+
+
 def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -> None:
     config = codex_config(fake_codex)
     cwd = tmp_path / "cwd"
     schema = tmp_path / "schema.json"
     output = tmp_path / "output.json"
+    catalog = tmp_path / "catalog.json"
     disabled = tuple(
         value for feature in EXPECTED_DISABLED_FEATURES for value in ("--disable", feature)
     )
 
-    assert build_exec_argv(config, cwd=cwd, schema_path=schema, output_path=output) == (
+    assert build_exec_argv(
+        config,
+        cwd=cwd,
+        schema_path=schema,
+        output_path=output,
+        catalog_path=catalog,
+    ) == (
         str(fake_codex.target.executable),
         "exec",
         "--ephemeral",
@@ -993,6 +1266,9 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
         "gpt-5.6-sol",
         "--strict-config",
         *disabled,
+        "-c",
+        f"model_catalog_json={json.dumps(str(catalog))}",
+        *(value for override in EXPECTED_TOOL_FREE_CONFIG_OVERRIDES for value in ("-c", override)),
         "-c",
         'model_reasoning_effort="ultra"',
         "-c",
@@ -1056,10 +1332,12 @@ def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -
         "collab_incomplete",
         "collab_wrong_completion",
         "internal_delegation",
-        "missing_reasoning",
         "missing_agent_message",
         "duplicate_agent_message",
         "reasoning_after_agent_message",
+        "reasoning_started",
+        "duplicate_reasoning_id",
+        "message_reuses_reasoning_id",
     ],
 )
 @pytest.mark.asyncio
@@ -1078,10 +1356,13 @@ async def test_codex_exec_rejects_external_or_unobservable_events(
     assert not Path(capture.request_dir).exists()
 
 
+@pytest.mark.parametrize("mode", ["good", "no_reasoning", "multiple_reasoning"])
 @pytest.mark.asyncio
-async def test_codex_exec_accepts_only_parent_reasoning_and_final_message(
+async def test_codex_exec_accepts_zero_or_more_reasoning_and_one_final_message(
     fake_codex: FakeCodex,
+    mode: str,
 ) -> None:
+    fake_codex.mode(mode)
     adapter = CodexExecAnswerAdapter(codex_config(fake_codex))
 
     result = await adapter.answer("sensitive query", (evidence(),), "quick-hybrid-v1")
@@ -2499,10 +2780,27 @@ async def test_codex_exec_nonzero_exit_kills_a_surviving_child_process_group(
         "disabled_feature_enabled",
         "missing_multi_agent",
         "missing_multi_agent_v2",
+        "missing_goals",
         "multi_agent_enabled",
         "multi_agent_v2_enabled",
+        "goals_enabled",
         "unknown_feature_stage",
         "malformed_feature_columns",
+        "catalog_extra_field",
+        "catalog_extra_model",
+        "catalog_wrong_slug",
+        "catalog_tool_mode",
+        "catalog_multi_agent",
+        "catalog_apply_patch",
+        "catalog_plugin_instructions",
+        "catalog_apps_instructions",
+        "catalog_search",
+        "catalog_node_repl",
+        "catalog_base_instructions",
+        "catalog_boolean_as_integer",
+        "catalog_missing_apply_patch",
+        "catalog_duplicate_json",
+        "catalog_nonfinite_json",
         "login_failure",
         "login_api_key",
         "login_stdout",
@@ -2535,17 +2833,34 @@ async def test_codex_exec_readiness_is_non_generating_and_uses_minimal_probe_env
     feature_overrides = [
         value for feature in EXPECTED_DISABLED_FEATURES for value in ("--disable", feature)
     ]
+    assert len(invocations) == 5
+    catalog_path = invocations[3]["catalogPath"]
+    assert isinstance(catalog_path, str)
     assert [item["argv"] for item in invocations] == [
         ["--version"],
         ["exec", "--help"],
         [*feature_overrides, "features", "list"],
+        [
+            "debug",
+            "models",
+            "-c",
+            f"model_catalog_json={json.dumps(catalog_path)}",
+            *(
+                value
+                for override in EXPECTED_TOOL_FREE_CONFIG_OVERRIDES
+                for value in ("-c", override)
+            ),
+        ],
         ["login", "status"],
     ]
+    assert invocations[3]["catalog"] == canonical_json(EXPECTED_TOOL_FREE_MODEL_CATALOG)
+    assert invocations[3]["catalogMode"] == 0o600
+    assert not Path(catalog_path).exists()
     for index, invocation in enumerate(invocations):
         environment = invocation["environment"]
         assert set(environment) == {"LANG", "LC_ALL", "HOME", "TMPDIR", "CODEX_HOME"}
         assert "PATH" not in environment
-        if index < 3:
+        if index < 4:
             assert environment["CODEX_HOME"] != str(fake_codex.codex_home)
             assert invocation["codexHomeEntries"] == []
             assert not Path(environment["CODEX_HOME"]).exists()

@@ -13,7 +13,7 @@ import stat
 import sys
 from collections.abc import Iterable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any, Literal, NoReturn
@@ -53,11 +53,22 @@ CODEX_DISABLED_FEATURES = (
     "tool_suggest",
     "multi_agent",
     "multi_agent_v2",
+    "goals",
 )
 
 _EXPECTED_CODEX_VERSION = "0.149.0"
 _EXPECTED_VERSION_OUTPUT = b"codex-cli 0.149.0"
 _EXPECTED_LOGIN_STATUS_STDERR = b"Logged in using ChatGPT\n"
+_EXPECTED_MODEL_ID = "gpt-5.6-sol"
+_TOOL_FREE_BASE_INSTRUCTIONS = (
+    "You are a tool-free grounded answer generator. Use only the supplied evidence and "
+    "return the requested structured answer. Do not call tools or delegate."
+)
+_TOOL_FREE_CONFIG_OVERRIDES = (
+    "tools.update_plan.enabled=false",
+    "tools.experimental_request_user_input.enabled=false",
+    "agents.enabled=false",
+)
 _MODEL_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _PROFILE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
@@ -151,8 +162,8 @@ class CodexExecConfig:
             raise ValueError("codex_home must exist") from error
         if resolved_codex_home != self.codex_home or not stat.S_ISDIR(codex_home_stat.st_mode):
             raise ValueError("codex_home must be a resolved directory")
-        if not isinstance(self.model_id, str) or _MODEL_ID.fullmatch(self.model_id) is None:
-            raise ValueError("model_id must be an approved bounded identifier")
+        if type(self.model_id) is not str or self.model_id != _EXPECTED_MODEL_ID:
+            raise ValueError("model_id must be the approved tool-free model")
         if self.reasoning_effort not in _REASONING_EFFORTS:
             raise ValueError("reasoning_effort is not approved")
         if not isinstance(self.profile_id, str) or _PROFILE_ID.fullmatch(self.profile_id) is None:
@@ -197,9 +208,9 @@ class _AuditState:
     delegation_started: int = 0
     delegation_completed: int = 0
     external_tool_events: int = 0
-    reasoning_completed: int = 0
     agent_message_completed: int = 0
     phase: int = 0
+    completed_item_ids: set[str] = field(default_factory=set, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +275,7 @@ def build_exec_argv(
     cwd: Path,
     schema_path: Path,
     output_path: Path,
+    catalog_path: Path,
 ) -> tuple[str, ...]:
     return (
         str(config.target.executable),
@@ -278,6 +290,9 @@ def build_exec_argv(
         config.model_id,
         "--strict-config",
         *_feature_override_args(),
+        "-c",
+        _model_catalog_override(catalog_path),
+        *_tool_free_config_args(),
         "-c",
         f'model_reasoning_effort="{config.reasoning_effort}"',
         "-c",
@@ -297,6 +312,97 @@ def build_exec_argv(
 
 def _feature_override_args() -> tuple[str, ...]:
     return tuple(value for feature in CODEX_DISABLED_FEATURES for value in ("--disable", feature))
+
+
+def _tool_free_config_args() -> tuple[str, ...]:
+    return tuple(value for override in _TOOL_FREE_CONFIG_OVERRIDES for value in ("-c", override))
+
+
+def _model_catalog_override(catalog_path: Path) -> str:
+    if not isinstance(catalog_path, Path) or not catalog_path.is_absolute():
+        raise ValueError("catalog_path must be absolute")
+    return f"model_catalog_json={json.dumps(str(catalog_path))}"
+
+
+def _tool_free_model_descriptor(*, rendered: bool) -> dict[str, object]:
+    model: dict[str, object] = {
+        "slug": _EXPECTED_MODEL_ID,
+        "display_name": "GPT-5.6-Sol",
+        "description": "Latest frontier agentic coding model.",
+        "base_instructions": _TOOL_FREE_BASE_INSTRUCTIONS,
+        "default_reasoning_level": "low",
+        "supported_reasoning_levels": [
+            {"effort": "low", "description": "Fast responses with lighter reasoning"},
+            {
+                "effort": "medium",
+                "description": "Balances speed and reasoning depth for everyday tasks",
+            },
+            {
+                "effort": "high",
+                "description": "Greater reasoning depth for complex problems",
+            },
+            {
+                "effort": "xhigh",
+                "description": "Extra high reasoning depth for complex problems",
+            },
+            {
+                "effort": "max",
+                "description": "Maximum reasoning depth for the hardest problems",
+            },
+            {"effort": "ultra", "description": "Maximum reasoning depth"},
+        ],
+        "shell_type": "shell_command",
+        "visibility": "list",
+        "supported_in_api": True,
+        "priority": 1,
+        "additional_speed_tiers": ["fast"],
+        "service_tiers": [
+            {
+                "id": "priority",
+                "name": "Fast",
+                "description": "1.5x speed, increased usage",
+            }
+        ],
+        "availability_nux": None,
+        "upgrade": None,
+        "include_skills_usage_instructions": False,
+        "include_plugin_usage_instructions": False,
+        "include_apps_usage_instructions": False,
+        "default_reasoning_summary": "none",
+        "support_verbosity": True,
+        "default_verbosity": "low",
+        "apply_patch_tool_type": None,
+        "web_search_tool_type": "text_and_image",
+        "truncation_policy": {"mode": "tokens", "limit": 10_000},
+        "supports_image_detail_original": True,
+        "context_window": 272_000,
+        "max_context_window": 872_000,
+        "comp_hash": "3000",
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "input_modalities": ["text", "image"],
+        "supports_search_tool": False,
+        "use_responses_lite": True,
+        "node_repl_auto_review_required": False,
+        "node_repl_disabled": True,
+    }
+    if rendered:
+        model["model_messages"] = None
+    else:
+        model["tool_mode"] = None
+        model["multi_agent_version"] = None
+    return model
+
+
+def _tool_free_model_catalog() -> dict[str, object]:
+    return {
+        "client_version": _EXPECTED_CODEX_VERSION,
+        "models": [_tool_free_model_descriptor(rendered=False)],
+    }
+
+
+def _rendered_tool_free_model_catalog() -> dict[str, object]:
+    return {"models": [_tool_free_model_descriptor(rendered=True)]}
 
 
 def grounded_answer_schema(config: CodexExecConfig) -> dict[str, object]:
@@ -423,6 +529,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 raise _CodexContractFailure("Codex feature inventory is incomplete")
             if any(features[feature] is not False for feature in CODEX_DISABLED_FEATURES):
                 raise _CodexContractFailure("Codex disabled feature matrix is not effective")
+            await self._catalog_probe()
             await self._login_probe()
         except asyncio.CancelledError:
             raise
@@ -558,16 +665,22 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
             request_cwd = _private_directory(request_dir / "cwd")
             schema_path = request_dir / "answer-schema.json"
             output_path = request_dir / "answer-output.json"
+            catalog_path = request_dir / "model-catalog.json"
             _write_exclusive_file(
                 schema_path,
                 _canonical_json_bytes(grounded_answer_schema(self.config)),
             )
             _write_exclusive_file(output_path, b"")
+            _write_exclusive_file(
+                catalog_path,
+                _canonical_json_bytes(_tool_free_model_catalog()),
+            )
             argv = build_exec_argv(
                 self.config,
                 cwd=request_cwd,
                 schema_path=schema_path,
                 output_path=output_path,
+                catalog_path=catalog_path,
             )
             environment = _minimal_environment(
                 home=request_home,
@@ -659,6 +772,8 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
     async def _inventory_probe(
         self,
         arguments: tuple[str, ...],
+        *,
+        include_model_catalog: bool = False,
     ) -> bytes:
         async with asyncio.timeout(self.config.timeout_seconds):
             result = await self._probe_with_directory(
@@ -666,10 +781,20 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 prefix="tap-codex-inventory-",
                 real_codex_home=False,
                 capture_stderr=False,
+                include_model_catalog=include_model_catalog,
             )
         if result.stderr is not None:
             raise _CodexContractFailure("Codex inventory probe output is malformed")
         return result.stdout
+
+    async def _catalog_probe(self) -> None:
+        output = await self._inventory_probe(
+            ("debug", "models"),
+            include_model_catalog=True,
+        )
+        rendered = _decode_closed_json(output)
+        if not _same_closed_json(rendered, _rendered_tool_free_model_catalog()):
+            raise _CodexContractFailure("Codex tool-free model catalog is unsupported")
 
     async def _login_probe(self) -> None:
         async with asyncio.timeout(self.config.timeout_seconds):
@@ -678,6 +803,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 prefix="tap-codex-login-",
                 real_codex_home=True,
                 capture_stderr=True,
+                include_model_catalog=False,
             )
         if result.stdout != b"" or result.stderr != _EXPECTED_LOGIN_STATUS_STDERR:
             raise _CodexContractFailure("Codex login status is not ChatGPT")
@@ -689,6 +815,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         prefix: str,
         real_codex_home: bool,
         capture_stderr: bool,
+        include_model_catalog: bool,
     ) -> _ProbeOutput:
         invocation = await self._create_invocation(prefix)
         request_dir = invocation.request.path
@@ -702,6 +829,18 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
                 if real_codex_home
                 else _private_directory(request_dir / "codex-home")
             )
+            if include_model_catalog:
+                catalog_path = request_dir / "model-catalog.json"
+                _write_exclusive_file(
+                    catalog_path,
+                    _canonical_json_bytes(_tool_free_model_catalog()),
+                )
+                arguments = (
+                    *arguments,
+                    "-c",
+                    _model_catalog_override(catalog_path),
+                    *_tool_free_config_args(),
+                )
             result = await self._run_probe(
                 invocation,
                 arguments,
@@ -1578,7 +1717,6 @@ async def _audit_jsonl(
             or state.turn_started != 1
             or state.turn_completed != 1
             or state.phase != 4
-            or state.reasoning_completed < 1
             or state.agent_message_completed != 1
             or state.delegation_started != 0
             or state.delegation_completed != 0
@@ -1596,6 +1734,7 @@ async def _audit_jsonl(
         chunk = b""
         line = b""
         pending.clear()
+        state.completed_item_ids.clear()
 
 
 def _audit_event(
@@ -1630,13 +1769,15 @@ def _audit_event(
     item = raw.get("item")
     if not isinstance(item, dict):
         raise _CodexContractFailure("Codex item event is malformed")
-    _bounded_event_value(item.get("id"), "item id")
+    item_id = _bounded_event_value(item.get("id"), "item id")
+    if item_id in state.completed_item_ids:
+        raise _CodexContractFailure("Codex item lifecycle is duplicated")
+    state.completed_item_ids.add(item_id)
     item_type = item.get("type")
     if item_type == "reasoning":
-        state.reasoning_completed += 1
         return
     if item_type == "agent_message":
-        if state.reasoning_completed < 1 or state.agent_message_completed != 0:
+        if state.agent_message_completed != 0:
             raise _CodexContractFailure("Codex final message lifecycle is malformed")
         state.agent_message_completed = 1
         state.phase = 3
@@ -1735,6 +1876,23 @@ def _decode_closed_json(value: bytes) -> object:
         )
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         raise _CodexContractFailure("Codex returned malformed closed JSON") from error
+
+
+def _same_closed_json(actual: object, expected: object) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict) or actual.keys() != expected.keys():
+            return False
+        return all(_same_closed_json(actual[key], value) for key, value in expected.items())
+    if isinstance(expected, list):
+        if not isinstance(actual, list) or len(actual) != len(expected):
+            return False
+        return all(
+            _same_closed_json(actual_value, expected_value)
+            for actual_value, expected_value in zip(actual, expected, strict=True)
+        )
+    return actual == expected
 
 
 def _closed_pairs(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
