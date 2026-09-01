@@ -173,7 +173,7 @@ TAP_RUN_ATHENA_CODEX_CONFORMANCE=1 uv run --project apps/backend pytest \
   apps/backend/tests/smoke/test_athena_codex_smoke.py -v -rs
 ```
 
-2026-09-01 的验收证据为：阿里 `athena-embedding` 的 zh→en 与 en→zh 门禁均通过且维度为 `1536`；Codex bootstrap 和未打补丁的生产配置均通过，最新生产复验输出 `version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=24026`，pytest 为 `1 passed in 24.08s`、exit `0`。默认无授权执行为 `2 skipped in 0.72s`、exit `0`。证据不保存 query、Evidence、回答、向量、JSONL 或登录信息。
+2026-09-01 的验收证据为：阿里 `athena-embedding` 的 zh→en 与 en→zh 门禁均通过且维度为 `1536`，`elapsed_ms=669`；Codex bootstrap 和未打补丁的生产配置均通过，最新生产复验输出 `version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=21652`，pytest 为 `1 passed in 21.71s`、exit `0`。默认无授权执行为 `2 skipped in 0.63s`、exit `0`。证据不保存 query、Evidence、回答、向量、JSONL 或登录信息。
 
 ### 实验性 Milvus 检索门禁
 

@@ -205,10 +205,11 @@ exception_type / duration_ms
 
 ### 实施证据（2026-09-01）
 
-- 默认未授权执行：两个 opt-in smoke 精确 `2 skipped in 0.72s`，exit `0`，没有进入 provider/Codex 请求体。
-- 阿里 Embedding：alias `athena-embedding`，维度 `1536`，zh→en 与 en→zh 均为 `true`，exit `0`；输入与向量未记录。
+- 全量确定性/本地门禁：`make check` exit `0`；`make test` 为 Backend `2243 passed, 26 skipped, 5 warnings`、Web `128 passed`；Codex 模式 `make demo-check` 的 `mysql/redis/blob/milvus/models` 五项均为 `ok`；`make demo-e2e` 为 `12 passed, 2 warnings` 且隔离 journey 通过。七条 warning 都来自未修改的 `apps/backend/alembic.ini` `path_separator` 弃用基线。
+- 默认未授权执行：两个 opt-in smoke 精确 `2 skipped in 0.63s`，exit `0`，没有进入 provider/Codex 请求体。
+- 阿里 Embedding：alias `athena-embedding`，维度 `1536`，zh→en 与 en→zh 均为 `true`，`elapsed_ms=669`，exit `0`；输入与向量未记录。
 - Codex bootstrap：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=55379`，`1 passed`，exit `0`。
-- Codex 生产未打补丁 gate 最新复验：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=24026`，`1 passed in 24.08s`，exit `0`。
+- Codex 生产未打补丁 gate 最新复验：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=21652`，`1 passed in 21.71s`，exit `0`。
 
 这些结果实现了本 RFC；完整 Phase 1 仍为 `active`，RFC-005 保持 `implemented`。本 RFC 的当前单智能体、无工具决策见 [ADR-018](../decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)，它替代了 ADR-017 的历史多智能体选择。
 
