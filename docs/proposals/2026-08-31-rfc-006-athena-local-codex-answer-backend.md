@@ -205,7 +205,7 @@ exception_type / duration_ms
 
 ### 实施证据（2026-09-01）
 
-- 全量确定性/本地门禁：`make check` exit `0`；`make test` 为 Backend `2243 passed, 26 skipped, 5 warnings`、Web `128 passed`；Codex 模式 `make demo-check` 的 `mysql/redis/blob/milvus/models` 五项均为 `ok`；`make demo-e2e` 为 `12 passed, 2 warnings` 且隔离 journey 通过。七条 warning 都来自未修改的 `apps/backend/alembic.ini` `path_separator` 弃用基线。
+- 全量确定性/本地门禁：`make check` exit `0`；`make test` 为 Backend `2244 passed, 26 skipped, 5 warnings`、Web `128 passed`；Codex 模式 `make demo-check` 的 `mysql/redis/blob/milvus/models` 五项均为 `ok`；`make demo-e2e` 为 `12 passed, 2 warnings` 且隔离 journey 通过。七条 warning 都来自未修改的 `apps/backend/alembic.ini` `path_separator` 弃用基线。
 - 默认未授权执行：两个 opt-in smoke 精确 `2 skipped in 0.63s`，exit `0`，没有进入 provider/Codex 请求体。
 - 阿里 Embedding：alias `athena-embedding`，维度 `1536`，zh→en 与 en→zh 均为 `true`，`elapsed_ms=669`，exit `0`；输入与向量未记录。
 - Codex bootstrap：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=55379`，`1 passed`，exit `0`。

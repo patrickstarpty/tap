@@ -1614,7 +1614,7 @@ git commit -m "docs: record tool-free codex acceptance"
 
 ### Completion Evidence（2026-09-01）
 
-- 全量确定性/本地门禁：`make check` exit `0`；`make test` 为 Backend `2243 passed, 26 skipped, 5 warnings`、Web `128 passed`；Codex 模式 `make demo-check` 五项均为 `ok`；`make demo-e2e` 为 `12 passed, 2 warnings` 且隔离 journey 通过。七条 warning 都来自未修改的 `apps/backend/alembic.ini` `path_separator` 弃用基线。
+- 全量确定性/本地门禁：`make check` exit `0`；`make test` 为 Backend `2244 passed, 26 skipped, 5 warnings`、Web `128 passed`；Codex 模式 `make demo-check` 五项均为 `ok`；`make demo-e2e` 为 `12 passed, 2 warnings` 且隔离 journey 通过。七条 warning 都来自未修改的 `apps/backend/alembic.ini` `path_separator` 弃用基线。
 - 默认两个 smoke 均在 guard 处停止：`2 skipped in 0.63s`，exit `0`。
 - 阿里 `athena-embedding` 为 1536 维，zh→en 与 en→zh 都通过，`elapsed_ms=669`，exit `0`。
 - Codex bootstrap：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=55379`，`1 passed`，exit `0`。
