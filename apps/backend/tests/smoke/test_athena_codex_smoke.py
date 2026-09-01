@@ -22,6 +22,7 @@ from tap.modules.knowledge.adapters.codex_exec import (
     build_exec_argv,
 )
 from tap.modules.knowledge.adapters.codex_target import resolve_native_codex_target
+from tap.modules.knowledge.application.retrieve import _resolve_generated_claims
 from tap.modules.knowledge.domain.models import (
     ContentRole,
     DocumentAnchor,
@@ -219,8 +220,18 @@ async def test_local_codex_ultra_is_single_agent_tool_free_and_grounded(
         )
         labels = {label for claim in result.claims for label in claim.evidence_labels}
         _require(labels == {"S-ZH", "S-EN"}, current_gate)
-        citations_by_label = {item.evidence_label: item.citation_id for item in evidence}
-        resolved_citations = {citations_by_label[label] for label in labels}
+        claim_ids = iter(f"smoke-claim-{index}" for index in range(1, 65))
+        resolved_claims = _resolve_generated_claims(
+            result,
+            evidence,
+            id_factory=lambda: next(claim_ids),
+        )
+        _require(resolved_claims is not None, current_gate)
+        if resolved_claims is None:
+            raise _GateFailure(current_gate)
+        resolved_citations = {
+            citation_id for claim in resolved_claims for citation_id in claim.citation_ids
+        }
         _require(resolved_citations == {"citation-zh", "citation-en"}, current_gate)
         _require(
             any(value in result.text for value in ("两名", "两人", "2名", "2 名")),
@@ -241,6 +252,7 @@ async def test_local_codex_ultra_is_single_agent_tool_free_and_grounded(
                 forbidden not in observed_text
                 for forbidden in (
                     sentinel,
+                    str(sentinel_path),
                     "ATHENA_CODEX_SENTINEL",
                     "spawn_agent",
                     "multi_agent",

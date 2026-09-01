@@ -112,6 +112,51 @@ class _RetrievalRun:
     policy: RetrievalPolicyContext
 
 
+def _resolve_generated_claims(
+    generation: AnswerGeneration,
+    evidence: tuple[Evidence, ...],
+    *,
+    id_factory: Callable[[], str],
+) -> tuple[Claim, ...] | None:
+    citations_by_label = {item.evidence_label: item.citation_id for item in evidence}
+    claims: list[Claim] = []
+    for generated_claim in generation.claims:
+        citation_ids = tuple(
+            citations_by_label[label]
+            for label in generated_claim.evidence_labels
+            if label in citations_by_label
+        )
+        if not citation_ids or len(citation_ids) != len(generated_claim.evidence_labels):
+            return None
+        if "\n\n" in generated_claim.text:
+            return None
+        spans: list[tuple[int, int]] = []
+        start = 0
+        for paragraph in generation.text.split("\n\n"):
+            end = start + len(paragraph)
+            if paragraph == generated_claim.text:
+                spans.append((start, end))
+            start = end + 2
+        if len(spans) != 1:
+            return None
+        claims.append(
+            Claim(
+                claim_id=id_factory(),
+                text=generated_claim.text,
+                answer_start=spans[0][0],
+                answer_end=spans[0][1],
+                citation_ids=citation_ids,
+            )
+        )
+    if generation.text and not claims:
+        return None
+
+    claims.sort(key=lambda item: (item.answer_start, item.answer_end))
+    if any(later.answer_start < earlier.answer_end for earlier, later in zip(claims, claims[1:])):
+        return None
+    return tuple(claims)
+
+
 class AuthorizedRetrieval:
     def __init__(
         self,
@@ -162,43 +207,12 @@ class AuthorizedRetrieval:
         )
         current = await self._verify_current(current)
         self._validate_binding(current, run.plan, run.context_snapshot)
-        citations_by_label = {
-            item.evidence_label: item.citation_id for item in run.response.evidence
-        }
-        claims: list[Claim] = []
-        for generated_claim in generation.claims:
-            citation_ids = tuple(
-                citations_by_label[label]
-                for label in generated_claim.evidence_labels
-                if label in citations_by_label
-            )
-            if not citation_ids or len(citation_ids) != len(generated_claim.evidence_labels):
-                return self._abstain(
-                    run.response,
-                    AbstentionReason.INSUFFICIENT_EVIDENCE,
-                )
-            span = self._complete_paragraph_span(generation.text, generated_claim.text)
-            if span is None:
-                return self._abstain(
-                    run.response,
-                    AbstentionReason.INSUFFICIENT_EVIDENCE,
-                )
-            claims.append(
-                Claim(
-                    claim_id=self._id_factory(),
-                    text=generated_claim.text,
-                    answer_start=span[0],
-                    answer_end=span[1],
-                    citation_ids=citation_ids,
-                )
-            )
-        if generation.text and not claims:
-            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
-
-        claims.sort(key=lambda item: (item.answer_start, item.answer_end))
-        if any(
-            later.answer_start < earlier.answer_end for earlier, later in zip(claims, claims[1:])
-        ):
+        claims = _resolve_generated_claims(
+            generation,
+            run.response.evidence,
+            id_factory=self._id_factory,
+        )
+        if claims is None:
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
 
         return AnswerResponse(
@@ -209,27 +223,11 @@ class AuthorizedRetrieval:
             retrieval_profile_id=run.response.retrieval_profile_id,
             answer=generation.text,
             abstained=False,
-            claims=tuple(claims),
+            claims=claims,
             citations=tuple(self._citation(item) for item in run.response.evidence),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),
         )
-
-    @staticmethod
-    def _complete_paragraph_span(answer: str, claim_text: str) -> tuple[int, int] | None:
-        """Locate one claim only when it is exactly one complete answer paragraph."""
-        if "\n\n" in claim_text:
-            return None
-        matches: list[tuple[int, int]] = []
-        start = 0
-        for paragraph in answer.split("\n\n"):
-            end = start + len(paragraph)
-            if paragraph == claim_text:
-                matches.append((start, end))
-            start = end + 2
-        if len(matches) != 1:
-            return None
-        return matches[0]
 
     async def _retrieve(
         self,

@@ -47,7 +47,7 @@ from tap.modules.knowledge.api import (
     search_request_from_http,
     search_response_to_http,
 )
-from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
+from tap.modules.knowledge.application import retrieve as retrieval_application
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
     AnswerMode,
@@ -87,13 +87,128 @@ HIT_CONTENT = "Authorization requires the verified project policy."
 CHUNK_HASH = "sha256:" + hashlib.sha256(HIT_CONTENT.encode("utf-8")).hexdigest()
 
 
-def test_generated_claim_span_uses_equal_paragraphs_not_substrings() -> None:
-    """A claim paragraph remains grounded when another paragraph merely mentions it."""
-    answer = "Claim exact.\n\nAnother paragraph mentions Claim exact."
+def _claim_resolution_evidence() -> Evidence:
+    hit = search_hit()
+    return Evidence(
+        family=hit.family,
+        chunk_id=hit.chunk_id,
+        logical_chunk_id=hit.logical_chunk_id,
+        title=hit.title,
+        content=hit.content,
+        source=hit.source,
+        chunk_content_hash=hit.chunk_content_hash,
+        content_role=hit.content_role,
+        citation_id="citation-source-1",
+        evidence_label="S1",
+        index_revision=hit.index_revision,
+        embedding_model_version=hit.embedding_model_version,
+        acl_decision_id="decision-17",
+        score=hit.score,
+    )
 
-    assert AuthorizedRetrieval._complete_paragraph_span(answer, "Claim exact.") == (0, 12)
+
+def test_generated_claim_resolution_maps_citations_and_orders_complete_paragraphs() -> None:
+    claim_ids = iter(("claim-second", "claim-first"))
+    generation = AnswerGeneration(
+        text="First.\n\nSecond.",
+        claims=(
+            GeneratedClaim(text="Second.", evidence_labels=("S1",)),
+            GeneratedClaim(text="First.", evidence_labels=("S1",)),
+        ),
+        model_id="answer-model",
+        profile_id="grounded-answer-v1",
+        provider_request_id=None,
+    )
+
+    resolved = retrieval_application._resolve_generated_claims(
+        generation,
+        (_claim_resolution_evidence(),),
+        id_factory=lambda: next(claim_ids),
+    )
+
+    assert resolved == (
+        Claim(
+            claim_id="claim-first",
+            text="First.",
+            answer_start=0,
+            answer_end=6,
+            citation_ids=("citation-source-1",),
+        ),
+        Claim(
+            claim_id="claim-second",
+            text="Second.",
+            answer_start=8,
+            answer_end=15,
+            citation_ids=("citation-source-1",),
+        ),
+    )
+
+
+def test_generated_claim_resolution_uses_equal_paragraphs_not_substrings() -> None:
+    generation = AnswerGeneration(
+        text="Claim exact.\n\nAnother paragraph mentions Claim exact.",
+        claims=(GeneratedClaim(text="Claim exact.", evidence_labels=("S1",)),),
+        model_id="answer-model",
+        profile_id="grounded-answer-v1",
+        provider_request_id=None,
+    )
+
+    resolved = retrieval_application._resolve_generated_claims(
+        generation,
+        (_claim_resolution_evidence(),),
+        id_factory=lambda: "claim-id",
+    )
+
+    assert resolved == (
+        Claim(
+            claim_id="claim-id",
+            text="Claim exact.",
+            answer_start=0,
+            answer_end=12,
+            citation_ids=("citation-source-1",),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "generation",
+    [
+        AnswerGeneration(
+            text="Known claim.",
+            claims=(GeneratedClaim(text="Known claim.", evidence_labels=("S99",)),),
+            model_id="answer-model",
+            profile_id="grounded-answer-v1",
+            provider_request_id=None,
+        ),
+        AnswerGeneration(
+            text="First.\n\nSecond.",
+            claims=(GeneratedClaim(text="First.\n\nSecond.", evidence_labels=("S1",)),),
+            model_id="answer-model",
+            profile_id="grounded-answer-v1",
+            provider_request_id=None,
+        ),
+        AnswerGeneration(
+            text="Duplicate claim.",
+            claims=(
+                GeneratedClaim(text="Duplicate claim.", evidence_labels=("S1",)),
+                GeneratedClaim(text="Duplicate claim.", evidence_labels=("S1",)),
+            ),
+            model_id="answer-model",
+            profile_id="grounded-answer-v1",
+            provider_request_id=None,
+        ),
+    ],
+    ids=("unknown-label", "multi-paragraph", "overlap"),
+)
+def test_generated_claim_resolution_rejects_unresolved_spans_or_citations(
+    generation: AnswerGeneration,
+) -> None:
     assert (
-        AuthorizedRetrieval._complete_paragraph_span("First.\n\nSecond.", "First.\n\nSecond.")
+        retrieval_application._resolve_generated_claims(
+            generation,
+            (_claim_resolution_evidence(),),
+            id_factory=lambda: "claim-id",
+        )
         is None
     )
 
