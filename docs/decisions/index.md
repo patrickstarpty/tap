@@ -25,7 +25,8 @@
 
 ## 本地 Demo 决策
 
-- [ADR-017：Athena 本地回答端口可选 Codex CLI](2026-08-31-adr-017-athena-local-codex-answer-backend.md)（`accepted`）
+- [ADR-017：Athena 本地回答端口可选 Codex CLI](2026-08-31-adr-017-athena-local-codex-answer-backend.md)（`superseded`）：保留曾接受 Ultra 内部委派的历史决策；由 ADR-018 替代。
+- [ADR-018：Athena 本地 Codex 回答固定为单智能体、无工具](2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)（`accepted`）：精确固定 CLI/model/catalog 能力契约，任何漂移均无 fallback 地 fail closed。
 
 ## 文档治理决策
 

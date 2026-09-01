@@ -1,9 +1,10 @@
 ---
 id: RFC-006
-status: accepted
+status: implemented
 date: 2026-08-31
 related-adrs:
   - ADR-017
+  - ADR-018
 ---
 
 # RFC-006：Athena 本地可选 Codex CLI 回答后端
@@ -12,7 +13,7 @@ related-adrs:
 
 Athena 本地知识 Demo 将查询向量生成与回答生成拆成独立端口。文档摄取和查询向量始终通过 LiteLLM 的固定 `athena-embedding` alias 调用百炼 `text-embedding-v4`，继续使用现有 1536 维 Milvus vector space；最终回答由服务端环境变量在现有 LiteLLM 路径和本机 `codex exec` 路径之间选择，不向浏览器暴露模型选择。
 
-Codex 路径复用本机 Codex CLI 已保存的 ChatGPT 登录，不要求 OpenAI API key。首个批准配置是 `gpt-5.6-sol` + `ultra`。调用只接收本次查询及有界 Evidence，输出继续遵守现有 `AnswerGeneration`、Claim 和 Citation 约束；CLI 的 shell、浏览器、应用、插件、技能和外部工具全部关闭，只有 Ultra 的内部推理与子智能体委派保留。Codex 不参与摄取、Embedding、检索、ACL、Citation 解析或索引写入。
+Codex 路径复用本机 Codex CLI 已保存的 ChatGPT 登录，不要求 OpenAI API key。批准配置精确为原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、一个智能体且不提供任何工具。调用只接收本次查询及有界 Evidence，输出继续遵守现有 `AnswerGeneration`、Claim 和 Citation 约束；Codex 不参与摄取、Embedding、检索、ACL、Citation 解析或索引写入。
 
 本 RFC 同时修复当前 LiteLLM 成功 Embedding 响应因缺少可选 `id` 而被误判为 `embedding-unavailable` 的兼容问题，并为 ingestion worker 增加脱敏的阶段失败日志。本方案只适用于 loopback、无认证的 Athena 单机 Demo，不改变企业 Azure 四索引基线，也不把个人 ChatGPT 登录引入共享或生产服务。
 
@@ -83,8 +84,7 @@ ATHENA_CODEX_TIMEOUT_SECONDS=300
 ```
 
 - `ATHENA_ANSWER_BACKEND` 只接受 `litellm | codex`，默认 `litellm`，因此现有环境升级后行为不变。
-- `ATHENA_CODEX_MODEL` 在 Codex 模式下必须匹配 `[a-z0-9][a-z0-9._-]{0,127}`；首个验收值为 `gpt-5.6-sol`。
-- `ATHENA_CODEX_REASONING_EFFORT` 在 Codex 模式下只接受 `low | medium | high | xhigh | max | ultra`；首个验收值为 `ultra`。
+- Settings parser 先对 `ATHENA_CODEX_MODEL` 应用 `[a-z0-9][a-z0-9._-]{0,127}` 语法上限、对 reasoning 应用 `low | medium | high | xhigh | max | ultra` 闭合集；已实现 Codex adapter/readiness 在此基础上进一步只接受精确 `gpt-5.6-sol + ultra`，其他语法合法值仍 fail closed 为 `answer-unavailable`。
 - `ATHENA_CODEX_TIMEOUT_SECONDS` 默认 `300`，允许范围 `30..900` 秒。并发固定为 `1`，首版不增加可调并发变量。
 - LiteLLM 模式继续使用现有 `ATHENA_CHAT_ALIAS=athena-chat`；Codex 模式仍要求 `ATHENA_EMBEDDING_ALIAS=athena-embedding` 和 `ATHENA_EMBEDDING_DIMENSION=1536`。
 - 两种真实回答模式都需要现有 `DASHSCOPE_API_KEY` 完成文档和查询 Embedding；Codex 模式只是不需要额外的 OpenAI API key。
@@ -94,7 +94,7 @@ ATHENA_CODEX_TIMEOUT_SECONDS=300
 
 ### Codex CLI 适配器
 
-首版目标精确支持本机已安装且已完成 flags/features 核对的 `codex-cli 0.149.0`；只有后述真实 capability conformance 通过后才把它加入受支持版本常量。其他版本即使可以启动也不能自动进入 ready；升级必须先更新 CLI capability contract 和真实 opt-in conformance，再修改受支持版本常量。
+首版精确支持本机已安装且已通过真实 capability conformance 的 `codex-cli 0.149.0`；生产支持集是只含 `0.149.0` 的 singleton。其他版本即使可以启动也不能自动进入 ready；升级必须先更新 CLI capability/catalog contract 和真实 opt-in conformance，再修改受支持版本常量。
 
 `CodexExecAnswerAdapter` 使用 `asyncio.create_subprocess_exec` 和启动前解析的原生 CLI 绝对路径直接构造 argv，不经过 shell。若 `command -v codex` 指向 npm 的 `#!/usr/bin/env node` launcher，resolver 必须解析其包内、与当前平台匹配的 `vendor/.../bin/codex` 原生 executable；不能执行 JS launcher，也不能依赖继承的 `PATH`。原生 binary、symlink target 和安装根之间的路径组件必须由当前用户或 root 拥有，且不能对其他主体开放写权限；版本/capability 检查与真实请求使用同一个已验证 target，target identity 变化后 readiness 失效。
 
@@ -104,13 +104,13 @@ ATHENA_CODEX_TIMEOUT_SECONDS=300
 - `--ignore-user-config` 和 `--ignore-rules`：不加载个人配置、repo rules 或其模型/能力覆盖；认证仍使用本机 Codex CLI 保存的登录状态。
 - `--skip-git-repo-check`、私有空工作目录和 `--sandbox read-only`。
 - `--model gpt-5.6-sol`、`model_reasoning_effort="ultra"`、`approval_policy="never"` 和 `--strict-config`。
-- `--json`、`--output-schema` 与 `--output-last-message`：stdout 必须是有界 JSONL，最终输出必须符合闭合的 `answer + claims` JSON Schema。Adapter 只提取事件类型、工具名和计数用于 allowlist 判定，不持久化或记录可能包含输入输出的原始 JSONL。
-- 对 `0.149.0` 显式传入 `--disable`：`shell_tool`、`shell_snapshot`、`unified_exec`、`code_mode`、`code_mode_host`、`browser_use`、`browser_use_external`、`browser_use_full_cdp_access`、`in_app_browser`、`computer_use`、`apps`、`enable_mcp_apps`、`plugins`、`skill_search`、`hooks`、`image_generation`、`view_image`、`workspace_dependencies`、`auth_elicitation`、`tool_call_mcp_elicitation` 和 `tool_suggest`。不配置 MCP server。只保留 `multi_agent` 供 Ultra 内部委派，子智能体必须继承同一配置且不能获得被关闭能力。
-- 通过有界 JSONL 事件流审计能力使用；出现任何非内部委派的工具事件都终止并拒绝结果。
+- `--json`、`--output-schema` 与 `--output-last-message`：stdout 必须是有界 JSONL，最终输出必须符合闭合的 `answer + claims` JSON Schema。Adapter 只保留闭合的计数/完整性审计，不持久化或记录可能包含输入输出的原始 JSONL；任何工具或协作事件都终止并拒绝结果。
+- 对 `0.149.0` 显式禁用 24 个 feature：既有 shell/code/browser/app/plugin/skill/image/workspace/auth/tool 路径，加上 `multi_agent`、`multi_agent_v2` 和 `goals`；不配置 MCP server，不传入任何 `--enable`。
+- 每个 readiness/request 创建 owner-only canonical `model_catalog_json`，其中精确 `gpt-5.6-sol` entry 去除 CodeModeOnly、多智能体和 apply-patch metadata，并将 experimental tool 列表置空；同时显式设置 `tools.update_plan.enabled=false`、`tools.experimental_request_user_input.enabled=false` 与 `agents.enabled=false`。`debug models` 必须在非生成 readiness probe 中呈现精确的 tool-free descriptor，才允许真实请求启动。
 
 Adapter 在启动/ready 检查中通过同一原生 target 验证精确版本、所需 CLI flags/features 和 `codex login status`。stdout、stderr、JSONL 和最终消息分别设置字节上限；到期、取消、输出超限或关闭时终止并 reap 整个子进程组。首版不重试，以避免重复消耗 ChatGPT 额度和产生不明确的双请求。
 
-CLI 帮助和 feature inventory 只能证明 `multi_agent` 存在，不能单独证明嵌套智能体继承父 invocation 的 disable matrix 或所有嵌套事件都出现在父 JSONL。因此在把 `0.149.0` 加入支持常量、允许 Codex readiness 通过之前，必须运行一次真实、显式 opt-in capability conformance：用无秘密的 sentinel 环境和 prompt-injection Evidence 触发 Ultra 委派，证明父/子智能体均不能调用被禁用能力、不能读取 sentinel 文件或环境，并且父 JSONL 能观察所有内部委派及任何工具尝试。若任一项无法证明，Codex backend 保持不 ready；不能静默关闭 `multi_agent` 或把 `ultra` 降级为其他 reasoning level。
+内建 Sol catalog 会带入 CodeModeOnly/协作/apply-patch metadata，仅检查 CLI help 或 feature inventory 不足以证明零工具。实现因此把 catalog 内容、渲染后的 model descriptor、24 个 feature 状态和三个显式 config override 都纳入 readiness。这个 request-owned catalog 的固定 entry schema 有意与精确 CLI `0.149.0` 耦合，不是跨版本保证；字段、默认值、rendering 或 Direct registry 语义任何漂移都使 backend 不 ready，不能放宽 parser、恢复工具、切换模型或降低 `ultra` 来绕过门禁。
 
 并发 `1` 是单个、唯一 Athena API 进程内的 semaphore。`make demo-dev` 继续只支持一个 API process/worker；本 RFC 不声称为多个 API 进程提供全局额度互斥。任何多进程或共享部署都超出 local-only 范围，必须另行设计分布式限流和认证隔离。
 
@@ -159,9 +159,9 @@ exception_type / duration_ms
 - **Unit/contract**：先增加没有顶层 `id` 的 LiteLLM 200 response RED test，再实现兼容；保留 malformed fields、维度、index、NaN/Infinity 和 alias drift 的拒绝测试。
 - **Worker logging**：使用 `caplog` 验证每个可恢复阶段失败恰好记录一条事件，并验证 key、endpoint、文件内容、raw body 和异常原文不出现。
 - **Port/config**：覆盖端口拆分、默认 LiteLLM、显式 Codex、fake E2E 排斥 Codex、无效 model/reasoning/timeout 和 backend-aware readiness。
-- **Codex adapter**：使用临时 fake executable/安装树，不调用真实 OpenAI；验证 JS launcher 被解析为同平台原生 target、不安全 owner/mode 和 target identity 变化被拒绝，以及精确版本门禁、`--json`、argv/feature matrix 固定、临时 `HOME`、无 `PATH` 的最小环境、输入只走 stdin、schema/claim 校验、JSONL/stdout/stderr 上限、单进程并发 1、timeout、cancel、process-group reap 和零 fallback。
+- **Codex adapter**：使用临时 fake executable/安装树，不调用真实 OpenAI；验证 JS launcher 被解析为同平台原生 target、不安全 owner/mode 和 target identity 变化被拒绝，以及精确版本门禁、request-owned catalog entry schema/rendered descriptor、24-feature/三项 override 矩阵、单智能体/零工具 JSONL、临时 `HOME`、无 `PATH` 的最小环境、输入只走 stdin、schema/claim 校验、JSONL/stdout/stderr 上限、单进程并发 1、timeout、cancel、process-group reap 和零 fallback。
 - **Cross-language/citation**：使用确定性双语 fixture 验证中英双向召回、来源选择约束、每个 claim 的 citation 和点击原文仍绑定相同 revision/hash/anchor。
-- **真实 capability/smoke**：新增独立、显式 opt-in 的本机 Codex gate；未设置开关时精确 skip，不能进入普通 `make test` 或隔离 `make demo-e2e`。首次支持 `0.149.0` 前必须运行 capability conformance，验证 Ultra 嵌套委派继承禁用能力、sentinel 不可读、父 JSONL 覆盖全部委派/工具事件；随后验证一次 grounded answer 和 citation resolution。报告只保存版本、通过项和匿名 timing，不保存 prompt、Evidence、回答、JSONL 或认证信息。
+- **真实 capability/smoke**：新增独立、显式 opt-in 的本机 Codex gate；未设置开关时精确 skip，不能进入普通 `make test` 或隔离 `make demo-e2e`。支持 `0.149.0` 前先用 bootstrap override 运行单智能体/零工具 conformance，再用生产 singleton 支持集原样复跑，验证 sentinel 不可读、零协作/工具事件、grounded answer、citation 与 cleanup。报告只保存版本、通过项和匿名 timing，不保存 prompt、Evidence、回答、JSONL 或认证信息。
 
 ## 替代方案
 
@@ -183,9 +183,9 @@ exception_type / duration_ms
 
 ## 风险与缓解
 
-- **提示注入读取本机数据或调用工具**：使用临时 `HOME`、忽略个人/repo 配置，在空目录运行，显式关闭全部外部工具并审计事件；Ultra 嵌套继承必须先通过真实 capability conformance，任何越界或不可观察事件都使 backend 不 ready。该边界仅批准 loopback 个人 Lab，不能据此形成共享服务安全声明。
+- **提示注入读取本机数据或调用工具**：使用临时 `HOME`、忽略个人/repo 配置，在空目录运行，以 request-owned catalog、24 个禁用 feature 和三项显式 override 保持单智能体/零工具，并审计事件；任何协作/工具事件或不可观察状态都使 backend 不 ready。该边界仅批准 loopback 个人 Lab，不能据此形成共享服务安全声明。
 - **Ultra 延迟和额度消耗较高**：超时默认 300 秒、上限 900 秒，并发固定 1、不重试；日志只记录匿名 timing。操作者可通过 `.env` 明确改用 LiteLLM。
-- **CLI 版本或安装 target 漂移**：首版只接受 `codex-cli 0.149.0`，并同时核对原生 target identity、owner/mode 和所需 flags/features；`--strict-config` 在配置失配时 fail closed。支持新版本或安装形态前必须先更新 resolver、capability matrix、fake CLI tests 和真实 opt-in conformance。
+- **CLI 版本、catalog schema 或安装 target 漂移**：首版只接受 `codex-cli 0.149.0`，并同时核对原生 target identity、owner/mode、所需 flags/features、request-owned catalog entry 与渲染结果；`--strict-config` 在配置失配时 fail closed。支持新版本或安装形态前必须先更新 resolver、catalog/capability matrix、fake CLI tests 和真实 opt-in conformance。
 - **本机登录失效或额度耗尽**：ready/demo-check 显示依赖不可用，请求返回稳定 503，不泄露账户详情，也不自动切换后端。
 - **数据离开本机的误解**：README 和示例配置明确说明 Codex CLI 只是本地调用入口，query/Evidence 会发送到 OpenAI；Embedding 仍发送到百炼。
 - **Embedding parser 过度放宽**：只把已观察到的 `id` 改为可选，保留其余结构、类型、模型、维度、数量和数值校验。
@@ -203,6 +203,15 @@ exception_type / duration_ms
 
 此变更没有数据库 migration、Milvus schema 变更、vector rebuild 或数据清理步骤。普通 `demo-down/up` 继续保留文档、ingestion 和索引数据；不得使用 destructive reset 作为升级步骤。
 
+### 实施证据（2026-09-01）
+
+- 默认未授权执行：两个 opt-in smoke 精确 `2 skipped in 0.72s`，exit `0`，没有进入 provider/Codex 请求体。
+- 阿里 Embedding：alias `athena-embedding`，维度 `1536`，zh→en 与 en→zh 均为 `true`，exit `0`；输入与向量未记录。
+- Codex bootstrap：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=55379`，`1 passed`，exit `0`。
+- Codex 生产未打补丁 gate 最新复验：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=24026`，`1 passed in 24.08s`，exit `0`。
+
+这些结果实现了本 RFC；完整 Phase 1 仍为 `active`，RFC-005 保持 `implemented`。本 RFC 的当前单智能体、无工具决策见 [ADR-018](../decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)，它替代了 ADR-017 的历史多智能体选择。
+
 ## 验收标准
 
 - LiteLLM 返回合法、无顶层 `id` 的 Embedding 200 response 时，文档完成 embedding/publishing 并进入 `ready`；非法结构仍以稳定错误失败。
@@ -212,7 +221,7 @@ exception_type / duration_ms
 - Codex 缺失、未登录、能力不兼容、超时、取消、输出超限、非法 JSON 或越界工具事件都明确失败，LiteLLM answer 调用次数保持为零。
 - Codex 子进程的 argv、环境、临时目录和日志中没有 query、Evidence、provider key 或回答；子进程环境不含 DashScope、LiteLLM、数据库、Blob 或 Milvus 凭据；请求结束后无遗留子进程或 session 文件。
 - npm `env node` launcher 不进入请求进程树；实际执行的是已验证的同平台原生 Codex binary，且父 `PATH` 不进入子进程环境。
-- 非 `codex-cli 0.149.0`、缺少任一固定禁用 feature、真实 capability conformance 未证明嵌套继承/完整事件可见性，或运行时出现外部工具事件时，Codex readiness/请求 fail closed。
+- 非 `codex-cli 0.149.0`、request-owned catalog entry schema/渲染结果漂移、缺少任一固定禁用 feature/override、未证明单智能体/零工具，或运行时出现协作/工具事件时，Codex readiness/请求 fail closed。
 - 中文问题可以从所选英文来源产生有引用的回答，英文问题可以从所选中文来源产生有引用的回答；取消选择的文档在 hits、claims 和 citations 三层均为零。
 - 每个非拒答实质 claim 至少有一个可解析 citation，且引用仍定位相同 document revision、content hash 和 anchor。
 - deterministic E2E 不启动 Codex 或真实 provider；未授权真实 Codex smoke 产生一次有意 skip，不被描述为真实模型验证。

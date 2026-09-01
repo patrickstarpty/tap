@@ -1,9 +1,10 @@
 ---
 id: ADR-017
-status: accepted
+status: superseded
 date: 2026-08-31
 supersedes: []
-superseded-by: []
+superseded-by:
+  - ADR-018
 related-rfcs:
   - RFC-006
 ---

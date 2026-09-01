@@ -932,7 +932,7 @@ type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 | `POST /v1/knowledge/answers` | `200 RetrievalAnswerResponse` | `400`, `409`, `422`, `503` |
 | `GET /v1/citations/{citation_id}` | `200 CitationPreview` | `404`, `422`, `503` |
 
-除 `204` 外，错误统一使用 RFC 9457 `application/problem+json`，闭合字段为 HTTPS `type`、非空 `title`、HTTP `status`、非空 `detail` 与可选 `instance`；未知字段被拒绝。九个已实现操作的稳定问题类型（`type` URL 的末段 slug）闭合为 `request-validation`、`knowledge-runtime-unavailable`、`search-unavailable`、`search-execution-rejected`、`unsupported-document`、`empty-document`、`document-too-large`、`document-not-found`、`document-not-retryable`、`document-state-changed`、`document-limit-reached`、`source-selection-required`、`unsupported-answer-control`、`embedding-unavailable`、`answer-snapshot-unavailable`、`citation-stale`、`citation-unavailable`；保留的 Phase 1 Chat stub 另使用 `turn-not-implemented`。公共 problem 不包含堆栈、provider 原始错误、credential、endpoint、Blob locator、Milvus target 或内部 filter。
+除 `204` 外，错误统一使用 RFC 9457 `application/problem+json`，闭合字段为 HTTPS `type`、非空 `title`、HTTP `status`、非空 `detail` 与可选 `instance`；未知字段被拒绝。九个已实现操作的稳定问题类型（`type` URL 的末段 slug）闭合为 `request-validation`、`knowledge-runtime-unavailable`、`search-unavailable`、`search-execution-rejected`、`unsupported-document`、`empty-document`、`document-too-large`、`document-not-found`、`document-not-retryable`、`document-state-changed`、`document-limit-reached`、`source-selection-required`、`unsupported-answer-control`、`embedding-unavailable`、`answer-unavailable`、`answer-snapshot-unavailable`、`citation-stale`、`citation-unavailable`；保留的 Phase 1 Chat stub 另使用 `turn-not-implemented`。公共 problem 不包含堆栈、provider 原始错误、credential、endpoint、Blob locator、Milvus target 或内部 filter。
 
 ### 10.3 回答 claim 与 citation 边界
 
@@ -951,6 +951,10 @@ type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 | `redis` | `PING` | `start-redis` |
 | `blob` | originals/artifacts 两个 private container | `start-blob` |
 | `milvus` | alias/schema/model/dimension 绑定及有界读探针 | `start-milvus` |
-| `models` | LiteLLM `/v1/models` 同时包含 `athena-chat` 与 `athena-embedding` | `configure-models` |
+| `models` | 始终要求 LiteLLM `/v1/models` 包含 `athena-embedding`；`ATHENA_ANSWER_BACKEND=litellm` 另要求 `athena-chat`，`codex` 则要求精确原生 CLI `0.149.0`、ChatGPT 登录、固定 feature/catalog/tool-free contract | `configure-models` |
+
+Athena 的文档/query Embedding 在两种真实回答模式下都经 LiteLLM `athena-embedding` 调用百炼 `text-embedding-v4`，固定 1536 维。回答后端由服务端 `.env` 在进程启动时独占选择且没有相互 fallback；Codex 只实现 API answer port，版本、登录、feature、与 `0.149.0` entry schema 耦合的 request-owned catalog、事件或输出任一漂移都返回 `503 https://tap.example/problems/answer-unavailable`。公共 `detail` 保持固定安全英文，Web 按 `503:answer-unavailable` 映射为“回答模型暂时不可用，请稍后重试。”，两者都不暴露 CLI/provider 细节。
+
+该实现没有修改任何公共 document/answer/citation request 或 success response DTO，也没有增加 browser-selectable backend/model/reasoning 字段；生成的 OpenAPI/Web client 中唯一新增的 HTTP 语义是上述 `answer-unavailable` Problem type。Codex query/所选 Evidence 发往 OpenAI，Embedding 内容发往阿里云百炼；这个数据边界和无认证 API 只适用于精确 loopback 本地 Demo。
 
 本节的规范性生成物是 [OpenAPI](../../contracts/openapi/api.json) 与 Web generated client/type；修改 Python DTO 或路由后必须运行 `make contracts` 并要求生成 diff 可解释、再次生成无 diff。

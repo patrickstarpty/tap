@@ -43,6 +43,8 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - [Athena 本地知识 Demo RFC](docs/proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md)：本地来源优先工作区、运行边界与验收标准。
 - [Athena 本地知识 Demo 计划](docs/plans/2026-08-27-athena-local-knowledge-demo.md)：纵向实现步骤与确定性门禁。
 - [Athena 本地知识 Demo 验收](docs/reviews/2026-08-27-athena-local-knowledge-demo.md)：本地中间件、浏览器、持久化和可选真实模型的证据记录。
+- [Athena 本地回答后端 RFC](docs/proposals/2026-08-31-rfc-006-athena-local-codex-answer-backend.md)：记录 LiteLLM/Codex 独占选择、固定 Embedding 与 fail-closed 验收。
+- [Athena 单智能体、无工具 Codex 决策](docs/decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)：记录精确 CLI/model/catalog 契约及其本地边界。
 - [Phase 1：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
 - [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
 - [Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
@@ -101,7 +103,28 @@ make demo-dev
 | Milvus | `19530` / `9091` | 本地 `doc` 可重建检索投影与健康端口 |
 | FastAPI / Vite | `8000` / `5173` | Knowledge HTTP API 与 Athena Web |
 
-模型配置只来自服务端环境，不在 UI 暴露。固定公共配置是 `ATHENA_MODEL_BACKEND=litellm`、`ATHENA_CHAT_ALIAS=athena-chat`、`ATHENA_EMBEDDING_ALIAS=athena-embedding` 与 `ATHENA_EMBEDDING_DIMENSION=1536`；LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`LITELLM_MODEL`、`OPENAI_API_KEY`、`LITELLM_EMBEDDING_MODEL`、`LITELLM_EMBEDDING_API_KEY` 和 `LITELLM_EMBEDDING_API_BASE` 注入实际路由与凭据。
+模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露。默认及已验收的完整回答选择块为：
+
+```dotenv
+ATHENA_MODEL_BACKEND=litellm
+ATHENA_ANSWER_BACKEND=litellm
+ATHENA_CODEX_MODEL=gpt-5.6-sol
+ATHENA_CODEX_REASONING_EFFORT=ultra
+ATHENA_CODEX_TIMEOUT_SECONDS=300
+ATHENA_CHAT_ALIAS=athena-chat
+ATHENA_EMBEDDING_ALIAS=athena-embedding
+ATHENA_EMBEDDING_DIMENSION=1536
+```
+
+默认 `ATHENA_ANSWER_BACKEND=litellm`；要使用已验收的本机 Codex 路径，只把该值改为 `codex`，其余固定值不变，然后停止并重新运行 `make demo-dev` 使 API/Relay/Worker 重新读取同一配置。若同时修改 LiteLLM route 或 credential，还要重新运行 `make demo-up`。两个值是启动时独占选择：LiteLLM 与 Codex 不会相互 fallback、hedge 或重试到另一后端。
+
+无论选择哪一个回答后端，文档与查询 Embedding 都必须经 LiteLLM 固定 `athena-embedding` alias 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`，并支持中文、英文和混合术语检索；这也是 LiteLLM 在 Codex 模式下仍为必需中间件的原因。LiteLLM 回答模式另使用 `athena-chat`。Codex 回答模式精确要求原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、有效的本机 ChatGPT 登录、单智能体、零工具、单 API 进程内并发 `1` 和 300 秒超时，不读取或要求 `OPENAI_API_KEY`/`CODEX_API_KEY`。
+
+Codex CLI 只是本机调用入口，不是本地推理：query 与所选 Evidence 会发送给 OpenAI；文档和 query 的 Embedding 内容会发送给阿里云百炼。该数据边界只获准用于 loopback、无认证的单操作者本地 Demo，不得据此开放 LAN、共享或生产服务。
+
+Codex 的请求自有 canonical model catalog 会消除内建 CodeModeOnly、多智能体和 apply-patch metadata，并与 24 个禁用 feature 及显式 plan/input/agent overrides 一起保持 Direct tool registry 为空。这个 catalog 的固定 entry schema 只保证精确 CLI `0.149.0`，不是跨版本兼容承诺；CLI、登录、feature、catalog/schema、模型或能力任何漂移都会使 readiness/request fail closed，返回 `503 answer-unavailable`，且绝不调用 LiteLLM answer。Web 对该错误只显示“回答模型暂时不可用，请稍后重试。”
+
+LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`LITELLM_MODEL`、`OPENAI_API_KEY` 与 `LITELLM_ATHENA_EMBEDDING_MODEL`/`DASHSCOPE_API_KEY` 注入实际路由与凭据；`LITELLM_EMBEDDING_*` 只供单独批准的付费 Embedding research 使用，Athena runtime 不读取。
 
 页面刷新会重新读取已提交的文档、ingestion/index 状态和必要的可重建状态；API/Web/Worker 进程重启与普通 Compose 停止/再次启动后也从这些持久事实恢复。当前渲染的回答只存在于 Web 页面内存，刷新会清空，本版没有历史回答恢复 API；用户可以基于仍为 `ready` 的持久来源重新提问。普通停止/再次启动保留具名卷：
 
@@ -128,7 +151,7 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-athena-demo \
 | Redis / `start-redis` | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:6379/0`。 |
 | Blob / `start-blob` | 运行 `make demo-up`；确认 `AZURE_STORAGE_CONNECTION_STRING` 指向 loopback Azurite，两个容器保持 private。 |
 | Milvus / `start-milvus` | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。 |
-| Models / `configure-models` | 在 ignored `.env` 填入 Chat/Embedding provider credential 与 raw model route，重启 `make demo-up`，再确认两个固定 alias 都出现在 LiteLLM `/v1/models`。 |
+| Models / `configure-models` | 两种模式都要在 ignored `.env` 配置 `DASHSCOPE_API_KEY`，重启本地角色并确认 `athena-embedding`；LiteLLM 回答模式还要确认 `athena-chat`，Codex 回答模式则检查精确原生 `0.149.0`、ChatGPT 登录、tool-free catalog/feature 契约。Codex 失败不会回退 LiteLLM，用户只收到 `answer-unavailable` 安全文案。 |
 
 ### 确定性 E2E 与真实模型 smoke
 
@@ -138,21 +161,23 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-athena-demo \
 make demo-e2e
 ```
 
-真实模型 smoke 是单独的显式 opt-in；它要求本地生产图已 ready、知识库至少有一份 ready 文档，并验证一次真实 embedding、一次 grounded answer 及全部 citation resolution。未设置 opt-in 时测试精确 skip；一旦 opt-in，缺凭据、provider `401`、维度错误、claim 格式错误或 citation 无法解析都算失败，不会转为 skip：
+真实 provider gate 是单独的显式 opt-in；未设置开关时两个 smoke 文件精确产生两次有意 skip，且不会进入 provider/Codex 请求体。阿里门禁验证 `athena-embedding`、1536 维、有限数值及 zh→en/en→zh 相似度；Codex 门禁验证精确 `0.149.0 + gpt-5.6-sol + ultra` 的单智能体、零工具、grounded/cited/sanitized/cleanup 契约。缺凭据、provider `401`、维度或 catalog 漂移、非法 claim/citation、工具事件和清理不确定性都算失败，不会转为 skip：
 
 ```sh
 set -a
 . ./.env
 set +a
 TAP_RUN_ATHENA_REAL_MODEL_SMOKE=1 uv run --project apps/backend pytest \
-  apps/backend/tests/smoke/test_athena_real_model.py -v
+  apps/backend/tests/smoke/test_athena_real_model.py -v -rs
+TAP_RUN_ATHENA_CODEX_CONFORMANCE=1 uv run --project apps/backend pytest \
+  apps/backend/tests/smoke/test_athena_codex_smoke.py -v -rs
 ```
 
-本次验收 checkout 未提供 `.env`，因此记录为 `not-run: credentials not provided`；LiteLLM 可运行路由已经配置，但真实 provider smoke 尚未验证。
+2026-09-01 的验收证据为：阿里 `athena-embedding` 的 zh→en 与 en→zh 门禁均通过且维度为 `1536`；Codex bootstrap 和未打补丁的生产配置均通过，最新生产复验输出 `version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=24026`，pytest 为 `1 passed in 24.08s`、exit `0`。默认无授权执行为 `2 skipped in 0.72s`、exit `0`。证据不保存 query、Evidence、回答、向量、JSONL 或登录信息。
 
 ### 实验性 Milvus 检索门禁
 
-Milvus 目前仅是本地、可回退的 `doc` 检索实验，不是共享非生产或生产默认后端，也不改变 Azure AI Search 的既有发布门禁。固定版本与脱敏预计算向量的可复现 correctness gate 为：
+Milvus 目前仅是本地、可重建且可替换的 `doc` 检索实验，不是共享非生产或生产默认后端，也不改变 Azure AI Search 的既有发布门禁；这里的检索实现可替换性不表示回答后端存在 fallback。固定版本与脱敏预计算向量的可复现 correctness gate 为：
 
 ```sh
 make milvus-preflight
