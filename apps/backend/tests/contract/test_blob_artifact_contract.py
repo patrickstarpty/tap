@@ -893,89 +893,54 @@ async def test_public_commit_uses_one_total_deadline_for_permanently_pending_cop
 async def test_recovery_child_settlement_cannot_add_a_second_grace_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    timeout = 0.03
-    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=timeout)
-    source = object()
-    recovery_child_cancelled = asyncio.Event()
+    store = _store_with_double(monkeypatch, _BlobDouble(), timeout=0.03)
     recovery_child_release = asyncio.Event()
-    recovery_child_settled = asyncio.Event()
-    settlement_timeouts: list[float] = []
+    settlement_observations: list[tuple[asyncio.Future[object], float]] = []
     wait_terminal = blob_artifacts._wait_terminal  # pyright: ignore[reportPrivateUsage]
+    active_settlement_deadline = blob_artifacts._ACTIVE_COPY_SETTLEMENT_DEADLINE  # pyright: ignore[reportPrivateUsage]
 
     async def observe_wait_terminal(
         task: asyncio.Future[object],
         *,
         timeout_seconds: float,
     ) -> None:
-        settlement_timeouts.append(timeout_seconds)
+        settlement_observations.append((task, timeout_seconds))
         await wait_terminal(task, timeout_seconds=timeout_seconds)
 
     monkeypatch.setattr(blob_artifacts, "_wait_terminal", observe_wait_terminal)
 
-    class Destination:
-        calls = 0
-
-        async def exists(self) -> bool:
-            return False
-
-        async def start_copy_from_url(self, _url: str, **_kwargs: object) -> dict[str, str]:
-            await asyncio.sleep(0.02)
-            return {"copy_id": "copy-pending"}
-
-        async def get_blob_properties(self) -> object:
-            self.calls += 1
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                if self.calls > 1:
-                    recovery_child_cancelled.set()
-                    try:
-                        await recovery_child_release.wait()
-                    finally:
-                        recovery_child_settled.set()
-                raise
-
-    destination = Destination()
-    staged = StagedOriginal(
-        staging_key="staging/single-settlement-grace",
-        filename="policy.md",
-        media_type="text/markdown",
-        size=3,
-        source_content_hash=canonical_sha256(b"abc"),
-    )
-    monkeypatch.setattr(
-        store,
-        "_blob",
-        lambda _container, name: source if name == staged.staging_key else destination,
-    )
-    monkeypatch.setattr(
-        store,
-        "_staging_properties",
-        lambda _key: _async_value(
-            SimpleNamespace(
-                size=3,
-                metadata={
-                    "blobsha256": staged.source_content_hash.removeprefix("sha256:"),
-                    "size": "3",
-                },
-            )
-        ),
-    )
-    monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
-    monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
+    async def cancellation_resistant_child() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await recovery_child_release.wait()
+            raise
 
     try:
         with pytest.raises(ArtifactProviderUnavailable):
-            await store.commit_original(staged, REVISION)
-        await asyncio.wait_for(recovery_child_cancelled.wait(), timeout=0.2)
+            await store._bounded(cancellation_resistant_child(), timeout_seconds=0.0)
 
-        assert destination.calls == 2
-        assert len(settlement_timeouts) == 2
-        assert settlement_timeouts[-1] == 0.0
+        settlement_token = active_settlement_deadline.set(asyncio.get_running_loop().time())
+        try:
+            with pytest.raises(ArtifactProviderUnavailable):
+                await store._bounded(cancellation_resistant_child(), timeout_seconds=0.0)
+        finally:
+            active_settlement_deadline.reset(settlement_token)
+
+        assert len(settlement_observations) == 2
+        _primary_task, primary_timeout = settlement_observations[0]
+        recovery_task, recovery_timeout = settlement_observations[-1]
+        assert primary_timeout > 0.0
+        assert recovery_timeout == 0.0
+        assert isinstance(recovery_task, asyncio.Task)
+        assert not recovery_task.done()
+        assert recovery_task.cancelling() > 0
     finally:
         recovery_child_release.set()
-        if destination.calls > 1:
-            await asyncio.wait_for(recovery_child_settled.wait(), timeout=0.2)
+        await asyncio.gather(
+            *(task for task, _timeout in settlement_observations),
+            return_exceptions=True,
+        )
 
 
 @pytest.mark.asyncio
