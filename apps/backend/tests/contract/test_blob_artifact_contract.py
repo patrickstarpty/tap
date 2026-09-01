@@ -20,6 +20,7 @@ from azure.core.exceptions import (
 from azure.storage.blob import ContainerProperties
 from pydantic import SecretStr
 
+from tap.modules.knowledge.adapters import blob_artifacts
 from tap.modules.knowledge.adapters.blob_artifacts import (
     ARTIFACTS_CONTAINER,
     ORIGINALS_CONTAINER,
@@ -895,6 +896,21 @@ async def test_recovery_child_settlement_cannot_add_a_second_grace_window(
     timeout = 0.03
     store = _store_with_double(monkeypatch, _BlobDouble(), timeout=timeout)
     source = object()
+    recovery_child_cancelled = asyncio.Event()
+    recovery_child_release = asyncio.Event()
+    recovery_child_settled = asyncio.Event()
+    settlement_timeouts: list[float] = []
+    wait_terminal = blob_artifacts._wait_terminal  # pyright: ignore[reportPrivateUsage]
+
+    async def observe_wait_terminal(
+        task: asyncio.Future[object],
+        *,
+        timeout_seconds: float,
+    ) -> None:
+        settlement_timeouts.append(timeout_seconds)
+        await wait_terminal(task, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(blob_artifacts, "_wait_terminal", observe_wait_terminal)
 
     class Destination:
         calls = 0
@@ -912,7 +928,11 @@ async def test_recovery_child_settlement_cannot_add_a_second_grace_window(
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
                 if self.calls > 1:
-                    await asyncio.sleep(0.08)
+                    recovery_child_cancelled.set()
+                    try:
+                        await recovery_child_release.wait()
+                    finally:
+                        recovery_child_settled.set()
                 raise
 
     destination = Destination()
@@ -944,12 +964,18 @@ async def test_recovery_child_settlement_cannot_add_a_second_grace_window(
     monkeypatch.setattr(store, "_download", lambda _blob: _async_value(b"abc"))
     monkeypatch.setattr(store, "_source_copy_url", lambda _source: "https://copy.invalid")
 
-    started = asyncio.get_running_loop().time()
-    with pytest.raises(ArtifactProviderUnavailable):
-        await store.commit_original(staged, REVISION)
-    elapsed = asyncio.get_running_loop().time() - started
+    try:
+        with pytest.raises(ArtifactProviderUnavailable):
+            await store.commit_original(staged, REVISION)
+        await asyncio.wait_for(recovery_child_cancelled.wait(), timeout=0.2)
 
-    assert elapsed <= timeout + 0.015
+        assert destination.calls == 2
+        assert len(settlement_timeouts) == 2
+        assert settlement_timeouts[-1] == 0.0
+    finally:
+        recovery_child_release.set()
+        if destination.calls > 1:
+            await asyncio.wait_for(recovery_child_settled.wait(), timeout=0.2)
 
 
 @pytest.mark.asyncio
