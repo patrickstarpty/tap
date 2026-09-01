@@ -173,10 +173,11 @@ def batch_embedding_response(
 
 def embedding_response_with_usage(
     *,
+    vector: list[object] | None = None,
     usage: object | None = None,
     model: str = "tap-embed-fixed-v1",
 ) -> dict[str, object]:
-    body = embedding_response(model=model)
+    body = embedding_response(vector=vector, model=model)
     body["usage"] = {"prompt_tokens": 4, "total_tokens": 4} if usage is None else usage
     return body
 
@@ -487,10 +488,10 @@ async def test_litellm_answer_failure_crosses_as_answer_unavailable(failure: str
 @pytest.mark.parametrize(
     "body",
     [
-        embedding_response(vector=[0.25]),
-        embedding_response(vector=[0.25, float("nan")]),
-        embedding_response(vector=[0.25, True]),
-        embedding_response(model="unknown-provider-model"),
+        embedding_response_with_usage(vector=[0.25]),
+        embedding_response_with_usage(vector=[0.25, float("nan")]),
+        embedding_response_with_usage(vector=[0.25, True]),
+        embedding_response_with_usage(model="unknown-provider-model"),
     ],
     ids=("dimension", "non-finite", "boolean", "unknown-model"),
 )
@@ -635,6 +636,26 @@ async def test_embedding_huge_integer_vector_fails_as_model_unavailable() -> Non
 
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ModelUnavailable):
+            await LiteLLMAdapter(config(), client=client).embed("authorization [REDACTED]")
+
+
+@pytest.mark.asyncio
+async def test_embedding_rejects_json_numeric_overflow() -> None:
+    raw_body = (
+        b'{"id":"embedding-17","object":"list","model":"tap-embed-fixed-v1",'
+        b'"data":[{"embedding":[1e309,0.5],"index":0}],'
+        b'"usage":{"prompt_tokens":4,"total_tokens":4}}'
+    )
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=raw_body,
+            headers={"content-type": "application/json"},
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ModelUnavailable):
