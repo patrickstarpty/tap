@@ -44,6 +44,7 @@ from tap.modules.knowledge.ports.errors import AnswerUnavailable
 
 SOURCE_HASH = "sha256:" + "a" * 64
 CHUNK_HASH = "sha256:" + "b" * 64
+MARKER_COORDINATION_TIMEOUT_SECONDS = 4.0
 GROUNDING_INSTRUCTION = (
     "Answer only from supplied evidence. Return JSON with exactly answer and claims; "
     "every claim must contain current evidenceLabels, and every claim text must be "
@@ -180,6 +181,7 @@ ROOT = Path(__file__).resolve().parent
 os.environ.pop("__CF_USER_TEXT_ENCODING", None)  # macOS interpreter artifact, not exec env.
 MODE_FILE = ROOT / "mode"
 INVOCATIONS = ROOT / "invocations.jsonl"
+MARKER_COORDINATION_TIMEOUT_SECONDS = 4.0
 DISABLED = (
     "shell_tool", "shell_snapshot", "unified_exec", "code_mode", "code_mode_host",
     "browser_use", "browser_use_external", "browser_use_full_cdp_access",
@@ -315,8 +317,8 @@ def spawn_ignoring_child(index: int, *, close_pipes: bool = False) -> None:
         f"root=pathlib.Path({str(ROOT)!r});"
         f"marker=root/'child-term-{index}';"
         "signal.signal(signal.SIGTERM,lambda *_:(marker.write_text('term'),None)[1]);"
-        f"(root/'child-pid-{index}').write_text(str(os.getpid()));"
         f"(root/'child-pgid-{index}').write_text(str(os.getpgid(0)));"
+        f"(root/'child-pid-{index}').write_text(str(os.getpid()));"
         "time.sleep(3600)"
     )
     null_stream = subprocess.DEVNULL if close_pipes else None
@@ -329,29 +331,24 @@ def spawn_ignoring_child(index: int, *, close_pipes: bool = False) -> None:
     )
     if close_pipes:
         child_marker = ROOT / f"child-pid-{index}"
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + MARKER_COORDINATION_TIMEOUT_SECONDS
         while not child_marker.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
 
 
 def spawn_detached_pipe_child(index: int) -> None:
     child_code = (
-        "import os,signal,time,pathlib;"
-        f"root=pathlib.Path({str(ROOT)!r});"
+        "import signal,time;"
         "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
-        f"(root/'detached-pid-{index}').write_text(str(os.getpid()));"
-        f"(root/'detached-pgid-{index}').write_text(str(os.getpgid(0)));"
         "time.sleep(3600)"
     )
-    subprocess.Popen(
+    child = subprocess.Popen(
         [sys.executable, "-c", child_code],
         close_fds=True,
         start_new_session=True,
     )
-    marker = ROOT / f"detached-pid-{index}"
-    deadline = time.monotonic() + 2
-    while not marker.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
+    (ROOT / f"detached-pgid-{index}").write_text(str(child.pid), encoding="ascii")
+    (ROOT / f"detached-pid-{index}").write_text(str(child.pid), encoding="ascii")
 
 
 def events(selected_mode: str) -> bytes:
@@ -723,8 +720,8 @@ def run_answer(args: list[str], selected_mode: str) -> int:
     (ROOT / "capture.json").write_text(
         json.dumps(capture, ensure_ascii=False, sort_keys=True), encoding="utf-8"
     )
-    (ROOT / f"started-{index}").write_text(str(os.getpid()), encoding="ascii")
     install_term_handler(index, ignore=selected_mode == "ignore_term")
+    (ROOT / f"started-{index}").write_text(str(os.getpid()), encoding="ascii")
     if selected_mode == "block":
         block(index)
     elif selected_mode == "hang":
@@ -772,9 +769,9 @@ def main() -> int:
     append_invocation(args)
     if args == ["--version"]:
         if selected_mode == "probe_hang":
+            install_term_handler(99, ignore=False)
             (ROOT / "probe-pgid").write_text(str(os.getpgid(0)), encoding="ascii")
             (ROOT / "probe-pid").write_text(str(os.getpid()), encoding="ascii")
-            install_term_handler(99, ignore=False)
             wait_forever()
         if selected_mode == "probe_stdout_over":
             sys.stdout.buffer.write(b"v" * 262_145)
@@ -985,7 +982,12 @@ class FakeCodex:
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
-    async def wait_for(self, name: str, *, timeout: float = 2) -> Path:
+    async def wait_for(
+        self,
+        name: str,
+        *,
+        timeout: float = MARKER_COORDINATION_TIMEOUT_SECONDS,
+    ) -> Path:
         path = self.root / name
         async with asyncio.timeout(timeout):
             while not path.exists():
@@ -1447,31 +1449,55 @@ async def test_codex_exec_last_audit_ignores_an_older_concurrent_completion(
     fake_codex: FakeCodex,
 ) -> None:
     fake_codex.mode("block")
-    marker_coordination_timeout_seconds = 4.0
-    adapter_timeout_seconds = marker_coordination_timeout_seconds + 1.0
+    adapter_timeout_seconds = MARKER_COORDINATION_TIMEOUT_SECONDS + 1.0
     adapter = CodexExecAnswerAdapter(
         codex_config(fake_codex, timeout_seconds=adapter_timeout_seconds)
     )
-    first = asyncio.create_task(adapter.answer("first", (evidence(),), "quick-hybrid-v1"))
-    await fake_codex.wait_for("started-1", timeout=marker_coordination_timeout_seconds)
-    second = asyncio.create_task(adapter.answer("second", (evidence(),), "quick-hybrid-v1"))
-    await asyncio.sleep(0)
+    tasks: list[asyncio.Task[Any]] = []
+    observed_process_groups: set[int] = set()
 
-    assert adapter.last_audit is None
-    fake_codex.release(1)
-    await fake_codex.wait_for("started-2", timeout=marker_coordination_timeout_seconds)
-    assert adapter.last_audit is None
+    try:
+        first = asyncio.create_task(adapter.answer("first", (evidence(),), "quick-hybrid-v1"))
+        tasks.append(first)
+        first_pid = int((await fake_codex.wait_for("started-1")).read_text(encoding="ascii"))
+        observed_process_groups.add(first_pid)
+        first_capture = fake_codex.read_capture()
+        observed_process_groups.add(first_capture.pgid)
+        assert first_pid == first_capture.pid == first_capture.pgid
 
-    fake_codex.release(2)
-    await asyncio.gather(first, second)
-    assert adapter.last_audit == CodexEventAudit(
-        thread_started=1,
-        turn_started=1,
-        turn_completed=1,
-        delegation_started=0,
-        delegation_completed=0,
-        external_tool_events=0,
-    )
+        second = asyncio.create_task(adapter.answer("second", (evidence(),), "quick-hybrid-v1"))
+        tasks.append(second)
+        await asyncio.sleep(0)
+
+        assert adapter.last_audit is None
+        fake_codex.release(1)
+        second_pid = int((await fake_codex.wait_for("started-2")).read_text(encoding="ascii"))
+        observed_process_groups.add(second_pid)
+        second_capture = fake_codex.read_capture()
+        observed_process_groups.add(second_capture.pgid)
+        assert second_pid == second_capture.pid == second_capture.pgid
+        assert adapter.last_audit is None
+
+        fake_codex.release(2)
+        await asyncio.gather(first, second)
+        assert adapter.last_audit == CodexEventAudit(
+            thread_started=1,
+            turn_started=1,
+            turn_completed=1,
+            delegation_started=0,
+            delegation_completed=0,
+            external_tool_events=0,
+        )
+    finally:
+        fake_codex.release(1)
+        fake_codex.release(2)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(adapter.aclose(), return_exceptions=True)
+        for process_group in observed_process_groups:
+            await force_process_group_gone(process_group)
 
 
 def input_with_total_size(size: int) -> Evidence:
@@ -1937,8 +1963,7 @@ async def test_codex_exec_detached_pipe_holder_cannot_make_cleanup_unbounded(
     fake_codex: FakeCodex,
 ) -> None:
     fake_codex.mode("detached_holds_pipes")
-    marker_coordination_timeout_seconds = 4.0
-    adapter_timeout_seconds = marker_coordination_timeout_seconds + 1.0
+    adapter_timeout_seconds = MARKER_COORDINATION_TIMEOUT_SECONDS + 1.0
     adapter = CodexExecAnswerAdapter(
         codex_config(fake_codex, timeout_seconds=adapter_timeout_seconds)
     )
@@ -1948,12 +1973,7 @@ async def test_codex_exec_detached_pipe_holder_cannot_make_cleanup_unbounded(
 
     try:
         detached_group = int(
-            (
-                await fake_codex.wait_for(
-                    "detached-pgid-1",
-                    timeout=marker_coordination_timeout_seconds,
-                )
-            ).read_text(encoding="ascii")
+            (await fake_codex.wait_for("detached-pgid-1")).read_text(encoding="ascii")
         )
         owned_group = fake_codex.read_capture().pgid
         task.cancel()
@@ -1963,6 +1983,14 @@ async def test_codex_exec_detached_pipe_holder_cannot_make_cleanup_unbounded(
             await task
         assert not Path(fake_codex.read_capture().request_dir).exists()
     finally:
+        if detached_group is None:
+            marker = fake_codex.root / "detached-pgid-1"
+            if marker.exists():
+                detached_group = int(marker.read_text(encoding="ascii"))
+        if owned_group is None:
+            capture_path = fake_codex.root / "capture.json"
+            if capture_path.exists():
+                owned_group = fake_codex.read_capture().pgid
         if detached_group is not None:
             await force_process_group_gone(detached_group)
         if owned_group is not None:
@@ -2410,11 +2438,11 @@ async def test_codex_exec_aclose_fails_boundedly_when_leader_wait_does_not_settl
         ),
         stdin=asyncio.subprocess.DEVNULL,
     )
-    await fake_codex.wait_for("probe-pid")
     original_wait = process.wait
     wait_entered = asyncio.Event()
     wait_cancelled = asyncio.Event()
     wait_release = asyncio.Event()
+    close_task: asyncio.Task[None] | None = None
 
     async def nonsettling_wait() -> int:
         wait_entered.set()
@@ -2425,10 +2453,10 @@ async def test_codex_exec_aclose_fails_boundedly_when_leader_wait_does_not_settl
                 wait_cancelled.set()
         return await original_wait()
 
-    monkeypatch.setattr(process, "wait", nonsettling_wait)
-    close_task = asyncio.create_task(adapter.aclose())
-
     try:
+        await fake_codex.wait_for("probe-pid")
+        monkeypatch.setattr(process, "wait", nonsettling_wait)
+        close_task = asyncio.create_task(adapter.aclose())
         await asyncio.wait_for(wait_entered.wait(), timeout=2)
         done, pending = await asyncio.wait({close_task}, timeout=1.5)
         assert pending == set()
@@ -2450,7 +2478,9 @@ async def test_codex_exec_aclose_fails_boundedly_when_leader_wait_does_not_settl
                 os.killpg(process.pid, signal.SIGKILL)
         with suppress(BaseException):
             await asyncio.wait_for(original_wait(), timeout=2)
-        await asyncio.gather(close_task, return_exceptions=True)
+        if close_task is not None:
+            await asyncio.gather(close_task, return_exceptions=True)
+        await asyncio.gather(adapter.aclose(), return_exceptions=True)
         shutil.rmtree(request_dir, ignore_errors=True)
 
 
@@ -2670,12 +2700,17 @@ async def test_codex_exec_concurrent_close_waits_for_complete_invocation_cleanup
 
     monkeypatch.setattr(codex_exec, "_settle_process_pipes", gated_settlement)
     answer_task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
-    await fake_codex.wait_for("started-1")
-    capture = fake_codex.read_capture()
-    close_one = asyncio.create_task(adapter.aclose())
-    close_two = asyncio.create_task(adapter.aclose())
+    close_tasks: list[asyncio.Task[None]] = []
+    capture: Capture | None = None
+    process_group: int | None = None
 
     try:
+        process_group = int((await fake_codex.wait_for("started-1")).read_text(encoding="ascii"))
+        capture = fake_codex.read_capture()
+        assert process_group == capture.pid == capture.pgid
+        close_one = asyncio.create_task(adapter.aclose())
+        close_two = asyncio.create_task(adapter.aclose())
+        close_tasks.extend((close_one, close_two))
         await asyncio.wait_for(settlement_entered.wait(), timeout=2)
         await asyncio.sleep(0)
         assert not close_one.done()
@@ -2688,11 +2723,23 @@ async def test_codex_exec_concurrent_close_waits_for_complete_invocation_cleanup
         assert not Path(capture.request_dir).exists()
     finally:
         settlement_release.set()
-        await asyncio.gather(close_one, close_two, return_exceptions=True)
+        await asyncio.gather(*close_tasks, return_exceptions=True)
         if not answer_task.done():
             answer_task.cancel()
         await asyncio.gather(answer_task, return_exceptions=True)
-        await force_process_group_gone(capture.pgid)
+        await asyncio.gather(adapter.aclose(), return_exceptions=True)
+        if process_group is None:
+            marker = fake_codex.root / "started-1"
+            if marker.exists():
+                process_group = int(marker.read_text(encoding="ascii"))
+        if capture is None:
+            capture_path = fake_codex.root / "capture.json"
+            if capture_path.exists():
+                capture = fake_codex.read_capture()
+        if capture is not None:
+            process_group = capture.pgid
+        if process_group is not None:
+            await force_process_group_gone(process_group)
 
 
 @pytest.mark.asyncio
@@ -2817,9 +2864,7 @@ async def test_codex_exec_kills_term_ignoring_parent_and_child_process_group(
     task = asyncio.create_task(adapter.answer("question", (evidence(),), "quick-hybrid-v1"))
 
     try:
-        child_pid = int(
-            (await fake_codex.wait_for("child-pid-1", timeout=4)).read_text(encoding="ascii")
-        )
+        child_pid = int((await fake_codex.wait_for("child-pid-1")).read_text(encoding="ascii"))
         capture = fake_codex.read_capture()
         process_group = capture.pgid
         task.cancel()
@@ -3160,23 +3205,16 @@ async def test_codex_exec_readiness_timeout_reaps_its_process_group(
     fake_codex: FakeCodex,
 ) -> None:
     fake_codex.mode("probe_hang")
-    marker_coordination_timeout_seconds = 4.0
-    adapter_timeout_seconds = marker_coordination_timeout_seconds + 1.0
+    adapter_timeout_seconds = MARKER_COORDINATION_TIMEOUT_SECONDS + 1.0
     adapter = CodexExecAnswerAdapter(
         codex_config(fake_codex, timeout_seconds=adapter_timeout_seconds)
     )
     readiness = asyncio.create_task(adapter.check_ready())
     probe_pid: int | None = None
+    probe_pgid: int | None = None
 
     try:
-        probe_pid = int(
-            (
-                await fake_codex.wait_for(
-                    "probe-pid",
-                    timeout=marker_coordination_timeout_seconds,
-                )
-            ).read_text(encoding="ascii")
-        )
+        probe_pid = int((await fake_codex.wait_for("probe-pid")).read_text(encoding="ascii"))
         probe_pgid = int((fake_codex.root / "probe-pgid").read_text(encoding="ascii"))
         assert probe_pid == probe_pgid
 
@@ -3188,16 +3226,22 @@ async def test_codex_exec_readiness_timeout_reaps_its_process_group(
         with pytest.raises(ProcessLookupError):
             os.killpg(probe_pgid, 0)
         assert adapter._processes == set()
+        assert adapter._invocations == set()
     finally:
         if not readiness.done():
             readiness.cancel()
-            await asyncio.gather(readiness, return_exceptions=True)
+        await asyncio.gather(readiness, return_exceptions=True)
         if probe_pid is None:
             marker = fake_codex.root / "probe-pid"
             if marker.exists():
                 probe_pid = int(marker.read_text(encoding="ascii"))
-        if probe_pid is not None:
-            await force_process_group_gone(probe_pid)
+        if probe_pgid is None:
+            marker = fake_codex.root / "probe-pgid"
+            if marker.exists():
+                probe_pgid = int(marker.read_text(encoding="ascii"))
+        await asyncio.gather(adapter.aclose(), return_exceptions=True)
+        if probe_pgid is not None:
+            await force_process_group_gone(probe_pgid)
 
 
 @pytest.mark.asyncio
