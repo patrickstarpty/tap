@@ -71,7 +71,6 @@ _TOOL_FREE_CONFIG_OVERRIDES = (
 )
 _MODEL_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _PROFILE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
-_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
 _GROUNDED_ANSWER_INSTRUCTION = (
     "Answer only from supplied evidence. Return JSON with exactly answer and claims; "
     "every claim must contain current evidenceLabels, and every claim text must be "
@@ -164,8 +163,8 @@ class CodexExecConfig:
             raise ValueError("codex_home must be a resolved directory")
         if type(self.model_id) is not str or self.model_id != _EXPECTED_MODEL_ID:
             raise ValueError("model_id must be the approved tool-free model")
-        if self.reasoning_effort not in _REASONING_EFFORTS:
-            raise ValueError("reasoning_effort is not approved")
+        if type(self.reasoning_effort) is not str or self.reasoning_effort != "ultra":
+            raise ValueError("reasoning_effort must be the approved ultra setting")
         if not isinstance(self.profile_id, str) or _PROFILE_ID.fullmatch(self.profile_id) is None:
             raise ValueError("profile_id must be an approved bounded identifier")
         if (
@@ -387,7 +386,15 @@ def _tool_free_model_descriptor(*, rendered: bool) -> dict[str, object]:
         "node_repl_disabled": True,
     }
     if rendered:
-        model["model_messages"] = None
+        model["model_messages"] = {
+            "approvals": None,
+            "auto_review": None,
+            "collaboration_modes": None,
+            "instructions_template": _TOOL_FREE_BASE_INSTRUCTIONS,
+            "instructions_variables": None,
+            "multi_agent": None,
+            "permissions": None,
+        }
     else:
         model["tool_mode"] = None
         model["multi_agent_version"] = None
@@ -880,7 +887,7 @@ class CodexExecAnswerAdapter(AnswerGenerationPort):
         )
         if process.stdout is None or process.stderr is None:
             raise _CodexContractFailure("Codex probe pipes are unavailable")
-        stderr_task = (
+        stderr_task: asyncio.Task[Any] = (
             asyncio.create_task(
                 _read_bounded(
                     process.stderr,

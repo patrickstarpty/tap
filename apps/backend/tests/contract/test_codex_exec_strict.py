@@ -193,6 +193,18 @@ TOOL_FREE_CONFIG_OVERRIDES = (
     "tools.experimental_request_user_input.enabled=false",
     "agents.enabled=false",
 )
+RENDERED_MODEL_MESSAGES = {
+    "approvals": None,
+    "auto_review": None,
+    "collaboration_modes": None,
+    "instructions_template": (
+        "You are a tool-free grounded answer generator. Use only the supplied evidence "
+        "and return the requested structured answer. Do not call tools or delegate."
+    ),
+    "instructions_variables": None,
+    "multi_agent": None,
+    "permissions": None,
+}
 FEATURE_OVERRIDES = tuple(
     value for feature in DISABLED for value in ("--disable", feature)
 )
@@ -810,7 +822,7 @@ def main() -> int:
         rendered_model = dict(catalog["models"][0])
         rendered_model.pop("tool_mode")
         rendered_model.pop("multi_agent_version")
-        rendered_model["model_messages"] = None
+        rendered_model["model_messages"] = dict(RENDERED_MODEL_MESSAGES)
         rendered = {"models": [rendered_model]}
         if selected_mode == "catalog_extra_field":
             rendered_model["unexpected"] = True
@@ -838,6 +850,8 @@ def main() -> int:
             rendered_model["include_plugin_usage_instructions"] = 0
         elif selected_mode == "catalog_missing_apply_patch":
             rendered_model.pop("apply_patch_tool_type")
+        elif selected_mode == "catalog_null_model_messages":
+            rendered_model["model_messages"] = None
         elif selected_mode == "catalog_duplicate_json":
             sys.stdout.write('{"models":[],"models":[]}')
             return 0
@@ -1235,6 +1249,25 @@ def test_codex_exec_config_rejects_string_subclass_model_id(fake_codex: FakeCode
 
     with pytest.raises(ValueError):
         codex_config(fake_codex, model_id=PretendApprovedModel("not-approved"))
+
+
+@pytest.mark.parametrize("reasoning_effort", ["low", "medium", "high", "xhigh", "max"])
+def test_codex_exec_config_rejects_every_non_ultra_reasoning_effort(
+    fake_codex: FakeCodex,
+    reasoning_effort: str,
+) -> None:
+    with pytest.raises(ValueError):
+        codex_config(fake_codex, reasoning_effort=reasoning_effort)
+
+
+def test_codex_exec_config_rejects_string_subclass_ultra_reasoning(
+    fake_codex: FakeCodex,
+) -> None:
+    class UltraReasoning(str):
+        pass
+
+    with pytest.raises(ValueError):
+        codex_config(fake_codex, reasoning_effort=UltraReasoning("ultra"))
 
 
 def test_exec_argv_and_schema_are_exact(fake_codex: FakeCodex, tmp_path: Path) -> None:
@@ -1674,18 +1707,40 @@ async def test_codex_exec_timeout_covers_waiting_for_semaphore(fake_codex: FakeC
 @pytest.mark.asyncio
 async def test_codex_exec_timeout_terminates_and_reaps_process_group(
     fake_codex: FakeCodex,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_codex.mode("hang")
     adapter = CodexExecAnswerAdapter(codex_config(fake_codex, timeout_seconds=1.0))
+    original_spawn = asyncio.create_subprocess_exec
+    created: list[asyncio.subprocess.Process] = []
+    request_root = fake_codex.root / "timeout-requests"
+    request_root.mkdir(mode=0o700)
+    original_mkdtemp = codex_exec.mkdtemp
+
+    async def recording_spawn(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        process = await original_spawn(*args, **kwargs)  # type: ignore[arg-type]
+        created.append(process)
+        return process
+
+    def confined_mkdtemp(*, prefix: str) -> str:
+        return original_mkdtemp(prefix=prefix, dir=request_root)
+
+    monkeypatch.setattr(codex_exec.asyncio, "create_subprocess_exec", recording_spawn)
+    monkeypatch.setattr(codex_exec, "mkdtemp", confined_mkdtemp)
 
     with pytest.raises(AnswerUnavailable):
         await adapter.answer("question", (evidence(),), "quick-hybrid-v1")
 
-    capture = fake_codex.read_capture()
-    await assert_pid_gone(capture.pid)
-    assert (fake_codex.root / "term-1").exists()
-    assert not Path(capture.request_dir).exists()
+    assert len(created) == 1
+    process = created[0]
+    await assert_pid_gone(process.pid)
+    assert process.returncode is not None
+    capture_path = fake_codex.root / "capture.json"
+    if capture_path.exists():
+        assert (fake_codex.root / "term-1").exists()
+    assert not tuple(request_root.iterdir())
     assert adapter._processes == set()
+    assert adapter._invocations == set()
 
 
 @pytest.mark.asyncio
@@ -2799,6 +2854,7 @@ async def test_codex_exec_nonzero_exit_kills_a_surviving_child_process_group(
         "catalog_base_instructions",
         "catalog_boolean_as_integer",
         "catalog_missing_apply_patch",
+        "catalog_null_model_messages",
         "catalog_duplicate_json",
         "catalog_nonfinite_json",
         "login_failure",
