@@ -4,6 +4,8 @@ import {
   FileTextOutlined,
   MessageOutlined,
   PlusOutlined,
+  RobotOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 
 import type { PrototypeCopy } from "./copy";
@@ -49,12 +51,12 @@ export function PrototypeSidebar({
     {
       key: "agents",
       label: copy.navigation.agents,
-      icon: <MessageOutlined aria-hidden="true" />,
+      icon: <RobotOutlined aria-hidden="true" />,
     },
     {
       key: "skills",
       label: copy.navigation.skills,
-      icon: <CodeOutlined aria-hidden="true" />,
+      icon: <ToolOutlined aria-hidden="true" />,
     },
     {
       key: "library",
@@ -185,7 +187,10 @@ export function PrototypeSidebar({
       ) : null}
 
       <div className="tap-sidebar-footer">
-        <div className="tap-language-switcher" aria-label="Language">
+        <div
+          className="tap-language-switcher"
+          aria-label={copy.navigation.language}
+        >
           {(["en", "zh"] as const).map((language) => (
             <button
               key={language}
@@ -200,8 +205,8 @@ export function PrototypeSidebar({
         </div>
         <span className="tap-avatar">PT</span>
         <span className="tap-sidebar-copy">
-          <strong>Prototype team</strong>
-          <small>Local workspace</small>
+          <strong>{copy.navigation.prototypeTeam}</strong>
+          <small>{copy.navigation.localWorkspace}</small>
         </span>
       </div>
     </aside>

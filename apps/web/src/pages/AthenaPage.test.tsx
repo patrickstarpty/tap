@@ -265,7 +265,12 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(user, "寿险投保需要什么资料？");
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      "寿险投保需要什么资料？",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
 
     expect(screen.getByText("寿险投保需要什么资料？")).toBeVisible();
     expect(
@@ -274,6 +279,58 @@ describe("Athena product prototype", () => {
     expect(
       screen.queryByRole("button", { name: "Import to Test Plan" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("answers an English question in English by default", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(
+      user,
+      "What information is needed for a life insurance application?",
+    );
+
+    expect(
+      screen.getByText(
+        /Based on the selected knowledge sources, a life insurance application usually requires/,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/根据当前选择的知识来源，寿险投保通常需要/),
+    ).toBeNull();
+  });
+
+  it("localizes product workspaces without losing saved conversation data", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const prompt = "What evidence is needed for life underwriting?";
+
+    await sendMessage(user, prompt);
+    await user.click(screen.getByRole("button", { name: "中文" }));
+
+    expect(screen.getByText(prompt)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "知识库" }));
+    expect(screen.getAllByText("知识来源 · 已就绪")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "测试管理" }));
+    expect(screen.getByRole("heading", { name: "测试管理" })).toBeVisible();
+    expect(
+      within(screen.getByRole("tablist", { name: "测试管理分区" }))
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["测试计划", "测试数据"]);
+
+    await user.click(screen.getByRole("button", { name: "低代码自动化" }));
+    expect(
+      screen.getByRole("heading", { name: "寿险投保申请自动化" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "添加步骤" })).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "步骤操作 1" }));
+    expect(screen.getByRole("option", { name: "导航" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+    expect(screen.getByText(prompt)).toBeVisible();
   });
 
   it("moves the composer from the centered start state to the conversation dock", async () => {

@@ -5,6 +5,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -70,6 +71,7 @@ function KnowledgeGraph({
   copy: PrototypeCopy;
   sources: readonly LibrarySource[];
 }) {
+  const graphRef = useRef<HTMLElement>(null);
   const documentNodes = sources.slice(0, 4);
   const concepts = [
     copy.library.application,
@@ -101,8 +103,14 @@ function KnowledgeGraph({
     }),
   ];
 
+  useEffect(() => {
+    if (sources.length === 0 && graphRef.current !== null) {
+      graphRef.current.scrollLeft = 280;
+    }
+  }, [sources.length]);
+
   return (
-    <figure className="tap-knowledge-graph">
+    <figure ref={graphRef} className="tap-knowledge-graph">
       <svg
         role="img"
         aria-label={copy.library.knowledgeGraphImage}

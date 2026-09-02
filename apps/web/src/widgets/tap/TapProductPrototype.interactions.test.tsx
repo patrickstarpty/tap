@@ -126,6 +126,43 @@ describe("Tap product prototype interactions", () => {
     expect(navigation).toHaveAttribute("data-collapsed", "false");
   });
 
+  it("starts with the complete navigation in a collapsed rail on a narrow viewport", async () => {
+    const user = userEvent.setup();
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string): MediaQueryList => ({
+        matches: query === "(max-width: 640px)",
+        media: query,
+        onchange: null,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        dispatchEvent: () => true,
+      }),
+    });
+
+    renderPrototype();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: originalMatchMedia,
+    });
+
+    const navigation = screen.getByRole("navigation", { name: "Product" });
+    expect(navigation).toHaveAttribute("data-collapsed", "true");
+    expect(within(navigation).getAllByRole("button")).toHaveLength(7);
+
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(navigation).toHaveAttribute("data-collapsed", "false");
+
+    await user.click(
+      within(navigation).getByRole("button", { name: "Library" }),
+    );
+    expect(navigation).toHaveAttribute("data-collapsed", "true");
+    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  });
+
   it("starts a new empty chat while preserving and restoring earlier life-underwriting chats", async () => {
     const user = userEvent.setup();
     renderPrototype();

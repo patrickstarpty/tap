@@ -267,7 +267,10 @@ export function AthenaChat({
 
       {selectedSources.length + selectedAgents.length + selectedSkills.length >
       0 ? (
-        <div className="tap-context-chips" aria-label="Message context">
+        <div
+          className="tap-context-chips"
+          aria-label={copy.composer.messageContext}
+        >
           {selectedSources.map((source) => (
             <span key={`source-${source.id}`}>{source.name}</span>
           ))}
@@ -411,7 +414,7 @@ export function AthenaChat({
               <Button
                 type="text"
                 shape="circle"
-                aria-label={`Close ${pickerConfig.title}`}
+                aria-label={`${copy.composer.close} ${pickerConfig.title}`}
                 icon={<CloseOutlined aria-hidden="true" />}
                 onClick={() => setPicker(null)}
               />

@@ -1,20 +1,22 @@
 .tap-product-shell {
-  --tap-canvas: #f5f6f8;
-  --tap-ink: #172032;
-  --tap-muted: #5f697a;
-  --tap-line: #e3e7ed;
-  --tap-soft: #f0f3f7;
+  --tap-canvas: #f7f7f5;
+  --tap-ink: #1f2328;
+  --tap-muted: #626871;
+  --tap-line: #e2e2df;
+  --tap-soft: #efefec;
   --tap-accent: #4f46e5;
   --tap-accent-dark: #3730a3;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 256px minmax(0, 1fr);
+  max-width: 100%;
   min-height: 100dvh;
+  overflow-x: clip;
   background: var(--tap-canvas);
   color: var(--tap-ink);
 }
 
 .tap-product-shell--collapsed {
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
 }
 
 .tap-product-shell ::selection {
@@ -28,16 +30,16 @@
   display: flex;
   flex-direction: column;
   height: 100dvh;
-  border-right: 1px solid #e6e8ec;
-  background: #111827;
-  color: #f9fafb;
-  padding: 22px 14px 16px;
+  border-right: 1px solid #dededb;
+  background: #f1f1ef;
+  color: #202328;
+  padding: 18px 12px 14px;
   overflow: hidden;
 }
 
 .tap-sidebar-topline {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
@@ -47,7 +49,7 @@
   align-items: center;
   gap: 11px;
   min-width: 0;
-  padding: 0 10px 24px;
+  padding: 0 10px 18px;
   font-size: 17px;
   letter-spacing: -0.02em;
 }
@@ -60,7 +62,7 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #aeb6c4;
+  color: #686e76;
   cursor: pointer;
   font: inherit;
   font-size: 24px;
@@ -69,8 +71,8 @@
 
 .tap-sidebar-collapse:hover,
 .tap-sidebar-collapse:focus-visible {
-  background: #1f2937;
-  color: #fff;
+  background: #e2e2df;
+  color: #1f2328;
 }
 
 .tap-brand > span {
@@ -78,7 +80,7 @@
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: #6d5dfc;
+  background: #27272a;
   color: #fff;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 18px;
@@ -92,8 +94,9 @@
 
 .tap-navigation-item--new {
   margin-bottom: 9px;
-  background: #21283a;
-  color: #f5f7fb;
+  background: #e5e5e1;
+  color: #202328;
+  font-weight: 650;
 }
 
 .tap-navigation-item {
@@ -107,7 +110,7 @@
   border-radius: 10px;
   background: transparent;
   padding: 0 12px;
-  color: #aeb6c4;
+  color: #555b63;
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -117,13 +120,23 @@
 }
 
 .tap-navigation-item:hover {
-  background: #1f2937;
-  color: #fff;
+  background: #e5e5e1;
+  color: #1f2328;
 }
 
 .tap-navigation-item[aria-current="page"] {
-  background: #292d48;
-  color: #fff;
+  background: #dcdcd8;
+  color: #17191c;
+  font-weight: 700;
+}
+
+.tap-navigation-item:focus-visible,
+.tap-chat-history button:focus-visible,
+.tap-language-switcher button:focus-visible,
+.tap-quick-prompts button:focus-visible,
+.tap-composer-add-button:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
 }
 
 .tap-navigation-item .anticon {
@@ -148,6 +161,7 @@
 
 .tap-sidebar[data-collapsed="true"] .tap-sidebar-topline {
   display: grid;
+  justify-items: center;
 }
 
 .tap-sidebar[data-collapsed="true"] .tap-navigation-item {
@@ -166,7 +180,7 @@
 
 .tap-sidebar-section-title {
   padding: 0 10px 6px;
-  color: #7f8a9b;
+  color: #767b82;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -183,7 +197,7 @@
   border-radius: 9px;
   background: transparent;
   padding: 0 10px;
-  color: #aeb6c4;
+  color: #5d626a;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -192,8 +206,8 @@
 
 .tap-chat-history button:hover,
 .tap-chat-history button[aria-current="page"] {
-  background: #1f2937;
-  color: #fff;
+  background: #e2e2de;
+  color: #1f2328;
 }
 
 .tap-chat-history button span {
@@ -208,7 +222,7 @@
   align-items: center;
   gap: 10px;
   margin-top: auto;
-  border-top: 1px solid #2d3543;
+  border-top: 1px solid #d9d9d5;
   padding: 16px 8px 0;
 }
 
@@ -224,15 +238,15 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #aeb6c4;
+  color: #5f656d;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
 }
 
 .tap-language-switcher button[aria-pressed="true"] {
-  background: #292d48;
-  color: #fff;
+  background: #deded9;
+  color: #202328;
 }
 
 .tap-sidebar-footer > span:last-child {
@@ -249,12 +263,12 @@
 }
 
 .tap-sidebar-footer strong {
-  color: #f3f4f6;
+  color: #30343a;
   font-size: 12px;
 }
 
 .tap-sidebar-footer small {
-  color: #8d98a8;
+  color: #6b7179;
   font-size: 11px;
 }
 
@@ -264,8 +278,8 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: #374151;
-  color: #e5e7eb;
+  background: #deded9;
+  color: #3f444b;
   font-size: 11px;
   font-weight: 700;
   place-items: center;
@@ -273,6 +287,7 @@
 
 .tap-product-main {
   min-width: 0;
+  overflow-x: hidden;
 }
 
 .tap-athena-layout {
@@ -284,7 +299,7 @@
 .tap-chat {
   min-width: 0;
   min-height: 100dvh;
-  background: #fff;
+  background: #fdfdfc;
 }
 
 .tap-chat--idle {
@@ -301,6 +316,12 @@
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100dvh;
   overflow: hidden;
+}
+
+.tap-chat--active > .tap-composer {
+  position: sticky;
+  z-index: 5;
+  bottom: 0;
 }
 
 .tap-chat-transcript {
@@ -424,6 +445,7 @@
   box-shadow: none;
   line-height: 1.55;
   resize: none;
+  caret-color: var(--tap-accent);
 }
 
 .tap-composer textarea.ant-input:focus,
@@ -1483,7 +1505,7 @@
   }
 
   .tap-product-shell--collapsed {
-    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
   .tap-low-code-layout {
@@ -1530,83 +1552,143 @@
 
 @media (max-width: 640px) {
   .tap-product-shell {
-    display: block;
-    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    padding-bottom: 0;
+  }
+
+  .tap-product-shell--collapsed {
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
   .tap-sidebar {
     position: fixed;
-    z-index: 20;
-    top: auto;
-    right: 0;
+    z-index: 40;
+    top: 0;
+    right: auto;
     bottom: 0;
     left: 0;
-    display: block;
-    width: 100%;
-    height: calc(68px + env(safe-area-inset-bottom));
-    border-top: 1px solid #303846;
-    border-right: 0;
-    padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+    display: flex;
+    width: min(256px, calc(100vw - 24px));
+    height: 100dvh;
+    border-top: 0;
+    border-right: 1px solid #d8d8d4;
+    box-shadow: 14px 0 36px 2px rgb(31 35 40 / 14%);
+    padding: max(14px, env(safe-area-inset-top)) 12px
+      max(14px, env(safe-area-inset-bottom));
+    transition:
+      width 180ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 180ms ease-out;
   }
 
-  .tap-brand,
-  .tap-sidebar-footer {
-    display: none;
+  .tap-sidebar[data-collapsed="true"] {
+    width: 72px;
+    padding-inline: 10px;
+    box-shadow: none;
   }
 
   .tap-primary-navigation {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    height: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .tap-navigation-item {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 3px;
-    min-height: 0;
-    padding: 3px 2px;
-    text-align: center;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    min-height: 46px;
+    padding: 0 12px;
+    text-align: left;
   }
 
-  .tap-navigation-item span {
-    display: block;
-    overflow: hidden;
+  .tap-sidebar[data-collapsed="true"] .tap-navigation-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding-inline: 0;
+  }
+
+  .tap-sidebar[data-collapsed="true"] .tap-sidebar-topline {
+    gap: 4px;
+  }
+
+  .tap-sidebar[data-collapsed="true"] .tap-brand {
+    padding-bottom: 4px;
+  }
+
+  .tap-product-main {
+    grid-column: 2;
     width: 100%;
-    font-size: 9px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+
+  .tap-athena-layout {
+    width: 100%;
   }
 
   .tap-chat-transcript {
-    padding: 26px 16px;
+    padding: 30px 14px 22px;
   }
 
   .tap-chat {
-    min-height: calc(100dvh - 68px - env(safe-area-inset-bottom));
+    min-height: 100dvh;
   }
 
   .tap-chat--active {
-    height: calc(100dvh - 68px - env(safe-area-inset-bottom));
+    height: 100dvh;
   }
 
   .tap-chat--idle {
-    gap: 20px;
-    padding: 28px 16px;
+    align-content: center;
+    gap: 18px;
+    padding: 28px 12px;
   }
 
   .tap-chat-welcome h1 {
-    font-size: 36px;
+    font-size: clamp(29px, 9vw, 36px);
+  }
+
+  .tap-chat-welcome > p {
+    margin-top: 12px;
+    font-size: 14px;
+  }
+
+  .tap-athena-mark {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 16px;
+    border-radius: 12px;
+    font-size: 23px;
   }
 
   .tap-quick-prompts {
     display: grid;
+    width: 100%;
+  }
+
+  .tap-quick-prompts button {
+    height: auto;
+    padding: 10px 12px;
+    line-height: 1.45;
+    text-align: left;
   }
 
   .tap-composer {
-    width: calc(100% - 24px);
-    margin-bottom: 12px;
+    width: calc(100% - 20px);
+    margin-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-inline: 10px;
+  }
+
+  .tap-chat--idle > .tap-composer {
+    width: 100%;
+  }
+
+  .tap-composer textarea.ant-input,
+  .tap-source-search.ant-input,
+  .tap-catalog-toolbar .ant-input,
+  .tap-library-toolbar .ant-input {
+    font-size: 16px;
   }
 
   .tap-composer-footer > span {
@@ -1619,6 +1701,7 @@
 
   .tap-user-message {
     max-width: 90%;
+    font-size: 14px;
   }
 
   .tap-assistant-message {
@@ -1635,13 +1718,28 @@
     width: 100%;
   }
 
+  .tap-list-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .tap-list-toolbar .ant-input-search {
+    width: 100%;
+  }
+
   .tap-module {
-    padding: 24px 14px 38px;
+    padding: 24px 12px 38px;
   }
 
   .tap-module-heading {
     align-items: stretch;
     flex-direction: column;
+    gap: 16px;
+  }
+
+  .tap-module-heading h1 {
+    font-size: 30px;
   }
 
   .tap-catalog-toolbar,
@@ -1653,6 +1751,18 @@
   .tap-catalog-toolbar > .ant-input,
   .tap-library-toolbar > .ant-input {
     width: 100%;
+  }
+
+  .tap-catalog-actions {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .tap-catalog-actions .ant-btn {
+    width: 100%;
+    padding-inline: 8px;
   }
 
   .tap-library-list > li {
@@ -1673,8 +1783,28 @@
     justify-content: space-between;
   }
 
+  .tap-knowledge-graph {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .tap-knowledge-graph svg {
+    min-width: 720px;
+  }
+
   .tap-step-list > li {
     grid-template-columns: 26px minmax(0, 1fr) 44px;
     padding-inline: 10px 6px;
+  }
+
+  .tap-step-editor-heading,
+  .tap-code-preview > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tap-code-preview pre {
+    overflow-x: auto;
+    white-space: pre;
   }
 }

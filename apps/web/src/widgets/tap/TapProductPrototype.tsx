@@ -8,6 +8,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Input, Select } from "antd";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -160,9 +161,7 @@ function AssistantResponse({
   if (intent === "answer") {
     return (
       <div className="tap-answer-copy">
-        <p>
-          根据当前选择的知识来源，寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。
-        </p>
+        <p>{copy.chat.answer}</p>
         <span className="tap-citation-reference">
           [1] life-underwriting-rules.md
         </span>
@@ -174,7 +173,7 @@ function AssistantResponse({
     return (
       <article
         className="tap-generated-artifact"
-        aria-label="Generated BDD test plan"
+        aria-label={copy.artifacts.bddPlanLabel}
       >
         <div className="tap-artifact-heading">
           <span className="tap-artifact-icon">
@@ -198,7 +197,7 @@ function AssistantResponse({
   return (
     <article
       className="tap-generated-artifact"
-      aria-label="Generated automation"
+      aria-label={copy.artifacts.automationLabel}
     >
       <div className="tap-artifact-heading">
         <span className="tap-artifact-icon">
@@ -228,7 +227,13 @@ function AssistantResponse({
   );
 }
 
-function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
+function TestManagement({
+  copy,
+  plans,
+}: {
+  copy: PrototypeCopy;
+  plans: readonly TestPlan[];
+}) {
   const [section, setSection] = useState<TestManagementSection>("plans");
   const planTabRef = useRef<HTMLButtonElement>(null);
   const dataTabRef = useRef<HTMLButtonElement>(null);
@@ -255,18 +260,18 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
     <section className="tap-module" aria-labelledby="test-management-heading">
       <header className="tap-module-heading">
         <div>
-          <h1 id="test-management-heading">Test Management</h1>
-          <p>Plan coverage and reusable data in one workspace.</p>
+          <h1 id="test-management-heading">{copy.testManagement.heading}</h1>
+          <p>{copy.testManagement.description}</p>
         </div>
         <Button type="primary" icon={<PlusOutlined />}>
-          New Test Plan
+          {copy.testManagement.newTestPlan}
         </Button>
       </header>
 
       <div
         className="tap-section-tabs"
         role="tablist"
-        aria-label="Test Management sections"
+        aria-label={copy.testManagement.sections}
       >
         <button
           ref={planTabRef}
@@ -279,7 +284,7 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
           onClick={() => setSection("plans")}
           onKeyDown={(event) => handleTabKeyDown(event, "plans")}
         >
-          Test Plan
+          {copy.testManagement.testPlan}
         </button>
         <button
           ref={dataTabRef}
@@ -292,7 +297,7 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
           onClick={() => setSection("data")}
           onKeyDown={(event) => handleTabKeyDown(event, "data")}
         >
-          Test Data
+          {copy.testManagement.testData}
         </button>
       </div>
 
@@ -301,22 +306,34 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
           id="tap-test-plan-panel"
           className="tap-plan-workspace"
           role="tabpanel"
-          aria-label="Test Plan"
+          aria-label={copy.testManagement.testPlan}
           aria-labelledby="tap-test-plan-tab"
         >
           <div className="tap-list-toolbar">
-            <span>{plans.length} test plans</span>
+            <span>
+              {plans.length} {copy.testManagement.testPlans}
+            </span>
             <Input.Search
-              aria-label="Search test plans"
-              placeholder="Search plans"
+              aria-label={copy.testManagement.searchPlans}
+              placeholder={copy.testManagement.searchPlans}
             />
           </div>
-          <div className="tap-plan-table" role="table" aria-label="Test plans">
+          <div
+            className="tap-plan-table"
+            role="table"
+            aria-label={copy.testManagement.testPlans}
+          >
             <div className="tap-plan-row tap-plan-row-header" role="row">
-              <span role="columnheader">Name</span>
-              <span role="columnheader">Scenarios</span>
-              <span role="columnheader">Source</span>
-              <span role="columnheader">Status</span>
+              <span role="columnheader">{copy.testManagement.nameColumn}</span>
+              <span role="columnheader">
+                {copy.testManagement.scenariosColumn}
+              </span>
+              <span role="columnheader">
+                {copy.testManagement.sourceColumn}
+              </span>
+              <span role="columnheader">
+                {copy.testManagement.statusColumn}
+              </span>
             </div>
             {plans.map((plan) => (
               <div className="tap-plan-row" role="row" key={plan.id}>
@@ -327,11 +344,12 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
                 <span role="cell">{plan.scenarios}</span>
                 <span role="cell">
                   {plan.source === "Athena"
-                    ? "Imported from Athena"
-                    : "Created manually"}
+                    ? copy.testManagement.importedFromAthena
+                    : copy.testManagement.createdManually}
                 </span>
                 <span role="cell" className="tap-status-ready">
-                  <CheckCircleFilled aria-hidden="true" /> Draft
+                  <CheckCircleFilled aria-hidden="true" />{" "}
+                  {copy.testManagement.draft}
                 </span>
               </div>
             ))}
@@ -342,13 +360,15 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
           id="tap-test-data-panel"
           className="tap-data-workspace"
           role="tabpanel"
-          aria-label="Test Data"
+          aria-label={copy.testManagement.testData}
           aria-labelledby="tap-test-data-tab"
         >
           <DatabaseOutlined aria-hidden="true" />
-          <h2>Reusable test data</h2>
-          <p>Test data sets will appear here.</p>
-          <Button icon={<PlusOutlined />}>New data set</Button>
+          <h2>{copy.testManagement.reusableTestData}</h2>
+          <p>{copy.testManagement.testDataEmpty}</p>
+          <Button icon={<PlusOutlined />}>
+            {copy.testManagement.newDataSet}
+          </Button>
         </div>
       )}
     </section>
@@ -369,9 +389,11 @@ function scriptForStep(step: AutomationStep): string {
 }
 
 function LowCodeAutomation({
+  copy,
   steps,
   onStepsChange,
 }: {
+  copy: PrototypeCopy;
   steps: readonly AutomationStep[];
   onStepsChange: (steps: readonly AutomationStep[]) => void;
 }) {
@@ -418,13 +440,15 @@ function LowCodeAutomation({
     >
       <header className="tap-module-heading">
         <div>
-          <h1 id="low-code-heading">Life insurance application automation</h1>
-          <p>Generated by Athena · Playwright · Draft</p>
+          <h1 id="low-code-heading">{copy.lowCode.heading}</h1>
+          <p>{copy.lowCode.description}</p>
         </div>
         <div className="tap-heading-actions">
-          {saved ? <span className="tap-saved-state">Saved</span> : null}
+          {saved ? (
+            <span className="tap-saved-state">{copy.lowCode.saved}</span>
+          ) : null}
           <Button type="primary" onClick={() => setSaved(true)}>
-            Save draft
+            {copy.lowCode.saveDraft}
           </Button>
         </div>
       </header>
@@ -436,33 +460,40 @@ function LowCodeAutomation({
         >
           <div className="tap-step-editor-heading">
             <div>
-              <h2 id="automation-steps-heading">Automation steps</h2>
-              <span>{steps.length} steps</span>
+              <h2 id="automation-steps-heading">
+                {copy.lowCode.automationSteps}
+              </h2>
+              <span>
+                {steps.length} {copy.lowCode.steps}
+              </span>
             </div>
             <Button
-              aria-label="Add step"
+              aria-label={copy.lowCode.addStep}
               icon={<PlusOutlined aria-hidden="true" />}
               onClick={addStep}
             >
-              Add step
+              {copy.lowCode.addStep}
             </Button>
           </div>
           <ol className="tap-step-list">
             {steps.map((step, index) => (
-              <li key={step.id} aria-label={`Automation step ${index + 1}`}>
+              <li
+                key={step.id}
+                aria-label={`${copy.lowCode.automationStep} ${index + 1}`}
+              >
                 <span className="tap-step-number">{index + 1}</span>
                 <div className="tap-step-fields">
                   <label>
-                    <span>Action</span>
+                    <span>{copy.lowCode.action}</span>
                     <Select
-                      aria-label={`Action for step ${index + 1}`}
+                      aria-label={`${copy.lowCode.actionForStep} ${index + 1}`}
                       value={step.action}
                       options={[
-                        { value: "Navigate", label: "Navigate" },
-                        { value: "Click", label: "Click" },
-                        { value: "Fill", label: "Fill" },
-                        { value: "Assert", label: "Assert" },
-                        { value: "Wait", label: "Wait" },
+                        { value: "Navigate", label: copy.lowCode.navigate },
+                        { value: "Click", label: copy.lowCode.click },
+                        { value: "Fill", label: copy.lowCode.fill },
+                        { value: "Assert", label: copy.lowCode.assert },
+                        { value: "Wait", label: copy.lowCode.wait },
                       ]}
                       onChange={(action: AutomationStep["action"]) =>
                         updateStep(step.id, { action })
@@ -470,22 +501,22 @@ function LowCodeAutomation({
                     />
                   </label>
                   <label>
-                    <span>Element or URL</span>
+                    <span>{copy.lowCode.elementOrUrl}</span>
                     <Input
-                      aria-label={`Element for step ${index + 1}`}
+                      aria-label={`${copy.lowCode.elementForStep} ${index + 1}`}
                       value={step.target}
-                      placeholder="CSS selector, text, or URL"
+                      placeholder={copy.lowCode.elementPlaceholder}
                       onChange={(event) =>
                         updateStep(step.id, { target: event.target.value })
                       }
                     />
                   </label>
                   <label>
-                    <span>Value</span>
+                    <span>{copy.lowCode.value}</span>
                     <Input
-                      aria-label={`Value for step ${index + 1}`}
+                      aria-label={`${copy.lowCode.valueForStep} ${index + 1}`}
                       value={step.value}
-                      placeholder="Optional"
+                      placeholder={copy.lowCode.optional}
                       onChange={(event) =>
                         updateStep(step.id, { value: event.target.value })
                       }
@@ -495,7 +526,7 @@ function LowCodeAutomation({
                 <Button
                   type="text"
                   danger
-                  aria-label={`Delete step ${index + 1}`}
+                  aria-label={`${copy.lowCode.deleteStep} ${index + 1}`}
                   icon={<DeleteOutlined aria-hidden="true" />}
                   onClick={() => deleteStep(step.id)}
                 />
@@ -510,8 +541,10 @@ function LowCodeAutomation({
         >
           <header>
             <div>
-              <h2 id="script-preview-heading">Generated script</h2>
-              <span>Updates with every step</span>
+              <h2 id="script-preview-heading">
+                {copy.lowCode.generatedScript}
+              </h2>
+              <span>{copy.lowCode.updatesWithEveryStep}</span>
             </div>
             <span className="tap-file-name">
               life-policy-application.spec.ts
@@ -579,7 +612,12 @@ export function TapProductPrototype() {
   const documentsQuery = useDocumentListQuery();
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>("athena");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(
+    () => window.matchMedia("(max-width: 640px)").matches,
+  );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => window.matchMedia("(max-width: 640px)").matches,
+  );
   const [conversations, setConversations] = useState<readonly Conversation[]>(
     () => [createConversation("chat-1")],
   );
@@ -599,6 +637,17 @@ export function TapProductPrototype() {
   const nextLocalSourceId = useRef(1);
 
   const copy = PROTOTYPE_COPY[locale];
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 640px)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsNarrowViewport(event.matches);
+      if (event.matches) setSidebarCollapsed(true);
+    };
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
+
   const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
       (documentsQuery.data?.items ?? []).map((document) => ({
@@ -611,9 +660,21 @@ export function TapProductPrototype() {
             : document.status === "failed"
               ? "failed"
               : "processing",
-        description: `Knowledge source · ${document.stage}`,
+        description: `${copy.sources.knowledgeSource} · ${
+          document.status === "ready"
+            ? copy.library.ready
+            : document.status === "failed"
+              ? copy.library.failed
+              : copy.library.processing
+        }`,
       })),
-    [documentsQuery.data?.items],
+    [
+      copy.library.failed,
+      copy.library.processing,
+      copy.library.ready,
+      copy.sources.knowledgeSource,
+      documentsQuery.data?.items,
+    ],
   );
   const sources = useMemo<readonly LibrarySource[]>(
     () => [
@@ -648,11 +709,18 @@ export function TapProductPrototype() {
     setConversations((current) => [...current, createConversation(id)]);
     setActiveConversationId(id);
     setActiveModule("athena");
+    if (isNarrowViewport) setSidebarCollapsed(true);
   };
 
   const selectConversation = (conversationId: string) => {
     setActiveConversationId(conversationId);
     setActiveModule("athena");
+    if (isNarrowViewport) setSidebarCollapsed(true);
+  };
+
+  const selectModule = (module: ProductModule) => {
+    setActiveModule(module);
+    if (isNarrowViewport) setSidebarCollapsed(true);
   };
 
   const sendMessage = (prompt: string) => {
@@ -730,7 +798,7 @@ export function TapProductPrototype() {
         copy={copy}
         locale={locale}
         onLocaleChange={setLocale}
-        onModuleChange={setActiveModule}
+        onModuleChange={selectModule}
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
         onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
@@ -830,10 +898,11 @@ export function TapProductPrototype() {
           />
         ) : null}
         {activeModule === "test-management" ? (
-          <TestManagement plans={plans} />
+          <TestManagement copy={copy} plans={plans} />
         ) : null}
         {activeModule === "low-code" ? (
           <LowCodeAutomation
+            copy={copy}
             steps={automationSteps}
             onStepsChange={setAutomationSteps}
           />

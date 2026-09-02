@@ -16,6 +16,8 @@ describe("Athena prototype model", () => {
     expect(detectIntent("What evidence is needed for underwriting?")).toBe(
       "answer",
     );
+    expect(detectIntent("为寿险新单核保生成 BDD 测试用例")).toBe("test-plan");
+    expect(detectIntent("为寿险投保申请生成自动化脚本")).toBe("automation");
   });
 
   it("creates an empty conversation with independent context selections", () => {

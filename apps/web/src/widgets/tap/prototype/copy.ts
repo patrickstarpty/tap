@@ -11,6 +11,9 @@ export interface PrototypeCopy {
     newChat: string;
     chatHistory: string;
     product: string;
+    language: string;
+    prototypeTeam: string;
+    localWorkspace: string;
   };
   chat: {
     startConversation: string;
@@ -24,6 +27,7 @@ export interface PrototypeCopy {
     sourceHint: string;
     suggestedPrompts: string;
     quickPrompts: readonly [string, string, string];
+    answer: string;
   };
   sources: {
     heading: string;
@@ -36,6 +40,7 @@ export interface PrototypeCopy {
     manageKnowledge: string;
     provenanceHint: string;
     immutableRevision: string;
+    knowledgeSource: string;
   };
   composer: {
     addToMessage: string;
@@ -45,6 +50,8 @@ export interface PrototypeCopy {
     searchLibrary: string;
     searchAgents: string;
     searchSkills: string;
+    messageContext: string;
+    close: string;
   };
   catalog: {
     agents: string;
@@ -104,6 +111,8 @@ export interface PrototypeCopy {
     scenariosDraft: string;
     automationSummary: string;
     feature: string;
+    bddPlanLabel: string;
+    automationLabel: string;
   };
   testManagement: {
     heading: string;
@@ -125,6 +134,7 @@ export interface PrototypeCopy {
     scenariosColumn: string;
     sourceColumn: string;
     statusColumn: string;
+    sections: string;
   };
   lowCode: {
     heading: string;
@@ -140,6 +150,18 @@ export interface PrototypeCopy {
     action: string;
     elementOrUrl: string;
     value: string;
+    steps: string;
+    automationStep: string;
+    actionForStep: string;
+    elementForStep: string;
+    valueForStep: string;
+    elementPlaceholder: string;
+    optional: string;
+    navigate: string;
+    click: string;
+    fill: string;
+    assert: string;
+    wait: string;
   };
 }
 
@@ -158,6 +180,9 @@ export const PROTOTYPE_COPY = {
       newChat: "New Chat",
       chatHistory: "Chat history",
       product: "Product",
+      language: "Language",
+      prototypeTeam: "Prototype team",
+      localWorkspace: "Local workspace",
     },
     chat: {
       startConversation: "Start a conversation",
@@ -176,6 +201,8 @@ export const PROTOTYPE_COPY = {
         "Create BDD test cases for life insurance underwriting",
         "Generate an automation script for a life insurance application",
       ],
+      answer:
+        "Based on the selected knowledge sources, a life insurance application usually requires identity details for the policyholder and insured person, health disclosures, beneficiary information, and verifiable payment details.",
     },
     sources: {
       heading: "Knowledge sources",
@@ -189,6 +216,7 @@ export const PROTOTYPE_COPY = {
       provenanceHint:
         "Answers and generated assets show which selected sources they used.",
       immutableRevision: "immutable revision",
+      knowledgeSource: "Knowledge source",
     },
     composer: {
       addToMessage: "Add to message",
@@ -198,6 +226,8 @@ export const PROTOTYPE_COPY = {
       searchLibrary: "Search library",
       searchAgents: "Search agents",
       searchSkills: "Search skills",
+      messageContext: "Message context",
+      close: "Close",
     },
     catalog: {
       agents: "Agents",
@@ -261,6 +291,8 @@ export const PROTOTYPE_COPY = {
       scenariosDraft: "3 scenarios · Draft",
       automationSummary: "BDD scenario + 6 automation steps",
       feature: "Feature: Life insurance application underwriting",
+      bddPlanLabel: "Generated BDD test plan",
+      automationLabel: "Generated automation",
     },
     testManagement: {
       heading: "Test Management",
@@ -282,6 +314,7 @@ export const PROTOTYPE_COPY = {
       scenariosColumn: "Scenarios",
       sourceColumn: "Source",
       statusColumn: "Status",
+      sections: "Test Management sections",
     },
     lowCode: {
       heading: "Life insurance application automation",
@@ -297,6 +330,18 @@ export const PROTOTYPE_COPY = {
       action: "Action",
       elementOrUrl: "Element or URL",
       value: "Value",
+      steps: "steps",
+      automationStep: "Automation step",
+      actionForStep: "Action for step",
+      elementForStep: "Element for step",
+      valueForStep: "Value for step",
+      elementPlaceholder: "CSS selector, text, or URL",
+      optional: "Optional",
+      navigate: "Navigate",
+      click: "Click",
+      fill: "Fill",
+      assert: "Assert",
+      wait: "Wait",
     },
   },
   zh: {
@@ -313,6 +358,9 @@ export const PROTOTYPE_COPY = {
       newChat: "新建对话",
       chatHistory: "对话历史",
       product: "产品",
+      language: "语言",
+      prototypeTeam: "原型团队",
+      localWorkspace: "本地工作区",
     },
     chat: {
       startConversation: "开始对话",
@@ -330,6 +378,8 @@ export const PROTOTYPE_COPY = {
         "为寿险新单核保创建 BDD 测试用例",
         "为寿险投保申请生成自动化脚本",
       ],
+      answer:
+        "根据当前选择的知识来源，寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。",
     },
     sources: {
       heading: "知识来源",
@@ -342,6 +392,7 @@ export const PROTOTYPE_COPY = {
       manageKnowledge: "管理知识库",
       provenanceHint: "回答和生成的资产会显示使用了哪些已选来源。",
       immutableRevision: "不可变版本",
+      knowledgeSource: "知识来源",
     },
     composer: {
       addToMessage: "添加到消息",
@@ -351,6 +402,8 @@ export const PROTOTYPE_COPY = {
       searchLibrary: "搜索知识库",
       searchAgents: "搜索智能体",
       searchSkills: "搜索技能",
+      messageContext: "消息上下文",
+      close: "关闭",
     },
     catalog: {
       agents: "智能体",
@@ -410,6 +463,8 @@ export const PROTOTYPE_COPY = {
       scenariosDraft: "3 个场景 · 草稿",
       automationSummary: "BDD 场景 + 6 个自动化步骤",
       feature: "功能：寿险投保申请核保",
+      bddPlanLabel: "生成的 BDD 测试计划",
+      automationLabel: "生成的自动化流程",
     },
     testManagement: {
       heading: "测试管理",
@@ -431,6 +486,7 @@ export const PROTOTYPE_COPY = {
       scenariosColumn: "场景",
       sourceColumn: "来源",
       statusColumn: "状态",
+      sections: "测试管理分区",
     },
     lowCode: {
       heading: "寿险投保申请自动化",
@@ -446,6 +502,18 @@ export const PROTOTYPE_COPY = {
       action: "操作",
       elementOrUrl: "元素或 URL",
       value: "值",
+      steps: "个步骤",
+      automationStep: "自动化步骤",
+      actionForStep: "步骤操作",
+      elementForStep: "步骤元素",
+      valueForStep: "步骤值",
+      elementPlaceholder: "CSS 选择器、文本或 URL",
+      optional: "可选",
+      navigate: "导航",
+      click: "点击",
+      fill: "填写",
+      assert: "断言",
+      wait: "等待",
     },
   },
 } as const satisfies Record<Locale, PrototypeCopy>;
