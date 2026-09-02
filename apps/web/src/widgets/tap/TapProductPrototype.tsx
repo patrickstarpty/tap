@@ -134,18 +134,47 @@ const QUICK_PROMPTS = [
 
 function detectIntent(prompt: string): AssistantIntent {
   const normalized = prompt.toLowerCase();
+  const requestsCreation = [
+    "生成",
+    "创建",
+    "编写",
+    "设计",
+    "构建",
+    "产出",
+    "generate",
+    "create",
+    "draft",
+    "write",
+    "design",
+    "build",
+    "produce",
+    "automate",
+  ].some((cue) => normalized.includes(cue));
   if (
-    normalized.includes("自动化") ||
-    normalized.includes("脚本") ||
-    normalized.includes("automation") ||
-    normalized.includes("script")
+    requestsCreation &&
+    [
+      "自动化",
+      "脚本",
+      "automation",
+      "automate",
+      "script",
+      "playwright",
+      "workflow",
+    ].some((target) => normalized.includes(target))
   ) {
     return "automation";
   }
   if (
-    normalized.includes("测试用例") ||
-    normalized.includes("bdd") ||
-    normalized.includes("test case")
+    requestsCreation &&
+    [
+      "测试用例",
+      "测试计划",
+      "测试场景",
+      "bdd",
+      "test case",
+      "test plan",
+      "test scenario",
+    ].some((target) => normalized.includes(target))
   ) {
     return "test-plan";
   }
@@ -173,6 +202,7 @@ function PrimaryNavigation({
               key={module.key}
               type="button"
               className="tap-navigation-item"
+              aria-label={module.label}
               aria-current={active === module.key ? "page" : undefined}
               onClick={() => onChange(module.key)}
             >
@@ -312,9 +342,7 @@ function AssistantResponse({
         <p>
           根据当前选择的知识来源，退款申请需要订单号、退款金额、退款原因和可核验的付款记录。
         </p>
-        <button type="button" className="tap-citation-link">
-          [1] refund-policy.md
-        </button>
+        <span className="tap-citation-reference">[1] refund-policy.md</span>
       </div>
     );
   }
@@ -504,6 +532,27 @@ function AthenaAssistant({
 
 function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
   const [section, setSection] = useState<TestManagementSection>("plans");
+  const planTabRef = useRef<HTMLButtonElement>(null);
+  const dataTabRef = useRef<HTMLButtonElement>(null);
+
+  const handleTabKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    current: TestManagementSection,
+  ) => {
+    let next: TestManagementSection | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      next = current === "plans" ? "data" : "plans";
+    } else if (event.key === "Home") {
+      next = "plans";
+    } else if (event.key === "End") {
+      next = "data";
+    }
+    if (next === null) return;
+    event.preventDefault();
+    setSection(next);
+    (next === "plans" ? planTabRef : dataTabRef).current?.focus();
+  };
+
   return (
     <section className="tap-module" aria-labelledby="test-management-heading">
       <header className="tap-module-heading">
@@ -522,18 +571,28 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
         aria-label="Test Management sections"
       >
         <button
+          ref={planTabRef}
+          id="tap-test-plan-tab"
           type="button"
           role="tab"
           aria-selected={section === "plans"}
+          aria-controls="tap-test-plan-panel"
+          tabIndex={section === "plans" ? 0 : -1}
           onClick={() => setSection("plans")}
+          onKeyDown={(event) => handleTabKeyDown(event, "plans")}
         >
           Test Plan
         </button>
         <button
+          ref={dataTabRef}
+          id="tap-test-data-tab"
           type="button"
           role="tab"
           aria-selected={section === "data"}
+          aria-controls="tap-test-data-panel"
+          tabIndex={section === "data" ? 0 : -1}
           onClick={() => setSection("data")}
+          onKeyDown={(event) => handleTabKeyDown(event, "data")}
         >
           Test Data
         </button>
@@ -541,9 +600,11 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
 
       {section === "plans" ? (
         <div
+          id="tap-test-plan-panel"
           className="tap-plan-workspace"
           role="tabpanel"
           aria-label="Test Plan"
+          aria-labelledby="tap-test-plan-tab"
         >
           <div className="tap-list-toolbar">
             <span>{plans.length} test plans</span>
@@ -580,9 +641,11 @@ function TestManagement({ plans }: { plans: readonly TestPlan[] }) {
         </div>
       ) : (
         <div
+          id="tap-test-data-panel"
           className="tap-data-workspace"
           role="tabpanel"
           aria-label="Test Data"
+          aria-labelledby="tap-test-data-tab"
         >
           <DatabaseOutlined aria-hidden="true" />
           <h2>Reusable test data</h2>
@@ -615,7 +678,6 @@ function LowCodeAutomation({
   onStepsChange: (steps: readonly AutomationStep[]) => void;
 }) {
   const [saved, setSaved] = useState(false);
-  const nextStepId = useRef(steps.length + 1);
   const code = useMemo(
     () => steps.map((step) => `  ${scriptForStep(step)}`).join("\n"),
     [steps],
@@ -629,7 +691,11 @@ function LowCodeAutomation({
   };
 
   const addStep = () => {
-    const number = nextStepId.current++;
+    const number =
+      steps.reduce((maximum, step) => {
+        const match = /^step-(\d+)$/.exec(step.id);
+        return match === null ? maximum : Math.max(maximum, Number(match[1]));
+      }, 0) + 1;
     setSaved(false);
     onStepsChange([
       ...steps,
@@ -780,12 +846,12 @@ export function TapProductPrototype() {
     <div className="tap-product-shell">
       <PrimaryNavigation active={activeModule} onChange={setActiveModule} />
       <main className="tap-product-main">
-        {activeModule === "athena" ? (
+        <div hidden={activeModule !== "athena"}>
           <AthenaAssistant
             onImportPlan={importPlan}
             onOpenAutomation={() => setActiveModule("low-code")}
           />
-        ) : null}
+        </div>
         {activeModule === "test-management" ? (
           <TestManagement plans={plans} />
         ) : null}

@@ -1,7 +1,7 @@
 .tap-product-shell {
   --tap-canvas: #f5f6f8;
   --tap-ink: #172032;
-  --tap-muted: #697386;
+  --tap-muted: #5f697a;
   --tap-line: #e3e7ed;
   --tap-soft: #f0f3f7;
   --tap-accent: #4f46e5;
@@ -207,7 +207,7 @@
 }
 
 .tap-quick-prompts button {
-  min-height: 42px;
+  min-height: 44px;
   border: 1px solid var(--tap-line);
   border-radius: 10px;
   background: #fff;
@@ -265,15 +265,15 @@
 }
 
 .tap-composer-footer > span {
-  color: #7a8494;
+  color: #596579;
   font-size: 11px;
 }
 
 .tap-composer-footer .ant-btn {
   flex: 0 0 auto;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
 }
 
 .tap-sources {
@@ -369,18 +369,18 @@
 }
 
 .tap-source-name small {
-  color: #7d8796;
+  color: #5f6a7b;
   font-size: 10px;
 }
 
 .tap-sources > .ant-btn {
-  min-height: 42px;
+  min-height: 44px;
   margin-top: auto;
 }
 
 .tap-source-footnote {
   margin: 13px 2px 0;
-  color: #828b99;
+  color: #5f6a7b;
   font-size: 10px;
   line-height: 1.5;
 }
@@ -435,16 +435,9 @@
   margin: 4px 0 8px;
 }
 
-.tap-citation-link {
-  border: 0;
-  background: transparent;
-  padding: 0;
+.tap-citation-reference {
   color: var(--tap-accent);
-  cursor: pointer;
-  font: inherit;
   font-size: 12px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 .tap-generated-artifact {
@@ -643,7 +636,7 @@
 .tap-plan-row-header {
   min-height: 44px;
   background: #f8f9fb;
-  color: #737d8c;
+  color: #5e6878;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -748,7 +741,7 @@
 
 .tap-step-list > li {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 38px;
+  grid-template-columns: 28px minmax(0, 1fr) 44px;
   align-items: start;
   gap: 10px;
   border-bottom: 1px solid #edf0f4;
@@ -786,7 +779,7 @@
 }
 
 .tap-step-fields label > span {
-  color: #757f8e;
+  color: #5e6878;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -799,6 +792,9 @@
 }
 
 .tap-step-list > li > .ant-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   margin-top: 18px;
 }
 
@@ -841,29 +837,7 @@
 
 @media (max-width: 1100px) {
   .tap-product-shell {
-    grid-template-columns: 84px minmax(0, 1fr);
-  }
-
-  .tap-brand {
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .tap-brand strong,
-  .tap-navigation-item span,
-  .tap-sidebar-footer > span:last-child {
-    display: none;
-  }
-
-  .tap-navigation-item {
-    display: grid;
-    grid-template-columns: 1fr;
-    justify-items: center;
-    padding: 0;
-  }
-
-  .tap-sidebar-footer {
-    justify-content: center;
+    grid-template-columns: 200px minmax(0, 1fr);
   }
 
   .tap-low-code-layout {
@@ -907,7 +881,7 @@
 @media (max-width: 640px) {
   .tap-product-shell {
     display: block;
-    padding-bottom: 68px;
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
   }
 
   .tap-sidebar {
@@ -919,10 +893,10 @@
     left: 0;
     display: block;
     width: 100%;
-    height: 68px;
+    height: calc(68px + env(safe-area-inset-bottom));
     border-top: 1px solid #303846;
     border-right: 0;
-    padding: 7px 8px;
+    padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
   }
 
   .tap-brand,
@@ -1012,7 +986,7 @@
   }
 
   .tap-step-list > li {
-    grid-template-columns: 26px minmax(0, 1fr) 36px;
+    grid-template-columns: 26px minmax(0, 1fr) 44px;
     padding-inline: 10px 6px;
   }
 }

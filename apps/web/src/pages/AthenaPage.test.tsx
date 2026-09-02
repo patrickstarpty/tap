@@ -144,6 +144,91 @@ describe("Athena product prototype", () => {
     ).toHaveLength(stepCount);
   });
 
+  it("keeps the generated automation available for both destination handoffs", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(user, "生成退款申请的自动化脚本");
+    await user.click(
+      screen.getByRole("button", { name: "Open in Low Code Automation" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+
+    const artifact = screen.getByRole("article", {
+      name: "Generated automation",
+    });
+    await user.click(
+      within(artifact).getByRole("button", {
+        name: "Import BDD as Test Plan",
+      }),
+    );
+
+    expect(screen.getByText("Refund request approval")).toBeVisible();
+    expect(screen.getByText("Imported from Athena")).toBeVisible();
+  });
+
+  it("never reuses an automation step id after delete and module navigation", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(
+      screen.getByRole("button", { name: "Low Code Automation" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete step 2" }));
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(
+      screen.getByRole("button", { name: "Low Code Automation" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+
+    expect(
+      screen.getAllByRole("listitem", { name: /Automation step/ }),
+    ).toHaveLength(6);
+    await user.click(screen.getByRole("button", { name: "Delete step 6" }));
+    expect(
+      screen.getAllByRole("listitem", { name: /Automation step/ }),
+    ).toHaveLength(5);
+  });
+
+  it.each([
+    ["Create a test plan for refund approval", "Generated BDD test plan"],
+    ["Automate refund requests with Playwright", "Generated automation"],
+  ])("routes common request wording: %s", async (prompt, artifactName) => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(user, prompt);
+
+    expect(screen.getByRole("article", { name: artifactName })).toBeVisible();
+  });
+
+  it("does not treat a workflow question as an automation request", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(user, "What is the refund workflow?");
+
+    expect(screen.getByText("What is the refund workflow?")).toBeVisible();
+    expect(
+      screen.queryByRole("article", { name: "Generated automation" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("supports keyboard navigation between Test Management sections", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    const testPlanTab = screen.getByRole("tab", { name: "Test Plan" });
+    const testDataTab = screen.getByRole("tab", { name: "Test Data" });
+    testPlanTab.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(testDataTab).toHaveFocus();
+    expect(testDataTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Test Data" })).toBeVisible();
+  });
+
   it("keeps ordinary questions in the chat conversation", async () => {
     const user = userEvent.setup();
     renderPrototype();
