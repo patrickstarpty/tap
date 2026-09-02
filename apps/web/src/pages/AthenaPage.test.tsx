@@ -1,9 +1,6 @@
-import { defaultScheduler, notifyManager } from "@tanstack/react-query";
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-
-import { useDocumentListQuery } from "../features/knowledge/api/queries";
+import { describe, expect, it } from "vitest";
 
 import {
   document,
@@ -12,108 +9,153 @@ import {
 import { renderKnowledgeApp } from "../features/knowledge/testing/renderKnowledgeApp";
 import { AthenaPage } from "./AthenaPage";
 
-function DocumentPollingProbe({ pollIntervalMs }: { pollIntervalMs: number }) {
-  const documentsQuery = useDocumentListQuery({ pollIntervalMs });
-  return (
-    <output aria-label="共享文档状态">
-      {documentsQuery.data?.items[0]?.status ?? "pending"}
-    </output>
-  );
+function renderPrototype() {
+  const api = fakeKnowledgeClient().withDocuments([
+    document({
+      documentId: "refund-policy",
+      filename: "refund-policy.md",
+      status: "ready",
+      stage: "ready",
+    }),
+    document({
+      documentId: "support-playbook",
+      filename: "support-playbook.pdf",
+      status: "ready",
+      stage: "ready",
+    }),
+  ]);
+  return renderKnowledgeApp(<AthenaPage />, { api });
 }
 
-describe("AthenaPage", () => {
-  it("offers the Intelligence Lab as a third primary workspace", async () => {
+async function sendMessage(
+  user: ReturnType<typeof userEvent.setup>,
+  text: string,
+) {
+  const composer = screen.getByRole("textbox", { name: "Message Athena" });
+  await user.clear(composer);
+  await user.type(composer, text);
+  await user.click(screen.getByRole("button", { name: "Send" }));
+}
+
+describe("Athena product prototype", () => {
+  it("uses one assistant entry and keeps knowledge management inside Athena", async () => {
     const user = userEvent.setup();
-    renderKnowledgeApp(<AthenaPage />, { api: fakeKnowledgeClient() });
+    renderPrototype();
 
-    await user.click(screen.getByRole("tab", { name: "Intelligence Lab" }));
-
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
     expect(
-      within(
-        screen.getByRole("tabpanel", { name: "Intelligence Lab" }),
-      ).getByRole("heading", { name: "把模糊目标变成可审核的自动化蓝图" }),
+      within(navigation)
+        .getAllByRole("button")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
+    expect(
+      screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Knowledge sources" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Intelligence Lab")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "问答" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Manage knowledge" }));
+    expect(
+      screen.getByRole("dialog", { name: "Knowledge Library" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "添加来源" })).toBeVisible();
   });
 
-  it("keeps the terminal document cache across primary navigation changes", async () => {
+  it("creates BDD in chat and imports it as a Test Plan", async () => {
     const user = userEvent.setup();
-    const api = fakeKnowledgeClient().withDocuments([
-      document({ status: "ready", stage: "ready" }),
-    ]);
-    renderKnowledgeApp(<AthenaPage />, { api });
-    await user.click(screen.getByRole("tab", { name: "知识库" }));
-    const libraryPanel = screen.getByRole("tabpanel", { name: "知识库" });
-    expect(await within(libraryPanel).findByText("handbook.md")).toBeVisible();
-    expect(api.listCalls).toBe(1);
+    renderPrototype();
 
-    await user.click(screen.getByRole("tab", { name: "问答" }));
-    expect(
-      within(screen.getByRole("tabpanel", { name: "问答" })).getByRole(
-        "heading",
-        { name: "问答" },
-      ),
-    ).toBeVisible();
-    await user.click(screen.getByRole("tab", { name: "知识库" }));
+    await sendMessage(user, "为退款审批流程生成 BDD 测试用例");
 
-    expect(within(libraryPanel).getByText("handbook.md")).toBeVisible();
-  });
-
-  it("shows cached processing state immediately after tab return", async () => {
-    const api = fakeKnowledgeClient().withDocuments([
-      document({ status: "processing", stage: "embedding" }),
-    ]);
-    renderKnowledgeApp(<AthenaPage knowledgePollIntervalMs={60_000} />, {
-      api,
+    const artifact = screen.getByRole("article", {
+      name: "Generated BDD test plan",
     });
     expect(
-      await within(screen.getByRole("tabpanel", { name: "问答" })).findByText(
-        "正在生成向量",
-      ),
+      within(artifact).getByText("Feature: Refund request approval"),
     ).toBeVisible();
-    expect(api.listCalls).toBe(1);
+    expect(
+      within(artifact).getByText(/Given a refundable order/),
+    ).toBeVisible();
+    await user.click(
+      within(artifact).getByRole("button", { name: "Import to Test Plan" }),
+    );
 
-    fireEvent.click(screen.getByRole("tab", { name: "知识库" }));
-    const libraryPanel = screen.getByRole("tabpanel", { name: "知识库" });
-    expect(within(libraryPanel).getByText("正在生成向量")).toBeVisible();
-    fireEvent.click(screen.getByRole("tab", { name: "问答" }));
-    fireEvent.click(screen.getByRole("tab", { name: "知识库" }));
-    expect(within(libraryPanel).getByText("正在生成向量")).toBeVisible();
-    expect(api.listCalls).toBe(1);
+    expect(
+      screen.getByRole("heading", { name: "Test Management" }),
+    ).toBeVisible();
+    const tabs = screen.getByRole("tablist", {
+      name: "Test Management sections",
+    });
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Test Plan", "Test Data"]);
+    expect(screen.getByText("Refund request approval")).toBeVisible();
+    expect(screen.getByText("Imported from Athena")).toBeVisible();
   });
 
-  it("polls the shared processing snapshot to terminal with controlled time", async () => {
-    vi.useFakeTimers();
-    notifyManager.setScheduler((callback) => callback());
-    const api = fakeKnowledgeClient()
-      .listOnce([document({ status: "processing", stage: "embedding" })])
-      .listOnce([
-        document({
-          status: "failed",
-          stage: "embedding",
-          errorCode: "embedding-unavailable",
-        }),
-      ]);
-    const rendered = renderKnowledgeApp(
-      <DocumentPollingProbe pollIntervalMs={25} />,
-      { api },
+  it("turns an automation request into BDD plus an editable Low Code Automation flow", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(user, "生成退款申请的自动化脚本");
+
+    const artifact = screen.getByRole("article", {
+      name: "Generated automation",
+    });
+    expect(
+      within(artifact).getByText("BDD scenario + 6 automation steps"),
+    ).toBeVisible();
+    await user.click(
+      within(artifact).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
     );
-    try {
-      await act(async () => vi.advanceTimersByTimeAsync(0));
-      expect(screen.getByLabelText("共享文档状态")).toHaveTextContent(
-        "processing",
-      );
-      expect(api.listCalls).toBe(1);
 
-      await act(async () => vi.advanceTimersByTimeAsync(25));
-      expect(screen.getByLabelText("共享文档状态")).toHaveTextContent("failed");
-      expect(api.listCalls).toBe(2);
+    expect(
+      screen.getByRole("heading", { name: "Refund request automation" }),
+    ).toBeVisible();
+    const target = screen.getByRole("textbox", {
+      name: "Element for step 2",
+    });
+    fireEvent.change(target, {
+      target: { value: "button[data-testid='new-refund']" },
+    });
+    expect(target).toHaveValue("button[data-testid='new-refund']");
 
-      await act(async () => vi.advanceTimersByTimeAsync(100));
-      expect(api.listCalls).toBe(2);
-    } finally {
-      rendered.unmount();
-      notifyManager.setScheduler(defaultScheduler);
-      vi.useRealTimers();
-    }
+    const stepCount = screen.getAllByRole("listitem", {
+      name: /Automation step/,
+    }).length;
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    expect(
+      screen.getAllByRole("listitem", { name: /Automation step/ }),
+    ).toHaveLength(stepCount + 1);
+    await user.click(
+      screen.getByRole("button", { name: `Delete step ${stepCount + 1}` }),
+    );
+    expect(
+      screen.getAllByRole("listitem", { name: /Automation step/ }),
+    ).toHaveLength(stepCount);
+  });
+
+  it("keeps ordinary questions in the chat conversation", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(user, "退款申请需要什么资料？");
+
+    expect(screen.getByText("退款申请需要什么资料？")).toBeVisible();
+    expect(
+      screen.getByText(/根据当前选择的知识来源，退款申请需要订单号/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Import to Test Plan" }),
+    ).not.toBeInTheDocument();
   });
 });
