@@ -360,7 +360,11 @@ export function AthenaChat({
         >
           <div className="tap-conversation">
             {conversation.turns.map((turn) => (
-              <div className="tap-turn" key={turn.id}>
+              <div
+                className="tap-turn"
+                key={turn.id}
+                lang={turn.locale === "zh" ? "zh-CN" : "en"}
+              >
                 <div className="tap-user-message">{turn.prompt}</div>
                 <div className="tap-assistant-message">
                   <span className="tap-assistant-avatar">A</span>

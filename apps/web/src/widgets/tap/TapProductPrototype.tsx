@@ -28,7 +28,7 @@ import {
   appendTurn,
   createConversation,
   detectIntent,
-  type AssistantIntent,
+  type AssistantTurn,
   type CatalogItem,
   type Conversation,
   type LibrarySource,
@@ -63,7 +63,7 @@ const INITIAL_PLANS: readonly TestPlan[] = [
   },
   {
     id: "plan-beneficiary",
-    title: "Beneficiary maintenance",
+    title: "Beneficiary designation validation",
     scenarios: 9,
     source: "Manual",
   },
@@ -150,28 +150,50 @@ function BddPreview({ copy }: { copy: PrototypeCopy }) {
 function AssistantResponse({
   actionCopy,
   contentCopy,
-  intent,
+  turn,
   onImportPlan,
   onOpenAutomation,
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
-  intent: AssistantIntent;
+  turn: AssistantTurn;
   onImportPlan: () => void;
   onOpenAutomation: () => void;
 }) {
-  if (intent === "answer") {
+  if (turn.intent === "answer") {
+    const hasSources = turn.sourceReferences.length > 0;
     return (
       <div className="tap-answer-copy">
-        <p>{contentCopy.chat.answer}</p>
-        <span className="tap-citation-reference">
-          [1] life-underwriting-rules.md
-        </span>
+        <p>
+          {hasSources
+            ? contentCopy.chat.answer
+            : contentCopy.chat.ungroundedAnswer}
+        </p>
+        {hasSources ? (
+          <ol
+            className="tap-citation-list"
+            aria-label={contentCopy.chat.sourcesUsed}
+          >
+            {turn.sourceReferences.map((source, index) => (
+              <li key={source.id}>
+                <span className="tap-citation-reference">[{index + 1}]</span>
+                <span>
+                  <strong>{source.name}</strong>
+                  <small>
+                    {source.origin === "knowledge-base"
+                      ? contentCopy.sources.knowledgeBaseDocument
+                      : contentCopy.sources.pageLocalSource}
+                  </small>
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : null}
       </div>
     );
   }
 
-  if (intent === "test-plan") {
+  if (turn.intent === "test-plan") {
     return (
       <article
         className="tap-generated-artifact"
@@ -677,6 +699,7 @@ export function TapProductPrototype() {
       (documentsQuery.data?.items ?? []).map((document) => ({
         id: document.documentId,
         name: document.filename,
+        origin: "knowledge-base",
         type: document.filename.split(".").pop()?.toUpperCase() ?? "FILE",
         status:
           document.status === "ready"
@@ -705,6 +728,7 @@ export function TapProductPrototype() {
       ...documentSources,
       ...localSources.map((source) => ({
         ...source,
+        origin: "page-local" as const,
         status: "ready" as const,
         description: copy.library.localSourceDescription,
       })),
@@ -748,12 +772,18 @@ export function TapProductPrototype() {
   };
 
   const sendMessage = (prompt: string) => {
+    const sourceReferences = sources
+      .filter((source) =>
+        activeConversation.selectedSourceIds.includes(source.id),
+      )
+      .map(({ id, name, origin }) => ({ id, name, origin }));
     updateActiveConversation((conversation) =>
       appendTurn(conversation, {
         id: `turn-${nextTurnId.current++}`,
         intent: detectIntent(prompt),
         locale,
         prompt,
+        sourceReferences,
       }),
     );
   };
@@ -880,7 +910,7 @@ export function TapProductPrototype() {
                 <AssistantResponse
                   actionCopy={copy}
                   contentCopy={PROTOTYPE_COPY[turn.locale]}
-                  intent={turn.intent}
+                  turn={turn}
                   onImportPlan={importPlan}
                   onOpenAutomation={() => setActiveModule("low-code")}
                 />

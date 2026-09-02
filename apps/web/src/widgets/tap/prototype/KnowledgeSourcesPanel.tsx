@@ -59,10 +59,14 @@ export function KnowledgeSourcesPanel({
           <Spin size="small" />
           <span>{copy.sources.loading}</span>
         </div>
-      ) : readySources.length === 0 ? (
+      ) : visibleSources.length === 0 ? (
         <div className="tap-sources-empty">
           <BookOutlined aria-hidden="true" />
-          <span>{copy.sources.noReadySources}</span>
+          <span>
+            {readySources.length === 0
+              ? copy.sources.noReadySources
+              : copy.sources.noResults}
+          </span>
         </div>
       ) : (
         <div className="tap-source-list">
@@ -75,7 +79,10 @@ export function KnowledgeSourcesPanel({
               <span className="tap-source-name">
                 <strong>{source.name}</strong>
                 <small>
-                  {copy.sources.ready} · {copy.sources.immutableRevision}
+                  {copy.sources.ready} ·{" "}
+                  {source.origin === "knowledge-base"
+                    ? copy.sources.immutableRevision
+                    : copy.sources.pageLocalSource}
                 </small>
               </span>
             </Checkbox>

@@ -11,11 +11,20 @@ export type CatalogKind = "agent" | "skill";
 
 export type CatalogOrigin = "built-in" | "custom";
 
+export type LibrarySourceOrigin = "knowledge-base" | "page-local";
+
+export interface AssistantSourceReference {
+  id: string;
+  name: string;
+  origin: LibrarySourceOrigin;
+}
+
 export interface AssistantTurn {
   id: string;
   intent: AssistantIntent;
   locale: Locale;
   prompt: string;
+  sourceReferences: readonly AssistantSourceReference[];
 }
 
 export interface Conversation {
@@ -39,6 +48,7 @@ export interface CatalogItem {
 export interface LibrarySource {
   id: string;
   name: string;
+  origin: LibrarySourceOrigin;
   type: string;
   status: "ready" | "processing" | "failed";
   description: string;
@@ -50,23 +60,6 @@ export interface CreateConversationOptions {
   selectedAgentIds?: readonly string[];
   selectedSkillIds?: readonly string[];
 }
-
-const CREATION_CUES = [
-  "生成",
-  "创建",
-  "编写",
-  "设计",
-  "构建",
-  "产出",
-  "generate",
-  "create",
-  "draft",
-  "write",
-  "design",
-  "build",
-  "produce",
-  "automate",
-] as const;
 
 const AUTOMATION_CUES = [
   "自动化",
@@ -94,7 +87,6 @@ function containsAny(value: string, cues: readonly string[]): boolean {
 
 export function detectIntent(prompt: string): AssistantIntent {
   const normalized = prompt.toLowerCase();
-  if (!containsAny(normalized, CREATION_CUES)) return "answer";
   if (containsAny(normalized, AUTOMATION_CUES)) return "automation";
   if (containsAny(normalized, TEST_PLAN_CUES)) return "test-plan";
   return "answer";

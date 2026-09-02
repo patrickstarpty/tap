@@ -29,6 +29,8 @@ export interface PrototypeCopy {
     suggestedPrompts: string;
     quickPrompts: readonly [string, string, string];
     answer: string;
+    ungroundedAnswer: string;
+    sourcesUsed: string;
     assistant: string;
   };
   sources: {
@@ -39,10 +41,13 @@ export interface PrototypeCopy {
     ready: string;
     loading: string;
     noReadySources: string;
+    noResults: string;
     manageKnowledge: string;
     provenanceHint: string;
     immutableRevision: string;
     knowledgeSource: string;
+    knowledgeBaseDocument: string;
+    pageLocalSource: string;
   };
   composer: {
     addToMessage: string;
@@ -226,6 +231,9 @@ export const PROTOTYPE_COPY = {
       ],
       answer:
         "Based on the selected knowledge sources, a life insurance application usually requires identity details for the policyholder and insured person, health disclosures, beneficiary information, and verifiable payment details.",
+      ungroundedAnswer:
+        "No knowledge source was selected for this turn. This response uses general knowledge: a life insurance application commonly requires identity details for the policyholder and insured person, health disclosures, beneficiary information, and verifiable payment details.",
+      sourcesUsed: "Sources used",
       assistant: "Athena assistant",
     },
     sources: {
@@ -236,11 +244,14 @@ export const PROTOTYPE_COPY = {
       ready: "Ready",
       loading: "Loading sources",
       noReadySources: "No ready sources",
+      noResults: "No matching sources",
       manageKnowledge: "Manage knowledge",
       provenanceHint:
         "Answers and generated assets show which selected sources they used.",
       immutableRevision: "immutable revision",
       knowledgeSource: "Knowledge source",
+      knowledgeBaseDocument: "Knowledge base document",
+      pageLocalSource: "Page-local Library source",
     },
     composer: {
       addToMessage: "Add to message",
@@ -428,6 +439,9 @@ export const PROTOTYPE_COPY = {
       ],
       answer:
         "根据当前选择的知识来源，寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。",
+      ungroundedAnswer:
+        "此轮对话未选择知识来源。以下内容来自通用知识：寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。",
+      sourcesUsed: "使用的来源",
       assistant: "Athena 助手",
     },
     sources: {
@@ -438,10 +452,13 @@ export const PROTOTYPE_COPY = {
       ready: "已就绪",
       loading: "正在加载来源",
       noReadySources: "没有可用来源",
+      noResults: "没有匹配的来源",
       manageKnowledge: "管理知识库",
       provenanceHint: "回答和生成的资产会显示使用了哪些已选来源。",
       immutableRevision: "不可变版本",
       knowledgeSource: "知识来源",
+      knowledgeBaseDocument: "知识库文档",
+      pageLocalSource: "仅当前页面的知识库来源",
     },
     composer: {
       addToMessage: "添加到消息",

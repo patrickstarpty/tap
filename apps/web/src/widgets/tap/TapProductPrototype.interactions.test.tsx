@@ -230,14 +230,14 @@ describe("Tap product prototype interactions", () => {
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(
-      screen.getByText(/Based on the selected knowledge sources/),
+      screen.getByText(/No knowledge source was selected for this turn/),
     ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "中文" }));
     expect(
-      screen.getByText(/Based on the selected knowledge sources/),
+      screen.getByText(/No knowledge source was selected for this turn/),
     ).toBeVisible();
-    expect(screen.queryByText(/根据当前选择的知识来源/)).toBeNull();
+    expect(screen.queryByText(/此轮对话未选择知识来源/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await user.type(
@@ -245,7 +245,7 @@ describe("Tap product prototype interactions", () => {
       "寿险投保需要什么资料？",
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
-    expect(screen.getByText(/根据当前选择的知识来源/)).toBeVisible();
+    expect(screen.getByText(/此轮对话未选择知识来源/)).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await user.click(
@@ -255,9 +255,31 @@ describe("Tap product prototype interactions", () => {
       ),
     );
     expect(
-      screen.getByText(/Based on the selected knowledge sources/),
+      screen.getByText(/No knowledge source was selected for this turn/),
     ).toBeVisible();
-    expect(screen.queryByText(/根据当前选择的知识来源/)).toBeNull();
+    expect(screen.queryByText(/此轮对话未选择知识来源/)).toBeNull();
+  });
+
+  it("marks every persisted turn with the language used when it was sent", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "What evidence is needed for life underwriting?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      "寿险投保需要什么资料？",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const turns = container.querySelectorAll(".tap-turn");
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toHaveAttribute("lang", "en");
+    expect(turns[1]).toHaveAttribute("lang", "zh-CN");
   });
 
   it("starts a new empty chat while preserving and restoring earlier life-underwriting chats", async () => {
@@ -375,6 +397,123 @@ describe("Tap product prototype interactions", () => {
     expect(
       within(sources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
+  });
+
+  it("shows a localized no-match state when source search filters out every ready source", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const sources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+
+    await user.type(
+      within(sources).getByRole("textbox", {
+        name: "Search knowledge sources",
+      }),
+      "not-a-source",
+    );
+    expect(within(sources).getByText("No matching sources")).toBeVisible();
+    expect(within(sources).queryByText("No ready sources")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    expect(within(sources).getByText("没有匹配的来源")).toBeVisible();
+  });
+
+  it("grounds each answer in the source selection captured for that turn", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+    const sources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+    const firstPrompt = "What evidence supports this underwriting decision?";
+
+    await user.click(
+      await within(sources).findByRole("checkbox", {
+        name: /health-disclosure-guide\.pdf/,
+      }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      firstPrompt,
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await user.click(
+      within(sources).getByRole("checkbox", {
+        name: /health-disclosure-guide\.pdf/,
+      }),
+    );
+    await user.click(
+      within(sources).getByRole("checkbox", {
+        name: /life-underwriting-rules\.md/,
+      }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "What rules apply to the application?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const turns = container.querySelectorAll(".tap-turn");
+    expect(turns).toHaveLength(2);
+    const firstCitations = within(turns[0] as HTMLElement).getByRole("list", {
+      name: "Sources used",
+    });
+    expect(
+      within(firstCitations).getByText("health-disclosure-guide.pdf"),
+    ).toBeVisible();
+    expect(
+      within(firstCitations).queryByText("life-underwriting-rules.md"),
+    ).toBeNull();
+    const secondCitations = within(turns[1] as HTMLElement).getByRole("list", {
+      name: "Sources used",
+    });
+    expect(
+      within(secondCitations).getByText("life-underwriting-rules.md"),
+    ).toBeVisible();
+    expect(
+      within(secondCitations).queryByText("health-disclosure-guide.pdf"),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "New Chat" }));
+    await user.click(
+      within(
+        screen.getByRole("navigation", { name: "Chat history" }),
+      ).getByRole("button", {
+        name: `${firstPrompt} · Conversation 1 · 1 selected`,
+      }),
+    );
+    const restoredTurns = container.querySelectorAll(".tap-turn");
+    expect(
+      within(restoredTurns[0] as HTMLElement).getByText(
+        "health-disclosure-guide.pdf",
+      ),
+    ).toBeVisible();
+    expect(
+      within(restoredTurns[1] as HTMLElement).getByText(
+        "life-underwriting-rules.md",
+      ),
+    ).toBeVisible();
+  });
+
+  it("renders an explicit ungrounded answer with no fabricated citation", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "What information is needed for a life insurance application?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const turn = container.querySelector(".tap-turn") as HTMLElement;
+    expect(
+      within(turn).getByText(/No knowledge source was selected for this turn/),
+    ).toBeVisible();
+    expect(
+      within(turn).queryByRole("list", { name: "Sources used" }),
+    ).toBeNull();
+    expect(within(turn).queryByText("life-underwriting-rules.md")).toBeNull();
   });
 
   it("adds a searchable Library reference to the composer from its plus menu", async () => {
@@ -852,6 +991,50 @@ describe("Tap product prototype interactions", () => {
     );
     expect(
       screen.getByRole("option", { name: "beneficiary-guide.txt" }),
+    ).toBeVisible();
+  });
+
+  it("identifies and cites a page-local Library source without an immutable label", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    const addDialog = screen.getByRole("dialog", { name: "Add source" });
+    await user.upload(
+      within(addDialog).getByLabelText("Source file"),
+      new File(["beneficiary guidance"], "beneficiary-guide.txt", {
+        type: "text/plain",
+      }),
+    );
+    await user.click(
+      within(addDialog).getByRole("button", { name: "Add source" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+
+    const sources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+    const localSource = within(sources).getByRole("checkbox", {
+      name: /beneficiary-guide\.txt/,
+    });
+    expect(localSource).toHaveAccessibleName(
+      "beneficiary-guide.txtReady · Page-local Library source",
+    );
+    expect(localSource).not.toHaveAccessibleName(/immutable revision/);
+    await user.click(localSource);
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "What beneficiary details are needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const citations = within(
+      container.querySelector(".tap-turn") as HTMLElement,
+    ).getByRole("list", { name: "Sources used" });
+    expect(within(citations).getByText("beneficiary-guide.txt")).toBeVisible();
+    expect(
+      within(citations).getByText("Page-local Library source"),
     ).toBeVisible();
   });
 

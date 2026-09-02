@@ -228,6 +228,24 @@ describe("Athena product prototype", () => {
     expect(screen.getByRole("article", { name: artifactName })).toBeVisible();
   });
 
+  it.each([
+    ["BDD test plan for life underwriting", "Generated BDD test plan"],
+    ["I need BDD test cases for life underwriting", "Generated BDD test plan"],
+    ["Automation script for a life application", "Generated automation"],
+    ["寿险核保 BDD 测试计划", "Generated BDD test plan"],
+    ["寿险投保自动化脚本", "Generated automation"],
+  ])(
+    "routes noun-form requests without a creation verb: %s",
+    async (prompt, artifactName) => {
+      const user = userEvent.setup();
+      renderPrototype();
+
+      await sendMessage(user, prompt);
+
+      expect(screen.getByRole("article", { name: artifactName })).toBeVisible();
+    },
+  );
+
   it("does not treat a workflow question as an automation request", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -250,7 +268,9 @@ describe("Athena product prototype", () => {
     expect(
       screen.getByText("Life policy application regression"),
     ).toBeVisible();
-    expect(screen.getByText("Beneficiary maintenance")).toBeVisible();
+    expect(
+      screen.getByText("Beneficiary designation validation"),
+    ).toBeVisible();
     const testPlanTab = screen.getByRole("tab", { name: "Test Plan" });
     const testDataTab = screen.getByRole("tab", { name: "Test Data" });
     testPlanTab.focus();
@@ -274,7 +294,7 @@ describe("Athena product prototype", () => {
 
     expect(screen.getByText("寿险投保需要什么资料？")).toBeVisible();
     expect(
-      screen.getByText(/根据当前选择的知识来源，寿险投保通常需要投保人/),
+      screen.getByText(/此轮对话未选择知识来源。以下内容来自通用知识/),
     ).toBeVisible();
     expect(screen.getByRole("region", { name: "Athena 助手" })).toBeVisible();
     expect(
@@ -314,12 +334,10 @@ describe("Athena product prototype", () => {
 
     expect(
       screen.getByText(
-        /Based on the selected knowledge sources, a life insurance application usually requires/,
+        /No knowledge source was selected for this turn. This response uses general knowledge/,
       ),
     ).toBeVisible();
-    expect(
-      screen.queryByText(/根据当前选择的知识来源，寿险投保通常需要/),
-    ).toBeNull();
+    expect(screen.queryByText(/此轮对话未选择知识来源/)).toBeNull();
   });
 
   it("localizes product workspaces without losing saved conversation data", async () => {

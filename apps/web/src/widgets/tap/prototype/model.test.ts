@@ -20,6 +20,17 @@ describe("Athena prototype model", () => {
     expect(detectIntent("为寿险投保申请生成自动化脚本")).toBe("automation");
   });
 
+  it.each([
+    ["BDD test plan for life underwriting", "test-plan"],
+    ["I need BDD test cases for life underwriting", "test-plan"],
+    ["Automation script for a life application", "automation"],
+    ["寿险核保 BDD 测试计划", "test-plan"],
+    ["寿险投保自动化脚本", "automation"],
+    ["What evidence is needed for life underwriting?", "answer"],
+  ] as const)("classifies noun-form request %s", (prompt, expectedIntent) => {
+    expect(detectIntent(prompt)).toBe(expectedIntent);
+  });
+
   it("creates an empty conversation with independent context selections", () => {
     expect(createConversation("chat-2")).toMatchObject({
       id: "chat-2",
@@ -42,6 +53,13 @@ describe("Athena prototype model", () => {
       intent: "answer",
       locale: "en",
       prompt: "What evidence is needed for life insurance underwriting?",
+      sourceReferences: [
+        {
+          id: "life-underwriting-rules",
+          name: "life-underwriting-rules.md",
+          origin: "knowledge-base",
+        },
+      ],
     };
 
     const nextConversation = appendTurn(conversation, turn);
