@@ -22,6 +22,19 @@ function DocumentPollingProbe({ pollIntervalMs }: { pollIntervalMs: number }) {
 }
 
 describe("AthenaPage", () => {
+  it("offers the Intelligence Lab as a third primary workspace", async () => {
+    const user = userEvent.setup();
+    renderKnowledgeApp(<AthenaPage />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("tab", { name: "Intelligence Lab" }));
+
+    expect(
+      within(
+        screen.getByRole("tabpanel", { name: "Intelligence Lab" }),
+      ).getByRole("heading", { name: "把模糊目标变成可审核的自动化蓝图" }),
+    ).toBeVisible();
+  });
+
   it("keeps the terminal document cache across primary navigation changes", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().withDocuments([

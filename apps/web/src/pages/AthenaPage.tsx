@@ -1,5 +1,6 @@
 import { Tabs } from "antd";
 
+import { IntelligenceLabPrototype } from "../features/intelligence/components/IntelligenceLabPrototype";
 import { KnowledgeLibrary } from "../features/knowledge/components/KnowledgeLibrary";
 import { COPY } from "../features/knowledge/copy";
 import { AthenaWorkspace } from "../widgets/athena/AthenaWorkspace";
@@ -34,6 +35,11 @@ export function AthenaPage({
               children: (
                 <KnowledgeLibrary pollIntervalMs={knowledgePollIntervalMs} />
               ),
+            },
+            {
+              key: "intelligence",
+              label: "Intelligence Lab",
+              children: <IntelligenceLabPrototype />,
             },
           ]}
         />
