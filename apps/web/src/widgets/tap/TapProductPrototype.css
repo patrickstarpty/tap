@@ -506,6 +506,10 @@
 }
 
 .tap-picker-backdrop {
+  --tap-ink: #172032;
+  --tap-muted: #5f697a;
+  --tap-accent: #4f46e5;
+  --tap-accent-dark: #3730a3;
   position: fixed;
   z-index: 1000;
   inset: 0;

@@ -28,6 +28,43 @@ function renderPrototype() {
   return renderKnowledgeApp(<TapProductPrototype />, { api });
 }
 
+function renderPrototypeWithManyDocuments() {
+  const api = fakeKnowledgeClient().withDocuments([
+    document({
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
+      stage: "ready",
+      status: "ready",
+    }),
+    document({
+      documentId: "health-disclosure-guide",
+      filename: "health-disclosure-guide.pdf",
+      stage: "ready",
+      status: "ready",
+    }),
+    document({
+      documentId: "application-checklist",
+      filename: "application-checklist.docx",
+      stage: "ready",
+      status: "ready",
+    }),
+    document({
+      documentId: "underwriting-evidence",
+      filename: "underwriting-evidence.txt",
+      stage: "ready",
+      status: "ready",
+    }),
+    document({
+      documentId: "beneficiary-guide",
+      filename: "beneficiary-guide.md",
+      stage: "ready",
+      status: "ready",
+    }),
+  ]);
+
+  return renderKnowledgeApp(<TapProductPrototype />, { api });
+}
+
 describe("Tap product prototype interactions", () => {
   it("defaults to English and lets the user switch the interface language", async () => {
     const user = userEvent.setup();
@@ -479,6 +516,66 @@ describe("Tap product prototype interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
+  it("contains create-dialog focus, hides the product background, and restores the Create trigger", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    const trigger = screen.getByRole("button", { name: "Create agent" });
+    await user.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Create agent" });
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    expect(name).toHaveFocus();
+    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByRole("navigation", { name: "Product" })).toBeNull();
+
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+    await user.tab();
+    expect(name).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
+    expect(trigger).toHaveFocus();
+    expect(container.querySelector(".tap-product-shell")).not.toHaveAttribute(
+      "aria-hidden",
+    );
+  });
+
+  it("contains edit-dialog focus and restores the exact Edit trigger", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    const trigger = screen.getByRole("button", {
+      name: "Edit Life Underwriting Analyst",
+    });
+    await user.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    const save = within(dialog).getByRole("button", { name: "Save agent" });
+    expect(name).toHaveFocus();
+    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+
+    await user.tab({ shift: true });
+    expect(save).toHaveFocus();
+    await user.tab();
+    expect(name).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
   it("searches, creates, and edits reusable underwriting skills", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -612,6 +709,57 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
   });
 
+  it("contains add-source focus, hides the product background, and restores its trigger", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    const trigger = screen.getByRole("button", { name: "Add source" });
+    await user.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Add source" });
+    const file = within(dialog).getByLabelText("Source file");
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    expect(file).toHaveFocus();
+    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByRole("navigation", { name: "Product" })).toBeNull();
+
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+    await user.tab();
+    expect(file).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Add source" })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps a locally added source description in the current interface language", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    const dialog = screen.getByRole("dialog", { name: "Add source" });
+    await user.upload(
+      within(dialog).getByLabelText("Source file"),
+      new File(["beneficiary guidance"], "beneficiary-guide.txt", {
+        type: "text/plain",
+      }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Add source" }),
+    );
+    expect(screen.getByText("Local source · page-only")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    expect(screen.getByText("本地来源 · 仅当前页面")).toBeVisible();
+    expect(screen.queryByText("Local source · page-only")).toBeNull();
+  });
+
   it("switches the Library between searchable thumbnails and an illustrative Knowledge Graph", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -643,11 +791,75 @@ describe("Tap product prototype interactions", () => {
     expect(within(graph).getByText(/health-disclosure-guide/)).toBeVisible();
     expect(within(graph).queryByText(/life-underwriting-rules/)).toBeNull();
     expect(screen.getByText(/Illustrative view/)).toBeVisible();
-    expect(screen.getByText("Health disclosure")).toBeVisible();
-    expect(screen.getByText("informs")).toBeVisible();
+    expect(within(graph).getByText("Health disclosure")).toBeVisible();
+    expect(within(graph).getByText("informs")).toBeVisible();
 
     await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Thumbnail list" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
+  });
+
+  it("summarizes every visible graph document, concept, and labeled relationship", async () => {
+    const user = userEvent.setup();
+    renderPrototypeWithManyDocuments();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+    const graph = screen.getByRole("img", {
+      name: "Life insurance knowledge graph",
+    });
+    const summary = screen.getByRole("region", {
+      name: "Knowledge graph summary",
+    });
+    const documents = within(summary).getByRole("list", {
+      name: "Visible documents",
+    });
+    expect(within(documents).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(documents).getByText("beneficiary-guide.md")).toBeVisible();
+
+    const concepts = within(summary).getByRole("list", {
+      name: "Concepts",
+    });
+    expect(
+      within(concepts)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "Life insurance application",
+      "Underwriting",
+      "Health disclosure",
+      "Beneficiary",
+    ]);
+
+    const relationships = within(summary).getByRole("list", {
+      name: "Labeled relationships",
+    });
+    expect(
+      within(relationships).getByText(
+        "Life insurance application requires Health disclosure",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(relationships).getByText("Health disclosure informs Underwriting"),
+    ).toBeInTheDocument();
+    expect(
+      within(relationships).getByText(
+        "Life insurance application names Beneficiary",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(relationships).getByText(
+        "beneficiary-guide.md supports Life insurance application",
+      ),
+    ).toBeInTheDocument();
+    expect(graph).toHaveAttribute(
+      "aria-describedby",
+      expect.stringContaining("tap-library-graph-summary"),
+    );
+    expect(within(graph).queryByText("寿险投保")).toBeNull();
+    expect(within(graph).queryByText("健康告知")).toBeNull();
+    expect(within(graph).queryByText("核保")).toBeNull();
+    expect(within(graph).queryByText("受益人")).toBeNull();
   });
 });

@@ -587,9 +587,9 @@ export function TapProductPrototype() {
   const [plans, setPlans] = useState<readonly TestPlan[]>(INITIAL_PLANS);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
   const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
-  const [localSources, setLocalSources] = useState<readonly LibrarySource[]>(
-    [],
-  );
+  const [localSources, setLocalSources] = useState<
+    readonly Pick<LibrarySource, "id" | "name" | "type">[]
+  >([]);
   const [automationSteps, setAutomationSteps] = useState<
     readonly AutomationStep[]
   >(INITIAL_AUTOMATION_STEPS);
@@ -616,8 +616,15 @@ export function TapProductPrototype() {
     [documentsQuery.data?.items],
   );
   const sources = useMemo<readonly LibrarySource[]>(
-    () => [...documentSources, ...localSources],
-    [documentSources, localSources],
+    () => [
+      ...documentSources,
+      ...localSources.map((source) => ({
+        ...source,
+        status: "ready" as const,
+        description: copy.library.localSourceDescription,
+      })),
+    ],
+    [copy.library.localSourceDescription, documentSources, localSources],
   );
   const activeConversation =
     conversations.find(
@@ -707,8 +714,6 @@ export function TapProductPrototype() {
       {
         ...source,
         id: `local-source-${nextLocalSourceId.current++}`,
-        status: "ready",
-        description: "Local source · page-only",
       },
     ]);
   };

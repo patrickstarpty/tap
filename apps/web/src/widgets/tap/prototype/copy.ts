@@ -76,6 +76,11 @@ export interface PrototypeCopy {
     knowledgeGraph: string;
     sources: string;
     knowledgeGraphImage: string;
+    graphSummary: string;
+    visibleDocuments: string;
+    concepts: string;
+    labeledRelationships: string;
+    localSourceDescription: string;
     search: string;
     sourceFile: string;
     cancel: string;
@@ -227,6 +232,11 @@ export const PROTOTYPE_COPY = {
       knowledgeGraph: "Knowledge Graph",
       sources: "Library sources",
       knowledgeGraphImage: "Life insurance knowledge graph",
+      graphSummary: "Knowledge graph summary",
+      visibleDocuments: "Visible documents",
+      concepts: "Concepts",
+      labeledRelationships: "Labeled relationships",
+      localSourceDescription: "Local source · page-only",
       search: "Search library",
       sourceFile: "Source file",
       cancel: "Cancel",
@@ -372,6 +382,11 @@ export const PROTOTYPE_COPY = {
       knowledgeGraph: "知识图谱",
       sources: "知识库来源",
       knowledgeGraphImage: "寿险知识图谱",
+      graphSummary: "知识图谱摘要",
+      visibleDocuments: "可见文档",
+      concepts: "概念",
+      labeledRelationships: "已标注关系",
+      localSourceDescription: "本地来源 · 仅当前页面",
       search: "搜索知识库",
       sourceFile: "来源文件",
       cancel: "取消",

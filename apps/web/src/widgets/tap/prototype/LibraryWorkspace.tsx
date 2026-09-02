@@ -10,8 +10,10 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from "react";
 
+import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
 
@@ -69,17 +71,47 @@ function KnowledgeGraph({
   sources: readonly LibrarySource[];
 }) {
   const documentNodes = sources.slice(0, 4);
+  const concepts = [
+    copy.library.application,
+    copy.library.underwriting,
+    copy.library.healthDisclosure,
+    copy.library.beneficiary,
+  ];
+  const relationships = [
+    {
+      id: "application-health-disclosure",
+      label: `${copy.library.application} ${copy.library.requires} ${copy.library.healthDisclosure}`,
+    },
+    {
+      id: "health-disclosure-underwriting",
+      label: `${copy.library.healthDisclosure} ${copy.library.informs} ${copy.library.underwriting}`,
+    },
+    {
+      id: "application-beneficiary",
+      label: `${copy.library.application} ${copy.library.names} ${copy.library.beneficiary}`,
+    },
+    ...sources.map((source) => {
+      const target = source.name.toLocaleLowerCase().includes("health")
+        ? copy.library.healthDisclosure
+        : copy.library.application;
+      return {
+        id: `document-${source.id}`,
+        label: `${source.name} ${copy.library.supports} ${target}`,
+      };
+    }),
+  ];
 
   return (
     <figure className="tap-knowledge-graph">
       <svg
         role="img"
         aria-label={copy.library.knowledgeGraphImage}
-        aria-describedby="tap-library-graph-caption"
+        aria-describedby="tap-library-graph-caption tap-library-graph-summary"
         viewBox="0 0 920 520"
         preserveAspectRatio="xMidYMid meet"
       >
         <title>{copy.library.knowledgeGraphImage}</title>
+        <desc>{copy.library.graphSummary}</desc>
         <defs>
           <marker
             id="tap-graph-arrow"
@@ -142,33 +174,54 @@ function KnowledgeGraph({
         <GraphNode
           accent
           label={copy.library.application}
-          secondary="寿险投保"
           width={220}
           x={400}
           y={87}
         />
         <GraphNode
           label={copy.library.healthDisclosure}
-          secondary="健康告知"
           width={220}
           x={600}
           y={170}
         />
         <GraphNode
           label={copy.library.underwriting}
-          secondary="核保"
           width={220}
           x={600}
           y={300}
         />
         <GraphNode
           label={copy.library.beneficiary}
-          secondary="受益人"
           width={220}
           x={600}
           y={410}
         />
       </svg>
+      <section
+        id="tap-library-graph-summary"
+        className="athena-visually-hidden"
+        aria-label={copy.library.graphSummary}
+      >
+        <h2>{copy.library.graphSummary}</h2>
+        <h3>{copy.library.visibleDocuments}</h3>
+        <ul aria-label={copy.library.visibleDocuments}>
+          {sources.map((source) => (
+            <li key={source.id}>{source.name}</li>
+          ))}
+        </ul>
+        <h3>{copy.library.concepts}</h3>
+        <ul aria-label={copy.library.concepts}>
+          {concepts.map((concept) => (
+            <li key={concept}>{concept}</li>
+          ))}
+        </ul>
+        <h3>{copy.library.labeledRelationships}</h3>
+        <ul aria-label={copy.library.labeledRelationships}>
+          {relationships.map((relationship) => (
+            <li key={relationship.id}>{relationship.label}</li>
+          ))}
+        </ul>
+      </section>
       <figcaption id="tap-library-graph-caption">
         {copy.library.illustrative}
       </figcaption>
@@ -185,6 +238,7 @@ export function LibraryWorkspace({
   const [query, setQuery] = useState("");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const addDialogTriggerRef = useRef<HTMLElement | null>(null);
   const listTabRef = useRef<HTMLButtonElement>(null);
   const graphTabRef = useRef<HTMLButtonElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -218,7 +272,8 @@ export function LibraryWorkspace({
     selectMode(currentMode === "list" ? "graph" : "list");
   };
 
-  const openAddDialog = () => {
+  const openAddDialog = (event: MouseEvent<HTMLElement>) => {
+    addDialogTriggerRef.current = event.currentTarget;
     setSelectedFile(null);
     setAddDialogOpen(true);
   };
@@ -350,45 +405,39 @@ export function LibraryWorkspace({
       )}
 
       {addDialogOpen ? (
-        <div className="tap-picker-backdrop">
-          <section
-            className="tap-catalog-dialog tap-source-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={copy.library.addSource}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") closeAddDialog();
-            }}
-          >
-            <header>
-              <h2>{copy.library.addSource}</h2>
-            </header>
-            <form onSubmit={addSource}>
-              <label>
-                <span>{copy.library.sourceFile}</span>
-                <input
-                  autoFocus
-                  type="file"
-                  aria-label={copy.library.sourceFile}
-                  accept=".pdf,.docx,.md,.txt"
-                  onChange={(event) =>
-                    setSelectedFile(event.target.files?.item(0) ?? null)
-                  }
-                />
-              </label>
-              <div className="tap-dialog-actions">
-                <Button onClick={closeAddDialog}>{copy.library.cancel}</Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  disabled={selectedFile === null}
-                >
-                  {copy.library.addSource}
-                </Button>
-              </div>
-            </form>
-          </section>
-        </div>
+        <AccessibleDialog
+          ariaLabel={copy.library.addSource}
+          className="tap-catalog-dialog tap-source-dialog"
+          onClose={closeAddDialog}
+          opener={addDialogTriggerRef.current}
+        >
+          <header>
+            <h2>{copy.library.addSource}</h2>
+          </header>
+          <form onSubmit={addSource}>
+            <label>
+              <span>{copy.library.sourceFile}</span>
+              <input
+                type="file"
+                aria-label={copy.library.sourceFile}
+                accept=".pdf,.docx,.md,.txt"
+                onChange={(event) =>
+                  setSelectedFile(event.target.files?.item(0) ?? null)
+                }
+              />
+            </label>
+            <div className="tap-dialog-actions">
+              <Button onClick={closeAddDialog}>{copy.library.cancel}</Button>
+              <Button
+                type="primary"
+                htmlType="submit"
+                disabled={selectedFile === null}
+              >
+                {copy.library.addSource}
+              </Button>
+            </div>
+          </form>
+        </AccessibleDialog>
       ) : null}
     </section>
   );
