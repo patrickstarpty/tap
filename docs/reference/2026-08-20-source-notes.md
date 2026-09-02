@@ -29,6 +29,8 @@
 
 2026-08-21 的应用技术栈进一步确认为：前端 React + TypeScript，后端 Python + FastAPI/ASGI。整体架构要求同时覆盖最初的 Test Automation Platform 能力与当前 RAG 前后端，并明确 RAG 是未来平台共享的 Knowledge Plane，而非独立 Demo。工程决策是保持一个代码库/共享契约，按 API/SSE、Turn、Ingestion、Embedding、Index Writer、Agent 与 Execution 角色隔离部署。
 
+2026-09-02 的产品讨论进一步确认：TAP 的长期主体参考 BrowserStack 的测试自动化、运行和证据体验，当前先探索 Intelligence Layer。用户可以只提供一个 `goal`；长期 Context 模型允许 Requirement、Release、Project、产品源码、测试仓库和失败材料成为可选关系，但 P1.0–P1.2 wire 只接 goal、可选人工步骤和用户选择的 `ready` Knowledge Source。第一步交付的是 Brief、事实/推断/假设/未知分析、Automation Blueprint、可恢复任务和 Review Package，而不是完整 Test Management、Release Management 或真实 Browser/Device 执行。该变化已由 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 正式记录；2026-08-20/21 的 RAG/Knowledge Chat 决策作为历史和后续 Knowledge Plane 设计保留。
+
 ```text
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM
@@ -38,7 +40,7 @@ Core = Test IR + Git versioning + unified execution evidence
 
 原始会话确认、并由 2026-08-21 交互决策继续演进的产品形态：
 
-- 原讨论以 Manus 为自然语言交互标杆；当前 Phase 1 明确改为参考 Codex/Claude Code 的 Project/Conversation、流式状态、中断、队列和证据交互。
+- 原讨论以 Manus 为自然语言交互标杆；2026-08-21 的阶段曾参考 Codex/Claude Code 的 Project/Conversation、流式状态、中断、队列和证据交互。2026-09-02 的当前 Phase 1 改为 Intelligence Lab，综合 Rovo、Gemini Notebook、Manus、Codex 与 Claude Code 的上下文、研究、任务和工程体验，但不强制 Project/Conversation，也不暴露供应商模式。
 - BrowserStack 式测试执行/低代码资产体验。
 - Git 式可审查、可编辑、可版本化测试资产。
 - 内网环境不能把 BrowserStack 或 Manus 当必需运行依赖。
@@ -124,8 +126,9 @@ Core = Test IR + Git versioning + unified execution evidence
 - [Agent approvals and security](https://learn.chatgpt.com/docs/agent-approvals-security)
 - [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 - [Workload identity federation](https://learn.chatgpt.com/docs/enterprise/workload-identity)
+- [OpenAI Structured Outputs supported schemas](https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas)
 
-采用的事实：Codex SDK 可在服务端启动、继续和恢复本地 coding thread，并用于 CI/CD、内部工具、工作流和应用；官方稳定 Python 包为 `openai-codex`，要求 Python 3.10+、包含 pinned Codex CLI runtime，并提供 `AsyncCodex`。`codex exec` 面向脚本与 CI；App Server 协议面向认证、会话历史、审批和流式 Agent 事件等深度集成，但其 command/WebSocket transport 当前为 experimental/unsupported for production。Codex 支持 API key 程序化认证，并明确不应把执行能力暴露在不可信或公开环境；managed ChatGPT Workspace 自动化可评估 access token 或当前为 Beta 且需 Workspace 开通/映射的 workload identity。自定义 model provider 的公开 wire protocol 是 Responses API。官方也明确 command network proxy 不覆盖 web search、connectors/plugins、MCP、Browser/Computer Use、cloud task 或 model/auth 流量，必须分别治理。
+采用的事实：Codex SDK 可在服务端启动、继续和恢复本地 coding thread，并用于 CI/CD、内部工具、工作流和应用；官方稳定 Python 包为 `openai-codex`，要求 Python 3.10+、包含 pinned Codex CLI runtime，并提供 `AsyncCodex`。`codex exec` 面向脚本与 CI；App Server 协议面向认证、会话历史、审批和流式 Agent 事件等深度集成，但其 command/WebSocket transport 当前为 experimental/unsupported for production。Codex 支持 API key 程序化认证，并明确不应把执行能力暴露在不可信或公开环境；managed ChatGPT Workspace 自动化可评估 access token 或当前为 Beta 且需 Workspace 开通/映射的 workload identity。自定义 model provider 的公开 wire protocol 是 Responses API。官方也明确 command network proxy 不覆盖 web search、connectors/plugins、MCP、Browser/Computer Use、cloud task 或 model/auth 流量，必须分别治理。Structured Outputs 只支持 JSON Schema 子集：根必须是 object、所有字段必须 required、每个 object 必须 `additionalProperties:false`，可选语义用 nullable union 表达；不在官方子集内的 tuple/conditional 关键字不能作为真实 Adapter 的未验证前提。
 
 TAP 的一 Attempt 一 Pod、干净 runtime home、Tool/Artifact/Credential sidecar、Codex 不直连 AI Search、Test IR 优先、候选 patch、Git 审批、多租户隔离、LiteLLM 兼容性门禁和 Phase 1.5 分期均为本次工程设计，不是 OpenAI 产品内部架构。详细设计见 [受控 Codex Agent Runtime](../proposals/2026-08-21-rfc-001-codex-agent-runtime.md)。
 

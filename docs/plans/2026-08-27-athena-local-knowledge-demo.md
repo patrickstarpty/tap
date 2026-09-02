@@ -5,6 +5,8 @@ date: 2026-08-27
 
 # Athena Local Knowledge Demo Implementation Plan
 
+> **当前阶段处置（2026-09-02）**：本计划保持 `completed`，用于记录已交付的 Athena 本地能力。文中“完整 Phase 1 仍 active”属于当时验收语境；[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已把完整 RAG/Knowledge Chat 后置，当前 Phase 1 改为 Intelligence Lab。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 交付一个可在开发机长期保存数据的 Athena Web Demo，让用户上传可提取文本的 PDF、DOCX、Markdown 与 TXT，观察真实 ingestion 状态，限定来源问答，并点击引用核验同一文档 revision 的原文。

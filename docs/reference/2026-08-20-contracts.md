@@ -2,7 +2,9 @@
 
 本页定义架构级契约，而不是最终 API。字段在实现前可以扩展，但不能破坏不可变性、幂等、租户隔离和可追溯性。框架代码、BrowserStack capability 和 Agent Runtime 对象都不能成为领域契约。
 
-## 1. Test IR 与稳定身份
+> **当前阶段入口（2026-09-02）**：当前 Phase 1 实施入口是[第 5 节的 Intelligence Contract](#phase-1-intelligence-contract)。第 1–4 节的 Test IR、Run、执行 Task/Event，以及 `ExecutionProvider` 等内容是 Phase 2+ 长期平台契约，不是 P1.0–P1.2 的数据模型或交付范围。
+
+## 1. Test IR 与稳定身份（Phase 2+）
 
 Test IR 是 Git 中版本化的核心资产。稳定身份与文件路径、名称和执行框架解耦：
 
@@ -32,7 +34,7 @@ spec:
 - 自定义能力通过显式 extension namespace 表达；禁止把任意 Shell 当通用 action。
 - MySQL 保存 Test catalog/projection 与 revision 映射，内容版本以 Git 为准。
 
-## 2. RunSpec
+## 2. RunSpec（Phase 2+）
 
 Run 创建后冻结。任何重跑都创建新的 Attempt；改变工作流、策略或 revision 必须创建新 Run。
 
@@ -70,7 +72,7 @@ spec:
     - test.web.e2e
 ```
 
-## 3. Task 与 Attempt
+## 3. 执行 Task 与 Attempt（Phase 2+）
 
 - Task 是归一化逻辑工作项，可以来自 Workflow DAG 节点，也可以来自 Agentic Loop 某轮规划的 action。
 - DAG Task 具有稳定 node key；Loop Task 必须记录 `plan_iteration`、`action_id` 与产生它的 causation event。
@@ -106,7 +108,7 @@ stateDiagram-v2
 
 未知或供应商特有状态映射为 `running` 加诊断属性，不能乐观映射为 `succeeded`。
 
-## 4. RunEvent
+## 4. RunEvent（Phase 2+）
 
 ```json
 {
@@ -135,243 +137,630 @@ stateDiagram-v2
 - Schema 只做向后兼容扩展；破坏性变化升级 `schema_version`。
 - 事件中只存小型结构化事实；大载荷进入 Blob 并用 ArtifactRef 引用。
 
-MySQL 中持久化的 Chat、Agent 和 Test Run domain event 共享内部 envelope：`eventId`、`tenantId`、`projectId`、`aggregateType`、`aggregateId`、aggregate 内单调 `sequence`、`eventType`、`schemaVersion`、`correlationId`、`causationId`、`traceId`、`occurredAt`、`idempotencyKey` 与 typed payload。三类 aggregate 保持各自状态机。面向浏览器的 SSE 是授权后的领域投影，可省略内部 tenant/policy 字段，但必须保留 opaque `eventId` 和 `sequence`。
+MySQL 中持久化的领域事件共享内部 envelope：`eventId`、`workspaceScopeId`、`aggregateType`、`aggregateId`、aggregate 内单调 `sequence`、`eventType`、`schemaVersion`、`correlationId`、`causationId`、`traceId`、`occurredAt`、`idempotencyKey` 与 typed payload。只有在对象确实属于 Project/tenant 时才附加 `projectId` / `tenantId` 关系；当前 Intelligence Task 不要求这些父对象。不同 aggregate 保持各自状态机。面向浏览器的事件是授权后的领域投影，可省略内部 scope/policy 字段，但必须保留 opaque `eventId` 和 `sequence`。
 
 ## 5. Provider Port
 
-### AgentRuntime
+### Phase 1 Intelligence Contract
+
+当前 Phase 1 契约由 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 约束。它不以 Project、Release、Requirement 或仓库作为强制父对象；P1.0–P1.2 的公共创建请求只要求 `goal`，另外只接受可选人工步骤和用户选择的 `ready` Knowledge Source。公共 OpenAPI/JSON Schema 由 Pydantic 生成；Runtime wire Schema 另行按下述 `openai-structured-outputs-subset-v1` 生成和检查，不能直接复用公共导出。以下为实施前必须保持的架构不变量。
 
 ```typescript
-type AgentPurpose =
-  | "knowledge_research"
-  | "knowledge_enrichment"
-  | "generate_test_ir"
-  | "generate_candidate_patch"
+type RequestedOutcome =
+  | "intelligence_report"
+  | "automation_blueprint"
+  | "repository_impact_report"
+  | "code_bundle"
+  | "candidate_patch"
   | "failure_analysis";
 
-type AgentCapability =
-  | "knowledge.read"
-  | "knowledge.enrich"
-  | "workspace.read"
-  | "workspace.write"
-  | "test_ir.generate"
-  | "candidate_patch.generate";
-
-interface AgentRuntimeCapabilitySet {
-  runtimeProvider: string;
-  purposes: AgentPurpose[];
-  capabilities: AgentCapability[];
-  features: {
-    eventStream: boolean;
-    interactiveResponses: boolean;
-    cooperativeCancel: boolean;
-    threadResume: boolean;
-  };
+interface CreateIntelligenceTaskRequest {
+  clientRequestId: string;
+  goal: string;
+  targetDescription?: string;
+  requestedOutcomes?: RequestedOutcome[];
+  successCriteria?: string[];
+  constraints?: string[];
+  manualSteps?: Array<{ ordinal: number; instruction: string; expectedOutcome?: string }>;
+  optionalContextRefs?: Array<{ kind: "knowledge_source"; sourceId: string }>;
 }
 
-interface AgentTask {
-  taskId: string;
-  attemptId: string;
-  tenantId: string;
-  projectId: string;
-  actorId: string;
-  purpose: AgentPurpose;
-  instruction: string;
-  inputRefs: Array<{ kind: string; id: string; revision: string; contentHash: string }>;
-  requestedCapabilities: AgentCapability[];
-  outputSchemaVersion: string;
-  idempotencyKey: string;
+interface IntelligenceCommandRequest {
+  clientRequestId: string;
 }
 
-interface RuntimePolicy {
-  policyId: string;
-  policyVersion: string;
-  runtimeConfigRef: string;         // platform-owned, immutable; never user/repo config
-  credentialBrokerRef: string;      // reference only; no secret value reaches the task
-  modelRouteRef: string;            // separately governed model/auth egress
-  sandbox: "read_only" | "workspace_write"; // service mode excludes full_access
-  allowedCapabilities: AgentCapability[];
-  allowedTools: string[];
-  commandNetworkAllowlist: string[]; // applies only to model-controlled commands; model egress is separately governed
-  webSearch: "disabled";
-  allowedMcpServers: string[];       // Phase 1.5 only permits the named TAP Tool Gateway
-  allowedSkills: string[];           // platform-pinned only
-  allowedApps: string[];             // empty in service mode
-  allowedPlugins: string[];          // empty in service mode
-  allowedConnectors: string[];       // empty in service mode
-  browserEnabled: false;
-  computerUseEnabled: false;
-  cloudTasksEnabled: false;
-  shellEnvironmentPolicy: {
-    inherit: "none";
-    includeOnly: string[];
-    ignoreDefaultExcludes: false;
-    useShellProfile: false;
-  };
-  interactionMode: "headless_fail_closed" | "tap_brokered";
-  budgets: {
-    deadlineSeconds: number;
-    maxTurns: number;
-    maxTokens: number;
-    maxToolCalls: number;
-  };
-  inputManifestHash: string;         // binds the immutable, authorized AgentTask.inputRefs
-  retrievalProfileId?: string;
-  corpusVersion?: string;
+interface ArtifactReviewRequest {
+  clientRequestId: string;
+  decision: "accept" | "request_revision" | "reject";
+  reason: string;
+  reviewPackageContentHash: string;
 }
 
-interface RuntimeHandle {
-  runtimeProvider: string;
-  externalThreadId?: string;
-  externalTurnId?: string;
-  attemptId: string;
-  negotiated: AgentRuntimeCapabilitySet["features"];
-}
-
-interface InteractionResponse {
-  interactionId: string;
-  decision: "allow_once" | "deny";
-  respondedBy: string;
-  reason?: string;
-}
-
-interface AgentEvent {
-  eventId: string;
-  attemptId: string;
-  traceId: string;
-  sequence: number;
-  occurredAt: string;
-  schemaVersion: string;
-  type: "started" | "progress" | "tool_requested" | "tool_completed" | "approval_requested" | "artifact_ready" | "cancel_requested" | "completed" | "failed" | "canceled" | "timed_out" | "unavailable";
-  data: Record<string, unknown>; // normalized and redacted; never hidden reasoning
-}
-
-interface GeneratedArtifactEnvelope {
-  artifactId: string;
-  kind: "report" | "draft_test_ir" | "patch" | "code" | "enrichment" | "evidence_manifest";
-  uri: string;
+interface AutomationBrief {
+  briefId: string;
+  revision: number;
+  workspaceScopeId: string;
+  goal: string;
+  targetDescription?: string;
+  requestedOutcomes: RequestedOutcome[];
+  successCriteria: string[];
+  constraints: string[];
+  manualSteps: Array<{ ordinal: number; instruction: string; expectedOutcome?: string }>;
+  optionalContextRefs: Array<{ kind: string; id: string }>;
+  createdBy: string;
+  createdAt: string;
   contentHash: string;
+}
+
+interface ContextSnapshot {
+  contextSnapshotId: string;
+  contentHash: string;
+  briefRevisionRef: { briefId: string; revision: number; contentHash: string };
+  actorRef: string;
+  workspaceScopeId: string;
   classification: string;
-  inputRefs: Array<{ id: string; revision: string; contentHash: string }>;
-  generator: {
-    runtimeProvider: string;
-    runtimeVersion: string;
-    model: string;
-    promptVersion: string;
-    toolsetVersion: string;
-    policyVersion: string;
-  };
-  validation: { status: "pending" | "passed" | "failed"; validatorVersion?: string; evidenceRefs: string[] };
-}
-
-interface AgentResult {
-  status: "succeeded" | "failed" | "canceled" | "timed_out" | "unavailable";
-  artifacts: GeneratedArtifactEnvelope[];
-  findings: string[];
-  usage: { inputTokens?: number; outputTokens?: number; costAmount?: number; currency?: string };
-  externalThreadId?: string;
-}
-
-interface AgentRuntime {
-  capabilities(): Promise<AgentRuntimeCapabilitySet>;
-  start(task: AgentTask, policy: RuntimePolicy): Promise<RuntimeHandle>;
-  events?(handle: RuntimeHandle, cursor?: string): AsyncIterable<AgentEvent>;
-  respond?(handle: RuntimeHandle, response: InteractionResponse): Promise<void>;
-  cancel?(handle: RuntimeHandle, reason: string): Promise<void>;
-  result(handle: RuntimeHandle): Promise<AgentResult>;
+  sourceRefs: Array<{ sourceId: string; revision: string; contentHash: string; anchor: unknown }>;
+  repositoryRefs: Array<{ repositoryId: string; role: "product_source" | "test_repository"; commit: string; treeHash: string; accessMode: "read_only"; pathGrants: string[] }>;
+  failureBundleRefs: Array<{ artifactId: string; contentHash: string }>;
+  declaredAbsences: string[];
+  policyDecisionId: string;
+  policyVersion: string;
+  aclDigest: string;
+  runtimePolicyRef: string;
+  grantedRuntimeProfile: "intelligence-readonly-v1" | "automation-design-v1" | "automation-engineering-lab-v1";
+  featureGateVersion: string;
+  redactionVersion: string;
+  createdAt: string;
 }
 ```
 
-约束：
+`actorRef`、`workspaceScopeId`、Policy、Profile、feature gate 和权威 revision/hash 全部由服务端解析与注入。公共请求不得接受 provider、model、Runtime Profile、sandbox、tool、network、capability、ACL 或物理索引字段。Create、cancel、retry、context-refresh 和 review 均以当前 scope + operation + route resource + `clientRequestId` 做幂等；服务端在业务变更同一事务中持久化 canonical request hash 与结果 resource/status。相同 key/相同 request replay 原结果，相同 key/不同 request 返回 `409 idempotency-conflict`。
 
-- `AgentTask`、`RuntimePolicy`、Task/Attempt 必须在启动外部 Runtime 前持久化；Runtime thread/turn ID 只是 Provider 引用。
-- Runtime 只能得到 `requestedCapabilities ∩ allowedCapabilities`，工具再与 `allowedTools` 求交；Capability 与工具名是两个独立维度，内容、Prompt 或 Provider 事件不能扩权。
-- Adapter 必须先协商 `features`。Phase 1.5 的 headless SDK 路径使用 `interactionMode=headless_fail_closed`，对应 `approval_policy=never` 与最小 sandbox；越界请求直接失败。只有经验证且声明 `interactiveResponses=true` 的 Adapter 才能使用 `tap_brokered/respond`，发布 Artifact 的人工审批仍在 Runtime 之外完成。
-- 服务模式禁止 `full_access`。凭据由可信 wrapper、workload identity 或 credential broker 持有，不能进入 Agent workspace、Prompt、Artifact 或模型控制的 Shell 环境。
-- Runtime Pod 禁用自动 ServiceAccount token；projected identity 只显式挂入可信 sidecar。Agent/command 容器使用干净 runtime home 和平台固定配置，不加载个人 auth/config、repo `.codex` capability 配置或未批准插件。Artifact 上传和 TAP Tool 调用由可信 Broker/Gateway 完成。
-- 每个输出先落 `GeneratedArtifactEnvelope` 并经过 Schema/Compiler/Test/Policy 验证；Agent 的 completed 事件不能替代 TAP validator 的 passed 结论。
-- 未知 Provider 事件只保存为脱敏诊断信息，不能乐观映射为 `succeeded`。
-- Codex 的具体接入与隔离规则见 [受控 Codex Agent Runtime](../proposals/2026-08-21-rfc-001-codex-agent-runtime.md)。
-
-### Phase 1.5 Agent Job API
-
-Phase 1.5 的公共 API 只开放只读 Research 与受控 Knowledge Enrichment；Test IR/代码生成在 Phase 2 具备相应 Schema、compiler 与 validator 后扩展，不复用 Chat turn 状态机。
+P1.0–P1.2 的 `repositoryRefs` 和 `failureBundleRefs` 必须为空；显式请求 `repository_impact_report`、`code_bundle`、`candidate_patch` 或 `failure_analysis` 时返回稳定的 `409 outcome-not-enabled`，不得静默降级。Context Builder 另外生成一个单独哈希、大小受限且持久化的 Runtime 投影。所有带 `contentHash` 的对象都对“不含自身 `contentHash` 字段”的 canonical payload 计算 SHA-256，不能把 digest 写回待哈希字节形成循环：
 
 ```typescript
-type Phase15AgentPurpose = "knowledge_research" | "knowledge_enrichment";
-type AgentJobState =
-  | "queued"
-  | "running"
-  | "cancel_requested"
-  | "succeeded"
-  | "failed"
-  | "canceled"
-  | "timed_out"
-  | "unavailable";
-
-interface AgentJobRequest {
-  clientRequestId: string;
-  purpose: Phase15AgentPurpose;
-  instruction: string;
-  resourceRefs: ResourceRef[];
-  requestedCorpusVersion?: string;
-  outputSchemaVersion: string;
+interface RuntimeContextExcerpt {
+  evidenceLabel: string;
+  sourceDisplay: { title: string; kind: string };
+  sourceId: string;
+  revision: string;
+  contentHash: string;
+  anchor: unknown;
+  authorizedText: string;
+  excerptContentHash: string;
+  truncated: boolean;
 }
 
-interface AgentJobSummary {
-  jobId: string;
-  projectId: string;
-  purpose: Phase15AgentPurpose;
-  state: AgentJobState;
-  activeAttemptId?: string;
-  artifactRefs: string[];
+interface RuntimeContextPacket {
+  runtimeContextPacketId: string;
+  contextSnapshotRef: { contextSnapshotId: string; contentHash: string };
+  declaredAbsences: string[];
+  selectionPlan: {
+    strategyVersion: "brief-relevance-v1";
+    normalizedQuery: string;
+    sourceRefs: Array<{ sourceId: string; revision: string; contentHash: string }>;
+    maxExcerpts: number;
+    maxBytes: number;
+  };
+  excerpts: RuntimeContextExcerpt[];
+  truncation: { wasTruncated: boolean; omittedExcerptCount: number; omittedByteCount: number };
+  contentHash: string;
+}
+
+interface RuntimeProposalSchemaBinding {
+  schemaId: string;
+  kind: "intelligence_report" | "assumption_register" | "automation_blueprint";
+  schemaVersion: "intelligence-report-v1" | "assumption-register-v1" | "automation-blueprint-v1";
+  jsonSchemaDraft: "2020-12";
+  schemaDialectProfile: "openai-structured-outputs-subset-v1";
+  schemaBytesHash: string;
+}
+
+interface ProposalSchemaRegistryRefV1 {
+  registryVersion: "runtime-proposal-schema-registry-v1";
+  contentHash: string;
+}
+
+interface ProposalSchemaRegistryEntryV1 extends RuntimeProposalSchemaBinding {
+  canonicalSchemaBytes: Uint8Array;
+}
+
+interface ProposalSchemaRegistryV1 {
+  registryVersion: "runtime-proposal-schema-registry-v1";
+  entries: [ProposalSchemaRegistryEntryV1, ProposalSchemaRegistryEntryV1, ProposalSchemaRegistryEntryV1];
+  contentHash: string;
+}
+
+type ModelLineageV1 =
+  | { mode: "none" }
+  | { mode: "service_profile"; modelProfileRef: string };
+
+interface RuntimeLineageV1 {
+  schemaVersion: "runtime-lineage-v1";
+  runtimeProfileRef: string;
+  runtimeVersion: string;
+  runtimeContractVersion: "agent-runtime-v1";
+  grantedRuntimeProfile: "intelligence-readonly-v1" | "automation-design-v1";
+  model: ModelLineageV1;
+  instructionProfileVersion: "intelligence-invocation-v1";
+  toolsetVersion: string;
+  policyVersion: string;
+  contentHash: string;
+}
+
+interface EffectiveRuntimeBudgetV1 {
+  version: "runtime-budget-v1";
+  deadlineSeconds: number;
+  maxContextBytes: number;
+  maxOutputBytes: number;
+  maxEvents: number;
+  maxProposals: number;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  maxToolCalls: number;
+}
+
+interface InputManifest {
+  briefRef: { briefId: string; revision: number; contentHash: string };
+  contextSnapshotRef: { contextSnapshotId: string; contentHash: string };
+  runtimeContextPacketRef: { runtimeContextPacketId: string; contentHash: string };
+  runtimePolicyRef: string;
+  featureGateVersion: string;
+  redactionVersion: string;
+  effectiveBudget: EffectiveRuntimeBudgetV1;
+  runtimeLineage: RuntimeLineageV1;
+  proposalSchemaRegistryRef: ProposalSchemaRegistryRefV1;
+  proposalSchemas: RuntimeProposalSchemaBinding[];
+  contentHash: string;
+}
+
+interface RuntimeBriefProjection {
+  briefRef: { briefId: string; revision: number; contentHash: string };
+  goal: string;
+  targetDescription?: string;
+  successCriteria: string[];
+  constraints: string[];
+  manualSteps: Array<{ ordinal: number; instruction: string; expectedOutcome?: string }>;
+  requestedProposalKinds: Array<"intelligence_report" | "assumption_register" | "automation_blueprint">;
+}
+
+interface RuntimeInvocationEnvelopeV1 {
+  schemaVersion: "runtime-invocation-v1";
+  runtimeInvocationId: string;
+  brief: RuntimeBriefProjection;
+  contextPacket: RuntimeContextPacket;
+  inputManifestRef: { contentHash: string };
+  runtimeLineage: RuntimeLineageV1;
+  proposalSchemaRegistryRef: ProposalSchemaRegistryRefV1;
+  proposalSchemas: RuntimeProposalSchemaBinding[];
+  effectiveBudget: EffectiveRuntimeBudgetV1;
+  contentHash: string;
+}
+
+interface RuntimeOutputSchemaRecordV1 {
+  rootSchemaVersion: "runtime-proposals-root-v1";
+  schemaDialectProfile: "openai-structured-outputs-subset-v1";
+  runtimeInvocationRef: { runtimeInvocationId: string; contentHash: string };
+  inputManifestHash: string;
+  proposalSchemaRegistryRef: ProposalSchemaRegistryRefV1;
+  canonicalSchemaBytes: Uint8Array;
+  schemaBytesHash: string;
+}
+```
+
+`brief-relevance-v1` 是纯整数、无模型的确定性选择算法。它按 `goal`、`targetDescription`、`successCriteria`、`manualSteps` 的固定字段与数组顺序连接文本，做 Unicode NFKC、`casefold`、换行统一和连续空白折叠；tokenizer 将非东亚 Unicode 字母数字连续串和每个 CJK/Hiragana/Katakana/Hangul code point 作为 token，其他标点为空格。候选 excerpt 使用同一规范化；分数是 `100 × 共同相邻 token 二元组数 + 10 × 共同唯一 token 数`。只保留正分候选，按分数降序，再按 source ID、revision、anchor canonical bytes、excerpt content hash 的 UTF-8 字节升序打破平局；来源输入顺序不得影响结果。按该全序贪婪装入完整 excerpt，预算按最终 excerpt canonical JSON 的 UTF-8 bytes 计，不截断正文；超预算项记录 omitted count/bytes，零命中时返回空 excerpts 和 `no_relevant_excerpt` 缺失事实。选中项按最终顺序分配 `ev-0001` 起的 label。策略的规范化、评分、排序、预算和 label 必须由 committed golden vectors 锁定。
+
+`selectionPlan.normalizedQuery` 保存上述规范化查询；其 source refs、策略版本和预算参与 packet hash。P1.2 的 proposal Schema registry 是平台持有、append-only、按内容寻址的闭集，三项 binding 始终按 Report、Assumption Register、Blueprint 固定顺序且精确绑定 canonical Schema bytes。修改任一 Schema bytes 必须创建新 Schema/registry version，旧 hash 必须永久可读。Input Manifest 在 Brief、Snapshot、packet、Runtime lineage 与 registry/三个 proposal Schema hash 都存在后计算；Runtime Invocation Envelope 最后生成，并嵌入有界 Brief 投影与完整 packet，所以 goal-only 任务即使没有 excerpt 也能把用户目标交给 Runtime。Controller 随后从 exact registry bytes、invocation hash 和 manifest hash 确定性渲染并持久化自包含的 `RuntimeOutputSchemaRecordV1`；该后生成记录不反向进入 invocation，避免循环。
+
+`RuntimeContextPacket`、`RuntimeInvocationEnvelopeV1` 和 per-invocation root output Schema 的 canonical bytes 作为 append-only 私有记录随 Attempt 输入事务保存，分别以 ID/hash 读取；事件、日志和公共 API 不返回其中的授权正文。Retry 只有在即时重授权通过时才让新 Attempt 复用同一 packet/manifest/invocation/root-Schema refs，Context refresh 则创建新的输入四元组和 root Schema。Adapter 的 stdin 恰好是一份已校验的 `RuntimeInvocationEnvelopeV1` canonical JSON（一个文档、一个结尾换行）；Codex 的单一 `--output-schema` 文件来自 hash-matched `RuntimeOutputSchemaRecordV1`，不得通过第二段 stdin、环境变量、临时 Prompt 或额外文件传递 Context/Schema。Runtime 只能引用 `evidenceLabel`，不能生成公共 Citation ID；可信控制面在 Artifact 封存时把 label 绑定到 Snapshot 中的 revision/hash/anchor，再分配 Artifact-scoped Citation ID。
+
+Claim 使用 discriminated union，不使用大量可空字段的万能类型：
+
+```typescript
+interface ProposedEvidenceClaim {
+  claimKey: string;
+  basis: "evidence";
+  text: string;
+  evidenceLabels: string[];
+  confidence: "not_applicable";
+}
+
+interface ProposedInferenceClaim {
+  claimKey: string;
+  basis: "inference";
+  text: string;
+  supportingEvidenceLabels: string[];
+  rationale: string;
+  confidence: "low" | "medium" | "high";
+  confidenceBasis: string;
+}
+
+interface ProposedAssumptionClaim {
+  claimKey: string;
+  basis: "assumption";
+  text: string;
+  risk: string;
+  confirmationOwner: string;
+  confirmationQuestion: string;
+  confidence: "low" | "medium" | "high";
+  confidenceBasis: string;
+}
+
+interface ProposedUnknownClaim {
+  claimKey: string;
+  basis: "unknown";
+  text: string;
+  missingInformation: string[];
+  suggestedNextStep: string;
+  confidence: "not_applicable";
+}
+
+type ProposedClaim = ProposedEvidenceClaim | ProposedInferenceClaim | ProposedAssumptionClaim | ProposedUnknownClaim;
+
+interface EvidenceClaim {
+  claimId: string;
+  basis: "evidence";
+  text: string;
+  citationRefs: string[];
+  confidence: "not_applicable";
+}
+
+interface InferenceClaim {
+  claimId: string;
+  basis: "inference";
+  text: string;
+  supportingCitationRefs: string[];
+  rationale: string;
+  confidence: "low" | "medium" | "high";
+  confidenceBasis: string;
+}
+
+interface AssumptionClaim {
+  claimId: string;
+  basis: "assumption";
+  text: string;
+  risk: string;
+  confirmationOwner: string;
+  confirmationQuestion: string;
+  confidence: "low" | "medium" | "high";
+  confidenceBasis: string;
+}
+
+interface UnknownClaim {
+  claimId: string;
+  basis: "unknown";
+  text: string;
+  missingInformation: string[];
+  suggestedNextStep: string;
+  confidence: "not_applicable";
+}
+
+type Claim = EvidenceClaim | InferenceClaim | AssumptionClaim | UnknownClaim;
+
+type IntelligenceArtifactKind =
+  | "intelligence_report"
+  | "assumption_register"
+  | "automation_blueprint"
+  | "repository_impact_report"
+  | "code_bundle"
+  | "candidate_patch"
+  | "failure_analysis"
+  | "review_package";
+
+type ArtifactProducerLineageV1 =
+  | {
+      producerKind: "runtime";
+      runtimeLineage: RuntimeLineageV1;
+      runtimeOutputSchemaHash: string;
+    }
+  | {
+      producerKind: "controller";
+      componentProfileRef: string;
+      componentVersion: string;
+      sourceRuntimeLineage: RuntimeLineageV1;
+      runtimeOutputSchemaHash: string;
+    };
+
+interface ValidationBindingV1 {
+  validatorProfileRef: string;
+  validatorVersion: string;
+  validationPolicyVersion: string;
+}
+
+interface IntelligenceArtifactEnvelope {
+  artifactId: string;
+  kind: IntelligenceArtifactKind;
+  revision: number;
+  schemaVersion: string;
+  contentHash: string;
+  classification: string;
+  taskId: string;
+  attemptId: string;
+  contextSnapshotId: string;
+  inputManifestHash: string;
+  inputRefs: Array<{ kind: string; id: string; revision: string; contentHash: string }>;
+  producerLineage: ArtifactProducerLineageV1;
+  validationPlan: { mode: "not_applicable" } | { mode: "required"; binding: ValidationBindingV1 };
+  executionStatus: "not_run";
   createdAt: string;
-  completedAt?: string;
+  supersedesArtifactId?: string;
+  recordContentHash: string;
 }
 
-interface AgentJobEventEnvelope {
-  eventId: string;
-  sequence: number;
-  jobId: string;
-  attemptId?: string;
-  traceId: string;
-  occurredAt: string;
-  schemaVersion: number;
-  type: "job.queued" | "attempt.started" | "tool.completed" | "artifact.ready" | "job.cancel_requested" | "job.succeeded" | "job.failed" | "job.canceled" | "job.timed_out" | "job.unavailable";
-  data: Record<string, unknown>;
+interface ArtifactValidationV1 {
+  schemaVersion: "artifact-validation-v1";
+  validationId: string;
+  taskId: string;
+  attemptId: string;
+  artifactId: string;
+  artifactContentHash: string;
+  binding: ValidationBindingV1;
+  status: "passed" | "failed";
+  issueCodes: string[];
+  evidenceRefs: string[];
+  recordedGeneration: number;
+  createdAt: string;
+  contentHash: string;
 }
 
-interface EnrichmentReviewRequest {
-  clientRequestId: string;
-  expectedContentHash: string;
-  decision: "approve_for_indexing" | "reject";
-  reason?: string;
+interface IntelligenceArtifactViewV1 {
+  artifact: IntelligenceArtifactEnvelope;
+  validationSummary: {
+    status: "not_applicable" | "pending" | "passed" | "failed";
+    validationRefs: Array<{ validationId: string; contentHash: string }>;
+    evidenceRefs: string[];
+  };
+  viewHash: string;
+}
+
+interface IntelligenceReportV1 {
+  kind: "intelligence_report";
+  schemaVersion: "intelligence-report-v1";
+  title: string;
+  summary: { text: string; claimRefs: string[] };
+  claims: Claim[];
+  sections: Array<{
+    sectionKind: "scope" | "findings" | "risks" | "limitations" | "recommendations";
+    title: string;
+    claimRefs: string[];
+  }>;
+  nextSteps: Array<{ stepId: string; instruction: string; basisClaimRefs: string[] }>;
+}
+
+interface AssumptionRegisterV1 {
+  kind: "assumption_register";
+  schemaVersion: "assumption-register-v1";
+  claims: Claim[];
+  assumptions: Array<{ entryId: string; claimRef: string; impact: string; state: "open" }>;
+  unknowns: Array<{ entryId: string; claimRef: string; impact: string; state: "open" }>;
+  conflicts: Array<{ conflictId: string; claimRefs: string[]; impact: string; resolutionQuestion: string; state: "open" }>;
+}
+
+interface AutomationBlueprintV1 {
+  kind: "automation_blueprint";
+  schemaVersion: "automation-blueprint-v1";
+  title: string;
+  automationKind: "test" | "business_process" | "mixed";
+  objective: { text: string; claimRefs: string[] };
+  claims: Claim[];
+  preconditions: Array<{ itemId: string; text: string; basisClaimRefs: string[] }>;
+  dataRequirements: Array<{ itemId: string; text: string; basisClaimRefs: string[]; sensitive: boolean }>;
+  steps: Array<{
+    stepId: string;
+    ordinal: number;
+    stepKind: "navigate" | "interact" | "observe" | "assert" | "wait" | "branch" | "cleanup" | "manual_checkpoint";
+    instruction: string;
+    expectedOutcome?: string;
+    basisClaimRefs: string[];
+  }>;
+  exceptionPaths: Array<{ pathId: string; trigger: string; handling: string; expectedOutcome?: string; basisClaimRefs: string[] }>;
+  cleanupRequirements: Array<{ itemId: string; text: string; basisClaimRefs: string[] }>;
+  unresolvedClaimRefs: string[];
+}
+
+interface PassedValidationRefV1 {
+  validationId: string;
+  validationContentHash: string;
+  binding: ValidationBindingV1;
+  status: "passed";
+}
+
+interface ReviewedArtifactPinV1 {
+  artifactId: string;
+  revision: number;
+  schemaVersion: string;
+  contentHash: string;
+  validation: PassedValidationRefV1;
+}
+
+interface ReviewPackageGenerationSummaryV1 {
+  sourceRuntimeLineage: RuntimeLineageV1;
+  runtimeOutputSchemaHash: string;
+  assembler: {
+    componentProfileRef: "review-package-assembler-v1";
+    componentVersion: string;
+  };
+  proposalSchemaRegistryRef: ProposalSchemaRegistryRefV1;
+  proposalSchemas: RuntimeProposalSchemaBinding[];
+}
+
+interface AttemptUsageV1 {
+  schemaVersion: "attempt-usage-v1";
+  taskId: string;
+  attemptId: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  toolCalls: number;
+  durationMs: number;
+  estimatedCost?: { amountDecimal: string; currency: string; pricingProfileVersion: string };
+  measurementStatus: "measured" | "partially_measured" | "not_measured";
+}
+
+interface ReviewPackageV1 {
+  kind: "review_package";
+  schemaVersion: "review-package-v1";
+  overview: { text: string; claimRefs: Array<{ artifactId: string; claimId: string }> };
+  inputScope: {
+    selectedSourceCount: number;
+    excerptCount: number;
+    declaredAbsences: string[];
+    wasContextTruncated: boolean;
+  };
+  artifacts: {
+    intelligenceReport: ReviewedArtifactPinV1;
+    assumptionRegister: ReviewedArtifactPinV1;
+    automationBlueprint: ReviewedArtifactPinV1;
+  };
+  keyClaimRefs: Array<{ artifactId: string; claimId: string }>;
+  remainingRiskClaimRefs: Array<{ artifactId: string; claimId: string }>;
+  unresolvedClaimRefs: Array<{ artifactId: string; claimId: string }>;
+  nextSteps: Array<{ stepId: string; instruction: string; basisClaimRefs: Array<{ artifactId: string; claimId: string }> }>;
+  generationSummary: ReviewPackageGenerationSummaryV1;
+  usageSummary: AttemptUsageV1;
+  executionDisclosure: { code: "target_execution_not_performed"; unexecutedItems: string[] };
+}
+
+type Phase1CoreArtifactBodyV1 =
+  | IntelligenceReportV1
+  | AssumptionRegisterV1
+  | AutomationBlueprintV1
+  | ReviewPackageV1;
+
+interface IntelligenceArtifactDetailV1 {
+  view: IntelligenceArtifactViewV1;
+  body: Phase1CoreArtifactBodyV1;
+}
+
+interface ProposedIntelligenceReportV1 {
+  kind: "intelligence_report";
+  schemaVersion: "intelligence-report-v1";
+  title: string;
+  summary: { text: string; claimKeys: string[] };
+  claims: ProposedClaim[];
+  sections: Array<{
+    sectionKind: "scope" | "findings" | "risks" | "limitations" | "recommendations";
+    title: string;
+    claimKeys: string[];
+  }>;
+  nextSteps: Array<{ stepId: string; instruction: string; basisClaimKeys: string[] }>;
+}
+
+interface ProposedAssumptionRegisterV1 {
+  kind: "assumption_register";
+  schemaVersion: "assumption-register-v1";
+  claims: ProposedClaim[];
+  assumptions: Array<{ entryId: string; claimKey: string; impact: string; state: "open" }>;
+  unknowns: Array<{ entryId: string; claimKey: string; impact: string; state: "open" }>;
+  conflicts: Array<{ conflictId: string; claimKeys: string[]; impact: string; resolutionQuestion: string; state: "open" }>;
+}
+
+interface ProposedAutomationBlueprintV1 {
+  kind: "automation_blueprint";
+  schemaVersion: "automation-blueprint-v1";
+  title: string;
+  automationKind: "test" | "business_process" | "mixed";
+  objective: { text: string; claimKeys: string[] };
+  claims: ProposedClaim[];
+  preconditions: Array<{ itemId: string; text: string; basisClaimKeys: string[] }>;
+  dataRequirements: Array<{ itemId: string; text: string; basisClaimKeys: string[]; sensitive: boolean }>;
+  steps: Array<{
+    stepId: string;
+    ordinal: number;
+    stepKind: "navigate" | "interact" | "observe" | "assert" | "wait" | "branch" | "cleanup" | "manual_checkpoint";
+    instruction: string;
+    expectedOutcome: string | null;
+    basisClaimKeys: string[];
+  }>;
+  exceptionPaths: Array<{ pathId: string; trigger: string; handling: string; expectedOutcome: string | null; basisClaimKeys: string[] }>;
+  cleanupRequirements: Array<{ itemId: string; text: string; basisClaimKeys: string[] }>;
+  unresolvedClaimKeys: string[];
+}
+
+interface RuntimeProposalsRootV1 {
+  schemaVersion: "runtime-proposals-root-v1";
+  invocationContentHash: string;
+  inputManifestHash: string;
+  proposalSchemaRegistryHash: string;
+  intelligenceReport: ProposedIntelligenceReportV1;
+  assumptionRegister: ProposedAssumptionRegisterV1;
+  automationBlueprint: ProposedAutomationBlueprintV1;
+}
+
+interface ArtifactReview {
+  reviewId: string;
+  taskId: string;
+  reviewPackageId: string;
+  reviewPackageContentHash: string;
+  reviewPackageValidation: PassedValidationRefV1;
+  reviewedArtifactPins: ReviewedArtifactPinV1[];
+  decision: "accept" | "request_revision" | "reject";
+  actorRef: string;
+  policyDecisionId: string;
+  reason: string;
+  idempotencyKey: string;
+  requestHash: string;
+  taskStateVersionBefore: number;
+  taskStateVersionAfter: number;
+  successorTaskId?: string;
+  createdAt: string;
 }
 ```
 
-```text
-POST /v1/projects/{projectId}/agent-jobs
-GET  /v1/projects/{projectId}/agent-jobs
-GET  /v1/agent-jobs/{jobId}
-POST /v1/agent-jobs/{jobId}/cancel
-GET  /v1/agent-jobs/{jobId}/events
-POST /v1/agent-artifacts/{artifactId}/review
-```
+`AttemptUsageV1.durationMs` 从 Controller 提交 matching activation ack 的单调时钟时刻计到持久化 matching `RuntimeResultRecord` 前的时刻，向下取整为整数毫秒；prepare/register/authorization 时间不计入，未激活的 launch 不产生 `AttemptUsageV1`。
+
+Runtime 的三个 `Proposed*V1` Schema 与公开 body 字段逐项对应，但 `claims` 使用 `ProposedClaim`，所有 `claimRefs`/`basisClaimRefs`/`unresolvedClaimRefs` 使用局部 `claimKey`，且 evidence/inference 只能使用 `evidenceLabel`。Broker 校验完整引用图、分配服务端 Claim/Citation ID 并作一次确定性替换；Runtime 不能选择公共 ID。Runtime wire Schema 是独立、版本化的 `openai-structured-outputs-subset-v1` 契约，不能直接导出公共 Pydantic/OpenAPI Schema：根节点必须是 object，三个 proposal 使用三个必填命名属性，所有 object 属性都进入 `required` 且设置 `additionalProperties: false`，逻辑可选值以必填 nullable 字段表示，嵌套变体只使用受支持的 `anyOf`。Schema subset linter 必须拒绝 `prefixItems`、tuple validation、root `anyOf`、`allOf`、`not`、条件关键字、外部 `$ref` 和未登记关键字/规模；动态 invocation/manifest/registry hash 使用单值 `enum` 固定。原始模型 JSON 在 typed parsing 前还必须拒绝重复 key。Adapter 把通过 wire 校验的 nullable 值规范化为严格 `Proposed*V1`/领域值，再交给 Proposal Validator；属性出现顺序不构成业务身份。单一 `RuntimeProposalsRootV1` Schema 内联三份 proposal Schema 为 `$defs`，并拒绝额外字段、缺失命名区段或 hash 替换。`ReviewPackageV1` 只能由 Controller 从三个已封存且验证通过的 Artifact、对应 Envelope/validation、Input Manifest 和 `AttemptUsageV1` 组装，永远不是 Runtime proposal；其三个命名 pin 必须分别匹配一个 Report、Assumption Register 和 Blueprint，且每个 pin 包含独立的 passed validation ref。`generationSummary` 逐字复用 Input Manifest 中的 `RuntimeLineageV1`、registry/schema bindings 和 per-invocation root Schema hash；deterministic Runtime 使用 `model.mode=none`，真实模型仅保存不透明服务端 Profile ref。
+
+`AttemptUsageV1` 由可信 Controller 用单调时钟、Tool Gateway 审计计数和 Runtime token observation 一次性构造并随 `RuntimeResultRecord` 保存；Runtime 不能自行决定 `toolCalls` 或 `durationMs`。两项平台计数是有限非负整数，`0` 只表示平台实际观察为零。`measurementStatus` 只描述 `{inputTokens, outputTokens, estimatedCost}` 三个可选维度：三项全有为 `measured`，存在一至两项为 `partially_measured`，三项全无为 `not_measured`。成本对象必须整体出现，`amountDecimal` 匹配 `0|[1-9][0-9]*(\.[0-9]{1,9})?`，币种为三个大写字母，并固定 pricing Profile version；不得用 JSON float、缺币种或零值占位表达未知。
+
+供应商 wire 子集不能表达的 `artifact-body-limits-v1`、唯一性和引用图规则不因此弱化；它们必须在 wire parse/nullable 规范化后立即由 Proposal Validator 确定性执行，失败时不得进入 result persistence 或 Artifact sealing。
+
+`IntelligenceArtifactEnvelope.contentHash` 是不可变 body hash，`recordContentHash` 是 Envelope 自身 hash；两者都不因后续验证到达而变化。P1.0–P1.2 的 validation plan 要么明确 `not_applicable`，要么恰好固定一个 required `ValidationBindingV1`；它不保存 `pending/passed/failed`，也不允许空集合造成 vacuous pass。同一 Artifact/body/Validator binding 只能追加一个结果且不能以相反结果覆盖；查询层组合 Envelope 和该 exact validation row 形成 `IntelligenceArtifactViewV1`，并用 `recordContentHash + validation content hash` 计算 ETag/view hash。授权后的 `IntelligenceArtifactDetailV1` 另外返回四种 P1.0–P1.2 body 中恰好一种；服务端必须重算 canonical body hash，核对 kind/schema/`Envelope.contentHash` 后才返回。Blob locator、staging locator 和存储凭据永远不进入公共 View 或 Detail。P1.3 若需组合多个 Validator，必须升级契约而不能扩大该 v1 cardinality。
+
+四个 body 都拒绝未知字段并遵守同一 `artifact-body-limits-v1`：canonical JSON 不超过 1,048,576 bytes；单个普通字符串为去除首尾空白后的 1–4,096 UTF-8 bytes，标题/名称最多 256 bytes；Report 含 1–128 个 Claim、1–5 个不重复 section kind 和最多 32 个 next step，每个 Claim 最多 8 个唯一 Citation/evidence ref；Assumption Register 的 claims/assumptions/unknowns/conflicts 各最多 128 项，四个数组可同时为空以明确表达“无假设”；Blueprint 含 1–300 个 Claim、1–256 个连续编号 step，其他列表各最多 64 项，`automationKind=test` 时至少有一个带 `expectedOutcome` 的 `assert`；Review Package 的三个 Artifact pin 恰好各一个，其 Claim ref/next step 列表各不超过 128/64 项，proposal Schema binding 恰好三项且顺序固定。Token、工具调用和耗时是非负整数；估算成本若存在则满足上述 decimal/currency/pricing 原子约束。所有 ID/key 在各自 body 内唯一，所有内部 ref 必须解析到本 body；Review Package 的跨 Artifact ref 必须解析到三个 pin 所固定的精确 Artifact/hash。任何悬空、重复、跨 Task 引用都 fail closed。
+
+Validator 还必须执行语义引用规则：Report 的每个 Claim 至少被 summary、section 或 next step 引用；Assumption/unknown entry 分别只能引用相同 basis 的 Claim，conflict 至少引用两个不同 Claim；Blueprint 的 objective、precondition、data、step、exception 和 cleanup 项各至少有一个 basis Claim，`unresolvedClaimRefs` 只能指向 assumption/unknown。建议与风险不因引用了证据就变成已执行结论，禁止 `passed`、`verified`、`executed` 等无 Execution Evidence 的状态表达。
+
+大产物使用持久化封存日志，而不是“先写 Blob、再尽力补数据库”：
+
+- Runtime 成功结果必须以一个 MySQL CAS 事务写入 `UNIQUE(attempt_id)` 的 append-only `RuntimeResultRecord`、在 Attempt 上固定 `{runtimeResultId, contentHash}`、执行 `running -> sealing` 并追加 event/Outbox。记录包含完整 bounded root/proposal canonical bytes、Controller-owned `AttemptUsageV1`、Attempt/launch/activation fence 和 hash；恢复用当前 fence 按 Attempt 唯一键发现该结果，不要求调用者先知道 result ID。Worker 即使在该事务后、首个 seal 前崩溃也不能重跑已返回的 Runtime；
+- `ArtifactSeal` 在任何 Blob I/O 前记录 server-issued seal/Artifact/Claim/Citation IDs、Attempt fence、逻辑名称、proposal hash、evidence-label binding plan、完整 canonical public-body bytes/hash、预期 media/limit 和 `intent | uploaded | promoted | committed | abandoned` 状态；hash 不能替代可恢复字节，Broker 恢复时不得重新分配 ID 或重建不同正文；
+- 写入 Attempt-owned staging 后必须 read-back、限长、校验 media 并由平台计算 hash；最终对象由平台选择 content-addressed locator；
+- 不含可变验证状态的 Artifact Envelope、Artifact-scoped `CitationBinding` 与 `committed` seal 在同一事务中落库；
+- `ArtifactValidationV1` 是后置、append-only、绑定精确 Artifact body hash 和 Validator binding 的独立记录；P1.0–P1.2 缺少唯一 required 记录派生为 `pending`，该记录 failed 派生为 `failed`，passed 才派生为 `passed`。Artifact record/content hash 在验证到达后不变，公开 `IntelligenceArtifactViewV1.viewHash` 则随该 validation hash 改变；
+- `CitationBinding` 固定 Task、Attempt、Context Snapshot、input manifest、Artifact、claim、evidence label、source revision/hash/anchor 和 excerpt hash；
+- 恢复只删除本 Attempt 拥有的 staging object。共享的 content-addressed final object 只能由后续 retention-aware GC 在权威引用扫描后删除。
+
+Task 是稳定目标，Attempt 是一次具体 Runtime 执行，TaskStep 是版本化工作流产生的可恢复业务投影。三者不复用 Chat Turn 或 Knowledge Ingestion Job。
 
 ```mermaid
 stateDiagram-v2
     [*] --> queued
-    queued --> running
+    queued --> leased
     queued --> canceled
-    queued --> unavailable
+    leased --> running
+    leased --> canceled
+    leased --> failed
+    leased --> timed_out
+    leased --> unavailable
     running --> cancel_requested
-    running --> succeeded
+    running --> sealing
     running --> failed
     running --> timed_out
     running --> unavailable
+    sealing --> cancel_requested
+    sealing --> validating
+    sealing --> failed
+    sealing --> timed_out
+    sealing --> unavailable
+    validating --> cancel_requested
+    validating --> succeeded
+    validating --> failed
+    validating --> timed_out
+    validating --> unavailable
     cancel_requested --> canceled
     cancel_requested --> failed
     cancel_requested --> timed_out
+    cancel_requested --> unavailable
     succeeded --> [*]
     failed --> [*]
     canceled --> [*]
@@ -379,14 +768,123 @@ stateDiagram-v2
     unavailable --> [*]
 ```
 
-- 公共请求不能选择 Runtime、sandbox、工具、网络、tenant/group/ACL 或物理索引；BFF 从身份、Project Policy 和 purpose 生成内部 `AgentTask + RuntimePolicy`。
-- Job `clientRequestId` 在同一 Project 内幂等；Review `clientRequestId` 在同一 Artifact 内幂等且相反决定产生冲突。浏览器断线不取消 Job；事件持久化并支持 `Last-Event-ID`，重放事件不重放副作用。
-- cancel 先进入 `cancel_requested` 并停止新工具调用；若 Adapter 无 cooperative cancel，Dispatcher 终止隔离 Worker。Retry 创建新 Attempt，不覆盖旧事件或 Artifact。
-- Enrichment 仅允许受限管理员/Indexer 服务角色创建，结果进入 staging Derivation Artifact；它不能直接发布 active corpus。
-- `job.succeeded` 只表示 required Artifact 已由 Broker 封存且通过该 purpose 的确定性 Schema/Enrichment Validator；不表示 Artifact 已获管理员批准或已经进入 active corpus。
-- Review 只接受已通过 Enrichment Validator 且 content hash 匹配的不可变 Artifact，并按当前 ACL/角色重新授权；`approve_for_indexing` 只向标准 Indexer 写入幂等 publish intent，不直接调用 AI Search。决定、actor、时间与 reason 进入 MySQL Audit。
+Task 状态只允许 `active -> review_ready -> accepted | revision_requested | rejected`。失败、取消、超时或 unavailable Attempt 只清空 `activeAttemptId`，Task 保持 `active`；只有同一事务中完成 `Attempt validating -> succeeded`、固定 Review Package 自身的 exact passed validation ref 及其三个已通过验证的源 Artifact pin，并完成 `Task active -> review_ready` 后，Package 才可审查。`retry`/`context-refresh` 只允许在 `active` 且没有活动 Attempt 时以 Task state-version CAS 创建一个新 Attempt；`review_ready` 只能提交一次 Review decision，三个终态无出边。`UNIQUE(review_package_id)` 与 Task/package/hash CAS 保证并发 accept/reject/request-revision 只有一个成功，其他请求稳定返回 `409 review-decision-conflict`；`request_revision` 把旧 Task 置为终态并在同一事务创建完整 successor aggregate。
 
-### ExecutionProvider
+Attempt 的成功主路径没有通用裸写：`claim_attempt` 独占 `queued -> leased`，matching activation ack 独占 `leased -> running`，上述 result 事务独占 `running -> sealing`，`begin_validation` 在核对三个 committed proposal seal 后以 fence/state/version CAS 独占 `sealing -> validating`，`settle_attempt` 独占 `validating -> succeeded` 并同步推进 Task。其他取消、失败、超时和 unavailable 分支也必须经闭集 transition API，以相同 fence/state/version CAS 同事务写 event/Outbox；任何 Adapter、Worker 或 Reconciler 都不能直接更新 Attempt state column。
+
+公共 BFF 面保持资源导向，不暴露 Runtime 供应商：
+
+```text
+POST /v1/intelligence/tasks
+GET  /v1/intelligence/tasks/{taskId}
+GET  /v1/intelligence/tasks/{taskId}/events?afterSequence=&limit=
+POST /v1/intelligence/tasks/{taskId}/cancel
+POST /v1/intelligence/tasks/{taskId}/retry
+POST /v1/intelligence/tasks/{taskId}/context-refresh
+GET  /v1/intelligence/tasks/{taskId}/artifacts
+GET  /v1/intelligence/artifacts/{artifactId}
+GET  /v1/intelligence/tasks/{taskId}/citations/{citationId}
+POST /v1/intelligence/artifacts/{reviewPackageId}/reviews
+GET  /v1/intelligence/artifacts/{artifactId}/export
+GET  /v1/intelligence/artifacts/{artifactId}/attachments/{attachmentId}
+```
+
+Task Event 使用闭集 discriminated payload，只发布阶段、状态、ID、hash/ref、计数、message code 和耗时。禁止将 provider event、Prompt、transcript、任意 `dict` 或隐藏推理原样透传给浏览器。Citation 读取必须使用 task-scoped 路由并同时核对 Context Snapshot、Artifact 和当前授权。
+
+### AgentRuntime
+
+`AgentRuntime` 是平台内部端口，不是公共 API。P1.2 的首个 Adapter 只能在 `intelligence-readonly-v1` 和 `automation-design-v1` Profile 中运行；P1.3 的 `automation-engineering-lab-v1` 需要独立门禁和实施计划。
+
+```typescript
+interface RuntimePreparation {
+  taskId: string;
+  attemptId: string;
+  ownershipGeneration: number;
+  fencingToken: string;
+  invocationRef: { runtimeInvocationId: string; contentHash: string };
+  inputManifestHash: string;
+  runtimeLineageHash: string;
+  rootOutputSchemaRef: { schemaBytesHash: string };
+}
+
+interface PreparedRuntimeHandle {
+  launchId: string;
+  attemptId: string;
+  ownershipGeneration: number;
+  fencingToken: string;
+  adapterProfileRef: string;
+  adapterVersion: string;
+  executableIdentityHash: string;
+  invocationContentHash: string;
+  rootOutputSchemaHash: string;
+  expiresAt: string;
+}
+
+interface RuntimeActivationGrant {
+  activationId: string;
+  launchId: string;
+  attemptId: string;
+  ownershipGeneration: number;
+  fencingToken: string;
+  invocationContentHash: string;
+  rootOutputSchemaHash: string;
+  authorizationDecisionId: string;
+  expiresAt: string;
+}
+
+interface RuntimeReportedUsageV1 {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+interface AgentRuntime {
+  capabilities(): Promise<RuntimeCapabilitySet>;
+  prepare(preparation: RuntimePreparation, policy: RuntimePolicy): Promise<PreparedRuntimeHandle>;
+  activate(
+    prepared: PreparedRuntimeHandle,
+    grant: RuntimeActivationGrant,
+    invocation: RuntimeInvocationEnvelopeV1,
+    outputSchema: RuntimeOutputSchemaRecordV1,
+  ): Promise<RuntimeHandle>;
+  abort(handle: PreparedRuntimeHandle | RuntimeHandle, reason: "canceled" | "expired" | "authorization_stale" | "reconciler"): Promise<void>;
+  events(handle: RuntimeHandle, afterSequence?: number): AsyncIterable<RuntimeEvent>;
+  cancel(handle: RuntimeHandle, reason: string): Promise<void>;
+  result(handle: RuntimeHandle): Promise<RuntimeResult>;
+  close(): Promise<void>;
+}
+
+type RuntimeResult =
+  | {
+      binding: { launchId: string; activationId: string; attemptId: string; ownershipGeneration: number; fencingToken: string; invocationContentHash: string; rootOutputSchemaHash: string };
+      status: "succeeded";
+      output: RuntimeProposalsRootV1;
+      reportedUsage: RuntimeReportedUsageV1;
+    }
+  | {
+      binding: { launchId: string; activationId: string; attemptId: string; ownershipGeneration: number; fencingToken: string; invocationContentHash: string; rootOutputSchemaHash: string };
+      status: "failed" | "canceled" | "timed_out" | "unavailable";
+      reasonCode: string;
+      reportedUsage: RuntimeReportedUsageV1;
+    };
+```
+
+Runtime 只返回有界结构化 proposal，不能自行分配 Artifact ID、URI、Blob locator、SAS、可信 hash 或 Validator 结论。Task Control 在 Runtime 停止写入后以 generation/fencing 校验当前 Attempt，再调用可信 Broker 封存、计算 hash 并由独立 Validator 记录结果。Runtime 的 `succeeded` 不得直接将 TAP Attempt 置为 `succeeded`。
+
+默认 goal-only Task 必须得到 `intelligence_report`、`assumption_register` 和 `automation_blueprint` 三个已封存、已验证产物；没有假设时仍产生显式空 Assumption Register。`review_package` 只由可信 Controller 汇总生成，不是 Runtime proposal。Runtime 声明、平台授权、Profile、feature gate 和任务请求取闭集交集；任何一方都不能扩权。
+
+- Runtime、Policy、Brief、Context Snapshot、Runtime Context Packet、Input Manifest、Runtime Invocation Envelope、root output Schema、Task 和 Attempt 必须在准备 Adapter 前持久化；每个 Attempt 固定自己的 exact input refs。Worker 只能按 Attempt ID/current ownership fence 读取并校验原始 canonical bytes，不能按 Task 读取“最新输入”，也不能从最新资料悄然重建。
+- Capability 与 Tool 是独立闭集；取交集后才能调用，Prompt、仓库说明、Skill、Hook 或 provider event 不能扩权。
+- Runtime 使用 `prepare -> register -> reauthorize -> activation_intent -> activate` 两阶段协议。第一次即时授权在 `prepare` 前阻止已撤权任务解析 target；`prepare` 只能创建无模型 egress、无工具、未收到 invocation 正文的 gated launcher。Task Control 先用 Attempt fence 原子登记 `RuntimeLaunch`，再复核 lease/deadline/cancel 和当前 actor/scope/source，持久化一次性短 TTL activation grant，之后 `activate` 才能把 exact invocation bytes 和 hash-matched `RuntimeOutputSchemaRecordV1` 交给 Runtime；Attempt 只在 activation ack 后由 `leased` 进入 `running`。register 后撤权或取消必须 abort/reap launcher，且没有任何输入正文离开 Controller。
+- Adapter `capabilities()` 和 Worker 启动不得执行 provider CLI。首个 Codex Adapter 只能在一次性 activation grant 被消费后，由 gated launcher 运行无 invocation/root-Schema 输入的有界 version/help/features/auth/catalog probes；全部匹配后才启动真实 `codex exec`。probe 失败把 Attempt 置为 `unavailable` 且不得重用 grant，同一 Attempt 不得二次 activate。因而 activation 前允许存在可信 inert launcher，但必须保持零 Codex CLI spawn、零 target probe、零模型 egress和零 invocation disclosure。
+- `RuntimeLaunch` 以 `preparing | prepared | registered | authorization_stale | activation_intent | activated | aborting | aborted | orphaned` 记录 launch/Attempt/fence、invocation/manifest/root-Schema hashes、adapter/executable identity、授权决定、activation ID 和非秘密 process ownership。每个 Attempt 最多一个 activation 可进入 `activated`；activation ack 不明时 Reconciler 必须对账精确 launcher/process/result，不能在同一 Attempt 重放。所有 Runtime result 必须回绑 launch、activation、generation/fence、invocation 和 root Schema hash；不匹配的 late result 只能成为脱敏诊断。
+- 每次 Tool、每一个 Artifact 封存、Citation/Artifact 读取时，都按当前 actor/scope 和 packet 中每个 source 的 revision/hash/anchor 重新授权；一次批量预检不能授权后续多个封存动作。旧 Context Snapshot 只供审计，不能绕过撤权。授权失败时不得发送 invocation bytes，也不得开始对应封存，并以 `context-authorization-stale` 终止当前 Attempt；用户必须刷新 Context。Retry API 先作同样预检并在失败时返回 `409 context-refresh-required`，Worker 仍须在 activation 前复验以关闭排队竞态。
+- Review Package 的读取和 `accept | reject | request_revision` 提交分别重授权；决定写入事务开始前必须再次检查当前 actor/scope、package hash、Package 自身的 passed validation ref、三个源 Artifact/validation pin 和每个来源 revision/hash/anchor。查看后撤权时提交 fail closed 且不能新增 Review、修改 Task 或创建 successor；`request_revision` 只有在后继 Context 完成即时重授权并完整构建后才可原子写入。
+- 服务模式禁止 `full_access`。Runtime 无平台凭据，不直连 MySQL、Redis、Blob、Search、Docker/Kubernetes、生产 Git、BrowserStack 或被测系统。
+- 未知 provider event 只能作脱敏诊断，不得乐观映射为成功。Retry 必须创建新 Attempt 和新 workspace，不重用旧可变状态。
+- Phase 1 的 Artifact `executionStatus` 固定为 `not_run`。Validation evidence 不是 Execution Evidence Manifest，不能支持“测试已运行/通过/验证”的声明。
+- Codex 是当前已批准的首个实验 Adapter，但仅位于上述端口后；具体决策见 [ADR-014](../decisions/2026-08-21-adr-014-codex-specialist-runtime.md)。
+
+### ExecutionProvider（Phase 2+）
 
 ```typescript
 type ExecutionKind = "browser" | "device" | "api_contract";
@@ -898,7 +1396,7 @@ GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 
 ## 10. Athena 本地 Document/Answer/Citation HTTP Contract
 
-Athena 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为 Phase 1 stub，当前只返回 `501 turn-not-implemented`，不计入 Athena 九个已实现操作。
+Athena 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为后置 Knowledge Chat stub，当前只返回 `501 turn-not-implemented`，不计入 Athena 九个已实现操作。
 
 ### 10.1 文档与 ingestion 状态
 
@@ -932,7 +1430,7 @@ type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 | `POST /v1/knowledge/answers` | `200 RetrievalAnswerResponse` | `400`, `409`, `422`, `503` |
 | `GET /v1/citations/{citation_id}` | `200 CitationPreview` | `404`, `422`, `503` |
 
-除 `204` 外，错误统一使用 RFC 9457 `application/problem+json`，闭合字段为 HTTPS `type`、非空 `title`、HTTP `status`、非空 `detail` 与可选 `instance`；未知字段被拒绝。九个已实现操作的稳定问题类型（`type` URL 的末段 slug）闭合为 `request-validation`、`knowledge-runtime-unavailable`、`search-unavailable`、`search-execution-rejected`、`unsupported-document`、`empty-document`、`document-too-large`、`document-not-found`、`document-not-retryable`、`document-state-changed`、`document-limit-reached`、`source-selection-required`、`unsupported-answer-control`、`embedding-unavailable`、`answer-unavailable`、`answer-snapshot-unavailable`、`citation-stale`、`citation-unavailable`；保留的 Phase 1 Chat stub 另使用 `turn-not-implemented`。公共 problem 不包含堆栈、provider 原始错误、credential、endpoint、Blob locator、Milvus target 或内部 filter。
+除 `204` 外，错误统一使用 RFC 9457 `application/problem+json`，闭合字段为 HTTPS `type`、非空 `title`、HTTP `status`、非空 `detail` 与可选 `instance`；未知字段被拒绝。九个已实现操作的稳定问题类型（`type` URL 的末段 slug）闭合为 `request-validation`、`knowledge-runtime-unavailable`、`search-unavailable`、`search-execution-rejected`、`unsupported-document`、`empty-document`、`document-too-large`、`document-not-found`、`document-not-retryable`、`document-state-changed`、`document-limit-reached`、`source-selection-required`、`unsupported-answer-control`、`embedding-unavailable`、`answer-unavailable`、`answer-snapshot-unavailable`、`citation-stale`、`citation-unavailable`；保留的后置 Knowledge Chat stub 另使用 `turn-not-implemented`。公共 problem 不包含堆栈、provider 原始错误、credential、endpoint、Blob locator、Milvus target 或内部 filter。
 
 ### 10.3 回答 claim 与 citation 边界
 

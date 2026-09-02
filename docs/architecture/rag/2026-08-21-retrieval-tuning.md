@@ -1,4 +1,6 @@
-# Phase 1：Azure AI Search 检索调优方案
+# 后置 Knowledge Plane：Azure AI Search 检索调优方案
+
+> **阶段说明（2026-09-02）**：本文保留旧企业 RAG 阶段的检索实验设计；[ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已将完整 Azure AI Search 调优后置。当前 Intelligence 评测只对实际接入的 Athena `doc` 来源能力作结论。
 
 本文定义 TAP 如何从可复现 baseline 出发，逐步调优 Azure AI Search 的全文、向量、RRF、semantic ranker、scoring profile、跨索引融合与回答上下文。目标不是“把所有高级开关都打开”，而是让每项能力在真实评测集上证明增益。
 

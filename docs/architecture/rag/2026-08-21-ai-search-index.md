@@ -1,6 +1,8 @@
-# Phase 1：Azure AI Search 索引设计
+# 后置 Knowledge Plane：Azure AI Search 索引设计
 
 本文把 TAP 的四个逻辑知识域映射为可部署的 Azure AI Search 索引、别名、字段属性、向量与 semantic configuration。字段名是架构契约基线，最终 JSON 由实现仓库生成并进入评测与变更审查。
+
+> **阶段说明（2026-09-02）**：本文正文中的 “Phase 1” 指 2026-08-21 的旧企业 RAG 基线。根据 [ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md)，四索引部署已后置；当前 Intelligence Lab 继续使用 Athena 的本地 `doc` Milvus 投影，不能把它描述为本页企业索引已实现。
 
 ## 1. 实现边界
 

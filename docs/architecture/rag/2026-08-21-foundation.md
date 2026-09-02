@@ -1,15 +1,17 @@
-# Phase 1：RAG Foundation
+# 后置 Knowledge Plane：RAG Foundation
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | Phase 1 delivery baseline |
+| 状态 | 后置 Knowledge Plane 设计；已由 ADR-019 重排 |
 | 目标 | 构建可评测、权限安全、可追溯、可增量更新，并能通过聊天完成知识问答的企业 RAG 垂直切片 |
 | 核心技术 | React/TypeScript、Python + FastAPI/ASGI、Git、Entra ID、AKS、Azure AI Search、MySQL、Redis、Blob、Key Vault、LiteLLM |
 | 主要用户面 | TAP Knowledge Chat、Retrieval API、Citation/Trace Inspector |
 
+> **阶段说明（2026-09-02）**：[ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已将当前 Phase 1 改为 Intelligence Layer Exploration。本文的 RAG 能力作为后续 Knowledge Plane 设计保留，Athena 已实现的 `doc` revision/hash/anchor 和 Citation 继续为 Intelligence Context 提供基础；完整四索引和 Knowledge Chat 不再是当前 Phase 1 出口。
+
 ## 1. 阶段目标
 
-第一阶段不追求完整 Test Automation 闭环，而是先证明后续 Agent、Test IR 生成、失败 RCA 都能共享一套可靠检索底座：
+后置 Knowledge Plane 阶段不追求完整 Test Automation 闭环，而是证明后续 Agent、Test IR 生成、失败 RCA 都能共享一套可靠检索底座：
 
 - 文档、代码、BDD、失败记录按各自结构正确解析和切片。
 - 四个 Azure AI Search 索引可从 Git、Blob、MySQL 权威源重建。
@@ -21,7 +23,7 @@
 
 ## 2. 非目标
 
-Phase 1 不以以下能力作为出口条件：
+该 Knowledge Plane 不以以下能力作为出口条件：
 
 - Agentic Loop、多 Agent 调度或自动任务规划。
 - Test IR 编译器、低代码测试编辑器和测试代码生成。
@@ -30,9 +32,9 @@ Phase 1 不以以下能力作为出口条件：
 - 通用知识图谱、模型微调或跨云检索平台。
 - Shell/工具执行、代码编辑、Git 写入、测试运行和通用 Agent 产品能力。
 
-Phase 1 的 Knowledge Chat 是可持续使用的 RAG 用户面和正式出口条件；它聚焦知识问答，不在本阶段扩展为通用 Agent 或 Test Automation 工作台。
+完整 Knowledge Chat 是该后置阶段的可持续 RAG 用户面和出口条件；它聚焦知识问答，不扩展为通用 Agent 或 Test Automation 工作台。
 
-## 3. Phase 1 架构
+## 3. 后置 Knowledge Plane 架构
 
 ```mermaid
 flowchart LR
@@ -128,13 +130,13 @@ Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP
 
 QueryPlan 至少固定：原始问题与 raw request hash、standalone query、intent/置信度、effective source families、exact identifiers、已授权并解析到 immutable revision/hash 的 `@resource`、effective environment/corpus、server-capped candidate limit、Retrieval Profile、Policy/ACL digest、子问题上限和 planner version。Context Snapshot 绑定 retrieval operation/current Policy；Chat 路径额外绑定 chat/turn，记录每层输入的 ID/hash/token 数与摘要 lineage；每轮重新授权摘要来源，不复制秘密或未经授权原文。
 
-### 3.2 预留的 Codex Agent 旁路
+### 3.2 与当前 Intelligence Layer 的关系
 
-Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 和 Ingestion 验收。Phase 1.5 可在同一 BFF 后增加显式 Research/Knowledge Enrichment Job：它通过 `AgentRuntime` 端口启动隔离 Codex SDK Worker，只能调用 TAP Retrieval/Citation/Enrichment 窄工具，并输出 report 或 staging Derivation Artifact。Codex 不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。Test IR/代码生成待 Phase 2 Schema/compiler/validator 就绪后接入。详见 [受控 Codex Agent Runtime](../../proposals/2026-08-21-rfc-001-codex-agent-runtime.md)。
+Knowledge、Chat、ACL、Citation 和 Ingestion 在不启动 Intelligence Runtime 时仍必须独立工作。当前 Intelligence Task 通过 provider-neutral `AgentRuntime` 产生候选 Report/Blueprint，只能经 TAP Knowledge/Citation 边界读取当前快照；它不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。后置 Knowledge Enrichment 若恢复，仍只能产生经 Validator 和审批的 staging derivation。当前边界见 [RFC-007](../../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-014](../../decisions/2026-08-21-adr-014-codex-specialist-runtime.md)。
 
 ### 3.3 前后端与运行角色边界
 
-| 角色 | Phase 1 职责 |
+| 角色 | 后置 Knowledge Plane 职责 |
 | --- | --- |
 | React/TypeScript Web | Project/Conversation、composer/queue、SSE 增量投影、Sources/Claims/Trace；不保存权威状态或构造 ACL |
 | FastAPI `api-sse` | Entra/Policy、公共 DTO、幂等、Turn/Queue API、REST snapshot + SSE tail、Citation/Trace 重授权 |
@@ -148,7 +150,7 @@ Phase 1 不启动 Codex 也必须完整通过所有 RAG、Chat、ACL、Citation 
 
 ### 3.4 Athena 本地 `doc` 切片的已交付能力
 
-Athena 本地 Demo 已经交付一组可被完整 Phase 1 复用、但范围严格受限的 RAG 能力：
+Athena 本地 Demo 已经交付一组可被当前 Intelligence 和后置 Knowledge Plane 复用、但范围严格受限的 RAG 能力：
 
 - provider-neutral Knowledge HTTP/API、Search/Model/Citation ports 与公共 OpenAPI/TypeScript 生成链；
 - PDF/DOCX/MD/TXT 文档的有界上传、稳定 revision/chunk 身份、typed parse/chunk、可恢复 job/lease/retry/delete 和 MySQL Outbox/Redis 唤醒；
@@ -156,7 +158,7 @@ Athena 本地 Demo 已经交付一组可被完整 Phase 1 复用、但范围严�
 - fixed demo policy 下的来源限定检索、grounded answer、whole-paragraph claim spans、citation snapshot 与 revision/hash/anchor 原文解析；
 - 浏览器刷新、应用进程重启和普通 Compose `down/up` 后恢复文档目录与来源可用状态、ingestion/index 状态和 citation resolver 所需的持久事实。当前渲染回答只在页面内存中，刷新会清空；本版不提供历史回答恢复，但可基于持久的 `ready` 来源重新提问。
 
-该切片不包含 `code`、`bdd`、`failure` family，也没有 Azure AI Search 四索引、Entra/Project ACL、classification/environment security trimming、Conversation/SSE/Trace/Feedback、OCR 或 AKS 生产治理。它证明同一领域与端口边界可以承载本地来源优先路径；本文件其余章节仍是 active 企业 Phase 1 的规范性目标，不能用本地 deterministic E2E 或 Milvus `doc` GREEN 替代其出口标准。
+该切片不包含 `code`、`bdd`、`failure` family，也没有 Azure AI Search 四索引、Entra/Project ACL、classification/environment security trimming、Conversation/SSE/Trace/Feedback、OCR 或 AKS 生产治理。它证明同一领域与端口边界可以承载本地来源优先路径；本文件其余章节是后置 Knowledge Plane 的规范性目标，不能用本地 deterministic E2E 或 Milvus `doc` GREEN 替代其未来出口标准。
 
 ## 4. 四索引设计
 
@@ -237,11 +239,11 @@ OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必�
 8. 去重、控制 token budget，并生成带不可变 `source revision + structured anchor + sourceContentHash + chunkContentHash + chunkId` 的 Citation；内部 URI 经 resolver 重新授权后才可打开。
 9. Retrieval Trace 保存 tenant/project/actor、ACL digest、QueryPlan/Context Snapshot ID、filters、候选、分数、丢弃原因、最终 context、版本与耗时；内容按 trace retention/redaction policy 保存。
 
-Phase 1 默认不缓存检索结果；若评测后启用，cache key 必须包含 tenant、project、ACL digest、classification、environment、corpus/index/model version，撤权与删除必须同步失效。
+Knowledge Plane 初始实现默认不缓存检索结果；若评测后启用，cache key 必须包含 tenant、project、ACL digest、classification、environment、corpus/index/model version，撤权与删除必须同步失效。
 
 ## 7. Retrieval 与 Knowledge Chat API
 
-Phase 1 至少交付：
+后置 Knowledge Plane 至少交付：
 
 ```text
 POST /v1/retrieval/search
@@ -295,7 +297,7 @@ Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL dige
 
 所有结果必须分别报告四类索引，不能只用总体平均掩盖代码或失败知识的弱项。
 
-### 8.3 Phase 1 出口标准
+### 8.3 后置 Knowledge Plane 出口标准
 
 硬门槛：
 

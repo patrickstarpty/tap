@@ -17,16 +17,20 @@
 
 - [ADR-009：MySQL Outbox + Redis 分发，按至少一次处理](2026-08-20-adr-009-mysql-outbox-redis-delivery.md)
 - [ADR-010：控制面先保持模块化，Worker 独立扩缩](2026-08-20-adr-010-modular-control-plane-independent-workers.md)
-- [ADR-011：第一交付阶段专注 RAG Foundation](2026-08-20-adr-011-phase-1-rag-foundation.md)
+- [ADR-011：第一交付阶段专注 RAG Foundation](2026-08-20-adr-011-phase-1-rag-foundation.md)（`superseded`）：保留 RAG 先行的历史决策；由 ADR-019 替代。
 - [ADR-012：TAP 管切片与溯源，Azure AI Search 管索引与检索](2026-08-21-adr-012-tap-managed-chunking-and-provenance.md)
-- [ADR-013：Phase 1 交付 Codex/Claude Code 式 Knowledge Chat](2026-08-21-adr-013-phase-1-knowledge-chat.md)
-- [ADR-014：Codex 作为可选、隔离的 Specialist Runtime](2026-08-21-adr-014-codex-specialist-runtime.md)
+- [ADR-013：Phase 1 交付 Codex/Claude Code 式 Knowledge Chat](2026-08-21-adr-013-phase-1-knowledge-chat.md)（`superseded`）：保留 Knowledge Chat 优先级的历史决策；由 ADR-019 替代。
+- [ADR-014：Codex 作为可选、隔离的 Specialist Runtime](2026-08-21-adr-014-codex-specialist-runtime.md)（`accepted`）：在 provider-neutral `AgentRuntime` 之后用 Codex 作首个可关闭实验 Adapter。
 - [ADR-015：前端采用 React/TypeScript，后端采用 Python/FastAPI，按运行角色隔离](2026-08-21-adr-015-react-typescript-python-fastapi.md)
 
 ## 本地 Demo 决策
 
 - [ADR-017：Athena 本地回答端口可选 Codex CLI](2026-08-31-adr-017-athena-local-codex-answer-backend.md)（`superseded`）：保留曾接受 Ultra 内部委派的历史决策；由 ADR-018 替代。
 - [ADR-018：Athena 本地 Codex 回答固定为单智能体、无工具](2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)（`accepted`）：精确固定 CLI/model/catalog 能力契约，任何漂移均无 fallback 地 fail closed。
+
+## 当前产品阶段决策
+
+- [ADR-019：Phase 1 优先探索 Intelligence Layer](2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md)（`accepted`）：只以 `goal` 为必填输入，优先验证可追溯分析、Automation Blueprint、可恢复任务与 Review Package；BrowserStack-like 主体后置。
 
 ## 文档治理决策
 

@@ -5,9 +5,12 @@ date: 2026-08-23
 related-adrs:
   - ADR-013
   - ADR-015
+  - ADR-019
 ---
 
 # RFC-003：Phase 1 应用工程结构
+
+> **范围处置（2026-09-02）**：[RFC-007](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 与 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已重排当前 Phase 1 的产品范围。本文的单仓、模块依赖、契约生成、多运行角色和测试边界继续有效；完整 Knowledge Chat、企业四索引、Entra、AKS 和生产门禁不再是当前 Phase 1 出口，而是后置 Knowledge Plane/企业平台设计。本文正文保留原接受时语义，不代表这些后置能力已实现或仍为当前优先级。
 
 ## 摘要
 

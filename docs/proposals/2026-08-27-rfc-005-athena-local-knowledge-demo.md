@@ -11,6 +11,8 @@ related-adrs:
 
 # RFC-005：Athena 本地知识工作区 Demo
 
+> **当前阶段处置（2026-09-02）**：本 RFC 作为已实现的 Athena 本地能力继续有效；文中“完整 Phase 1 仍 active/回到现有 Phase 1”记录的是当时路线图，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Phase 1 是 Intelligence Lab；Athena 文档、revision/hash/anchor 和 Citation 只作为可选资料能力被复用，不代表完整 Knowledge Chat 或企业四索引成为当前交付项。
+
 ## 摘要
 
 本 RFC 定义一个可在开发机运行的 Athena 纵向 Demo：用户在 Web 页面上传 PDF、DOCX、Markdown 或 TXT 文档，查看真实解析与索引状态，选择可用来源进行知识问答，并从回答中的行内引用定位到不可变文档版本的原文片段。

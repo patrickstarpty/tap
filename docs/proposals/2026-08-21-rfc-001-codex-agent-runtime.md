@@ -1,12 +1,15 @@
 ---
 id: RFC-001
-status: in-review
+status: rejected
 date: 2026-08-21
 related-adrs:
   - ADR-014
+  - ADR-019
 ---
 
 # TAP 受控 Codex Agent Runtime
+
+> **处置（2026-09-02）**：本 RFC 被拒绝，不再作为当前阶段的实施依据。[RFC-007](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 已重新定义 Intelligence Layer 的产品范围、任务与 Artifact 契约、评测门禁和阶段顺序；本文中仍有价值的隔离、凭据、Tool Gateway 和 Broker 约束已在 RFC-007 中重新收敛。以下正文仅保留为历史设计记录。
 
 | 字段 | 值 |
 | --- | --- |
@@ -235,7 +238,7 @@ Runtime-specific thread/session ID 只作为外部引用写入 Attempt。TAP 至
 
 不默认保存隐藏推理；日志中的 Prompt、源内容、命令输出和秘密按角色脱敏与分级保留。
 
-浏览器/BFF 的创建、查询、取消、SSE 恢复、幂等和状态机见 [Phase 1.5 Agent Job API](../reference/2026-08-20-contracts.md#phase-15-agent-job-api)。公共请求不能选择 Runtime、sandbox、工具或网络。
+本文原有的 Phase 1.5 浏览器/BFF 契约已被 [RFC-007 的 Durable Task Control](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md#45-durable-task-control) 和当前 [Intelligence Contract](../reference/2026-08-20-contracts.md#phase-1-intelligence-contract) 替代。公共请求不能选择 Runtime、sandbox、工具或网络。
 
 ## 8. 沙箱、多租户与网络
 

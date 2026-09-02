@@ -1,10 +1,10 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是 `engprod` 讨论沉淀出的自动化测试与研发效能平台。本仓库同时包含可评审、可演进的技术架构基线，以及 Python/FastAPI Backend、React/Vite Web、公共契约和本地运行工具。Athena 本地知识工作区已经打通“上传文档 → 可恢复索引 → 限定来源问答 → 核验引用”的 `doc` 纵向切片；完整 Phase 1、共享环境部署与生产加固仍在推进。
+TAP（**Test Automation Platform**）是以 BrowserStack-like 测试自动化平台为长期主体、以 Intelligence Layer 为 AI 差异化的测试工程平台。本仓库同时包含可评审、可演进的技术架构基线，以及 Python/FastAPI Backend、React/Vite Web、公共契约和本地运行工具。Athena 本地知识工作区已经打通“上传文档 → 可恢复索引 → 限定来源问答 → 核验引用”的 `doc` 纵向切片；当前先实施独立 Intelligence Lab，完整测试资产、真实执行和生产治理后置。
 
 ## 一句话架构
 
-TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。Phase 1 先在 AKS 上交付基于 Azure AI Search 的确定性 RAG 与参考 Codex/Claude Code 交互模式的 Knowledge Chat；Phase 1.5 再以可拔掉的 `CodexRuntimeAdapter` 验证只读 Research 与受控 Knowledge Enrichment；Test IR/代码生成在 Phase 2 基础契约就绪后接入。在线问答不依赖 Agent，模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
+TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为长期平台核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。当前按 [RFC-007](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 先交付 `TAP Intelligence Lab` 的 P1.0–P1.2：仅以 `goal` 为必填输入，可附加人工步骤和已就绪的 Athena 资料，产生可追溯分析、Assumption Register、Automation Blueprint、可恢复任务和 Review Package。仓库、失败材料与候选代码属于后置 P1.3 条件实验；真实浏览器/设备执行、Test Management 和 Release Management 不属于 Phase 1。模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
 
 已确认的企业技术栈：
 
@@ -22,8 +22,8 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - 同时支持内网自建 Browser/Device Grid 与 BrowserStack，避免单一供应商依赖。
 - 通过 LiteLLM 统一路由 Chat、Coder、Embedding、Reranker、Vision 模型。
 - 默认隔离不可信代码，限制凭证、网络和高风险工具调用。
-- 第一阶段提供可持续使用的 Project/Conversation 知识问答页面，并用逐条引用、Trace 与反馈闭环验收 RAG。
-- 在不改变 Retrieval/Citation Contract 的前提下，以隔离异步 Worker 验证 Codex Agent Runtime；所有检索走 TAP API，所有生成只形成可验证、可审批的候选 Artifact。
+- 第一阶段先验证在没有正式 Requirement、Release 或源码时，AI 是否仍能产生明确区分事实、推断、假设和未知的测试工程产物。
+- 以独立、可恢复的 Intelligence Task/Attempt 验证只读 Agent Runtime；所有检索走 TAP API，所有生成只形成可验证、可审查的候选 Artifact。
 
 ## 非目标
 
@@ -45,12 +45,15 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - [Athena 本地知识 Demo 验收](docs/reviews/2026-08-27-athena-local-knowledge-demo.md)：本地中间件、浏览器、持久化和可选真实模型的证据记录。
 - [Athena 本地回答后端 RFC](docs/proposals/2026-08-31-rfc-006-athena-local-codex-answer-backend.md)：记录 LiteLLM/Codex 独占选择、固定 Embedding 与 fail-closed 验收。
 - [Athena 单智能体、无工具 Codex 决策](docs/decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)：记录精确 CLI/model/catalog 契约及其本地边界。
-- [Phase 1：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：第一阶段的范围、四索引、流水线、评测与验收标准。
-- [数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
-- [Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
-- [检索调优方案](docs/architecture/rag/2026-08-21-retrieval-tuning.md)：BM25/Vector/Hybrid/RRF/Rerank 的可复现实验阶梯。
-- [TAP Knowledge Chat](docs/architecture/2026-08-21-knowledge-chat-ui.md)：Codex/Claude Code 式会话、流式状态、引用与 Trace 交互。
-- [受控 Codex Agent Runtime](docs/proposals/2026-08-21-rfc-001-codex-agent-runtime.md)：后台 SDK/CLI/App Server 选择、异步 Job、沙箱、工具、凭证、生成与审批边界。
+- [Phase 1 Intelligence Layer 探索](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)：当前产品范围、对象、安全边界、评测和分阶段出口。
+- [Phase 1 Intelligence Layer 决策](docs/decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md)：正式替代 Knowledge Chat 优先级，保留 BrowserStack-like 测试平台为长期主体。
+- [Phase 1 Intelligence Core 实施计划](docs/plans/2026-09-02-phase-1-intelligence-core-implementation.md)：当前 P1.0–P1.2 的 TDD 任务、依赖顺序与验收命令。
+- [后置 Knowledge Plane：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：保留原 Phase 1 的四索引、流水线、评测与验收设计。
+- [后置数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
+- [后置 Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
+- [后置检索调优方案](docs/architecture/rag/2026-08-21-retrieval-tuning.md)：BM25/Vector/Hybrid/RRF/Rerank 的可复现实验阶梯。
+- [后置 TAP Knowledge Chat](docs/architecture/2026-08-21-knowledge-chat-ui.md)：保留会话、流式状态、引用与 Trace 的后续 Knowledge Plane 交互设计。
+- [历史 Codex Agent Runtime RFC](docs/proposals/2026-08-21-rfc-001-codex-agent-runtime.md)：已拒绝的旧 Phase 1.5 设计；当前边界由 RFC-007 与 ADR-014 管理。
 - [核心契约](docs/reference/2026-08-20-contracts.md)：RunSpec、事件、Provider Port 和状态机约束。
 - [架构决策](docs/decisions/index.md)：架构决策、取舍与被覆盖的历史方案。
 - [交付路线图](docs/plans/2026-08-20-roadmap.md)：从架构基线到可用 MVP 的阶段计划。
@@ -69,9 +72,9 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 当前状态
 
 - 架构状态：`v0.3 integrated platform + RAG baseline / review-ready`
-- 实现状态：`Athena local doc Q&A slice implemented; full Phase 1/shared/production active`
-- 当前交付重点：`Phase 1 — Azure AI Search RAG + TAP Knowledge Chat`
-- 下一实验增量：`Phase 1.5 — optional Codex Research / Knowledge Enrichment runtime`
+- 实现状态：`Athena local doc Q&A slice implemented; Intelligence P1.0–P1.2 not implemented`
+- 当前交付重点：`Phase 1 — TAP Intelligence Lab P1.0–P1.2 planned`
+- 后置条件实验：`P1.3 — Failure Intelligence / Automation Engineering Lab`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 

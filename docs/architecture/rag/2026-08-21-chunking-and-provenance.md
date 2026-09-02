@@ -1,6 +1,8 @@
-# Phase 1：数据切片与端到端溯源
+# 后置 Knowledge Plane：数据切片与端到端溯源
 
 本文定义 TAP 如何把 Git、Blob 和 MySQL 中的文档、代码、BDD 与失败记录转换为 Azure AI Search 中可检索、可重建、可解释的 chunk，并保证知识问答中的每条引用能够回到不可变原始版本。
+
+> **阶段说明（2026-09-02）**：本文正文中的 “Phase 1” 指 2026-08-21 形成的旧企业 RAG 阶段。该能力现由 [ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置；当前 P1.0–P1.2 只复用 Athena 已实现的 `doc` revision/hash/anchor 与 Citation，不交付四类语料摄取。
 
 ## 1. 设计结论
 
@@ -156,7 +158,7 @@ derivationKey = hashId(
 
 首次成功生成后，把 summary 文本、`chunkContentHash`、generator/runtime/model/prompt/tool/output-schema、解码参数与输入 chunk IDs 固化到 Blob/MySQL manifest；同一 `derivationKey` 的重建只复用该 artifact，不再次调用模型。要重新生成必须显式升级任一生成/模型/工具/Schema/策略版本并产生新的 derivation artifact 和 `chunkId`。如果 artifact 遗失，重建标记失败，不能悄然生成一份不同内容冒充历史摘要。
 
-若使用 Codex Runtime 做 enrichment，它只能产出 staging Derivation Artifact。Phase 1.5 的 parser/data-quality、关系、分类或摘要都只是建议 Artifact，不生成代码或 patch，也不进入 Git；它们必须先通过类型、ACL、来源覆盖和质量 Validator。只有批准的 `generated_summary` 才能由标准 Indexer 进入索引，其他报告留在 Blob，不伪装成 source chunk，也不能直接写 active corpus。代码/patch 生成待 Phase 2 Test IR/Git 契约就绪后启用。
+若未来恢复 Knowledge enrichment，Intelligence Runtime 只能产出 staging Derivation Artifact。parser/data-quality、关系、分类或摘要都只是建议 Artifact，不生成代码或 patch，也不进入 Git；它们必须先通过类型、ACL、来源覆盖和质量 Validator。只有批准的 `generated_summary` 才能由标准 Indexer 进入索引，其他报告留在 Blob，不伪装成 source chunk，也不能直接写 active corpus。当前 P1.2 只生成只读 Report/Blueprint；候选工程需通过 P1.3 独立门禁。
 
 ## 5. Ingestion 与发布链路
 

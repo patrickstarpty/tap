@@ -15,6 +15,8 @@ date: 2026-08-23
 
 **Spec:** `docs/proposals/2026-08-23-rfc-003-phase-1-application-structure.md`
 
+> **重排说明（2026-09-02）**：[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已将当前交付重点改为 Intelligence Layer Exploration。本计划仍保持 `active`，因为 Plan 状态机没有 paused/canceled，且其完整 RAG/Knowledge Chat 任务尚未完成；它现在是后置 Knowledge Plane 工作流，不再是当前 Phase 1 出口。当前实施使用独立的 [Phase 1 Intelligence Core 实施计划](2026-09-02-phase-1-intelligence-core-implementation.md)，不从本计划继续扩展 Chat 或企业四索引。
+
 ## Current Reusable Athena Baseline
 
 独立的 [Athena 本地知识 Demo 计划](2026-08-27-athena-local-knowledge-demo.md) 已经交付 Python/FastAPI 与 React/Vite workspace、确定性 OpenAPI/TypeScript 生成、MySQL document/job/manifest 与 Outbox、Redis Relay/worker 唤醒、Azurite artifact、PDF/DOCX/MD/TXT typed ingestion、本地 Milvus `doc` 投影、固定 LiteLLM alias、来源限定 answer/citation，以及真实本地中间件上的浏览器、失败恢复和文档/ingestion/index 持久化门禁。这些能力可被本计划复用，不应再建立第二套 DTO、文档身份、RAG 或 worker 状态机；当前回答正文只在 Web 页面内存中，不具备 history 恢复能力。
@@ -23,7 +25,7 @@ date: 2026-08-23
 
 ## Global Constraints
 
-- 实施前将 RFC-003 从 `in-review` 推进到 `accepted`；未接受前只能执行验证性 spike，不能把其提议写入规范性 architecture/reference 文档。
+- 保持 RFC-003 为 `accepted`；只有本后置 Knowledge Plane 计划的全部门禁实际完成后才能将其推进为 `implemented`。其历史验收项不得再表述为当前 Phase 1 出口。
 - 只创建当前任务实际使用的目录、entrypoint 和部署资源；不创建 Phase 1.5、Test IR、Agent、执行网格或空 `packages/`。
 - Web 依赖只能沿 `app/pages → widgets → features → shared` 向下；禁止任何 `feature → feature` 导入。
 - Backend 领域层不依赖 FastAPI、数据库、Azure SDK、HTTP DTO；跨模块只通过公开应用接口。

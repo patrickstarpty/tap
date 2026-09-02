@@ -9,6 +9,8 @@ related-adrs:
 
 # RFC-006：Athena 本地可选 Codex CLI 回答后端
 
+> **当前阶段处置（2026-09-02）**：本 RFC 的已实现 Athena Answer Adapter 继续作为独立本地能力维护；其中“完整 Phase 1 仍 active”沿用的是旧 RAG/Knowledge Chat 路线，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Intelligence Lab 使用独立、provider-neutral 的 `AgentRuntime`，不复用 Knowledge Answer 语义。
+
 ## 摘要
 
 Athena 本地知识 Demo 将查询向量生成与回答生成拆成独立端口。文档摄取和查询向量始终通过 LiteLLM 的固定 `athena-embedding` alias 调用百炼 `text-embedding-v4`，继续使用现有 1536 维 Milvus vector space；最终回答由服务端环境变量在现有 LiteLLM 路径和本机 `codex exec` 路径之间选择，不向浏览器暴露模型选择。

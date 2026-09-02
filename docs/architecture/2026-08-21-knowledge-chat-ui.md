@@ -2,18 +2,20 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 阶段 | Phase 1 正式交付物 |
+| 阶段 | 后置 Knowledge Plane 交互设计；已由 ADR-019 重排 |
 | 目标 | 用一个可持续使用的聊天界面验收 RAG 的权限、检索、回答、引用与反馈闭环 |
 | 交互参考 | Codex 与 Claude Code 的项目/会话、流式状态、中断、排队追问和资源引用模式 |
-| 边界 | 借鉴交互模型，不复制品牌、视觉资产或像素布局；Phase 1 不执行 Shell、代码修改或测试任务 |
+| 边界 | 借鉴交互模型，不复制品牌、视觉资产或像素布局；该后置知识入口不执行 Shell、代码修改或测试任务 |
+
+> **阶段说明（2026-09-02）**：[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已用 `TAP Intelligence Lab` 替代完整 Knowledge Chat 作为当前 Phase 1 验收面。本文保留为后续交互设计；当前实施范围以 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 为准。
 
 ## 1. 产品目标
 
 `TAP Knowledge Chat` 是 RAG 的首个正式用户面，而不是临时 Demo。用户在有权限的 Project 中发起知识问答，观察检索阶段，获得带逐条引用的回答，并能打开不可变 source revision 的原文证据。
 
-Phase 1 不把它扩展为通用 Agent：没有工具执行、多 Agent 规划、Test IR 编辑、Git 写入、测试运行或审批流。后续阶段在同一会话外壳中增加这些能力，但不能改变 Phase 1 已冻结的 Retrieval 与 Citation 契约。
+该 Knowledge Chat 设计不把知识问答扩展为通用 Agent：没有工具执行、多 Agent 规划、Test IR 编辑、Git 写入、测试运行或审批流。后续平台可以在同一 App Shell 中增加其他能力，但不能改变这里的 Retrieval 与 Citation 契约。
 
-Phase 1.5 的 Codex Research（以及受限管理员发起的 Knowledge Enrichment）是显式异步 Agent Job，不是聊天回答背后的隐藏路径。普通 `quick/deep` 问答都由确定性 Retrieval Pipeline 完成；关闭 Codex Runtime 不影响本页面。Test IR/代码生成在 Phase 2 工作台接入。
+当前 RFC-007 定义的 Intelligence Task 是显式、独立的异步对象，不是聊天回答背后的隐藏路径。普通 `quick/deep` 问答仍由确定性 Retrieval Pipeline 完成；关闭 Intelligence Runtime 不影响本页面。Test IR/代码生成在后续测试工作台接入。
 
 ### 1.1 Athena 本地工作区与正式 Knowledge Chat 的边界
 
@@ -35,7 +37,7 @@ Phase 1.5 的 Codex Research（以及受限管理员发起的 Knowledge Enrichme
 - 知识库把上传和运维从 composer 分离，直接显示 `stored → parsing → chunking → embedding → publishing → ready` 六阶段，以及失败重试与删除。
 - 本地 Demo 无身份验证、Trace、Feedback 或当前 ACL 重授权，只允许精确 loopback 使用；正式 Knowledge Chat 仍必须实现 Entra/Project Policy、历史权限收紧与受限诊断。
 
-这一区分是产品边界，不是临时命名差异：Athena 验证“喂资料、限定来源、核验回答”，下面章节继续描述 active Phase 1 的 durable Conversation/SSE/queue/stop/Trace/Feedback/auth 目标。
+这一区分是产品边界，不是临时命名差异：Athena 验证“喂资料、限定来源、核验回答”，下面章节描述后置 Knowledge Plane 的 durable Conversation/SSE/queue/stop/Trace/Feedback/auth 目标。
 
 ## 2. 页面布局
 
@@ -95,7 +97,7 @@ Phase 1.5 的 Codex Research（以及受限管理员发起的 Knowledge Enrichme
 
 ### 3.4 Slash command
 
-Phase 1 支持：
+后置 Knowledge Chat 计划支持：
 
 | 命令 | 行为 |
 | --- | --- |
@@ -262,9 +264,9 @@ stateDiagram-v2
 - Markdown 使用 allowlist sanitizer；代码块作为文本渲染；链接只允许批准的 URL scheme，并经 Citation Resolver 跳转，防止 XSS、伪造链接和路径泄漏。
 - Cookie/session 使用 Secure、HttpOnly、SameSite 与 CSRF 防护；设置严格 CSP，禁止内联脚本和任意外域资源。
 - 每次 Citation、Trace、历史 turn 与 source preview 读取都重新授权并记录审计；防止 citation/trace IDOR。
-- 外部文档内容一律视为不可信数据；不得借 prompt injection 影响 ACL、工具或系统指令。Phase 1 没有工具执行能力。
+- 外部文档内容一律视为不可信数据；不得借 prompt injection 影响 ACL、工具或系统指令。Knowledge Chat 本身没有工具执行能力。
 
-## 9. Phase 1 验收
+## 9. 后置 Knowledge Chat 验收
 
 - 完成 `选择 Project → 新建/恢复会话 → 流式提问 → 查看活动摘要 → 打开精确引用 → 反馈` 的端到端链路。
 - 刷新/断线后可从 SSE cursor 恢复，不能重复生成 turn。
