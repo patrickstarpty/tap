@@ -152,7 +152,12 @@
 }
 
 .tap-chat--idle {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  justify-items: center;
+  gap: 24px;
+  padding: clamp(36px, 7vh, 72px) clamp(24px, 6vw, 84px);
 }
 
 .tap-chat--active {
@@ -160,16 +165,6 @@
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100dvh;
   overflow: hidden;
-}
-
-.tap-chat-start {
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 24px;
-  width: 100%;
-  min-height: 100dvh;
-  padding: clamp(36px, 7vh, 72px) clamp(24px, 6vw, 84px);
 }
 
 .tap-chat-transcript {
@@ -225,7 +220,7 @@
   margin-top: 30px;
 }
 
-.tap-chat-start .tap-quick-prompts {
+.tap-chat--idle > .tap-quick-prompts {
   margin-top: 0;
 }
 
@@ -260,7 +255,7 @@
   padding: 12px 13px 10px;
 }
 
-.tap-chat-start .tap-composer {
+.tap-chat--idle > .tap-composer {
   width: min(760px, 100%);
   margin: 0;
 }
@@ -884,10 +879,6 @@
     border-left: 0;
   }
 
-  .tap-chat {
-    min-height: 760px;
-  }
-
   .tap-plan-table {
     overflow-x: auto;
   }
@@ -961,8 +952,7 @@
     padding: 26px 16px;
   }
 
-  .tap-chat,
-  .tap-chat-start {
+  .tap-chat {
     min-height: calc(100dvh - 68px - env(safe-area-inset-bottom));
   }
 
@@ -970,7 +960,7 @@
     height: calc(100dvh - 68px - env(safe-area-inset-bottom));
   }
 
-  .tap-chat-start {
+  .tap-chat--idle {
     gap: 20px;
     padding: 28px 16px;
   }

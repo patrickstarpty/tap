@@ -494,63 +494,56 @@ function AthenaAssistant({
     <div className="tap-athena-layout">
       <section
         className={`tap-chat ${hasTurns ? "tap-chat--active" : "tap-chat--idle"}`}
-        aria-label="Athena assistant"
+        aria-label={hasTurns ? "Athena assistant" : "Start a conversation"}
       >
         {hasTurns ? (
-          <>
-            <div
-              className="tap-chat-transcript"
-              role="log"
-              aria-label="Conversation"
-              aria-live="polite"
-            >
-              <div className="tap-conversation">
-                {turns.map((turn) => (
-                  <div className="tap-turn" key={turn.id}>
-                    <div className="tap-user-message">{turn.prompt}</div>
-                    <div className="tap-assistant-message">
-                      <span className="tap-assistant-avatar">A</span>
-                      <AssistantResponse
-                        intent={turn.intent}
-                        onImportPlan={onImportPlan}
-                        onOpenAutomation={onOpenAutomation}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {composer}
-          </>
-        ) : (
           <div
-            className="tap-chat-start"
-            role="region"
-            aria-label="Start a conversation"
+            className="tap-chat-transcript"
+            role="log"
+            aria-label="Conversation"
+            aria-live="polite"
           >
-            <div className="tap-chat-welcome">
-              <div className="tap-athena-mark" aria-hidden="true">
-                A
-              </div>
-              <h1>What can I do for you?</h1>
-              <p>
-                Ask a question, create BDD test cases, or build an automation.
-              </p>
-            </div>
-            {composer}
-            <div className="tap-quick-prompts" aria-label="Suggested prompts">
-              {QUICK_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt}
-                  type="button"
-                  onClick={() => submitMessage(prompt)}
-                >
-                  {prompt}
-                </button>
+            <div className="tap-conversation">
+              {turns.map((turn) => (
+                <div className="tap-turn" key={turn.id}>
+                  <div className="tap-user-message">{turn.prompt}</div>
+                  <div className="tap-assistant-message">
+                    <span className="tap-assistant-avatar">A</span>
+                    <AssistantResponse
+                      intent={turn.intent}
+                      onImportPlan={onImportPlan}
+                      onOpenAutomation={onOpenAutomation}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
           </div>
+        ) : (
+          <div className="tap-chat-welcome">
+            <div className="tap-athena-mark" aria-hidden="true">
+              A
+            </div>
+            <h1>What can I do for you?</h1>
+            <p>
+              Ask a question, create BDD test cases, or build an automation.
+            </p>
+          </div>
         )}
+        {composer}
+        {!hasTurns ? (
+          <div className="tap-quick-prompts" aria-label="Suggested prompts">
+            {QUICK_PROMPTS.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => submitMessage(prompt)}
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <KnowledgeSources onManage={() => setKnowledgeOpen(true)} />

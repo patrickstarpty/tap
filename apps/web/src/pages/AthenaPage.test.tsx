@@ -284,7 +284,11 @@ describe("Athena product prototype", () => {
       within(start).getByRole("form", { name: "Message composer" }),
     ).toBeVisible();
 
-    await sendMessage(user, "寿险投保需要什么资料？");
+    const composer = within(start).getByRole("textbox", {
+      name: "Message Athena",
+    });
+    await user.type(composer, "寿险投保需要什么资料？");
+    await user.keyboard("{Enter}");
 
     expect(
       screen.queryByRole("region", { name: "Start a conversation" }),
@@ -293,5 +297,8 @@ describe("Athena product prototype", () => {
     expect(
       screen.getByRole("form", { name: "Message composer" }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+    ).toHaveFocus();
   });
 });
