@@ -449,8 +449,17 @@
   flex: 0 0 auto;
 }
 
-.tap-composer-context-control > .ant-btn {
+.tap-composer-add-button {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  color: inherit;
+  background: transparent;
   border: 1px solid #d9dde5;
+  border-radius: 50%;
+  cursor: pointer;
 }
 
 .tap-composer-menu {
@@ -669,13 +678,8 @@
   font-size: 10px;
 }
 
-.tap-sources > .ant-btn {
-  min-height: 44px;
-  margin-top: auto;
-}
-
 .tap-source-footnote {
-  margin: 13px 2px 0;
+  margin: auto 2px 0;
   color: #5f6a7b;
   font-size: 10px;
   line-height: 1.5;

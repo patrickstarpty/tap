@@ -714,7 +714,6 @@ export function TapProductPrototype() {
             <KnowledgeSourcesPanel
               copy={copy}
               isLoading={documentsQuery.isPending}
-              onManage={() => setActiveModule("library")}
               onToggleSource={(sourceId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,

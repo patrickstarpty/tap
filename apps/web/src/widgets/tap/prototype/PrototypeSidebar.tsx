@@ -73,10 +73,34 @@ export function PrototypeSidebar({
     },
   ];
 
-  const conversationHistory = conversations.filter(
-    (conversation) =>
-      conversation.turns.length > 0 && conversation.id !== activeConversationId,
-  );
+  const conversationHistory = conversations
+    .map((conversation, index) => ({ conversation, index }))
+    .filter(({ conversation }) => {
+      const contextCount =
+        conversation.selectedSourceIds.length +
+        conversation.selectedAgentIds.length +
+        conversation.selectedSkillIds.length;
+
+      return (
+        conversation.id !== activeConversationId &&
+        (conversation.turns.length > 0 || contextCount > 0)
+      );
+    });
+
+  const getConversationLabel = (conversation: Conversation, index: number) => {
+    const contextCount =
+      conversation.selectedSourceIds.length +
+      conversation.selectedAgentIds.length +
+      conversation.selectedSkillIds.length;
+    const title =
+      conversation.turns.length > 0
+        ? conversation.title
+        : copy.navigation.newChat;
+    const contextLabel =
+      contextCount > 0 ? ` · ${contextCount} ${copy.sources.selected}` : "";
+
+    return `${title} · ${copy.chat.conversation} ${index + 1}${contextLabel}`;
+  };
 
   const moduleButton = (module: (typeof modules)[number]) => (
     <button
@@ -141,24 +165,22 @@ export function PrototypeSidebar({
           <span className="tap-sidebar-section-title">
             {copy.navigation.chatHistory}
           </span>
-          {conversationHistory.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              aria-current={
-                activeModule === "athena" &&
-                activeConversationId === conversation.id
-                  ? "page"
-                  : undefined
-              }
-              aria-label={conversation.title}
-              title={conversation.title}
-              onClick={() => onSelectConversation(conversation.id)}
-            >
-              <MessageOutlined aria-hidden="true" />
-              <span>{conversation.title}</span>
-            </button>
-          ))}
+          {conversationHistory.map(({ conversation, index }) => {
+            const label = getConversationLabel(conversation, index);
+
+            return (
+              <button
+                key={conversation.id}
+                type="button"
+                aria-label={label}
+                title={label}
+                onClick={() => onSelectConversation(conversation.id)}
+              >
+                <MessageOutlined aria-hidden="true" />
+                <span>{label}</span>
+              </button>
+            );
+          })}
         </nav>
       ) : null}
 

@@ -64,6 +64,9 @@ describe("Athena product prototype", () => {
     expect(await screen.findByText("life-underwriting-rules.md")).toBeVisible();
     expect(screen.getByText("health-disclosure-guide.pdf")).toBeVisible();
     expect(
+      screen.queryByRole("button", { name: "Manage knowledge" }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.getByRole("button", {
         name: "Create BDD test cases for life insurance underwriting",
       }),

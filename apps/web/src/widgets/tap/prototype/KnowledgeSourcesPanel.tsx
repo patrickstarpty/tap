@@ -1,5 +1,5 @@
 import { BookOutlined } from "@ant-design/icons";
-import { Button, Checkbox, Input, Spin } from "antd";
+import { Checkbox, Input, Spin } from "antd";
 import { useMemo, useState } from "react";
 
 import type { PrototypeCopy } from "./copy";
@@ -8,7 +8,6 @@ import type { LibrarySource } from "./model";
 interface KnowledgeSourcesPanelProps {
   copy: PrototypeCopy;
   isLoading: boolean;
-  onManage: () => void;
   onToggleSource: (sourceId: string) => void;
   selectedSourceIds: readonly string[];
   sources: readonly LibrarySource[];
@@ -17,7 +16,6 @@ interface KnowledgeSourcesPanelProps {
 export function KnowledgeSourcesPanel({
   copy,
   isLoading,
-  onManage,
   onToggleSource,
   selectedSourceIds,
   sources,
@@ -85,14 +83,6 @@ export function KnowledgeSourcesPanel({
         </div>
       )}
 
-      <Button
-        block
-        aria-label={copy.sources.manageKnowledge}
-        icon={<BookOutlined aria-hidden="true" />}
-        onClick={onManage}
-      >
-        {copy.sources.manageKnowledge}
-      </Button>
       <p className="tap-source-footnote">{copy.sources.provenanceHint}</p>
     </aside>
   );

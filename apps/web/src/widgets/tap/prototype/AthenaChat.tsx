@@ -58,6 +58,11 @@ export function AthenaChat({
   const [picker, setPicker] = useState<PickerKind | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
   const composerRef = useRef<TextAreaRef>(null);
+  const addTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const wasMenuOpenRef = useRef(false);
+  const previousPickerRef = useRef<PickerKind | null>(null);
 
   useEffect(() => {
     setMessage("");
@@ -65,6 +70,24 @@ export function AthenaChat({
     setPicker(null);
     setPickerQuery("");
   }, [conversation.id]);
+
+  useEffect(() => {
+    if (menuOpen) {
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+        ?.focus();
+    } else if (wasMenuOpenRef.current && picker === null) {
+      addTriggerRef.current?.focus();
+    }
+    wasMenuOpenRef.current = menuOpen;
+  }, [menuOpen, picker]);
+
+  useEffect(() => {
+    if (picker === null && previousPickerRef.current !== null) {
+      addTriggerRef.current?.focus();
+    }
+    previousPickerRef.current = picker;
+  }, [picker]);
 
   const selectedSources = sources.filter((source) =>
     conversation.selectedSourceIds.includes(source.id),
@@ -85,6 +108,7 @@ export function AthenaChat({
           .filter((source) => source.status === "ready")
           .map((source) => ({ id: source.id, name: source.name })),
         onSelect: onToggleSource,
+        selectedIds: conversation.selectedSourceIds,
       };
     }
     if (picker === "agents") {
@@ -93,6 +117,7 @@ export function AthenaChat({
         search: copy.composer.searchAgents,
         items: agents.map((agent) => ({ id: agent.id, name: agent.name })),
         onSelect: onToggleAgent,
+        selectedIds: conversation.selectedAgentIds,
       };
     }
     if (picker === "skills") {
@@ -101,11 +126,15 @@ export function AthenaChat({
         search: copy.composer.searchSkills,
         items: skills.map((skill) => ({ id: skill.id, name: skill.name })),
         onSelect: onToggleSkill,
+        selectedIds: conversation.selectedSkillIds,
       };
     }
     return null;
   }, [
     agents,
+    conversation.selectedAgentIds,
+    conversation.selectedSkillIds,
+    conversation.selectedSourceIds,
     copy,
     onToggleAgent,
     onToggleSkill,
@@ -159,6 +188,64 @@ export function AthenaChat({
     setPicker(kind);
   };
 
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]',
+      ) ?? [],
+    );
+    const activeIndex = items.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
+    let nextIndex: number | null = null;
+
+    if (event.key === "ArrowDown") {
+      nextIndex = (activeIndex + 1) % items.length;
+    } else if (event.key === "ArrowUp") {
+      nextIndex = (activeIndex - 1 + items.length) % items.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = items.length - 1;
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuOpen(false);
+      return;
+    }
+
+    if (nextIndex !== null && items.length > 0) {
+      event.preventDefault();
+      items[nextIndex]?.focus();
+    }
+  };
+
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setPicker(null);
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusableElements = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements.at(-1);
+
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault();
+      lastElement?.focus();
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault();
+      firstElement?.focus();
+    }
+  };
+
   const composer = (
     <form
       className="tap-composer"
@@ -195,20 +282,24 @@ export function AthenaChat({
 
       <div className="tap-composer-footer">
         <div className="tap-composer-context-control">
-          <Button
-            type="text"
-            shape="circle"
-            htmlType="button"
+          <button
+            ref={addTriggerRef}
+            type="button"
+            className="tap-composer-add-button"
             aria-label={copy.composer.addToMessage}
+            aria-haspopup="menu"
             aria-expanded={menuOpen}
-            icon={<PlusOutlined aria-hidden="true" />}
             onClick={() => setMenuOpen((current) => !current)}
-          />
+          >
+            <PlusOutlined aria-hidden="true" />
+          </button>
           {menuOpen ? (
             <div
+              ref={menuRef}
               className="tap-composer-menu"
               role="menu"
               aria-label={copy.composer.addToMessage}
+              onKeyDown={handleMenuKeyDown}
             >
               <button
                 type="button"
@@ -308,10 +399,12 @@ export function AthenaChat({
       {pickerConfig === null ? null : (
         <div className="tap-picker-backdrop">
           <section
+            ref={dialogRef}
             className="tap-context-picker"
             role="dialog"
             aria-modal="true"
             aria-label={pickerConfig.title}
+            onKeyDown={handleDialogKeyDown}
           >
             <header>
               <h2>{pickerConfig.title}</h2>
@@ -338,7 +431,7 @@ export function AthenaChat({
                     type="button"
                     role="option"
                     aria-label={item.name}
-                    aria-selected={false}
+                    aria-selected={pickerConfig.selectedIds.includes(item.id)}
                     onClick={() => {
                       pickerConfig.onSelect(item.id);
                       setPicker(null);

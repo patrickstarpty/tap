@@ -107,9 +107,77 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
 
     const history = screen.getByRole("navigation", { name: "Chat history" });
-    await user.click(within(history).getByRole("button", { name: message }));
+    await user.click(
+      within(history).getByRole("button", {
+        name: `${message} · Conversation 1`,
+      }),
+    );
     expect(screen.getByRole("log", { name: "Conversation" })).toBeVisible();
     expect(screen.getByText(message)).toBeVisible();
+  });
+
+  it("restores source, Agent, and Skill context from a context-only session", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const addContext = async (
+      menuItem: string,
+      dialogName: string,
+      optionName: string,
+    ) => {
+      await user.click(screen.getByRole("button", { name: "Add to message" }));
+      await user.click(
+        within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+          "menuitem",
+          { name: menuItem },
+        ),
+      );
+      const picker = screen.getByRole("dialog", { name: dialogName });
+      await user.click(
+        await within(picker).findByRole("option", { name: optionName }),
+      );
+    };
+
+    await addContext(
+      "Add from Library",
+      "Add from Library",
+      "life-underwriting-rules.md",
+    );
+    await addContext("Use Agents", "Use Agents", "Life Underwriting Analyst");
+    await addContext("Use Skills", "Use Skills", "BDD Scenario Design");
+
+    await user.click(screen.getByRole("button", { name: "New Chat" }));
+
+    const emptyComposer = screen.getByRole("form", {
+      name: "Message composer",
+    });
+    expect(
+      within(emptyComposer).queryByText("life-underwriting-rules.md"),
+    ).toBeNull();
+    expect(
+      within(emptyComposer).queryByText("Life Underwriting Analyst"),
+    ).toBeNull();
+    expect(within(emptyComposer).queryByText("BDD Scenario Design")).toBeNull();
+
+    const history = screen.getByRole("navigation", { name: "Chat history" });
+    await user.click(
+      within(history).getByRole("button", {
+        name: "New Chat · Conversation 1 · 3 selected",
+      }),
+    );
+
+    const restoredComposer = screen.getByRole("form", {
+      name: "Message composer",
+    });
+    expect(
+      within(restoredComposer).getByText("life-underwriting-rules.md"),
+    ).toBeVisible();
+    expect(
+      within(restoredComposer).getByText("Life Underwriting Analyst"),
+    ).toBeVisible();
+    expect(
+      within(restoredComposer).getByText("BDD Scenario Design"),
+    ).toBeVisible();
   });
 
   it("filters the Knowledge sources panel by source name", async () => {
@@ -227,6 +295,99 @@ describe("Tap product prototype interactions", () => {
         "BDD Scenario Design",
       ),
     ).toBeVisible();
+  });
+
+  it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const trigger = screen.getByRole("button", { name: "Add to message" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+
+    const menu = screen.getByRole("menu", { name: "Add to message" });
+    const libraryItem = within(menu).getByRole("menuitem", {
+      name: "Add from Library",
+    });
+    const agentItem = within(menu).getByRole("menuitem", {
+      name: "Use Agents",
+    });
+    const skillItem = within(menu).getByRole("menuitem", {
+      name: "Use Skills",
+    });
+    expect(libraryItem).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
+    expect(agentItem).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(skillItem).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(libraryItem).toHaveFocus();
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menu", { name: "Add to message" })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("contains dialog focus and restores it to the add trigger on Escape", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const trigger = screen.getByRole("button", { name: "Add to message" });
+    await user.click(trigger);
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    const picker = screen.getByRole("dialog", { name: "Use Agents" });
+    const search = within(picker).getByRole("textbox", {
+      name: "Search agents",
+    });
+    const close = within(picker).getByRole("button", {
+      name: "Close Use Agents",
+    });
+    const lastOption = within(picker).getByRole("option", {
+      name: "Application Completeness Reviewer",
+    });
+    expect(search).toHaveFocus();
+
+    await user.tab({ shift: true });
+    expect(close).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(lastOption).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Use Agents" })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("reports selected composer context through option aria-selected", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const trigger = screen.getByRole("button", { name: "Add to message" });
+    await user.click(trigger);
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Life Underwriting Analyst" }),
+    );
+
+    await user.click(trigger);
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("option", { name: "Life Underwriting Analyst" }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
