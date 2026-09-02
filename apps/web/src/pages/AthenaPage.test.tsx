@@ -39,10 +39,9 @@ async function sendMessage(
 
 describe("Athena product prototype", () => {
   it("uses the integrated Athena navigation and keeps sources inside Athena", async () => {
-    const user = userEvent.setup();
     renderPrototype();
 
-    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    const navigation = screen.getByRole("navigation", { name: "Product" });
     expect(
       within(navigation)
         .getAllByRole("button")
@@ -73,7 +72,6 @@ describe("Athena product prototype", () => {
     expect(
       screen.queryByRole("heading", { name: "问答" }),
     ).not.toBeInTheDocument();
-
   });
 
   it("creates BDD in chat and imports it as a Test Plan", async () => {

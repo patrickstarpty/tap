@@ -1,30 +1,37 @@
 import {
-  BookOutlined,
   CheckCircleFilled,
   CodeOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   FileTextOutlined,
-  MessageOutlined,
   PlusOutlined,
-  SendOutlined,
 } from "@ant-design/icons";
-import { Button, Checkbox, Drawer, Input, Select, Spin } from "antd";
+import { Button, Input, Select } from "antd";
 import {
-  useEffect,
   useMemo,
   useRef,
   useState,
-  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
 import { useDocumentListQuery } from "../../features/knowledge/api/queries";
-import { KnowledgeLibrary } from "../../features/knowledge/components/KnowledgeLibrary";
+import { AthenaChat } from "./prototype/AthenaChat";
+import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
+import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
+import {
+  appendTurn,
+  createConversation,
+  detectIntent,
+  type AssistantIntent,
+  type CatalogItem,
+  type Conversation,
+  type LibrarySource,
+  type Locale,
+  type ProductModule,
+} from "./prototype/model";
+import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
 import "./TapProductPrototype.css";
 
-type ProductModule = "athena" | "test-management" | "low-code";
-type AssistantIntent = "answer" | "test-plan" | "automation";
 type TestManagementSection = "plans" | "data";
 
 interface TestPlan {
@@ -40,30 +47,6 @@ interface AutomationStep {
   target: string;
   value: string;
 }
-
-interface AssistantTurn {
-  id: number;
-  intent: AssistantIntent;
-  prompt: string;
-}
-
-const MODULES: readonly {
-  icon: typeof MessageOutlined;
-  key: ProductModule;
-  label: string;
-}[] = [
-  { key: "athena", label: "Athena", icon: MessageOutlined },
-  {
-    key: "test-management",
-    label: "Test Management",
-    icon: FileTextOutlined,
-  },
-  {
-    key: "low-code",
-    label: "Low Code Automation",
-    icon: CodeOutlined,
-  },
-];
 
 const INITIAL_PLANS: readonly TestPlan[] = [
   {
@@ -126,191 +109,11 @@ const INITIAL_AUTOMATION_STEPS: readonly AutomationStep[] = [
   },
 ];
 
-const QUICK_PROMPTS = [
-  "Summarize the life insurance underwriting rules",
-  "Create BDD test cases for life insurance underwriting",
-  "Generate an automation script for a life insurance application",
-] as const;
-
-function detectIntent(prompt: string): AssistantIntent {
-  const normalized = prompt.toLowerCase();
-  const requestsCreation = [
-    "生成",
-    "创建",
-    "编写",
-    "设计",
-    "构建",
-    "产出",
-    "generate",
-    "create",
-    "draft",
-    "write",
-    "design",
-    "build",
-    "produce",
-    "automate",
-  ].some((cue) => normalized.includes(cue));
-  if (
-    requestsCreation &&
-    [
-      "自动化",
-      "脚本",
-      "automation",
-      "automate",
-      "script",
-      "playwright",
-      "workflow",
-    ].some((target) => normalized.includes(target))
-  ) {
-    return "automation";
-  }
-  if (
-    requestsCreation &&
-    [
-      "测试用例",
-      "测试计划",
-      "测试场景",
-      "bdd",
-      "test case",
-      "test plan",
-      "test scenario",
-    ].some((target) => normalized.includes(target))
-  ) {
-    return "test-plan";
-  }
-  return "answer";
-}
-
-function PrimaryNavigation({
-  active,
-  onChange,
-}: {
-  active: ProductModule;
-  onChange: (module: ProductModule) => void;
-}) {
-  return (
-    <aside className="tap-sidebar">
-      <div className="tap-brand" aria-label="TAP">
-        <span>T</span>
-        <strong>TAP</strong>
-      </div>
-      <nav aria-label="Primary" className="tap-primary-navigation">
-        {MODULES.map((module) => {
-          const Icon = module.icon;
-          return (
-            <button
-              key={module.key}
-              type="button"
-              className="tap-navigation-item"
-              aria-label={module.label}
-              aria-current={active === module.key ? "page" : undefined}
-              onClick={() => onChange(module.key)}
-            >
-              <Icon aria-hidden="true" />
-              <span>{module.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-      <div className="tap-sidebar-footer">
-        <span className="tap-avatar">PT</span>
-        <span>
-          <strong>Prototype team</strong>
-          <small>Local workspace</small>
-        </span>
-      </div>
-    </aside>
-  );
-}
-
-function KnowledgeSources({ onManage }: { onManage: () => void }) {
-  const documentsQuery = useDocumentListQuery();
-  const documents = documentsQuery.data?.items ?? [];
-  const readyDocuments = documents.filter(
-    (document) => document.status === "ready",
-  );
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const initializedRef = useRef(false);
-
-  useEffect(() => {
-    if (initializedRef.current || readyDocuments.length === 0) return;
-    initializedRef.current = true;
-    setSelectedIds(
-      new Set(readyDocuments.map((document) => document.documentId)),
-    );
-  }, [readyDocuments]);
-
-  const toggle = (documentId: string) => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(documentId)) next.delete(documentId);
-      else next.add(documentId);
-      return next;
-    });
-  };
-
-  return (
-    <aside className="tap-sources" aria-labelledby="tap-sources-heading">
-      <header>
-        <div>
-          <h2 id="tap-sources-heading">Knowledge sources</h2>
-          <p>Choose what Athena can use.</p>
-        </div>
-        <span className="tap-source-count">{selectedIds.size} selected</span>
-      </header>
-
-      {documentsQuery.isPending ? (
-        <div
-          className="tap-sources-loading"
-          aria-label="Loading knowledge sources"
-        >
-          <Spin size="small" />
-          <span>Loading sources</span>
-        </div>
-      ) : readyDocuments.length === 0 ? (
-        <div className="tap-sources-empty">
-          <BookOutlined aria-hidden="true" />
-          <span>No ready sources</span>
-        </div>
-      ) : (
-        <div className="tap-source-list">
-          {readyDocuments.map((document) => (
-            <Checkbox
-              key={document.documentId}
-              checked={selectedIds.has(document.documentId)}
-              onChange={() => toggle(document.documentId)}
-            >
-              <span className="tap-source-name">
-                <strong>{document.filename}</strong>
-                <small>Ready · immutable revision</small>
-              </span>
-            </Checkbox>
-          ))}
-        </div>
-      )}
-
-      <Button
-        block
-        aria-label="Manage knowledge"
-        icon={<BookOutlined aria-hidden="true" />}
-        onClick={onManage}
-      >
-        Manage knowledge
-      </Button>
-      <p className="tap-source-footnote">
-        Answers and generated assets show which selected sources they used.
-      </p>
-    </aside>
-  );
-}
-
-function BddPreview() {
+function BddPreview({ copy }: { copy: PrototypeCopy }) {
   return (
     <pre className="tap-bdd-preview">
       <code>
-        <span>Feature: Life insurance application underwriting</span>
+        <span>{copy.artifacts.feature}</span>
         {"\n\n"}
         <span> Scenario: Complete application enters underwriting</span>
         {"\n"}
@@ -339,10 +142,12 @@ function BddPreview() {
 }
 
 function AssistantResponse({
+  copy,
   intent,
   onImportPlan,
   onOpenAutomation,
 }: {
+  copy: PrototypeCopy;
   intent: AssistantIntent;
   onImportPlan: () => void;
   onOpenAutomation: () => void;
@@ -371,14 +176,14 @@ function AssistantResponse({
             <FileTextOutlined aria-hidden="true" />
           </span>
           <div>
-            <strong>BDD test plan ready</strong>
-            <span>3 scenarios · Draft</span>
+            <strong>{copy.artifacts.bddPlanReady}</strong>
+            <span>{copy.artifacts.scenariosDraft}</span>
           </div>
         </div>
-        <BddPreview />
+        <BddPreview copy={copy} />
         <div className="tap-artifact-actions">
           <Button type="primary" onClick={onImportPlan}>
-            Import to Test Plan
+            {copy.testManagement.importToTestPlan}
           </Button>
         </div>
       </article>
@@ -395,11 +200,11 @@ function AssistantResponse({
           <CodeOutlined aria-hidden="true" />
         </span>
         <div>
-          <strong>Automation draft ready</strong>
-          <span>BDD scenario + 6 automation steps</span>
+          <strong>{copy.artifacts.automationReady}</strong>
+          <span>{copy.artifacts.automationSummary}</span>
         </div>
       </div>
-      <BddPreview />
+      <BddPreview copy={copy} />
       <div className="tap-automation-summary">
         <span>Navigate</span>
         <span>Click</span>
@@ -407,157 +212,14 @@ function AssistantResponse({
         <span>Assert</span>
       </div>
       <div className="tap-artifact-actions">
-        <Button onClick={onImportPlan}>Import BDD as Test Plan</Button>
+        <Button onClick={onImportPlan}>
+          {copy.testManagement.importBddAsTestPlan}
+        </Button>
         <Button type="primary" onClick={onOpenAutomation}>
-          Open in Low Code Automation
+          {copy.lowCode.openInLowCode}
         </Button>
       </div>
     </article>
-  );
-}
-
-function AthenaAssistant({
-  onImportPlan,
-  onOpenAutomation,
-}: {
-  onImportPlan: () => void;
-  onOpenAutomation: () => void;
-}) {
-  const [message, setMessage] = useState("");
-  const [turns, setTurns] = useState<readonly AssistantTurn[]>([]);
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-  const nextTurnId = useRef(1);
-
-  const submitMessage = (value: string) => {
-    const prompt = value.trim();
-    if (prompt.length === 0) return;
-    setTurns((current) => [
-      ...current,
-      { id: nextTurnId.current++, prompt, intent: detectIntent(prompt) },
-    ]);
-    setMessage("");
-  };
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    submitMessage(message);
-  };
-
-  const handleComposerKeyDown = (
-    event: ReactKeyboardEvent<HTMLTextAreaElement>,
-  ) => {
-    if (
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.nativeEvent.isComposing ||
-      event.nativeEvent.keyCode === 229
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  };
-
-  const hasTurns = turns.length > 0;
-  const composer = (
-    <form
-      className="tap-composer"
-      aria-label="Message composer"
-      onSubmit={submit}
-    >
-      <label className="athena-visually-hidden" htmlFor="tap-message">
-        Message Athena
-      </label>
-      <Input.TextArea
-        id="tap-message"
-        value={message}
-        rows={3}
-        placeholder="Ask Athena anything..."
-        onChange={(event) => setMessage(event.target.value)}
-        onKeyDown={handleComposerKeyDown}
-      />
-      <div className="tap-composer-footer">
-        <span>Answers use your selected sources when available.</span>
-        <Button
-          type="primary"
-          shape="circle"
-          htmlType="submit"
-          aria-label="Send"
-          disabled={message.trim().length === 0}
-          icon={<SendOutlined aria-hidden="true" />}
-        />
-      </div>
-    </form>
-  );
-
-  return (
-    <div className="tap-athena-layout">
-      <section
-        className={`tap-chat ${hasTurns ? "tap-chat--active" : "tap-chat--idle"}`}
-        aria-label={hasTurns ? "Athena assistant" : "Start a conversation"}
-      >
-        {hasTurns ? (
-          <div
-            className="tap-chat-transcript"
-            role="log"
-            aria-label="Conversation"
-            aria-live="polite"
-          >
-            <div className="tap-conversation">
-              {turns.map((turn) => (
-                <div className="tap-turn" key={turn.id}>
-                  <div className="tap-user-message">{turn.prompt}</div>
-                  <div className="tap-assistant-message">
-                    <span className="tap-assistant-avatar">A</span>
-                    <AssistantResponse
-                      intent={turn.intent}
-                      onImportPlan={onImportPlan}
-                      onOpenAutomation={onOpenAutomation}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="tap-chat-welcome">
-            <div className="tap-athena-mark" aria-hidden="true">
-              A
-            </div>
-            <h1>What can I do for you?</h1>
-            <p>
-              Ask a question, create BDD test cases, or build an automation.
-            </p>
-          </div>
-        )}
-        {composer}
-        {!hasTurns ? (
-          <div className="tap-quick-prompts" aria-label="Suggested prompts">
-            {QUICK_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                onClick={() => submitMessage(prompt)}
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <KnowledgeSources onManage={() => setKnowledgeOpen(true)} />
-
-      <Drawer
-        title="Knowledge Library"
-        size="large"
-        open={knowledgeOpen}
-        destroyOnHidden={false}
-        onClose={() => setKnowledgeOpen(false)}
-      >
-        <KnowledgeLibrary />
-      </Drawer>
-    </div>
   );
 }
 
@@ -859,12 +521,123 @@ function LowCodeAutomation({
   );
 }
 
+export const BUILT_IN_AGENTS: readonly CatalogItem[] = [
+  {
+    id: "life-underwriting-analyst",
+    kind: "agent",
+    name: "Life Underwriting Analyst",
+    description:
+      "Reviews life policy evidence and explains underwriting decisions.",
+  },
+  {
+    id: "application-completeness-reviewer",
+    kind: "agent",
+    name: "Application Completeness Reviewer",
+    description: "Checks life policy applications for missing information.",
+  },
+];
+
+export const BUILT_IN_SKILLS: readonly CatalogItem[] = [
+  {
+    id: "bdd-scenario-design",
+    kind: "skill",
+    name: "BDD Scenario Design",
+    description: "Turns underwriting rules into focused BDD scenarios.",
+  },
+  {
+    id: "underwriting-evidence-review",
+    kind: "skill",
+    name: "Underwriting Evidence Review",
+    description: "Finds and summarizes evidence for underwriting decisions.",
+  },
+];
+
+function toggleSelection(values: readonly string[], id: string): string[] {
+  return values.includes(id)
+    ? values.filter((value) => value !== id)
+    : [...values, id];
+}
+
+function WorkspacePlaceholder({ heading }: { heading: string }) {
+  return (
+    <section className="tap-module tap-workspace-placeholder">
+      <h1>{heading}</h1>
+      <p>This workspace will be available in the next prototype step.</p>
+    </section>
+  );
+}
+
 export function TapProductPrototype() {
+  const documentsQuery = useDocumentListQuery();
+  const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>("athena");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [conversations, setConversations] = useState<readonly Conversation[]>(
+    () => [createConversation("chat-1")],
+  );
+  const [activeConversationId, setActiveConversationId] = useState("chat-1");
   const [plans, setPlans] = useState<readonly TestPlan[]>(INITIAL_PLANS);
   const [automationSteps, setAutomationSteps] = useState<
     readonly AutomationStep[]
   >(INITIAL_AUTOMATION_STEPS);
+  const nextConversationId = useRef(2);
+  const nextTurnId = useRef(1);
+
+  const copy = PROTOTYPE_COPY[locale];
+  const sources = useMemo<readonly LibrarySource[]>(
+    () =>
+      (documentsQuery.data?.items ?? []).map((document) => ({
+        id: document.documentId,
+        name: document.filename,
+        type: document.filename.split(".").pop()?.toUpperCase() ?? "FILE",
+        status:
+          document.status === "ready"
+            ? "ready"
+            : document.status === "failed"
+              ? "failed"
+              : "processing",
+        description: `Knowledge source · ${document.stage}`,
+      })),
+    [documentsQuery.data?.items],
+  );
+  const activeConversation =
+    conversations.find(
+      (conversation) => conversation.id === activeConversationId,
+    ) ?? conversations[0]!;
+
+  const updateActiveConversation = (
+    update: (conversation: Conversation) => Conversation,
+  ) => {
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === activeConversationId
+          ? update(conversation)
+          : conversation,
+      ),
+    );
+  };
+
+  const createNewChat = () => {
+    const id = `chat-${nextConversationId.current++}`;
+    setConversations((current) => [...current, createConversation(id)]);
+    setActiveConversationId(id);
+    setActiveModule("athena");
+  };
+
+  const selectConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    setActiveModule("athena");
+  };
+
+  const sendMessage = (prompt: string) => {
+    updateActiveConversation((conversation) =>
+      appendTurn(conversation, {
+        id: `turn-${nextTurnId.current++}`,
+        intent: detectIntent(prompt),
+        prompt,
+      }),
+    );
+  };
 
   const importPlan = () => {
     setPlans((current) =>
@@ -876,15 +649,95 @@ export function TapProductPrototype() {
   };
 
   return (
-    <div className="tap-product-shell">
-      <PrimaryNavigation active={activeModule} onChange={setActiveModule} />
+    <div
+      className={`tap-product-shell${sidebarCollapsed ? " tap-product-shell--collapsed" : ""}`}
+    >
+      <PrototypeSidebar
+        activeConversationId={activeConversationId}
+        activeModule={activeModule}
+        collapsed={sidebarCollapsed}
+        conversations={conversations}
+        copy={copy}
+        locale={locale}
+        onLocaleChange={setLocale}
+        onModuleChange={setActiveModule}
+        onNewChat={createNewChat}
+        onSelectConversation={selectConversation}
+        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+      />
       <main className="tap-product-main">
         <div hidden={activeModule !== "athena"}>
-          <AthenaAssistant
-            onImportPlan={importPlan}
-            onOpenAutomation={() => setActiveModule("low-code")}
-          />
+          <div className="tap-athena-layout">
+            <AthenaChat
+              agents={BUILT_IN_AGENTS}
+              conversation={activeConversation}
+              copy={copy}
+              onSend={sendMessage}
+              onToggleAgent={(agentId) =>
+                updateActiveConversation((conversation) => ({
+                  ...conversation,
+                  selectedAgentIds: toggleSelection(
+                    conversation.selectedAgentIds,
+                    agentId,
+                  ),
+                }))
+              }
+              onToggleSkill={(skillId) =>
+                updateActiveConversation((conversation) => ({
+                  ...conversation,
+                  selectedSkillIds: toggleSelection(
+                    conversation.selectedSkillIds,
+                    skillId,
+                  ),
+                }))
+              }
+              onToggleSource={(sourceId) =>
+                updateActiveConversation((conversation) => ({
+                  ...conversation,
+                  selectedSourceIds: toggleSelection(
+                    conversation.selectedSourceIds,
+                    sourceId,
+                  ),
+                }))
+              }
+              renderAssistantTurn={(turn) => (
+                <AssistantResponse
+                  copy={copy}
+                  intent={turn.intent}
+                  onImportPlan={importPlan}
+                  onOpenAutomation={() => setActiveModule("low-code")}
+                />
+              )}
+              skills={BUILT_IN_SKILLS}
+              sources={sources}
+            />
+            <KnowledgeSourcesPanel
+              copy={copy}
+              isLoading={documentsQuery.isPending}
+              onManage={() => setActiveModule("library")}
+              onToggleSource={(sourceId) =>
+                updateActiveConversation((conversation) => ({
+                  ...conversation,
+                  selectedSourceIds: toggleSelection(
+                    conversation.selectedSourceIds,
+                    sourceId,
+                  ),
+                }))
+              }
+              selectedSourceIds={activeConversation.selectedSourceIds}
+              sources={sources}
+            />
+          </div>
         </div>
+        {activeModule === "agents" ? (
+          <WorkspacePlaceholder heading={copy.catalog.agents} />
+        ) : null}
+        {activeModule === "skills" ? (
+          <WorkspacePlaceholder heading={copy.catalog.skills} />
+        ) : null}
+        {activeModule === "library" ? (
+          <WorkspacePlaceholder heading={copy.library.heading} />
+        ) : null}
         {activeModule === "test-management" ? (
           <TestManagement plans={plans} />
         ) : null}

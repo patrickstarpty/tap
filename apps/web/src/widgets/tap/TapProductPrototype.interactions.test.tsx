@@ -124,7 +124,9 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
 
     await user.type(
-      within(sources).getByRole("textbox", { name: "Search knowledge sources" }),
+      within(sources).getByRole("textbox", {
+        name: "Search knowledge sources",
+      }),
       "disclosure",
     );
 
@@ -142,9 +144,15 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Add to message" }));
     const menu = screen.getByRole("menu", { name: "Add to message" });
-    expect(within(menu).getByRole("menuitem", { name: "Add from Library" })).toBeVisible();
-    expect(within(menu).getByRole("menuitem", { name: "Use Agents" })).toBeVisible();
-    expect(within(menu).getByRole("menuitem", { name: "Use Skills" })).toBeVisible();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Add from Library" }),
+    ).toBeVisible();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Use Agents" }),
+    ).toBeVisible();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Use Skills" }),
+    ).toBeVisible();
 
     await user.click(
       within(menu).getByRole("menuitem", { name: "Add from Library" }),
@@ -163,6 +171,60 @@ describe("Tap product prototype interactions", () => {
     expect(
       within(screen.getByRole("form", { name: "Message composer" })).getByText(
         "health-disclosure-guide.pdf",
+      ),
+    ).toBeVisible();
+  });
+
+  it("adds a searchable Agent to the active conversation context", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    const menu = screen.getByRole("menu", { name: "Add to message" });
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Use Agents" }),
+    );
+
+    const picker = screen.getByRole("dialog", { name: "Use Agents" });
+    await user.type(
+      within(picker).getByRole("textbox", { name: "Search agents" }),
+      "underwriting",
+    );
+    await user.click(
+      within(picker).getByRole("option", {
+        name: "Life Underwriting Analyst",
+      }),
+    );
+
+    expect(
+      within(screen.getByRole("form", { name: "Message composer" })).getByText(
+        "Life Underwriting Analyst",
+      ),
+    ).toBeVisible();
+  });
+
+  it("adds a searchable Skill to the active conversation context", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    const menu = screen.getByRole("menu", { name: "Add to message" });
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Use Skills" }),
+    );
+
+    const picker = screen.getByRole("dialog", { name: "Use Skills" });
+    await user.type(
+      within(picker).getByRole("textbox", { name: "Search skills" }),
+      "scenario",
+    );
+    await user.click(
+      within(picker).getByRole("option", { name: "BDD Scenario Design" }),
+    );
+
+    expect(
+      within(screen.getByRole("form", { name: "Message composer" })).getByText(
+        "BDD Scenario Design",
       ),
     ).toBeVisible();
   });
