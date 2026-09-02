@@ -26,7 +26,7 @@ from tap.modules.knowledge.ports.models import (
 
 _CANONICAL_COST = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,18})?\Z")
 _ATHENA_EMBEDDING_ALIAS = "athena-embedding"
-_MAX_EMBEDDING_BATCH = 32
+_MAX_EMBEDDING_BATCH = 10
 _MAX_EMBEDDING_REQUEST_BYTES = 262_144
 _EMBEDDING_REQUIRED_FIELDS = frozenset({"object", "model", "data", "usage"})
 _EMBEDDING_OPTIONAL_FIELDS = frozenset({"id"})
@@ -198,6 +198,7 @@ class LiteLLMAdapter:
                         "model": self._config.embedding_model_id,
                         "input": query,
                         "dimensions": self._config.embedding_dimension,
+                        "encoding_format": "float",
                     },
                     deadline_at=deadline_at,
                     expected_model_id=self._config.embedding_model_id,
@@ -235,6 +236,7 @@ class LiteLLMAdapter:
                         "model": _ATHENA_EMBEDDING_ALIAS,
                         "input": list(texts),
                         "dimensions": self._config.embedding_dimension,
+                        "encoding_format": "float",
                     },
                     deadline_at=deadline_at,
                     expected_model_id=self._config.embedding_model_id,
@@ -305,6 +307,7 @@ class LiteLLMAdapter:
                         "model": _ATHENA_EMBEDDING_ALIAS,
                         "input": list(texts),
                         "dimensions": self._config.embedding_dimension,
+                        "encoding_format": "float",
                     },
                     ensure_ascii=False,
                     allow_nan=False,

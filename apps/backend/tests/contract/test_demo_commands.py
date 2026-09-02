@@ -22,6 +22,8 @@ E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173)
 _RECORDED_ENVIRONMENT_NAMES = (
     "ATHENA_API_HOST",
     "AZURE_STORAGE_CONNECTION_STRING",
+    "BAILIAN_API_BASE",
+    "BAILIAN_API_KEY",
     "CODEX_API_BASE",
     "CODEX_API_KEY",
     "CODEX_HOME",
@@ -97,6 +99,27 @@ def _write_stub(directory: Path, name: str) -> None:
     path.write_text(
         """#!/bin/sh
 set -eu
+if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
+  case "${0##*/}" in
+    docker)
+      [ -n "${DASHSCOPE_API_KEY:-}" ] || exit 71
+      [ -z "${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}${LITELLM_EMBEDDING_API_KEY:-}" ] || exit 72
+      ;;
+    uv)
+      [ -z "${DASHSCOPE_API_KEY:-}${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}" ] || exit 73
+      [ -z "${LITELLM_EMBEDDING_API_KEY:-}" ] || exit 73
+      ;;
+  esac
+fi
+if [ "${ATHENA_ASSERT_CHECK_PROVIDER_SCOPE:-}" = 1 ]; then
+  case "${0##*/}" in
+    uv)
+      [ -n "${DASHSCOPE_API_KEY:-}" ] || exit 74
+      [ -z "${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}${BAILIAN_API_BASE:-}" ] || exit 75
+      [ -z "${LITELLM_EMBEDDING_API_KEY:-}${LITELLM_EMBEDDING_API_BASE:-}" ] || exit 76
+      ;;
+  esac
+fi
 {
   printf '%s\\0' "${0##*/}"
   for argument in "$@"; do printf '%s\\0' "$argument"; done
@@ -206,6 +229,10 @@ def _supervisor_fixture(
     temp_directory.mkdir()
     child = """#!/bin/sh
 set -eu
+if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
+  [ -z "${DASHSCOPE_API_KEY:-}${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}" ] || exit 103
+  [ -z "${LITELLM_EMBEDDING_API_KEY:-}${LITELLM_EMBEDDING_API_BASE:-}" ] || exit 104
+fi
 role="$1"
 printf 'start %s %s\n' "$role" "$$" >> "$ATHENA_CHILD_LOG"
 environment_names="$(athena-env-names)"
@@ -228,6 +255,10 @@ while :; do sleep 0.1; done
     uv.write_text(
         """#!/bin/sh
 set -eu
+if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
+  [ -z "${DASHSCOPE_API_KEY:-}${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}" ] || exit 103
+  [ -z "${LITELLM_EMBEDDING_API_KEY:-}${LITELLM_EMBEDDING_API_BASE:-}" ] || exit 104
+fi
 case " $* " in
   *" python -c "*)
     environment_names="$(athena-env-names)"
@@ -382,11 +413,13 @@ MILVUS_URI=http://127.0.0.1:19530
 DOCKER_HOST=tcp://provider-secret.invalid:2375
 AZURE_STORAGE_CONNECTION_STRING=provider-secret
 OPENAI_API_KEY=provider-secret
+BAILIAN_API_KEY=provider-secret
+BAILIAN_API_BASE=https://provider-secret.invalid/bailian
 DASHSCOPE_API_KEY=provider-secret
 LITELLM_ATHENA_EMBEDDING_MODEL=provider-secret-route
 LITELLM_EMBEDDING_MODEL=provider-secret-model
 LITELLM_EMBEDDING_API_KEY=provider-secret
-LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/embedding
+LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/v1
 CODEX_HOME=/provider-secret/codex-home
 CODEX_API_KEY=provider-secret
 OPENAI_BASE_URL=https://provider-secret.invalid/openai
@@ -454,12 +487,13 @@ case " $* " in
     environment_names="$(athena-env-names)"
     printf 'env|settings|%s\n' "$environment_names" >> "$ATHENA_E2E_STUB_LOG"
     [ "$TAP_DEMO_MODE:$ATHENA_MODEL_BACKEND:$ATHENA_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    [ "$LITELLM_MODEL" = dashscope/e2e-chat-unused ] || exit 72
     [ "$LITELLM_ATHENA_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
     [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
-    [ "$OPENAI_API_KEY" = tap-e2e-unused ] || exit 74
     [ "$DASHSCOPE_API_KEY" = tap-e2e-unused ] || exit 75
-    [ "$LITELLM_EMBEDDING_API_KEY" = tap-e2e-unused ] || exit 76
-    [ "$LITELLM_EMBEDDING_API_BASE" = http://127.0.0.1:14000 ] || exit 77
+    [ "$DASHSCOPE_API_BASE" = http://127.0.0.1:14000 ] || exit 76
+    [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 77
+    [ -z "${LITELLM_EMBEDDING_API_KEY+x}${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 78
     [ -z "${CODEX_HOME+x}${CODEX_API_KEY+x}" ] || exit 78
     ;;
   *" python - "*)
@@ -507,6 +541,9 @@ case " $* " in
     [ "$TAP_DATABASE_URL" = "$expected_database" ] || exit 85
     [ "$TAP_REDIS_URL" = 'redis://127.0.0.1:16379/0' ] || exit 86
     [ "$MILVUS_URI" = 'http://127.0.0.1:29530' ] || exit 87
+    [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 89
+    [ -z "${LITELLM_EMBEDDING_API_KEY+x}" ] || exit 90
+    [ -z "${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 94
     case "$AZURE_STORAGE_CONNECTION_STRING" in
       *'BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;'*) ;;
       *) exit 88 ;;
@@ -897,6 +934,44 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
     ]
 
 
+def test_demo_up_scopes_provider_secrets_to_the_gateway_process(
+    tmp_path: Path,
+) -> None:
+    completed, _calls = _run_make_with_stubs(
+        tmp_path,
+        "demo-up",
+        extra_env={
+            "ATHENA_ASSERT_PROVIDER_SCOPE": "1",
+            "DASHSCOPE_API_KEY": "current-provider-secret",
+            "OPENAI_API_KEY": "legacy-openai-secret",
+            "BAILIAN_API_KEY": "legacy-bailian-secret",
+            "LITELLM_EMBEDDING_API_KEY": "direct-research-secret",
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_demo_check_keeps_only_the_current_gateway_provider_secret(
+    tmp_path: Path,
+) -> None:
+    completed, _calls = _run_make_with_stubs(
+        tmp_path,
+        "demo-check",
+        extra_env={
+            "ATHENA_ASSERT_CHECK_PROVIDER_SCOPE": "1",
+            "DASHSCOPE_API_KEY": "current-provider-secret",
+            "OPENAI_API_KEY": "legacy-openai-secret",
+            "BAILIAN_API_KEY": "legacy-bailian-secret",
+            "BAILIAN_API_BASE": "https://legacy-provider-secret.invalid/v1",
+            "LITELLM_EMBEDDING_API_KEY": "direct-research-secret",
+            "LITELLM_EMBEDDING_API_BASE": "https://research-secret.invalid/v1",
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_compose_file_boundary_ignores_command_line_curdir_override(tmp_path: Path) -> None:
     completed, calls = _run_make_with_stubs(
         tmp_path,
@@ -972,7 +1047,7 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
     settings = AthenaSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
 
@@ -1140,7 +1215,7 @@ def test_athena_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1178,7 +1253,7 @@ def test_athena_ensure_cli_reports_configuration_failure_before_any_resource_sta
         {
             "ATHENA_API_HOST": "provider-secret-invalid-host",
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1255,7 +1330,7 @@ def test_athena_ensure_cli_redacts_provider_failures(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1290,7 +1365,7 @@ def test_athena_ensure_cli_maps_keyboard_interrupt_to_130_without_output(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1322,7 +1397,7 @@ def test_athena_ensure_cli_redacts_direct_cancelled_error(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1388,7 +1463,7 @@ def test_athena_ensure_cli_redacts_cancelled_error_and_cleanup_group(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1464,7 +1539,7 @@ def test_athena_ensure_cli_maps_only_closed_target_failure_stages(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1517,7 +1592,7 @@ def test_athena_ensure_cli_suppresses_worker_thread_rpc_details(
             ["ensure"],
             {
                 "LITELLM_MODEL": "openai/test-chat",
-                "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+                "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
             },
         )
         _emit_provider_rpc_error("ensure-filter-restored-after-main")
@@ -1636,7 +1711,7 @@ def test_safe_check_runs_all_five_probes_independently(
     settings = AthenaSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
     events: list[str] = []
@@ -1681,7 +1756,7 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
         result = safe_check.main(
             {
                 "LITELLM_MODEL": "openai/test-chat",
-                "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+                "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
             }
         )
     finally:
@@ -1709,7 +1784,7 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
     settings = AthenaSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
     events: list[str] = []
@@ -1787,7 +1862,7 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
     settings = AthenaSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
     requests: list[tuple[str, str]] = []
@@ -1815,10 +1890,8 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
         transport=httpx.MockTransport(handler),
     )
     monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda _settings: client)
-    provider = {
-        "DASHSCOPE_API_KEY": "configured",
-        "OPENAI_API_KEY": "configured",
-    }
+    assert "_create_model" not in vars(safe_check)
+    provider = {"DASHSCOPE_API_KEY": "configured"}
 
     assert asyncio.run(safe_check._check_models(settings, {})) is False
     assert requests == []
@@ -1832,11 +1905,11 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
     [
         (
             "litellm",
-            {"DASHSCOPE_API_KEY": "configured", "OPENAI_API_KEY": " \t"},
+            {"DASHSCOPE_API_KEY": " \t"},
         ),
         (
             "litellm",
-            {"DASHSCOPE_API_KEY": "\n", "OPENAI_API_KEY": "configured"},
+            {"OPENAI_API_KEY": "configured"},
         ),
         (
             "codex",
@@ -2059,11 +2132,13 @@ def test_litellm_exposes_exactly_the_two_fixed_athena_aliases() -> None:
     ]
     assert config["model_list"][0]["litellm_params"] == {
         "model": "os.environ/LITELLM_MODEL",
-        "api_key": "os.environ/OPENAI_API_KEY",
+        "api_key": "os.environ/DASHSCOPE_API_KEY",
+        "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
     assert config["model_list"][1]["litellm_params"] == {
         "model": "os.environ/LITELLM_ATHENA_EMBEDDING_MODEL",
         "api_key": "os.environ/DASHSCOPE_API_KEY",
+        "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
 
 
@@ -2294,6 +2369,9 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "LITELLM_ATHENA_EMBEDDING_MODEL",
         "LITELLM_EMBEDDING_MODEL",
         "DASHSCOPE_API_KEY",
+        "DASHSCOPE_API_HOST",
+        "DASHSCOPE_API_BASE",
+        "DASHSCOPE_NATIVE_API_BASE",
         "MILVUS_URI",
         "MILVUS_READER_PASSWORD",
         "MILVUS_WRITER_PASSWORD",
@@ -2322,11 +2400,48 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
     assert values["DASHSCOPE_API_KEY"] == ""
     assert values["TAP_DEMO_MODE"] == ""
     assert values["TAP_ALLOW_INITIAL_MILVUS_ROOT"] == "0"
-    assert values["OPENAI_API_KEY"] == ""
+    assert "OPENAI_API_KEY" not in values
+    assert values["LITELLM_IMAGE"] == "ghcr.io/berriai/litellm:v1.87.0"
+    assert "BAILIAN_API_KEY" not in values
+    assert "BAILIAN_API_BASE" not in values
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
     assert "query and selected Evidence are sent to OpenAI" in example
     assert "Embedding content is sent to Alibaba Bailian" in example
     assert "Codex uses local ChatGPT login; it does not require OPENAI_API_KEY" in example
+    assert values["DASHSCOPE_API_HOST"] == ("ws-your-workspace-id.cn-beijing.maas.aliyuncs.com")
+    assert values["DASHSCOPE_API_BASE"] == (
+        "https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    )
+    assert values["DASHSCOPE_NATIVE_API_BASE"] == (
+        "https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/api/v1"
+    )
+    assert values["LITELLM_MODEL"] == "dashscope/qwen-plus"
+    assert values["LITELLM_ATHENA_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert values["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
+    assert {
+        "MYSQL_PORT": values["MYSQL_PORT"],
+        "REDIS_PORT": values["REDIS_PORT"],
+        "AZURITE_BLOB_PORT": values["AZURITE_BLOB_PORT"],
+        "LITELLM_PORT": values["LITELLM_PORT"],
+        "MILVUS_PORT": values["MILVUS_PORT"],
+        "MILVUS_HEALTH_PORT": values["MILVUS_HEALTH_PORT"],
+    } == {
+        "MYSQL_PORT": "23306",
+        "REDIS_PORT": "26379",
+        "AZURITE_BLOB_PORT": "21000",
+        "LITELLM_PORT": "24000",
+        "MILVUS_PORT": "39530",
+        "MILVUS_HEALTH_PORT": "29091",
+    }
+    assert values["TAP_DATABASE_URL"].endswith("@127.0.0.1:23306/tap?charset=utf8mb4")
+    assert values["TAP_ALEMBIC_DATABASE_URL"].endswith("@127.0.0.1:23306/tap?charset=utf8mb4")
+    assert values["TAP_REDIS_URL"] == "redis://127.0.0.1:26379/0"
+    assert (
+        "BlobEndpoint=http://127.0.0.1:21000/devstoreaccount1;"
+        in values["AZURE_STORAGE_CONNECTION_STRING"]
+    )
+    assert values["LITELLM_BASE_URL"] == "http://127.0.0.1:24000"
+    assert values["MILVUS_URI"] == "http://127.0.0.1:39530"
 
     sourced = subprocess.run(
         [
@@ -2375,6 +2490,16 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         tmp_path,
         api_exit="17",
         ready_status="unready",
+    )
+    environment.update(
+        {
+            "ATHENA_ASSERT_PROVIDER_SCOPE": "1",
+            "DASHSCOPE_API_KEY": "current-provider-secret",
+            "OPENAI_API_KEY": "legacy-openai-secret",
+            "BAILIAN_API_KEY": "legacy-bailian-secret",
+            "LITELLM_EMBEDDING_API_KEY": "direct-research-secret",
+            "LITELLM_EMBEDDING_API_BASE": "https://provider-secret.invalid/v1",
+        }
     )
 
     completed = subprocess.run(
@@ -2800,6 +2925,8 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
     environment.update(
         {
             "OPENAI_API_KEY": "caller-openai-key",
+            "BAILIAN_API_KEY": "caller-bailian-key",
+            "BAILIAN_API_BASE": "https://caller.invalid/bailian",
             "DASHSCOPE_API_KEY": "caller-dashscope-key",
             "CODEX_HOME": "/caller/codex-home",
             "CODEX_API_KEY": "caller-codex-key",
@@ -2834,22 +2961,24 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
     assert len(recorded) == 1
     environment_names = set(filter(None, recorded[0].split("|", maxsplit=2)[2].split(",")))
     assert {
-        "OPENAI_API_KEY",
         "DASHSCOPE_API_KEY",
+        "DASHSCOPE_API_BASE",
         "LITELLM_ATHENA_EMBEDDING_MODEL",
         "LITELLM_EMBEDDING_MODEL",
-        "LITELLM_EMBEDDING_API_KEY",
-        "LITELLM_EMBEDDING_API_BASE",
     } <= environment_names
     assert (
         not {
+            "OPENAI_API_KEY",
+            "BAILIAN_API_KEY",
+            "BAILIAN_API_BASE",
             "CODEX_HOME",
             "CODEX_API_KEY",
             "OPENAI_BASE_URL",
             "OPENAI_API_BASE",
             "DASHSCOPE_BASE_URL",
-            "DASHSCOPE_API_BASE",
             "CODEX_API_BASE",
+            "LITELLM_EMBEDDING_API_KEY",
+            "LITELLM_EMBEDDING_API_BASE",
         }
         & environment_names
     )

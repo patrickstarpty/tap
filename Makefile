@@ -94,8 +94,11 @@ demo-up: ## start durable Athena middleware and initialize exact owned resources
 	[ "$${#athena_demo_project}" -ge 3 ] && [ "$${#athena_demo_project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
 	readonly athena_demo_project; \
 	if [ -f "$(TAP_REPO_ROOT)/.env" ]; then set -a; . "$(TAP_REPO_ROOT)/.env"; set +a; fi; \
+	unset OPENAI_API_KEY BAILIAN_API_KEY BAILIAN_API_BASE; \
+	unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE; \
 	export TAP_ATHENA_COMPOSE_PROJECT="$$athena_demo_project"; \
 	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$athena_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
+	unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE; \
 	uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head; \
 	TAP_ALLOW_INITIAL_MILVUS_ROOT=1 uv run --project apps/backend python scripts/milvus_bootstrap.py; \
 	uv run --project apps/backend python scripts/athena_collection.py ensure
@@ -107,6 +110,8 @@ demo-check: ## check exact Athena dependencies without exposing provider details
 	[ "$${#athena_demo_project}" -ge 3 ] && [ "$${#athena_demo_project}" -le 63 ] || { echo "invalid Athena Compose project" >&2; exit 2; }; \
 	readonly athena_demo_project; \
 	if [ -f "$(TAP_REPO_ROOT)/.env" ]; then set -a; . "$(TAP_REPO_ROOT)/.env"; set +a; fi; \
+	unset OPENAI_API_KEY BAILIAN_API_KEY BAILIAN_API_BASE; \
+	unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE; \
 	export TAP_ATHENA_COMPOSE_PROJECT="$$athena_demo_project"; \
 	uv run --project apps/backend python scripts/check-athena-demo.py
 

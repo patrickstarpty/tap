@@ -38,6 +38,9 @@ if [ "${ATHENA_SUPERVISOR_ENV:-}" != "preloaded" ] && \
   . "$athena_dev_repo_root/.env"
   set +a
 fi
+unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE OPENAI_API_KEY
+unset BAILIAN_API_KEY BAILIAN_API_BASE
+unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
 export TAP_ATHENA_COMPOSE_PROJECT="$athena_dev_requested_project"
 export ATHENA_API_HOST="${ATHENA_API_HOST:-127.0.0.1}"
 export ATHENA_API_PORT="${ATHENA_API_PORT:-8000}"

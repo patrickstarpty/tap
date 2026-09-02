@@ -686,11 +686,23 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
         return httpx.Response(
             200,
             json={
-                "object": "list",
                 "id": "embedding-worker-1",
                 "model": "athena-embedding",
-                "data": [{"embedding": [0.0, 1.0, 2.0], "index": 0}],
-                "usage": {"prompt_tokens": 4, "total_tokens": 4},
+                "object": "list",
+                "data": [
+                    {
+                        "object": "embedding",
+                        "embedding": [0.0, 1.0, 2.0],
+                        "index": 0,
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 4,
+                    "completion_tokens": 0,
+                    "total_tokens": 4,
+                    "prompt_tokens_details": None,
+                    "completion_tokens_details": None,
+                },
             },
         )
 

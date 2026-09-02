@@ -153,7 +153,13 @@ def embedding_response(
         "id": "embedding-17",
         "object": "list",
         "model": model,
-        "data": [{"embedding": vector if vector is not None else [0.25, 0.5], "index": 0}],
+        "data": [
+            {
+                "object": "embedding",
+                "embedding": vector if vector is not None else [0.25, 0.5],
+                "index": 0,
+            }
+        ],
     }
 
 
@@ -166,8 +172,8 @@ def batch_embedding_response(
         "id": "embedding-batch-17",
         "object": "list",
         "model": model,
-        "data": rows,
-        "usage": {"prompt_tokens": 4, "total_tokens": 4},
+        "data": [{"object": "embedding"} | row for row in rows],
+        "usage": {"prompt_tokens": 4, "total_tokens": 4, "completion_tokens": 0},
     }
 
 
@@ -178,7 +184,9 @@ def embedding_response_with_usage(
     model: str = "tap-embed-fixed-v1",
 ) -> dict[str, object]:
     body = embedding_response(vector=vector, model=model)
-    body["usage"] = {"prompt_tokens": 4, "total_tokens": 4} if usage is None else usage
+    body["usage"] = (
+        {"prompt_tokens": 4, "total_tokens": 4, "completion_tokens": 0} if usage is None else usage
+    )
     return body
 
 
@@ -746,6 +754,7 @@ async def test_embedding_parses_standard_usage_and_exact_decimal_response_cost()
         "model": "tap-embed-fixed-v1",
         "input": "authorization [REDACTED]",
         "dimensions": 2,
+        "encoding_format": "float",
     }
 
 
@@ -1516,6 +1525,7 @@ async def test_embed_many_uses_exact_fixed_route_and_restores_provider_index_ord
         "model": "athena-embedding",
         "input": ["first", "second"],
         "dimensions": 2,
+        "encoding_format": "float",
     }
 
 
@@ -1677,6 +1687,10 @@ async def test_embed_many_rejects_wrong_model_group() -> None:
             {"embedding": [0.75, 1.0], "index": 1},
         ],
         [
+            {"embedding": [0.25, 0.5], "index": 0, "object": "not-embedding"},
+            {"embedding": [0.75, 1.0], "index": 1},
+        ],
+        [
             {"embedding": [0.25, float("nan")], "index": 0},
             {"embedding": [0.75, 1.0], "index": 1},
         ],
@@ -1685,7 +1699,15 @@ async def test_embed_many_rejects_wrong_model_group() -> None:
             {"embedding": [0.75, 1.0], "index": 1},
         ],
     ],
-    ids=("duplicate", "missing", "out-of-range", "widened", "non-finite", "dimension"),
+    ids=(
+        "duplicate",
+        "missing",
+        "out-of-range",
+        "whitespace-object",
+        "wrong-object",
+        "non-finite",
+        "dimension",
+    ),
 )
 async def test_embed_many_rejects_non_bijective_or_malformed_provider_rows(
     rows: list[dict[str, object]],
@@ -1712,7 +1734,7 @@ async def test_embed_many_rejects_non_bijective_or_malformed_provider_rows(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "texts",
-    [(), tuple("x" for _ in range(33)), ("x" * 262_145,)],
+    [(), tuple("x" for _ in range(11)), ("x" * 262_145,)],
     ids=("empty", "too-many", "byte-bound"),
 )
 async def test_embed_many_rejects_batch_bounds_before_egress(texts: tuple[str, ...]) -> None:
@@ -1809,14 +1831,16 @@ async def test_embed_documents_partitions_count_and_binds_chunk_order() -> None:
             chunk_ids=chunk_ids,
         )
 
-    assert [len(json.loads(request.content)["input"]) for request in requests] == [32, 1]
+    assert [len(json.loads(request.content)["input"]) for request in requests] == [10, 10, 10, 3]
     assert all(len(request.content) <= 262_144 for request in requests)
     assert artifact.model_alias == "athena-embedding"
     assert artifact.dimension == 2
     assert artifact.chunk_ids == chunk_ids
     assert artifact.vectors[0] == (0.0, 1.0)
-    assert artifact.vectors[31] == (31.0, 32.0)
-    assert artifact.vectors[32] == (0.0, 1.0)
+    assert artifact.vectors[9] == (9.0, 10.0)
+    assert artifact.vectors[10] == (0.0, 1.0)
+    assert artifact.vectors[31] == (1.0, 2.0)
+    assert artifact.vectors[32] == (2.0, 3.0)
 
 
 @pytest.mark.asyncio
@@ -1861,7 +1885,7 @@ async def test_embed_documents_applies_deadline_per_batch_not_whole_document() -
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
         count = len(json.loads(request.content)["input"])
         return httpx.Response(
             200,
@@ -1878,7 +1902,7 @@ async def test_embed_documents_applies_deadline_per_batch_not_whole_document() -
         allowed_embedding_model_labels=frozenset(
             {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
-        deadline_seconds=0.03,
+        deadline_seconds=0.35,
         max_request_bytes=262_144,
     )
     texts = tuple(f"chunk-{index}" for index in range(33))
@@ -1890,6 +1914,6 @@ async def test_embed_documents_applies_deadline_per_batch_not_whole_document() -
             chunk_ids=chunk_ids,
         )
 
-    assert calls == 2
+    assert calls == 4
     assert artifact.chunk_ids == chunk_ids
     assert len(artifact.vectors) == 33

@@ -25,7 +25,7 @@ def _athena_environment(**overrides: str) -> dict[str, str]:
         "TAP_REDIS_COMMAND_STREAM": "tap-athena-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "LITELLM_MODEL": "openai/test-chat",
-        "LITELLM_EMBEDDING_MODEL": "openai/test-embedding",
+        "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "MILVUS_URI": "http://127.0.0.1:29530",
     }
     values.update(overrides)

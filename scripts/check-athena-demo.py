@@ -51,8 +51,7 @@ _REMEDIATION = {
     "milvus": "start-milvus",
     "models": "configure-models",
 }
-_EMBEDDING_PROVIDER_SETTINGS: tuple[str, ...] = ("DASHSCOPE_API_KEY",)
-_LITELLM_ANSWER_PROVIDER_SETTINGS: tuple[str, ...] = ("OPENAI_API_KEY",)
+_PROVIDER_SETTINGS: tuple[str, ...] = ("DASHSCOPE_API_KEY",)
 
 Probe = Callable[[AthenaSettings, Mapping[str, str]], Awaitable[bool]]
 
@@ -168,10 +167,7 @@ async def _check_models(settings: AthenaSettings, values: Mapping[str, str]) -> 
                 rel_tol=1e-12,
             )
         )
-    required_provider_settings = _EMBEDDING_PROVIDER_SETTINGS
-    if settings.answer_backend == "litellm":
-        required_provider_settings += _LITELLM_ANSWER_PROVIDER_SETTINGS
-    if any(not values.get(name, "").strip() for name in required_provider_settings):
+    if any(not values.get(name, "").strip() for name in _PROVIDER_SETTINGS):
         return False
     resources = OwnedResources()
     try:

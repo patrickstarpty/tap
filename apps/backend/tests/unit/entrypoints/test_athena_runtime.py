@@ -437,6 +437,7 @@ def test_athena_embedding_gateway_route_rejects_drift() -> None:
         ("LITELLM_MODEL", "openai/gpt-4o-mini,other"),
         ("LITELLM_ATHENA_EMBEDDING_MODEL", "openai/gpt 4o"),
         ("LITELLM_ATHENA_EMBEDDING_MODEL", "openai/gpt-4o-mini"),
+        ("LITELLM_ATHENA_EMBEDDING_MODEL", "openai/*"),
     ],
 )
 def test_real_model_routes_reject_widening_and_cross_route_overlap(name: str, value: str) -> None:
@@ -1826,8 +1827,20 @@ async def test_runtime_litellm_binds_body_labels_and_gateway_group_separately() 
                     "id": "embedding-runtime-label",
                     "object": "list",
                     "model": body_label,
-                    "data": [{"embedding": [0.0] * 1536, "index": 0}],
-                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "embedding": [0.0] * 1536,
+                            "index": 0,
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 0,
+                        "total_tokens": 1,
+                        "prompt_tokens_details": None,
+                        "completion_tokens_details": None,
+                    },
                 },
             )
 

@@ -85,22 +85,30 @@ Athena 是来源优先的本地 Demo 产品外壳，不是完整 Knowledge Chat�
 
 ```sh
 cp .env.example .env
-# 在 .env 中填入实际 provider credential；不要提交该文件
+# 在 .env 中填写 DASHSCOPE_API_KEY，并把 ws-your-workspace-id 换成自己的 Workspace ID；不要提交该文件
 make bootstrap
 make demo-up
 make demo-check
 make demo-dev
 ```
 
+已有旧 `.env` 的工作区必须重新复制模板，或至少同步下面三项；旧 OpenAI model route 会覆盖 Compose 默认值，不能继续保留：
+
+```dotenv
+LITELLM_MODEL=dashscope/qwen-plus
+LITELLM_ATHENA_EMBEDDING_MODEL=dashscope/text-embedding-v4
+DASHSCOPE_API_BASE=https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+```
+
 `make demo-up` 启动并初始化 MySQL、Redis、Azurite、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay 与 Athena Ingestion Worker。默认本地端口如下：
 
 | 组件 | 默认 loopback 端口 | 职责 |
 | --- | --- | --- |
-| MySQL 8.4 LTS | `3306` | 文档/revision/job/manifest、query hash/所选 revision/citation 核验快照与 Outbox；不保存回答正文/history |
-| Redis 7.4 | `6379` | 可重建命令分发与任务唤醒 |
-| Azurite Blob | `10000` | 原文件、normalized/chunk/embedding artifact |
-| LiteLLM Proxy | `4000` | 固定 Chat/Embedding alias 路由 |
-| Milvus | `19530` / `9091` | 本地 `doc` 可重建检索投影与健康端口 |
+| MySQL 8.4 LTS | `23306` | 文档/revision/job/manifest、query hash/所选 revision/citation 核验快照与 Outbox；不保存回答正文/history |
+| Redis 7.4 | `26379` | 可重建命令分发与任务唤醒 |
+| Azurite Blob | `21000` | 原文件、normalized/chunk/embedding artifact |
+| LiteLLM Proxy | `24000` | 固定 Chat/Embedding alias 路由 |
+| Milvus | `39530` / `29091` | 本地 `doc` 可重建检索投影与健康端口 |
 | FastAPI / Vite | `8000` / `5173` | Knowledge HTTP API 与 Athena Web |
 
 模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露。默认及已验收的完整回答选择块为：
@@ -118,13 +126,15 @@ ATHENA_EMBEDDING_DIMENSION=1536
 
 默认 `ATHENA_ANSWER_BACKEND=litellm`；要使用已验收的本机 Codex 路径，只把该值改为 `codex`，其余固定值不变，然后停止并重新运行 `make demo-dev` 使 API/Relay/Worker 重新读取同一配置。若同时修改 LiteLLM route 或 credential，还要重新运行 `make demo-up`。两个值是启动时独占选择：LiteLLM 与 Codex 不会相互 fallback、hedge 或重试到另一后端。
 
-无论选择哪一个回答后端，文档与查询 Embedding 都必须经 LiteLLM 固定 `athena-embedding` alias 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`，并支持中文、英文和混合术语检索；这也是 LiteLLM 在 Codex 模式下仍为必需中间件的原因。LiteLLM 回答模式另使用 `athena-chat`。Codex 回答模式精确要求原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、有效的本机 ChatGPT 登录、单智能体、零工具、单 API 进程内并发 `1` 和 300 秒超时，不读取或要求 `OPENAI_API_KEY`/`CODEX_API_KEY`。
+无论选择哪一个回答后端，文档与查询 Embedding 都必须经 LiteLLM 固定 `athena-embedding` alias 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`，并支持中文、英文和混合术语检索；这也是 LiteLLM 在 Codex 模式下仍为必需中间件的原因。LiteLLM `1.87.0` 回答模式另通过 DashScope provider 将 `athena-chat` 路由到百炼 `qwen-plus`。
+
+Codex 回答模式精确要求原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、有效的本机 ChatGPT 登录、单智能体、零工具、单 API 进程内并发 `1` 和 300 秒超时，不读取或要求 `OPENAI_API_KEY`/`CODEX_API_KEY`。
 
 Codex CLI 只是本机调用入口，不是本地推理：query 与所选 Evidence 会发送给 OpenAI；文档和 query 的 Embedding 内容会发送给阿里云百炼。该数据边界只获准用于 loopback、无认证的单操作者本地 Demo，不得据此开放 LAN、共享或生产服务。
 
 Codex 的请求自有 canonical model catalog 会消除内建 CodeModeOnly、多智能体和 apply-patch metadata，并与 24 个禁用 feature 及显式 plan/input/agent overrides 一起保持 Direct tool registry 为空。这个 catalog 的固定 entry schema 只保证精确 CLI `0.149.0`，不是跨版本兼容承诺；CLI、登录、feature、catalog/schema、模型或能力任何漂移都会使 readiness/request fail closed，返回 `503 answer-unavailable`，且绝不调用 LiteLLM answer。Web 对该错误只显示“回答模型暂时不可用，请稍后重试。”
 
-LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`LITELLM_MODEL`、`OPENAI_API_KEY` 与 `LITELLM_ATHENA_EMBEDDING_MODEL`/`DASHSCOPE_API_KEY` 注入实际路由与凭据；`LITELLM_EMBEDDING_*` 只供单独批准的付费 Embedding research 使用，Athena runtime 不读取。
+LiteLLM 用 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY`、`LITELLM_MODEL`、`LITELLM_ATHENA_EMBEDDING_MODEL`、`DASHSCOPE_API_KEY` 与 `DASHSCOPE_API_BASE` 注入实际路由与凭据。在未跟踪的 `.env` 填写 key，并把脱敏 Workspace ID 替换为实际值；`.env.example` 同时列出的 API Host 与原生 `/api/v1` 地址仅供参考，Athena/LiteLLM 当前只消费 OpenAI-compatible `/compatible-mode/v1` 地址。`LITELLM_EMBEDDING_*` 只供单独批准的付费 Embedding research 使用，Athena runtime 不读取。
 
 页面刷新会重新读取已提交的文档、ingestion/index 状态和必要的可重建状态；API/Web/Worker 进程重启与普通 Compose 停止/再次启动后也从这些持久事实恢复。当前渲染的回答只存在于 Web 页面内存，刷新会清空，本版没有历史回答恢复 API；用户可以基于仍为 `ready` 的持久来源重新提问。普通停止/再次启动保留具名卷：
 
@@ -148,10 +158,10 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-athena-demo \
 | 组件 / 修复码 | 处理方式 |
 | --- | --- |
 | MySQL / `start-mysql` | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。 |
-| Redis / `start-redis` | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:6379/0`。 |
+| Redis / `start-redis` | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:26379/0`。 |
 | Blob / `start-blob` | 运行 `make demo-up`；确认 `AZURE_STORAGE_CONNECTION_STRING` 指向 loopback Azurite，两个容器保持 private。 |
 | Milvus / `start-milvus` | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。 |
-| Models / `configure-models` | 两种模式都要在 ignored `.env` 配置 `DASHSCOPE_API_KEY`，重启本地角色并确认 `athena-embedding`；LiteLLM 回答模式还要确认 `athena-chat`，Codex 回答模式则检查精确原生 `0.149.0`、ChatGPT 登录、tool-free catalog/feature 契约。Codex 失败不会回退 LiteLLM，用户只收到 `answer-unavailable` 安全文案。 |
+| Models / `configure-models` | 两种模式都要在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、`dashscope/text-embedding-v4` 与完整 Workspace `/compatible-mode/v1` 地址，重启 `make demo-up` 和本地角色，并确认 `athena-embedding`；LiteLLM 回答模式还要同步 `dashscope/qwen-plus` 并确认 `athena-chat`，Codex 回答模式则检查精确原生 `0.149.0`、ChatGPT 登录与 tool-free catalog/feature 契约。Codex 失败不会回退 LiteLLM，用户只收到 `answer-unavailable` 安全文案。 |
 
 ### 确定性 E2E 与真实模型 smoke
 
