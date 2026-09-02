@@ -1,0 +1,270 @@
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import {
+  document,
+  fakeKnowledgeClient,
+} from "../../features/knowledge/testing/fakeKnowledgeClient";
+import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
+import { TapProductPrototype } from "./TapProductPrototype";
+
+function renderPrototype() {
+  const api = fakeKnowledgeClient().withDocuments([
+    document({
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
+      stage: "ready",
+      status: "ready",
+    }),
+    document({
+      documentId: "health-disclosure-guide",
+      filename: "health-disclosure-guide.pdf",
+      stage: "ready",
+      status: "ready",
+    }),
+  ]);
+
+  return renderKnowledgeApp(<TapProductPrototype />, { api });
+}
+
+describe("Tap product prototype interactions", () => {
+  it("defaults to English and lets the user switch the interface language", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    expect(
+      screen.getByRole("button", { name: "English", pressed: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "What can I do for you?" }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+
+    expect(
+      screen.getByRole("button", { name: "中文", pressed: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "我能为您做什么？" }),
+    ).toBeVisible();
+  });
+
+  it("fills and focuses the composer when a suggested underwriting prompt is chosen", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    const prompt = "Summarize the life insurance underwriting rules";
+    await user.click(screen.getByRole("button", { name: prompt }));
+
+    expect(composer).toHaveValue(prompt);
+    expect(composer).toHaveFocus();
+    expect(screen.queryByRole("log", { name: "Conversation" })).toBeNull();
+  });
+
+  it("shows the integrated product sidebar and can collapse and expand it", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const navigation = screen.getByRole("navigation", { name: "Product" });
+    expect(
+      within(navigation)
+        .getAllByRole("button")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual([
+      "Athena",
+      "New Chat",
+      "Agent",
+      "Skills",
+      "Library",
+      "Test Management",
+      "Low Code Automation",
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(navigation).toHaveAttribute("data-collapsed", "true");
+
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(navigation).toHaveAttribute("data-collapsed", "false");
+  });
+
+  it("starts a new empty chat while preserving and restoring earlier life-underwriting chats", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const message = "What evidence is needed for life insurance underwriting?";
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      message,
+    );
+    await user.keyboard("{Enter}");
+    expect(screen.getByText(message)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "New Chat" }));
+    expect(
+      screen.getByRole("region", { name: "Start a conversation" }),
+    ).toBeVisible();
+
+    const history = screen.getByRole("navigation", { name: "Chat history" });
+    await user.click(within(history).getByRole("button", { name: message }));
+    expect(screen.getByRole("log", { name: "Conversation" })).toBeVisible();
+    expect(screen.getByText(message)).toBeVisible();
+  });
+
+  it("filters the Knowledge sources panel by source name", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const sources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+    expect(
+      await within(sources).findByText("life-underwriting-rules.md"),
+    ).toBeVisible();
+
+    await user.type(
+      within(sources).getByRole("textbox", { name: "Search knowledge sources" }),
+      "disclosure",
+    );
+
+    expect(
+      within(sources).getByText("health-disclosure-guide.pdf"),
+    ).toBeVisible();
+    expect(
+      within(sources).queryByText("life-underwriting-rules.md"),
+    ).toBeNull();
+  });
+
+  it("adds a searchable Library reference to the composer from its plus menu", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    const menu = screen.getByRole("menu", { name: "Add to message" });
+    expect(within(menu).getByRole("menuitem", { name: "Add from Library" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Use Agents" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Use Skills" })).toBeVisible();
+
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Add from Library" }),
+    );
+    const picker = screen.getByRole("dialog", { name: "Add from Library" });
+    await user.type(
+      within(picker).getByRole("textbox", { name: "Search library" }),
+      "disclosure",
+    );
+    await user.click(
+      within(picker).getByRole("option", {
+        name: "health-disclosure-guide.pdf",
+      }),
+    );
+
+    expect(
+      within(screen.getByRole("form", { name: "Message composer" })).getByText(
+        "health-disclosure-guide.pdf",
+      ),
+    ).toBeVisible();
+  });
+
+  it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    expect(screen.getByRole("heading", { name: "Agents" })).toBeVisible();
+    await user.type(
+      screen.getByRole("textbox", { name: "Search agents" }),
+      "underwriting",
+    );
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+
+    const createDialog = screen.getByRole("dialog", { name: "Create agent" });
+    await user.type(
+      within(createDialog).getByRole("textbox", { name: "Name" }),
+      "Life underwriting reviewer",
+    );
+    await user.click(
+      within(createDialog).getByRole("button", { name: "Save agent" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Life underwriting reviewer" }),
+    ).toBeVisible();
+
+    await user.click(
+      screen.getByRole("button", { name: "Edit Life underwriting reviewer" }),
+    );
+    const editDialog = screen.getByRole("dialog", { name: "Edit agent" });
+    const description = within(editDialog).getByRole("textbox", {
+      name: "Description",
+    });
+    await user.type(description, "Escalates high-risk life applications.");
+    await user.click(
+      within(editDialog).getByRole("button", { name: "Save agent" }),
+    );
+    expect(
+      screen.getByText("Escalates high-risk life applications."),
+    ).toBeVisible();
+  });
+
+  it("searches, creates, and edits reusable underwriting skills", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
+    await user.type(
+      screen.getByRole("textbox", { name: "Search skills" }),
+      "underwriting",
+    );
+    await user.click(screen.getByRole("button", { name: "Create skill" }));
+
+    const createDialog = screen.getByRole("dialog", { name: "Create skill" });
+    await user.type(
+      within(createDialog).getByRole("textbox", { name: "Name" }),
+      "Underwriting rules lookup",
+    );
+    await user.click(
+      within(createDialog).getByRole("button", { name: "Save skill" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Underwriting rules lookup" }),
+    ).toBeVisible();
+
+    await user.click(
+      screen.getByRole("button", { name: "Edit Underwriting rules lookup" }),
+    );
+    const editDialog = screen.getByRole("dialog", { name: "Edit skill" });
+    const description = within(editDialog).getByRole("textbox", {
+      name: "Description",
+    });
+    await user.type(description, "Retrieves rule evidence before a decision.");
+    await user.click(
+      within(editDialog).getByRole("button", { name: "Save skill" }),
+    );
+    expect(
+      screen.getByText("Retrieves rule evidence before a decision."),
+    ).toBeVisible();
+  });
+
+  it("switches the Library between source thumbnails and a Knowledge Graph", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add source" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Thumbnail list", pressed: true }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Knowledge Graph" }));
+    expect(
+      screen.getByRole("button", { name: "Knowledge Graph", pressed: true }),
+    ).toBeVisible();
+    expect(screen.getByRole("img", { name: "Knowledge Graph" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Thumbnail list" }));
+    expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
+  });
+});

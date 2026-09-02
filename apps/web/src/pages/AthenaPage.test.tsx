@@ -38,7 +38,7 @@ async function sendMessage(
 }
 
 describe("Athena product prototype", () => {
-  it("uses one assistant entry and keeps knowledge management inside Athena", async () => {
+  it("uses the integrated Athena navigation and keeps sources inside Athena", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -47,7 +47,15 @@ describe("Athena product prototype", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
+    ).toEqual([
+      "Athena",
+      "New Chat",
+      "Agent",
+      "Skills",
+      "Library",
+      "Test Management",
+      "Low Code Automation",
+    ]);
     expect(
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
@@ -66,11 +74,6 @@ describe("Athena product prototype", () => {
       screen.queryByRole("heading", { name: "问答" }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Manage knowledge" }));
-    expect(
-      screen.getByRole("dialog", { name: "Knowledge Library" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "添加来源" })).toBeVisible();
   });
 
   it("creates BDD in chat and imports it as a Test Plan", async () => {
