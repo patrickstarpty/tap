@@ -120,7 +120,11 @@ export function PrototypeSidebar({
   );
 
   return (
-    <aside className="tap-sidebar" data-collapsed={collapsed}>
+    <aside
+      id="tap-product-sidebar"
+      className="tap-sidebar"
+      data-collapsed={collapsed}
+    >
       <div className="tap-sidebar-topline">
         <div className="tap-brand" aria-label="TAP">
           <span>T</span>
@@ -129,6 +133,8 @@ export function PrototypeSidebar({
         <button
           type="button"
           className="tap-sidebar-collapse"
+          aria-controls="tap-product-sidebar"
+          aria-expanded={!collapsed}
           aria-label={
             collapsed
               ? copy.navigation.expandSidebar

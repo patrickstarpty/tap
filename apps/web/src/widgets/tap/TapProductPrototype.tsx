@@ -121,39 +121,41 @@ function BddPreview({ copy }: { copy: PrototypeCopy }) {
       <code>
         <span>{copy.artifacts.feature}</span>
         {"\n\n"}
-        <span> Scenario: Complete application enters underwriting</span>
+        <span>
+          {` ${copy.artifacts.scenario}${copy.artifacts.keywordSeparator}${copy.artifacts.completeScenario}`}
+        </span>
         {"\n"}
-        {
-          "   Given an adult applicant with completed identity and health declarations\n"
-        }
-        {"   When the applicant submits a complete term life application\n"}
-        {'   Then the application status should be "Pending underwriting"\n\n'}
-        <span> Scenario: Missing health disclosure is blocked</span>
+        {`   ${copy.artifacts.given} ${copy.artifacts.completeGiven}\n`}
+        {`   ${copy.artifacts.when} ${copy.artifacts.completeWhen}\n`}
+        {`   ${copy.artifacts.then} ${copy.artifacts.completeThen}\n\n`}
+        <span>
+          {` ${copy.artifacts.scenario}${copy.artifacts.keywordSeparator}${copy.artifacts.disclosureScenario}`}
+        </span>
         {"\n"}
-        {"   Given mandatory health disclosure answers are missing\n"}
-        {"   When the applicant submits the life insurance application\n"}
-        {"   Then the application should show a validation error\n\n"}
-        <span> Scenario: High coverage requires manual review</span>
+        {`   ${copy.artifacts.given} ${copy.artifacts.disclosureGiven}\n`}
+        {`   ${copy.artifacts.when} ${copy.artifacts.disclosureWhen}\n`}
+        {`   ${copy.artifacts.then} ${copy.artifacts.disclosureThen}\n\n`}
+        <span>
+          {` ${copy.artifacts.scenario}${copy.artifacts.keywordSeparator}${copy.artifacts.highCoverageScenario}`}
+        </span>
         {"\n"}
-        {
-          "   Given the requested sum assured exceeds the straight-through limit\n"
-        }
-        {"   When the applicant submits the life insurance application\n"}
-        {
-          '   Then the application status should be "Additional review required"'
-        }
+        {`   ${copy.artifacts.given} ${copy.artifacts.highCoverageGiven}\n`}
+        {`   ${copy.artifacts.when} ${copy.artifacts.highCoverageWhen}\n`}
+        {`   ${copy.artifacts.then} ${copy.artifacts.highCoverageThen}`}
       </code>
     </pre>
   );
 }
 
 function AssistantResponse({
-  copy,
+  actionCopy,
+  contentCopy,
   intent,
   onImportPlan,
   onOpenAutomation,
 }: {
-  copy: PrototypeCopy;
+  actionCopy: PrototypeCopy;
+  contentCopy: PrototypeCopy;
   intent: AssistantIntent;
   onImportPlan: () => void;
   onOpenAutomation: () => void;
@@ -161,7 +163,7 @@ function AssistantResponse({
   if (intent === "answer") {
     return (
       <div className="tap-answer-copy">
-        <p>{copy.chat.answer}</p>
+        <p>{contentCopy.chat.answer}</p>
         <span className="tap-citation-reference">
           [1] life-underwriting-rules.md
         </span>
@@ -173,21 +175,21 @@ function AssistantResponse({
     return (
       <article
         className="tap-generated-artifact"
-        aria-label={copy.artifacts.bddPlanLabel}
+        aria-label={contentCopy.artifacts.bddPlanLabel}
       >
         <div className="tap-artifact-heading">
           <span className="tap-artifact-icon">
             <FileTextOutlined aria-hidden="true" />
           </span>
           <div>
-            <strong>{copy.artifacts.bddPlanReady}</strong>
-            <span>{copy.artifacts.scenariosDraft}</span>
+            <strong>{contentCopy.artifacts.bddPlanReady}</strong>
+            <span>{contentCopy.artifacts.scenariosDraft}</span>
           </div>
         </div>
-        <BddPreview copy={copy} />
+        <BddPreview copy={contentCopy} />
         <div className="tap-artifact-actions">
           <Button type="primary" onClick={onImportPlan}>
-            {copy.testManagement.importToTestPlan}
+            {actionCopy.testManagement.importToTestPlan}
           </Button>
         </div>
       </article>
@@ -197,30 +199,30 @@ function AssistantResponse({
   return (
     <article
       className="tap-generated-artifact"
-      aria-label={copy.artifacts.automationLabel}
+      aria-label={contentCopy.artifacts.automationLabel}
     >
       <div className="tap-artifact-heading">
         <span className="tap-artifact-icon">
           <CodeOutlined aria-hidden="true" />
         </span>
         <div>
-          <strong>{copy.artifacts.automationReady}</strong>
-          <span>{copy.artifacts.automationSummary}</span>
+          <strong>{contentCopy.artifacts.automationReady}</strong>
+          <span>{contentCopy.artifacts.automationSummary}</span>
         </div>
       </div>
-      <BddPreview copy={copy} />
+      <BddPreview copy={contentCopy} />
       <div className="tap-automation-summary">
-        <span>Navigate</span>
-        <span>Click</span>
-        <span>Fill</span>
-        <span>Assert</span>
+        <span>{contentCopy.lowCode.navigate}</span>
+        <span>{contentCopy.lowCode.click}</span>
+        <span>{contentCopy.lowCode.fill}</span>
+        <span>{contentCopy.lowCode.assert}</span>
       </div>
       <div className="tap-artifact-actions">
         <Button onClick={onImportPlan}>
-          {copy.testManagement.importBddAsTestPlan}
+          {actionCopy.testManagement.importBddAsTestPlan}
         </Button>
         <Button type="primary" onClick={onOpenAutomation}>
-          {copy.lowCode.openInLowCode}
+          {actionCopy.lowCode.openInLowCode}
         </Button>
       </div>
     </article>
@@ -311,7 +313,7 @@ function TestManagement({
         >
           <div className="tap-list-toolbar">
             <span>
-              {plans.length} {copy.testManagement.testPlans}
+              {plans.length} {copy.testManagement.testPlanCount}
             </span>
             <Input.Search
               aria-label={copy.testManagement.searchPlans}
@@ -635,8 +637,21 @@ export function TapProductPrototype() {
   const nextTurnId = useRef(1);
   const nextCatalogId = useRef(1);
   const nextLocalSourceId = useRef(1);
+  const documentLanguageOnMount = useRef(document.documentElement.lang);
 
   const copy = PROTOTYPE_COPY[locale];
+  const mobileDrawerOpen = isNarrowViewport && !sidebarCollapsed;
+
+  useEffect(() => {
+    document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
+  }, [locale]);
+
+  useEffect(
+    () => () => {
+      document.documentElement.lang = documentLanguageOnMount.current;
+    },
+    [],
+  );
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 640px)");
@@ -647,6 +662,15 @@ export function TapProductPrototype() {
     media.addEventListener("change", handleChange);
     return () => media.removeEventListener("change", handleChange);
   }, []);
+
+  useEffect(() => {
+    if (!mobileDrawerOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarCollapsed(true);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [mobileDrawerOpen]);
 
   const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
@@ -728,6 +752,7 @@ export function TapProductPrototype() {
       appendTurn(conversation, {
         id: `turn-${nextTurnId.current++}`,
         intent: detectIntent(prompt),
+        locale,
         prompt,
       }),
     );
@@ -803,7 +828,20 @@ export function TapProductPrototype() {
         onSelectConversation={selectConversation}
         onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
       />
-      <main className="tap-product-main">
+      {mobileDrawerOpen ? (
+        <button
+          type="button"
+          className="tap-sidebar-scrim"
+          aria-label={copy.navigation.closeSidebar}
+          tabIndex={-1}
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      ) : null}
+      <main
+        className="tap-product-main"
+        aria-hidden={mobileDrawerOpen ? true : undefined}
+        inert={mobileDrawerOpen ? true : undefined}
+      >
         <div hidden={activeModule !== "athena"}>
           <div className="tap-athena-layout">
             <AthenaChat
@@ -840,7 +878,8 @@ export function TapProductPrototype() {
               }
               renderAssistantTurn={(turn) => (
                 <AssistantResponse
-                  copy={copy}
+                  actionCopy={copy}
+                  contentCopy={PROTOTYPE_COPY[turn.locale]}
                   intent={turn.intent}
                   onImportPlan={importPlan}
                   onOpenAutomation={() => setActiveModule("low-code")}

@@ -76,6 +76,14 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
+    expect(
+      screen.getByPlaceholderText("Ask about life insurance or testing..."),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Ask about life insurance, create BDD test cases, or build an automation.",
+      ),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "中文" }));
 
@@ -85,6 +93,24 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("heading", { name: "我能为您做什么？" }),
     ).toBeVisible();
+    expect(
+      screen.getByPlaceholderText("询问寿险业务或测试问题..."),
+    ).toBeVisible();
+  });
+
+  it("synchronizes the document language and restores the host value on unmount", async () => {
+    const user = userEvent.setup();
+    const originalLanguage = globalThis.document.documentElement.lang;
+    globalThis.document.documentElement.lang = "fr";
+    const view = renderPrototype();
+
+    expect(globalThis.document.documentElement.lang).toBe("en");
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    expect(globalThis.document.documentElement.lang).toBe("zh-CN");
+
+    view.unmount();
+    expect(globalThis.document.documentElement.lang).toBe("fr");
+    globalThis.document.documentElement.lang = originalLanguage;
   });
 
   it("fills and focuses the composer when a suggested underwriting prompt is chosen", async () => {
@@ -126,7 +152,7 @@ describe("Tap product prototype interactions", () => {
     expect(navigation).toHaveAttribute("data-collapsed", "false");
   });
 
-  it("starts with the complete navigation in a collapsed rail on a narrow viewport", async () => {
+  it("provides an accessible dismissible sidebar drawer from the narrow icon rail", async () => {
     const user = userEvent.setup();
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
@@ -143,24 +169,95 @@ describe("Tap product prototype interactions", () => {
       }),
     });
 
-    renderPrototype();
+    const { container } = renderPrototype();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: originalMatchMedia,
     });
 
     const navigation = screen.getByRole("navigation", { name: "Product" });
+    const toggle = screen.getByRole("button", { name: "Expand sidebar" });
     expect(navigation).toHaveAttribute("data-collapsed", "true");
     expect(within(navigation).getAllByRole("button")).toHaveLength(7);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-controls", "tap-product-sidebar");
+
+    await user.click(toggle);
+    expect(navigation).toHaveAttribute("data-collapsed", "false");
+    expect(
+      screen.getByRole("button", { name: "Collapse sidebar" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".tap-product-main")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(container.querySelector(".tap-product-main")).toHaveAttribute(
+      "inert",
+    );
+    expect(
+      screen.getByRole("button", { name: "English", pressed: true }),
+    ).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(navigation).toHaveAttribute("data-collapsed", "true");
+    expect(container.querySelector(".tap-product-main")).not.toHaveAttribute(
+      "aria-hidden",
+    );
+    expect(container.querySelector(".tap-product-main")).not.toHaveAttribute(
+      "inert",
+    );
 
     await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    expect(navigation).toHaveAttribute("data-collapsed", "false");
+    await user.click(screen.getByRole("button", { name: "Close sidebar" }));
+    expect(navigation).toHaveAttribute("data-collapsed", "true");
 
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
     await user.click(
       within(navigation).getByRole("button", { name: "Library" }),
     );
     expect(navigation).toHaveAttribute("data-collapsed", "true");
     expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+  });
+
+  it("keeps each answer in its response language through locale changes and history navigation", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const englishPrompt = "What evidence is needed for life underwriting?";
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      englishPrompt,
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(
+      screen.getByText(/Based on the selected knowledge sources/),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    expect(
+      screen.getByText(/Based on the selected knowledge sources/),
+    ).toBeVisible();
+    expect(screen.queryByText(/根据当前选择的知识来源/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      "寿险投保需要什么资料？",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(screen.getByText(/根据当前选择的知识来源/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
+    await user.click(
+      within(screen.getByRole("navigation", { name: "对话历史" })).getByRole(
+        "button",
+        { name: `${englishPrompt} · 对话 1` },
+      ),
+    );
+    expect(
+      screen.getByText(/Based on the selected knowledge sources/),
+    ).toBeVisible();
+    expect(screen.queryByText(/根据当前选择的知识来源/)).toBeNull();
   });
 
   it("starts a new empty chat while preserving and restoring earlier life-underwriting chats", async () => {
@@ -551,6 +648,18 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("option", { name: "Life underwriting reviewer" }),
     ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("localizes catalog list labels instead of composing English aria text", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    await user.click(screen.getByRole("button", { name: "智能体" }));
+    expect(screen.getByRole("list", { name: "智能体目录" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "技能" }));
+    expect(screen.getByRole("list", { name: "技能目录" })).toBeVisible();
   });
 
   it("contains create-dialog focus, hides the product background, and restores the Create trigger", async () => {

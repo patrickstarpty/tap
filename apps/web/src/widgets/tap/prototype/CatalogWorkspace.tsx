@@ -61,6 +61,9 @@ export function CatalogWorkspace({
   const searchLabel = isAgent
     ? copy.catalog.searchAgents
     : copy.catalog.searchSkills;
+  const catalogLabel = isAgent
+    ? copy.catalog.agentCatalog
+    : copy.catalog.skillCatalog;
 
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -146,7 +149,7 @@ export function CatalogWorkspace({
       {visibleItems.length === 0 ? (
         <div className="tap-catalog-empty">{copy.catalog.noResults}</div>
       ) : (
-        <ul className="tap-catalog-list" aria-label={`${heading} catalog`}>
+        <ul className="tap-catalog-list" aria-label={catalogLabel}>
           {visibleItems.map((item) => (
             <li key={item.id} aria-label={item.name}>
               <div className="tap-catalog-icon" aria-hidden="true">

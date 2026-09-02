@@ -276,9 +276,31 @@ describe("Athena product prototype", () => {
     expect(
       screen.getByText(/根据当前选择的知识来源，寿险投保通常需要投保人/),
     ).toBeVisible();
+    expect(screen.getByRole("region", { name: "Athena 助手" })).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Import to Test Plan" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("localizes a Chinese automation response and its action summary", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "中文" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      "为寿险投保申请生成自动化脚本",
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const artifact = screen.getByRole("article", {
+      name: "生成的自动化流程",
+    });
+    expect(within(artifact).getByText("导航")).toBeVisible();
+    expect(within(artifact).getByText("点击")).toBeVisible();
+    expect(within(artifact).getByText("填写")).toBeVisible();
+    expect(within(artifact).getByText("断言")).toBeVisible();
+    expect(within(artifact).getByText(/场景：完整申请进入核保/)).toBeVisible();
   });
 
   it("answers an English question in English by default", async () => {
@@ -314,6 +336,8 @@ describe("Athena product prototype", () => {
 
     await user.click(screen.getByRole("button", { name: "测试管理" }));
     expect(screen.getByRole("heading", { name: "测试管理" })).toBeVisible();
+    expect(screen.getByText("2 个测试计划")).toBeVisible();
+    expect(screen.getByRole("table", { name: "测试计划列表" })).toBeVisible();
     expect(
       within(screen.getByRole("tablist", { name: "测试管理分区" }))
         .getAllByRole("tab")

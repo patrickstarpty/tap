@@ -349,7 +349,7 @@ export function AthenaChat({
   return (
     <section
       className={`tap-chat ${hasTurns ? "tap-chat--active" : "tap-chat--idle"}`}
-      aria-label={hasTurns ? "Athena assistant" : copy.chat.startConversation}
+      aria-label={hasTurns ? copy.chat.assistant : copy.chat.startConversation}
     >
       {hasTurns ? (
         <div

@@ -7,6 +7,7 @@ export interface PrototypeCopy {
   };
   navigation: Record<ProductModule, string> & {
     collapseSidebar: string;
+    closeSidebar: string;
     expandSidebar: string;
     newChat: string;
     chatHistory: string;
@@ -28,6 +29,7 @@ export interface PrototypeCopy {
     suggestedPrompts: string;
     quickPrompts: readonly [string, string, string];
     answer: string;
+    assistant: string;
   };
   sources: {
     heading: string;
@@ -74,6 +76,8 @@ export interface PrototypeCopy {
     useInChat: string;
     cancel: string;
     noResults: string;
+    agentCatalog: string;
+    skillCatalog: string;
   };
   library: {
     heading: string;
@@ -113,6 +117,23 @@ export interface PrototypeCopy {
     feature: string;
     bddPlanLabel: string;
     automationLabel: string;
+    scenario: string;
+    keywordSeparator: string;
+    given: string;
+    when: string;
+    then: string;
+    completeScenario: string;
+    completeGiven: string;
+    completeWhen: string;
+    completeThen: string;
+    disclosureScenario: string;
+    disclosureGiven: string;
+    disclosureWhen: string;
+    disclosureThen: string;
+    highCoverageScenario: string;
+    highCoverageGiven: string;
+    highCoverageWhen: string;
+    highCoverageThen: string;
   };
   testManagement: {
     heading: string;
@@ -127,6 +148,7 @@ export interface PrototypeCopy {
     importToTestPlan: string;
     importBddAsTestPlan: string;
     testPlans: string;
+    testPlanCount: string;
     reusableTestData: string;
     testDataEmpty: string;
     newDataSet: string;
@@ -176,6 +198,7 @@ export const PROTOTYPE_COPY = {
       "test-management": "Test Management",
       "low-code": "Low Code Automation",
       collapseSidebar: "Collapse sidebar",
+      closeSidebar: "Close sidebar",
       expandSidebar: "Expand sidebar",
       newChat: "New Chat",
       chatHistory: "Chat history",
@@ -190,10 +213,10 @@ export const PROTOTYPE_COPY = {
       messageAthena: "Message Athena",
       messageComposer: "Message composer",
       send: "Send",
-      placeholder: "Ask Athena anything...",
+      placeholder: "Ask about life insurance or testing...",
       heading: "What can I do for you?",
       description:
-        "Ask a question, create BDD test cases, or build an automation.",
+        "Ask about life insurance, create BDD test cases, or build an automation.",
       sourceHint: "Answers use your selected sources when available.",
       suggestedPrompts: "Suggested prompts",
       quickPrompts: [
@@ -203,6 +226,7 @@ export const PROTOTYPE_COPY = {
       ],
       answer:
         "Based on the selected knowledge sources, a life insurance application usually requires identity details for the policyholder and insured person, health disclosures, beneficiary information, and verifiable payment details.",
+      assistant: "Athena assistant",
     },
     sources: {
       heading: "Knowledge sources",
@@ -252,6 +276,8 @@ export const PROTOTYPE_COPY = {
       useInChat: "Use in chat",
       cancel: "Cancel",
       noResults: "No matching items",
+      agentCatalog: "Agent catalog",
+      skillCatalog: "Skill catalog",
     },
     library: {
       heading: "Library",
@@ -293,6 +319,26 @@ export const PROTOTYPE_COPY = {
       feature: "Feature: Life insurance application underwriting",
       bddPlanLabel: "Generated BDD test plan",
       automationLabel: "Generated automation",
+      scenario: "Scenario",
+      keywordSeparator: ": ",
+      given: "Given",
+      when: "When",
+      then: "Then",
+      completeScenario: "Complete application enters underwriting",
+      completeGiven:
+        "an adult applicant with completed identity and health declarations",
+      completeWhen: "the applicant submits a complete term life application",
+      completeThen: 'the application status should be "Pending underwriting"',
+      disclosureScenario: "Missing health disclosure is blocked",
+      disclosureGiven: "mandatory health disclosure answers are missing",
+      disclosureWhen: "the applicant submits the life insurance application",
+      disclosureThen: "the application should show a validation error",
+      highCoverageScenario: "High coverage requires manual review",
+      highCoverageGiven:
+        "the requested sum assured exceeds the straight-through limit",
+      highCoverageWhen: "the applicant submits the life insurance application",
+      highCoverageThen:
+        'the application status should be "Additional review required"',
     },
     testManagement: {
       heading: "Test Management",
@@ -306,7 +352,8 @@ export const PROTOTYPE_COPY = {
       draft: "Draft",
       importToTestPlan: "Import to Test Plan",
       importBddAsTestPlan: "Import BDD as Test Plan",
-      testPlans: "test plans",
+      testPlans: "Test plans",
+      testPlanCount: "test plans",
       reusableTestData: "Reusable test data",
       testDataEmpty: "Test data sets will appear here.",
       newDataSet: "New data set",
@@ -354,6 +401,7 @@ export const PROTOTYPE_COPY = {
       "test-management": "测试管理",
       "low-code": "低代码自动化",
       collapseSidebar: "收起侧边栏",
+      closeSidebar: "关闭侧边栏",
       expandSidebar: "展开侧边栏",
       newChat: "新建对话",
       chatHistory: "对话历史",
@@ -368,9 +416,9 @@ export const PROTOTYPE_COPY = {
       messageAthena: "向 Athena 发送消息",
       messageComposer: "消息编辑器",
       send: "发送",
-      placeholder: "向 Athena 提问...",
+      placeholder: "询问寿险业务或测试问题...",
       heading: "我能为您做什么？",
-      description: "提问、创建 BDD 测试用例，或构建自动化流程。",
+      description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
       sourceHint: "回答会在可用时使用您选择的知识来源。",
       suggestedPrompts: "推荐提示词",
       quickPrompts: [
@@ -380,6 +428,7 @@ export const PROTOTYPE_COPY = {
       ],
       answer:
         "根据当前选择的知识来源，寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。",
+      assistant: "Athena 助手",
     },
     sources: {
       heading: "知识来源",
@@ -426,6 +475,8 @@ export const PROTOTYPE_COPY = {
       useInChat: "在对话中使用",
       cancel: "取消",
       noResults: "没有匹配项",
+      agentCatalog: "智能体目录",
+      skillCatalog: "技能目录",
     },
     library: {
       heading: "知识库",
@@ -465,6 +516,23 @@ export const PROTOTYPE_COPY = {
       feature: "功能：寿险投保申请核保",
       bddPlanLabel: "生成的 BDD 测试计划",
       automationLabel: "生成的自动化流程",
+      scenario: "场景",
+      keywordSeparator: "：",
+      given: "假如",
+      when: "当",
+      then: "那么",
+      completeScenario: "完整申请进入核保",
+      completeGiven: "成年申请人已完成身份资料和健康告知",
+      completeWhen: "申请人提交完整的定期寿险投保申请",
+      completeThen: "申请状态应为“待核保”",
+      disclosureScenario: "缺少健康告知时阻止提交",
+      disclosureGiven: "必填健康告知答案缺失",
+      disclosureWhen: "申请人提交寿险投保申请",
+      disclosureThen: "投保申请应显示校验错误",
+      highCoverageScenario: "高保额申请需要人工审核",
+      highCoverageGiven: "申请保额超过自动核保限额",
+      highCoverageWhen: "申请人提交寿险投保申请",
+      highCoverageThen: "申请状态应为“需要补充审核”",
     },
     testManagement: {
       heading: "测试管理",
@@ -478,7 +546,8 @@ export const PROTOTYPE_COPY = {
       draft: "草稿",
       importToTestPlan: "导入测试计划",
       importBddAsTestPlan: "将 BDD 导入为测试计划",
-      testPlans: "个测试计划",
+      testPlans: "测试计划列表",
+      testPlanCount: "个测试计划",
       reusableTestData: "可复用测试数据",
       testDataEmpty: "测试数据集将显示在这里。",
       newDataSet: "新建数据集",

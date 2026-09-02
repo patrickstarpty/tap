@@ -14,6 +14,7 @@ export type CatalogOrigin = "built-in" | "custom";
 export interface AssistantTurn {
   id: string;
   intent: AssistantIntent;
+  locale: Locale;
   prompt: string;
 }
 

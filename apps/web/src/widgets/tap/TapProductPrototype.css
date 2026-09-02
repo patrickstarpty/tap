@@ -19,6 +19,10 @@
   grid-template-columns: 72px minmax(0, 1fr);
 }
 
+.tap-sidebar-scrim {
+  display: none;
+}
+
 .tap-product-shell ::selection {
   background: #dcd9ff;
   color: #211b6b;
@@ -1492,13 +1496,6 @@
   white-space: pre-wrap;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tap-navigation-item,
-  .tap-quick-prompts button {
-    transition: none;
-  }
-}
-
 @media (max-width: 1100px) {
   .tap-product-shell {
     grid-template-columns: 200px minmax(0, 1fr);
@@ -1585,6 +1582,18 @@
     width: 72px;
     padding-inline: 10px;
     box-shadow: none;
+  }
+
+  .tap-sidebar-scrim {
+    position: fixed;
+    z-index: 30;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgb(31 35 40 / 24%);
+    padding: 0;
   }
 
   .tap-primary-navigation {
@@ -1689,6 +1698,26 @@
   .tap-catalog-toolbar .ant-input,
   .tap-library-toolbar .ant-input {
     font-size: 16px;
+  }
+
+  .tap-product-main .ant-btn,
+  .tap-product-main .ant-input,
+  .tap-product-main .ant-select,
+  .tap-product-main .ant-select-selector,
+  .tap-product-main .ant-select-selection-search-input {
+    min-height: 44px;
+  }
+
+  .tap-product-main .ant-btn.ant-btn-icon-only {
+    min-width: 44px;
+  }
+
+  .tap-step-fields .ant-select-single {
+    height: 44px;
+  }
+
+  .tap-step-fields .ant-select-single .ant-select-selector {
+    align-items: center;
   }
 
   .tap-composer-footer > span {
@@ -1806,5 +1835,13 @@
   .tap-code-preview pre {
     overflow-x: auto;
     white-space: pre;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tap-sidebar,
+  .tap-navigation-item,
+  .tap-quick-prompts button {
+    transition: none;
   }
 }

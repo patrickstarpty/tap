@@ -40,6 +40,7 @@ describe("Athena prototype model", () => {
     const turn: AssistantTurn = {
       id: "turn-1",
       intent: "answer",
+      locale: "en",
       prompt: "What evidence is needed for life insurance underwriting?",
     };
 
