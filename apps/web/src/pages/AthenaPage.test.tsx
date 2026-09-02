@@ -12,14 +12,14 @@ import { AthenaPage } from "./AthenaPage";
 function renderPrototype() {
   const api = fakeKnowledgeClient().withDocuments([
     document({
-      documentId: "refund-policy",
-      filename: "refund-policy.md",
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
       status: "ready",
       stage: "ready",
     }),
     document({
-      documentId: "support-playbook",
-      filename: "support-playbook.pdf",
+      documentId: "health-disclosure-guide",
+      filename: "health-disclosure-guide.pdf",
       status: "ready",
       stage: "ready",
     }),
@@ -54,6 +54,13 @@ describe("Athena product prototype", () => {
     expect(
       screen.getByRole("heading", { name: "Knowledge sources" }),
     ).toBeVisible();
+    expect(await screen.findByText("life-underwriting-rules.md")).toBeVisible();
+    expect(screen.getByText("health-disclosure-guide.pdf")).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: "Create BDD test cases for life insurance underwriting",
+      }),
+    ).toBeVisible();
     expect(screen.queryByText("Intelligence Lab")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "问答" }),
@@ -70,16 +77,18 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(user, "为退款审批流程生成 BDD 测试用例");
+    await sendMessage(user, "为寿险新单核保生成 BDD 测试用例");
 
     const artifact = screen.getByRole("article", {
       name: "Generated BDD test plan",
     });
     expect(
-      within(artifact).getByText("Feature: Refund request approval"),
+      within(artifact).getByText(
+        "Feature: Life insurance application underwriting",
+      ),
     ).toBeVisible();
     expect(
-      within(artifact).getByText(/Given a refundable order/),
+      within(artifact).getByText(/Given an adult applicant/),
     ).toBeVisible();
     await user.click(
       within(artifact).getByRole("button", { name: "Import to Test Plan" }),
@@ -96,7 +105,9 @@ describe("Athena product prototype", () => {
         .getAllByRole("tab")
         .map((tab) => tab.textContent),
     ).toEqual(["Test Plan", "Test Data"]);
-    expect(screen.getByText("Refund request approval")).toBeVisible();
+    expect(
+      screen.getByText("Life insurance application underwriting"),
+    ).toBeVisible();
     expect(screen.getByText("Imported from Athena")).toBeVisible();
   });
 
@@ -104,7 +115,7 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(user, "生成退款申请的自动化脚本");
+    await sendMessage(user, "生成人寿保险投保的自动化脚本");
 
     const artifact = screen.getByRole("article", {
       name: "Generated automation",
@@ -119,15 +130,18 @@ describe("Athena product prototype", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Refund request automation" }),
+      screen.getByRole("heading", {
+        name: "Life insurance application automation",
+      }),
     ).toBeVisible();
+    expect(screen.getByText("life-policy-application.spec.ts")).toBeVisible();
     const target = screen.getByRole("textbox", {
       name: "Element for step 2",
     });
     fireEvent.change(target, {
-      target: { value: "button[data-testid='new-refund']" },
+      target: { value: "button[data-testid='start-application']" },
     });
-    expect(target).toHaveValue("button[data-testid='new-refund']");
+    expect(target).toHaveValue("button[data-testid='start-application']");
 
     const stepCount = screen.getAllByRole("listitem", {
       name: /Automation step/,
@@ -148,7 +162,7 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(user, "生成退款申请的自动化脚本");
+    await sendMessage(user, "生成人寿保险投保的自动化脚本");
     await user.click(
       screen.getByRole("button", { name: "Open in Low Code Automation" }),
     );
@@ -163,7 +177,9 @@ describe("Athena product prototype", () => {
       }),
     );
 
-    expect(screen.getByText("Refund request approval")).toBeVisible();
+    expect(
+      screen.getByText("Life insurance application underwriting"),
+    ).toBeVisible();
     expect(screen.getByText("Imported from Athena")).toBeVisible();
   });
 
@@ -191,8 +207,14 @@ describe("Athena product prototype", () => {
   });
 
   it.each([
-    ["Create a test plan for refund approval", "Generated BDD test plan"],
-    ["Automate refund requests with Playwright", "Generated automation"],
+    [
+      "Create a test plan for life insurance underwriting",
+      "Generated BDD test plan",
+    ],
+    [
+      "Automate life insurance applications with Playwright",
+      "Generated automation",
+    ],
   ])("routes common request wording: %s", async (prompt, artifactName) => {
     const user = userEvent.setup();
     renderPrototype();
@@ -206,9 +228,11 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(user, "What is the refund workflow?");
+    await sendMessage(user, "What is the life underwriting workflow?");
 
-    expect(screen.getByText("What is the refund workflow?")).toBeVisible();
+    expect(
+      screen.getByText("What is the life underwriting workflow?"),
+    ).toBeVisible();
     expect(
       screen.queryByRole("article", { name: "Generated automation" }),
     ).not.toBeInTheDocument();
@@ -219,6 +243,10 @@ describe("Athena product prototype", () => {
     renderPrototype();
 
     await user.click(screen.getByRole("button", { name: "Test Management" }));
+    expect(
+      screen.getByText("Life policy application regression"),
+    ).toBeVisible();
+    expect(screen.getByText("Beneficiary maintenance")).toBeVisible();
     const testPlanTab = screen.getByRole("tab", { name: "Test Plan" });
     const testDataTab = screen.getByRole("tab", { name: "Test Data" });
     testPlanTab.focus();
@@ -233,14 +261,37 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(user, "退款申请需要什么资料？");
+    await sendMessage(user, "寿险投保需要什么资料？");
 
-    expect(screen.getByText("退款申请需要什么资料？")).toBeVisible();
+    expect(screen.getByText("寿险投保需要什么资料？")).toBeVisible();
     expect(
-      screen.getByText(/根据当前选择的知识来源，退款申请需要订单号/),
+      screen.getByText(/根据当前选择的知识来源，寿险投保通常需要投保人/),
     ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Import to Test Plan" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("moves the composer from the centered start state to the conversation dock", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const start = screen.getByRole("region", { name: "Start a conversation" });
+    expect(
+      within(start).getByRole("heading", { name: "What can I do for you?" }),
+    ).toBeVisible();
+    expect(
+      within(start).getByRole("form", { name: "Message composer" }),
+    ).toBeVisible();
+
+    await sendMessage(user, "寿险投保需要什么资料？");
+
+    expect(
+      screen.queryByRole("region", { name: "Start a conversation" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("log", { name: "Conversation" })).toBeVisible();
+    expect(
+      screen.getByRole("form", { name: "Message composer" }),
+    ).toBeVisible();
   });
 });

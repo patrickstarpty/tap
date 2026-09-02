@@ -146,11 +146,30 @@
 }
 
 .tap-chat {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 100dvh;
   background: #fff;
+}
+
+.tap-chat--idle {
+  display: block;
+}
+
+.tap-chat--active {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.tap-chat-start {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 24px;
+  width: 100%;
+  min-height: 100dvh;
+  padding: clamp(36px, 7vh, 72px) clamp(24px, 6vw, 84px);
 }
 
 .tap-chat-transcript {
@@ -162,7 +181,7 @@
 .tap-chat-welcome {
   display: grid;
   max-width: 700px;
-  margin: clamp(70px, 14vh, 150px) auto 0;
+  margin: 0 auto;
   text-align: center;
 }
 
@@ -206,6 +225,10 @@
   margin-top: 30px;
 }
 
+.tap-chat-start .tap-quick-prompts {
+  margin-top: 0;
+}
+
 .tap-quick-prompts button {
   min-height: 44px;
   border: 1px solid var(--tap-line);
@@ -235,6 +258,11 @@
   background: #fff;
   box-shadow: 0 10px 30px 4px rgb(29 38 56 / 9%);
   padding: 12px 13px 10px;
+}
+
+.tap-chat-start .tap-composer {
+  width: min(760px, 100%);
+  margin: 0;
 }
 
 .tap-composer textarea.ant-input {
@@ -933,8 +961,18 @@
     padding: 26px 16px;
   }
 
-  .tap-chat-welcome {
-    margin-top: 72px;
+  .tap-chat,
+  .tap-chat-start {
+    min-height: calc(100dvh - 68px - env(safe-area-inset-bottom));
+  }
+
+  .tap-chat--active {
+    height: calc(100dvh - 68px - env(safe-area-inset-bottom));
+  }
+
+  .tap-chat-start {
+    gap: 20px;
+    padding: 28px 16px;
   }
 
   .tap-chat-welcome h1 {
@@ -952,6 +990,10 @@
 
   .tap-composer-footer > span {
     display: none;
+  }
+
+  .tap-composer-footer .ant-btn {
+    margin-left: auto;
   }
 
   .tap-user-message {

@@ -67,22 +67,22 @@ const MODULES: readonly {
 
 const INITIAL_PLANS: readonly TestPlan[] = [
   {
-    id: "plan-checkout",
-    title: "Checkout smoke suite",
-    scenarios: 12,
+    id: "plan-life-application",
+    title: "Life policy application regression",
+    scenarios: 14,
     source: "Manual",
   },
   {
-    id: "plan-login",
-    title: "Account access regression",
-    scenarios: 8,
+    id: "plan-beneficiary",
+    title: "Beneficiary maintenance",
+    scenarios: 9,
     source: "Manual",
   },
 ];
 
 const GENERATED_PLAN: TestPlan = {
-  id: "plan-refund",
-  title: "Refund request approval",
+  id: "plan-life-underwriting",
+  title: "Life insurance application underwriting",
   scenarios: 3,
   source: "Athena",
 };
@@ -91,45 +91,45 @@ const INITIAL_AUTOMATION_STEPS: readonly AutomationStep[] = [
   {
     id: "step-1",
     action: "Navigate",
-    target: "/orders/ORD-1048",
+    target: "/life/applications/new",
     value: "",
   },
   {
     id: "step-2",
     action: "Click",
-    target: "button[data-testid='request-refund']",
+    target: "button[data-testid='start-application']",
     value: "",
   },
   {
     id: "step-3",
     action: "Fill",
-    target: "input[name='amount']",
-    value: "1280",
+    target: "input[name='sumAssured']",
+    value: "1000000",
   },
   {
     id: "step-4",
     action: "Fill",
-    target: "textarea[name='reason']",
-    value: "Duplicate charge",
+    target: "textarea[name='healthDeclaration']",
+    value: "No disclosed conditions",
   },
   {
     id: "step-5",
     action: "Click",
-    target: "button[type='submit']",
+    target: "button[data-testid='submit-underwriting']",
     value: "",
   },
   {
     id: "step-6",
     action: "Assert",
-    target: "[data-testid='refund-status']",
-    value: "Pending review",
+    target: "[data-testid='underwriting-status']",
+    value: "Pending underwriting",
   },
 ];
 
 const QUICK_PROMPTS = [
-  "Summarize the refund policy",
-  "Create BDD test cases for refund approval",
-  "Generate an automation script for refund requests",
+  "Summarize the life insurance underwriting rules",
+  "Create BDD test cases for life insurance underwriting",
+  "Generate an automation script for a life insurance application",
 ] as const;
 
 function detectIntent(prompt: string): AssistantIntent {
@@ -310,18 +310,29 @@ function BddPreview() {
   return (
     <pre className="tap-bdd-preview">
       <code>
-        <span>Feature: Refund request approval</span>
+        <span>Feature: Life insurance application underwriting</span>
         {"\n\n"}
-        <span> Scenario: Eligible refund enters review</span>
+        <span> Scenario: Complete application enters underwriting</span>
         {"\n"}
-        {"   Given a refundable order with a captured payment\n"}
-        {"   When the customer submits a valid refund request\n"}
-        {'   Then the request status should be "Pending review"\n\n'}
-        <span> Scenario: Invalid amount is rejected</span>
+        {
+          "   Given an adult applicant with completed identity and health declarations\n"
+        }
+        {"   When the applicant submits a complete term life application\n"}
+        {'   Then the application status should be "Pending underwriting"\n\n'}
+        <span> Scenario: Missing health disclosure is blocked</span>
         {"\n"}
-        {"   Given the requested amount exceeds the captured payment\n"}
-        {"   When the customer submits the refund request\n"}
-        {"   Then the request should show a validation error"}
+        {"   Given mandatory health disclosure answers are missing\n"}
+        {"   When the applicant submits the life insurance application\n"}
+        {"   Then the application should show a validation error\n\n"}
+        <span> Scenario: High coverage requires manual review</span>
+        {"\n"}
+        {
+          "   Given the requested sum assured exceeds the straight-through limit\n"
+        }
+        {"   When the applicant submits the life insurance application\n"}
+        {
+          '   Then the application status should be "Additional review required"'
+        }
       </code>
     </pre>
   );
@@ -340,9 +351,11 @@ function AssistantResponse({
     return (
       <div className="tap-answer-copy">
         <p>
-          根据当前选择的知识来源，退款申请需要订单号、退款金额、退款原因和可核验的付款记录。
+          根据当前选择的知识来源，寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。
         </p>
-        <span className="tap-citation-reference">[1] refund-policy.md</span>
+        <span className="tap-citation-reference">
+          [1] life-underwriting-rules.md
+        </span>
       </div>
     );
   }
@@ -445,11 +458,76 @@ function AthenaAssistant({
     event.currentTarget.form?.requestSubmit();
   };
 
+  const hasTurns = turns.length > 0;
+  const composer = (
+    <form
+      className="tap-composer"
+      aria-label="Message composer"
+      onSubmit={submit}
+    >
+      <label className="athena-visually-hidden" htmlFor="tap-message">
+        Message Athena
+      </label>
+      <Input.TextArea
+        id="tap-message"
+        value={message}
+        rows={3}
+        placeholder="Ask Athena anything..."
+        onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={handleComposerKeyDown}
+      />
+      <div className="tap-composer-footer">
+        <span>Answers use your selected sources when available.</span>
+        <Button
+          type="primary"
+          shape="circle"
+          htmlType="submit"
+          aria-label="Send"
+          disabled={message.trim().length === 0}
+          icon={<SendOutlined aria-hidden="true" />}
+        />
+      </div>
+    </form>
+  );
+
   return (
     <div className="tap-athena-layout">
-      <section className="tap-chat" aria-label="Athena assistant">
-        <div className="tap-chat-transcript" aria-live="polite">
-          {turns.length === 0 ? (
+      <section
+        className={`tap-chat ${hasTurns ? "tap-chat--active" : "tap-chat--idle"}`}
+        aria-label="Athena assistant"
+      >
+        {hasTurns ? (
+          <>
+            <div
+              className="tap-chat-transcript"
+              role="log"
+              aria-label="Conversation"
+              aria-live="polite"
+            >
+              <div className="tap-conversation">
+                {turns.map((turn) => (
+                  <div className="tap-turn" key={turn.id}>
+                    <div className="tap-user-message">{turn.prompt}</div>
+                    <div className="tap-assistant-message">
+                      <span className="tap-assistant-avatar">A</span>
+                      <AssistantResponse
+                        intent={turn.intent}
+                        onImportPlan={onImportPlan}
+                        onOpenAutomation={onOpenAutomation}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {composer}
+          </>
+        ) : (
+          <div
+            className="tap-chat-start"
+            role="region"
+            aria-label="Start a conversation"
+          >
             <div className="tap-chat-welcome">
               <div className="tap-athena-mark" aria-hidden="true">
                 A
@@ -458,61 +536,21 @@ function AthenaAssistant({
               <p>
                 Ask a question, create BDD test cases, or build an automation.
               </p>
-              <div className="tap-quick-prompts" aria-label="Suggested prompts">
-                {QUICK_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => submitMessage(prompt)}
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
             </div>
-          ) : (
-            <div className="tap-conversation">
-              {turns.map((turn) => (
-                <div className="tap-turn" key={turn.id}>
-                  <div className="tap-user-message">{turn.prompt}</div>
-                  <div className="tap-assistant-message">
-                    <span className="tap-assistant-avatar">A</span>
-                    <AssistantResponse
-                      intent={turn.intent}
-                      onImportPlan={onImportPlan}
-                      onOpenAutomation={onOpenAutomation}
-                    />
-                  </div>
-                </div>
+            {composer}
+            <div className="tap-quick-prompts" aria-label="Suggested prompts">
+              {QUICK_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => submitMessage(prompt)}
+                >
+                  {prompt}
+                </button>
               ))}
             </div>
-          )}
-        </div>
-
-        <form className="tap-composer" onSubmit={submit}>
-          <label className="athena-visually-hidden" htmlFor="tap-message">
-            Message Athena
-          </label>
-          <Input.TextArea
-            id="tap-message"
-            value={message}
-            rows={3}
-            placeholder="Ask Athena anything..."
-            onChange={(event) => setMessage(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-          />
-          <div className="tap-composer-footer">
-            <span>Answers use your selected sources when available.</span>
-            <Button
-              type="primary"
-              shape="circle"
-              htmlType="submit"
-              aria-label="Send"
-              disabled={message.trim().length === 0}
-              icon={<SendOutlined aria-hidden="true" />}
-            />
           </div>
-        </form>
+        )}
       </section>
 
       <KnowledgeSources onManage={() => setKnowledgeOpen(true)} />
@@ -720,7 +758,7 @@ function LowCodeAutomation({
     >
       <header className="tap-module-heading">
         <div>
-          <h1 id="low-code-heading">Refund request automation</h1>
+          <h1 id="low-code-heading">Life insurance application automation</h1>
           <p>Generated by Athena · Playwright · Draft</p>
         </div>
         <div className="tap-heading-actions">
@@ -815,10 +853,12 @@ function LowCodeAutomation({
               <h2 id="script-preview-heading">Generated script</h2>
               <span>Updates with every step</span>
             </div>
-            <span className="tap-file-name">refund-request.spec.ts</span>
+            <span className="tap-file-name">
+              life-policy-application.spec.ts
+            </span>
           </header>
           <pre>
-            <code>{`test("customer requests a refund", async ({ page }) => {\n${code}\n});`}</code>
+            <code>{`test("applicant submits a life insurance application", async ({ page }) => {\n${code}\n});`}</code>
           </pre>
         </aside>
       </div>
