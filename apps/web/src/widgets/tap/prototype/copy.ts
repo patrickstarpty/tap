@@ -49,6 +49,8 @@ export interface PrototypeCopy {
   catalog: {
     agents: string;
     skills: string;
+    agentsDescription: string;
+    skillsDescription: string;
     createAgent: string;
     createSkill: string;
     editAgent: string;
@@ -57,15 +59,39 @@ export interface PrototypeCopy {
     saveSkill: string;
     name: string;
     description: string;
+    instructions: string;
+    searchAgents: string;
+    searchSkills: string;
+    builtIn: string;
+    custom: string;
+    useInChat: string;
+    cancel: string;
     noResults: string;
   };
   library: {
     heading: string;
+    description: string;
     addSource: string;
     thumbnailList: string;
     knowledgeGraph: string;
     sources: string;
     knowledgeGraphImage: string;
+    search: string;
+    sourceFile: string;
+    cancel: string;
+    ready: string;
+    processing: string;
+    failed: string;
+    noResults: string;
+    illustrative: string;
+    application: string;
+    underwriting: string;
+    healthDisclosure: string;
+    beneficiary: string;
+    requires: string;
+    informs: string;
+    names: string;
+    supports: string;
   };
   artifacts: {
     bddPlanReady: string;
@@ -171,6 +197,10 @@ export const PROTOTYPE_COPY = {
     catalog: {
       agents: "Agents",
       skills: "Skills",
+      agentsDescription:
+        "Create focused collaborators for repeatable workflows.",
+      skillsDescription:
+        "Keep reusable instructions ready for every conversation.",
       createAgent: "Create agent",
       createSkill: "Create skill",
       editAgent: "Edit agent",
@@ -179,15 +209,41 @@ export const PROTOTYPE_COPY = {
       saveSkill: "Save skill",
       name: "Name",
       description: "Description",
+      instructions: "Instructions",
+      searchAgents: "Search agents",
+      searchSkills: "Search skills",
+      builtIn: "Built-in",
+      custom: "Custom",
+      useInChat: "Use in chat",
+      cancel: "Cancel",
       noResults: "No matching items",
     },
     library: {
       heading: "Library",
+      description:
+        "Browse source material and explore its curated domain context.",
       addSource: "Add source",
       thumbnailList: "Thumbnail list",
       knowledgeGraph: "Knowledge Graph",
       sources: "Library sources",
       knowledgeGraphImage: "Life insurance knowledge graph",
+      search: "Search library",
+      sourceFile: "Source file",
+      cancel: "Cancel",
+      ready: "Ready",
+      processing: "Processing",
+      failed: "Failed",
+      noResults: "No matching sources",
+      illustrative:
+        "Illustrative view — relationships are curated for this prototype, not computed.",
+      application: "Life insurance application",
+      underwriting: "Underwriting",
+      healthDisclosure: "Health disclosure",
+      beneficiary: "Beneficiary",
+      requires: "requires",
+      informs: "informs",
+      names: "names",
+      supports: "supports",
     },
     artifacts: {
       bddPlanReady: "BDD test plan ready",
@@ -289,6 +345,8 @@ export const PROTOTYPE_COPY = {
     catalog: {
       agents: "智能体",
       skills: "技能",
+      agentsDescription: "为可重复的工作流创建专注的协作者。",
+      skillsDescription: "将可复用指令应用于每一次对话。",
       createAgent: "创建智能体",
       createSkill: "创建技能",
       editAgent: "编辑智能体",
@@ -297,15 +355,39 @@ export const PROTOTYPE_COPY = {
       saveSkill: "保存技能",
       name: "名称",
       description: "描述",
+      instructions: "指令",
+      searchAgents: "搜索智能体",
+      searchSkills: "搜索技能",
+      builtIn: "内置",
+      custom: "自定义",
+      useInChat: "在对话中使用",
+      cancel: "取消",
       noResults: "没有匹配项",
     },
     library: {
       heading: "知识库",
+      description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
       thumbnailList: "缩略图列表",
       knowledgeGraph: "知识图谱",
       sources: "知识库来源",
       knowledgeGraphImage: "寿险知识图谱",
+      search: "搜索知识库",
+      sourceFile: "来源文件",
+      cancel: "取消",
+      ready: "已就绪",
+      processing: "处理中",
+      failed: "失败",
+      noResults: "没有匹配的来源",
+      illustrative: "示意视图 — 关系由本原型编排，并非计算所得。",
+      application: "寿险投保",
+      underwriting: "核保",
+      healthDisclosure: "健康告知",
+      beneficiary: "受益人",
+      requires: "需要",
+      informs: "影响",
+      names: "指定",
+      supports: "支持",
     },
     artifacts: {
       bddPlanReady: "BDD 测试计划已就绪",

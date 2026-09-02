@@ -16,8 +16,13 @@ import {
 
 import { useDocumentListQuery } from "../../features/knowledge/api/queries";
 import { AthenaChat } from "./prototype/AthenaChat";
+import {
+  CatalogWorkspace,
+  type CatalogDraft,
+} from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
+import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
   appendTurn,
   createConversation,
@@ -525,15 +530,21 @@ export const BUILT_IN_AGENTS: readonly CatalogItem[] = [
   {
     id: "life-underwriting-analyst",
     kind: "agent",
+    origin: "built-in",
     name: "Life Underwriting Analyst",
     description:
       "Reviews life policy evidence and explains underwriting decisions.",
+    instructions:
+      "Review selected evidence, identify underwriting implications, and explain the rationale.",
   },
   {
     id: "application-completeness-reviewer",
     kind: "agent",
+    origin: "built-in",
     name: "Application Completeness Reviewer",
     description: "Checks life policy applications for missing information.",
+    instructions:
+      "Check identity, health disclosure, beneficiary, and payment details for completeness.",
   },
 ];
 
@@ -541,14 +552,20 @@ export const BUILT_IN_SKILLS: readonly CatalogItem[] = [
   {
     id: "bdd-scenario-design",
     kind: "skill",
+    origin: "built-in",
     name: "BDD Scenario Design",
     description: "Turns underwriting rules into focused BDD scenarios.",
+    instructions:
+      "Create concise Given, When, Then scenarios grounded in the selected rules.",
   },
   {
     id: "underwriting-evidence-review",
     kind: "skill",
+    origin: "built-in",
     name: "Underwriting Evidence Review",
     description: "Finds and summarizes evidence for underwriting decisions.",
+    instructions:
+      "Locate relevant evidence, summarize it faithfully, and retain source attribution.",
   },
 ];
 
@@ -556,15 +573,6 @@ function toggleSelection(values: readonly string[], id: string): string[] {
   return values.includes(id)
     ? values.filter((value) => value !== id)
     : [...values, id];
-}
-
-function WorkspacePlaceholder({ heading }: { heading: string }) {
-  return (
-    <section className="tap-module tap-workspace-placeholder">
-      <h1>{heading}</h1>
-      <p>This workspace will be available in the next prototype step.</p>
-    </section>
-  );
 }
 
 export function TapProductPrototype() {
@@ -577,14 +585,21 @@ export function TapProductPrototype() {
   );
   const [activeConversationId, setActiveConversationId] = useState("chat-1");
   const [plans, setPlans] = useState<readonly TestPlan[]>(INITIAL_PLANS);
+  const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
+  const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
+  const [localSources, setLocalSources] = useState<readonly LibrarySource[]>(
+    [],
+  );
   const [automationSteps, setAutomationSteps] = useState<
     readonly AutomationStep[]
   >(INITIAL_AUTOMATION_STEPS);
   const nextConversationId = useRef(2);
   const nextTurnId = useRef(1);
+  const nextCatalogId = useRef(1);
+  const nextLocalSourceId = useRef(1);
 
   const copy = PROTOTYPE_COPY[locale];
-  const sources = useMemo<readonly LibrarySource[]>(
+  const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
       (documentsQuery.data?.items ?? []).map((document) => ({
         id: document.documentId,
@@ -599,6 +614,10 @@ export function TapProductPrototype() {
         description: `Knowledge source · ${document.stage}`,
       })),
     [documentsQuery.data?.items],
+  );
+  const sources = useMemo<readonly LibrarySource[]>(
+    () => [...documentSources, ...localSources],
+    [documentSources, localSources],
   );
   const activeConversation =
     conversations.find(
@@ -648,6 +667,52 @@ export function TapProductPrototype() {
     setActiveModule("test-management");
   };
 
+  const createCatalogItem = (kind: "agent" | "skill", draft: CatalogDraft) => {
+    const item: CatalogItem = {
+      id: `custom-${kind}-${nextCatalogId.current++}`,
+      kind,
+      origin: "custom",
+      ...draft,
+    };
+    (kind === "agent" ? setAgents : setSkills)((current) => [...current, item]);
+  };
+
+  const updateCatalogItem = (
+    kind: "agent" | "skill",
+    itemId: string,
+    draft: CatalogDraft,
+  ) => {
+    (kind === "agent" ? setAgents : setSkills)((current) =>
+      current.map((item) =>
+        item.id === itemId ? { ...item, ...draft } : item,
+      ),
+    );
+  };
+
+  const useCatalogItem = (kind: "agent" | "skill", itemId: string) => {
+    updateActiveConversation((conversation) => {
+      const selectedKey =
+        kind === "agent" ? "selectedAgentIds" : "selectedSkillIds";
+      const selectedIds = conversation[selectedKey];
+      return selectedIds.includes(itemId)
+        ? conversation
+        : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
+    });
+    setActiveModule("athena");
+  };
+
+  const addLocalSource = (source: Pick<LibrarySource, "name" | "type">) => {
+    setLocalSources((current) => [
+      ...current,
+      {
+        ...source,
+        id: `local-source-${nextLocalSourceId.current++}`,
+        status: "ready",
+        description: "Local source · page-only",
+      },
+    ]);
+  };
+
   return (
     <div
       className={`tap-product-shell${sidebarCollapsed ? " tap-product-shell--collapsed" : ""}`}
@@ -669,7 +734,7 @@ export function TapProductPrototype() {
         <div hidden={activeModule !== "athena"}>
           <div className="tap-athena-layout">
             <AthenaChat
-              agents={BUILT_IN_AGENTS}
+              agents={agents}
               conversation={activeConversation}
               copy={copy}
               onSend={sendMessage}
@@ -708,7 +773,7 @@ export function TapProductPrototype() {
                   onOpenAutomation={() => setActiveModule("low-code")}
                 />
               )}
-              skills={BUILT_IN_SKILLS}
+              skills={skills}
               sources={sources}
             />
             <KnowledgeSourcesPanel
@@ -729,13 +794,35 @@ export function TapProductPrototype() {
           </div>
         </div>
         {activeModule === "agents" ? (
-          <WorkspacePlaceholder heading={copy.catalog.agents} />
+          <CatalogWorkspace
+            kind="agent"
+            copy={copy}
+            items={agents}
+            onCreate={(draft) => createCatalogItem("agent", draft)}
+            onUpdate={(itemId, draft) =>
+              updateCatalogItem("agent", itemId, draft)
+            }
+            onUse={(itemId) => useCatalogItem("agent", itemId)}
+          />
         ) : null}
         {activeModule === "skills" ? (
-          <WorkspacePlaceholder heading={copy.catalog.skills} />
+          <CatalogWorkspace
+            kind="skill"
+            copy={copy}
+            items={skills}
+            onCreate={(draft) => createCatalogItem("skill", draft)}
+            onUpdate={(itemId, draft) =>
+              updateCatalogItem("skill", itemId, draft)
+            }
+            onUse={(itemId) => useCatalogItem("skill", itemId)}
+          />
         ) : null}
         {activeModule === "library" ? (
-          <WorkspacePlaceholder heading={copy.library.heading} />
+          <LibraryWorkspace
+            copy={copy}
+            sources={sources}
+            onAddSource={addLocalSource}
+          />
         ) : null}
         {activeModule === "test-management" ? (
           <TestManagement plans={plans} />

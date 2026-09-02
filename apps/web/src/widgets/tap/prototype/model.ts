@@ -7,6 +7,10 @@ export type AthenaSurface = "chat" | "agents" | "skills" | "library";
 
 export type AssistantIntent = "answer" | "test-plan" | "automation";
 
+export type CatalogKind = "agent" | "skill";
+
+export type CatalogOrigin = "built-in" | "custom";
+
 export interface AssistantTurn {
   id: string;
   intent: AssistantIntent;
@@ -24,9 +28,11 @@ export interface Conversation {
 
 export interface CatalogItem {
   id: string;
-  kind: "agent" | "skill";
+  kind: CatalogKind;
+  origin: CatalogOrigin;
   name: string;
   description: string;
+  instructions: string;
 }
 
 export interface LibrarySource {
