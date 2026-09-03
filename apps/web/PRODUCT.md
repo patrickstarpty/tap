@@ -66,6 +66,7 @@ Athena 不是通用聊天机器人，也不只是测试用例生成器或测试�
 ## Evidence on Hand
 
 - 平台目标、原则和当前实现边界：[`../../README.md`](../../README.md)
+- 当前产品壳层、Low Code Automation 与 Athena 编排原型：[`../../docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md`](../../docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)
 - 软件生命周期与阶段路线图：[`../../docs/plans/2026-08-20-roadmap.md`](../../docs/plans/2026-08-20-roadmap.md)
 - Knowledge Chat 目标交互：[`../../docs/architecture/2026-08-21-knowledge-chat-ui.md`](../../docs/architecture/2026-08-21-knowledge-chat-ui.md)
 - 总体平台边界：[`../../docs/architecture/2026-08-20-overview.md`](../../docs/architecture/2026-08-20-overview.md)

@@ -10,4 +10,5 @@
 - [RFC-005：Athena 本地知识工作区 Demo](2026-08-27-rfc-005-athena-local-knowledge-demo.md)（`implemented`）：已通过 mandatory deterministic/local-middleware 与实际手工视觉/键盘验收；定义本地上传、可恢复 ingestion、来源限定问答、可定位引用与成熟产品对标的纵向 Demo。
 - [RFC-006：Athena 本地可选 Codex CLI 回答后端](2026-08-31-rfc-006-athena-local-codex-answer-backend.md)（`implemented`）：拆分 Embedding/回答端口，保持百炼向量空间，并为单机 Demo 交付精确 `0.149.0`、单智能体、无工具、无 fallback 的 Codex 回答路径与模型链路诊断。
 - [RFC-007：Phase 1 Intelligence Layer 探索](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)（`accepted`）：先用可选资料、仓库与失败材料验证可追溯的 AI 理解、自动化设计、长期任务、候选工程和 Review Package，再建设 BrowserStack-like 测试平台主体。
+- [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)（`accepted`）：记录两级产品导航、Automation 资产工作区、Web/Mobile 执行配置，以及 Athena 编排 Test Plan 与 Automation 的目标体验；实施由独立 Plan 管理，不扩大当前 Phase 1 的真实执行范围。
 - [RFC 模板](rfc-template.md)：提供新 RFC 的必填元数据与正文结构。

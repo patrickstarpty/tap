@@ -1,22 +1,42 @@
+import { CodeOutlined, FileTextOutlined } from "@ant-design/icons";
+import { Button } from "antd";
 import {
-  CheckCircleFilled,
-  CodeOutlined,
-  DatabaseOutlined,
-  DeleteOutlined,
-  FileTextOutlined,
-  PlusOutlined,
-} from "@ant-design/icons";
-import { Button, Input, Select } from "antd";
-import {
+  useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
 import { useDocumentListQuery } from "../../features/knowledge/api/queries";
 import { AthenaChat } from "./prototype/AthenaChat";
+import {
+  createBlankAutomation,
+  createGeneratedAutomation,
+  createInitialArtifactState,
+  createLifeAutomation,
+  createLifeTestPlan,
+} from "./prototype/artifacts/fixtures";
+import type {
+  Automation as AutomationAsset,
+  AutomationRun,
+  AutomationType,
+  ExecutionTarget,
+} from "./prototype/artifacts/model";
+import {
+  loadPrototypeSnapshot,
+  PROTOTYPE_SNAPSHOT_VERSION,
+  writePrototypeSnapshot,
+} from "./prototype/artifacts/persistence";
+import {
+  artifactReducer,
+  createSimulatedRun,
+} from "./prototype/artifacts/state";
+import {
+  AutomationWorkspace,
+  type AutomationWorkspaceView,
+} from "./prototype/automation/AutomationWorkspace";
 import {
   CatalogWorkspace,
   type CatalogDraft,
@@ -27,87 +47,20 @@ import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
   appendTurn,
   createConversation,
+  detectAutomationType,
   detectIntent,
   type AssistantTurn,
-  type AutomationStepSnapshot,
   type CatalogItem,
+  type CodexModelId,
   type Conversation,
   type LibrarySource,
   type Locale,
   type ProductModule,
 } from "./prototype/model";
+import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
 import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
+import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
 import "./TapProductPrototype.css";
-
-type TestManagementSection = "plans" | "data";
-
-interface TestPlan {
-  id: string;
-  title: string;
-  scenarios: number;
-  source: "Manual" | "Athena";
-}
-
-const INITIAL_PLANS: readonly TestPlan[] = [
-  {
-    id: "plan-life-application",
-    title: "Life policy application regression",
-    scenarios: 14,
-    source: "Manual",
-  },
-  {
-    id: "plan-beneficiary",
-    title: "Beneficiary designation validation",
-    scenarios: 9,
-    source: "Manual",
-  },
-];
-
-const GENERATED_PLAN: TestPlan = {
-  id: "plan-life-underwriting",
-  title: "Life insurance application underwriting",
-  scenarios: 3,
-  source: "Athena",
-};
-
-const GENERATED_AUTOMATION_STEPS: readonly AutomationStepSnapshot[] = [
-  {
-    id: "step-1",
-    action: "Navigate",
-    target: "/life/applications/new",
-    value: "",
-  },
-  {
-    id: "step-2",
-    action: "Click",
-    target: "button[data-testid='start-application']",
-    value: "",
-  },
-  {
-    id: "step-3",
-    action: "Fill",
-    target: "input[name='sumAssured']",
-    value: "1000000",
-  },
-  {
-    id: "step-4",
-    action: "Fill",
-    target: "textarea[name='healthDeclaration']",
-    value: "No disclosed conditions",
-  },
-  {
-    id: "step-5",
-    action: "Click",
-    target: "button[data-testid='submit-underwriting']",
-    value: "",
-  },
-  {
-    id: "step-6",
-    action: "Assert",
-    target: "[data-testid='underwriting-status']",
-    value: "Pending underwriting",
-  },
-];
 
 function BddPreview({ copy }: { copy: PrototypeCopy }) {
   return (
@@ -179,12 +132,22 @@ function AssistantResponse({
   contentCopy,
   turn,
   onImportPlan,
+  onCreateTestPlanFirst,
+  onGenerateLinkedAutomation,
+  onSkipTestPlan,
+  onChooseAutomationType,
+  onOpenTestPlan,
   onOpenAutomation,
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
   turn: AssistantTurn;
   onImportPlan: () => void;
+  onCreateTestPlanFirst: () => void;
+  onGenerateLinkedAutomation: () => void;
+  onSkipTestPlan: () => void;
+  onChooseAutomationType: (type: AutomationType) => void;
+  onOpenTestPlan: () => void;
   onOpenAutomation: () => void;
 }) {
   if (turn.intent === "answer") {
@@ -222,6 +185,14 @@ function AssistantResponse({
     );
   }
 
+  const workflow = turn.automationWorkflow ?? {
+    stage: "ask-test-plan" as const,
+    testPlanId: null,
+    automationId: null,
+    automationType: null,
+  };
+  const isChinese = turn.locale === "zh";
+
   return (
     <article
       className="tap-generated-artifact"
@@ -232,377 +203,141 @@ function AssistantResponse({
           <CodeOutlined aria-hidden="true" />
         </span>
         <div>
-          <strong>{contentCopy.artifacts.automationReady}</strong>
-          <span>{contentCopy.artifacts.automationSummary}</span>
+          <strong>
+            {workflow.stage === "ask-test-plan"
+              ? isChinese
+                ? "先创建测试计划吗？"
+                : "Create a Test Plan first?"
+              : workflow.stage === "choose-automation-type"
+                ? isChinese
+                  ? "选择 Web 或 Mobile"
+                  : "Choose Web or Mobile"
+                : contentCopy.artifacts.automationReady}
+          </strong>
+          <span>
+            {workflow.stage === "ask-test-plan"
+              ? isChinese
+                ? "先建立业务测试意图，再生成可执行自动化"
+                : "Define the business test intent before generating executable automation"
+              : workflow.stage === "choose-automation-type"
+                ? isChinese
+                  ? "Athena 无法可靠判断执行渠道，请确认自动化类型"
+                  : "Athena could not reliably infer the execution channel"
+                : contentCopy.artifacts.automationSummary}
+          </span>
         </div>
-      </div>
-      <BddPreview copy={contentCopy} />
-      <div className="tap-automation-summary">
-        <span>{contentCopy.lowCode.navigate}</span>
-        <span>{contentCopy.lowCode.click}</span>
-        <span>{contentCopy.lowCode.fill}</span>
-        <span>{contentCopy.lowCode.assert}</span>
       </div>
       <TurnContext copy={contentCopy} turn={turn} />
-      <div className="tap-artifact-actions">
-        <Button onClick={onImportPlan}>
-          {actionCopy.testManagement.importBddAsTestPlan}
-        </Button>
-        <Button type="primary" onClick={onOpenAutomation}>
-          {actionCopy.lowCode.openInLowCode}
-        </Button>
-      </div>
-    </article>
-  );
-}
-
-function TestManagement({
-  copy,
-  plans,
-}: {
-  copy: PrototypeCopy;
-  plans: readonly TestPlan[];
-}) {
-  const [section, setSection] = useState<TestManagementSection>("plans");
-  const planTabRef = useRef<HTMLButtonElement>(null);
-  const dataTabRef = useRef<HTMLButtonElement>(null);
-
-  const handleTabKeyDown = (
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-    current: TestManagementSection,
-  ) => {
-    let next: TestManagementSection | null = null;
-    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-      next = current === "plans" ? "data" : "plans";
-    } else if (event.key === "Home") {
-      next = "plans";
-    } else if (event.key === "End") {
-      next = "data";
-    }
-    if (next === null) return;
-    event.preventDefault();
-    setSection(next);
-    (next === "plans" ? planTabRef : dataTabRef).current?.focus();
-  };
-
-  return (
-    <section className="tap-module" aria-labelledby="test-management-heading">
-      <header className="tap-module-heading">
-        <div>
-          <h1 id="test-management-heading">{copy.testManagement.heading}</h1>
-          <p>{copy.testManagement.description}</p>
-        </div>
-        <Button type="primary" icon={<PlusOutlined />}>
-          {copy.testManagement.newTestPlan}
-        </Button>
-      </header>
-
-      <div
-        className="tap-section-tabs"
-        role="tablist"
-        aria-label={copy.testManagement.sections}
-      >
-        <button
-          ref={planTabRef}
-          id="tap-test-plan-tab"
-          type="button"
-          role="tab"
-          aria-selected={section === "plans"}
-          aria-controls="tap-test-plan-panel"
-          tabIndex={section === "plans" ? 0 : -1}
-          onClick={() => setSection("plans")}
-          onKeyDown={(event) => handleTabKeyDown(event, "plans")}
-        >
-          {copy.testManagement.testPlan}
-        </button>
-        <button
-          ref={dataTabRef}
-          id="tap-test-data-tab"
-          type="button"
-          role="tab"
-          aria-selected={section === "data"}
-          aria-controls="tap-test-data-panel"
-          tabIndex={section === "data" ? 0 : -1}
-          onClick={() => setSection("data")}
-          onKeyDown={(event) => handleTabKeyDown(event, "data")}
-        >
-          {copy.testManagement.testData}
-        </button>
-      </div>
-
-      {section === "plans" ? (
-        <div
-          id="tap-test-plan-panel"
-          className="tap-plan-workspace"
-          role="tabpanel"
-          aria-label={copy.testManagement.testPlan}
-          aria-labelledby="tap-test-plan-tab"
-        >
-          <div className="tap-list-toolbar">
-            <span>
-              {plans.length} {copy.testManagement.testPlanCount}
-            </span>
-            <Input.Search
-              aria-label={copy.testManagement.searchPlans}
-              placeholder={copy.testManagement.searchPlans}
-            />
-          </div>
-          <div
-            className="tap-plan-table"
-            role="table"
-            aria-label={copy.testManagement.testPlans}
-          >
-            <div className="tap-plan-row tap-plan-row-header" role="row">
-              <span role="columnheader">{copy.testManagement.nameColumn}</span>
-              <span role="columnheader">
-                {copy.testManagement.scenariosColumn}
-              </span>
-              <span role="columnheader">
-                {copy.testManagement.sourceColumn}
-              </span>
-              <span role="columnheader">
-                {copy.testManagement.statusColumn}
-              </span>
-            </div>
-            {plans.map((plan) => (
-              <div className="tap-plan-row" role="row" key={plan.id}>
-                <span role="cell">
-                  <FileTextOutlined aria-hidden="true" />
-                  <strong>{plan.title}</strong>
-                </span>
-                <span role="cell">{plan.scenarios}</span>
-                <span role="cell">
-                  {plan.source === "Athena"
-                    ? copy.testManagement.importedFromAthena
-                    : copy.testManagement.createdManually}
-                </span>
-                <span role="cell" className="tap-status-ready">
-                  <CheckCircleFilled aria-hidden="true" />{" "}
-                  {copy.testManagement.draft}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div
-          id="tap-test-data-panel"
-          className="tap-data-workspace"
-          role="tabpanel"
-          aria-label={copy.testManagement.testData}
-          aria-labelledby="tap-test-data-tab"
-        >
-          <DatabaseOutlined aria-hidden="true" />
-          <h2>{copy.testManagement.reusableTestData}</h2>
-          <p>{copy.testManagement.testDataEmpty}</p>
-          <Button icon={<PlusOutlined />}>
-            {copy.testManagement.newDataSet}
+      {workflow.stage === "ask-test-plan" ? (
+        <div className="tap-artifact-actions">
+          <Button onClick={onSkipTestPlan}>
+            {isChinese ? "暂不创建测试计划" : "Skip Test Plan"}
+          </Button>
+          <Button type="primary" onClick={onCreateTestPlanFirst}>
+            {isChinese ? "先创建测试计划" : "Create Test Plan first"}
           </Button>
         </div>
-      )}
-    </section>
-  );
-}
-
-function scriptForStep(step: AutomationStepSnapshot): string {
-  const target = JSON.stringify(step.target);
-  const value = JSON.stringify(step.value);
-  if (step.action === "Navigate") return `await page.goto(${target});`;
-  if (step.action === "Click") return `await page.locator(${target}).click();`;
-  if (step.action === "Fill")
-    return `await page.locator(${target}).fill(${value});`;
-  if (step.action === "Assert") {
-    return `await expect(page.locator(${target})).toContainText(${value});`;
-  }
-  return `await page.locator(${target}).waitFor();`;
-}
-
-function LowCodeAutomation({
-  copy,
-  steps,
-  onStepsChange,
-  onStartInAthena,
-}: {
-  copy: PrototypeCopy;
-  steps: readonly AutomationStepSnapshot[] | null;
-  onStepsChange: (steps: readonly AutomationStepSnapshot[]) => void;
-  onStartInAthena: () => void;
-}) {
-  const [saved, setSaved] = useState(false);
-  const editableSteps = steps ?? [];
-  const code = useMemo(
-    () => editableSteps.map((step) => `  ${scriptForStep(step)}`).join("\n"),
-    [editableSteps],
-  );
-
-  const updateStep = (id: string, patch: Partial<AutomationStepSnapshot>) => {
-    setSaved(false);
-    onStepsChange(
-      editableSteps.map((step) =>
-        step.id === id ? { ...step, ...patch } : step,
-      ),
-    );
-  };
-
-  const addStep = () => {
-    const number =
-      editableSteps.reduce((maximum, step) => {
-        const match = /^step-(\d+)$/.exec(step.id);
-        return match === null ? maximum : Math.max(maximum, Number(match[1]));
-      }, 0) + 1;
-    setSaved(false);
-    onStepsChange([
-      ...editableSteps,
-      {
-        id: `step-${number}`,
-        action: "Click",
-        target: "",
-        value: "",
-      },
-    ]);
-  };
-
-  const deleteStep = (id: string) => {
-    setSaved(false);
-    onStepsChange(editableSteps.filter((step) => step.id !== id));
-  };
-
-  return (
-    <section
-      className="tap-module tap-low-code"
-      aria-labelledby="low-code-heading"
-    >
-      <header className="tap-module-heading">
-        <div>
-          <h1 id="low-code-heading">{copy.lowCode.heading}</h1>
-          <p>{copy.lowCode.description}</p>
-        </div>
-        {steps === null ? null : (
-          <div className="tap-heading-actions">
-            {saved ? (
-              <span className="tap-saved-state">{copy.lowCode.saved}</span>
-            ) : null}
-            <Button type="primary" onClick={() => setSaved(true)}>
-              {copy.lowCode.saveDraft}
+      ) : null}
+      {workflow.stage === "review-test-plan" ? (
+        <>
+          <div className="tap-workflow-asset-card">
+            <FileTextOutlined aria-hidden="true" />
+            <span>
+              <strong>
+                {isChinese ? "测试计划已就绪" : "Test Plan ready"}
+              </strong>
+              <small>
+                {workflow.testPlanId} · {contentCopy.artifacts.scenariosDraft}
+              </small>
+            </span>
+            <Button onClick={onOpenTestPlan}>
+              {isChinese ? "查看测试计划" : "Review Test Plan"}
             </Button>
           </div>
-        )}
-      </header>
-
-      {steps === null ? (
-        <div className="tap-low-code-empty">
-          <CodeOutlined aria-hidden="true" />
-          <h2>{copy.lowCode.emptyTitle}</h2>
-          <p>{copy.lowCode.emptyDescription}</p>
-          <Button type="primary" onClick={onStartInAthena}>
-            {copy.lowCode.startInAthena}
-          </Button>
-        </div>
-      ) : (
-        <div className="tap-low-code-layout">
-          <section
-            className="tap-step-editor"
-            aria-labelledby="automation-steps-heading"
-          >
-            <div className="tap-step-editor-heading">
-              <div>
-                <h2 id="automation-steps-heading">
-                  {copy.lowCode.automationSteps}
-                </h2>
+          <BddPreview copy={contentCopy} />
+          <div className="tap-artifact-actions">
+            <Button type="primary" onClick={onGenerateLinkedAutomation}>
+              {isChinese ? "生成关联自动化" : "Generate linked automation"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+      {workflow.stage === "choose-automation-type" ? (
+        <>
+          {workflow.testPlanId === null ? null : (
+            <div className="tap-workflow-asset-card">
+              <FileTextOutlined aria-hidden="true" />
+              <span>
+                <strong>Test Plan</strong>
+                <small>{workflow.testPlanId}</small>
+              </span>
+            </div>
+          )}
+          <div className="tap-artifact-actions">
+            <Button onClick={() => onChooseAutomationType("mobile")}>
+              {isChinese ? "创建 Mobile 自动化" : "Create Mobile automation"}
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => onChooseAutomationType("web")}
+            >
+              {isChinese ? "创建 Web 自动化" : "Create Web automation"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+      {workflow.stage === "ready-linked" ||
+      workflow.stage === "ready-unlinked" ? (
+        <>
+          <BddPreview copy={contentCopy} />
+          <div className="tap-automation-summary">
+            <span>
+              {workflow.automationType === "mobile" ? "Wait" : "Navigate"}
+            </span>
+            <span>Click</span>
+            <span>Send keys</span>
+            <span>Assert</span>
+          </div>
+          <div className="tap-workflow-assets">
+            {workflow.testPlanId === null ? null : (
+              <div className="tap-workflow-asset-card">
+                <FileTextOutlined aria-hidden="true" />
                 <span>
-                  {editableSteps.length} {copy.lowCode.steps}
+                  <strong>Test Plan</strong>
+                  <small>
+                    {workflow.testPlanId} ·{" "}
+                    {contentCopy.artifacts.scenariosDraft}
+                  </small>
                 </span>
+                <Button onClick={onOpenTestPlan}>
+                  {isChinese ? "打开测试计划" : "Open Test Plan"}
+                </Button>
               </div>
-              <Button
-                aria-label={copy.lowCode.addStep}
-                icon={<PlusOutlined aria-hidden="true" />}
-                onClick={addStep}
-              >
-                {copy.lowCode.addStep}
+            )}
+            <div className="tap-workflow-asset-card">
+              <CodeOutlined aria-hidden="true" />
+              <span>
+                <strong>Automation</strong>
+                <small>
+                  {workflow.automationId} ·{" "}
+                  {workflow.automationType === "mobile" ? "Mobile" : "Web"} ·{" "}
+                  {workflow.testPlanId === null
+                    ? isChinese
+                      ? "未关联"
+                      : "Not linked"
+                    : isChinese
+                      ? "已关联测试计划"
+                      : "Linked to Test Plan"}
+                </small>
+              </span>
+              <Button type="primary" onClick={onOpenAutomation}>
+                {actionCopy.lowCode.openInLowCode}
               </Button>
             </div>
-            <ol className="tap-step-list">
-              {editableSteps.map((step, index) => (
-                <li
-                  key={step.id}
-                  aria-label={`${copy.lowCode.automationStep} ${index + 1}`}
-                >
-                  <span className="tap-step-number">{index + 1}</span>
-                  <div className="tap-step-fields">
-                    <label>
-                      <span>{copy.lowCode.action}</span>
-                      <Select
-                        aria-label={`${copy.lowCode.actionForStep} ${index + 1}`}
-                        value={step.action}
-                        options={[
-                          { value: "Navigate", label: copy.lowCode.navigate },
-                          { value: "Click", label: copy.lowCode.click },
-                          { value: "Fill", label: copy.lowCode.fill },
-                          { value: "Assert", label: copy.lowCode.assert },
-                          { value: "Wait", label: copy.lowCode.wait },
-                        ]}
-                        onChange={(action: AutomationStepSnapshot["action"]) =>
-                          updateStep(step.id, { action })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>{copy.lowCode.elementOrUrl}</span>
-                      <Input
-                        aria-label={`${copy.lowCode.elementForStep} ${index + 1}`}
-                        value={step.target}
-                        placeholder={copy.lowCode.elementPlaceholder}
-                        onChange={(event) =>
-                          updateStep(step.id, { target: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>{copy.lowCode.value}</span>
-                      <Input
-                        aria-label={`${copy.lowCode.valueForStep} ${index + 1}`}
-                        value={step.value}
-                        placeholder={copy.lowCode.optional}
-                        onChange={(event) =>
-                          updateStep(step.id, { value: event.target.value })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <Button
-                    type="text"
-                    danger
-                    aria-label={`${copy.lowCode.deleteStep} ${index + 1}`}
-                    icon={<DeleteOutlined aria-hidden="true" />}
-                    onClick={() => deleteStep(step.id)}
-                  />
-                </li>
-              ))}
-            </ol>
-          </section>
-
-          <aside
-            className="tap-code-preview"
-            aria-labelledby="script-preview-heading"
-          >
-            <header>
-              <div>
-                <h2 id="script-preview-heading">
-                  {copy.lowCode.generatedScript}
-                </h2>
-                <span>{copy.lowCode.updatesWithEveryStep}</span>
-              </div>
-              <span className="tap-file-name">
-                life-policy-application.spec.ts
-              </span>
-            </header>
-            <pre>
-              <code>{`test("applicant submits a life insurance application", async ({ page }) => {\n${code}\n});`}</code>
-            </pre>
-          </aside>
-        </div>
-      )}
-    </section>
+          </div>
+        </>
+      ) : null}
+    </article>
   );
 }
 
@@ -655,41 +390,167 @@ function toggleSelection(values: readonly string[], id: string): string[] {
     : [...values, id];
 }
 
+const ATHENA_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
+  agents: "#agent-heading",
+  library: "#library-heading",
+  skills: "#skill-heading",
+};
+
+type PendingFocusTarget = { kind: "selector"; selector: string };
+
+function nextNumericId(
+  ids: readonly string[],
+  prefix: string,
+  floor: number,
+): number {
+  return (
+    ids.reduce((maximum, id) => {
+      const match = new RegExp(`^${prefix}-(\\d+)$`).exec(id);
+      return match === null ? maximum : Math.max(maximum, Number(match[1]));
+    }, floor) + 1
+  );
+}
+
 export function TapProductPrototype() {
   const documentsQuery = useDocumentListQuery();
+  const [initialSnapshot] = useState(() =>
+    typeof window === "undefined"
+      ? null
+      : loadPrototypeSnapshot(window.localStorage),
+  );
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>("athena");
+  const lastAthenaModule = useRef<ProductModule>("athena");
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
+  );
+  const [isCompactViewport, setIsCompactViewport] = useState(
+    () => window.matchMedia("(max-width: 820px)").matches,
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
-  const [conversations, setConversations] = useState<readonly Conversation[]>(
-    () => [createConversation("chat-1")],
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(
+    () => window.matchMedia("(max-width: 820px)").matches,
   );
-  const [activeConversationId, setActiveConversationId] = useState("chat-1");
-  const [plans, setPlans] = useState<readonly TestPlan[]>(INITIAL_PLANS);
+  const [conversations, setConversations] = useState<readonly Conversation[]>(
+    () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
+  );
+  const [activeConversationId, setActiveConversationId] = useState(
+    () => initialSnapshot?.activeConversationId ?? "chat-1",
+  );
+  const [artifactState, dispatchArtifact] = useReducer(
+    artifactReducer,
+    initialSnapshot?.artifacts ?? createInitialArtifactState(),
+  );
+  const [automationView, setAutomationView] = useState<AutomationWorkspaceView>(
+    { kind: "library" },
+  );
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
   const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
   const [localSources, setLocalSources] = useState<
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
   >([]);
-  const [automationSteps, setAutomationSteps] = useState<
-    readonly AutomationStepSnapshot[] | null
-  >(null);
-  const nextConversationId = useRef(2);
-  const nextTurnId = useRef(1);
+  const nextConversationId = useRef(
+    nextNumericId(
+      (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
+        ({ id }) => id,
+      ),
+      "chat",
+      0,
+    ),
+  );
+  const nextTurnId = useRef(
+    nextNumericId(
+      (initialSnapshot?.conversations ?? []).flatMap((conversation) =>
+        conversation.turns.map(({ id }) => id),
+      ),
+      "turn",
+      0,
+    ),
+  );
+  const nextAutomationId = useRef(
+    nextNumericId(
+      artifactState.automations.map(({ id }) => id),
+      "AUTO",
+      102,
+    ),
+  );
+  const nextPlanId = useRef(
+    nextNumericId(
+      artifactState.testPlans.map(({ id }) => id),
+      "TP",
+      102,
+    ),
+  );
+  const nextRunId = useRef(
+    nextNumericId(
+      artifactState.runs.map(({ id }) => id),
+      "RUN",
+      0,
+    ),
+  );
   const nextCatalogId = useRef(1);
   const nextLocalSourceId = useRef(1);
   const documentLanguageOnMount = useRef(document.documentElement.lang);
+  const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
   const copy = PROTOTYPE_COPY[locale];
-  const mobileDrawerOpen = isNarrowViewport && !sidebarCollapsed;
+  const athenaWorkspaceActive = [
+    "athena",
+    "agents",
+    "skills",
+    "library",
+  ].includes(activeModule);
+  const athenaSidebarOpen = athenaWorkspaceActive && !sidebarCollapsed;
+  const mobileAthenaDrawerOpen = isNarrowViewport && athenaSidebarOpen;
+  const knowledgeSourcesOpen = activeModule === "athena" && !sourcesCollapsed;
+  const compactSourcesDrawerOpen = isCompactViewport && knowledgeSourcesOpen;
+  const dismissAthenaSidebar = useCallback(() => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-panel-toggle--left-expand",
+    };
+    setSidebarCollapsed(true);
+  }, []);
+  const expandAthenaSidebar = useCallback(() => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-panel-toggle--left-collapse",
+    };
+    if (isCompactViewport) setSourcesCollapsed(true);
+    setSidebarCollapsed(false);
+  }, [isCompactViewport]);
+  const dismissKnowledgeSources = useCallback(() => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-panel-toggle--right-expand",
+    };
+    setSourcesCollapsed(true);
+  }, []);
+  const expandKnowledgeSources = useCallback(() => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-panel-toggle--right-collapse",
+    };
+    if (isCompactViewport) setSidebarCollapsed(true);
+    setSourcesCollapsed(false);
+  }, [isCompactViewport]);
 
   useEffect(() => {
     document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
   }, [locale]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    writePrototypeSnapshot(window.localStorage, {
+      version: PROTOTYPE_SNAPSHOT_VERSION,
+      activeConversationId,
+      conversations,
+      artifacts: artifactState,
+    });
+  }, [activeConversationId, artifactState, conversations]);
 
   useEffect(
     () => () => {
@@ -699,23 +560,59 @@ export function TapProductPrototype() {
   );
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 640px)");
-    const handleChange = (event: MediaQueryListEvent) => {
+    const pendingTarget = pendingFocusTarget.current;
+    if (pendingTarget === null) return;
+
+    const target = document.querySelector<HTMLElement>(pendingTarget.selector);
+    if (target !== null) {
+      if (target.matches("h1, h2, h3, h4, h5, h6")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+    pendingFocusTarget.current = null;
+  }, [activeConversationId, activeModule, sidebarCollapsed, sourcesCollapsed]);
+
+  useEffect(() => {
+    const narrowMedia = window.matchMedia("(max-width: 640px)");
+    const compactMedia = window.matchMedia("(max-width: 820px)");
+    const handleNarrowChange = (event: MediaQueryListEvent) => {
       setIsNarrowViewport(event.matches);
       if (event.matches) setSidebarCollapsed(true);
     };
-    media.addEventListener("change", handleChange);
-    return () => media.removeEventListener("change", handleChange);
+    const handleCompactChange = (event: MediaQueryListEvent) => {
+      setIsCompactViewport(event.matches);
+      if (event.matches) setSourcesCollapsed(true);
+    };
+    narrowMedia.addEventListener("change", handleNarrowChange);
+    compactMedia.addEventListener("change", handleCompactChange);
+    return () => {
+      narrowMedia.removeEventListener("change", handleNarrowChange);
+      compactMedia.removeEventListener("change", handleCompactChange);
+    };
   }, []);
 
   useEffect(() => {
-    if (!mobileDrawerOpen) return;
+    if (!mobileAthenaDrawerOpen && !compactSourcesDrawerOpen) return;
+    const previousBodyOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSidebarCollapsed(true);
+      if (event.key !== "Escape") return;
+      if (compactSourcesDrawerOpen) {
+        dismissKnowledgeSources();
+      } else {
+        dismissAthenaSidebar();
+      }
     };
+    document.body.style.overflow = "hidden";
     document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [mobileDrawerOpen]);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    compactSourcesDrawerOpen,
+    dismissAthenaSidebar,
+    dismissKnowledgeSources,
+    mobileAthenaDrawerOpen,
+  ]);
 
   const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
@@ -777,21 +674,52 @@ export function TapProductPrototype() {
 
   const createNewChat = () => {
     const id = `chat-${nextConversationId.current++}`;
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-composer textarea",
+    };
     setConversations((current) => [...current, createConversation(id)]);
     setActiveConversationId(id);
+    lastAthenaModule.current = "athena";
     setActiveModule("athena");
-    if (isNarrowViewport) setSidebarCollapsed(true);
+    setSidebarCollapsed(isNarrowViewport);
   };
 
   const selectConversation = (conversationId: string) => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-composer textarea",
+    };
     setActiveConversationId(conversationId);
+    lastAthenaModule.current = "athena";
     setActiveModule("athena");
-    if (isNarrowViewport) setSidebarCollapsed(true);
+    setSidebarCollapsed(isNarrowViewport);
   };
 
   const selectModule = (module: ProductModule) => {
+    if (module === "athena") {
+      if (isCompactViewport) setSourcesCollapsed(true);
+      setActiveModule(lastAthenaModule.current);
+      setSidebarCollapsed(false);
+      return;
+    }
+    if (["agents", "skills", "library"].includes(module)) {
+      const focusTarget = ATHENA_MODULE_FOCUS_TARGETS[module];
+      if (isNarrowViewport && focusTarget !== undefined) {
+        pendingFocusTarget.current = {
+          kind: "selector",
+          selector: focusTarget,
+        };
+      }
+      lastAthenaModule.current = module;
+      setActiveModule(module);
+      setSidebarCollapsed(isNarrowViewport);
+      return;
+    }
+    if (module === "test-management") setSelectedPlanId(null);
+    if (module === "low-code") setAutomationView({ kind: "library" });
     setActiveModule(module);
-    if (isNarrowViewport) setSidebarCollapsed(true);
+    setSidebarCollapsed(true);
   };
 
   const sendMessage = (prompt: string) => {
@@ -806,29 +734,221 @@ export function TapProductPrototype() {
         id: `turn-${nextTurnId.current++}`,
         intent,
         locale,
+        modelId: conversation.modelId,
         prompt,
         sourceReferences,
-        automationSteps:
+        automationWorkflow:
           intent === "automation"
-            ? GENERATED_AUTOMATION_STEPS.map((step) => ({ ...step }))
+            ? {
+                stage: "ask-test-plan",
+                testPlanId: null,
+                automationId: null,
+                automationType: detectAutomationType(prompt),
+              }
             : undefined,
       }),
     );
   };
 
+  const updateAutomationTurn = (
+    turnId: string,
+    workflow: NonNullable<AssistantTurn["automationWorkflow"]>,
+  ) => {
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      turns: conversation.turns.map((turn) =>
+        turn.id === turnId ? { ...turn, automationWorkflow: workflow } : turn,
+      ),
+    }));
+  };
+
+  const createTestPlanFirst = (turn: AssistantTurn) => {
+    const planId = `TP-${nextPlanId.current++}`;
+    dispatchArtifact({
+      type: "test-plan/create",
+      testPlan: createLifeTestPlan(planId, null, "Athena"),
+    });
+    updateAutomationTurn(turn.id, {
+      stage: "review-test-plan",
+      testPlanId: planId,
+      automationId: null,
+      automationType: turn.automationWorkflow?.automationType ?? null,
+    });
+  };
+
+  const createAthenaAutomation = (
+    turn: AssistantTurn,
+    automationType: AutomationType,
+  ) => {
+    const planId = turn.automationWorkflow?.testPlanId ?? null;
+    const automationId = `AUTO-${nextAutomationId.current++}`;
+    dispatchArtifact({
+      type: "automation/create",
+      automation: createLifeAutomation(
+        automationId,
+        planId,
+        "Athena",
+        automationType,
+      ),
+    });
+    if (planId !== null) {
+      dispatchArtifact({
+        type: "association/set",
+        automationId,
+        testPlanId: planId,
+      });
+    }
+    updateAutomationTurn(turn.id, {
+      stage: planId === null ? "ready-unlinked" : "ready-linked",
+      testPlanId: planId,
+      automationId,
+      automationType,
+    });
+  };
+
+  const generateLinkedAutomation = (turn: AssistantTurn) => {
+    const planId = turn.automationWorkflow?.testPlanId;
+    if (planId === undefined || planId === null) return;
+    const automationType = turn.automationWorkflow?.automationType ?? null;
+    if (automationType === null) {
+      updateAutomationTurn(turn.id, {
+        stage: "choose-automation-type",
+        testPlanId: planId,
+        automationId: null,
+        automationType: null,
+      });
+      return;
+    }
+    createAthenaAutomation(turn, automationType);
+  };
+
+  const skipTestPlan = (turn: AssistantTurn) => {
+    const automationType = turn.automationWorkflow?.automationType ?? null;
+    if (automationType === null) {
+      updateAutomationTurn(turn.id, {
+        stage: "choose-automation-type",
+        testPlanId: null,
+        automationId: null,
+        automationType: null,
+      });
+      return;
+    }
+    createAthenaAutomation(
+      {
+        ...turn,
+        automationWorkflow: {
+          ...turn.automationWorkflow!,
+          testPlanId: null,
+        },
+      },
+      automationType,
+    );
+  };
+
+  const chooseAutomationType = (
+    turn: AssistantTurn,
+    automationType: AutomationType,
+  ) => {
+    createAthenaAutomation(
+      {
+        ...turn,
+        automationWorkflow: {
+          stage: "choose-automation-type",
+          testPlanId: turn.automationWorkflow?.testPlanId ?? null,
+          automationId: null,
+          automationType,
+        },
+      },
+      automationType,
+    );
+  };
+
   const openAutomation = (turn: AssistantTurn) => {
-    if (turn.automationSteps === undefined) return;
-    setAutomationSteps(turn.automationSteps.map((step) => ({ ...step })));
+    const automationId = turn.automationWorkflow?.automationId;
+    if (automationId === undefined || automationId === null) return;
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: "#automation-detail-heading",
+    };
+    setAutomationView({ kind: "detail", automationId });
     setActiveModule("low-code");
+    setSidebarCollapsed(true);
+  };
+
+  const openTestPlan = (testPlanId: string) => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: "#test-plan-detail-heading",
+    };
+    setSelectedPlanId(testPlanId);
+    setActiveModule("test-management");
+    setSidebarCollapsed(true);
   };
 
   const importPlan = () => {
-    setPlans((current) =>
-      current.some((plan) => plan.id === GENERATED_PLAN.id)
-        ? current
-        : [GENERATED_PLAN, ...current],
+    const existing = artifactState.testPlans.find(
+      (plan) => plan.source === "Athena",
     );
+    const planId = existing?.id ?? `TP-${nextPlanId.current++}`;
+    if (existing === undefined) {
+      dispatchArtifact({
+        type: "test-plan/create",
+        testPlan: createLifeTestPlan(planId, null, "Athena"),
+      });
+    }
+    setSelectedPlanId(null);
     setActiveModule("test-management");
+    setSidebarCollapsed(true);
+  };
+
+  const createAutomation = (draft: {
+    title: string;
+    goal: string;
+    type: AutomationType;
+    testPlanId: string | null;
+    mode: "blank" | "generated";
+  }) => {
+    const automationId = `AUTO-${nextAutomationId.current++}`;
+    const automation: AutomationAsset =
+      draft.mode === "blank"
+        ? createBlankAutomation({
+            id: automationId,
+            title: draft.title,
+            goal: draft.goal,
+            type: draft.type,
+            testPlanId: draft.testPlanId,
+          })
+        : createGeneratedAutomation({
+            id: automationId,
+            title: draft.title,
+            goal: draft.goal,
+            type: draft.type,
+            testPlanId: draft.testPlanId,
+          });
+    dispatchArtifact({ type: "automation/create", automation });
+    if (draft.testPlanId !== null) {
+      dispatchArtifact({
+        type: "association/set",
+        automationId,
+        testPlanId: draft.testPlanId,
+      });
+    }
+    setAutomationView({ kind: "detail", automationId });
+  };
+
+  const runAutomation = (
+    automation: AutomationAsset,
+    target: ExecutionTarget,
+    triggeredFrom: AutomationRun["triggeredFrom"],
+  ) => {
+    const run = createSimulatedRun({
+      automation,
+      id: `RUN-${String(nextRunId.current++).padStart(3, "0")}`,
+      target,
+      triggeredFrom,
+      timestamp: new Date().toISOString(),
+    });
+    dispatchArtifact({ type: "run/add", run });
   };
 
   const createCatalogItem = (kind: "agent" | "skill", draft: CatalogDraft) => {
@@ -854,6 +974,10 @@ export function TapProductPrototype() {
   };
 
   const useCatalogItem = (kind: "agent" | "skill", itemId: string) => {
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-composer textarea",
+    };
     updateActiveConversation((conversation) => {
       const selectedKey =
         kind === "agent" ? "selectedAgentIds" : "selectedSkillIds";
@@ -862,7 +986,9 @@ export function TapProductPrototype() {
         ? conversation
         : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
     });
+    lastAthenaModule.current = "athena";
     setActiveModule("athena");
+    setSidebarCollapsed(isNarrowViewport);
   };
 
   const addLocalSource = (source: Pick<LibrarySource, "name" | "type">) => {
@@ -877,7 +1003,7 @@ export function TapProductPrototype() {
 
   return (
     <div
-      className={`tap-product-shell${sidebarCollapsed ? " tap-product-shell--collapsed" : ""}`}
+      className={`tap-product-shell${athenaSidebarOpen ? " tap-product-shell--athena-open" : ""}`}
     >
       <PrototypeSidebar
         activeConversationId={activeConversationId}
@@ -890,28 +1016,61 @@ export function TapProductPrototype() {
         onModuleChange={selectModule}
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
-        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+        onToggleCollapsed={dismissAthenaSidebar}
       />
-      {mobileDrawerOpen ? (
+      {mobileAthenaDrawerOpen ? (
         <button
           type="button"
           className="tap-sidebar-scrim"
           aria-label={copy.navigation.closeSidebar}
           tabIndex={-1}
-          onClick={() => setSidebarCollapsed(true)}
+          onClick={dismissAthenaSidebar}
         />
       ) : null}
       <main
         className="tap-product-main"
-        aria-hidden={mobileDrawerOpen ? true : undefined}
-        inert={mobileDrawerOpen ? true : undefined}
+        aria-hidden={mobileAthenaDrawerOpen ? true : undefined}
+        inert={mobileAthenaDrawerOpen ? true : undefined}
       >
+        {athenaWorkspaceActive && sidebarCollapsed ? (
+          <button
+            type="button"
+            className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--left-expand"
+            aria-controls="tap-athena-sidebar"
+            aria-expanded="false"
+            aria-label={copy.navigation.expandSidebar}
+            onClick={expandAthenaSidebar}
+          >
+            <PanelToggleIcon side="left" state="collapsed" />
+          </button>
+        ) : null}
         <div hidden={activeModule !== "athena"}>
-          <div className="tap-athena-layout">
+          <div
+            className={`tap-athena-layout${sourcesCollapsed ? " tap-athena-layout--sources-collapsed" : ""}`}
+          >
+            {sourcesCollapsed ? (
+              <button
+                type="button"
+                className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--right-expand"
+                aria-controls="tap-knowledge-sources"
+                aria-expanded="false"
+                aria-label={copy.sources.expand}
+                onClick={expandKnowledgeSources}
+              >
+                <PanelToggleIcon side="right" state="collapsed" />
+              </button>
+            ) : null}
             <AthenaChat
               agents={agents}
               conversation={activeConversation}
               copy={copy}
+              isInert={compactSourcesDrawerOpen}
+              onModelChange={(modelId: CodexModelId) =>
+                updateActiveConversation((conversation) => ({
+                  ...conversation,
+                  modelId,
+                }))
+              }
               onSend={sendMessage}
               onToggleAgent={(agentId) =>
                 updateActiveConversation((conversation) => ({
@@ -946,27 +1105,58 @@ export function TapProductPrototype() {
                   contentCopy={PROTOTYPE_COPY[turn.locale]}
                   turn={turn}
                   onImportPlan={importPlan}
+                  onCreateTestPlanFirst={() => createTestPlanFirst(turn)}
+                  onGenerateLinkedAutomation={() =>
+                    generateLinkedAutomation(turn)
+                  }
+                  onSkipTestPlan={() => skipTestPlan(turn)}
+                  onChooseAutomationType={(type) =>
+                    chooseAutomationType(turn, type)
+                  }
+                  onOpenTestPlan={() => {
+                    const testPlanId = turn.automationWorkflow?.testPlanId;
+                    if (testPlanId !== undefined && testPlanId !== null) {
+                      openTestPlan(testPlanId);
+                    }
+                  }}
                   onOpenAutomation={() => openAutomation(turn)}
                 />
               )}
               skills={skills}
               sources={sources}
             />
-            <KnowledgeSourcesPanel
-              copy={copy}
-              isLoading={documentsQuery.isPending}
-              onToggleSource={(sourceId) =>
-                updateActiveConversation((conversation) => ({
-                  ...conversation,
-                  selectedSourceIds: toggleSelection(
-                    conversation.selectedSourceIds,
-                    sourceId,
-                  ),
-                }))
-              }
-              selectedSourceIds={activeConversation.selectedSourceIds}
-              sources={sources}
-            />
+            {compactSourcesDrawerOpen ? (
+              <button
+                type="button"
+                className="tap-sources-scrim"
+                aria-label={copy.sources.close}
+                tabIndex={-1}
+                onClick={dismissKnowledgeSources}
+              />
+            ) : null}
+            <div
+              className="tap-sources-shell"
+              aria-hidden={sourcesCollapsed ? true : undefined}
+              data-collapsed={sourcesCollapsed}
+              inert={sourcesCollapsed ? true : undefined}
+            >
+              <KnowledgeSourcesPanel
+                copy={copy}
+                isLoading={documentsQuery.isPending}
+                onCollapse={dismissKnowledgeSources}
+                onToggleSource={(sourceId) =>
+                  updateActiveConversation((conversation) => ({
+                    ...conversation,
+                    selectedSourceIds: toggleSelection(
+                      conversation.selectedSourceIds,
+                      sourceId,
+                    ),
+                  }))
+                }
+                selectedSourceIds={activeConversation.selectedSourceIds}
+                sources={sources}
+              />
+            </div>
           </div>
         </div>
         {activeModule === "agents" ? (
@@ -1001,15 +1191,61 @@ export function TapProductPrototype() {
           />
         ) : null}
         {activeModule === "test-management" ? (
-          <TestManagement copy={copy} plans={plans} />
+          <TestManagementWorkspace
+            state={artifactState}
+            selectedPlanId={selectedPlanId}
+            locale={locale}
+            onOpenPlan={setSelectedPlanId}
+            onBack={() => setSelectedPlanId(null)}
+            onOpenAutomation={(automationId) => {
+              setAutomationView({ kind: "detail", automationId });
+              setActiveModule("low-code");
+            }}
+            onLink={(automationId, testPlanId) =>
+              dispatchArtifact({
+                type: "association/set",
+                automationId,
+                testPlanId,
+              })
+            }
+            onRun={runAutomation}
+          />
         ) : null}
         {activeModule === "low-code" ? (
-          <LowCodeAutomation
-            copy={copy}
-            steps={automationSteps}
-            onStepsChange={setAutomationSteps}
-            onStartInAthena={() => setActiveModule("athena")}
+          <AutomationWorkspace
+            state={artifactState}
+            view={automationView}
+            locale={locale}
+            onViewChange={setAutomationView}
+            onUpdate={(automation) =>
+              dispatchArtifact({ type: "automation/update", automation })
+            }
+            onCreate={createAutomation}
+            onLink={(automationId, testPlanId) =>
+              dispatchArtifact({
+                type: "association/set",
+                automationId,
+                testPlanId,
+              })
+            }
+            onOpenTestPlan={openTestPlan}
+            onRun={runAutomation}
           />
+        ) : null}
+        {activeModule === "low-code" && automationView.kind === "library" ? (
+          <span className="tap-visually-hidden" aria-live="polite">
+            {artifactState.automations.length} automations
+          </span>
+        ) : null}
+        {activeModule === "low-code" && automationView.kind === "detail" ? (
+          <span className="tap-visually-hidden" aria-live="polite">
+            {automationView.automationId}
+          </span>
+        ) : null}
+        {activeModule === "test-management" && selectedPlanId !== null ? (
+          <span className="tap-visually-hidden" aria-live="polite">
+            {selectedPlanId}
+          </span>
         ) : null}
       </main>
     </div>

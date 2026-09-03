@@ -5,7 +5,6 @@ import {
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
 import {
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -16,9 +15,11 @@ import {
 
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
+import { KnowledgeGraph } from "./KnowledgeGraph";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
+type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
@@ -30,215 +31,6 @@ function sourceType(filename: string): string {
   return filename.split(".").pop()?.toLocaleUpperCase() ?? "FILE";
 }
 
-function GraphNode({
-  accent = false,
-  label,
-  secondary,
-  width,
-  x,
-  y,
-}: {
-  accent?: boolean;
-  label: string;
-  secondary?: string;
-  width: number;
-  x: number;
-  y: number;
-}) {
-  return (
-    <g
-      className={
-        accent ? "tap-graph-node tap-graph-node--accent" : "tap-graph-node"
-      }
-    >
-      <rect x={x} y={y} width={width} height="70" rx="12" />
-      <text x={x + 16} y={y + (secondary === undefined ? 41 : 31)}>
-        {label}
-      </text>
-      {secondary === undefined ? null : (
-        <text className="tap-graph-secondary" x={x + 16} y={y + 50}>
-          {secondary}
-        </text>
-      )}
-    </g>
-  );
-}
-
-function KnowledgeGraph({
-  copy,
-  sources,
-}: {
-  copy: PrototypeCopy;
-  sources: readonly LibrarySource[];
-}) {
-  const graphRef = useRef<HTMLElement>(null);
-  const documentNodes = sources;
-  const graphHeight = Math.max(520, 142 + documentNodes.length * 112);
-  const concepts = [
-    copy.library.application,
-    copy.library.underwriting,
-    copy.library.healthDisclosure,
-    copy.library.beneficiary,
-  ];
-  const relationships = [
-    {
-      id: "application-health-disclosure",
-      label: `${copy.library.application} ${copy.library.requires} ${copy.library.healthDisclosure}`,
-    },
-    {
-      id: "health-disclosure-underwriting",
-      label: `${copy.library.healthDisclosure} ${copy.library.informs} ${copy.library.underwriting}`,
-    },
-    {
-      id: "application-beneficiary",
-      label: `${copy.library.application} ${copy.library.names} ${copy.library.beneficiary}`,
-    },
-    ...sources.map((source) => {
-      const target = source.name.toLocaleLowerCase().includes("health")
-        ? copy.library.healthDisclosure
-        : copy.library.application;
-      return {
-        id: `document-${source.id}`,
-        label: `${source.name} ${copy.library.supports} ${target}`,
-      };
-    }),
-  ];
-
-  useEffect(() => {
-    if (sources.length === 0 && graphRef.current !== null) {
-      graphRef.current.scrollLeft = 280;
-    }
-  }, [sources.length]);
-
-  return (
-    <figure ref={graphRef} className="tap-knowledge-graph">
-      <svg
-        role="img"
-        aria-label={copy.library.knowledgeGraphImage}
-        aria-describedby="tap-library-graph-caption tap-library-graph-summary"
-        viewBox={`0 0 920 ${graphHeight}`}
-        height={graphHeight}
-        preserveAspectRatio="xMidYMid meet"
-      >
-        <title>{copy.library.knowledgeGraphImage}</title>
-        <desc>{copy.library.graphSummary}</desc>
-        <defs>
-          <marker
-            id="tap-graph-arrow"
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="7"
-            markerHeight="7"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" />
-          </marker>
-        </defs>
-
-        <g className="tap-graph-edge">
-          <path d="M 480 122 C 535 122, 548 205, 600 205" />
-          <text x="526" y="151">
-            {copy.library.requires}
-          </text>
-          <path d="M 690 240 C 690 260, 690 275, 690 300" />
-          <text x="706" y="273">
-            {copy.library.informs}
-          </text>
-          <path d="M 480 122 C 550 122, 532 445, 600 445" />
-          <text x="516" y="340">
-            {copy.library.names}
-          </text>
-          {documentNodes.map((source, index) => {
-            const y = 44 + index * 112;
-            const targetY = source.name.toLocaleLowerCase().includes("health")
-              ? 205
-              : 122;
-            return (
-              <g key={source.id}>
-                <path
-                  d={`M 280 ${y + 35} C 345 ${y + 35}, 350 ${targetY}, 400 ${targetY}`}
-                />
-                <text x="312" y={Math.min(y + 20, targetY - 10)}>
-                  {copy.library.supports}
-                </text>
-              </g>
-            );
-          })}
-        </g>
-
-        {documentNodes.map((source, index) => (
-          <GraphNode
-            key={source.id}
-            label={
-              source.name.length > 27
-                ? `${source.name.slice(0, 24)}…`
-                : source.name
-            }
-            secondary={source.type}
-            width={240}
-            x={40}
-            y={44 + index * 112}
-          />
-        ))}
-        <GraphNode
-          accent
-          label={copy.library.application}
-          width={220}
-          x={400}
-          y={87}
-        />
-        <GraphNode
-          label={copy.library.healthDisclosure}
-          width={220}
-          x={600}
-          y={170}
-        />
-        <GraphNode
-          label={copy.library.underwriting}
-          width={220}
-          x={600}
-          y={300}
-        />
-        <GraphNode
-          label={copy.library.beneficiary}
-          width={220}
-          x={600}
-          y={410}
-        />
-      </svg>
-      <section
-        id="tap-library-graph-summary"
-        className="athena-visually-hidden"
-        aria-label={copy.library.graphSummary}
-      >
-        <h2>{copy.library.graphSummary}</h2>
-        <h3>{copy.library.visibleDocuments}</h3>
-        <ul aria-label={copy.library.visibleDocuments}>
-          {sources.map((source) => (
-            <li key={source.id}>{source.name}</li>
-          ))}
-        </ul>
-        <h3>{copy.library.concepts}</h3>
-        <ul aria-label={copy.library.concepts}>
-          {concepts.map((concept) => (
-            <li key={concept}>{concept}</li>
-          ))}
-        </ul>
-        <h3>{copy.library.labeledRelationships}</h3>
-        <ul aria-label={copy.library.labeledRelationships}>
-          {relationships.map((relationship) => (
-            <li key={relationship.id}>{relationship.label}</li>
-          ))}
-        </ul>
-      </section>
-      <figcaption id="tap-library-graph-caption">
-        {copy.library.illustrative}
-      </figcaption>
-    </figure>
-  );
-}
-
 export function LibraryWorkspace({
   copy,
   onAddSource,
@@ -246,23 +38,42 @@ export function LibraryWorkspace({
 }: LibraryWorkspaceProps) {
   const [mode, setMode] = useState<LibraryMode>("list");
   const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const addDialogTriggerRef = useRef<HTMLElement | null>(null);
   const listTabRef = useRef<HTMLButtonElement>(null);
   const graphTabRef = useRef<HTMLButtonElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  const availableTypes = useMemo(
+    () => [...new Set(sources.map((source) => source.type))].sort(),
+    [sources],
+  );
+  const facetSources = useMemo(
+    () =>
+      sources.filter(
+        (source) =>
+          (typeFilter === "all" || source.type === typeFilter) &&
+          (statusFilter === "all" || source.status === statusFilter),
+      ),
+    [sources, statusFilter, typeFilter],
+  );
   const visibleSources = useMemo(
     () =>
       normalizedQuery.length === 0
-        ? sources
-        : sources.filter((source) =>
+        ? facetSources
+        : facetSources.filter((source) =>
             [source.name, source.type, source.description].some((value) =>
               value.toLocaleLowerCase().includes(normalizedQuery),
             ),
           ),
-    [normalizedQuery, sources],
+    [facetSources, normalizedQuery],
   );
+  const filtersActive =
+    normalizedQuery.length > 0 ||
+    typeFilter !== "all" ||
+    statusFilter !== "all";
 
   const selectMode = (nextMode: LibraryMode) => {
     setMode(nextMode);
@@ -345,7 +156,7 @@ export function LibraryWorkspace({
             onClick={() => setMode("list")}
             onKeyDown={(event) => handleTabKeyDown(event, "list")}
           >
-            {copy.library.thumbnailList}
+            {copy.library.all}
           </button>
           <button
             ref={graphTabRef}
@@ -361,12 +172,59 @@ export function LibraryWorkspace({
             {copy.library.knowledgeGraph}
           </button>
         </div>
-        <Input
-          aria-label={copy.library.search}
-          placeholder={copy.library.search}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        <div className="tap-library-filters">
+          <Input
+            className="tap-library-search"
+            aria-label={copy.library.search}
+            placeholder={copy.library.search}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <label>
+            <span>{copy.library.typeFilter}</span>
+            <select
+              aria-label={copy.library.typeFilter}
+              value={typeFilter}
+              onChange={(event) => setTypeFilter(event.target.value)}
+            >
+              <option value="all">{copy.library.allTypes}</option>
+              {availableTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{copy.library.statusFilter}</span>
+            <select
+              aria-label={copy.library.statusFilter}
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(event.target.value as LibraryStatusFilter)
+              }
+            >
+              <option value="all">{copy.library.allStatuses}</option>
+              <option value="ready">{copy.library.ready}</option>
+              <option value="processing">{copy.library.processing}</option>
+              <option value="failed">{copy.library.failed}</option>
+            </select>
+          </label>
+          <span className="tap-library-result-count" aria-live="polite">
+            {visibleSources.length}/{sources.length} {copy.library.sourceCount}
+          </span>
+          <Button
+            type="text"
+            disabled={!filtersActive}
+            onClick={() => {
+              setQuery("");
+              setTypeFilter("all");
+              setStatusFilter("all");
+            }}
+          >
+            {copy.library.clearFilters}
+          </Button>
+        </div>
       </div>
 
       {mode === "list" ? (
@@ -410,7 +268,7 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-graph-tab"
         >
-          <KnowledgeGraph copy={copy} sources={visibleSources} />
+          <KnowledgeGraph copy={copy} query={query} sources={facetSources} />
         </div>
       )}
 

@@ -1,6 +1,9 @@
-import { screen, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   document,
@@ -8,6 +11,17 @@ import {
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
 import { TapProductPrototype } from "./TapProductPrototype";
+import { createInitialArtifactState } from "./prototype/artifacts/fixtures";
+import {
+  PROTOTYPE_SNAPSHOT_VERSION,
+  writePrototypeSnapshot,
+} from "./prototype/artifacts/persistence";
+import { appendTurn, createConversation } from "./prototype/model";
+
+const prototypeStyles = readFileSync(
+  resolve("src/widgets/tap/TapProductPrototype.css"),
+  "utf8",
+);
 
 function renderPrototype() {
   const api = fakeKnowledgeClient().withDocuments([
@@ -26,6 +40,34 @@ function renderPrototype() {
   ]);
 
   return renderKnowledgeApp(<TapProductPrototype />, { api });
+}
+
+function installPrototypeStyles() {
+  const style = window.document.createElement("style");
+  style.textContent = prototypeStyles;
+  window.document.head.append(style);
+  return style;
+}
+
+function renderPrototypeWithQuestions(total: number) {
+  let conversation = createConversation("chat-1");
+  for (let index = 1; index <= total; index += 1) {
+    conversation = appendTurn(conversation, {
+      id: `turn-${index}`,
+      intent: "answer",
+      locale: "en",
+      modelId: conversation.modelId,
+      prompt: `Question ${index}`,
+      sourceReferences: [],
+    });
+  }
+  writePrototypeSnapshot(window.localStorage, {
+    version: PROTOTYPE_SNAPSHOT_VERSION,
+    activeConversationId: conversation.id,
+    conversations: [conversation],
+    artifacts: createInitialArtifactState(),
+  });
+  return renderPrototype();
 }
 
 function renderPrototypeWithManyDocuments() {
@@ -65,7 +107,57 @@ function renderPrototypeWithManyDocuments() {
   return renderKnowledgeApp(<TapProductPrototype />, { api });
 }
 
+function renderPrototypeWithLibraryStatuses() {
+  const api = fakeKnowledgeClient().withDocuments([
+    document({
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
+      stage: "ready",
+      status: "ready",
+    }),
+    document({
+      documentId: "health-disclosure-guide",
+      filename: "health-disclosure-guide.pdf",
+      stage: "embedding",
+      status: "failed",
+    }),
+    document({
+      documentId: "application-checklist",
+      filename: "application-checklist.docx",
+      stage: "parsing",
+      status: "processing",
+    }),
+    document({
+      documentId: "beneficiary-guide",
+      filename: "beneficiary-guide.txt",
+      stage: "ready",
+      status: "ready",
+    }),
+  ]);
+
+  return renderKnowledgeApp(<TapProductPrototype />, { api });
+}
+
+function mockNarrowViewport() {
+  return vi
+    .spyOn(window, "matchMedia")
+    .mockImplementation((query): MediaQueryList => ({
+      matches: query === "(max-width: 640px)" || query === "(max-width: 820px)",
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => true,
+    }));
+}
+
 describe("Tap product prototype interactions", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("defaults to English and lets the user switch the interface language", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -126,30 +218,250 @@ describe("Tap product prototype interactions", () => {
     expect(screen.queryByRole("log", { name: "Conversation" })).toBeNull();
   });
 
-  it("shows the integrated product sidebar and can collapse and expand it", async () => {
+  it("separates the product rail from the collapsible Athena sidebar", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    const navigation = screen.getByRole("navigation", { name: "Product" });
+    const productRail = screen.getByRole("complementary", {
+      name: "Product",
+    });
+    const navigation = within(productRail).getByRole("navigation", {
+      name: "Product",
+    });
     expect(
       within(navigation)
         .getAllByRole("button")
-        .map((item) => item.textContent?.trim()),
+        .map((item) => item.getAttribute("aria-label")),
     ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
-    const athenaNavigation = screen.getByRole("navigation", {
+    const athenaSidebar = screen.getByRole("complementary", {
+      name: "Athena tools",
+    });
+    const athenaNavigation = within(athenaSidebar).getByRole("navigation", {
       name: "Athena tools",
     });
     expect(
       within(athenaNavigation)
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["New Chat", "Agent", "Skills", "Library"]);
+    ).toEqual(["New chat", "Agent", "Skills", "Library"]);
+    const newChatButton = within(athenaNavigation).getByRole("button", {
+      name: "New chat",
+    });
+    expect(newChatButton.querySelector(".anticon-form")).toBeVisible();
+    expect(newChatButton.querySelector(".anticon-plus")).toBeNull();
+    expect(
+      within(athenaNavigation)
+        .getAllByRole("button")
+        .map((item) => item.className),
+    ).toEqual([
+      "tap-navigation-item tap-navigation-item--athena",
+      "tap-navigation-item tap-navigation-item--athena",
+      "tap-navigation-item tap-navigation-item--athena",
+      "tap-navigation-item tap-navigation-item--athena",
+    ]);
 
-    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    expect(navigation).toHaveAttribute("data-collapsed", "true");
+    const collapseSidebar = screen.getByRole("button", {
+      name: "Collapse sidebar",
+    });
+    expect(
+      collapseSidebar.querySelector('[data-panel-icon="left"]'),
+    ).toHaveAttribute("data-panel-state", "expanded");
+    await user.click(collapseSidebar);
+    expect(
+      screen.queryByRole("complementary", { name: "Athena tools" }),
+    ).not.toBeInTheDocument();
+    const expandSidebar = screen.getByRole("button", {
+      name: "Expand sidebar",
+    });
+    expect(expandSidebar).toHaveFocus();
+    expect(
+      expandSidebar.querySelector('[data-panel-icon="left"]'),
+    ).toHaveAttribute("data-panel-state", "collapsed");
 
-    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    expect(navigation).toHaveAttribute("data-collapsed", "false");
+    await user.click(expandSidebar);
+    const restoredSidebar = screen.getByRole("complementary", {
+      name: "Athena tools",
+    });
+    expect(restoredSidebar).toBeVisible();
+    expect(
+      within(restoredSidebar).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
+    ).toHaveFocus();
+  });
+
+  it("shows Athena tools only while the Athena workspace is active", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const athenaButton = screen.getByRole("button", { name: "Athena" });
+    expect(athenaButton).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("navigation", { name: "Athena tools" }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+
+    expect(athenaButton).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("navigation", { name: "Athena tools" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(athenaButton);
+
+    expect(athenaButton).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("navigation", { name: "Athena tools" }),
+    ).toBeVisible();
+  });
+
+  it("restores the last Athena surface when the workspace is reopened", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+
+    expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("opens Athena tools as an inert mobile drawer and restores focus when dismissed", async () => {
+    const matchMedia = mockNarrowViewport();
+
+    try {
+      const user = userEvent.setup();
+      renderPrototype();
+      const productRail = screen.getByRole("complementary", {
+        name: "Product",
+      });
+      const athenaButton = within(productRail).getByRole("button", {
+        name: "Athena",
+      });
+      const main = screen.getByRole("main");
+
+      expect(
+        screen.queryByRole("complementary", { name: "Athena tools" }),
+      ).not.toBeInTheDocument();
+      expect(main).not.toHaveAttribute("aria-hidden");
+
+      await user.click(athenaButton);
+
+      const collapseButton = screen.getByRole("button", {
+        name: "Collapse sidebar",
+      });
+      expect(
+        screen.getByRole("complementary", { name: "Athena tools" }),
+      ).toBeVisible();
+      expect(productRail).toBeVisible();
+      expect(main).toHaveAttribute("aria-hidden", "true");
+      expect(main).toHaveAttribute("inert");
+      expect(globalThis.document.body).toHaveStyle({ overflow: "hidden" });
+
+      collapseButton.focus();
+      await user.keyboard("{Escape}");
+
+      expect(
+        screen.queryByRole("complementary", { name: "Athena tools" }),
+      ).not.toBeInTheDocument();
+      expect(main).not.toHaveAttribute("aria-hidden");
+      expect(main).not.toHaveAttribute("inert");
+      expect(globalThis.document.body).not.toHaveStyle({
+        overflow: "hidden",
+      });
+      const expandSidebar = screen.getByRole("button", {
+        name: "Expand sidebar",
+      });
+      expect(expandSidebar).toHaveFocus();
+
+      await user.click(expandSidebar);
+      await user.click(screen.getByRole("button", { name: "Close sidebar" }));
+      expect(
+        screen.getByRole("button", { name: "Expand sidebar" }),
+      ).toHaveFocus();
+
+      await user.click(athenaButton);
+      await user.click(screen.getByRole("button", { name: "New chat" }));
+      expect(
+        screen.queryByRole("complementary", { name: "Athena tools" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("textbox", { name: "Message Athena" }),
+      ).toHaveFocus();
+    } finally {
+      matchMedia.mockRestore();
+    }
+  });
+
+  it("moves focus to a mobile Athena destination and restores that surface", async () => {
+    const matchMedia = mockNarrowViewport();
+
+    try {
+      const user = userEvent.setup();
+      renderPrototype();
+      const athenaButton = screen.getByRole("button", { name: "Athena" });
+
+      await user.click(athenaButton);
+      await user.click(screen.getByRole("button", { name: "Skills" }));
+
+      expect(
+        screen.queryByRole("complementary", { name: "Athena tools" }),
+      ).not.toBeInTheDocument();
+      const skillsHeading = screen.getByRole("heading", { name: "Skills" });
+      expect(skillsHeading).toHaveFocus();
+
+      await user.click(athenaButton);
+
+      expect(
+        screen.getByRole("complementary", { name: "Athena tools" }),
+      ).toBeVisible();
+      expect(skillsHeading).toBeVisible();
+      expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    } finally {
+      matchMedia.mockRestore();
+    }
+  });
+
+  it("keeps the compact Athena and Knowledge sources drawers mutually exclusive", async () => {
+    const matchMedia = mockNarrowViewport();
+
+    try {
+      const user = userEvent.setup();
+      renderPrototype();
+      const athenaButton = within(
+        screen.getByRole("complementary", { name: "Product" }),
+      ).getByRole("button", { name: "Athena" });
+
+      await user.click(
+        screen.getByRole("button", { name: "Expand Knowledge sources" }),
+      );
+      expect(
+        screen.getByRole("complementary", { name: "Knowledge sources" }),
+      ).toBeVisible();
+
+      await user.click(athenaButton);
+      await user.click(
+        screen.getByRole("button", { name: "Collapse sidebar" }),
+      );
+
+      expect(
+        screen.queryByRole("complementary", { name: "Knowledge sources" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Expand Knowledge sources" }),
+      ).toBeVisible();
+    } finally {
+      matchMedia.mockRestore();
+    }
   });
 
   it("keeps each answer in its response language through locale changes and history navigation", async () => {
@@ -227,7 +539,7 @@ describe("Tap product prototype interactions", () => {
     await user.keyboard("{Enter}");
     expect(screen.getByText(message)).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "New Chat" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(
       screen.getByRole("region", { name: "Start a conversation" }),
     ).toBeVisible();
@@ -240,6 +552,28 @@ describe("Tap product prototype interactions", () => {
     );
     expect(screen.getByRole("log", { name: "Conversation" })).toBeVisible();
     expect(screen.getByText(message)).toBeVisible();
+  });
+
+  it("recalls the latest sent prompt with ArrowUp only when the composer is empty", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    const latestPrompt = "Review the beneficiary evidence";
+
+    await user.type(composer, "Summarize the underwriting rules");
+    await user.keyboard("{Enter}");
+    await user.type(composer, latestPrompt);
+    await user.keyboard("{Enter}");
+
+    expect(composer).toHaveValue("");
+    await user.keyboard("{ArrowUp}");
+    expect(composer).toHaveValue(latestPrompt);
+
+    await user.clear(composer);
+    await user.type(composer, "Keep this draft");
+    await user.keyboard("{ArrowUp}");
+    expect(composer).toHaveValue("Keep this draft");
   });
 
   it("restores source, Agent, and Skill context from a context-only session", async () => {
@@ -272,7 +606,7 @@ describe("Tap product prototype interactions", () => {
     await addContext("Use Agents", "Use Agents", "Life Underwriting Analyst");
     await addContext("Use Skills", "Use Skills", "BDD Scenario Design");
 
-    await user.click(screen.getByRole("button", { name: "New Chat" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
 
     const emptyComposer = screen.getByRole("form", {
       name: "Message composer",
@@ -288,7 +622,7 @@ describe("Tap product prototype interactions", () => {
     const history = screen.getByRole("navigation", { name: "Chat history" });
     await user.click(
       within(history).getByRole("button", {
-        name: "New Chat · Conversation 1 · 3 selected",
+        name: "New chat · Conversation 1 · 3 selected",
       }),
     );
 
@@ -304,6 +638,715 @@ describe("Tap product prototype interactions", () => {
     expect(
       within(restoredComposer).getByText("BDD Scenario Design"),
     ).toBeVisible();
+  });
+
+  it("removes selected Knowledge, Agent, and Skill context from the composer", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const addContext = async (
+      menuItem: string,
+      dialogName: string,
+      optionName: string,
+    ) => {
+      await user.click(screen.getByRole("button", { name: "Add to message" }));
+      await user.click(
+        within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+          "menuitem",
+          { name: menuItem },
+        ),
+      );
+      await user.click(
+        within(screen.getByRole("dialog", { name: dialogName })).getByRole(
+          "option",
+          { name: optionName },
+        ),
+      );
+    };
+
+    await addContext(
+      "Add from Library",
+      "Add from Library",
+      "life-underwriting-rules.md",
+    );
+    await addContext("Use Agents", "Use Agents", "Life Underwriting Analyst");
+    await addContext("Use Skills", "Use Skills", "BDD Scenario Design");
+
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    for (const label of [
+      "life-underwriting-rules.md",
+      "Life Underwriting Analyst",
+      "BDD Scenario Design",
+    ]) {
+      await user.click(
+        within(composer).getByRole("button", { name: `Remove ${label}` }),
+      );
+      expect(within(composer).queryByText(label)).toBeNull();
+    }
+
+    expect(
+      within(composer).queryByRole("group", { name: "Message context" }),
+    ).toBeNull();
+  });
+
+  it("uses a Codex-style model-only selector in the Athena composer", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    const trigger = within(composer).getByRole("button", {
+      name: "Select model, current model GPT-5.6 Sol",
+    });
+
+    expect(trigger).toHaveTextContent("GPT-5.6 Sol");
+    expect(trigger.querySelector(".anticon-thunderbolt")).toBeNull();
+    expect(within(composer).queryByText(/Fast|Ultra/)).toBeNull();
+
+    await user.click(trigger);
+
+    const menu = screen.getByRole("menu", { name: "Models" });
+    expect(
+      within(menu)
+        .getAllByRole("menuitemradio")
+        .map((option) => option.textContent?.trim()),
+    ).toEqual([
+      "GPT-5.6 Sol",
+      "GPT-5.6 Terra",
+      "GPT-5.6 Luna",
+      "GPT-5.5",
+      "GPT-5.4",
+    ]);
+    expect(within(menu).queryByText(/Fast|Ultra/)).toBeNull();
+
+    await user.click(
+      within(menu).getByRole("menuitemradio", { name: "GPT-5.6 Terra" }),
+    );
+
+    expect(
+      within(composer).getByRole("button", {
+        name: "Select model, current model GPT-5.6 Terra",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("menu", { name: "Models" })).toBeNull();
+  });
+
+  it("closes the model menu without stealing focus from the composer", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Select model, current model GPT-5.6 Sol",
+      }),
+    );
+    await user.click(composer);
+
+    expect(screen.queryByRole("menu", { name: "Models" })).toBeNull();
+    expect(composer).toHaveFocus();
+  });
+
+  it("keeps the selected model with its Conversation", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const prompt = "Review the underwriting evidence";
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Select model, current model GPT-5.6 Sol",
+      }),
+    );
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "GPT-5.6 Luna" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      prompt,
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+    expect(
+      screen.getByRole("button", {
+        name: "Select model, current model GPT-5.6 Sol",
+      }),
+    ).toBeVisible();
+
+    await user.click(
+      within(
+        screen.getByRole("navigation", { name: "Chat history" }),
+      ).getByRole("button", { name: `${prompt} · Conversation 1` }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Select model, current model GPT-5.6 Luna",
+      }),
+    ).toBeVisible();
+  });
+
+  it("uses a single white Athena mark only in the product rail", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const productRail = screen.getByRole("complementary", { name: "Product" });
+    const athenaButton = within(productRail).getByRole("button", {
+      name: "Athena",
+    });
+    const railMark = within(athenaButton).getByText("A");
+    expect(railMark).toBeVisible();
+    expect(prototypeStyles).toMatch(
+      /^\.tap-athena-rail-mark\s*{[^}]*background:\s*#fff;/m,
+    );
+    const athenaHeading = screen.getByRole("heading", { name: "Athena" });
+    expect(within(athenaHeading).queryByText("A")).toBeNull();
+    expect(screen.getAllByText("A")).toHaveLength(1);
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(screen.getAllByText("A")).toHaveLength(1);
+
+    await user.click(
+      within(productRail).getByRole("button", { name: "Test Management" }),
+    );
+    expect(railMark).toBeVisible();
+  });
+
+  it("collapses and restores Knowledge sources without losing its selection", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const sources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+    const source = await within(sources).findByRole("checkbox", {
+      name: /life-underwriting-rules\.md/,
+    });
+    await user.click(source);
+
+    const collapseSources = within(sources).getByRole("button", {
+      name: "Collapse Knowledge sources",
+    });
+    expect(
+      collapseSources.querySelector('[data-panel-icon="right"]'),
+    ).toHaveAttribute("data-panel-state", "expanded");
+    await user.click(collapseSources);
+
+    expect(
+      screen.queryByRole("complementary", { name: "Knowledge sources" }),
+    ).not.toBeInTheDocument();
+    const expandSources = screen.getByRole("button", {
+      name: "Expand Knowledge sources",
+    });
+    expect(expandSources).toHaveFocus();
+    expect(
+      expandSources.querySelector('[data-panel-icon="right"]'),
+    ).toHaveAttribute("data-panel-state", "collapsed");
+
+    await user.click(expandSources);
+    const restoredSources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+    expect(restoredSources).toBeVisible();
+    expect(
+      within(restoredSources).getByRole("button", {
+        name: "Collapse Knowledge sources",
+      }),
+    ).toHaveFocus();
+    expect(
+      within(restoredSources).getByRole("checkbox", {
+        name: /life-underwriting-rules\.md/,
+      }),
+    ).toBeChecked();
+  });
+
+  it("builds a question navigation rail with previews and smooth turn jumps", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    renderPrototype();
+
+    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    await user.type(composer, "First underwriting question");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(composer, "Second underwriting question");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const questionNavigation = screen.getByRole("navigation", {
+      name: "Questions in this conversation",
+    });
+    const firstQuestion = within(questionNavigation).getByRole("button", {
+      name: "Jump to question 1: First underwriting question",
+    });
+    const secondQuestion = within(questionNavigation).getByRole("button", {
+      name: "Jump to question 2: Second underwriting question",
+    });
+    expect(questionNavigation).toHaveAttribute("data-placement", "left");
+    expect(firstQuestion).not.toHaveAttribute("style");
+    expect(secondQuestion).not.toHaveAttribute("style");
+    expect(firstQuestion).toHaveAttribute("data-proximity", "rest");
+    expect(secondQuestion).toHaveAttribute("data-proximity", "rest");
+    expect(secondQuestion).toHaveAttribute("aria-current", "true");
+
+    vi.spyOn(firstQuestion, "getBoundingClientRect").mockReturnValue({
+      bottom: 118,
+      height: 18,
+      left: 12,
+      right: 84,
+      top: 100,
+      width: 72,
+      x: 12,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    await user.hover(firstQuestion);
+    const preview = screen.getByRole("tooltip");
+    expect(preview).toHaveTextContent("First underwriting question");
+    expect(questionNavigation).not.toContainElement(preview);
+    expect(preview).toHaveStyle({ left: "92px", top: "109px" });
+    expect(firstQuestion).toHaveAttribute("data-proximity", "focus");
+    expect(secondQuestion).toHaveAttribute("data-proximity", "near-1");
+
+    await user.unhover(firstQuestion);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(firstQuestion).toHaveAttribute("data-proximity", "rest");
+    expect(secondQuestion).toHaveAttribute("data-proximity", "rest");
+
+    await user.click(firstQuestion);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "start",
+    });
+    expect(firstQuestion).toHaveAttribute("aria-current", "true");
+
+    const transcript = screen.getByRole("log", { name: "Conversation" });
+    const turns = transcript.querySelectorAll<HTMLElement>(".tap-turn");
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+      scrollTop: { configurable: true, value: 600 },
+    });
+    Object.defineProperty(turns[0], "offsetTop", {
+      configurable: true,
+      value: 100,
+    });
+    Object.defineProperty(turns[1], "offsetTop", {
+      configurable: true,
+      value: 900,
+    });
+    fireEvent.scroll(transcript);
+    expect(secondQuestion).toHaveAttribute("aria-current", "true");
+    expect(firstQuestion).toHaveAttribute("data-proximity", "rest");
+    expect(secondQuestion).toHaveAttribute("data-proximity", "rest");
+  });
+
+  it("matches the centered, left-anchored Codex minimap geometry and fisheye", async () => {
+    const style = installPrototypeStyles();
+    const user = userEvent.setup();
+
+    try {
+      renderPrototype();
+      const composer = screen.getByRole("textbox", { name: "Message Athena" });
+      for (let index = 1; index <= 7; index += 1) {
+        await user.type(composer, `Question ${index}`);
+        await user.click(screen.getByRole("button", { name: "Send" }));
+      }
+
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+      const questions = within(questionNavigation).getAllByRole("button");
+      const markers = questions.map((question) =>
+        question.querySelector<HTMLElement>(".tap-question-marker"),
+      );
+      expect(markers.every((marker) => marker !== null)).toBe(true);
+
+      const navigationStyle = getComputedStyle(questionNavigation);
+      expect(navigationStyle.top).toBe("384px");
+      expect(navigationStyle.display).toBe("flex");
+      expect(navigationStyle.flexDirection).toBe("column");
+      expect(navigationStyle.transform).toBe("translateY(-50%)");
+
+      const questionStyle = getComputedStyle(questions[0]!);
+      expect(questionStyle.height).toBe("14px");
+      expect(questionStyle.justifyContent).toBe("flex-start");
+      expect(questionStyle.paddingLeft).toBe("14px");
+
+      const defaultMarkerStyle = getComputedStyle(markers[0]!);
+      expect(defaultMarkerStyle.width).toBe("12px");
+      expect(defaultMarkerStyle.height).toBe("4px");
+      expect(defaultMarkerStyle.backgroundColor).toBe("rgb(219, 219, 219)");
+
+      const activeMarkerStyle = getComputedStyle(markers[6]!);
+      expect(activeMarkerStyle.width).toBe("12px");
+      expect(activeMarkerStyle.height).toBe("4px");
+      expect(activeMarkerStyle.backgroundColor).toBe("rgb(138, 138, 138)");
+
+      await user.hover(questions[3]!);
+      expect(questions.map((question) => question.dataset.proximity)).toEqual([
+        "near-3",
+        "near-2",
+        "near-1",
+        "focus",
+        "near-1",
+        "near-2",
+        "near-3",
+      ]);
+      expect(markers.map((marker) => getComputedStyle(marker!).width)).toEqual([
+        "14px",
+        "18px",
+        "24px",
+        "34px",
+        "24px",
+        "18px",
+        "14px",
+      ]);
+      expect(getComputedStyle(markers[3]!).backgroundColor).toBe(
+        "rgb(34, 37, 41)",
+      );
+
+      await user.unhover(questions[3]!);
+      expect(questions.map((question) => question.dataset.proximity)).toEqual(
+        Array.from({ length: 7 }, () => "rest"),
+      );
+      expect(markers.map((marker) => getComputedStyle(marker!).width)).toEqual(
+        Array.from({ length: 7 }, () => "12px"),
+      );
+
+      expect(getComputedStyle(screen.getByRole("log")).scrollbarWidth).toBe(
+        "none",
+      );
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("keeps a long question minimap inside a viewport-sized window", () => {
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(
+      window,
+      "innerHeight",
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 400,
+    });
+
+    try {
+      renderPrototypeWithQuestions(30);
+
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+      const visibleQuestions = within(questionNavigation)
+        .getAllByRole("button")
+        .filter((button) =>
+          button.getAttribute("aria-label")?.startsWith("Jump to question"),
+        );
+
+      expect(visibleQuestions).toHaveLength(21);
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Jump to question 10: Question 10",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Jump to question 30: Question 30",
+        }),
+      ).toHaveAttribute("aria-current", "true");
+      expect(
+        within(questionNavigation).queryByRole("button", {
+          name: "Jump to question 9: Question 9",
+        }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Show 9 earlier questions",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).queryByRole("button", {
+          name: /later questions/,
+        }),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (originalInnerHeight === undefined) {
+        Reflect.deleteProperty(window, "innerHeight");
+      } else {
+        Object.defineProperty(window, "innerHeight", originalInnerHeight);
+      }
+    }
+  });
+
+  it("clips the long minimap and fades its continuation without a scroll track", () => {
+    const style = installPrototypeStyles();
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(
+      window,
+      "innerHeight",
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 400,
+    });
+
+    try {
+      renderPrototypeWithQuestions(30);
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+      const continuationMarker = within(questionNavigation)
+        .getByRole("button", { name: "Show 9 earlier questions" })
+        .querySelector<HTMLElement>(".tap-question-overflow-marker");
+
+      expect(getComputedStyle(questionNavigation).maxHeight).toBe("336px");
+      expect(getComputedStyle(questionNavigation).overflow).toBe("clip");
+      expect(getComputedStyle(questionNavigation).overflowY).not.toBe("auto");
+      expect(getComputedStyle(continuationMarker!).width).toBe("12px");
+      expect(getComputedStyle(continuationMarker!).maskImage).toContain(
+        "linear-gradient",
+      );
+    } finally {
+      style.remove();
+      if (originalInnerHeight === undefined) {
+        Reflect.deleteProperty(window, "innerHeight");
+      } else {
+        Object.defineProperty(window, "innerHeight", originalInnerHeight);
+      }
+    }
+  });
+
+  it("browses hidden minimap questions without introducing another scrollbar", async () => {
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(
+      window,
+      "innerHeight",
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 400,
+    });
+
+    try {
+      const user = userEvent.setup();
+      renderPrototypeWithQuestions(46);
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+
+      fireEvent.wheel(questionNavigation, { deltaY: -100 });
+
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Show 22 earlier questions",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Show 3 later questions",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).queryByRole("button", {
+          name: "Jump to question 46: Question 46",
+        }),
+      ).not.toBeInTheDocument();
+
+      await user.click(
+        within(questionNavigation).getByRole("button", {
+          name: "Show 22 earlier questions",
+        }),
+      );
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Jump to question 2: Question 2",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Show 24 later questions",
+        }),
+      ).toBeVisible();
+
+      await user.click(
+        within(questionNavigation).getByRole("button", {
+          name: "Show 1 earlier question",
+        }),
+      );
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Jump to question 1: Question 1",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).queryByRole("button", {
+          name: /earlier questions/,
+        }),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (originalInnerHeight === undefined) {
+        Reflect.deleteProperty(window, "innerHeight");
+      } else {
+        Object.defineProperty(window, "innerHeight", originalInnerHeight);
+      }
+    }
+  });
+
+  it("recalculates the minimap window when the available height changes", () => {
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(
+      window,
+      "innerHeight",
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 400,
+    });
+
+    try {
+      renderPrototypeWithQuestions(30);
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+      const getVisibleQuestions = () =>
+        within(questionNavigation)
+          .getAllByRole("button")
+          .filter((button) =>
+            button.getAttribute("aria-label")?.startsWith("Jump to question"),
+          );
+
+      expect(getVisibleQuestions()).toHaveLength(21);
+
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: 520,
+      });
+      fireEvent(window, new Event("resize"));
+
+      expect(getVisibleQuestions()).toHaveLength(30);
+    } finally {
+      if (originalInnerHeight === undefined) {
+        Reflect.deleteProperty(window, "innerHeight");
+      } else {
+        Object.defineProperty(window, "innerHeight", originalInnerHeight);
+      }
+    }
+  });
+
+  it("keeps the minimap above the composer when the transcript is shorter than the viewport", () => {
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(
+      window,
+      "innerHeight",
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 600,
+    });
+
+    try {
+      renderPrototypeWithQuestions(30);
+      const transcript = screen.getByRole("log", { name: "Conversation" });
+      Object.defineProperty(transcript, "clientHeight", {
+        configurable: true,
+        value: 280,
+      });
+
+      fireEvent(window, new Event("resize"));
+
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+      const visibleQuestions = within(questionNavigation)
+        .getAllByRole("button")
+        .filter((button) =>
+          button.getAttribute("aria-label")?.startsWith("Jump to question"),
+        );
+
+      expect(visibleQuestions).toHaveLength(13);
+      expect(questionNavigation).toHaveStyle({
+        maxHeight: "216px",
+        top: "140px",
+      });
+    } finally {
+      if (originalInnerHeight === undefined) {
+        Reflect.deleteProperty(window, "innerHeight");
+      } else {
+        Object.defineProperty(window, "innerHeight", originalInnerHeight);
+      }
+    }
+  });
+
+  it("moves the minimap window with the active question while the transcript scrolls", () => {
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(
+      window,
+      "innerHeight",
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 400,
+    });
+
+    try {
+      renderPrototypeWithQuestions(30);
+      const transcript = screen.getByRole("log", { name: "Conversation" });
+      const turns = transcript.querySelectorAll<HTMLElement>(".tap-turn");
+      Object.defineProperties(transcript, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 6000 },
+        scrollTop: { configurable: true, value: 800 },
+      });
+      turns.forEach((turn, index) => {
+        Object.defineProperty(turn, "offsetTop", {
+          configurable: true,
+          value: index * 200,
+        });
+      });
+
+      fireEvent.scroll(transcript);
+
+      const questionNavigation = screen.getByRole("navigation", {
+        name: "Questions in this conversation",
+      });
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Jump to question 5: Question 5",
+        }),
+      ).toHaveAttribute("aria-current", "true");
+      expect(
+        within(questionNavigation).getByRole("button", {
+          name: "Jump to question 1: Question 1",
+        }),
+      ).toBeVisible();
+      expect(
+        within(questionNavigation).queryByRole("button", {
+          name: "Jump to question 30: Question 30",
+        }),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (originalInnerHeight === undefined) {
+        Reflect.deleteProperty(window, "innerHeight");
+      } else {
+        Object.defineProperty(window, "innerHeight", originalInnerHeight);
+      }
+    }
+  });
+
+  it("uses one clip-only motion system for both collapsible panels", () => {
+    renderPrototype();
+
+    expect(prototypeStyles).toMatch(/--tap-panel-motion-duration:\s*200ms;/m);
+    expect(prototypeStyles).toMatch(
+      /--tap-panel-motion-easing:\s*cubic-bezier\(0\.16, 1, 0\.3, 1\);/m,
+    );
+    expect(prototypeStyles).not.toMatch(
+      /\.tap-athena-sidebar\s*\{[^}]*opacity:/m,
+    );
+    expect(prototypeStyles).not.toMatch(
+      /\.tap-sources-shell\s*\{[^}]*opacity:/m,
+    );
   });
 
   it("filters the Knowledge sources panel by source name", async () => {
@@ -408,7 +1451,7 @@ describe("Tap product prototype interactions", () => {
       within(secondCitations).queryByText("health-disclosure-guide.pdf"),
     ).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "New Chat" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
     await user.click(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
@@ -973,7 +2016,7 @@ describe("Tap product prototype interactions", () => {
         "beneficiary-guide.txt",
       ),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(
       within(
         screen.getByRole("complementary", { name: "Knowledge sources" }),
@@ -1007,7 +2050,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(
       within(addDialog).getByRole("button", { name: "Add source" }),
     );
-    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
 
     const sources = screen.getByRole("complementary", {
       name: "Knowledge sources",
@@ -1086,13 +2129,13 @@ describe("Tap product prototype interactions", () => {
     expect(screen.queryByText("Local source · page-only")).toBeNull();
   });
 
-  it("switches the Library between searchable thumbnails and an illustrative Knowledge Graph", async () => {
+  it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     expect(
-      screen.getByRole("tab", { name: "Thumbnail list", selected: true }),
+      screen.getByRole("tab", { name: "All", selected: true }),
     ).toBeVisible();
     const search = screen.getByRole("textbox", { name: "Search library" });
     await user.type(search, "disclosure");
@@ -1110,19 +2153,107 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
-    const graph = screen.getByRole("img", {
+    const graph = screen.getByRole("group", {
       name: "Life insurance knowledge graph",
     });
     expect(graph).toBeVisible();
     expect(within(graph).getByText(/health-disclosure-guide/)).toBeVisible();
-    expect(within(graph).queryByText(/life-underwriting-rules/)).toBeNull();
+    expect(
+      within(graph).getByRole("button", {
+        name: /health-disclosure-guide\.pdf/,
+      }),
+    ).toHaveAttribute("data-highlighted", "true");
+    expect(
+      within(graph).getByRole("button", {
+        name: /life-underwriting-rules\.md/,
+      }),
+    ).toHaveAttribute("data-dimmed", "true");
     expect(screen.getByText(/Illustrative view/)).toBeVisible();
     expect(within(graph).getByText("Health disclosure")).toBeVisible();
     expect(within(graph).getByText("informs")).toBeVisible();
 
     await user.clear(search);
-    await user.click(screen.getByRole("tab", { name: "Thumbnail list" }));
+    await user.click(screen.getByRole("tab", { name: "All" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
+  });
+
+  it("combines Library type and status filters and clears them together", async () => {
+    const user = userEvent.setup();
+    renderPrototypeWithLibraryStatuses();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(screen.getByText("4/4 sources")).toBeVisible();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Type" }),
+      "PDF",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Status" }),
+      "failed",
+    );
+
+    const filteredSources = screen.getByRole("list", {
+      name: "Library sources",
+    });
+    expect(
+      within(filteredSources).getByText("health-disclosure-guide.pdf"),
+    ).toBeVisible();
+    expect(
+      within(filteredSources).queryByText("life-underwriting-rules.md"),
+    ).toBeNull();
+    expect(screen.getByText("1/4 sources")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("4/4 sources")).toBeVisible();
+    expect(
+      within(screen.getByRole("list", { name: "Library sources" })).getByText(
+        "application-checklist.docx",
+      ),
+    ).toBeVisible();
+  });
+
+  it("filters graph communities, inspects nodes, and controls the viewport", async () => {
+    const user = userEvent.setup();
+    renderPrototypeWithManyDocuments();
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+
+    const graph = screen.getByRole("group", {
+      name: "Life insurance knowledge graph",
+    });
+    const sourcesCommunity = screen.getByRole("checkbox", {
+      name: /Sources · 5 nodes/,
+    });
+    expect(sourcesCommunity).toBeChecked();
+    await user.click(sourcesCommunity);
+    expect(
+      within(graph).queryByRole("button", { name: /beneficiary-guide\.md/ }),
+    ).toBeNull();
+    await user.click(sourcesCommunity);
+
+    await user.click(
+      within(graph).getByRole("button", {
+        name: "Health disclosure · Concept · Underwriting",
+      }),
+    );
+    const inspector = screen.getByRole("region", { name: "Node details" });
+    expect(within(inspector).getByText("Health disclosure")).toBeVisible();
+    expect(within(inspector).getByText("3 connections")).toBeVisible();
+    expect(within(inspector).getByText("EXTRACTED")).toBeVisible();
+
+    expect(
+      screen.getByRole("status", { name: "Zoom level" }),
+    ).toHaveTextContent("100%");
+    await user.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(
+      screen.getByRole("status", { name: "Zoom level" }),
+    ).toHaveTextContent("125%");
+    await user.click(screen.getByRole("button", { name: "Reset view" }));
+    expect(
+      screen.getByRole("status", { name: "Zoom level" }),
+    ).toHaveTextContent("100%");
   });
 
   it("summarizes every visible graph document, concept, and labeled relationship", async () => {
@@ -1132,7 +2263,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    const graph = screen.getByRole("img", {
+    const graph = screen.getByRole("group", {
       name: "Life insurance knowledge graph",
     });
     const summary = screen.getByRole("region", {

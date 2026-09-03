@@ -1,6 +1,6 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   document,
@@ -38,6 +38,10 @@ async function sendMessage(
 }
 
 describe("Athena product prototype", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("uses the integrated Athena navigation and keeps sources inside Athena", async () => {
     renderPrototype();
 
@@ -45,13 +49,13 @@ describe("Athena product prototype", () => {
     expect(
       within(navigation)
         .getAllByRole("button")
-        .map((item) => item.textContent?.trim()),
+        .map((item) => item.getAttribute("aria-label")),
     ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
     expect(
       within(screen.getByRole("navigation", { name: "Athena tools" }))
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["New Chat", "Agent", "Skills", "Library"]);
+    ).toEqual(["New chat", "Agent", "Skills", "Library"]);
     expect(
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
@@ -72,6 +76,97 @@ describe("Athena product prototype", () => {
     expect(
       screen.queryByRole("heading", { name: "问答" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the active Conversation in history across modules and page remounts", async () => {
+    const user = userEvent.setup();
+    const firstRender = renderPrototype();
+    const message = "Create a browser automation for policy submission";
+
+    await sendMessage(user, message);
+    const history = screen.getByRole("navigation", { name: "Chat history" });
+    expect(
+      within(history).getByRole("button", {
+        name: `${message} · Conversation 1`,
+      }),
+    ).toHaveAttribute("aria-current", "page");
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Chat history" }),
+      ).getByRole("button", { name: `${message} · Conversation 1` }),
+    ).toHaveAttribute("aria-current", "page");
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Chat history" }),
+      ).getByRole("button", { name: `${message} · Conversation 1` }),
+    ).toHaveAttribute("aria-current", "page");
+
+    firstRender.unmount();
+    renderPrototype();
+    expect(screen.getByText(message)).toBeVisible();
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Chat history" }),
+      ).getByRole("button", { name: `${message} · Conversation 1` }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows BDD-to-action mapping and projects a linked Run into Test Plan history", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(
+      user,
+      "Generate a browser automation for policy submission",
+    );
+    const request = screen.getByRole("article", {
+      name: "Generated automation",
+    });
+    await user.click(
+      within(request).getByRole("button", { name: "Create Test Plan first" }),
+    );
+    await user.click(
+      within(request).getByRole("button", {
+        name: "Generate linked automation",
+      }),
+    );
+    await user.click(
+      within(request).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    );
+
+    const mappedStep = screen.getByRole("article", { name: "BDD step 2" });
+    expect(within(mappedStep).getByText("Automation actions")).toBeVisible();
+    expect(within(mappedStep).getByText("Click")).toBeVisible();
+    expect(within(mappedStep).getAllByText("Send keys")).not.toHaveLength(0);
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Execution Agent" }),
+      "ado-web-agent-03",
+    );
+    await user.click(screen.getByRole("button", { name: "Run automation" }));
+    const automationHistory = screen.getByRole("region", {
+      name: "Automation run history",
+    });
+    expect(
+      within(automationHistory).getByText("Completed · Simulated"),
+    ).toBeVisible();
+    const runId = within(automationHistory).getByText(/^RUN-/).textContent;
+
+    await user.click(screen.getByRole("button", { name: /Open Test Plan/ }));
+    const planHistory = screen.getByRole("region", {
+      name: "Test Plan execution history",
+    });
+    expect(within(planHistory).getByText(runId!)).toBeVisible();
+    expect(
+      within(planHistory).getByText("Completed · Simulated"),
+    ).toBeVisible();
   });
 
   it("creates BDD in chat and imports it as a Test Plan", async () => {
@@ -106,10 +201,14 @@ describe("Athena product prototype", () => {
         .getAllByRole("tab")
         .map((tab) => tab.textContent),
     ).toEqual(["Test Plan", "Test Data"]);
+    const importedCell = within(
+      screen.getByRole("table", { name: "Test plan list" }),
+    ).getByText("Imported from Athena");
+    const importedRow = importedCell.closest<HTMLElement>('[role="row"]');
+    expect(importedRow).not.toBeNull();
     expect(
-      screen.getByText("Life insurance application underwriting"),
+      within(importedRow!).getByText("Life insurance application underwriting"),
     ).toBeVisible();
-    expect(screen.getByText("Imported from Athena")).toBeVisible();
   });
 
   it("turns an automation request into BDD plus an editable Low Code Automation flow", async () => {
@@ -122,8 +221,15 @@ describe("Athena product prototype", () => {
       name: "Generated automation",
     });
     expect(
-      within(artifact).getByText("BDD scenario + 6 automation steps"),
+      within(artifact).getByText("Create a Test Plan first?"),
     ).toBeVisible();
+    await user.click(
+      within(artifact).getByRole("button", { name: "Skip Test Plan" }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", { name: "Create Web automation" }),
+    );
+    expect(within(artifact).getByText("Send keys")).toBeVisible();
     await user.click(
       within(artifact).getByRole("button", {
         name: "Open in Low Code Automation",
@@ -135,31 +241,31 @@ describe("Athena product prototype", () => {
         name: "Life insurance application automation",
       }),
     ).toBeVisible();
-    expect(screen.getByText("life-policy-application.spec.ts")).toBeVisible();
-    const target = screen.getByRole("textbox", {
-      name: "Element for step 2",
-    });
-    fireEvent.change(target, {
-      target: { value: "button[data-testid='start-application']" },
-    });
-    expect(target).toHaveValue("button[data-testid='start-application']");
-
-    const stepCount = screen.getAllByRole("listitem", {
-      name: /Automation step/,
-    }).length;
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-    expect(
-      screen.getAllByRole("listitem", { name: /Automation step/ }),
-    ).toHaveLength(stepCount + 1);
+    const mappedStep = screen.getByRole("article", { name: "BDD step 2" });
+    expect(within(mappedStep).getByText("Click")).toBeVisible();
+    expect(within(mappedStep).getAllByText("Send keys")).not.toHaveLength(0);
     await user.click(
-      screen.getByRole("button", { name: `Delete step ${stepCount + 1}` }),
+      within(mappedStep).getByRole("button", {
+        name: "Edit automation actions 2",
+      }),
     );
-    expect(
-      screen.getAllByRole("listitem", { name: /Automation step/ }),
-    ).toHaveLength(stepCount);
+    const target = screen.getByRole("textbox", {
+      name: "Locator or target 1 for BDD step 2",
+    });
+    await user.clear(target);
+    await user.type(target, "coverage-amount-field");
+    expect(target).toHaveValue("coverage-amount-field");
+
+    const stepCount = screen.getAllByRole("article", {
+      name: /BDD step/,
+    }).length;
+    await user.click(screen.getByRole("button", { name: "Add BDD step" }));
+    expect(screen.getAllByRole("article", { name: /BDD step/ })).toHaveLength(
+      stepCount + 1,
+    );
   });
 
-  it("keeps Low Code Automation empty until a generated draft is opened", async () => {
+  it("opens Low Code Automation as an asset library", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -167,20 +273,144 @@ describe("Athena product prototype", () => {
       screen.getByRole("button", { name: "Low Code Automation" }),
     );
 
+    const table = screen.getByRole("table", { name: "Low Code Automation" });
+    expect(within(table).getByRole("row", { name: /AUTO-101/ })).toBeVisible();
+    expect(within(table).getByRole("row", { name: /AUTO-102/ })).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "No automation draft yet" }),
+      screen.getByRole("button", { name: /New automation/ }),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("listitem", { name: /Automation step/ }),
-    ).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Start in Athena" }));
+    await user.click(screen.getByRole("button", { name: "Open AUTO-101" }));
     expect(
-      screen.getByRole("heading", { name: "What can I do for you?" }),
+      screen.getByRole("heading", {
+        name: "Life insurance application automation",
+      }),
     ).toBeVisible();
   });
 
-  it("opens a fresh step snapshot from the selected automation turn", async () => {
+  it("infers Mobile automation in Athena and uses device execution", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(
+      user,
+      "Create a mobile automation for a life insurance application",
+    );
+    const artifact = screen.getByRole("article", {
+      name: "Generated automation",
+    });
+    await user.click(
+      within(artifact).getByRole("button", { name: "Skip Test Plan" }),
+    );
+    expect(within(artifact).getByText(/Mobile · Not linked/)).toBeVisible();
+    expect(within(artifact).getByText("Wait")).toBeVisible();
+    expect(within(artifact).queryByText("Navigate")).not.toBeInTheDocument();
+    await user.click(
+      within(artifact).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    );
+
+    expect(screen.getByText(/Mobile · Ready/)).toBeVisible();
+    expect(
+      screen.getByRole("combobox", { name: "Run platform" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "Execution Agent" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("asks for Web or Mobile when Athena cannot infer the channel", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(
+      user,
+      "Create an automation script for policy submission",
+    );
+    const artifact = screen.getByRole("article", {
+      name: "Generated automation",
+    });
+    await user.click(
+      within(artifact).getByRole("button", { name: "Skip Test Plan" }),
+    );
+
+    expect(within(artifact).getByText("Choose Web or Mobile")).toBeVisible();
+    expect(
+      within(artifact).queryByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(artifact).getByRole("button", { name: "Create Web automation" }),
+    );
+    expect(
+      within(artifact).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    ).toBeVisible();
+  });
+
+  it("asks for an explicit channel when generation intent is ambiguous", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(
+      screen.getByRole("button", { name: "Low Code Automation" }),
+    );
+    await user.click(screen.getByRole("button", { name: "New automation" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Automation title" }),
+      "Cross-channel onboarding",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Describe what to automate" }),
+      "Run onboarding in a browser and Android app",
+    );
+    await user.click(screen.getByRole("button", { name: "Generate BDD" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This could be Web and Mobile. Choose a type to continue.",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Automation type" }),
+      "web",
+    );
+    await user.click(screen.getByRole("button", { name: "Generate BDD" }));
+    expect(
+      screen.getByRole("heading", { name: "Cross-channel onboarding" }),
+    ).toBeVisible();
+  });
+
+  it("creates a manual Automation with an editable starter BDD step", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(
+      screen.getByRole("button", { name: "Low Code Automation" }),
+    );
+    await user.click(screen.getByRole("button", { name: "New automation" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Automation title" }),
+      "Manual quote review",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Automation type" }),
+      "web",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Create blank automation" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Manual quote review" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: "BDD step text 1" }),
+    ).toHaveValue("Describe the starting context");
+  });
+
+  it("keeps generated Automation assets isolated across chat turns", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -188,13 +418,23 @@ describe("Athena product prototype", () => {
       user,
       "Generate an automation script for policy submission",
     );
-    await user.click(
-      screen.getByRole("button", { name: "Open in Low Code Automation" }),
-    );
-    const target = screen.getByRole("textbox", { name: "Element for step 2" });
-    fireEvent.change(target, {
-      target: { value: "button[data-testid='edited-draft']" },
+    let artifact = screen.getByRole("article", {
+      name: "Generated automation",
     });
+    await user.click(
+      within(artifact).getByRole("button", { name: "Skip Test Plan" }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", { name: "Create Web automation" }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    );
+    const firstStep = screen.getByRole("textbox", { name: "BDD step text 1" });
+    await user.clear(firstStep);
+    await user.type(firstStep, "an edited first conversation step");
 
     await user.click(screen.getByRole("button", { name: "Athena" }));
     await sendMessage(
@@ -204,67 +444,88 @@ describe("Athena product prototype", () => {
     const artifacts = screen.getAllByRole("article", {
       name: "Generated automation",
     });
+    artifact = artifacts.at(-1)!;
     await user.click(
-      within(artifacts.at(-1)!).getByRole("button", {
+      within(artifact).getByRole("button", { name: "Skip Test Plan" }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", { name: "Create Web automation" }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", {
         name: "Open in Low Code Automation",
       }),
     );
 
     expect(
-      screen.getByRole("textbox", { name: "Element for step 2" }),
-    ).toHaveValue("button[data-testid='start-application']");
+      screen.getByRole("textbox", { name: "BDD step text 1" }),
+    ).toHaveValue("an adult applicant starts a term life application");
   });
 
-  it("keeps the generated automation available for both destination handoffs", async () => {
+  it("keeps both linked artifact handoffs in the Athena response", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
     await sendMessage(user, "生成人寿保险投保的自动化脚本");
-    await user.click(
-      screen.getByRole("button", { name: "Open in Low Code Automation" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Athena" }));
-
     const artifact = screen.getByRole("article", {
       name: "Generated automation",
     });
     await user.click(
       within(artifact).getByRole("button", {
-        name: "Import BDD as Test Plan",
+        name: "Create Test Plan first",
       }),
     );
-
+    await user.click(
+      within(artifact).getByRole("button", {
+        name: "Generate linked automation",
+      }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", { name: "Create Web automation" }),
+    );
     expect(
-      screen.getByText("Life insurance application underwriting"),
+      within(artifact).getByRole("button", { name: "Open Test Plan" }),
     ).toBeVisible();
-    expect(screen.getByText("Imported from Athena")).toBeVisible();
+    expect(
+      within(artifact).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    ).toBeVisible();
+    await user.click(
+      within(artifact).getByRole("button", { name: "Open Test Plan" }),
+    );
+    expect(
+      screen.getByRole("heading", {
+        name: "Life insurance application underwriting",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Open Automation AUTO-/ }),
+    ).toBeVisible();
   });
 
-  it("never reuses an automation step id after delete and module navigation", async () => {
+  it("gates Mobile execution on a supported platform and available device", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await sendMessage(
-      user,
-      "Generate an automation script for policy submission",
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Open in Low Code Automation" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Delete step 2" }));
-    await user.click(screen.getByRole("button", { name: "Athena" }));
     await user.click(
       screen.getByRole("button", { name: "Low Code Automation" }),
     );
-    await user.click(screen.getByRole("button", { name: "Add step" }));
-
-    expect(
-      screen.getAllByRole("listitem", { name: /Automation step/ }),
-    ).toHaveLength(6);
-    await user.click(screen.getByRole("button", { name: "Delete step 6" }));
-    expect(
-      screen.getAllByRole("listitem", { name: /Automation step/ }),
-    ).toHaveLength(5);
+    await user.click(screen.getByRole("button", { name: "Open AUTO-102" }));
+    const run = screen.getByRole("button", { name: "Run automation" });
+    expect(run).toBeDisabled();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Run platform" }),
+      "ios",
+    );
+    expect(run).toBeDisabled();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Device" }),
+      "iphone-15",
+    );
+    expect(run).toBeEnabled();
+    await user.click(run);
+    expect(screen.getByText("Completed · Simulated")).toBeVisible();
   });
 
   it.each([
@@ -323,7 +584,7 @@ describe("Athena product prototype", () => {
 
     await user.click(screen.getByRole("button", { name: "Test Management" }));
     expect(
-      screen.getByText("Life policy application regression"),
+      screen.getByText("Life insurance application underwriting"),
     ).toBeVisible();
     expect(
       screen.getByText("Beneficiary designation validation"),
@@ -373,10 +634,17 @@ describe("Athena product prototype", () => {
     const artifact = screen.getByRole("article", {
       name: "生成的自动化流程",
     });
-    expect(within(artifact).getByText("导航")).toBeVisible();
-    expect(within(artifact).getByText("点击")).toBeVisible();
-    expect(within(artifact).getByText("填写")).toBeVisible();
-    expect(within(artifact).getByText("断言")).toBeVisible();
+    expect(within(artifact).getByText("先创建测试计划吗？")).toBeVisible();
+    await user.click(
+      within(artifact).getByRole("button", { name: "暂不创建测试计划" }),
+    );
+    await user.click(
+      within(artifact).getByRole("button", { name: "创建 Web 自动化" }),
+    );
+    expect(within(artifact).getByText("Navigate")).toBeVisible();
+    expect(within(artifact).getByText("Click")).toBeVisible();
+    expect(within(artifact).getByText("Send keys")).toBeVisible();
+    expect(within(artifact).getByText("Assert")).toBeVisible();
     expect(within(artifact).getByText(/场景：完整申请进入核保/)).toBeVisible();
   });
 
@@ -420,15 +688,16 @@ describe("Athena product prototype", () => {
     ).toEqual(["测试计划", "测试数据"]);
 
     await user.click(screen.getByRole("button", { name: "低代码自动化" }));
-    expect(
-      screen.getByRole("heading", { name: "寿险投保申请自动化" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("heading", { name: "还没有自动化草稿" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "前往 Athena" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "低代码自动化" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "低代码自动化" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /新建自动化/ })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /What evidence is needed for life underwriting\?/,
+      }),
+    );
     expect(screen.getByText(prompt)).toBeVisible();
   });
 

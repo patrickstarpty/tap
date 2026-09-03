@@ -1,11 +1,33 @@
 export type Locale = "en" | "zh";
 
+export type CodexModelId =
+  "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.5" | "gpt-5.4";
+
+export const CODEX_MODELS: readonly {
+  id: CodexModelId;
+  label: string;
+}[] = [
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+  { id: "gpt-5.5", label: "GPT-5.5" },
+  { id: "gpt-5.4", label: "GPT-5.4" },
+] as const;
+
+export const DEFAULT_CODEX_MODEL_ID: CodexModelId = "gpt-5.6-sol";
+
+export function isCodexModelId(value: unknown): value is CodexModelId {
+  return CODEX_MODELS.some((model) => model.id === value);
+}
+
 export type ProductModule =
   "athena" | "agents" | "skills" | "library" | "test-management" | "low-code";
 
 export type AthenaSurface = "chat" | "agents" | "skills" | "library";
 
 export type AssistantIntent = "answer" | "test-plan" | "automation";
+
+export type InferredAutomationType = "web" | "mobile";
 
 export type CatalogKind = "agent" | "skill";
 
@@ -33,15 +55,28 @@ export interface AssistantTurn {
   id: string;
   intent: AssistantIntent;
   locale: Locale;
+  modelId: CodexModelId;
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   automationSteps?: readonly AutomationStepSnapshot[];
+  automationWorkflow?: {
+    stage:
+      | "ask-test-plan"
+      | "review-test-plan"
+      | "choose-automation-type"
+      | "ready-linked"
+      | "ready-unlinked";
+    testPlanId: string | null;
+    automationId: string | null;
+    automationType: InferredAutomationType | null;
+  };
 }
 
 export interface Conversation {
   id: string;
   title: string;
   turns: readonly AssistantTurn[];
+  modelId: CodexModelId;
   selectedSourceIds: readonly string[];
   selectedAgentIds: readonly string[];
   selectedSkillIds: readonly string[];
@@ -67,6 +102,7 @@ export interface LibrarySource {
 
 export interface CreateConversationOptions {
   title?: string;
+  modelId?: CodexModelId;
   selectedSourceIds?: readonly string[];
   selectedAgentIds?: readonly string[];
   selectedSkillIds?: readonly string[];
@@ -135,6 +171,27 @@ const AUTOMATION_CUES = [
   "playwright",
 ] as const;
 
+const WEB_AUTOMATION_CUES = [
+  "web",
+  "browser",
+  "playwright",
+  "website",
+  "网页",
+  "网站",
+  "浏览器",
+] as const;
+
+const MOBILE_AUTOMATION_CUES = [
+  "mobile",
+  "ios",
+  "android",
+  "device",
+  "native app",
+  "移动端",
+  "手机",
+  "安卓",
+] as const;
+
 const TEST_PLAN_CUES = [
   "测试用例",
   "测试计划",
@@ -188,6 +245,16 @@ function containsAny(value: string, cues: readonly string[]): boolean {
   return firstCueIndex(value, cues) >= 0;
 }
 
+export function detectAutomationType(
+  prompt: string,
+): InferredAutomationType | null {
+  const normalized = prompt.trim().toLowerCase();
+  const indicatesWeb = containsAny(normalized, WEB_AUTOMATION_CUES);
+  const indicatesMobile = containsAny(normalized, MOBILE_AUTOMATION_CUES);
+  if (indicatesWeb === indicatesMobile) return null;
+  return indicatesWeb ? "web" : "mobile";
+}
+
 export function detectIntent(prompt: string): AssistantIntent {
   const normalized = prompt.trim().toLowerCase();
   const automationIntent = containsAny(normalized, AUTOMATION_CUES);
@@ -231,6 +298,7 @@ export function createConversation(
     id,
     title: options.title ?? "New chat",
     turns: [],
+    modelId: options.modelId ?? DEFAULT_CODEX_MODEL_ID,
     selectedSourceIds: [...(options.selectedSourceIds ?? [])],
     selectedAgentIds: [...(options.selectedAgentIds ?? [])],
     selectedSkillIds: [...(options.selectedSkillIds ?? [])],

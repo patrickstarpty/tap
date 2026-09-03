@@ -4,10 +4,12 @@ import { useMemo, useState } from "react";
 
 import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
+import { PanelToggleIcon } from "./PanelToggleIcon";
 
 interface KnowledgeSourcesPanelProps {
   copy: PrototypeCopy;
   isLoading: boolean;
+  onCollapse: () => void;
   onToggleSource: (sourceId: string) => void;
   selectedSourceIds: readonly string[];
   sources: readonly LibrarySource[];
@@ -16,6 +18,7 @@ interface KnowledgeSourcesPanelProps {
 export function KnowledgeSourcesPanel({
   copy,
   isLoading,
+  onCollapse,
   onToggleSource,
   selectedSourceIds,
   sources,
@@ -35,8 +38,22 @@ export function KnowledgeSourcesPanel({
   const selectedIds = new Set(selectedSourceIds);
 
   return (
-    <aside className="tap-sources" aria-labelledby="tap-sources-heading">
+    <aside
+      id="tap-knowledge-sources"
+      className="tap-sources"
+      aria-labelledby="tap-sources-heading"
+    >
       <header>
+        <button
+          type="button"
+          className="tap-panel-toggle tap-panel-toggle--right-collapse"
+          aria-controls="tap-knowledge-sources"
+          aria-expanded="true"
+          aria-label={copy.sources.collapse}
+          onClick={onCollapse}
+        >
+          <PanelToggleIcon side="right" state="expanded" />
+        </button>
         <div>
           <h2 id="tap-sources-heading">{copy.sources.heading}</h2>
           <p>{copy.sources.description}</p>

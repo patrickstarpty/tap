@@ -3,11 +3,23 @@ import { describe, expect, it } from "vitest";
 import {
   appendTurn,
   createConversation,
+  detectAutomationType,
   detectIntent,
   type AssistantTurn,
 } from "./model";
 
 describe("Athena prototype model", () => {
+  it.each([
+    ["Generate a Playwright automation", "web"],
+    ["Create a browser workflow", "web"],
+    ["为移动端生成自动化脚本", "mobile"],
+    ["Create an iOS automation", "mobile"],
+    ["Create an automation script", null],
+    ["Create a Web and Mobile automation", null],
+  ] as const)("infers the automation channel for %s", (prompt, expected) => {
+    expect(detectAutomationType(prompt)).toBe(expected);
+  });
+
   it("classifies life-underwriting requests by their intended output", () => {
     expect(detectIntent("Create BDD tests for underwriting")).toBe("test-plan");
     expect(
@@ -57,6 +69,7 @@ describe("Athena prototype model", () => {
   it("creates an empty conversation with independent context selections", () => {
     expect(createConversation("chat-2")).toMatchObject({
       id: "chat-2",
+      modelId: "gpt-5.6-sol",
       turns: [],
       selectedAgentIds: [],
       selectedSkillIds: [],
@@ -75,6 +88,7 @@ describe("Athena prototype model", () => {
       id: "turn-1",
       intent: "answer",
       locale: "en",
+      modelId: "gpt-5.6-sol",
       prompt: "What evidence is needed for life insurance underwriting?",
       sourceReferences: [
         {

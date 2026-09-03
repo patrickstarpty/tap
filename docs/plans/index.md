@@ -9,4 +9,6 @@
 - [Athena 本地知识工作区 Demo 实施计划](2026-08-27-athena-local-knowledge-demo.md)（`completed`）：已用真实持久中间件、文档上传、可恢复 ingestion、来源限定问答、可定位引用、跨应用/Compose 重启的文档与 ingestion/index 状态恢复，以及来源优先 Web 工作区完成 local-only 验收；当前页面回答不作 history 恢复，这份计划不代表当前 Intelligence Phase 1 已完成。
 - [Athena 本地 Codex 回答后端实施计划](2026-08-31-athena-local-codex-answer-backend.md)（`completed`）：已修复 Embedding/ingestion 诊断、拆分向量与回答端口，并在保留百炼跨语言向量空间的同时通过精确单智能体、无工具 Codex 真实门禁；这份计划只完成 Athena Answer Adapter，不完成 Intelligence Runtime。
 - [Phase 1 Intelligence Core 实施计划](2026-09-02-phase-1-intelligence-core-implementation.md)（`planned`，当前）：以 TDD 交付 P1.0 契约与评测、P1.1 Grounded Intelligence 和 P1.2 Durable Agent Task；P1.3 另行计划。
-- [Athena 交互原型实施计划](2026-09-02-athena-interaction-prototype.md)（`active`）：先以页面内状态验证统一聊天入口、会话历史、Agent/Skills/Library 引用、知识图谱与双语交互；正式总体设计待原型确认后更新。
+- [Athena 交互原型实施计划](2026-09-02-athena-interaction-prototype.md)（`active`）：以页面内状态验证一级产品 Rail、Athena 上下文 Sidebar、统一聊天入口、会话历史、Agent/Skills/Library 引用、知识图谱与双语交互；产品事实源为 RFC-008。
+- [Low Code Automation 交互原型实施计划](2026-09-03-low-code-automation-interaction-prototype.md)（`completed`）：以内联实施方式交付稳定资产、BDD Step/动作映射、严格 Test Plan `1:1`、共享 Run 历史、可恢复 Conversation、Web/Mobile 模拟执行和 Athena Test Plan-first 编排。
+- [Athena Library、知识图谱与视觉统一实施计划](2026-09-03-athena-library-graph-visual-unification.md)（`completed`）：以内联 TDD 完成可删除消息上下文、双层 Athena `A` 标识、Codex 式 Conversation 模型选择、Library 组合筛选、Graphify 式交互图谱，以及 LCA/Test Management 视觉统一。

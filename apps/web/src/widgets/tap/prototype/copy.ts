@@ -34,6 +34,12 @@ export interface PrototypeCopy {
     selectedContextNotice: string;
     selectedContext: string;
     assistant: string;
+    questionNavigation: string;
+    jumpToQuestion: string;
+    showEarlierQuestion: string;
+    showEarlierQuestions: string;
+    showLaterQuestion: string;
+    showLaterQuestions: string;
   };
   sources: {
     heading: string;
@@ -50,6 +56,9 @@ export interface PrototypeCopy {
     knowledgeSource: string;
     knowledgeBaseDocument: string;
     pageLocalSource: string;
+    collapse: string;
+    close: string;
+    expand: string;
   };
   composer: {
     addToMessage: string;
@@ -60,6 +69,10 @@ export interface PrototypeCopy {
     searchAgents: string;
     searchSkills: string;
     messageContext: string;
+    selectModel: string;
+    currentModel: string;
+    models: string;
+    remove: string;
     close: string;
   };
   catalog: {
@@ -90,9 +103,15 @@ export interface PrototypeCopy {
     heading: string;
     description: string;
     addSource: string;
-    thumbnailList: string;
+    all: string;
     knowledgeGraph: string;
     sources: string;
+    sourceCount: string;
+    typeFilter: string;
+    statusFilter: string;
+    allTypes: string;
+    allStatuses: string;
+    clearFilters: string;
     knowledgeGraphImage: string;
     graphSummary: string;
     visibleDocuments: string;
@@ -107,14 +126,45 @@ export interface PrototypeCopy {
     failed: string;
     noResults: string;
     illustrative: string;
+    communities: string;
+    sourceCommunity: string;
+    applicationCommunity: string;
+    underwritingCommunity: string;
+    partiesCommunity: string;
+    nodes: string;
+    nodeDetails: string;
+    selectNode: string;
+    community: string;
+    relationships: string;
+    provenance: string;
+    documentNode: string;
+    conceptNode: string;
+    entityNode: string;
+    connections: string;
+    zoomIn: string;
+    zoomOut: string;
+    resetView: string;
+    zoomLevel: string;
+    extracted: string;
+    inferred: string;
+    graphNavigationHint: string;
     application: string;
     underwriting: string;
     healthDisclosure: string;
     beneficiary: string;
+    applicant: string;
+    policy: string;
+    coverage: string;
+    premium: string;
+    riskAssessment: string;
     requires: string;
     informs: string;
     names: string;
     supports: string;
+    submits: string;
+    creates: string;
+    evaluates: string;
+    determines: string;
   };
   artifacts: {
     bddPlanReady: string;
@@ -210,7 +260,7 @@ export const PROTOTYPE_COPY = {
       collapseSidebar: "Collapse sidebar",
       closeSidebar: "Close sidebar",
       expandSidebar: "Expand sidebar",
-      newChat: "New Chat",
+      newChat: "New chat",
       chatHistory: "Chat history",
       product: "Product",
       athenaTools: "Athena tools",
@@ -243,6 +293,12 @@ export const PROTOTYPE_COPY = {
         "Context was selected for this turn. This prototype records this selection but does not verify document use.",
       selectedContext: "Selected context",
       assistant: "Athena assistant",
+      questionNavigation: "Questions in this conversation",
+      jumpToQuestion: "Jump to question",
+      showEarlierQuestion: "Show {count} earlier question",
+      showEarlierQuestions: "Show {count} earlier questions",
+      showLaterQuestion: "Show {count} later question",
+      showLaterQuestions: "Show {count} later questions",
     },
     sources: {
       heading: "Knowledge sources",
@@ -260,6 +316,9 @@ export const PROTOTYPE_COPY = {
       knowledgeSource: "Knowledge source",
       knowledgeBaseDocument: "Knowledge base document",
       pageLocalSource: "Page-local Library source",
+      collapse: "Collapse Knowledge sources",
+      close: "Close Knowledge sources",
+      expand: "Expand Knowledge sources",
     },
     composer: {
       addToMessage: "Add to message",
@@ -270,6 +329,10 @@ export const PROTOTYPE_COPY = {
       searchAgents: "Search agents",
       searchSkills: "Search skills",
       messageContext: "Message context",
+      selectModel: "Select model",
+      currentModel: "current model",
+      models: "Models",
+      remove: "Remove",
       close: "Close",
     },
     catalog: {
@@ -303,9 +366,15 @@ export const PROTOTYPE_COPY = {
       description:
         "Browse source material and explore its curated domain context.",
       addSource: "Add source",
-      thumbnailList: "Thumbnail list",
+      all: "All",
       knowledgeGraph: "Knowledge Graph",
       sources: "Library sources",
+      sourceCount: "sources",
+      typeFilter: "Type",
+      statusFilter: "Status",
+      allTypes: "All types",
+      allStatuses: "All statuses",
+      clearFilters: "Clear filters",
       knowledgeGraphImage: "Life insurance knowledge graph",
       graphSummary: "Knowledge graph summary",
       visibleDocuments: "Visible documents",
@@ -320,15 +389,47 @@ export const PROTOTYPE_COPY = {
       failed: "Failed",
       noResults: "No matching sources",
       illustrative:
-        "Illustrative view — relationships are curated for this prototype, not computed.",
+        "Illustrative view — interactive relationships and communities are curated, not computed.",
+      communities: "Communities",
+      sourceCommunity: "Sources",
+      applicationCommunity: "Application",
+      underwritingCommunity: "Underwriting",
+      partiesCommunity: "Parties",
+      nodes: "nodes",
+      nodeDetails: "Node details",
+      selectNode: "Select a node to inspect its relationships.",
+      community: "Community",
+      relationships: "Relationships",
+      provenance: "Provenance",
+      documentNode: "Document",
+      conceptNode: "Concept",
+      entityNode: "Entity",
+      connections: "connections",
+      zoomIn: "Zoom in",
+      zoomOut: "Zoom out",
+      resetView: "Reset view",
+      zoomLevel: "Zoom level",
+      extracted: "EXTRACTED",
+      inferred: "INFERRED",
+      graphNavigationHint:
+        "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
       application: "Life insurance application",
       underwriting: "Underwriting",
       healthDisclosure: "Health disclosure",
       beneficiary: "Beneficiary",
+      applicant: "Applicant",
+      policy: "Policy",
+      coverage: "Coverage",
+      premium: "Premium",
+      riskAssessment: "Risk assessment",
       requires: "requires",
       informs: "informs",
       names: "names",
       supports: "supports",
+      submits: "submits",
+      creates: "creates",
+      evaluates: "evaluates",
+      determines: "determines",
     },
     artifacts: {
       bddPlanReady: "BDD test plan ready",
@@ -457,6 +558,12 @@ export const PROTOTYPE_COPY = {
         "此轮对话已选择知识上下文。原型仅记录该选择，不验证是否使用了文档内容。",
       selectedContext: "已选上下文",
       assistant: "Athena 助手",
+      questionNavigation: "本次对话中的问题",
+      jumpToQuestion: "跳转到问题",
+      showEarlierQuestion: "显示上方另外 {count} 个问题",
+      showEarlierQuestions: "显示上方另外 {count} 个问题",
+      showLaterQuestion: "显示下方另外 {count} 个问题",
+      showLaterQuestions: "显示下方另外 {count} 个问题",
     },
     sources: {
       heading: "知识来源",
@@ -473,6 +580,9 @@ export const PROTOTYPE_COPY = {
       knowledgeSource: "知识来源",
       knowledgeBaseDocument: "知识库文档",
       pageLocalSource: "仅当前页面的知识库来源",
+      collapse: "收起知识来源",
+      close: "关闭知识来源",
+      expand: "展开知识来源",
     },
     composer: {
       addToMessage: "添加到消息",
@@ -483,6 +593,10 @@ export const PROTOTYPE_COPY = {
       searchAgents: "搜索智能体",
       searchSkills: "搜索技能",
       messageContext: "消息上下文",
+      selectModel: "选择模型",
+      currentModel: "当前模型",
+      models: "模型",
+      remove: "移除",
       close: "关闭",
     },
     catalog: {
@@ -513,9 +627,15 @@ export const PROTOTYPE_COPY = {
       heading: "知识库",
       description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
-      thumbnailList: "缩略图列表",
+      all: "全部",
       knowledgeGraph: "知识图谱",
       sources: "知识库来源",
+      sourceCount: "个来源",
+      typeFilter: "类型",
+      statusFilter: "状态",
+      allTypes: "全部类型",
+      allStatuses: "全部状态",
+      clearFilters: "清除筛选",
       knowledgeGraphImage: "寿险知识图谱",
       graphSummary: "知识图谱摘要",
       visibleDocuments: "可见文档",
@@ -529,15 +649,46 @@ export const PROTOTYPE_COPY = {
       processing: "处理中",
       failed: "失败",
       noResults: "没有匹配的来源",
-      illustrative: "示意视图 — 关系由本原型编排，并非计算所得。",
+      illustrative: "交互原型 — 关系和社区由本原型编排，并非计算所得。",
+      communities: "社区",
+      sourceCommunity: "来源",
+      applicationCommunity: "投保申请",
+      underwritingCommunity: "核保",
+      partiesCommunity: "参与方",
+      nodes: "个节点",
+      nodeDetails: "节点详情",
+      selectNode: "选择节点以查看其关系。",
+      community: "社区",
+      relationships: "关系",
+      provenance: "来源依据",
+      documentNode: "文档",
+      conceptNode: "概念",
+      entityNode: "实体",
+      connections: "个关联",
+      zoomIn: "放大",
+      zoomOut: "缩小",
+      resetView: "重置视图",
+      zoomLevel: "缩放比例",
+      extracted: "已抽取",
+      inferred: "推断",
+      graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
       application: "寿险投保",
       underwriting: "核保",
       healthDisclosure: "健康告知",
       beneficiary: "受益人",
+      applicant: "投保人",
+      policy: "保单",
+      coverage: "保额",
+      premium: "保费",
+      riskAssessment: "风险评估",
       requires: "需要",
       informs: "影响",
       names: "指定",
       supports: "支持",
+      submits: "提交",
+      creates: "生成",
+      evaluates: "评估",
+      determines: "决定",
     },
     artifacts: {
       bddPlanReady: "BDD 测试计划已就绪",
