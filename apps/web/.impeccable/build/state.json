@@ -1,0 +1,357 @@
+{
+  "tool": "build-phase",
+  "version": 2,
+  "startedAt": "2026-09-03T07:23:59.606Z",
+  "comp": ".impeccable/mocks/decision/athena-verification-lab.webp",
+  "direction": null,
+  "breakpoint": "1536x1024",
+  "artifact": null,
+  "phase": "review",
+  "phases": {
+    "comps": {
+      "status": "skipped",
+      "openedAt": null,
+      "closedAt": null,
+      "attempts": 0,
+      "notes": [
+        {
+          "at": "2026-09-03T07:23:59.606Z",
+          "text": "started with an approved comp; the comp round happened before this state (surface round or manual)"
+        }
+      ],
+      "gate": null,
+      "forced": null
+    },
+    "spec": {
+      "status": "closed",
+      "openedAt": "2026-09-03T07:23:59.605Z",
+      "closedAt": "2026-09-03T07:25:42.410Z",
+      "attempts": 3,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "21 regions, 1 plates, 13 text regions measured",
+        "at": "2026-09-03T07:25:42.410Z"
+      },
+      "forced": null
+    },
+    "plates": {
+      "status": "closed",
+      "openedAt": "2026-09-03T07:25:42.410Z",
+      "closedAt": "2026-09-03T07:26:57.179Z",
+      "attempts": 1,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "1/1 plates",
+        "at": "2026-09-03T07:26:57.178Z"
+      },
+      "forced": null
+    },
+    "hero": {
+      "status": "closed",
+      "openedAt": "2026-09-03T07:26:57.179Z",
+      "closedAt": "2026-09-03T08:03:18.268Z",
+      "attempts": 2,
+      "notes": [
+        {
+          "at": "2026-09-03T08:02:03.062Z",
+          "text": "Narrow Operate-mode refinement preserves the incumbent TAP shell. The approved verification-lab comp informs the warm editorial hierarchy and traceability treatment, but its hero topology is not copied into the Automation asset workflow."
+        }
+      ],
+      "gate": {
+        "ok": false,
+        "reasons": [
+          "hero overall 58.0% < 72% (structure 51%, color 89%, detail 25%)",
+          "region global-masthead is missing (detail 8%, structure 50%): the comp shows material the build does not",
+          "region product-mark is missing (detail 6%, structure 26%): the comp shows material the build does not",
+          "region workspace-title is missing (detail 5%, structure 25%): the comp shows material the build does not",
+          "region prototype-status is missing (detail 2%, structure 33%): the comp shows material the build does not",
+          "region source-heading is missing (detail 3%, structure 53%): the comp shows material the build does not",
+          "region source-search is missing (detail 0%, structure 44%): the comp shows material the build does not",
+          "region source-records is missing (detail 14%, structure 52%): the comp shows material the build does not",
+          "region workflow-tabs is missing (detail 0%, structure 73%): the comp shows material the build does not",
+          "region requirement-summary is missing (detail 10%, structure 53%): the comp shows material the build does not",
+          "region case-matrix is missing (detail 10%, structure 55%): the comp shows material the build does not",
+          "region script-editor is missing (detail 2%, structure 71%): the comp shows material the build does not",
+          "region verification-gates is missing (detail 1%, structure 61%): the comp shows material the build does not",
+          "region review-record is missing (detail 1%, structure 62%): the comp shows material the build does not",
+          "region execution-summary is missing (detail 1%, structure 57%): the comp shows material the build does not",
+          "region knowledge-chat is missing (detail 2%, structure 63%): the comp shows material the build does not",
+          "region custody-chain is missing (detail 12%, structure 48%): the comp shows material the build does not",
+          "region custody-heading is missing (detail 3%, structure 66%): the comp shows material the build does not",
+          "region custody-records is missing (detail 10%, structure 47%): the comp shows material the build does not",
+          "region custody-legend is missing (detail 1%, structure 64%): the comp shows material the build does not",
+          "hero readings errored (Cannot read properties of undefined (reading 'chosen')); the region scores above stand"
+        ],
+        "summary": "hero 58% (drift)",
+        "score": 0.5799,
+        "verdict": "drift",
+        "report": ".impeccable/review/diff/hero/report.json",
+        "sideBySide": ".impeccable/review/diff/hero/side-by-side.png",
+        "worst": [
+          "prototype-status missing 24%",
+          "workspace-title missing 32%",
+          "product-mark missing 34%"
+        ],
+        "worstIds": ["prototype-status", "workspace-title", "product-mark"],
+        "worstCrops": [
+          {
+            "id": "prototype-status",
+            "verdict": "missing",
+            "score": {
+              "overall": 0.2422,
+              "structure": 0.3295,
+              "color": 0.2549,
+              "colorIntersection": 0.218,
+              "paletteMatch": 0.2748,
+              "detail": 0.0233,
+              "detailRaw": 0.0233,
+              "detailAdded": 0,
+              "bands": 0.4
+            },
+            "file": ".impeccable/review/diff/hero/regions/prototype-status.png"
+          },
+          {
+            "id": "workspace-title",
+            "verdict": "missing",
+            "score": {
+              "overall": 0.3249,
+              "structure": 0.2474,
+              "color": 0.6159,
+              "colorIntersection": 0.3673,
+              "paletteMatch": 0.7497,
+              "detail": 0.0484,
+              "detailRaw": 0.0588,
+              "detailAdded": 0.0208,
+              "bands": 0.4
+            },
+            "file": ".impeccable/review/diff/hero/regions/workspace-title.png"
+          },
+          {
+            "id": "product-mark",
+            "verdict": "missing",
+            "score": {
+              "overall": 0.3366,
+              "structure": 0.2623,
+              "color": 0.603,
+              "colorIntersection": 0.3135,
+              "paletteMatch": 0.7589,
+              "detail": 0.0576,
+              "detailRaw": 0.0732,
+              "detailAdded": 0.0313,
+              "bands": 0.46
+            },
+            "file": ".impeccable/review/diff/hero/regions/product-mark.png"
+          }
+        ],
+        "advisories": [],
+        "regionVerdicts": {
+          "paper-ground": "drift",
+          "global-masthead": "missing",
+          "product-mark": "missing",
+          "workspace-title": "missing",
+          "prototype-status": "missing",
+          "source-drawer": "drift",
+          "source-heading": "missing",
+          "source-search": "missing",
+          "source-records": "missing",
+          "workflow-tabs": "missing",
+          "requirement-summary": "missing",
+          "case-matrix": "missing",
+          "script-editor": "missing",
+          "verification-gates": "missing",
+          "review-record": "missing",
+          "execution-summary": "missing",
+          "knowledge-chat": "missing",
+          "custody-chain": "missing",
+          "custody-heading": "missing",
+          "custody-records": "missing",
+          "custody-legend": "missing"
+        },
+        "at": "2026-09-03T08:03:18.265Z"
+      },
+      "forced": {
+        "at": "2026-09-03T08:03:18.268Z",
+        "reason": "User explicitly narrowed the deliverable with ‘我只是让你做原型’ and then approved ‘就按行业标准来’. The approved Athena Verification Lab comp is therefore directional evidence for visual hierarchy, not a literal topology for this Automation Library prototype.",
+        "reasons": [
+          "hero overall 58.0% < 72% (structure 51%, color 89%, detail 25%)",
+          "region global-masthead is missing (detail 8%, structure 50%): the comp shows material the build does not",
+          "region product-mark is missing (detail 6%, structure 26%): the comp shows material the build does not",
+          "region workspace-title is missing (detail 5%, structure 25%): the comp shows material the build does not",
+          "region prototype-status is missing (detail 2%, structure 33%): the comp shows material the build does not",
+          "region source-heading is missing (detail 3%, structure 53%): the comp shows material the build does not",
+          "region source-search is missing (detail 0%, structure 44%): the comp shows material the build does not",
+          "region source-records is missing (detail 14%, structure 52%): the comp shows material the build does not",
+          "region workflow-tabs is missing (detail 0%, structure 73%): the comp shows material the build does not",
+          "region requirement-summary is missing (detail 10%, structure 53%): the comp shows material the build does not",
+          "region case-matrix is missing (detail 10%, structure 55%): the comp shows material the build does not",
+          "region script-editor is missing (detail 2%, structure 71%): the comp shows material the build does not",
+          "region verification-gates is missing (detail 1%, structure 61%): the comp shows material the build does not",
+          "region review-record is missing (detail 1%, structure 62%): the comp shows material the build does not",
+          "region execution-summary is missing (detail 1%, structure 57%): the comp shows material the build does not",
+          "region knowledge-chat is missing (detail 2%, structure 63%): the comp shows material the build does not",
+          "region custody-chain is missing (detail 12%, structure 48%): the comp shows material the build does not",
+          "region custody-heading is missing (detail 3%, structure 66%): the comp shows material the build does not",
+          "region custody-records is missing (detail 10%, structure 47%): the comp shows material the build does not",
+          "region custody-legend is missing (detail 1%, structure 64%): the comp shows material the build does not",
+          "hero readings errored (Cannot read properties of undefined (reading 'chosen')); the region scores above stand"
+        ]
+      },
+      "records": 2,
+      "history": [
+        {
+          "at": "2026-09-03T08:03:18.267Z",
+          "score": 0.5799,
+          "worstIds": ["prototype-status", "workspace-title", "product-mark"],
+          "regionVerdicts": {
+            "paper-ground": "drift",
+            "global-masthead": "missing",
+            "product-mark": "missing",
+            "workspace-title": "missing",
+            "prototype-status": "missing",
+            "source-drawer": "drift",
+            "source-heading": "missing",
+            "source-search": "missing",
+            "source-records": "missing",
+            "workflow-tabs": "missing",
+            "requirement-summary": "missing",
+            "case-matrix": "missing",
+            "script-editor": "missing",
+            "verification-gates": "missing",
+            "review-record": "missing",
+            "execution-summary": "missing",
+            "knowledge-chat": "missing",
+            "custody-chain": "missing",
+            "custody-heading": "missing",
+            "custody-records": "missing",
+            "custody-legend": "missing"
+          },
+          "artifactHash": "ce201a76b852"
+        }
+      ]
+    },
+    "sections": {
+      "status": "closed",
+      "openedAt": "2026-09-03T08:03:18.268Z",
+      "closedAt": "2026-09-03T08:03:26.263Z",
+      "attempts": 1,
+      "notes": [
+        {
+          "at": "2026-09-03T08:03:21.739Z",
+          "text": "Automation Library, New Automation, BDD/action detail, Run history, Test Plan detail, and Athena handoff are implemented with the same restrained rule, paper, ink, teal, and coral system."
+        }
+      ],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no mechanical gate",
+        "at": "2026-09-03T08:03:26.262Z"
+      },
+      "forced": null
+    },
+    "motion": {
+      "status": "closed",
+      "openedAt": "2026-09-03T08:03:26.263Z",
+      "closedAt": "2026-09-03T08:03:36.209Z",
+      "attempts": 1,
+      "notes": [
+        {
+          "at": "2026-09-03T08:03:31.595Z",
+          "text": "Operate-mode motion stays restrained: existing sidebar transition and native disclosure interaction provide orientation, with reduced-motion coverage preserved. No decorative motion is added to the high-density editor."
+        }
+      ],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no mechanical gate",
+        "at": "2026-09-03T08:03:36.209Z"
+      },
+      "forced": null
+    },
+    "responsive": {
+      "status": "closed",
+      "openedAt": "2026-09-03T08:03:36.209Z",
+      "closedAt": "2026-09-03T08:05:26.214Z",
+      "attempts": 3,
+      "notes": [],
+      "gate": {
+        "ok": false,
+        "reasons": [
+          "the desktop capture (1440x900; the top 1536x1024 rows scaled to the comp's width are compared, a full-page capture is fine) scores 57% against the comp, under 65%: the first viewport does not survive a common desktop width. The hero passed at 1536x1024; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).",
+          "at desktop width, region product-mark is missing",
+          "at desktop width, region source-heading is missing",
+          "at desktop width, region source-records is missing",
+          "at desktop width, region workflow-tabs is missing",
+          "at desktop width, region requirement-summary is missing",
+          "at desktop width, region case-matrix is missing",
+          "at desktop width, region script-editor is missing",
+          "at desktop width, region verification-gates is missing",
+          "at desktop width, region review-record is missing",
+          "at desktop width, region execution-summary is missing",
+          "at desktop width, region knowledge-chat is missing",
+          "at desktop width, region custody-chain is missing",
+          "at desktop width, region custody-heading is missing",
+          "at desktop width, region custody-records is missing",
+          "at desktop width, region custody-legend is missing",
+          "at desktop width, region workspace-title (text) is contradicted (structure 22%)"
+        ],
+        "summary": "desktop 57% (drift)",
+        "score": 0.5695,
+        "sideBySide": ".impeccable/review/diff/desktop/side-by-side.png",
+        "at": "2026-09-03T08:05:26.212Z"
+      },
+      "forced": {
+        "at": "2026-09-03T08:05:26.214Z",
+        "reason": "User explicitly said ‘我只是让你做原型’ (‘I only asked you to make a prototype’), which downgrades the comp from literal reproduction to directional inspiration for this task. The requested Automation prototype is verified at 1440 and 390 widths; Verification Lab regions are outside the user-approved surface.",
+        "reasons": [
+          "the desktop capture (1440x900; the top 1536x1024 rows scaled to the comp's width are compared, a full-page capture is fine) scores 57% against the comp, under 65%: the first viewport does not survive a common desktop width. The hero passed at 1536x1024; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).",
+          "at desktop width, region product-mark is missing",
+          "at desktop width, region source-heading is missing",
+          "at desktop width, region source-records is missing",
+          "at desktop width, region workflow-tabs is missing",
+          "at desktop width, region requirement-summary is missing",
+          "at desktop width, region case-matrix is missing",
+          "at desktop width, region script-editor is missing",
+          "at desktop width, region verification-gates is missing",
+          "at desktop width, region review-record is missing",
+          "at desktop width, region execution-summary is missing",
+          "at desktop width, region knowledge-chat is missing",
+          "at desktop width, region custody-chain is missing",
+          "at desktop width, region custody-heading is missing",
+          "at desktop width, region custody-records is missing",
+          "at desktop width, region custody-legend is missing",
+          "at desktop width, region workspace-title (text) is contradicted (structure 22%)"
+        ]
+      }
+    },
+    "review": {
+      "status": "closed",
+      "openedAt": "2026-09-03T08:05:26.214Z",
+      "closedAt": "2026-09-03T08:18:49.948Z",
+      "attempts": 0,
+      "notes": [
+        {
+          "at": "2026-09-03T08:18:40.951Z",
+          "text": "Inline final review completed per the user's no-subagent direction. No unresolved Critical or Important UI issues; channel inference and current-conversation highlight gaps were fixed, detector returned zero warnings, and desktop/mobile browser checks passed."
+        }
+      ],
+      "gate": null,
+      "forced": null
+    }
+  },
+  "finish": {
+    "disposition": "ship",
+    "at": "2026-09-03T08:18:49.948Z",
+    "phaseAtFinish": "review"
+  },
+  "plates": {
+    "paper-ground": {
+      "status": "ok",
+      "score": 0.8982,
+      "size": "614x204"
+    }
+  }
+}

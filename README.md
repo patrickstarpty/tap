@@ -2,9 +2,62 @@
 
 TAP（**Test Automation Platform**）是以 BrowserStack-like 测试自动化平台为长期主体、以 Intelligence Layer 为 AI 差异化的测试工程平台。本仓库同时包含可评审、可演进的技术架构基线，以及 Python/FastAPI Backend、React/Vite Web、公共契约和本地运行工具。Athena 本地知识工作区已经打通“上传文档 → 可恢复索引 → 限定来源问答 → 核验引用”的 `doc` 纵向切片；当前先实施独立 Intelligence Lab，完整测试资产、真实执行和生产治理后置。
 
+## 客户原型演示
+
+当前纯前端交互原型展示一条完整产品叙事：用户从 Athena 组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Web/Mobile Automation；BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。详细页面说明、40 张逐页截图、现场话术和客户问答见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)，规范性产品要求见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。
+
+从仓库根目录启动原型：
+
+```sh
+corepack pnpm --dir apps/web dev --port 4175
+```
+
+打开 `http://127.0.0.1:4175/`。下图是建议向客户重点展示的六个页面：
+
+| Athena 统一对话入口                                                                          | Graphify 式 Knowledge Graph                                                                    |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| ![Athena 新对话入口](docs/assets/prototype-demo/01-athena-new-chat.jpg)                      | ![Knowledge Graph](docs/assets/prototype-demo/17-athena-knowledge-graph.jpg)                   |
+| **已关联的 Test Plan**                                                                       | **BDD 与 Automation actions 映射**                                                             |
+| ![已关联 Automation 的 Test Plan](docs/assets/prototype-demo/20-test-plan-detail-linked.jpg) | ![Web Automation BDD 与动作映射](docs/assets/prototype-demo/27-web-automation-bdd-mapping.jpg) |
+| **Mobile 设备执行配置**                                                                      | **Athena 生成并关联两类资产**                                                                  |
+| ![Mobile Automation 设备选择](docs/assets/prototype-demo/31-mobile-automation-device.jpg)    | ![Athena 生成关联资产](docs/assets/prototype-demo/36-athena-linked-artifacts.jpg)              |
+
+演示时必须明确：Athena 中的 **AI Agent** 负责分析、生成和调整；Automation 中的 **Execution Agent** 是 Azure DevOps **Pipeline Agent**。当前 Conversation、资产和 Run 使用浏览器状态模拟，所有运行均标为 `Simulated`；这不表示已连接真实 Pipeline、浏览器、移动设备或生成真实 Execution Evidence。
+
 ## 一句话架构
 
-TAP 以 **Test IR + Git 版本化 + 统一执行证据** 为长期平台核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。当前按 [RFC-007](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 先交付 `TAP Intelligence Lab` 的 P1.0–P1.2：仅以 `goal` 为必填输入，可附加人工步骤和已就绪的 Athena 资料，产生可追溯分析、Assumption Register、Automation Blueprint、可恢复任务和 Review Package。仓库、失败材料与候选代码属于后置 P1.3 条件实验；真实浏览器/设备执行、Test Management 和 Release Management 不属于 Phase 1。模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
+TAP 以 **统一测试模型（Test IR）+ Git 版本化 + 统一执行证据** 为长期平台核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。当前按 [RFC-007](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 先交付 `TAP Intelligence Lab` 的 P1.0–P1.2：仅以 `goal` 为必填输入，可附加人工步骤和已就绪的 Athena 资料，产生可追溯分析、Assumption Register、Automation Blueprint、可恢复任务和 Review Package。仓库、失败材料与候选代码属于后置 P1.3 条件实验；真实浏览器/设备执行、Test Management 和 Release Management 不属于 Phase 1。模型、Agent Runtime、BrowserStack 和自建执行网格都通过适配层接入。
+
+### Test IR 是什么？
+
+`Test IR` 是 **Test Intermediate Representation** 的缩写，在 TAP 中可以直接理解为“**统一测试模型**”。它不是客户需要操作的页面，也不是 Playwright、Selenium 或 Appium 脚本，而是平台内部用于统一记录测试内容的结构化格式。
+
+```text
+Test Plan / BDD（业务上要验证什么）
+                ↓
+Test IR（统一记录步骤、动作、目标、预期结果和关联关系）
+                ↓
+Web / Mobile Automation（生成具体的自动化实现）
+                ↓
+Run 与执行证据（记录执行结果并追溯到原始测试步骤）
+```
+
+例如，业务人员在 Test Plan 中写下：
+
+```text
+When the applicant submits the application
+```
+
+TAP 会在统一测试模型中记录：这个步骤来自哪个 Test Plan、执行 `Click` 动作、目标是哪个提交按钮，以及预期进入 `Pending underwriting` 状态。Web Automation 可以把它转换为 Playwright 或 Selenium 动作，Mobile Automation 可以转换为 Appium 动作，而 Test Plan 和执行结果仍然通过同一个步骤身份保持关联。
+
+因此，Test IR 的价值不是让客户学习一种新语言，而是让 TAP 能够做到：
+
+- Test Plan 和 BDD 保持业务可读；
+- 每个 BDD 步骤都能关联 Click、Send keys、Navigate、Assert 等自动化动作；
+- 更换 Web、Mobile 或执行框架时，不必重写业务测试定义；
+- Automation Run 可以追溯到对应的 Test Plan、Scenario 和 BDD Step。
+
+面向客户演示时，可以直接使用“**统一测试模型**”这个名称；`Test IR` 只作为技术架构中的正式术语保留。
 
 已确认的企业技术栈：
 
@@ -17,7 +70,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 ## 目标
 
 - 让用户用自然语言或 BDD 创建测试，也能基于已有自动化资产做定向更新。
-- 用稳定 Test IR 连接需求、BDD、脚本、Locator、Fixture、Hook、测试数据和运行证据。
+- 用稳定的统一测试模型（Test IR）连接需求、BDD、脚本、Locator、Fixture、Hook、测试数据和运行证据。
 - 在同一条 Run 时间线中关联 Git revision、Agent 行为、测试结果、自愈/RCA、证据和人工审批。
 - 同时支持内网自建 Browser/Device Grid 与 BrowserStack，避免单一供应商依赖。
 - 通过 LiteLLM 统一路由 Chat、Coder、Embedding、Reranker、Vision 模型。
@@ -48,6 +101,7 @@ AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 - [Phase 1 Intelligence Layer 探索](docs/proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)：当前产品范围、对象、安全边界、评测和分阶段出口。
 - [Phase 1 Intelligence Layer 决策](docs/decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md)：正式替代 Knowledge Chat 优先级，保留 BrowserStack-like 测试平台为长期主体。
 - [Phase 1 Intelligence Core 实施计划](docs/plans/2026-09-02-phase-1-intelligence-core-implementation.md)：当前 P1.0–P1.2 的 TDD 任务、依赖顺序与验收命令。
+- [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)：按客户讲解顺序汇总 Athena、Library、Test Management、Low Code Automation 的逐页截图、演示话术和能力边界。
 - [后置 Knowledge Plane：RAG 基础](docs/architecture/rag/2026-08-21-foundation.md)：保留原 Phase 1 的四索引、流水线、评测与验收设计。
 - [后置数据切片与溯源](docs/architecture/rag/2026-08-21-chunking-and-provenance.md)：分型切片、稳定身份、revision lineage、删除与重建。
 - [后置 Azure AI Search 索引设计](docs/architecture/rag/2026-08-21-ai-search-index.md)：四类物理索引、字段、ACL、向量与蓝绿升级。
@@ -105,14 +159,14 @@ DASHSCOPE_API_BASE=https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/com
 
 `make demo-up` 启动并初始化 MySQL、Redis、Azurite、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay 与 Athena Ingestion Worker。默认本地端口如下：
 
-| 组件 | 默认 loopback 端口 | 职责 |
-| --- | --- | --- |
-| MySQL 8.4 LTS | `23306` | 文档/revision/job/manifest、query hash/所选 revision/citation 核验快照与 Outbox；不保存回答正文/history |
-| Redis 7.4 | `26379` | 可重建命令分发与任务唤醒 |
-| Azurite Blob | `21000` | 原文件、normalized/chunk/embedding artifact |
-| LiteLLM Proxy | `24000` | 固定 Chat/Embedding alias 路由 |
-| Milvus | `39530` / `29091` | 本地 `doc` 可重建检索投影与健康端口 |
-| FastAPI / Vite | `8000` / `5173` | Knowledge HTTP API 与 Athena Web |
+| 组件           | 默认 loopback 端口 | 职责                                                                                                    |
+| -------------- | ------------------ | ------------------------------------------------------------------------------------------------------- |
+| MySQL 8.4 LTS  | `23306`            | 文档/revision/job/manifest、query hash/所选 revision/citation 核验快照与 Outbox；不保存回答正文/history |
+| Redis 7.4      | `26379`            | 可重建命令分发与任务唤醒                                                                                |
+| Azurite Blob   | `21000`            | 原文件、normalized/chunk/embedding artifact                                                             |
+| LiteLLM Proxy  | `24000`            | 固定 Chat/Embedding alias 路由                                                                          |
+| Milvus         | `39530` / `29091`  | 本地 `doc` 可重建检索投影与健康端口                                                                     |
+| FastAPI / Vite | `8000` / `5173`    | Knowledge HTTP API 与 Athena Web                                                                        |
 
 模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露。默认及已验收的完整回答选择块为：
 
@@ -158,12 +212,12 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-athena-demo \
 
 `make demo-check` 独立检查五个组件，只输出组件、结果和安全修复码：
 
-| 组件 / 修复码 | 处理方式 |
-| --- | --- |
-| MySQL / `start-mysql` | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。 |
-| Redis / `start-redis` | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:26379/0`。 |
-| Blob / `start-blob` | 运行 `make demo-up`；确认 `AZURE_STORAGE_CONNECTION_STRING` 指向 loopback Azurite，两个容器保持 private。 |
-| Milvus / `start-milvus` | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。 |
+| 组件 / 修复码               | 处理方式                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MySQL / `start-mysql`       | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。                                                                                                                                                                                                                                                                                                                                             |
+| Redis / `start-redis`       | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:26379/0`。                                                                                                                                                                                                                                                                                                                                                     |
+| Blob / `start-blob`         | 运行 `make demo-up`；确认 `AZURE_STORAGE_CONNECTION_STRING` 指向 loopback Azurite，两个容器保持 private。                                                                                                                                                                                                                                                                                                                        |
+| Milvus / `start-milvus`     | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。                                                                                                                                                                                                                                                                                                                              |
 | Models / `configure-models` | 两种模式都要在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、`dashscope/text-embedding-v4` 与完整 Workspace `/compatible-mode/v1` 地址，重启 `make demo-up` 和本地角色，并确认 `athena-embedding`；LiteLLM 回答模式还要同步 `dashscope/qwen-plus` 并确认 `athena-chat`，Codex 回答模式则检查精确原生 `0.149.0`、ChatGPT 登录与 tool-free catalog/feature 契约。Codex 失败不会回退 LiteLLM，用户只收到 `answer-unavailable` 安全文案。 |
 
 ### 确定性 E2E 与真实模型 smoke

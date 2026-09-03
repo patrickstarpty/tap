@@ -1,0 +1,132 @@
+{
+  "regions": [
+    {
+      "id": "paper-ground",
+      "kind": "texture",
+      "grid": "A8:B8",
+      "note": "warm archival paper grain without interface ink"
+    },
+    {
+      "id": "global-masthead",
+      "kind": "chrome",
+      "grid": "A0:J0",
+      "note": "dark product masthead and utility controls"
+    },
+    {
+      "id": "product-mark",
+      "kind": "text",
+      "grid": "A0:B0",
+      "note": "Athena product mark"
+    },
+    {
+      "id": "workspace-title",
+      "kind": "text",
+      "grid": "A0:C0",
+      "note": "Evidence Desk verification lab page title"
+    },
+    {
+      "id": "prototype-status",
+      "kind": "control",
+      "grid": "D0:F0",
+      "note": "target-state synthetic-example status stamp"
+    },
+    {
+      "id": "source-drawer",
+      "kind": "chrome",
+      "grid": "A1:C9",
+      "note": "source and requirement specimen rail",
+      "container": true
+    },
+    {
+      "id": "source-heading",
+      "kind": "text",
+      "grid": "A1:B1",
+      "note": "source rail section heading"
+    },
+    {
+      "id": "source-search",
+      "kind": "control",
+      "grid": "A1:C1",
+      "note": "source search and add controls"
+    },
+    {
+      "id": "source-records",
+      "kind": "text",
+      "grid": "A2:C7",
+      "note": "three evidence record summaries"
+    },
+    {
+      "id": "workflow-tabs",
+      "kind": "control",
+      "grid": "C1:H1",
+      "note": "requirement to RCA workflow tabs"
+    },
+    {
+      "id": "requirement-summary",
+      "kind": "text",
+      "grid": "C2:H3",
+      "note": "selected requirement title and narrative"
+    },
+    {
+      "id": "case-matrix",
+      "kind": "text",
+      "grid": "C3:H4",
+      "note": "test-case matrix headings and rows"
+    },
+    {
+      "id": "script-editor",
+      "kind": "text",
+      "grid": "C5:G6",
+      "note": "Playwright script editor content"
+    },
+    {
+      "id": "verification-gates",
+      "kind": "text",
+      "grid": "G5:H6",
+      "note": "deterministic verification gate statuses"
+    },
+    {
+      "id": "review-record",
+      "kind": "text",
+      "grid": "C7:E8",
+      "note": "review record and reviewer identities"
+    },
+    {
+      "id": "execution-summary",
+      "kind": "text",
+      "grid": "E7:H8",
+      "note": "run summary and outcome metrics"
+    },
+    {
+      "id": "knowledge-chat",
+      "kind": "text",
+      "grid": "C8:H9",
+      "note": "contextual knowledge chat answer and citations"
+    },
+    {
+      "id": "custody-chain",
+      "kind": "chrome",
+      "grid": "H1:J9",
+      "note": "evidence custody timeline panel",
+      "container": true
+    },
+    {
+      "id": "custody-heading",
+      "kind": "text",
+      "grid": "H1:J1",
+      "note": "evidence custody chain heading"
+    },
+    {
+      "id": "custody-records",
+      "kind": "text",
+      "grid": "I2:J8",
+      "note": "numbered evidence chain records and statuses"
+    },
+    {
+      "id": "custody-legend",
+      "kind": "control",
+      "grid": "I9:J9",
+      "note": "evidence state legend"
+    }
+  ]
+}
