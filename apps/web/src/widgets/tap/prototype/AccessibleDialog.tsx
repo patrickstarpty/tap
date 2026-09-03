@@ -19,6 +19,7 @@ interface AccessibleDialogProps {
   ariaLabel: string;
   children: ReactNode;
   className: string;
+  initialFocusSelector?: string;
   onClose: () => void;
   opener: HTMLElement | null;
 }
@@ -27,6 +28,7 @@ export function AccessibleDialog({
   ariaLabel,
   children,
   className,
+  initialFocusSelector,
   onClose,
   opener,
 }: AccessibleDialogProps) {
@@ -46,7 +48,9 @@ export function AccessibleDialog({
       productShell?.getAttribute("aria-hidden") ?? null;
     const previouslyInert = productShell?.hasAttribute("inert") ?? false;
 
-    dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
+    dialogRef.current
+      ?.querySelector<HTMLElement>(initialFocusSelector ?? FOCUSABLE_SELECTOR)
+      ?.focus();
     productShell?.setAttribute("inert", "");
     productShell?.setAttribute("aria-hidden", "true");
 
@@ -59,7 +63,7 @@ export function AccessibleDialog({
       if (!previouslyInert) productShell?.removeAttribute("inert");
       openerRef.current?.focus();
     };
-  }, []);
+  }, [initialFocusSelector]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {

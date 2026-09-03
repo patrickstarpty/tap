@@ -72,7 +72,8 @@ function KnowledgeGraph({
   sources: readonly LibrarySource[];
 }) {
   const graphRef = useRef<HTMLElement>(null);
-  const documentNodes = sources.slice(0, 4);
+  const documentNodes = sources;
+  const graphHeight = Math.max(520, 142 + documentNodes.length * 112);
   const concepts = [
     copy.library.application,
     copy.library.underwriting,
@@ -115,7 +116,8 @@ function KnowledgeGraph({
         role="img"
         aria-label={copy.library.knowledgeGraphImage}
         aria-describedby="tap-library-graph-caption tap-library-graph-summary"
-        viewBox="0 0 920 520"
+        viewBox={`0 0 920 ${graphHeight}`}
+        height={graphHeight}
         preserveAspectRatio="xMidYMid meet"
       >
         <title>{copy.library.knowledgeGraphImage}</title>

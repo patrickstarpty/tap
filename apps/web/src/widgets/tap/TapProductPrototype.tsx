@@ -29,6 +29,7 @@ import {
   createConversation,
   detectIntent,
   type AssistantTurn,
+  type AutomationStepSnapshot,
   type CatalogItem,
   type Conversation,
   type LibrarySource,
@@ -45,13 +46,6 @@ interface TestPlan {
   title: string;
   scenarios: number;
   source: "Manual" | "Athena";
-}
-
-interface AutomationStep {
-  action: "Navigate" | "Click" | "Fill" | "Assert" | "Wait";
-  id: string;
-  target: string;
-  value: string;
 }
 
 const INITIAL_PLANS: readonly TestPlan[] = [
@@ -76,7 +70,7 @@ const GENERATED_PLAN: TestPlan = {
   source: "Athena",
 };
 
-const INITIAL_AUTOMATION_STEPS: readonly AutomationStep[] = [
+const GENERATED_AUTOMATION_STEPS: readonly AutomationStepSnapshot[] = [
   {
     id: "step-1",
     action: "Navigate",
@@ -147,6 +141,39 @@ function BddPreview({ copy }: { copy: PrototypeCopy }) {
   );
 }
 
+function TurnContext({
+  copy,
+  turn,
+}: {
+  copy: PrototypeCopy;
+  turn: AssistantTurn;
+}) {
+  if (turn.sourceReferences.length === 0) {
+    return <p className="tap-context-notice">{copy.chat.noContextNotice}</p>;
+  }
+
+  return (
+    <div className="tap-turn-context">
+      <p className="tap-context-notice">{copy.chat.selectedContextNotice}</p>
+      <ol className="tap-citation-list" aria-label={copy.chat.selectedContext}>
+        {turn.sourceReferences.map((source, index) => (
+          <li key={source.id}>
+            <span className="tap-citation-reference">[{index + 1}]</span>
+            <span>
+              <strong>{source.name}</strong>
+              <small>
+                {source.origin === "knowledge-base"
+                  ? copy.sources.knowledgeBaseDocument
+                  : copy.sources.pageLocalSource}
+              </small>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function AssistantResponse({
   actionCopy,
   contentCopy,
@@ -161,34 +188,10 @@ function AssistantResponse({
   onOpenAutomation: () => void;
 }) {
   if (turn.intent === "answer") {
-    const hasSources = turn.sourceReferences.length > 0;
     return (
       <div className="tap-answer-copy">
-        <p>
-          {hasSources
-            ? contentCopy.chat.answer
-            : contentCopy.chat.ungroundedAnswer}
-        </p>
-        {hasSources ? (
-          <ol
-            className="tap-citation-list"
-            aria-label={contentCopy.chat.sourcesUsed}
-          >
-            {turn.sourceReferences.map((source, index) => (
-              <li key={source.id}>
-                <span className="tap-citation-reference">[{index + 1}]</span>
-                <span>
-                  <strong>{source.name}</strong>
-                  <small>
-                    {source.origin === "knowledge-base"
-                      ? contentCopy.sources.knowledgeBaseDocument
-                      : contentCopy.sources.pageLocalSource}
-                  </small>
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : null}
+        <p>{contentCopy.chat.answer}</p>
+        <TurnContext copy={contentCopy} turn={turn} />
       </div>
     );
   }
@@ -209,6 +212,7 @@ function AssistantResponse({
           </div>
         </div>
         <BddPreview copy={contentCopy} />
+        <TurnContext copy={contentCopy} turn={turn} />
         <div className="tap-artifact-actions">
           <Button type="primary" onClick={onImportPlan}>
             {actionCopy.testManagement.importToTestPlan}
@@ -239,6 +243,7 @@ function AssistantResponse({
         <span>{contentCopy.lowCode.fill}</span>
         <span>{contentCopy.lowCode.assert}</span>
       </div>
+      <TurnContext copy={contentCopy} turn={turn} />
       <div className="tap-artifact-actions">
         <Button onClick={onImportPlan}>
           {actionCopy.testManagement.importBddAsTestPlan}
@@ -399,7 +404,7 @@ function TestManagement({
   );
 }
 
-function scriptForStep(step: AutomationStep): string {
+function scriptForStep(step: AutomationStepSnapshot): string {
   const target = JSON.stringify(step.target);
   const value = JSON.stringify(step.value);
   if (step.action === "Navigate") return `await page.goto(${target});`;
@@ -416,33 +421,38 @@ function LowCodeAutomation({
   copy,
   steps,
   onStepsChange,
+  onStartInAthena,
 }: {
   copy: PrototypeCopy;
-  steps: readonly AutomationStep[];
-  onStepsChange: (steps: readonly AutomationStep[]) => void;
+  steps: readonly AutomationStepSnapshot[] | null;
+  onStepsChange: (steps: readonly AutomationStepSnapshot[]) => void;
+  onStartInAthena: () => void;
 }) {
   const [saved, setSaved] = useState(false);
+  const editableSteps = steps ?? [];
   const code = useMemo(
-    () => steps.map((step) => `  ${scriptForStep(step)}`).join("\n"),
-    [steps],
+    () => editableSteps.map((step) => `  ${scriptForStep(step)}`).join("\n"),
+    [editableSteps],
   );
 
-  const updateStep = (id: string, patch: Partial<AutomationStep>) => {
+  const updateStep = (id: string, patch: Partial<AutomationStepSnapshot>) => {
     setSaved(false);
     onStepsChange(
-      steps.map((step) => (step.id === id ? { ...step, ...patch } : step)),
+      editableSteps.map((step) =>
+        step.id === id ? { ...step, ...patch } : step,
+      ),
     );
   };
 
   const addStep = () => {
     const number =
-      steps.reduce((maximum, step) => {
+      editableSteps.reduce((maximum, step) => {
         const match = /^step-(\d+)$/.exec(step.id);
         return match === null ? maximum : Math.max(maximum, Number(match[1]));
       }, 0) + 1;
     setSaved(false);
     onStepsChange([
-      ...steps,
+      ...editableSteps,
       {
         id: `step-${number}`,
         action: "Click",
@@ -454,7 +464,7 @@ function LowCodeAutomation({
 
   const deleteStep = (id: string) => {
     setSaved(false);
-    onStepsChange(steps.filter((step) => step.id !== id));
+    onStepsChange(editableSteps.filter((step) => step.id !== id));
   };
 
   return (
@@ -467,118 +477,131 @@ function LowCodeAutomation({
           <h1 id="low-code-heading">{copy.lowCode.heading}</h1>
           <p>{copy.lowCode.description}</p>
         </div>
-        <div className="tap-heading-actions">
-          {saved ? (
-            <span className="tap-saved-state">{copy.lowCode.saved}</span>
-          ) : null}
-          <Button type="primary" onClick={() => setSaved(true)}>
-            {copy.lowCode.saveDraft}
-          </Button>
-        </div>
-      </header>
-
-      <div className="tap-low-code-layout">
-        <section
-          className="tap-step-editor"
-          aria-labelledby="automation-steps-heading"
-        >
-          <div className="tap-step-editor-heading">
-            <div>
-              <h2 id="automation-steps-heading">
-                {copy.lowCode.automationSteps}
-              </h2>
-              <span>
-                {steps.length} {copy.lowCode.steps}
-              </span>
-            </div>
-            <Button
-              aria-label={copy.lowCode.addStep}
-              icon={<PlusOutlined aria-hidden="true" />}
-              onClick={addStep}
-            >
-              {copy.lowCode.addStep}
+        {steps === null ? null : (
+          <div className="tap-heading-actions">
+            {saved ? (
+              <span className="tap-saved-state">{copy.lowCode.saved}</span>
+            ) : null}
+            <Button type="primary" onClick={() => setSaved(true)}>
+              {copy.lowCode.saveDraft}
             </Button>
           </div>
-          <ol className="tap-step-list">
-            {steps.map((step, index) => (
-              <li
-                key={step.id}
-                aria-label={`${copy.lowCode.automationStep} ${index + 1}`}
-              >
-                <span className="tap-step-number">{index + 1}</span>
-                <div className="tap-step-fields">
-                  <label>
-                    <span>{copy.lowCode.action}</span>
-                    <Select
-                      aria-label={`${copy.lowCode.actionForStep} ${index + 1}`}
-                      value={step.action}
-                      options={[
-                        { value: "Navigate", label: copy.lowCode.navigate },
-                        { value: "Click", label: copy.lowCode.click },
-                        { value: "Fill", label: copy.lowCode.fill },
-                        { value: "Assert", label: copy.lowCode.assert },
-                        { value: "Wait", label: copy.lowCode.wait },
-                      ]}
-                      onChange={(action: AutomationStep["action"]) =>
-                        updateStep(step.id, { action })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{copy.lowCode.elementOrUrl}</span>
-                    <Input
-                      aria-label={`${copy.lowCode.elementForStep} ${index + 1}`}
-                      value={step.target}
-                      placeholder={copy.lowCode.elementPlaceholder}
-                      onChange={(event) =>
-                        updateStep(step.id, { target: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{copy.lowCode.value}</span>
-                    <Input
-                      aria-label={`${copy.lowCode.valueForStep} ${index + 1}`}
-                      value={step.value}
-                      placeholder={copy.lowCode.optional}
-                      onChange={(event) =>
-                        updateStep(step.id, { value: event.target.value })
-                      }
-                    />
-                  </label>
-                </div>
-                <Button
-                  type="text"
-                  danger
-                  aria-label={`${copy.lowCode.deleteStep} ${index + 1}`}
-                  icon={<DeleteOutlined aria-hidden="true" />}
-                  onClick={() => deleteStep(step.id)}
-                />
-              </li>
-            ))}
-          </ol>
-        </section>
+        )}
+      </header>
 
-        <aside
-          className="tap-code-preview"
-          aria-labelledby="script-preview-heading"
-        >
-          <header>
-            <div>
-              <h2 id="script-preview-heading">
-                {copy.lowCode.generatedScript}
-              </h2>
-              <span>{copy.lowCode.updatesWithEveryStep}</span>
+      {steps === null ? (
+        <div className="tap-low-code-empty">
+          <CodeOutlined aria-hidden="true" />
+          <h2>{copy.lowCode.emptyTitle}</h2>
+          <p>{copy.lowCode.emptyDescription}</p>
+          <Button type="primary" onClick={onStartInAthena}>
+            {copy.lowCode.startInAthena}
+          </Button>
+        </div>
+      ) : (
+        <div className="tap-low-code-layout">
+          <section
+            className="tap-step-editor"
+            aria-labelledby="automation-steps-heading"
+          >
+            <div className="tap-step-editor-heading">
+              <div>
+                <h2 id="automation-steps-heading">
+                  {copy.lowCode.automationSteps}
+                </h2>
+                <span>
+                  {editableSteps.length} {copy.lowCode.steps}
+                </span>
+              </div>
+              <Button
+                aria-label={copy.lowCode.addStep}
+                icon={<PlusOutlined aria-hidden="true" />}
+                onClick={addStep}
+              >
+                {copy.lowCode.addStep}
+              </Button>
             </div>
-            <span className="tap-file-name">
-              life-policy-application.spec.ts
-            </span>
-          </header>
-          <pre>
-            <code>{`test("applicant submits a life insurance application", async ({ page }) => {\n${code}\n});`}</code>
-          </pre>
-        </aside>
-      </div>
+            <ol className="tap-step-list">
+              {editableSteps.map((step, index) => (
+                <li
+                  key={step.id}
+                  aria-label={`${copy.lowCode.automationStep} ${index + 1}`}
+                >
+                  <span className="tap-step-number">{index + 1}</span>
+                  <div className="tap-step-fields">
+                    <label>
+                      <span>{copy.lowCode.action}</span>
+                      <Select
+                        aria-label={`${copy.lowCode.actionForStep} ${index + 1}`}
+                        value={step.action}
+                        options={[
+                          { value: "Navigate", label: copy.lowCode.navigate },
+                          { value: "Click", label: copy.lowCode.click },
+                          { value: "Fill", label: copy.lowCode.fill },
+                          { value: "Assert", label: copy.lowCode.assert },
+                          { value: "Wait", label: copy.lowCode.wait },
+                        ]}
+                        onChange={(action: AutomationStepSnapshot["action"]) =>
+                          updateStep(step.id, { action })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>{copy.lowCode.elementOrUrl}</span>
+                      <Input
+                        aria-label={`${copy.lowCode.elementForStep} ${index + 1}`}
+                        value={step.target}
+                        placeholder={copy.lowCode.elementPlaceholder}
+                        onChange={(event) =>
+                          updateStep(step.id, { target: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>{copy.lowCode.value}</span>
+                      <Input
+                        aria-label={`${copy.lowCode.valueForStep} ${index + 1}`}
+                        value={step.value}
+                        placeholder={copy.lowCode.optional}
+                        onChange={(event) =>
+                          updateStep(step.id, { value: event.target.value })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <Button
+                    type="text"
+                    danger
+                    aria-label={`${copy.lowCode.deleteStep} ${index + 1}`}
+                    icon={<DeleteOutlined aria-hidden="true" />}
+                    onClick={() => deleteStep(step.id)}
+                  />
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          <aside
+            className="tap-code-preview"
+            aria-labelledby="script-preview-heading"
+          >
+            <header>
+              <div>
+                <h2 id="script-preview-heading">
+                  {copy.lowCode.generatedScript}
+                </h2>
+                <span>{copy.lowCode.updatesWithEveryStep}</span>
+              </div>
+              <span className="tap-file-name">
+                life-policy-application.spec.ts
+              </span>
+            </header>
+            <pre>
+              <code>{`test("applicant submits a life insurance application", async ({ page }) => {\n${code}\n});`}</code>
+            </pre>
+          </aside>
+        </div>
+      )}
     </section>
   );
 }
@@ -653,8 +676,8 @@ export function TapProductPrototype() {
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
   >([]);
   const [automationSteps, setAutomationSteps] = useState<
-    readonly AutomationStep[]
-  >(INITIAL_AUTOMATION_STEPS);
+    readonly AutomationStepSnapshot[] | null
+  >(null);
   const nextConversationId = useRef(2);
   const nextTurnId = useRef(1);
   const nextCatalogId = useRef(1);
@@ -772,6 +795,7 @@ export function TapProductPrototype() {
   };
 
   const sendMessage = (prompt: string) => {
+    const intent = detectIntent(prompt);
     const sourceReferences = sources
       .filter((source) =>
         activeConversation.selectedSourceIds.includes(source.id),
@@ -780,12 +804,22 @@ export function TapProductPrototype() {
     updateActiveConversation((conversation) =>
       appendTurn(conversation, {
         id: `turn-${nextTurnId.current++}`,
-        intent: detectIntent(prompt),
+        intent,
         locale,
         prompt,
         sourceReferences,
+        automationSteps:
+          intent === "automation"
+            ? GENERATED_AUTOMATION_STEPS.map((step) => ({ ...step }))
+            : undefined,
       }),
     );
+  };
+
+  const openAutomation = (turn: AssistantTurn) => {
+    if (turn.automationSteps === undefined) return;
+    setAutomationSteps(turn.automationSteps.map((step) => ({ ...step })));
+    setActiveModule("low-code");
   };
 
   const importPlan = () => {
@@ -912,7 +946,7 @@ export function TapProductPrototype() {
                   contentCopy={PROTOTYPE_COPY[turn.locale]}
                   turn={turn}
                   onImportPlan={importPlan}
-                  onOpenAutomation={() => setActiveModule("low-code")}
+                  onOpenAutomation={() => openAutomation(turn)}
                 />
               )}
               skills={skills}
@@ -974,6 +1008,7 @@ export function TapProductPrototype() {
             copy={copy}
             steps={automationSteps}
             onStepsChange={setAutomationSteps}
+            onStartInAthena={() => setActiveModule("athena")}
           />
         ) : null}
       </main>

@@ -38,7 +38,7 @@ export function PrototypeSidebar({
   onSelectConversation,
   onToggleCollapsed,
 }: PrototypeSidebarProps) {
-  const modules: readonly {
+  const productModules: readonly {
     icon: React.ReactNode;
     key: ProductModule;
     label: string;
@@ -48,6 +48,18 @@ export function PrototypeSidebar({
       label: copy.navigation.athena,
       icon: <MessageOutlined aria-hidden="true" />,
     },
+    {
+      key: "test-management",
+      label: copy.navigation["test-management"],
+      icon: <FileTextOutlined aria-hidden="true" />,
+    },
+    {
+      key: "low-code",
+      label: copy.navigation["low-code"],
+      icon: <CodeOutlined aria-hidden="true" />,
+    },
+  ];
+  const athenaModules: typeof productModules = [
     {
       key: "agents",
       label: copy.navigation.agents,
@@ -62,16 +74,6 @@ export function PrototypeSidebar({
       key: "library",
       label: copy.navigation.library,
       icon: <BookOutlined aria-hidden="true" />,
-    },
-    {
-      key: "test-management",
-      label: copy.navigation["test-management"],
-      icon: <FileTextOutlined aria-hidden="true" />,
-    },
-    {
-      key: "low-code",
-      label: copy.navigation["low-code"],
-      icon: <CodeOutlined aria-hidden="true" />,
     },
   ];
 
@@ -104,20 +106,27 @@ export function PrototypeSidebar({
     return `${title} · ${copy.chat.conversation} ${index + 1}${contextLabel}`;
   };
 
-  const moduleButton = (module: (typeof modules)[number]) => (
-    <button
-      key={module.key}
-      type="button"
-      className="tap-navigation-item"
-      aria-label={module.label}
-      aria-current={activeModule === module.key ? "page" : undefined}
-      title={collapsed ? module.label : undefined}
-      onClick={() => onModuleChange(module.key)}
-    >
-      {module.icon}
-      <span className="tap-sidebar-label">{module.label}</span>
-    </button>
-  );
+  const moduleButton = (module: (typeof productModules)[number]) => {
+    const isActive =
+      module.key === "athena"
+        ? ["athena", "agents", "skills", "library"].includes(activeModule)
+        : activeModule === module.key;
+
+    return (
+      <button
+        key={module.key}
+        type="button"
+        className="tap-navigation-item"
+        aria-label={module.label}
+        aria-current={isActive ? "page" : undefined}
+        title={collapsed ? module.label : undefined}
+        onClick={() => onModuleChange(module.key)}
+      >
+        {module.icon}
+        <span className="tap-sidebar-label">{module.label}</span>
+      </button>
+    );
+  };
 
   return (
     <aside
@@ -151,7 +160,17 @@ export function PrototypeSidebar({
         className="tap-primary-navigation"
         data-collapsed={String(collapsed)}
       >
-        {moduleButton(modules[0])}
+        {productModules.map(moduleButton)}
+      </nav>
+
+      <nav
+        aria-label={copy.navigation.athenaTools}
+        className="tap-athena-navigation"
+        data-collapsed={String(collapsed)}
+      >
+        <span className="tap-sidebar-section-title">
+          {copy.navigation.athena}
+        </span>
         <button
           type="button"
           className="tap-navigation-item tap-navigation-item--new"
@@ -162,7 +181,7 @@ export function PrototypeSidebar({
           <PlusOutlined aria-hidden="true" />
           <span className="tap-sidebar-label">{copy.navigation.newChat}</span>
         </button>
-        {modules.slice(1).map(moduleButton)}
+        {athenaModules.map(moduleButton)}
       </nav>
 
       {conversationHistory.length > 0 ? (

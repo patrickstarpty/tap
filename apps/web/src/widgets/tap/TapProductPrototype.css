@@ -91,9 +91,16 @@
   place-items: center;
 }
 
-.tap-primary-navigation {
+.tap-primary-navigation,
+.tap-athena-navigation {
   display: grid;
   gap: 5px;
+}
+
+.tap-athena-navigation {
+  margin-top: 18px;
+  border-top: 1px solid #d9d9d5;
+  padding-top: 14px;
 }
 
 .tap-navigation-item--new {
@@ -157,6 +164,7 @@
 
 .tap-sidebar[data-collapsed="true"] .tap-brand strong,
 .tap-sidebar[data-collapsed="true"] .tap-sidebar-label,
+.tap-sidebar[data-collapsed="true"] .tap-sidebar-section-title,
 .tap-sidebar[data-collapsed="true"] .tap-chat-history,
 .tap-sidebar[data-collapsed="true"] .tap-sidebar-copy,
 .tap-sidebar[data-collapsed="true"] .tap-language-switcher {
@@ -765,6 +773,16 @@
   margin: 4px 0 8px;
 }
 
+.tap-context-notice {
+  color: #5f6a7b;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.tap-turn-context {
+  min-width: 0;
+}
+
 .tap-citation-reference {
   color: var(--tap-accent);
   font-size: 12px;
@@ -878,6 +896,21 @@
   color: #596375;
   font-size: 10px;
   font-weight: 700;
+}
+
+.tap-generated-artifact > .tap-context-notice,
+.tap-generated-artifact > .tap-turn-context {
+  margin: 0;
+  border-block-start: 1px solid var(--tap-line);
+  padding: 12px 18px;
+}
+
+.tap-generated-artifact > .tap-turn-context .tap-context-notice {
+  margin: 0;
+}
+
+.tap-generated-artifact > .tap-turn-context .tap-citation-list {
+  margin-block-start: 8px;
 }
 
 .tap-artifact-actions {
@@ -1153,7 +1186,7 @@
   border-radius: 14px;
   background: #171d2a;
   box-shadow: 0 14px 34px 4px rgb(29 38 56 / 14%);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .tap-knowledge-graph svg {
@@ -1396,6 +1429,33 @@
 
 .tap-data-workspace .ant-btn {
   justify-self: center;
+}
+
+.tap-low-code-empty {
+  display: grid;
+  min-height: 420px;
+  place-content: center;
+  justify-items: center;
+  color: var(--tap-muted);
+  text-align: center;
+}
+
+.tap-low-code-empty > .anticon {
+  margin-bottom: 18px;
+  color: #8077d9;
+  font-size: 32px;
+}
+
+.tap-low-code-empty h2 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 18px;
+}
+
+.tap-low-code-empty p {
+  max-width: 48ch;
+  margin: 7px 0 18px;
+  line-height: 1.6;
 }
 
 .tap-low-code-layout {

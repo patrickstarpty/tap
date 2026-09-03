@@ -46,15 +46,12 @@ describe("Athena product prototype", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual([
-      "Athena",
-      "New Chat",
-      "Agent",
-      "Skills",
-      "Library",
-      "Test Management",
-      "Low Code Automation",
-    ]);
+    ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
+    expect(
+      within(screen.getByRole("navigation", { name: "Athena tools" }))
+        .getAllByRole("button")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual(["New Chat", "Agent", "Skills", "Library"]);
     expect(
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
@@ -162,6 +159,62 @@ describe("Athena product prototype", () => {
     ).toHaveLength(stepCount);
   });
 
+  it("keeps Low Code Automation empty until a generated draft is opened", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(
+      screen.getByRole("button", { name: "Low Code Automation" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "No automation draft yet" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("listitem", { name: /Automation step/ }),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Start in Athena" }));
+    expect(
+      screen.getByRole("heading", { name: "What can I do for you?" }),
+    ).toBeVisible();
+  });
+
+  it("opens a fresh step snapshot from the selected automation turn", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await sendMessage(
+      user,
+      "Generate an automation script for policy submission",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Open in Low Code Automation" }),
+    );
+    const target = screen.getByRole("textbox", { name: "Element for step 2" });
+    fireEvent.change(target, {
+      target: { value: "button[data-testid='edited-draft']" },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await sendMessage(
+      user,
+      "Create another automation script for a life policy",
+    );
+    const artifacts = screen.getAllByRole("article", {
+      name: "Generated automation",
+    });
+    await user.click(
+      within(artifacts.at(-1)!).getByRole("button", {
+        name: "Open in Low Code Automation",
+      }),
+    );
+
+    expect(
+      screen.getByRole("textbox", { name: "Element for step 2" }),
+    ).toHaveValue("button[data-testid='start-application']");
+  });
+
   it("keeps the generated automation available for both destination handoffs", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -191,8 +244,12 @@ describe("Athena product prototype", () => {
     const user = userEvent.setup();
     renderPrototype();
 
+    await sendMessage(
+      user,
+      "Generate an automation script for policy submission",
+    );
     await user.click(
-      screen.getByRole("button", { name: "Low Code Automation" }),
+      screen.getByRole("button", { name: "Open in Low Code Automation" }),
     );
     await user.click(screen.getByRole("button", { name: "Delete step 2" }));
     await user.click(screen.getByRole("button", { name: "Athena" }));
@@ -294,7 +351,7 @@ describe("Athena product prototype", () => {
 
     expect(screen.getByText("寿险投保需要什么资料？")).toBeVisible();
     expect(
-      screen.getByText(/此轮对话未选择知识来源。以下内容来自通用知识/),
+      screen.getByText(/此轮对话未选择知识上下文。此原型输出使用内置演示内容/),
     ).toBeVisible();
     expect(screen.getByRole("region", { name: "Athena 助手" })).toBeVisible();
     expect(
@@ -334,10 +391,10 @@ describe("Athena product prototype", () => {
 
     expect(
       screen.getByText(
-        /No knowledge source was selected for this turn. This response uses general knowledge/,
+        /No knowledge context was selected for this turn. This prototype output uses built-in demo content/,
       ),
     ).toBeVisible();
-    expect(screen.queryByText(/此轮对话未选择知识来源/)).toBeNull();
+    expect(screen.queryByText(/此轮对话未选择知识上下文/)).toBeNull();
   });
 
   it("localizes product workspaces without losing saved conversation data", async () => {
@@ -366,10 +423,10 @@ describe("Athena product prototype", () => {
     expect(
       screen.getByRole("heading", { name: "寿险投保申请自动化" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "添加步骤" })).toBeVisible();
-    await user.click(screen.getByRole("combobox", { name: "步骤操作 1" }));
-    expect(screen.getByRole("option", { name: "导航" })).toBeInTheDocument();
-    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("heading", { name: "还没有自动化草稿" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "前往 Athena" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Athena" }));
     expect(screen.getByText(prompt)).toBeVisible();

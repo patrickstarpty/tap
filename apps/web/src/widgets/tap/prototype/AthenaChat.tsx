@@ -25,6 +25,7 @@ import type {
   Conversation,
   LibrarySource,
 } from "./model";
+import { AccessibleDialog } from "./AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
 
@@ -60,9 +61,7 @@ export function AthenaChat({
   const composerRef = useRef<TextAreaRef>(null);
   const addTriggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
   const wasMenuOpenRef = useRef(false);
-  const previousPickerRef = useRef<PickerKind | null>(null);
 
   useEffect(() => {
     setMessage("");
@@ -81,13 +80,6 @@ export function AthenaChat({
     }
     wasMenuOpenRef.current = menuOpen;
   }, [menuOpen, picker]);
-
-  useEffect(() => {
-    if (picker === null && previousPickerRef.current !== null) {
-      addTriggerRef.current?.focus();
-    }
-    previousPickerRef.current = picker;
-  }, [picker]);
 
   const selectedSources = sources.filter((source) =>
     conversation.selectedSourceIds.includes(source.id),
@@ -217,32 +209,6 @@ export function AthenaChat({
     if (nextIndex !== null && items.length > 0) {
       event.preventDefault();
       items[nextIndex]?.focus();
-    }
-  };
-
-  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setPicker(null);
-      return;
-    }
-    if (event.key !== "Tab") return;
-
-    const focusableElements = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ) ?? [],
-    );
-    const firstElement = focusableElements[0];
-    const lastElement = focusableElements.at(-1);
-
-    if (event.shiftKey && document.activeElement === firstElement) {
-      event.preventDefault();
-      lastElement?.focus();
-    } else if (!event.shiftKey && document.activeElement === lastElement) {
-      event.preventDefault();
-      firstElement?.focus();
     }
   };
 
@@ -404,55 +370,55 @@ export function AthenaChat({
       ) : null}
 
       {pickerConfig === null ? null : (
-        <div className="tap-picker-backdrop">
-          <section
-            ref={dialogRef}
-            className="tap-context-picker"
-            role="dialog"
-            aria-modal="true"
-            aria-label={pickerConfig.title}
-            onKeyDown={handleDialogKeyDown}
-          >
-            <header>
-              <h2>{pickerConfig.title}</h2>
-              <Button
-                type="text"
-                shape="circle"
-                aria-label={`${copy.composer.close} ${pickerConfig.title}`}
-                icon={<CloseOutlined aria-hidden="true" />}
-                onClick={() => setPicker(null)}
-              />
-            </header>
-            <Input
-              autoFocus
-              aria-label={pickerConfig.search}
-              placeholder={pickerConfig.search}
-              value={pickerQuery}
-              onChange={(event) => setPickerQuery(event.target.value)}
+        <AccessibleDialog
+          ariaLabel={pickerConfig.title}
+          className="tap-context-picker"
+          initialFocusSelector="input"
+          onClose={() => setPicker(null)}
+          opener={addTriggerRef.current}
+        >
+          <header>
+            <h2>{pickerConfig.title}</h2>
+            <Button
+              type="text"
+              shape="circle"
+              aria-label={`${copy.composer.close} ${pickerConfig.title}`}
+              icon={<CloseOutlined aria-hidden="true" />}
+              onClick={() => setPicker(null)}
             />
-            <div className="tap-picker-options" role="listbox">
-              {visiblePickerItems.length > 0 ? (
-                visiblePickerItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="option"
-                    aria-label={item.name}
-                    aria-selected={pickerConfig.selectedIds.includes(item.id)}
-                    onClick={() => {
-                      pickerConfig.onSelect(item.id);
-                      setPicker(null);
-                    }}
-                  >
-                    {item.name}
-                  </button>
-                ))
-              ) : (
-                <p>{copy.catalog.noResults}</p>
-              )}
-            </div>
-          </section>
-        </div>
+          </header>
+          <Input
+            aria-label={pickerConfig.search}
+            placeholder={pickerConfig.search}
+            value={pickerQuery}
+            onChange={(event) => setPickerQuery(event.target.value)}
+          />
+          <div
+            className="tap-picker-options"
+            role="listbox"
+            aria-multiselectable="true"
+          >
+            {visiblePickerItems.length > 0 ? (
+              visiblePickerItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="option"
+                  aria-label={item.name}
+                  aria-selected={pickerConfig.selectedIds.includes(item.id)}
+                  onClick={() => {
+                    pickerConfig.onSelect(item.id);
+                    setPicker(null);
+                  }}
+                >
+                  {item.name}
+                </button>
+              ))
+            ) : (
+              <p>{copy.catalog.noResults}</p>
+            )}
+          </div>
+        </AccessibleDialog>
       )}
     </section>
   );

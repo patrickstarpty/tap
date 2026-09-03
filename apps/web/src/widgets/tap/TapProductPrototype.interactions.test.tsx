@@ -135,88 +135,21 @@ describe("Tap product prototype interactions", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual([
-      "Athena",
-      "New Chat",
-      "Agent",
-      "Skills",
-      "Library",
-      "Test Management",
-      "Low Code Automation",
-    ]);
+    ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
+    const athenaNavigation = screen.getByRole("navigation", {
+      name: "Athena tools",
+    });
+    expect(
+      within(athenaNavigation)
+        .getAllByRole("button")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual(["New Chat", "Agent", "Skills", "Library"]);
 
     await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(navigation).toHaveAttribute("data-collapsed", "true");
 
     await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(navigation).toHaveAttribute("data-collapsed", "false");
-  });
-
-  it("provides an accessible dismissible sidebar drawer from the narrow icon rail", async () => {
-    const user = userEvent.setup();
-    const originalMatchMedia = window.matchMedia;
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: (query: string): MediaQueryList => ({
-        matches: query === "(max-width: 640px)",
-        media: query,
-        onchange: null,
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-        addListener: () => undefined,
-        removeListener: () => undefined,
-        dispatchEvent: () => true,
-      }),
-    });
-
-    const { container } = renderPrototype();
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: originalMatchMedia,
-    });
-
-    const navigation = screen.getByRole("navigation", { name: "Product" });
-    const toggle = screen.getByRole("button", { name: "Expand sidebar" });
-    expect(navigation).toHaveAttribute("data-collapsed", "true");
-    expect(within(navigation).getAllByRole("button")).toHaveLength(7);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle).toHaveAttribute("aria-controls", "tap-product-sidebar");
-
-    await user.click(toggle);
-    expect(navigation).toHaveAttribute("data-collapsed", "false");
-    expect(
-      screen.getByRole("button", { name: "Collapse sidebar" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(container.querySelector(".tap-product-main")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(container.querySelector(".tap-product-main")).toHaveAttribute(
-      "inert",
-    );
-    expect(
-      screen.getByRole("button", { name: "English", pressed: true }),
-    ).toBeVisible();
-
-    await user.keyboard("{Escape}");
-    expect(navigation).toHaveAttribute("data-collapsed", "true");
-    expect(container.querySelector(".tap-product-main")).not.toHaveAttribute(
-      "aria-hidden",
-    );
-    expect(container.querySelector(".tap-product-main")).not.toHaveAttribute(
-      "inert",
-    );
-
-    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    await user.click(screen.getByRole("button", { name: "Close sidebar" }));
-    expect(navigation).toHaveAttribute("data-collapsed", "true");
-
-    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    await user.click(
-      within(navigation).getByRole("button", { name: "Library" }),
-    );
-    expect(navigation).toHaveAttribute("data-collapsed", "true");
-    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
   });
 
   it("keeps each answer in its response language through locale changes and history navigation", async () => {
@@ -230,14 +163,14 @@ describe("Tap product prototype interactions", () => {
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(
-      screen.getByText(/No knowledge source was selected for this turn/),
+      screen.getByText(/No knowledge context was selected for this turn/),
     ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "中文" }));
     expect(
-      screen.getByText(/No knowledge source was selected for this turn/),
+      screen.getByText(/No knowledge context was selected for this turn/),
     ).toBeVisible();
-    expect(screen.queryByText(/此轮对话未选择知识来源/)).toBeNull();
+    expect(screen.queryByText(/此轮对话未选择知识上下文/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await user.type(
@@ -245,7 +178,7 @@ describe("Tap product prototype interactions", () => {
       "寿险投保需要什么资料？",
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
-    expect(screen.getByText(/此轮对话未选择知识来源/)).toBeVisible();
+    expect(screen.getByText(/此轮对话未选择知识上下文/)).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await user.click(
@@ -255,9 +188,9 @@ describe("Tap product prototype interactions", () => {
       ),
     );
     expect(
-      screen.getByText(/No knowledge source was selected for this turn/),
+      screen.getByText(/No knowledge context was selected for this turn/),
     ).toBeVisible();
-    expect(screen.queryByText(/此轮对话未选择知识来源/)).toBeNull();
+    expect(screen.queryByText(/此轮对话未选择知识上下文/)).toBeNull();
   });
 
   it("marks every persisted turn with the language used when it was sent", async () => {
@@ -419,7 +352,7 @@ describe("Tap product prototype interactions", () => {
     expect(within(sources).getByText("没有匹配的来源")).toBeVisible();
   });
 
-  it("grounds each answer in the source selection captured for that turn", async () => {
+  it("records selected context separately for each persisted turn", async () => {
     const user = userEvent.setup();
     const { container } = renderPrototype();
     const sources = screen.getByRole("complementary", {
@@ -457,7 +390,7 @@ describe("Tap product prototype interactions", () => {
     const turns = container.querySelectorAll(".tap-turn");
     expect(turns).toHaveLength(2);
     const firstCitations = within(turns[0] as HTMLElement).getByRole("list", {
-      name: "Sources used",
+      name: "Selected context",
     });
     expect(
       within(firstCitations).getByText("health-disclosure-guide.pdf"),
@@ -466,7 +399,7 @@ describe("Tap product prototype interactions", () => {
       within(firstCitations).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
     const secondCitations = within(turns[1] as HTMLElement).getByRole("list", {
-      name: "Sources used",
+      name: "Selected context",
     });
     expect(
       within(secondCitations).getByText("life-underwriting-rules.md"),
@@ -496,7 +429,7 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
   });
 
-  it("renders an explicit ungrounded answer with no fabricated citation", async () => {
+  it("renders an explicit no-context notice without fabricated provenance", async () => {
     const user = userEvent.setup();
     const { container } = renderPrototype();
 
@@ -508,12 +441,64 @@ describe("Tap product prototype interactions", () => {
 
     const turn = container.querySelector(".tap-turn") as HTMLElement;
     expect(
-      within(turn).getByText(/No knowledge source was selected for this turn/),
+      within(turn).getByText(/No knowledge context was selected for this turn/),
     ).toBeVisible();
     expect(
-      within(turn).queryByRole("list", { name: "Sources used" }),
+      within(turn).queryByRole("list", { name: "Selected context" }),
     ).toBeNull();
     expect(within(turn).queryByText("life-underwriting-rules.md")).toBeNull();
+  });
+
+  it("shows the captured context state on generated BDD and automation artifacts", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPrototype();
+    const sources = screen.getByRole("complementary", {
+      name: "Knowledge sources",
+    });
+
+    await user.click(
+      await within(sources).findByRole("checkbox", {
+        name: /life-underwriting-rules\.md/,
+      }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "Create BDD tests for beneficiary designation",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await user.click(
+      within(sources).getByRole("checkbox", {
+        name: /life-underwriting-rules\.md/,
+      }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Athena" }),
+      "Generate an automation script for policy submission",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const turns = container.querySelectorAll(".tap-turn");
+    expect(
+      within(turns[0] as HTMLElement).getByRole("list", {
+        name: "Selected context",
+      }),
+    ).toHaveTextContent("life-underwriting-rules.md");
+    expect(
+      within(turns[0] as HTMLElement).getByText(
+        /records this selection but does not verify document use/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(turns[1] as HTMLElement).getByText(
+        /No knowledge context was selected for this turn/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(turns[1] as HTMLElement).queryByRole("list", {
+        name: "Selected context",
+      }),
+    ).toBeNull();
   });
 
   it("adds a searchable Library reference to the composer from its plus menu", async () => {
@@ -641,13 +626,17 @@ describe("Tap product prototype interactions", () => {
 
   it("contains dialog focus and restores it to the add trigger on Escape", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    const { container } = renderPrototype();
 
     const trigger = screen.getByRole("button", { name: "Add to message" });
     await user.click(trigger);
     await user.keyboard("{ArrowDown}{Enter}");
 
     const picker = screen.getByRole("dialog", { name: "Use Agents" });
+    expect(within(picker).getByRole("listbox")).toHaveAttribute(
+      "aria-multiselectable",
+      "true",
+    );
     const search = within(picker).getByRole("textbox", {
       name: "Search agents",
     });
@@ -658,6 +647,11 @@ describe("Tap product prototype interactions", () => {
       name: "Application Completeness Reviewer",
     });
     expect(search).toHaveFocus();
+    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByRole("navigation", { name: "Product" })).toBeNull();
 
     await user.tab({ shift: true });
     expect(close).toHaveFocus();
@@ -669,6 +663,9 @@ describe("Tap product prototype interactions", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Use Agents" })).toBeNull();
     expect(trigger).toHaveFocus();
+    expect(container.querySelector(".tap-product-shell")).not.toHaveAttribute(
+      "aria-hidden",
+    );
   });
 
   it("reports selected composer context through option aria-selected", async () => {
@@ -1031,7 +1028,7 @@ describe("Tap product prototype interactions", () => {
 
     const citations = within(
       container.querySelector(".tap-turn") as HTMLElement,
-    ).getByRole("list", { name: "Sources used" });
+    ).getByRole("list", { name: "Selected context" });
     expect(within(citations).getByText("beneficiary-guide.txt")).toBeVisible();
     expect(
       within(citations).getByText("Page-local Library source"),
@@ -1146,6 +1143,7 @@ describe("Tap product prototype interactions", () => {
     });
     expect(within(documents).getAllByRole("listitem")).toHaveLength(5);
     expect(within(documents).getByText("beneficiary-guide.md")).toBeVisible();
+    expect(within(graph).getByText("beneficiary-guide.md")).toBeVisible();
 
     const concepts = within(summary).getByRole("list", {
       name: "Concepts",

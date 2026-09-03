@@ -12,6 +12,7 @@ export interface PrototypeCopy {
     newChat: string;
     chatHistory: string;
     product: string;
+    athenaTools: string;
     language: string;
     prototypeTeam: string;
     localWorkspace: string;
@@ -29,8 +30,9 @@ export interface PrototypeCopy {
     suggestedPrompts: string;
     quickPrompts: readonly [string, string, string];
     answer: string;
-    ungroundedAnswer: string;
-    sourcesUsed: string;
+    noContextNotice: string;
+    selectedContextNotice: string;
+    selectedContext: string;
     assistant: string;
   };
   sources: {
@@ -178,6 +180,9 @@ export interface PrototypeCopy {
     elementOrUrl: string;
     value: string;
     steps: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    startInAthena: string;
     automationStep: string;
     actionForStep: string;
     elementForStep: string;
@@ -208,6 +213,7 @@ export const PROTOTYPE_COPY = {
       newChat: "New Chat",
       chatHistory: "Chat history",
       product: "Product",
+      athenaTools: "Athena tools",
       language: "Language",
       prototypeTeam: "Prototype team",
       localWorkspace: "Local workspace",
@@ -222,7 +228,7 @@ export const PROTOTYPE_COPY = {
       heading: "What can I do for you?",
       description:
         "Ask about life insurance, create BDD test cases, or build an automation.",
-      sourceHint: "Answers use your selected sources when available.",
+      sourceHint: "Each turn records the knowledge context you select.",
       suggestedPrompts: "Suggested prompts",
       quickPrompts: [
         "Summarize the life insurance underwriting rules",
@@ -230,10 +236,12 @@ export const PROTOTYPE_COPY = {
         "Generate an automation script for a life insurance application",
       ],
       answer:
-        "Based on the selected knowledge sources, a life insurance application usually requires identity details for the policyholder and insured person, health disclosures, beneficiary information, and verifiable payment details.",
-      ungroundedAnswer:
-        "No knowledge source was selected for this turn. This response uses general knowledge: a life insurance application commonly requires identity details for the policyholder and insured person, health disclosures, beneficiary information, and verifiable payment details.",
-      sourcesUsed: "Sources used",
+        "This prototype response says that a life insurance application commonly includes identity details for the policyholder and insured person, health disclosures, beneficiary information, and payment details.",
+      noContextNotice:
+        "No knowledge context was selected for this turn. This prototype output uses built-in demo content.",
+      selectedContextNotice:
+        "Context was selected for this turn. This prototype records this selection but does not verify document use.",
+      selectedContext: "Selected context",
       assistant: "Athena assistant",
     },
     sources: {
@@ -247,7 +255,7 @@ export const PROTOTYPE_COPY = {
       noResults: "No matching sources",
       manageKnowledge: "Manage knowledge",
       provenanceHint:
-        "Answers and generated assets show which selected sources they used.",
+        "Answers and generated assets record the source context selected for each turn.",
       immutableRevision: "immutable revision",
       knowledgeSource: "Knowledge source",
       knowledgeBaseDocument: "Knowledge base document",
@@ -389,6 +397,10 @@ export const PROTOTYPE_COPY = {
       elementOrUrl: "Element or URL",
       value: "Value",
       steps: "steps",
+      emptyTitle: "No automation draft yet",
+      emptyDescription:
+        "Ask Athena to generate an automation, then open that draft here to edit its steps.",
+      startInAthena: "Start in Athena",
       automationStep: "Automation step",
       actionForStep: "Action for step",
       elementForStep: "Element for step",
@@ -417,6 +429,7 @@ export const PROTOTYPE_COPY = {
       newChat: "新建对话",
       chatHistory: "对话历史",
       product: "产品",
+      athenaTools: "Athena 工具",
       language: "语言",
       prototypeTeam: "原型团队",
       localWorkspace: "本地工作区",
@@ -430,7 +443,7 @@ export const PROTOTYPE_COPY = {
       placeholder: "询问寿险业务或测试问题...",
       heading: "我能为您做什么？",
       description: "询问寿险业务、创建 BDD 测试用例，或构建自动化流程。",
-      sourceHint: "回答会在可用时使用您选择的知识来源。",
+      sourceHint: "每轮对话都会记录您选择的知识上下文。",
       suggestedPrompts: "推荐提示词",
       quickPrompts: [
         "总结寿险新单核保规则",
@@ -438,10 +451,11 @@ export const PROTOTYPE_COPY = {
         "为寿险投保申请生成自动化脚本",
       ],
       answer:
-        "根据当前选择的知识来源，寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。",
-      ungroundedAnswer:
-        "此轮对话未选择知识来源。以下内容来自通用知识：寿险投保通常需要投保人和被保险人身份资料、健康告知、受益人信息以及可核验的缴费资料。",
-      sourcesUsed: "使用的来源",
+        "此原型回答显示：寿险投保通常包含投保人和被保险人身份资料、健康告知、受益人信息以及缴费资料。",
+      noContextNotice: "此轮对话未选择知识上下文。此原型输出使用内置演示内容。",
+      selectedContextNotice:
+        "此轮对话已选择知识上下文。原型仅记录该选择，不验证是否使用了文档内容。",
+      selectedContext: "已选上下文",
       assistant: "Athena 助手",
     },
     sources: {
@@ -454,7 +468,7 @@ export const PROTOTYPE_COPY = {
       noReadySources: "没有可用来源",
       noResults: "没有匹配的来源",
       manageKnowledge: "管理知识库",
-      provenanceHint: "回答和生成的资产会显示使用了哪些已选来源。",
+      provenanceHint: "回答和生成的资产会记录每轮对话选择的来源上下文。",
       immutableRevision: "不可变版本",
       knowledgeSource: "知识来源",
       knowledgeBaseDocument: "知识库文档",
@@ -589,6 +603,10 @@ export const PROTOTYPE_COPY = {
       elementOrUrl: "元素或 URL",
       value: "值",
       steps: "个步骤",
+      emptyTitle: "还没有自动化草稿",
+      emptyDescription:
+        "请先让 Athena 生成自动化流程，再把草稿打开到这里编辑步骤。",
+      startInAthena: "前往 Athena",
       automationStep: "自动化步骤",
       actionForStep: "步骤操作",
       elementForStep: "步骤元素",
