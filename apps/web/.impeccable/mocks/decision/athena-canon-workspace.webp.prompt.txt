@@ -1,0 +1,12 @@
+Use case: ui-mockup
+Asset type: high-fidelity desktop web application direction comp, 1536×1024 landscape viewport, no device frame
+Primary request: Design Athena as the impeccable category-standard enterprise test-management workspace. This is the familiar canon option, executed with excellent hierarchy and spacing, not an experimental identity.
+Scene/backdrop: full browser viewport, bright neutral office UI.
+Subject: Athena target product connects requirement evidence, test-case generation, test-script generation and validation, controlled execution, results, evidence, and RCA. Show a practical project workspace for “退款审批规则”. All future capabilities are synthetic concept content.
+Style/medium: realistic polished enterprise SaaS UI, clean grid, restrained product design, familiar controls and navigation.
+Composition/framing: left sidebar with Athena and modules 首页 / 智能工作区 / 测试用例 / 测试脚本 / 执行 / 结果 / 知识库; top bar with project selector, search, help and role. Main content has a concise release summary row, a central test-work-items table showing cases and statuses, a right details drawer for selected “TC-042 超额退款需二次审批”, and a compact contextual AI assistant entry rather than a chat page. Use one visible end-to-end lineage strip from REQ-142 through sources, cases, script, Run #184 Attempt 2, 17/18 passed, and RCA candidate.
+Color palette: white #FFFFFF, cool neutral #F4F7FB, ink #111827, primary blue #2563EB, restrained green/amber/red semantic states; no gradients.
+Materials/textures: neutral panels, data table, status labels, subtle 1px borders and soft elevation used sparingly.
+Text (verbatim): “Athena”; “目标态 · 合成示例”; “退款审批规则”; “工作项”; “测试用例”; “测试脚本”; “执行”; “结果”; “知识库”; “TC-042 超额退款需二次审批”; “REQ-142”; “3 个来源”; “8 个候选用例 · 2 个待评审”; “Run #184 · Attempt 2”; “17 / 18 passed”; “RCA candidate”; “生成测试用例”; “发起执行”.
+Constraints: render Chinese accurately and sparingly; clearly show “目标态 · 合成示例”; professional, task-first, responsive-looking, accessible contrast, consistent components; no invented customers, prices, benchmarks, or commercial claims; no watermark.
+Avoid: experimental metaphors, Greek mythology, owl or temple motifs, neon, glassmorphism, gradients, huge rounded cards, excessive pills, marketing hero, stock photography, chat bubbles dominating the page, decorative illustrations, tiny unreadable text.

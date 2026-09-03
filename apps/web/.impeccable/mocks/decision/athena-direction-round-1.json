@@ -1,0 +1,162 @@
+{
+  "title": "为 Athena 选择视觉世界",
+  "question": "已确认的 A（Evidence Desk）继续作为交互骨架；本轮只选择视觉与状态语言。画面中的测试用例、脚本生成和执行均为“目标态 · 合成示例”，不代表当前已交付。",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Evidence Desk · Verification Lab",
+      "kicker": "THE ROLL",
+      "lineage": "验证实验台与证据保管链",
+      "thesis": "每份模型产物先是候选样本，只有经过来源核验、确定性校验、评审和运行证据，才成为可信资产。",
+      "palette": ["#F3F0E8", "#1E2728", "#0E6F68", "#C88716", "#B23A2B"],
+      "materials": ["实验记录纸", "细密坐标线", "拉丝铝仪器条", "编号封签"],
+      "viewport": "目标态合成示例：左侧是来源与需求样本架，中部展开需求→用例→脚本→评审→执行→RCA 验证链，右侧是证据保管链；Knowledge Chat 嵌在当前链路内。",
+      "risk": "若实验室隐喻进入对象名称，会增加学习成本；只借验证纪律，不做烧杯或显微镜拟物。",
+      "raised": [
+        {
+          "from": "challenger-hypercard",
+          "raise": "原位可逆：同一对象内完成查看、编辑和评审，返回时恢复筛选与检查路径。"
+        },
+        {
+          "from": "challenger-tensegrity",
+          "raise": "关系产生后果：每条追溯关系都有类型、方向、状态和影响范围。"
+        },
+        {
+          "from": "challenger-miura",
+          "raise": "尺度切换不断链：对象、场景、发布和项目视图共享同一选择与追溯上下文。"
+        }
+      ],
+      "comp": ".impeccable/mocks/decision/athena-verification-lab.webp"
+    },
+    {
+      "id": "model-pick",
+      "label": "可追溯性签核包",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "Requirements Traceability Matrix + Verification Report",
+      "thesis": "把需求、风险、证据、用例、脚本、运行与签核组织成同一份可审计交付包。",
+      "palette": ["#F7F8F5", "#172026", "#265C4B", "#C27A22", "#B54434"],
+      "materials": ["工程签核表", "可追溯矩阵", "版本页签", "审核批注"],
+      "viewport": "目标态合成示例：首屏是一份横向 verification crosswalk；选中 REQ-142 后整行点亮其来源、8 个用例、脚本验证、Run #184 与 RCA。",
+      "risk": "这是最清楚也最熟悉的方向；若表格成为全部，就会退化成沉重的 ALM 或 Excel。",
+      "comp": ".impeccable/mocks/decision/athena-traceability-pack.webp"
+    },
+    {
+      "id": "challenger-cutting-bench",
+      "label": "测试剪辑轨",
+      "verdict": "competitive",
+      "lineage": "film cutting bench select rail",
+      "thesis": "把整条测试生命周期变成可回放的工作轨，每个阶段都是不会被抹去的 frame。",
+      "palette": ["#080808", "#D85E28", "#F4F0E8", "#6B6660"],
+      "materials": ["打孔胶片轨", "粗粒橙标记", "油脂叉", "折叠停点旗"],
+      "viewport": "目标态合成示例：需求、证据、用例、脚本、验证、Attempt、结果和 RCA 沿一条横向轨道排列，当前 frame 展开为主工作区，延期项挂在轨道下方。",
+      "case": "产品清晰度守住一轴：进度、阻塞、承诺和回放极强；受众识别弱于直接的软件质量语言。",
+      "risk": "横向轨道若主宰所有页面，会削弱复杂多对多追溯和长文本评审。",
+      "comp": ".impeccable/mocks/decision/athena-cutting-rail.webp",
+      "hero": "https://impeccable.style/worlds/cards/operate-a-cutting-bench-select-rail-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/operate-a-cutting-bench-select-rail.webp"
+    },
+    {
+      "id": "challenger-ticket-wallet",
+      "label": "测试旅程票夹",
+      "verdict": "competitive",
+      "lineage": "jet-age airline ticket wallet",
+      "thesis": "每条测试意图是一段 journey；用例、脚本、验证、执行和结果作为连续 coupon，取消也留下证据。",
+      "palette": ["#112A46", "#C83932", "#FBFAF5", "#5B3B76"],
+      "materials": [
+        "coupon stock",
+        "carbon copy",
+        "tabbed fields",
+        "VOID stamp"
+      ],
+      "viewport": "目标态合成示例：一条关键测试旅程作为 coupon book 展开，revision、来源、环境、负责人和 Attempt 固定在字段中，validated、used、void 永不消失。",
+      "case": "产品清晰度守住一轴：固定字段、阶段状态和“取消但不消失”非常适合审计；受众识别仍弱于 Evidence Desk。",
+      "risk": "票据隐喻距离软件团队较远，印刷字段密度也可能拖慢日常扫描。",
+      "comp": ".impeccable/mocks/decision/athena-ticket-wallet.webp",
+      "hero": "https://impeccable.style/worlds/cards/vernacular-ephemera-jet-age-ticket-wallet-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/vernacular-ephemera-jet-age-ticket-wallet.webp"
+    },
+    {
+      "id": "challenger-botanical-folio",
+      "label": "阶段对照图谱",
+      "verdict": "competitive",
+      "lineage": "botanical folio following one specimen through five stages",
+      "thesis": "以同一基线对齐五个阶段，让需求如何长成用例、脚本、运行证据和 RCA 可以直接比较。",
+      "palette": ["#F1E8D5", "#4B382A", "#315C45", "#A23B32"],
+      "materials": [
+        "固定比例 plate",
+        "同基线标注",
+        "registered overlay",
+        "graphite captions"
+      ],
+      "viewport": "目标态合成示例：理解证据、设计用例、实现脚本、执行验证、诊断改进五个阶段在同一基线上对齐，可叠加 revision 并比较变化。",
+      "case": "产品清晰度守住一轴：阶段对照和 revision 比较直观；受众识别弱于软件测试的原生工作场景。",
+      "risk": "若过度强调静态图谱，会让执行、审批与修复动作显得被动。",
+      "comp": ".impeccable/mocks/decision/athena-stage-folio.webp",
+      "hero": "https://impeccable.style/worlds/cards/editorial-sequence-montage-botanical-folio-season-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/editorial-sequence-montage-botanical-folio-season.webp"
+    },
+    {
+      "id": "challenger-hypercard",
+      "label": "可编辑卡片栈",
+      "verdict": "declined",
+      "lineage": "HyperCard shoebox stack",
+      "thesis": "把需求、来源、用例、脚本、Attempt 和 RCA 做成可编辑、可深链的 card stack。",
+      "palette": ["#FFFFFF", "#000000", "#B8B8B8"],
+      "materials": ["one-bit ink", "stipple gray", "hand-drawn border"],
+      "viewport": "目标态合成示例：中央是一张可原位编辑的测试对象卡，显式按钮跳到其来源、下游资产和运行证据。",
+      "case": "两轴均落后：跨角色识别有限，也难同时表达阶段总览、并行执行和多对多证据。",
+      "risk": "固定卡片容易把完整工作流拆成需要记忆的页面迷宫。",
+      "kept": "原位可逆：查看、编辑与评审属于同一对象，返回恢复原检查路径。",
+      "hero": "https://impeccable.style/worlds/cards/medium-native-hypercard-stack-shoebox-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/medium-native-hypercard-stack-shoebox.webp"
+    },
+    {
+      "id": "challenger-tensegrity",
+      "label": "因果张力图",
+      "verdict": "declined",
+      "lineage": "tensegrity breathing column",
+      "thesis": "让需求、revision、用例、门禁、Attempt 和证据成为一张可追踪影响传播的语义网络。",
+      "palette": ["#E7E4DD", "#171A1D", "#B93832", "#92908A"],
+      "materials": ["carbon rods", "red tension cord", "engineering leaders"],
+      "viewport": "目标态合成示例：选中任一对象后，验证、覆盖、失败和影响关系沿网络展开，并同步显示语义列表。",
+      "case": "两轴均落后：力学装置不是共同工作语言，网络也不能自然说明下一步任务与阶段顺序。",
+      "risk": "用户需要先学习图的语法，才看得到产品价值。",
+      "kept": "关系产生后果：每条追溯边都带类型、方向、状态和影响范围。",
+      "hero": "https://impeccable.style/worlds/cards/kinetic-sculpture-automata-tensegrity-breathing-column-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/kinetic-sculpture-automata-tensegrity-breathing-column.webp"
+    },
+    {
+      "id": "challenger-miura",
+      "label": "可部署追溯折面",
+      "verdict": "declined",
+      "lineage": "Miura-fold deployable sheet",
+      "thesis": "把项目追溯矩阵折叠为对象、场景、发布和项目四个连续尺度。",
+      "palette": ["#F7F6F0", "#21262A", "#C3A33A", "#CFE0E7"],
+      "materials": ["scored sheet", "gold foil face", "crease graph"],
+      "viewport": "目标态合成示例：发布包从紧凑摘要逐级展开到需求行、测试单元和完整证据图，约束变化同步传播。",
+      "case": "两轴均落后：折纸空间操作不属于跨角色习惯，也会压缩 Attempt、证据和诊断闭环。",
+      "risk": "抽象折面会让高频操作和标准控件失去熟悉度。",
+      "kept": "尺度切换不断链：缩放层级时保持选择、追溯链、待处理变更和约束。",
+      "hero": "https://impeccable.style/worlds/cards/paper-folds-pleats-deployable-miura-orbit-sheet-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/paper-folds-pleats-deployable-miura-orbit-sheet.webp"
+    }
+  ],
+  "reroll": {
+    "registers": ["safer", "bolder"]
+  },
+  "buildPath": {
+    "value": "comp",
+    "toggle": true
+  },
+  "canon": true,
+  "canonCard": {
+    "label": "标准测试管理工作台",
+    "thesis": "以侧栏、模块看板、数据表和详情抽屉组织 Athena 的目标能力。",
+    "palette": ["#FFFFFF", "#F4F7FB", "#111827", "#2563EB"],
+    "materials": ["中性面板", "数据表格", "状态标签"],
+    "viewport": "目标态合成示例：左侧模块导航，顶部项目筛选，中部任务表与 AI 助手，右侧详情抽屉。",
+    "risk": "易学易用，但与成熟测试管理产品难以形成清晰视觉记忆。",
+    "comp": ".impeccable/mocks/decision/athena-canon-workspace.webp"
+  },
+  "steer": true
+}
