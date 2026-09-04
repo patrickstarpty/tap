@@ -1,6 +1,6 @@
 ---
 id: RFC-009
-status: in-review
+status: accepted
 date: 2026-09-04
 related-adrs:
   - ADR-001
@@ -8,18 +8,26 @@ related-adrs:
   - ADR-004
   - ADR-005
   - ADR-006
+  - ADR-008
   - ADR-009
   - ADR-010
   - ADR-012
+  - ADR-014
   - ADR-015
   - ADR-019
+  - ADR-020
+  - ADR-021
+  - ADR-022
+  - ADR-023
+  - ADR-024
+  - ADR-025
 ---
 
 # RFC-009：Athena 知识与 Web 测试自动化平台设计
 
 ## 1. 文档目的与事实边界
 
-本文提出 TAP 下一阶段的产品与技术设计。该方案已在设计对话中逐节确认，目前进入书面审阅；RFC 被接受后，才成为架构基线与实施计划的依据。交付分为“方案验证”和“产品化”两个阶段：先用固定的企业、Project 与验证操作者完成核心价值闭环，方案验证通过后再建设多用户认证、RBAC 与多 Project 产品能力。
+本文定义 TAP 下一阶段已经接受的产品与技术设计，并作为架构基线与实施计划的依据。交付分为“方案验证”和“产品化”两个阶段：先用固定的企业、Project 与验证操作者完成核心价值闭环，方案验证通过后再建设多用户认证、RBAC 与多 Project 产品能力。
 
 方案验证主线按以下顺序推进：
 
@@ -34,7 +42,7 @@ related-adrs:
   → 用户 / 认证 / RBAC / 多 Project 产品化
 ```
 
-本文描述的是**待书面确认的目标设计**，不是当前完成状态。当前仓库真实实现仍是较窄的 Athena 本地知识切片，以及使用浏览器状态和 fixture 的产品交互原型：
+本文描述的是**已接受但尚未实现的目标设计**，不是当前完成状态。当前仓库真实实现仍是较窄的 Athena 本地知识切片，以及使用浏览器状态和 fixture 的产品交互原型：
 
 - Backend 已实现文档摄取、MySQL 账本、Outbox/Redis 唤醒、Milvus `doc` 检索、LiteLLM 模型端口、grounded answer 和引用核验基础。
 - Web 已实现 Athena、Library、Knowledge Graph、Test Management 和 Low Code Automation 的交互原型。
@@ -43,7 +51,7 @@ related-adrs:
 - 在对应发布门禁通过前，原型中的 `Passed`、Run、Graph、Agent 和资产都不得描述为生产实现或真实执行证据。
 - Validation Mode 不等于匿名生产模式：它只能运行在 loopback 或有独立基础设施访问控制的隔离验证环境，不能直接晋级为 Staging/Production，也不能宣称具有个人身份归因或多 Project 隔离能力。
 
-RFC 接受后将替代旧的“Phase 1 先做独立 Intelligence Lab”交付优先级，并将 Athena 可信知识能力重新放在第一位。旧文档仍保留为历史决策和实验依据。
+本 RFC 已替代旧的“Phase 1 先做独立 Intelligence Lab”交付优先级，并将 Athena 可信知识能力重新放在第一位。旧文档仍保留为历史决策和实验依据。
 
 ## 2. 产品范围
 
@@ -335,23 +343,23 @@ Validation Mode 的固定身份不是安全认证机制，只是为快速验证�
 
 ### 6.3 数据职责
 
-| 数据类别                                                  | 权威存储                                                         | 说明                                                         |
-| --------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------ |
-| Enterprise、Project、Actor Principal                      | MySQL                                                            | V0 建立固定验证记录；P0 扩展 Project 生命周期并保留稳定 ID   |
-| User、Membership、RBAC                                    | MySQL                                                            | P0 产品化后的认证授权事实                                    |
-| Document、Revision、Ingestion、Manifest                   | MySQL                                                            | 原件和派生文件内容保存在对象存储                             |
-| Chunk 检索投影                                            | Milvus                                                           | 可重建，不是内容事实源                                       |
-| Graph Node/Edge/Snapshot/Provenance                       | MySQL                                                            | 已发布 Graph 历史事实；重抽取产生新 Snapshot，不替代备份恢复 |
-| Conversation、Turn、Context Snapshot                      | MySQL                                                            | 每轮绑定发送时的选择和引用                                   |
-| Test Plan、BDD、Automation、Test IR                       | MySQL                                                            | 资产身份、草稿、版本和映射                                   |
-| Environment、Execution Target、Credential Binding Profile | MySQL                                                            | 配置使用不可变 Revision；Run 只引用确定版本                  |
-| Run Configuration Manifest                                | MySQL + 可选 MinIO 数据制品                                      | 冻结目标 URL、非秘密参数与数据 digest，不含 Secret value     |
-| Playwright Bundle、Evidence                               | MinIO                                                            | 内容寻址并在 MySQL 保存 digest/manifest                      |
-| Debug Execution、短期诊断                                 | MySQL + MinIO                                                    | 与正式 Run 分表、短期保留、不投影 Test Plan                  |
-| Run、Attempt、Step Result、Project Audit                  | MySQL                                                            | append-oriented Project 运行和审计事实                       |
-| Platform/Auth Audit                                       | MySQL                                                            | 企业级事件；Project 可空，未认证尝试的 Actor 可空            |
-| Queue wakeup、短期 lease/cache                            | Redis                                                            | 可重建，不是唯一事实源                                       |
-| Runtime Secret                                            | Jenkins Credential（正式 Run）/ TAP 加密 Secret（平台内 Worker） | 业务模型只保存用途受限的 `SecretRef`                         |
+| 数据类别                                                     | 权威存储                                                         | 说明                                                         |
+| ------------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------ |
+| Enterprise、Project、Actor Principal                         | MySQL                                                            | V0 建立固定验证记录；P0 扩展 Project 生命周期并保留稳定 ID   |
+| User、Membership、RBAC                                       | MySQL                                                            | P0 产品化后的认证授权事实                                    |
+| Document、Revision、Ingestion、Manifest                      | MySQL                                                            | 原件和派生文件内容保存在对象存储                             |
+| Chunk 检索投影                                               | Milvus                                                           | 可重建，不是内容事实源                                       |
+| Graph Node/Edge/Snapshot/Provenance                          | MySQL                                                            | 已发布 Graph 历史事实；重抽取产生新 Snapshot，不替代备份恢复 |
+| Conversation、Turn、Input Snapshot、Answer/Evidence Snapshot | MySQL                                                            | 输入选择与完成时检索/Graph/Citation 分别形成不可变快照       |
+| Test Plan、BDD、Automation、Test IR                          | MySQL                                                            | 资产身份、草稿、版本和映射                                   |
+| Environment、Execution Target、Credential Binding Profile    | MySQL                                                            | 配置使用不可变 Revision；Run 只引用确定版本                  |
+| Run Configuration Manifest                                   | MySQL + 可选 MinIO 数据制品                                      | 冻结目标 URL、非秘密参数与数据 digest，不含 Secret value     |
+| Playwright Bundle、Evidence                                  | MinIO                                                            | 内容寻址并在 MySQL 保存 digest/manifest                      |
+| Debug Execution、短期诊断                                    | MySQL + MinIO                                                    | 与正式 Run 分表、短期保留、不投影 Test Plan                  |
+| Run、Attempt、Step Result、Project Audit                     | MySQL                                                            | append-oriented Project 运行和审计事实                       |
+| Platform/Auth Audit                                          | MySQL                                                            | 企业级事件；Project 可空，未认证尝试的 Actor 可空            |
+| Queue wakeup、短期 lease/cache                               | Redis                                                            | 可重建，不是唯一事实源                                       |
+| Runtime Secret                                               | Jenkins Credential（正式 Run）/ TAP 加密 Secret（平台内 Worker） | 业务模型只保存用途受限的 `SecretRef`                         |
 
 ## 7. 模块边界与稳定 Port
 
@@ -360,9 +368,9 @@ Validation Mode 的固定身份不是安全认证机制，只是为快速验证�
 | 模块               | 公开责任                                                                                         | 主要依赖                                  |
 | ------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
 | Identity & Project | V0 最小 Enterprise/Project/Actor Principal 与可信 Scope；P0 增加 User、Session、Membership、Role | V0 使用 MySQL/配置/Audit；P0 增加 Hasher  |
-| Knowledge          | Source、Document Revision、Ingestion、Search、Answer、Citation                                   | SearchPort、ModelGateway、ObjectStorePort |
+| Knowledge          | Source、Document Revision、Ingestion、Search、Answer/Evidence Snapshot、Citation                 | SearchPort、ModelGateway、ObjectStorePort |
 | Graph              | Graph Snapshot、Node、Edge、Evidence、邻居/路径查询                                              | GraphStorePort、ModelGateway              |
-| Conversation       | Conversation、Turn、Context Snapshot、Artifact Link、SSE                                         | Knowledge、Graph、AI Catalog              |
+| Conversation       | Conversation、Turn、Input Snapshot、Artifact Link、SSE                                           | Knowledge、Graph、AI Catalog              |
 | Test Management    | Test Plan、Test Case、BDD、Revision、发布                                                        | Knowledge Citation、Audit                 |
 | Automation         | Automation、Test IR、Playwright Bundle、1:1 Link、发布                                           | ScriptGeneratorPort、ObjectStorePort      |
 | Recorder           | Recorder Session、Live Stream、Captured Event、Draft 构建                                        | RecorderPort、Automation                  |
@@ -389,27 +397,28 @@ Validation Adapter 只返回配置中唯一允许的固定 `ProjectScopeContext`
 
 ### 7.2 Provider-neutral Port
 
-| Port                  | 最小职责                                         | 第一实现                        |
-| --------------------- | ------------------------------------------------ | ------------------------------- |
-| `ModelGateway`        | Chat、Embedding、结构化生成、模型目录            | LiteLLM                         |
-| `SearchPort`          | Hybrid Search、Project Filter、版本与 provenance | Milvus                          |
-| `GraphStorePort`      | Snapshot、Node/Edge、Neighbors、Bounded Path     | MySQL                           |
-| `ObjectStorePort`     | 文档、Bundle、Evidence 的读写和短期 URL          | MinIO/S3 API                    |
-| `RecorderPort`        | allocate、stream、capture、stop、cleanup         | Playwright Chromium Worker      |
-| `ScriptGeneratorPort` | Test IR 验证并生成框架代码                       | Playwright TypeScript Generator |
-| `ExecutionProvider`   | verify、submit、status、cancel、fetch result     | Jenkins Adapter                 |
+| Port                  | 最小职责                                                  | 第一实现                        |
+| --------------------- | --------------------------------------------------------- | ------------------------------- |
+| `ModelGateway`        | Chat、Embedding、结构化生成、模型目录                     | LiteLLM                         |
+| `SearchPort`          | Hybrid Search、Project Filter、版本与 provenance          | Milvus                          |
+| `GraphStorePort`      | Snapshot、Node/Edge、Neighbors、Bounded Path              | MySQL                           |
+| `ObjectStorePort`     | 文档、Bundle、Evidence 的读写和短期 URL                   | MinIO/S3 API                    |
+| `RecorderPort`        | allocate、stream、capture、stop、cleanup                  | Playwright Chromium Worker      |
+| `ScriptGeneratorPort` | Test IR 验证并生成框架代码                                | Playwright TypeScript Generator |
+| `ExecutionProvider`   | verify、submit、按 key 对账、status、cancel、fetch result | Jenkins Adapter                 |
 
 `ExecutionProvider` 的领域请求只使用 TAP 术语，不泄漏 Jenkins Job 对象：
 
 ```text
 verify_connection(target)
 submit(execution_request) -> provider_run_ref
+reconcile_submission(target, submission_key) -> submission_lookup
 get_status(provider_run_ref) -> normalized_status
 cancel(provider_run_ref)
 fetch_result(provider_run_ref) -> provider_result_manifest
 ```
 
-未来 Azure DevOps Adapter 实现相同 Port，不改变 Automation、Run 或 Test Plan 模型。
+`submission_lookup` 统一表达 `NOT_FOUND | QUEUED | STARTED` 和可选 `provider_run_ref`；`NOT_FOUND` 在对账期限前不授权再次提交。未来 Azure DevOps Adapter 实现相同 Port，不改变 Automation、Run 或 Test Plan 模型。
 
 以上七个 Port 是本阶段需要保持稳定的领域集成边界。Secret 存储与解析属于平台安全设施：业务对象只持有用途受限的 `SecretRef`。正式 Jenkins Run 只接受 Execution Target 中已验证的 Jenkins Credential Binding；TAP 托管 Secret 仅供 API/Provider、Recorder 和 Debug Worker 的平台内路径通过受限内部解析器访问，不新增第八个业务 Provider Port。
 
@@ -428,7 +437,8 @@ erDiagram
     EXECUTION_TARGET_REVISION ||--o{ CREDENTIAL_BINDING_PROFILE_REVISION : allows
 
     PROJECT ||--o{ KNOWLEDGE_SOURCE : owns
-    KNOWLEDGE_SOURCE ||--o{ DOCUMENT_REVISION : versions
+    KNOWLEDGE_SOURCE ||--o{ DOCUMENT : contains
+    DOCUMENT ||--o{ DOCUMENT_REVISION : versions
     DOCUMENT_REVISION ||--o{ CHUNK_MANIFEST : produces
     CHUNK_MANIFEST ||--o{ DOCUMENT_CHUNK : lists
     DOCUMENT_REVISION }o--o{ GRAPH_SNAPSHOT : contributes
@@ -445,7 +455,8 @@ erDiagram
 
     PROJECT ||--o{ CONVERSATION : owns
     CONVERSATION ||--o{ TURN : contains
-    TURN ||--|| TURN_CONTEXT_SNAPSHOT : freezes
+    TURN ||--|| TURN_INPUT_SNAPSHOT : accepts_with
+    TURN ||--o| TURN_ANSWER_EVIDENCE_SNAPSHOT : completes_with
 
     PROJECT ||--o{ TEST_PLAN : owns
     TEST_PLAN ||--o{ TEST_PLAN_REVISION : versions
@@ -555,6 +566,9 @@ flowchart LR
 
 摄取使用现有 MySQL 账本、Outbox、lease 和可恢复 Worker 模式。关键规则：
 
+- `KnowledgeSource` 是 Project 内可命名、可选择的逻辑容器，一个 Source 拥有一个或多个稳定 `Document`，每个 Document 再拥有不可变 Revision。Source 删除/撤权必须先阻断其全部 Document Revision 的读取。
+- 从现有本地切片升级时，为每个 legacy Document 创建一个同 Project 的 Source，保留 Document ID，并把旧 `source_id=document_id` 显式回填到新 Source ID；迁移采用 nullable expand、backfill/校验、再加 FK/non-null 的 contract 顺序。
+- Document 去重键唯一性按 `(project_id, dedupe_key)` 定义；不同 Project 可以上传相同内容，任何全局唯一约束都必须迁移掉。
 - `source_content_hash`、`revision_id` 和 `chunk_content_hash` 提供幂等身份。
 - 原件、标准化文本、Chunk Manifest 和 Embedding Manifest 可从对象存储恢复。
 - 新检索投影完成前保留旧 active revision；alias/snapshot 切换原子化。
@@ -565,7 +579,7 @@ flowchart LR
 
 V1 将已有 Milvus `doc` 路径升级为方案验证检索后端，P1 再完成生产安全、容量和恢复门禁；在 P1 通过前不能把本地或验证实验描述为生产完成。
 
-- 每个检索实体保存 `enterprise_id`、`project_id`、授权元数据、document/revision/chunk identity、anchor 和内容 digest。
+- 每个检索实体保存 `enterprise_id`、`project_id`、`source_id`、授权元数据、document/revision/chunk identity、anchor 和内容 digest。现有物理字段 `tenant_id` 只作为迁移输入，不继续充当新契约名；通过新版本 collection 重建为 `enterprise_id` 后再原子切换 alias，不能原地混用两种名称。
 - 查询过滤器只能由服务端从可信 `ProjectScopeContext` 与 Project Policy 编译，不能接受浏览器或模型提供的原始 filter；P0 后的 Project Context 必须来自 Session/Membership。
 - Dense、BM25、hybrid 和任何补充读取使用等价 filter；结果返回后再次核验 project/revision/provenance。
 - 一次请求绑定一个确定的 physical collection/schema/corpus/model version，alias 切换期间不能混读版本。
@@ -588,16 +602,16 @@ V1 将已有 Milvus `doc` 路径升级为方案验证检索后端，P1 再完成
 
 在线回答顺序固定为：
 
-1. 从服务端身份适配器取得可信 `ProjectScopeContext`：Validation Mode 校验固定 Project/Actor，P0 之后校验 Session/Membership；再校验用户选择的 Source 属于该 Project。
+1. 从服务端身份适配器取得可信 `ProjectScopeContext`：Validation Mode 校验固定 Project/Actor，P0 之后校验 Session/Membership；再把已授权 Source 解析为确定 Revision，并在接受 Turn 的事务中写不可变 `TurnInputSnapshot` 与只引用 `inputSnapshotDigest` 的 `conversation.turn.requested`。
 2. 生成有界 Query Plan 和查询向量。
 3. 执行 Milvus BM25 + dense hybrid retrieval。
 4. 仅当当前 Project/Source 存在可授权的 active Graph Snapshot 时，根据命中实体做最多两跳、受类型和数量预算约束的 Graph Expansion。
-5. 去重、RRF/rerank，并构造只包含已授权 Evidence 的 Context Snapshot；同时保存 `graph_context_status` 与使用的 Snapshot ID。
+5. 去重、RRF/rerank，并构造只包含已授权 Evidence 的有界生成上下文；该过程不修改 `TurnInputSnapshot`。
 6. 经 `ModelGateway` 生成结构化回答。
 7. 对 claim、citation、revision、anchor 和当前权限进行确定性验证。
-8. 验证失败则返回受控错误或证据不足，不把 Provider 故障伪装成正常零召回。
+8. 在完成事务中写不可变 `TurnAnswerEvidenceSnapshot`，固定回答 digest、检索摘要、`graph_context_status`、实际使用的 Graph Snapshot ID 与 Citation Snapshot，并让 `conversation.turn.completed` 以 `answerEvidenceSnapshotId` 和 `answerEvidenceSnapshotDigest` 引用它。验证失败则保存闭合失败状态并返回受控错误或证据不足，不把 Provider 故障伪装成正常零召回。
 
-`graph_context_status` 使用 `APPLIED | NOT_READY | FAILED | UNAVAILABLE | NOT_SELECTED`。普通 Knowledge Chat 在非 `APPLIED` 时继续使用文档检索回答，并在响应/Context Snapshot 中明确标记“Graph enrichment 未使用”及原因；只有 active Snapshot 查询成功且返回零关系时，才能表达“未找到相关关系”。用户显式执行 Graph 邻居/路径查询时，`FAILED/UNAVAILABLE` 返回稳定 `503 graph-unavailable`，不能降级成空图。
+`graph_context_status` 使用 `APPLIED | NOT_READY | FAILED | UNAVAILABLE | NOT_SELECTED`。普通 Knowledge Chat 在非 `APPLIED` 时继续使用文档检索回答，并在响应/Answer Evidence Snapshot 中明确标记“Graph enrichment 未使用”及原因；只有 active Snapshot 查询成功且返回零关系时，才能表达“未找到相关关系”。用户显式执行 Graph 邻居/路径查询时，`FAILED/UNAVAILABLE` 返回稳定 `503 graph-unavailable`，不能降级成空图。
 
 ### 9.4 Graph 数据与体验
 
@@ -632,9 +646,10 @@ Node 与 Edge 使用独立 Evidence 关联表，避免一条证据记录被错�
 - 一次 Conversation 对应一条历史记录，后续 Turn 追加到同一记录。
 - 切换页面、刷新或服务重启后恢复 Conversation、Turn 和选择上下文。
 - Composer 为空且不处于 IME 组字时，按一次上方向键只填入当前 Conversation 最近一条用户已发送内容，不自动发送；已有草稿、无历史或切换到其他 Conversation 时保持当前输入不变。已发送 Turn 以服务端为准。
-- 每个 Turn 保存发送时的 `model_alias`、Knowledge Source/Revision、AI Agent、Skill、Project、检索策略摘要和 Citation Snapshot。
+- 每个 Turn 在接受时保存不可变 `TurnInputSnapshot`，只包含发送时的 Project/Actor/identity mode、`model_alias`、已解析 Knowledge Source/Document Revision、AI Agent/Skill Revision 和检索策略 digest；其 digest 由 `conversation.turn.requested` 引用。
+- 检索、Graph、回答与 Citation 核验完成后另存不可变 `TurnAnswerEvidenceSnapshot`，包含输入快照 digest、回答 digest、检索摘要、Graph 状态/实际 Snapshot ID 和 Citation Snapshot；`conversation.turn.completed` 以 `answerEvidenceSnapshotId` 和 `answerEvidenceSnapshotDigest` 引用该对象。任何处理阶段都不得回写 Input Snapshot。
 - Validation Mode 中 Project 和 Actor 仍逐 Turn 持久化，但所有操作者共用固定身份，因此不能把记录描述为个人活动；P0 后的新 Turn 保存真实用户身份，历史验证记录保持原样并明确标记来源模式。
-- 之后移除 Knowledge、Agent 或 Skill 只影响下一 Turn，不能改写历史 Turn。
+- 之后移除 Knowledge、Agent 或 Skill 只影响下一 Turn，不能改写历史 Input 或 Answer/Evidence Snapshot。
 
 ### 10.2 模型、AI Agent 与 Skill
 
@@ -643,7 +658,7 @@ Node 与 Edge 使用独立 Evidence 关联表，避免一条证据记录被错�
 - UI 显示名与内部 model alias 分离；Conversation 保存 alias，审计保存实际 provider/model 解析结果。
 - AI Agent 是允许的系统指令、工具权限和输出 Schema 配置，不是 Jenkins Agent。
 - Skill 是版本化、服务器批准的指令/模板资源。当前路线的交互界面不允许上传任意可执行插件代码。
-- 生成 Test Plan/Automation 时保存 Agent、Skill、模型和知识 Context Snapshot，保证结果可审计。
+- 生成 Test Plan/Automation 时必须同时引用同一 Turn 的 `inputSnapshotDigest` 与 `answerEvidenceSnapshotDigest`：前者证明用户选择、Agent/Skill、模型和策略，后者证明实际检索、Graph、回答与 Citation Evidence。服务端重新验证两者的 Turn/Project 归属和 digest，不能只保存泛化的单一 Context Snapshot。
 
 ### 10.3 流式与取消
 
@@ -849,7 +864,7 @@ BDD/Test IR Step Result 使用 `PASSED | FAILED | SKIPPED | NOT_RUN | INCONCLUSI
 - 标准 Jenkins Pipeline 在下载 Bundle 或访问目标站点前，必须携 `submission_key` 向 TAP 申请一次性执行 claim；TAP 通过唯一约束和 lease 只允许一个 Build 获得该 Attempt。重复或过期 Build 在产生测试副作用前退出。当前路线不在同一 Run 内创建替代 Attempt；用户选择 Rerun 时创建新的 Run，并保存 `rerun_of_run_id`，旧 Attempt/Step Result/Evidence 保持不可变且不与新 Run 混合。
 - `provider_run_ref` 在同一 Execution Target 内唯一。
 - Callback 和 Polling 使用相同终态归一器，重复或乱序消息不能回退终态。
-- Jenkins callback 只进入反向代理后的 API webhook inbox；Pipeline 使用 Execution Target 绑定的 Jenkins Credential 对 `target_id + run_id + submission_key + timestamp + nonce + body_digest` 做 HMAC-SHA256。API 验证 key ID、target/run 绑定、恒定时间签名、时间窗和 nonce 唯一性后才持久化事件，私网 Adapter 不暴露公网入口。Execution Worker 对已验证 Inbox 与 Polling Observation 使用同一归一器。
+- Jenkins callback 只进入反向代理后的 API webhook inbox。Pipeline 使用 Execution Target 绑定的 Jenkins Credential，对包含 `signatureVersion=tap-jenkins-callback-v1`、HTTP method、request path、key ID、target ID、run ID、submission key、RFC3339 UTC timestamp、nonce 与原始 body SHA-256 的对象做 RFC 8785 canonical JSON 编码，再计算 HMAC-SHA256；禁止无边界字符串拼接。API 验证版本、method/path、key ID、target/run 绑定、恒定时间签名、时间窗和 nonce 唯一性后才持久化事件，私网 Adapter 不暴露公网入口。Execution Worker 对已验证 Inbox 与 Polling Observation 使用同一归一器。
 - Provider 暂时不可用返回 `503 execution-provider-unavailable`，不能生成模拟成功结果。
 - 取消是尽力而为；TAP 保存请求时间、Provider 响应和最终观测状态。
 
@@ -1176,7 +1191,7 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 - 当前 `DemoCurrentPolicyVerifier` 及固定 `tenant_id/project_id/user_id` 证明服务端可以统一注入检索 Policy Context；方案验证阶段复用其边界思想，但显式命名和标记为 Validation Scope，不把 `demo` 信任语义包装成生产认证。
 - 文档 Parser、Chunker、Embedding、Milvus Document Index 和检索 Adapter。
 - MySQL Document/Answer/Citation 账本、Blob Artifact Store、Outbox 与 Relay/Reconciler。
-- LiteLLM 的 Query Embedding 与 Answer Generation Port 分离。
+- 现有 LiteLLM Query Embedding 与 Answer Generation 窄端口可作为迁移输入，但 V1 必须把调用者收口到唯一 `ModelGateway` 和 LiteLLM Adapter/conformance suite；RFC-006 的直接 Codex CLI `AnswerGenerationPort` 不迁入 V1，也不保留第二模型出口。若继续保留该历史能力，必须从默认 `athena_runtime.py` 和 V1 import graph 中移出，放入仅由显式命令启动、只绑定 loopback 且不挂载 RFC-009 Project API 的 legacy composition；它不能计入任何 V1/VG 证据。
 - grounded output、Citation Resolver 和 HTTP Problem Details 基础。
 - `apps/web/src/features/knowledge/` 的 Library、Answer、Source、Citation 组件。
 - `apps/web/src/widgets/tap/prototype/` 已确认的信息架构和交互语言。
@@ -1225,30 +1240,30 @@ Mobile、SSO、Azure DevOps、Git Sync、专用 Graph DB 和 Kubernetes HA 只�
 
 ## 22. 决策与相关文档
 
-### 22.1 RFC 接受时必须同步的决策
+### 22.1 RFC 接受时同步的决策
 
-| 决策/同步动作                       | 作用                                                                                     | 对既有决策的处理                                                                                                                |
-| ----------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Validation-first 交付顺序           | 先以固定可信 Scope 完成 V0–VG，之后才实施 P0 身份/RBAC 与 P1 生产加固                    | 目标生产形态仍是单企业、多 Project、多用户；验证代码不得绕过 `ProjectScopeContext`/Policy，也不得直接晋级生产                   |
-| Knowledge-first Web Automation 阶段 | 将 V0–P1 设为当前交付顺序                                                                | 替代 ADR-019；保留其 durable task、artifact、validator 等可复用思想，不继续以独立 Intelligence Lab 为出口                       |
-| Self-hosted Compose 交付基线        | V0–VG 验证 Compose、MinIO、Milvus、LiteLLM 和外置 Jenkins；P0 增加 RBAC，P1 完成生产加固 | 替代 ADR-002 的 Azure 必选部署基线                                                                                              |
-| Milvus + MySQL Graph 知识后端       | TAP 继续管理 parsing/chunking/provenance，Milvus 管 `doc` 检索投影，MySQL 管 Graph       | 替代 ADR-005 和 ADR-012；保留 provider-neutral `SearchPort`                                                                     |
-| TAP-managed Automation Revision     | MySQL 管资产/版本，MinIO 管 Bundle，Git 变为可选同步                                     | 替代 ADR-001 和 ADR-004 中 Git 必须为测试内容事实源的部分，同时保留 Test IR 与统一 Evidence                                     |
-| Jenkins-first Execution Provider    | Provider-neutral core 后的第一个正式执行适配器                                           | 新 ADR 替代 ADR-006 的 Selenium Grid/Appium/AKS 首期实现与顺序，同时重述并保留自建、可替换 Provider、统一 Test IR/Evidence 原则 |
-| 接受 MySQL Outbox + Redis 交付决策  | 状态/Audit/Outbox 同事务，Redis 仅作至少一次低延迟分发                                   | 将仍为 `proposed` 的 ADR-009 推进为 `accepted`，补 `related-rfcs: [RFC-009]`；若评审要求拆出新增运维语义，再由新 ADR 承接       |
-| 接受模块化控制面与独立 Worker 决策  | 保持控制面模块化、耗时/隔离任务独立扩缩                                                  | 将仍为 `proposed` 的 ADR-010 推进为 `accepted`，补 `related-rfcs: [RFC-009]`                                                    |
+| 决策/同步动作                                                                                                         | 作用                                                                                     | 对既有决策的处理                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [ADR-020：Validation-first](../decisions/2026-09-04-adr-020-validation-first-delivery.md)                             | 先以固定可信 Scope 完成 V0–VG，之后才实施 P0 身份/RBAC 与 P1 生产加固                    | 目标生产形态仍是单企业、多 Project、多用户；验证代码不得绕过 `ProjectScopeContext`/Policy，也不得直接晋级生产            |
+| [ADR-021：Knowledge-first Web Automation](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) | 将 V0–P1 设为当前交付顺序                                                                | 替代 ADR-014 和 ADR-019；保留可选隔离 Runtime 原则及 durable task、artifact、validator 等思想，取消旧 P1.2/P1.3 授权     |
+| [ADR-022：Self-hosted Compose](../decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md)              | V0–VG 验证 Compose、MinIO、Milvus、LiteLLM 和外置 Jenkins；P0 增加 RBAC，P1 完成生产加固 | 替代 ADR-002 的 Azure 必选部署基线                                                                                       |
+| [ADR-023：Milvus + MySQL Graph](../decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md)                    | TAP 继续管理 parsing/chunking/provenance，Milvus 管 `doc` 检索投影，MySQL 管 Graph       | 替代 ADR-005 和 ADR-012；保留 provider-neutral `SearchPort`                                                              |
+| [ADR-024：TAP-managed Automation Revision](../decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md)       | MySQL 管资产/版本，MinIO 管 Bundle，Git 变为可选同步                                     | 替代 ADR-001、ADR-004 和 ADR-008；保留 Test IR、统一 Evidence、确定性门禁与 Agent provenance/evidence                    |
+| [ADR-025：Jenkins-first Execution Provider](../decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md)      | Provider-neutral core 后的第一个正式执行适配器                                           | 替代 ADR-006 的 Selenium Grid/Appium/AKS 首期实现与顺序，同时重述并保留自建、可替换 Provider、统一 Test IR/Evidence 原则 |
+| [ADR-009：MySQL Outbox + Redis](../decisions/2026-08-20-adr-009-mysql-outbox-redis-delivery.md)                       | 状态与 Outbox 同事务，Redis 仅作至少一次低延迟分发                                       | 已从 `proposed` 转为 `accepted` 并补 `related-rfcs: [RFC-009]`；新增 Audit/归档运维语义仍由本 RFC 与 Plan 管理           |
+| [ADR-010：模块化控制面与独立 Worker](../decisions/2026-08-20-adr-010-modular-control-plane-independent-workers.md)    | 保持控制面模块化、耗时/隔离任务独立扩缩                                                  | 已从 `proposed` 转为 `accepted` 并补 `related-rfcs: [RFC-009]`                                                           |
 
-ADR 必须一项决策一份文档，并双向维护 `supersedes`/`superseded-by`；已有 proposed ADR 按治理状态机接受并补关联。书面 RFC 被接受前不创建替代 ADR、不推进 ADR-009/010，也不修改旧 ADR 语义。
+本 RFC 接受时已按“一项决策一份文档”创建 ADR-020–025，并双向维护 `supersedes`/`superseded-by`；ADR-009/010 已按治理状态机转为 `accepted` 并补关联。旧 ADR 的原决策正文作为历史记录保留，不被静默改写。
 
 ### 22.2 相关文档
 
-- 产品交互事实源：[RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。若本 RFC 被接受，冲突范围以 RFC-009 为准：`AUT-003` 的 Web Provider 从 Azure DevOps 改为 Jenkins，其 Mobile 部分以及 `AUT-005` 的 Web/Mobile 类型推断、`AUT-007` 全部后移到 P1 之后；`AUT-008` 保留 AI Agent 与 Pipeline Agent 分离，但首个 Pipeline Provider 改为 Jenkins。`ATH-008` 与最近一次消息上键召回语义继续有效。
+- 产品交互事实源：[RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。冲突范围以本 RFC 为准：`AUT-003` 的 Web Provider 从 Azure DevOps 改为 Jenkins，其 Mobile 部分以及 `AUT-005` 的 Web/Mobile 类型推断、`AUT-007` 全部后移到 P1 之后；`AUT-008` 保留 AI Agent 与 Pipeline Agent 分离，但首个 Pipeline Provider 改为 Jenkins。`ATH-008` 与最近一次消息上键召回语义继续有效。
 - 当前实现事实源：[RFC-005：Athena 本地知识工作区 Demo](../proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md)。
 - 当前 Backend 装配入口：[`athena_runtime.py`](../../apps/backend/src/tap/entrypoints/athena_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
 - 当前默认 Web 产品壳：[`AthenaPage.tsx`](../../apps/web/src/pages/AthenaPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/web/src/widgets/tap/TapProductPrototype.tsx)；真实知识组件入口：[`AthenaWorkspace.tsx`](../../apps/web/src/widgets/athena/AthenaWorkspace.tsx)。
 - Milvus 实验证据：[Milvus 本地检索实验评审](../reviews/2026-08-27-milvus-local-search-experiment.md)。
 - 文档治理：[TAP 文档治理规范](../reference/2026-08-22-document-governance.md)。
-- RFC 接受后必须创建替代 ADR，并同步 [架构决策索引](../decisions/index.md)、总体架构、README 和路线图；在此之前不得把既有 Azure/Git/Intelligence 决策静默改写为已替代。
+- 本 RFC 的接受动作同步创建替代 ADR，并更新[架构决策索引](../decisions/index.md)、总体架构、README 和路线图；既有 Azure/Git/Intelligence 决策仅通过生命周期元数据进入历史，不静默改写原语义。
 
 ### 22.3 外部技术依据
 
@@ -1269,11 +1284,11 @@ ADR 必须一项决策一份文档，并双向维护 `supersedes`/`superseded-by
 | Jenkins 提交结果不确定或回调重复             | 重复测试副作用、错误终态     | `submission_key`、`SUBMIT_UNKNOWN` 对账、Pipeline preflight claim、无盲目重试、Inbox/Polling 同一幂等 Normalizer     |
 | MySQL、MinIO、Milvus 与 Jenkins 无分布式事务 | 状态与制品短暂不一致         | MySQL 状态/Audit/Outbox 同事务、digest/manifest 晋级、lease/fencing 和 Reconciler；UI 展示明确中间/失败状态          |
 | 单机 Compose 达到资源上限                    | 延迟、排队或恢复目标失守     | VG 只报告实测；P1 执行配额、`REF-COMPOSE-01` 容量门禁和恢复演练；超过基线时按新 RFC 迁移 Distributed/Kubernetes      |
-| 新方向与既有 Azure/Git ADR 冲突              | 实现和客户叙述出现双重事实源 | 本 RFC 接受后逐项创建 superseding ADR，并同步旧 ADR、Architecture、README 与 Roadmap，未同步前不宣称新基线生效       |
+| 新方向与既有 Azure/Git ADR 冲突              | 实现和客户叙述出现双重事实源 | 已通过 ADR-020–025 及 Architecture、README、Roadmap 同步建立新基线；后续材料只引用当前决策链                         |
 
 ## 24. 未决问题
 
-没有阻止本 RFC 进入接受评审的产品或架构未决问题。方案验证也必须在使用真实依赖前填写对应的 Validation 配置，不能因为尚未建设用户认证而省略数据和执行边界：
+没有阻止本 RFC 实施的产品或架构未决问题。方案验证仍必须在使用真实依赖前填写对应的 Validation 配置，不能因为尚未建设用户认证而省略数据和执行边界：
 
 - V1 前：代表性知识数据、允许的 Codex model alias、LiteLLM/模型 Provider、数据出境/保留批准和验证配额。
 - V4 前：非生产目标 Web Environment、Recorder/Debug egress allowlist、测试数据与 Validation Secret 策略。

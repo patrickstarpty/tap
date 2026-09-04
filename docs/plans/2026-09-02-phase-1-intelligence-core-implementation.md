@@ -1,9 +1,11 @@
 ---
-status: planned
+status: cancelled
 date: 2026-09-02
 ---
 
 # Phase 1 Intelligence Core Implementation Plan
+
+> **取消说明（2026-09-04）**：本计划在实施前取消，只保留为 RFC-007/ADR-019 的历史技术参考。RFC-009/ADR-021 已把交付顺序改为 V0–VG 的 Knowledge-first Web Automation；实现不得从本计划选择任务跳过新的 Scope、Knowledge、Test Plan、LCA、Recorder 与 Jenkins 里程碑。当前执行入口是 [Athena 知识与 Web 自动化平台实施计划](2026-09-04-athena-knowledge-web-automation-platform.md)。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -11,6 +11,8 @@ related-adrs:
 
 # RFC-005：Athena 本地知识工作区 Demo
 
+> **现行处置（2026-09-04）**：本 RFC 保持 `implemented`，只记录已经交付的 loopback、单知识空间 Athena 本地纵向切片，并作为 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) V1 的可复用起点；它不表示 V0/V1 已完成。现行交付已由 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 恢复为 Knowledge-first Web Automation，下文“当前 Phase 1 是 Intelligence Lab”、Azure 企业基线及“四索引不在当前交付”等表述均只记录 2026-09-02 及更早的历史语境。
+
 > **当前阶段处置（2026-09-02）**：本 RFC 作为已实现的 Athena 本地能力继续有效；文中“完整 Phase 1 仍 active/回到现有 Phase 1”记录的是当时路线图，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Phase 1 是 Intelligence Lab；Athena 文档、revision/hash/anchor 和 Citation 只作为可选资料能力被复用，不代表完整 Knowledge Chat 或企业四索引成为当前交付项。
 
 ## 摘要

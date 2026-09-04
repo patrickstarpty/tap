@@ -1,30 +1,30 @@
 # 后置 Knowledge Plane：Azure AI Search 索引设计
 
-本文把 TAP 的四个逻辑知识域映射为可部署的 Azure AI Search 索引、别名、字段属性、向量与 semantic configuration。字段名是架构契约基线，最终 JSON 由实现仓库生成并进入评测与变更审查。
+本文记录 2026-08-21 将 TAP 四个逻辑知识域映射为 Azure AI Search 索引、别名、字段属性、向量与 semantic configuration 的 provider-specific 历史方案；它不是当前架构契约基线。
 
-> **阶段说明（2026-09-02）**：本文正文中的 “Phase 1” 指 2026-08-21 的旧企业 RAG 基线。根据 [ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md)，四索引部署已后置；当前 Intelligence Lab 继续使用 Athena 的本地 `doc` Milvus 投影，不能把它描述为本页企业索引已实现。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 采用 Milvus `doc` 检索与 MySQL Knowledge Graph，并按 V0–VG、P0、P1 推进。本文正文中的 “Phase 1”、Azure AI Search、Entra、AKS 和四索引均指 2026-08-21 历史设计，不能描述为当前目标或已实现能力。可继续复用的原则限于 TAP 掌握稳定身份、provenance、Policy filter、manifest、删除传播、可重建与版本化评测；具体 Azure Schema/API 不自动约束当前 Milvus 实现。
 
 ## 1. 实现边界
 
-| 能力 | TAP 负责 | Azure AI Search 负责 |
-| --- | --- | --- |
-| 数据理解 | source adapter、typed parser、结构化 chunk、稳定 ID | Phase 1 不承担解析；indexer/skillset 仅为后续隔离 POC |
-| 安全 | Entra 身份解析、ACL Policy、脱敏、可信 filter 编译 | 在 filterable 字段上执行 query-time security filter |
-| 向量 | 选择模型、Embedding 版本/维度、迁移 | 保存向量、HNSW/eKNN 查询、压缩能力 |
-| 排序 | query classification、exact path、跨索引融合、context/citation | 单索引 BM25、vector、RRF、semantic ranker、scoring profile |
-| 生命周期 | manifest、删除传播、对账、corpus 发布 | 批量 upsert/delete、物理索引、alias |
-| 溯源 | source/chunk/index/retrieval/answer 账本 | 返回被索引的 provenance 字段与 score/subscore |
+| 能力     | TAP 负责                                                       | Azure AI Search 负责                                       |
+| -------- | -------------------------------------------------------------- | ---------------------------------------------------------- |
+| 数据理解 | source adapter、typed parser、结构化 chunk、稳定 ID            | Phase 1 不承担解析；indexer/skillset 仅为后续隔离 POC      |
+| 安全     | Entra 身份解析、ACL Policy、脱敏、可信 filter 编译             | 在 filterable 字段上执行 query-time security filter        |
+| 向量     | 选择模型、Embedding 版本/维度、迁移                            | 保存向量、HNSW/eKNN 查询、压缩能力                         |
+| 排序     | query classification、exact path、跨索引融合、context/citation | 单索引 BM25、vector、RRF、semantic ranker、scoring profile |
+| 生命周期 | manifest、删除传播、对账、corpus 发布                          | 批量 upsert/delete、物理索引、alias                        |
+| 溯源     | source/chunk/index/retrieval/answer 账本                       | 返回被索引的 provenance 字段与 score/subscore              |
 
 Phase 1 四个 active index 全部使用 TAP Push API。PDF/DOCX/PPTX 可以调用 Document Intelligence/Content Understanding 做结构提取，但由 TAP 生成 `ChunkEnvelope` 并发布。未来若评估 indexer + skillset + index projection，必须写入隔离物理索引；由于 projection document key 由 AI Search 生成，需新增独立 `searchDocumentKey` 并保存它到业务 `chunkId` 的映射，不能直接复用本页 active-index Schema。
 
 ## 2. 索引与别名
 
-| Family | Reader Alias | 物理索引示例 | 内容 |
-| --- | --- | --- | --- |
-| doc | `kb-doc-active` | `kb-doc-v1-20260821` | 文档 leaf/section/document summary、OpenAPI operation |
-| code | `kb-code-active` | `kb-code-v1-20260821` | source symbol、AST chunk、一跳依赖元数据 |
-| bdd | `kb-bdd-active` | `kb-bdd-v1-20260821` | Feature/Scenario/Step 与 Test IR ref |
-| failure | `kb-failure-active` | `kb-failure-v1-20260821` | Incident、fingerprint、resolution 与 evidence refs |
+| Family  | Reader Alias        | 物理索引示例             | 内容                                                  |
+| ------- | ------------------- | ------------------------ | ----------------------------------------------------- |
+| doc     | `kb-doc-active`     | `kb-doc-v1-20260821`     | 文档 leaf/section/document summary、OpenAPI operation |
+| code    | `kb-code-active`    | `kb-code-v1-20260821`    | source symbol、AST chunk、一跳依赖元数据              |
+| bdd     | `kb-bdd-active`     | `kb-bdd-v1-20260821`     | Feature/Scenario/Step 与 Test IR ref                  |
+| failure | `kb-failure-active` | `kb-failure-v1-20260821` | Incident、fingerprint、resolution 与 evidence refs    |
 
 规则：
 
@@ -39,33 +39,33 @@ Phase 1 四个 active index 全部使用 TAP Push API。PDF/DOCX/PPTX 可以调�
 
 布尔列表示推荐的 Azure AI Search field attribution；`—` 表示关闭。
 
-| 字段 | Azure 类型 | key | searchable | filterable | sortable | facetable | retrievable | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `chunkId` | `Edm.String` | ✓ | — | ✓ | — | — | ✓ | 不可变 snapshot key；`h_` + SHA-256 lowercase hex，符合 document-key 字符规则 |
-| `logicalChunkId` | `Edm.String` | — | — | ✓ | — | — | ✓ | 跨 revision 的逻辑身份 |
-| `rootId` / `parentId` | `Edm.String` | — | — | ✓ | — | — | ✓ | Parent/Child 回填 |
-| `tenantId` / `projectId` | `Edm.String` | — | — | ✓ | — | — | — | 服务端 security filter；不返回浏览器 |
-| `allowedGroupIds` | `Collection(Edm.String)` | — | — | ✓ | — | — | — | group security trimming |
-| `classification` / `environment` | `Edm.String` | — | — | ✓ | — | — | ✓ | 数据分级与环境范围 |
-| `aclVersion` | `Edm.Int64` | — | — | ✓ | — | — | — | 撤权、缓存与审计 |
-| `sourceId` / `sourceType` | `Edm.String` | — | — | ✓ | — | — | ✓ | 逻辑来源 |
-| `sourceUri` / `sourceRevision` | `Edm.String` | — | — | ✓ | — | — | ✓ | 仅后端 Citation Resolver 使用 |
-| `anchorKind` | `Edm.String` | — | — | ✓ | — | — | ✓ | page/heading/line/symbol/BDD/incident |
-| `anchorJson` | `Edm.String` | — | — | — | — | — | ✓ | 结构化位置序列化值 |
-| `sourceContentHash` / `chunkContentHash` | `Edm.String` | — | — | ✓ | — | — | ✓ | 原始 snapshot / 当前 chunk 的完整性与对账 |
-| `contentRole` | `Edm.String` | — | — | ✓ | — | — | ✓ | `source` 或 `generated_summary` |
-| `derivedFromChunkIds` | `Collection(Edm.String)` | — | — | ✓ | — | — | ✓ | 摘要回链 |
-| `chunkKind` / `chunkLevel` | `Edm.String` | — | — | ✓ | — | ✓ | ✓ | function/scenario/leaf/section 等 |
-| `title` | `Edm.String` | — | ✓ | — | — | — | ✓ | semantic title 候选 |
-| `content` | `Edm.String` | — | ✓ | — | — | — | ✓ | 可引用的脱敏文本 |
-| `embeddingTextHash` | `Edm.String` | — | — | ✓ | — | — | ✓ | embedding 输入审计；默认不存完整输入副本 |
-| `contentVector` | `Collection(Edm.Single)` | — | ✓ | — | — | — | — | 维度绑定 embedding model，绝不返回前端 |
-| `language` | `Edm.String` | — | — | ✓ | — | ✓ | ✓ | analyzer/query routing |
-| `tags` | `Collection(Edm.String)` | — | ✓ | ✓ | — | ✓ | ✓ | 关键词与筛选 |
-| `corpusVersion` | `Edm.String` | — | — | ✓ | — | — | ✓ | active corpus 与 trace |
-| `parserVersion` / `chunkerVersion` / `pipelineVersion` | `Edm.String` | — | — | ✓ | — | — | ✓ | 可重建性 |
-| `embeddingModelVersion` | `Edm.String` | — | — | ✓ | — | — | ✓ | 向量空间版本 |
-| `indexedAt` / `sourceUpdatedAt` | `Edm.DateTimeOffset` | — | — | ✓ | ✓ | — | ✓ | 新鲜度与 scoring profile |
+| 字段                                                   | Azure 类型               | key | searchable | filterable | sortable | facetable | retrievable | 说明                                                                          |
+| ------------------------------------------------------ | ------------------------ | --- | ---------- | ---------- | -------- | --------- | ----------- | ----------------------------------------------------------------------------- |
+| `chunkId`                                              | `Edm.String`             | ✓   | —          | ✓          | —        | —         | ✓           | 不可变 snapshot key；`h_` + SHA-256 lowercase hex，符合 document-key 字符规则 |
+| `logicalChunkId`                                       | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 跨 revision 的逻辑身份                                                        |
+| `rootId` / `parentId`                                  | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | Parent/Child 回填                                                             |
+| `tenantId` / `projectId`                               | `Edm.String`             | —   | —          | ✓          | —        | —         | —           | 服务端 security filter；不返回浏览器                                          |
+| `allowedGroupIds`                                      | `Collection(Edm.String)` | —   | —          | ✓          | —        | —         | —           | group security trimming                                                       |
+| `classification` / `environment`                       | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 数据分级与环境范围                                                            |
+| `aclVersion`                                           | `Edm.Int64`              | —   | —          | ✓          | —        | —         | —           | 撤权、缓存与审计                                                              |
+| `sourceId` / `sourceType`                              | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 逻辑来源                                                                      |
+| `sourceUri` / `sourceRevision`                         | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 仅后端 Citation Resolver 使用                                                 |
+| `anchorKind`                                           | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | page/heading/line/symbol/BDD/incident                                         |
+| `anchorJson`                                           | `Edm.String`             | —   | —          | —          | —        | —         | ✓           | 结构化位置序列化值                                                            |
+| `sourceContentHash` / `chunkContentHash`               | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 原始 snapshot / 当前 chunk 的完整性与对账                                     |
+| `contentRole`                                          | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | `source` 或 `generated_summary`                                               |
+| `derivedFromChunkIds`                                  | `Collection(Edm.String)` | —   | —          | ✓          | —        | —         | ✓           | 摘要回链                                                                      |
+| `chunkKind` / `chunkLevel`                             | `Edm.String`             | —   | —          | ✓          | —        | ✓         | ✓           | function/scenario/leaf/section 等                                             |
+| `title`                                                | `Edm.String`             | —   | ✓          | —          | —        | —         | ✓           | semantic title 候选                                                           |
+| `content`                                              | `Edm.String`             | —   | ✓          | —          | —        | —         | ✓           | 可引用的脱敏文本                                                              |
+| `embeddingTextHash`                                    | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | embedding 输入审计；默认不存完整输入副本                                      |
+| `contentVector`                                        | `Collection(Edm.Single)` | —   | ✓          | —          | —        | —         | —           | 维度绑定 embedding model，绝不返回前端                                        |
+| `language`                                             | `Edm.String`             | —   | —          | ✓          | —        | ✓         | ✓           | analyzer/query routing                                                        |
+| `tags`                                                 | `Collection(Edm.String)` | —   | ✓          | ✓          | —        | ✓         | ✓           | 关键词与筛选                                                                  |
+| `corpusVersion`                                        | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | active corpus 与 trace                                                        |
+| `parserVersion` / `chunkerVersion` / `pipelineVersion` | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 可重建性                                                                      |
+| `embeddingModelVersion`                                | `Edm.String`             | —   | —          | ✓          | —        | —         | ✓           | 向量空间版本                                                                  |
+| `indexedAt` / `sourceUpdatedAt`                        | `Edm.DateTimeOffset`     | —   | —          | ✓          | ✓        | —         | ✓           | 新鲜度与 scoring profile                                                      |
 
 权限字段默认 `retrievable: false`。即使后端需要诊断，也从 Policy/Trace 账本读取脱敏值，不把原始 group IDs 放进普通 Search response。
 
@@ -73,49 +73,49 @@ Phase 1 四个 active index 全部使用 TAP Push API。PDF/DOCX/PPTX 可以调�
 
 ### 4.1 `kb-doc-*`
 
-| 字段 | 类型与属性 | 用途 |
-| --- | --- | --- |
-| `documentId` | String, filterable/retrievable | 文档逻辑 ID |
-| `docType` | String, filterable/facetable/retrievable | requirement/design/manual/openapi 等 |
-| `sectionPath` | Collection(String), searchable/retrievable | heading breadcrumb |
-| `pageStart/pageEnd` | Int32, filterable/retrievable | PDF/Office 定位 |
-| `offsetStart/offsetEnd` | Int64, retrievable | 文本原件定位 |
-| `effectiveDate` | DateTimeOffset, filterable/sortable/retrievable | 版本与时效 |
-| `summaryModelVersion/promptVersion` | String, filterable/retrievable | 生成摘要 provenance |
+| 字段                                | 类型与属性                                      | 用途                                 |
+| ----------------------------------- | ----------------------------------------------- | ------------------------------------ |
+| `documentId`                        | String, filterable/retrievable                  | 文档逻辑 ID                          |
+| `docType`                           | String, filterable/facetable/retrievable        | requirement/design/manual/openapi 等 |
+| `sectionPath`                       | Collection(String), searchable/retrievable      | heading breadcrumb                   |
+| `pageStart/pageEnd`                 | Int32, filterable/retrievable                   | PDF/Office 定位                      |
+| `offsetStart/offsetEnd`             | Int64, retrievable                              | 文本原件定位                         |
+| `effectiveDate`                     | DateTimeOffset, filterable/sortable/retrievable | 版本与时效                           |
+| `summaryModelVersion/promptVersion` | String, filterable/retrievable                  | 生成摘要 provenance                  |
 
 ### 4.2 `kb-code-*`
 
-| 字段 | 类型与属性 | 用途 |
-| --- | --- | --- |
-| `repositoryId` / `commitSha` | String, filterable/retrievable | Git revision |
-| `path` | String, searchable/filterable/retrievable | 文件定位 |
-| `symbolId` / `symbolFqn` | String, searchable/filterable/retrievable | exact/symbol recall |
-| `symbolKind` / `signature` | String, searchable/filterable/retrievable | 类型与签名 |
-| `lineStart/lineEnd` | Int32, filterable/retrievable | 精确引用 |
-| `callerIds/calleeIds/testAssetIds` | Collection(String), filterable/retrievable | 一跳关系扩展，仍需 ACL |
-| `codeSummary` | String, searchable/retrievable | 可选自然语言 rerank 输入；不是源码 citation |
+| 字段                               | 类型与属性                                 | 用途                                        |
+| ---------------------------------- | ------------------------------------------ | ------------------------------------------- |
+| `repositoryId` / `commitSha`       | String, filterable/retrievable             | Git revision                                |
+| `path`                             | String, searchable/filterable/retrievable  | 文件定位                                    |
+| `symbolId` / `symbolFqn`           | String, searchable/filterable/retrievable  | exact/symbol recall                         |
+| `symbolKind` / `signature`         | String, searchable/filterable/retrievable  | 类型与签名                                  |
+| `lineStart/lineEnd`                | Int32, filterable/retrievable              | 精确引用                                    |
+| `callerIds/calleeIds/testAssetIds` | Collection(String), filterable/retrievable | 一跳关系扩展，仍需 ACL                      |
+| `codeSummary`                      | String, searchable/retrievable             | 可选自然语言 rerank 输入；不是源码 citation |
 
 ### 4.3 `kb-bdd-*`
 
-| 字段 | 类型与属性 | 用途 |
-| --- | --- | --- |
-| `featureId` / `scenarioId` / `stableTestId` | String, searchable/filterable/retrievable | exact 与资产关联 |
-| `featureTitle` / `scenarioTitle` | String, searchable/retrievable | 语义与 BM25 |
-| `stepKeyword` / `stepOrder` | String / Int32, filterable/retrievable | Step 定位与顺序 |
-| `examplesJson` | String, retrievable | Scenario Outline 示例 |
-| `testIrAssetId/testIrRevision` | String, filterable/retrievable | 后续 Test IR 连接 |
+| 字段                                        | 类型与属性                                | 用途                  |
+| ------------------------------------------- | ----------------------------------------- | --------------------- |
+| `featureId` / `scenarioId` / `stableTestId` | String, searchable/filterable/retrievable | exact 与资产关联      |
+| `featureTitle` / `scenarioTitle`            | String, searchable/retrievable            | 语义与 BM25           |
+| `stepKeyword` / `stepOrder`                 | String / Int32, filterable/retrievable    | Step 定位与顺序       |
+| `examplesJson`                              | String, retrievable                       | Scenario Outline 示例 |
+| `testIrAssetId/testIrRevision`              | String, filterable/retrievable            | 后续 Test IR 连接     |
 
 ### 4.4 `kb-failure-*`
 
-| 字段 | 类型与属性 | 用途 |
-| --- | --- | --- |
-| `incidentId` / `fingerprint` | String, searchable/filterable/retrievable | exact/fingerprint recall |
-| `runId` / `attemptId` / `testAssetId` | String, filterable/retrievable | 运行定位 |
-| `errorType` / `status` | String, searchable/filterable/facetable/retrievable | 分类与筛选 |
-| `environmentMatrixJson` | String, retrievable | 浏览器/设备/环境摘要 |
-| `symptom` / `resolution` | String, searchable/retrievable | 语义检索与 semantic ranker |
-| `evidenceRefsJson` | String, retrievable | Blob refs + hash；不含原始大日志 |
-| `firstSeenAt/lastSeenAt` | DateTimeOffset, filterable/sortable/retrievable | 新鲜度与趋势 |
+| 字段                                  | 类型与属性                                          | 用途                             |
+| ------------------------------------- | --------------------------------------------------- | -------------------------------- |
+| `incidentId` / `fingerprint`          | String, searchable/filterable/retrievable           | exact/fingerprint recall         |
+| `runId` / `attemptId` / `testAssetId` | String, filterable/retrievable                      | 运行定位                         |
+| `errorType` / `status`                | String, searchable/filterable/facetable/retrievable | 分类与筛选                       |
+| `environmentMatrixJson`               | String, retrievable                                 | 浏览器/设备/环境摘要             |
+| `symptom` / `resolution`              | String, searchable/retrievable                      | 语义检索与 semantic ranker       |
+| `evidenceRefsJson`                    | String, retrievable                                 | Blob refs + hash；不含原始大日志 |
+| `firstSeenAt/lastSeenAt`              | DateTimeOffset, filterable/sortable/retrievable     | 新鲜度与趋势                     |
 
 ## 5. Analyzer 与 exact 字段
 
@@ -138,12 +138,12 @@ Phase 1 四个 active index 全部使用 TAP Push API。PDF/DOCX/PPTX 可以调�
 
 每个 family 独立配置，并通过评测决定是否默认启用：
 
-| Family | Title | Prioritized keywords | Prioritized content | 默认策略 |
-| --- | --- | --- | --- | --- |
-| doc | `title` | tags、sectionPath | content、经验证的 summary | 默认实验开启 |
-| code | `symbolFqn` | path、language、signature | codeSummary、content | 默认关闭，先走 exact/symbol/hybrid |
-| bdd | `scenarioTitle` | featureTitle、tags、stableTestId | content | 默认实验开启 |
-| failure | `errorType` | fingerprint、testAssetId、tags | symptom、resolution、content | 默认实验开启 |
+| Family  | Title           | Prioritized keywords             | Prioritized content          | 默认策略                           |
+| ------- | --------------- | -------------------------------- | ---------------------------- | ---------------------------------- |
+| doc     | `title`         | tags、sectionPath                | content、经验证的 summary    | 默认实验开启                       |
+| code    | `symbolFqn`     | path、language、signature        | codeSummary、content         | 默认关闭，先走 exact/symbol/hybrid |
+| bdd     | `scenarioTitle` | featureTitle、tags、stableTestId | content                      | 默认实验开启                       |
+| failure | `errorType`     | fingerprint、testAssetId、tags   | symptom、resolution、content | 默认实验开启                       |
 
 Semantic ranker 只处理可检索文本，并重排已有候选，不替代初始召回。若启用，候选字段按优先级排列；代码、短 ID、fingerprint query 可以按 query class 绕过。
 

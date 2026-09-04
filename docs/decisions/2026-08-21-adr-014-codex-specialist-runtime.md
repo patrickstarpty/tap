@@ -1,9 +1,11 @@
 ---
 id: ADR-014
-status: accepted
+status: superseded
 date: 2026-08-21
+accepted-date: 2026-09-02
 supersedes: []
-superseded-by: []
+superseded-by:
+  - ADR-021
 related-rfcs:
   - RFC-001
   - RFC-007
@@ -11,7 +13,9 @@ related-rfcs:
 
 # ADR-014：Codex 作为可选、隔离的 Specialist Runtime
 
-- **状态**：已接受（2026-09-02）；作为 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 的首个可替换 Runtime Adapter 决策。旧 [RFC-001](../proposals/2026-08-21-rfc-001-codex-agent-runtime.md) 已被拒绝，仅作历史设计记录。
+> **替代说明（2026-09-04）**：本 ADR 已由 [ADR-021](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代。provider-neutral、可关闭、凭据隔离且不被 Knowledge API 依赖的可选 Runtime 原则继续保留，但下述旧 P1.2/P1.3 Profile、权限和实施次序不再构成当前授权；未来引入具体 Runtime 必须在 P1 后另立 RFC/ADR。
+
+- **状态**：历史决策；曾于 2026-09-02 接受，已于 2026-09-04 被 [ADR-021](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代。它曾作为 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 的首个可替换 Runtime Adapter 决策；旧 [RFC-001](../proposals/2026-08-21-rfc-001-codex-agent-runtime.md) 已被拒绝，仅作历史设计记录。
 - **决策**：在 TAP 拥有的 `AgentRuntime` 端口之后增加可关闭、可替换的 `CodexRuntimeAdapter`。公共 API、Artifact Schema 和 UI 不暴露 Codex 供应商模式。长任务集成优先评估服务端 SDK；`codex exec` 只用于本地实验、CI 和一次性批处理；App Server 只在确实需要且其契约稳定后单独 POC。Athena 的 Ingestion、Retrieval、Answer 和 Citation 不依赖该 Adapter。
 - **用途**：P1.2 只用 `intelligence-readonly-v1` 和 `automation-design-v1` Profile，产生有依据的 Intelligence Report、Assumption Register、Automation Blueprint 和 Review Package。P1.3 仅在凭据隔离、workspace escape、Broker 扫描、patch policy 和独立 Validator 门禁通过后，才能以可关闭的 `automation-engineering-lab-v1` Profile 产生 Code Bundle 或 Candidate Patch。Codex 只能通过 TAP Tool Gateway 调用当前 Profile 已批准的窄接口，不能直接持有 Search、MySQL、Redis、Blob、Key Vault、Docker/Kubernetes、生产 Git、BrowserStack 或被测系统凭据。
 - **原因**：Codex SDK 官方支持把 coding-focused Agent 集成进内部工具、工作流和应用，但 Agent Runtime 的线程、工具和 workspace 能力与 LiteLLM 模型路由、确定性 RAG 是不同层次。把它放在可替换 Provider 后面可以复用其代码理解与生成能力，同时保持供应商可替换、权限安全和 RAG 独立可用。

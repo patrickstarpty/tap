@@ -1,6 +1,6 @@
 ---
 id: RFC-007
-status: accepted
+status: withdrawn
 date: 2026-09-02
 related-adrs:
   - ADR-008
@@ -9,9 +9,12 @@ related-adrs:
   - ADR-014
   - ADR-018
   - ADR-019
+  - ADR-021
 ---
 
 # RFC-007：Phase 1 Intelligence Layer 探索
+
+> **撤回处置（2026-09-04）**：本 RFC 在实施前被 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 取代，不再授权独立 Intelligence Lab 的 P1.0–P1.3 路线。durable task、artifact、validator、引用与真实性边界仍可作为历史工程参考；本文所有“当前”“接下来”“Phase 1/P1.0–P1.3”均按 2026-09-02 历史范围理解。现行顺序为 Knowledge-first V0–VG、P0 身份/RBAC/多 Project、P1 生产加固，并以 Web-only/Jenkins-first 为自动化范围。
 
 ## 摘要
 
@@ -34,16 +37,16 @@ P1.3 是 Phase 1 总路线中的后续条件实验，才可能加入只读仓库
 
 需求、Release、产品源码和测试仓库都不是启动任务的必要条件。缺少资料时，系统必须进入 `assumption-first` 路径，明确列出假设和未知项，不能伪造需求、引用或执行结果。
 
-| 维度 | Phase 1 总路线决定 |
-| --- | --- |
-| 产品形态 | 单用户、loopback 的 `TAP Intelligence Lab` |
-| 主要价值 | P1.0–P1.2 验证理解、研究和测试/流程设计；P1.3 条件验证候选自动化工程和失败分析 |
-| 正式产物 | 版本化、可引用、可评测、可人工审查的 Artifact 与 Review Package |
-| 自主边界 | 当前为 L0 Insight、L1 Draft；L2 隔离候选代码仅属于 P1.3 条件实验 |
+| 维度     | Phase 1 总路线决定                                                                                        |
+| -------- | --------------------------------------------------------------------------------------------------------- |
+| 产品形态 | 单用户、loopback 的 `TAP Intelligence Lab`                                                                |
+| 主要价值 | P1.0–P1.2 验证理解、研究和测试/流程设计；P1.3 条件验证候选自动化工程和失败分析                            |
+| 正式产物 | 版本化、可引用、可评测、可人工审查的 Artifact 与 Review Package                                           |
+| 自主边界 | 当前为 L0 Insight、L1 Draft；L2 隔离候选代码仅属于 P1.3 条件实验                                          |
 | 延后能力 | Test Management、真实浏览器/设备执行、Execution Provider、Release Management、PR/缺陷写入、多租户生产治理 |
-| 产品承诺 | 没有真实执行证据，就不能声称测试已经运行、通过或验证 |
+| 产品承诺 | 没有真实执行证据，就不能声称测试已经运行、通过或验证                                                      |
 
-本 RFC 已于 2026-09-02 被接受。[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 正式记录了阶段重排：旧 Knowledge Chat 优先级作为历史决策保留，当前 Phase 1 以 Intelligence Layer Exploration 为产品验证主线。
+本 RFC 已于 2026-09-02 被接受。[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 正式记录了当时的阶段重排：旧 Knowledge Chat 优先级作为历史决策保留，Intelligence Layer Exploration 曾成为产品验证主线。2026-09-04 起，该交付优先级由 RFC-009/ADR-021 替代，本 RFC 的 `accepted` 状态与可复用技术决策不变。
 
 ## 背景
 
@@ -68,14 +71,14 @@ flowchart TB
 
 长期平台主体参考 BrowserStack 的测试管理、自动化执行和证据体验；Intelligence Layer 则分别吸收以下产品原则：
 
-| 参考方向 | TAP 吸收的原则 | Phase 1 中的体现 |
-| --- | --- | --- |
-| Rovo | 理解当前上下文，区分问答与行动 | 明确任务范围和允许动作；不把所有请求都当聊天 |
-| Gemini Notebook | 用户明确选择资料，结论可逐项核验 | Context Snapshot、Claim basis 和 Citation |
-| Manus | 长任务可观察、可取消、可恢复 | 独立 Task/Attempt 状态机和任务工作区 |
-| Codex | 在隔离工作区理解仓库、生成最小改动并展示 Diff | 条件开启的候选代码/patch 实验 |
-| Claude Code | 分层规则、Skills、Hooks、Subagents、工具和权限可配置 | 平台版本化规则与工具 Profile；安全边界仍在 Runtime 外 |
-| BrowserStack | 测试领域语言、结果与证据导向 | Blueprint 和 Review Package 面向未来测试平台，但本阶段不接真实执行 |
+| 参考方向        | TAP 吸收的原则                                       | Phase 1 中的体现                                                   |
+| --------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| Rovo            | 理解当前上下文，区分问答与行动                       | 明确任务范围和允许动作；不把所有请求都当聊天                       |
+| Gemini Notebook | 用户明确选择资料，结论可逐项核验                     | Context Snapshot、Claim basis 和 Citation                          |
+| Manus           | 长任务可观察、可取消、可恢复                         | 独立 Task/Attempt 状态机和任务工作区                               |
+| Codex           | 在隔离工作区理解仓库、生成最小改动并展示 Diff        | 条件开启的候选代码/patch 实验                                      |
+| Claude Code     | 分层规则、Skills、Hooks、Subagents、工具和权限可配置 | 平台版本化规则与工具 Profile；安全边界仍在 Runtime 外              |
+| BrowserStack    | 测试领域语言、结果与证据导向                         | Blueprint 和 Review Package 面向未来测试平台，但本阶段不接真实执行 |
 
 这些产品只是体验与能力参考，不是 TAP 的运行时依赖，也不会出现在供应商模式选择器中。
 
@@ -111,7 +114,7 @@ flowchart TB
 
 - [ADR-008](../decisions/2026-08-20-adr-008-deterministic-gates-and-agent-advice.md) 的原则保持不变：模型提出建议，确定性系统负责验证、权限和发布门禁。
 - [ADR-011](../decisions/2026-08-20-adr-011-phase-1-rag-foundation.md) 与 [ADR-013](../decisions/2026-08-21-adr-013-phase-1-knowledge-chat.md) 分别将 RAG Foundation 和 Knowledge Chat 定义为原 Phase 1 验收面。[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已正式替代这两项阶段优先级；来源、引用和后置 Knowledge Plane 设计仍保留。
-- [RFC-003](2026-08-23-rfc-003-phase-1-application-structure.md) 中单仓、模块边界、契约生成和多 entrypoint 等工程约束继续有效；其中把完整 Knowledge Chat、企业四索引、Entra 和 AKS 作为当前 Phase 1 出口的产品范围，已由本 RFC 和 ADR-019 重排。
+- [RFC-003](2026-08-23-rfc-003-phase-1-application-structure.md) 中单仓、模块边界、契约生成和多 entrypoint 等工程约束继续有效；其中把完整 Knowledge Chat、企业四索引、Entra 和 AKS 作为当时 Phase 1 出口的产品范围，曾由本 RFC 和 ADR-019 重排，现行优先级再由 RFC-009/ADR-021 替代。
 - [ADR-014](../decisions/2026-08-21-adr-014-codex-specialist-runtime.md) 已接受 Codex 作为首个可替换、可关闭的实验 Runtime Adapter；[RFC-001](2026-08-21-rfc-001-codex-agent-runtime.md) 已进入 `rejected`，不再保留与本 RFC 冲突的 Phase 1.5/Phase 2 划分。
 - [ADR-018](../decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md) 只约束当前 Athena 本地回答后端。新的 Agent Runtime 必须独立实现，不能通过打开现有 Answer Adapter 的工具权限来获得。
 
@@ -206,15 +209,15 @@ P1.3 若获批，可在相同区域增加 repository/failure Context、候选代
 
 下表描述长期 Context 模型中的可选关系，不代表它们都已进入 P1.0–P1.2 的公开 wire contract；当前 wire 仅实现人工步骤和 `ready` Knowledge Source，其余关系在对应后续阶段加入：
 
-| 可选输入 | 缺失时的行为 |
-| --- | --- |
-| Requirement / ticket / Release | 不阻塞；所有业务规则只能来自用户描述或标为假设 |
-| 产品资料 | 不阻塞；不能声称已核对产品事实 |
-| 产品源码 | 不阻塞；不能做源码级影响分析，也不能推断内部实现 |
-| 测试仓库 | 不阻塞；P1.0–P1.2 只生成 Blueprint，P1.3 才可评估固定模板 Code Bundle |
-| 人工步骤 / 示例数据 | 不阻塞；系统提出最少澄清问题并生成待确认步骤 |
-| 截图 / 日志 / 失败包 | 不阻塞；没有观察材料时不能做 evidence-backed failure analysis |
-| Project / Release 关联 | 不阻塞；任务以独立 Workspace Scope 存在，后续可再关联 |
+| 可选输入                       | 缺失时的行为                                                          |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Requirement / ticket / Release | 不阻塞；所有业务规则只能来自用户描述或标为假设                        |
+| 产品资料                       | 不阻塞；不能声称已核对产品事实                                        |
+| 产品源码                       | 不阻塞；不能做源码级影响分析，也不能推断内部实现                      |
+| 测试仓库                       | 不阻塞；P1.0–P1.2 只生成 Blueprint，P1.3 才可评估固定模板 Code Bundle |
+| 人工步骤 / 示例数据            | 不阻塞；系统提出最少澄清问题并生成待确认步骤                          |
+| 截图 / 日志 / 失败包           | 不阻塞；没有观察材料时不能做 evidence-backed failure analysis         |
+| Project / Release 关联         | 不阻塞；任务以独立 Workspace Scope 存在，后续可再关联                 |
 
 Phase 1 的评测地图覆盖四种输入模式，但 P1.0–P1.2 只实际运行前两种；后两种在当前 Golden suite 中必须得到 `outcome-not-enabled`，直到 P1.3 另行批准：
 
@@ -381,12 +384,12 @@ runtime_lineage / proposal_schema_registry_ref / proposal_schema_refs[]
 
 每个重要结论使用闭集 `basis`：
 
-| basis | 含义 | 强制字段 |
-| --- | --- | --- |
-| `evidence` | 输入快照直接支持 | Citation/Evidence Ref；`confidence=not_applicable` |
-| `inference` | 基于证据形成的可反驳推断 | supporting refs + 简要依据 + confidence |
-| `assumption` | 为继续设计而暂时采用 | 风险 + 需要谁确认 + confidence |
-| `unknown` | 当前无法判断 | 缺失信息 + 建议下一步；`confidence=not_applicable` |
+| basis        | 含义                     | 强制字段                                           |
+| ------------ | ------------------------ | -------------------------------------------------- |
+| `evidence`   | 输入快照直接支持         | Citation/Evidence Ref；`confidence=not_applicable` |
+| `inference`  | 基于证据形成的可反驳推断 | supporting refs + 简要依据 + confidence            |
+| `assumption` | 为继续设计而暂时采用     | 风险 + 需要谁确认 + confidence                     |
+| `unknown`    | 当前无法判断             | 缺失信息 + 建议下一步；`confidence=not_applicable` |
 
 `confidence` 使用 `low | medium | high | not_applicable` 闭集，并要求 `confidence_basis` 说明它来自哪些输入充分性、冲突或缺口；它是可审查的判断标签，不是模型内部概率。Failure hypothesis 同样必须保存 confidence、supporting refs 和不确定性说明。`AssumptionRegister` 保存假设、未知、冲突、影响、确认状态和关闭它们所需的信息。它不能因 confidence 较高而自动变成事实。
 
@@ -521,13 +524,13 @@ Review 读取和提交时都按当前 scope 重授权；同一幂等键的冲突
 
 ### 6. 自主等级
 
-| 等级 | Phase 1 行为 |
-| --- | --- |
-| L0 Insight | 搜索、比较、解释、识别风险，不修改任何 workspace |
-| L1 Draft | 生成和修订 Brief、Blueprint、分析及 Review Package |
-| L2 Sandbox | 条件开启；只在一次性隔离 workspace 生成 Code Bundle 或 Candidate Patch，并运行固定检查 |
-| L3 Controlled Write | 不提供 |
-| L4 Restricted | 不提供 |
+| 等级                | Phase 1 行为                                                                           |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| L0 Insight          | 搜索、比较、解释、识别风险，不修改任何 workspace                                       |
+| L1 Draft            | 生成和修订 Brief、Blueprint、分析及 Review Package                                     |
+| L2 Sandbox          | 条件开启；只在一次性隔离 workspace 生成 Code Bundle 或 Candidate Patch，并运行固定检查 |
+| L3 Controlled Write | 不提供                                                                                 |
+| L4 Restricted       | 不提供                                                                                 |
 
 用户输入、仓库中的 `AGENTS.md`/`CLAUDE.md`、Skill 或 Hook 可以影响候选内容，但不能扩大等级、工具、网络、预算或数据范围。
 
@@ -567,25 +570,25 @@ flowchart TB
 
 组件职责：
 
-| 组件 | 职责 |
-| --- | --- |
-| Intelligence API/BFF | 接收业务目的和资源引用；不接受供应商、模型、物理索引、sandbox、工具或网络选择 |
-| Context Builder | 将实际可用输入、缺失输入、权限和 hash 固定为 Context Snapshot |
-| Task Control | 持久化任务事实、幂等、状态、取消、重试、预算和事件 |
-| AgentRuntime Port | 统一 Runtime 能力协商、prepare/activate、事件、取消和结果；首个 Adapter 不进入公共 DTO |
-| TAP Tool Gateway | 只开放阶段批准的窄工具，每次调用重新检查 task capability 和当前授权 |
-| Artifact Broker | 仅接受可信 Controller 调度；从持久 Runtime proposal 构造公共 body，在 Blob I/O 前保存完整 seal bytes/ID/binding plan，再封存、计算 hash 并提交不可变 Artifact；P1.3 才允许额外扫描候选 workspace |
-| Deterministic Validator | 在独立短生命周期 sandbox 中验证 Schema，并按服务端固定 Profile 运行检查；不接受模型自报成功 |
-| Evaluation Harness | 在固定输入、策略和版本上比较 baseline 与 candidate，并保存成本和人工评分 |
+| 组件                    | 职责                                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Intelligence API/BFF    | 接收业务目的和资源引用；不接受供应商、模型、物理索引、sandbox、工具或网络选择                                                                                                                    |
+| Context Builder         | 将实际可用输入、缺失输入、权限和 hash 固定为 Context Snapshot                                                                                                                                    |
+| Task Control            | 持久化任务事实、幂等、状态、取消、重试、预算和事件                                                                                                                                               |
+| AgentRuntime Port       | 统一 Runtime 能力协商、prepare/activate、事件、取消和结果；首个 Adapter 不进入公共 DTO                                                                                                           |
+| TAP Tool Gateway        | 只开放阶段批准的窄工具，每次调用重新检查 task capability 和当前授权                                                                                                                              |
+| Artifact Broker         | 仅接受可信 Controller 调度；从持久 Runtime proposal 构造公共 body，在 Blob I/O 前保存完整 seal bytes/ID/binding plan，再封存、计算 hash 并提交不可变 Artifact；P1.3 才允许额外扫描候选 workspace |
+| Deterministic Validator | 在独立短生命周期 sandbox 中验证 Schema，并按服务端固定 Profile 运行检查；不接受模型自报成功                                                                                                      |
+| Evaluation Harness      | 在固定输入、策略和版本上比较 baseline 与 candidate，并保存成本和人工评分                                                                                                                         |
 
 ### 8. Runtime 与工具边界
 
 Phase 1 至少定义三个平台拥有的 Runtime Profile：
 
-| Profile | Workspace | 允许能力 | 禁止能力 |
-| --- | --- | --- | --- |
-| `intelligence-readonly-v1` | read-only | 检索、读取快照、生成结构化分析 | 写仓库、Shell 网络、外部动作 |
-| `automation-design-v1` | read-only | 上述能力 + Blueprint Schema 生成/验证 | 代码写入、浏览器执行 |
+| Profile                         | Workspace       | 允许能力                                         | 禁止能力                                       |
+| ------------------------------- | --------------- | ------------------------------------------------ | ---------------------------------------------- |
+| `intelligence-readonly-v1`      | read-only       | 检索、读取快照、生成结构化分析                   | 写仓库、Shell 网络、外部动作                   |
+| `automation-design-v1`          | read-only       | 上述能力 + Blueprint Schema 生成/验证            | 代码写入、浏览器执行                           |
 | `automation-engineering-lab-v1` | workspace-write | 读取固定 repo/template、副本内编辑、请求固定检查 | 产品源码写入、任意网络、远端 Git、真实目标执行 |
 
 允许的 TAP 工具应保持最小化，例如：
@@ -647,12 +650,12 @@ Phase 1 明确不泛化以下实现：
 
 首轮评测至少包含 24 个经人工复核的 fixture，每个 lane 至少 6 个。P1.0–P1.2 只让前两条 current lane 进入 Task/Runtime/Artifact 路径；后两条 future lane 的正确结果是创建前 `outcome-not-enabled`、零 Runtime 调用和零 Artifact，而不是候选内容质量：
 
-| Lane | 输入 | 代表任务 | 核心判定 |
-| --- | --- | --- | --- |
-| Assumption-first | 只有目标和边界 | 从零散描述形成测试/流程 Blueprint | 不伪造事实；假设和未知完整；专家可用性 |
-| Source-grounded | 文档/工单/BDD 快照 | 比较规则、发现冲突、形成覆盖候选 | Citation 精确性、覆盖率、abstention |
-| Repository-informed（future） | 固定仓库或模板 | P1.3 候选；当前验证拒绝 | `outcome-not-enabled`、零 Task/Runtime/Artifact |
-| Evidence-informed（future） | 日志/截图/失败 bundle | P1.3 候选；当前验证拒绝 | `outcome-not-enabled`、零 Task/Runtime/Artifact |
+| Lane                          | 输入                  | 代表任务                          | 核心判定                                        |
+| ----------------------------- | --------------------- | --------------------------------- | ----------------------------------------------- |
+| Assumption-first              | 只有目标和边界        | 从零散描述形成测试/流程 Blueprint | 不伪造事实；假设和未知完整；专家可用性          |
+| Source-grounded               | 文档/工单/BDD 快照    | 比较规则、发现冲突、形成覆盖候选  | Citation 精确性、覆盖率、abstention             |
+| Repository-informed（future） | 固定仓库或模板        | P1.3 候选；当前验证拒绝           | `outcome-not-enabled`、零 Task/Runtime/Artifact |
+| Evidence-informed（future）   | 日志/截图/失败 bundle | P1.3 候选；当前验证拒绝           | `outcome-not-enabled`、零 Task/Runtime/Artifact |
 
 数据集同时覆盖无答案、冲突 revision、过期资料、权限撤销、Prompt injection、恶意仓库说明、取消、超时、错误 Citation，以及诱导模型伪称“测试已经通过”的样例。
 
@@ -676,17 +679,17 @@ execution_status / cost / tokens / latency / reviewer decisions
 
 #### 10.3 指标
 
-| 维度 | 指标 |
-| --- | --- |
-| Grounding | material claim citation coverage、citation precision、unsupported claim rate、abstention accuracy |
-| Design | Blueprint Schema 通过率、专家 accept/edit/reject、编辑量、遗漏关键路径和不可执行步骤数 |
-| Engineering | P1.0–P1.2：future-lane 拒绝正确率；P1.3 才测 Patch apply、固定检查、最小 Diff 和复用率 |
-| Failure | P1.0–P1.2：future-lane 拒绝正确率；P1.3 才测 evidence-supported classification 和人工一致性 |
-| Task | terminal/recoverable rate、取消时延、重试隔离、Artifact/hash 对账 |
-| Safety | unauthorized read/write、凭据暴露、Policy/工具/网络越界、敏感内容泄露 |
-| Honesty | 错误的事实状态、验证状态或执行状态声明数 |
-| Economics | P50/P95 时延、token、工具次数、单任务成本、每个被接受 Artifact 成本 |
-| Human value | 采纳率、接受前编辑量、review 时长、人工干预率 |
+| 维度        | 指标                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| Grounding   | material claim citation coverage、citation precision、unsupported claim rate、abstention accuracy |
+| Design      | Blueprint Schema 通过率、专家 accept/edit/reject、编辑量、遗漏关键路径和不可执行步骤数            |
+| Engineering | P1.0–P1.2：future-lane 拒绝正确率；P1.3 才测 Patch apply、固定检查、最小 Diff 和复用率            |
+| Failure     | P1.0–P1.2：future-lane 拒绝正确率；P1.3 才测 evidence-supported classification 和人工一致性       |
+| Task        | terminal/recoverable rate、取消时延、重试隔离、Artifact/hash 对账                                 |
+| Safety      | unauthorized read/write、凭据暴露、Policy/工具/网络越界、敏感内容泄露                             |
+| Honesty     | 错误的事实状态、验证状态或执行状态声明数                                                          |
+| Economics   | P50/P95 时延、token、工具次数、单任务成本、每个被接受 Artifact 成本                               |
+| Human value | 采纳率、接受前编辑量、review 时长、人工干预率                                                     |
 
 #### 10.4 硬门禁与晋级规则
 
@@ -760,20 +763,20 @@ Phase 1 IntelligenceArtifact
 
 ## 风险与缓解
 
-| 风险 | 缓解 |
-| --- | --- |
-| 无资料时生成“伪需求” | 强制 Claim basis 和 Assumption Register；无来源时禁止 evidence claim |
-| Intelligence Lab 变成泛化聊天 | Task 必须有 requested outcome，并收敛为正式 Artifact revision |
-| 为了展示 AI 而过早引入完整测试平台 | Phase 1 明确没有正式 Test Asset、Run、Provider、Release 或外部写入 |
-| 代码候选被误认为已验证 | Validator 与 Runtime 分离；强制 Diff、检查证据和 `execution_status=not_run` |
-| Agent 通过仓库文本或 Prompt 越权 | Runtime Policy、工具、网络和凭据在 Agent 外；repo instructions 只作为不可信输入 |
-| 当前 Athena demo 安全假设被带入共享服务 | Phase 1 保持 loopback 单用户；正式身份/多租户需独立安全设计后才能共享 |
-| Agent Task 与 Chat/Ingestion 状态混用 | 新建独立 Task/Attempt/Event 表和状态机，只复用 Outbox/lease 模式 |
-| Artifact 污染未来权威测试资产 | Phase 1 Artifact 均为 candidate；未来必须经过 Adapter、Validator 和人工接纳 |
-| 供应商锁定 | 公共 API 不暴露 Provider；Runtime 通过 capability 协商并保留 baseline/off 开关 |
-| 评测只挑成功案例 | 版本化 Golden Tasks，包含无答案、攻击、取消、失败和诱导假绿样例；按 lane 单报 |
-| 成本和延迟不可控 | Task budgets、分层模型/Profile、token/tool limits 和单位采纳成本指标 |
-| 工程实验拖累核心能力 | workspace-write 是后置可关闭 Profile，不阻塞 read-only Brief/Blueprint 路径 |
+| 风险                                    | 缓解                                                                            |
+| --------------------------------------- | ------------------------------------------------------------------------------- |
+| 无资料时生成“伪需求”                    | 强制 Claim basis 和 Assumption Register；无来源时禁止 evidence claim            |
+| Intelligence Lab 变成泛化聊天           | Task 必须有 requested outcome，并收敛为正式 Artifact revision                   |
+| 为了展示 AI 而过早引入完整测试平台      | Phase 1 明确没有正式 Test Asset、Run、Provider、Release 或外部写入              |
+| 代码候选被误认为已验证                  | Validator 与 Runtime 分离；强制 Diff、检查证据和 `execution_status=not_run`     |
+| Agent 通过仓库文本或 Prompt 越权        | Runtime Policy、工具、网络和凭据在 Agent 外；repo instructions 只作为不可信输入 |
+| 当前 Athena demo 安全假设被带入共享服务 | Phase 1 保持 loopback 单用户；正式身份/多租户需独立安全设计后才能共享           |
+| Agent Task 与 Chat/Ingestion 状态混用   | 新建独立 Task/Attempt/Event 表和状态机，只复用 Outbox/lease 模式                |
+| Artifact 污染未来权威测试资产           | Phase 1 Artifact 均为 candidate；未来必须经过 Adapter、Validator 和人工接纳     |
+| 供应商锁定                              | 公共 API 不暴露 Provider；Runtime 通过 capability 协商并保留 baseline/off 开关  |
+| 评测只挑成功案例                        | 版本化 Golden Tasks，包含无答案、攻击、取消、失败和诱导假绿样例；按 lane 单报   |
+| 成本和延迟不可控                        | Task budgets、分层模型/Profile、token/tool limits 和单位采纳成本指标            |
+| 工程实验拖累核心能力                    | workspace-write 是后置可关闭 Profile，不阻塞 read-only Brief/Blueprint 路径     |
 
 ## 迁移或发布方式
 
@@ -869,9 +872,9 @@ Phase 1 IntelligenceArtifact
 
 接受时已裁决两项 P1.0–P1.2 边界：本阶段不接浏览器录制、截图或 failure bundle，只接 goal、可选人工步骤与 ready Athena 来源；Artifact 导出固定为人类可读 Markdown 和 canonical JSON。代码 archive/patch 与 failure bundle 留到 P1.3 单独设计。
 
-| 问题 | 建议默认值 | 何时必须决定 |
-| --- | --- | --- |
-| 首个自动化工程 Profile | Playwright + TypeScript，使用固定模板和固定 check profile | P1.3 工程实验前 |
-| 是否允许产品源码参与 | 允许固定 revision 只读分析；永不修改产品源码 | P1.3 安全设计前 |
-| 非 Grounding 指标的晋级阈值 | 在 unblinded candidate 结果前，依据 24-task baseline 冻结 | 首次真实模型评测前 |
+| 问题                        | 建议默认值                                                               | 何时必须决定       |
+| --------------------------- | ------------------------------------------------------------------------ | ------------------ |
+| 首个自动化工程 Profile      | Playwright + TypeScript，使用固定模板和固定 check profile                | P1.3 工程实验前    |
+| 是否允许产品源码参与        | 允许固定 revision 只读分析；永不修改产品源码                             | P1.3 安全设计前    |
+| 非 Grounding 指标的晋级阈值 | 在 unblinded candidate 结果前，依据 24-task baseline 冻结                | 首次真实模型评测前 |
 | 通用 RPA 是否成为未来产品线 | Phase 1 只记录需求与实验反馈，不承诺；BrowserStack-like 测试平台仍是主线 | Phase 1 阶段评审时 |

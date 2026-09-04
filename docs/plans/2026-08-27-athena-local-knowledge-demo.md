@@ -5,6 +5,8 @@ date: 2026-08-27
 
 # Athena Local Knowledge Demo Implementation Plan
 
+> **现行处置（2026-09-04）**：本计划保持 `completed`，只记录已经完成的 Athena 本地纵向 Demo，不恢复任何任务，也不表示 [RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 的 V0/V1 已完成。当前执行入口是 [Athena 知识与 Web 自动化平台实施计划](2026-09-04-athena-knowledge-web-automation-platform.md)；下文“完整 Phase 1 仍 active”和“当前 Phase 1 是 Intelligence Lab”只记录旧验收语境。
+
 > **当前阶段处置（2026-09-02）**：本计划保持 `completed`，用于记录已交付的 Athena 本地能力。文中“完整 Phase 1 仍 active”属于当时验收语境；[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已把完整 RAG/Knowledge Chat 后置，当前 Phase 1 改为 Intelligence Lab。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -66,6 +68,7 @@ date: 2026-08-27
 ### Task 1: Public Document and Citation Contracts
 
 **Files:**
+
 - Create: `apps/backend/src/tap/interfaces/http/dependencies.py`
 - Create: `apps/backend/src/tap/interfaces/http/problems.py`
 - Create: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
@@ -97,6 +100,7 @@ date: 2026-08-27
 - Modify: `contracts/openapi/api.json`
 
 **Interfaces:**
+
 - Consumes: existing `RetrievalAnswerRequest`, `RetrievalAnswerResponse`, `ProblemDetails`, `ResourceRef` and side-effect-free `create_app()`.
 - Produces: public DTOs `DocumentAccepted`, `DocumentPage`, `DocumentDetail`, `CitationPreview`, `LiveHealth`, `ReadyHealth`; answer-claim spans; stable operation IDs; `KnowledgeHttpService` protocol; deterministic `apps/web/src/shared/api/generated/schema.ts`.
 
@@ -286,6 +290,7 @@ git commit -m "feat: add knowledge document contracts"
 ### Task 2: Stable Identities, Parsers, and Structural Chunking
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/knowledge/domain/documents.py`
 - Create: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py`
@@ -299,6 +304,7 @@ git commit -m "feat: add knowledge document contracts"
 - Modify: `uv.lock`
 
 **Interfaces:**
+
 - Consumes: public media-type set and existing `DocumentAnchor` / canonical SHA-256 conventions.
 - Produces: `ParserRegistry.parse(DocumentSource) -> NormalizedArtifact`, `StructuralChunker.chunk(NormalizedArtifact) -> tuple[ChunkDraft, ...]`, stable ID functions, and closed ingestion errors used by persistence and worker tasks.
 
@@ -424,6 +430,7 @@ git commit -m "feat: parse and chunk knowledge documents"
 ### Task 3: Durable Document Ledger and Upload Commands
 
 **Files:**
+
 - Create: `apps/backend/migrations/versions/0003_athena_documents.py`
 - Create: `apps/backend/src/tap/platform/db/schema.py`
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/mysql_documents.py`
@@ -437,6 +444,7 @@ git commit -m "feat: parse and chunk knowledge documents"
 - Modify: `apps/backend/tests/architecture/test_module_boundaries.py`
 
 **Interfaces:**
+
 - Consumes: stable identities, `UploadInput`, the generic `outbox` table, `async_sessionmaker[AsyncSession]`, and an `ArtifactStore` fake.
 - Produces: shared DB `metadata/outbox`, `DocumentService.upload/list/get/retry/delete`, `MysqlDocumentRepository`, six durable Knowledge tables, job leases and transactional `knowledge.ingestion_requested` / `knowledge.deletion_requested` Outbox rows.
 
@@ -621,6 +629,7 @@ git commit -m "feat: persist knowledge document jobs"
 ### Task 4: Recoverable Ingestion and Deletion Worker
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Create: `apps/backend/src/tap/platform/messaging/redis_wakeup.py`
 - Create: `apps/backend/src/tap/entrypoints/athena_ingestion_worker.py`
@@ -632,6 +641,7 @@ git commit -m "feat: persist knowledge document jobs"
 - Modify: `apps/backend/src/tap/platform/messaging/redis_dispatch.py`
 
 **Interfaces:**
+
 - Consumes: parser/chunker, artifact/repository/embedding/index ports, generic Outbox dispatch and MySQL job leases.
 - Produces: `IngestionWorker.run_once(limit: int) -> WorkerRun`, `DeletionWorker` branch within the same job runner, and optional Redis Stream wake-up with mandatory DB scan fallback.
 
@@ -782,6 +792,7 @@ git commit -m "feat: add recoverable ingestion worker"
 ### Task 5: Real Azurite, LiteLLM Embedding, and Mutable Milvus Projection
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/milvus_documents.py`
 - Create: `apps/backend/src/tap/operations/milvus/doc_schema.py`
@@ -803,6 +814,7 @@ git commit -m "feat: add recoverable ingestion worker"
 - Modify: `uv.lock`
 
 **Interfaces:**
+
 - Consumes: artifact/index/embedding ports, canonical doc schema, existing strict `MilvusSearchAdapter` and `LiteLLMAdapter` transport rules.
 - Produces: content-addressed `AzureBlobArtifactStore`, batch `LiteLLMAdapter.embed_many`, `MilvusDocumentIndex.ensure_target/upsert_revision/delete_revision/count_revision/rebuild`, and a reader-compatible Athena alias.
 
@@ -959,6 +971,7 @@ git commit -m "feat: publish knowledge documents to milvus"
 ### Task 6: Grounded Answers, Fixed Demo Policy, and Citation Resolver
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/knowledge/application/answers.py`
 - Create: `apps/backend/src/tap/modules/knowledge/application/citations.py`
 - Create: `apps/backend/src/tap/modules/knowledge/application/demo_policy.py`
@@ -976,6 +989,7 @@ git commit -m "feat: publish knowledge documents to milvus"
 - Modify: `apps/backend/tests/architecture/test_module_boundaries.py`
 
 **Interfaces:**
+
 - Consumes: `KnowledgeAPI.answer()`, ready document revisions, `ResourceRef`, fixed local policy facts, answer/citation snapshot tables and artifact/index adapters.
 - Produces: a concrete `KnowledgeHttpService`, atomic answer snapshot behavior, and bounded/stale-safe citation previews for the Web.
 
@@ -1157,6 +1171,7 @@ git commit -m "feat: answer from selected knowledge sources"
 ### Task 7: Athena App Shell and Knowledge Library
 
 **Files:**
+
 - Create: `apps/web/index.html`
 - Create: `apps/web/vite.config.ts`
 - Create: `apps/web/vitest.config.ts`
@@ -1184,6 +1199,7 @@ git commit -m "feat: answer from selected knowledge sources"
 - Modify: `Makefile`
 
 **Interfaces:**
+
 - Consumes: generated OpenAPI types and document endpoints from Tasks 1/6.
 - Produces: runnable Athena shell with `问答/知识库` navigation, real knowledge library/upload/detail/retry/delete behavior, query hooks and a typed `KnowledgeClient` reused by the workspace.
 
@@ -1211,25 +1227,33 @@ Do not upgrade TypeScript to 7 or jsdom to 30: those versions are outside the ch
 Use a real QueryClient and an injected stateful fake client:
 
 ```tsx
-it('polls only while a document is non-terminal and enables retry on failure', async () => {
+it("polls only while a document is non-terminal and enables retry on failure", async () => {
   const api = fakeKnowledgeClient()
-    .listOnce([document({ status: 'processing', stage: 'embedding' })])
-    .listOnce([document({ status: 'failed', stage: 'embedding', errorCode: 'embedding-unavailable' })]);
+    .listOnce([document({ status: "processing", stage: "embedding" })])
+    .listOnce([
+      document({
+        status: "failed",
+        stage: "embedding",
+        errorCode: "embedding-unavailable",
+      }),
+    ]);
   renderApp(<KnowledgeLibrary />, { api });
-  expect(await screen.findByText('正在生成向量')).toBeVisible();
+  expect(await screen.findByText("正在生成向量")).toBeVisible();
   await advancePollingClock(2000);
-  expect(await screen.findByRole('button', { name: '重试' })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "重试" })).toBeEnabled();
   expect(api.listCalls).toBe(2);
 });
 
-
-it('keeps a completed upload visible after closing the upload dialog', async () => {
+it("keeps a completed upload visible after closing the upload dialog", async () => {
   const api = fakeKnowledgeClient();
   renderApp(<KnowledgeLibrary />, { api });
-  await userEvent.upload(screen.getByLabelText('选择文档'), markdownFile('policy.md'));
-  await userEvent.click(screen.getByRole('button', { name: '开始添加' }));
-  expect(await screen.findByText('policy.md')).toBeVisible();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await userEvent.upload(
+    screen.getByLabelText("选择文档"),
+    markdownFile("policy.md"),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "开始添加" }));
+  expect(await screen.findByText("policy.md")).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 ```
 
@@ -1249,12 +1273,20 @@ Create one `KnowledgeClient` interface and an `openapi-fetch` implementation:
 
 ```ts
 export interface KnowledgeClient {
-  listDocuments(input: { cursor?: string; limit: number }): Promise<DocumentPage>;
+  listDocuments(input: {
+    cursor?: string;
+    limit: number;
+  }): Promise<DocumentPage>;
   getDocument(documentId: string): Promise<DocumentDetail>;
-  uploadDocument(file: File, onProgress: (ratio: number) => void): Promise<DocumentAccepted>;
+  uploadDocument(
+    file: File,
+    onProgress: (ratio: number) => void,
+  ): Promise<DocumentAccepted>;
   retryDocument(documentId: string): Promise<DocumentAccepted>;
   deleteDocument(documentId: string): Promise<void>;
-  createAnswer(request: RetrievalAnswerRequest): Promise<RetrievalAnswerResponse>;
+  createAnswer(
+    request: RetrievalAnswerRequest,
+  ): Promise<RetrievalAnswerResponse>;
   getCitation(citationId: string): Promise<CitationPreview>;
 }
 ```
@@ -1279,10 +1311,13 @@ The upload dialog accepts `.pdf,.docx,.md,.markdown,.txt`, supports drag/drop an
 
 ```ts
 const uploadMutation = useMutation({
-  mutationFn: ({ file, onProgress }: UploadCommand) => api.uploadDocument(file, onProgress),
+  mutationFn: ({ file, onProgress }: UploadCommand) =>
+    api.uploadDocument(file, onProgress),
   onSuccess: async () => {
     closeUploadDialog();
-    await queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents() });
+    await queryClient.invalidateQueries({
+      queryKey: knowledgeKeys.documents(),
+    });
   },
 });
 ```
@@ -1329,6 +1364,7 @@ git commit -m "feat: add athena knowledge library"
 ### Task 8: Source-First Question Workspace and Citation Viewer
 
 **Files:**
+
 - Create: `apps/web/src/widgets/athena/AthenaWorkspace.tsx`
 - Create: `apps/web/src/features/knowledge/components/SourcesPanel.tsx`
 - Create: `apps/web/src/features/knowledge/components/QuestionComposer.tsx`
@@ -1342,6 +1378,7 @@ git commit -m "feat: add athena knowledge library"
 - Modify: `apps/web/src/app/styles.css`
 
 **Interfaces:**
+
 - Consumes: `KnowledgeClient`, document list, `RetrievalAnswerResponse.claims/citations`, and `CitationPreview`.
 - Produces: NotebookLM-inspired source selection, one-shot grounded Q&A, inline citation actions, current-answer citation viewer, sanitization and responsive three-panel UX.
 
@@ -1350,27 +1387,29 @@ git commit -m "feat: add athena knowledge library"
 Test behavior rather than component internals:
 
 ```tsx
-it('removes a selected source when it stops being ready', async () => {
+it("removes a selected source when it stops being ready", async () => {
   const api = fakeKnowledgeClient().withDocuments([
-    document({ documentId: 'doc_a', status: 'ready' }),
-    document({ documentId: 'doc_b', status: 'ready' }),
+    document({ documentId: "doc_a", status: "ready" }),
+    document({ documentId: "doc_b", status: "ready" }),
   ]);
   renderApp(<AthenaWorkspace />, { api });
-  await userEvent.click(await screen.findByRole('checkbox', { name: /doc_a/ }));
-  api.replaceDocument('doc_a', document({ documentId: 'doc_a', status: 'deleting' }));
+  await userEvent.click(await screen.findByRole("checkbox", { name: /doc_a/ }));
+  api.replaceDocument(
+    "doc_a",
+    document({ documentId: "doc_a", status: "deleting" }),
+  );
   api.emitListUpdate();
-  expect(screen.getByRole('checkbox', { name: /doc_a/ })).toBeDisabled();
-  expect(screen.getByText('已选择 0 个来源')).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: /doc_a/ })).toBeDisabled();
+  expect(screen.getByText("已选择 0 个来源")).toBeVisible();
 });
 
-
-it('opens only an internal citation preview and clears it for a new question', async () => {
+it("opens only an internal citation preview and clears it for a new question", async () => {
   renderApp(<AthenaWorkspace />, { api: answeredFake() });
-  await ask('退款需要几人审批？');
-  await userEvent.click(await screen.findByRole('button', { name: '引用 1' }));
-  expect(await screen.findByText('原文依据')).toBeVisible();
-  await ask('额度是多少？');
-  expect(screen.queryByText('原文依据')).not.toBeInTheDocument();
+  await ask("退款需要几人审批？");
+  await userEvent.click(await screen.findByRole("button", { name: "引用 1" }));
+  expect(await screen.findByText("原文依据")).toBeVisible();
+  await ask("额度是多少？");
+  expect(screen.queryByText("原文依据")).not.toBeInTheDocument();
 });
 ```
 
@@ -1383,13 +1422,17 @@ While the single JSON request is pending, assert the center panel shows both `�
 Feed a malicious model response and require inert rendering:
 
 ```tsx
-it('renders model links as text and strips executable markup', () => {
-  render(<GroundedAnswer response={answerWith(
-    '<img src=x onerror=alert(1)> [steal](https://evil.example) <script>alert(2)</script>'
-  )} />);
-  expect(document.querySelector('script,img')).toBeNull();
-  expect(screen.queryByRole('link')).not.toBeInTheDocument();
-  expect(screen.getByText('steal')).toBeVisible();
+it("renders model links as text and strips executable markup", () => {
+  render(
+    <GroundedAnswer
+      response={answerWith(
+        "<img src=x onerror=alert(1)> [steal](https://evil.example) <script>alert(2)</script>",
+      )}
+    />,
+  );
+  expect(document.querySelector("script,img")).toBeNull();
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  expect(screen.getByText("steal")).toBeVisible();
 });
 ```
 
@@ -1442,8 +1485,13 @@ Clicking a citation fetches `/v1/citations/{id}`, shows filename, revision hash,
 
 ```ts
 const answerCodePoints = Array.from(response.answer);
-for (const claim of [...response.claims].sort((a, b) => a.answerStart - b.answerStart)) {
-  if (answerCodePoints.slice(claim.answerStart, claim.answerEnd).join('') !== claim.text) {
+for (const claim of [...response.claims].sort(
+  (a, b) => a.answerStart - b.answerStart,
+)) {
+  if (
+    answerCodePoints.slice(claim.answerStart, claim.answerEnd).join("") !==
+    claim.text
+  ) {
     throw new AnswerFormatError();
   }
   segments.push(textBefore(claim), citedClaim(claim));
@@ -1485,6 +1533,7 @@ git commit -m "feat: add athena grounded question workspace"
 ### Task 9: Local Runtime, Stable Make Commands, and Playwright Journey
 
 **Files:**
+
 - Create: `apps/backend/src/tap/entrypoints/athena_api.py`
 - Create: `apps/backend/src/tap/entrypoints/athena_runtime.py`
 - Create: `apps/backend/src/tap/testing/deterministic_model.py`
@@ -1512,6 +1561,7 @@ git commit -m "feat: add athena grounded question workspace"
 - Modify: `uv.lock`
 
 **Interfaces:**
+
 - Consumes: all application services/adapters, existing Compose services and local Milvus role bootstrap.
 - Produces: `make demo-up/demo-dev/demo-check/demo-e2e/demo-down`, real LiteLLM aliases, loopback-only API/Web, deterministic E2E mode and a repeatable persistence/failure user journey.
 
@@ -1704,6 +1754,7 @@ git commit -m "feat: run athena knowledge demo locally"
 ### Task 10: Full Acceptance, Real-Model Smoke, and Documentation Lifecycle
 
 **Files:**
+
 - Create: `apps/backend/tests/smoke/test_athena_real_model.py`
 - Create: `docs/reviews/2026-08-27-athena-local-knowledge-demo.md`
 - Modify: `README.md`
@@ -1721,6 +1772,7 @@ git commit -m "feat: run athena knowledge demo locally"
 - Modify: `docs/reviews/index.md`
 
 **Interfaces:**
+
 - Consumes: completed runnable vertical slice and every automated gate from Tasks 1–9.
 - Produces: evidence-backed acceptance report, current README/AGENTS/architecture/contracts, lifecycle updates, and a separately authorized real-provider smoke result.
 

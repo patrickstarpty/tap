@@ -4,25 +4,34 @@ status: accepted
 date: 2026-09-03
 related-adrs:
   - ADR-019
+  - ADR-021
+  - ADR-024
+  - ADR-025
 ---
 
 # RFC-008：TAP 产品壳层与 Low Code Automation 交互原型
 
 ## 摘要
 
-本 RFC 是 TAP 当前产品原型和交互需求的持续事实源，记录两级产品导航、Low Code Automation 资产工作区，以及 Athena 生成 Test Plan 和 Automation 的协作流程。
+本 RFC 是 TAP 产品交互需求与 2026-09-03 前端原型演进的持续事实源，记录两级产品导航、Low Code Automation 资产工作区，以及 Athena 生成 Test Plan 和 Automation 的协作流程。它不单独代表当前仓库已经实现到哪个 Provider 或 Automation 类型。
 
-本 RFC 只定义产品目标与纯前端原型合同，不表示相关后端、持久化资产、Execution Provider、浏览器 Agent 或移动设备已经进入当前 Phase 1。当前阶段边界仍由 [RFC-007](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 约束：没有真实 Provider Attempt 和 Execution Evidence 时，不得声称自动化已经执行、通过或验证。
+本 RFC 只定义产品目标与纯前端原型合同，不表示相关后端、持久化资产、Execution Provider、浏览器 Agent 或移动设备已经实现。2026-09-04 起，正式交付范围由已接受的 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 和 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 约束：当前只实施 Web Automation 和 Jenkins，Mobile、Web/Mobile 跨类型推断与 Azure DevOps 后移到 P1 之后。原型中的 Mobile 与 Azure DevOps 页面继续作为历史交互探索，但不得用来描述当前目标实现。
+
+| 观察面          | 当前仓库事实                                                                                                   | 已接受的正式目标                                                 |
+| --------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| 前端原型        | `TapProductPrototype` 仍包含模拟 Azure DevOps Agent 与 Mobile 设备页面；全部状态来自 fixture/local storage     | 保留通用交互，正式功能只交付 Web/Jenkins；Mobile 与 ADO 后置     |
+| Test/LCA 后端   | 没有正式 Test Plan、Automation、Recorder、Execution Provider 或 Evidence 后端                                  | 按 RFC-009 的 V3–V5 实施                                         |
+| 本 RFC 验收条目 | 同时保存已经交付的 2026-09-03 原型行为与 2026-09-04 后的新目标；新目标在代码完成前不能描述为“当前原型已经支持” | 实施状态以 README 和各里程碑 Review 为准，不由 accepted 状态推断 |
 
 ### 状态词典
 
-| 状态             | 含义                                      |
-| ---------------- | ----------------------------------------- |
-| `confirmed`      | 用户已经明确提出或批准，原型应据此设计    |
-| `proposed`       | 推荐设计，尚待用户确认                    |
-| `unresolved`     | 会影响交互或数据模型，仍需用户选择        |
-| `prototype-only` | 只用页面内 fixture 和模拟状态验证体验     |
-| `future-target`  | 长期产品目标，不属于当前 Phase 1 交付承诺 |
+| 状态             | 含义                                   |
+| ---------------- | -------------------------------------- |
+| `confirmed`      | 用户已经明确提出或批准，原型应据此设计 |
+| `proposed`       | 推荐设计，尚待用户确认                 |
+| `unresolved`     | 会影响交互或数据模型，仍需用户选择     |
+| `prototype-only` | 只用页面内 fixture 和模拟状态验证体验  |
+| `future-target`  | RFC-009 当前路线之后的长期产品目标     |
 
 ## 背景
 
@@ -31,7 +40,7 @@ related-adrs:
 1. `New Chat`、`Agent`、`Skills`、`Library` 不应继续与产品模块平铺，而应收敛到 Athena 的上下文导航中。
 2. Low Code Automation 不应在点击顶层入口后直接展示硬编码的 `Life insurance application automation`。它应先进入 Automation 资产工作区，再由用户打开或新建具体 Automation。
 
-当前实现仍把 Automation 表达为一份页面内步骤数组：没有 Automation 集合、稳定身份、Web/Mobile 类型、执行目标、Test Plan 关系、资产级对话或运行记录。Athena 生成结果也保存为聊天 Turn 中的步骤快照，而不是指向同一个 Automation 资产。因此，本轮不是标题调整，而是产品信息架构和原型状态模型的扩展。
+本 RFC 编写之初，Automation 仍只是一份页面内步骤数组，没有资产集合、稳定身份、类型、执行目标、Test Plan 关系、资产级对话或运行记录。随后交付的纯前端原型已经用 fixture/local storage 补齐 Automation Library、稳定 ID、Web/Mobile 模拟配置、严格 `1:1`、资产级对话和模拟 Run；它仍没有正式服务端资产或真实执行。当前正式目标继续保留资产模型，但按 RFC-009 收窄为 Web/Jenkins。
 
 本 RFC 与 [Athena 交互原型实施计划](../plans/2026-09-02-athena-interaction-prototype.md) 及 [Low Code Automation 交互原型实施计划](../plans/2026-09-03-low-code-automation-interaction-prototype.md) 配套：RFC 记录“产品应该怎样工作”，Plan 只记录“如何实现获批范围”。长期阶段安排仍见 [TAP 交付路线图](../plans/2026-08-20-roadmap.md)。
 
@@ -41,39 +50,39 @@ related-adrs:
 
 ### 已确认需求
 
-| ID        | 状态        | 需求                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NAV-001` | `confirmed` | 产品一级导航保留 Athena、Test Management、Low Code Automation；Athena 自身承载 New Chat、Agent、Skills、Library。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `NAV-002` | `confirmed` | 点击 Athena 后，在一级导航右侧显示 Athena 上下文菜单，体验上像在 TAP 中嵌入一个完整的 Manus 式工作区，而不是把所有入口平铺在同一层。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `NAV-003` | `confirmed` | Athena 上下文 Sidebar 采用 Codex 式菜单反馈：`New chat` 使用方框铅笔图标、透明背景和普通菜单文字，不使用黑色主按钮；Agent、Skills、Library 的当前项使用整行浅灰圆角背景，不显示紫色侧边线，Hover 使用更浅的灰色，键盘 Focus 保留清晰描边。                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `NAV-004` | `confirmed` | 最左 `68px` 产品一级 Rail 始终保留，不参与收起；Athena 二级 Sidebar 使用 Codex 式面板图标收展。图标必须表达当前状态：面板收起时对应侧只显示窄线，展开时对应侧显示更宽的面板留白，左右两侧互为镜像。展开时按钮位于 Sidebar 标题区，收起后移动到工作区左上角，点击后恢复 Sidebar 与按钮焦点。收展采用同一短时曲线与外层裁切，不使用透明度叠影。                                                                                                                                                                                                                                                                                                        |
-| `AUT-001` | `confirmed` | Low Code Automation 默认展示 Automation 列表和总数；点击一项进入该 Automation 详情。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `AUT-002` | `confirmed` | Automation 详情展示可编辑的 BDD 测试步骤，用户既可手动调整，也可与详情内的平台 Agent 对话调整。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `AUT-003` | `confirmed` | Web Automation 执行前选择 Execution Agent；Execution Agent 即 Azure DevOps Pipeline Agent。Mobile Automation 执行前选择设备及 iOS/Android 平台。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `AUT-004` | `confirmed` | 新建 Automation 时可以选择类型并手写 BDD，也可以只描述要完成的目标后点击 `✨`，由平台分析意图并生成 BDD。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `AUT-005` | `confirmed` | 平台应从意图推断 Web 或 Mobile；无法可靠判断时必须让用户选择类型，不能静默猜测。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `AUT-006` | `confirmed` | Test Plan 与 Automation 采用可选、严格双向 `1:1`：一个 Test Plan 最多关联一个 Automation，一个 Automation 也最多关联一个 Test Plan；未关联是合法状态。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `AUT-007` | `confirmed` | 同一个 Mobile Automation 可以支持 iOS、Android 或两者；BDD 保持共用，每次 Run 选择一个具体设备，平台差异进入实现绑定。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `AUT-008` | `confirmed` | Athena 中的 Agent 是负责理解、生成和调整的 AI Agent；Web Automation 的 Execution Agent 即 Azure DevOps Pipeline Agent，两者必须分开建模和呈现。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `AUT-009` | `confirmed` | Automation Copilot 对 BDD 的调整先展示建议差异，由用户 Apply 或 Reject，不静默覆盖手工编辑。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `AUT-010` | `confirmed` | 当前纯前端原型提供一次单目标的模拟 Run、状态和有限日志，并明确标记 `Simulated`；不生成或暗示真实执行证据。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `AUT-011` | `confirmed` | 每个 Automation BDD Step 必须显式关联其一个或多个实现动作；`Click`、`Send keys`、`Navigate`、`Wait`、`Assert` 等动作在对应 BDD Step 下展示和编辑，不能作为与业务步骤无关的独立列表。                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `AUT-012` | `confirmed` | 已关联 Automation 的 Test Plan 可以直接发起 Automation Run；只要 Run 开始时存在关联，无论从 Test Plan 还是 Automation 详情发起，同一个 Run 都进入 Automation Run History 和 Test Plan Execution History。未关联 Run 不产生 Test Plan 执行记录，后续解除关联也不删除历史快照。                                                                                                                                                                                                                                                                                                                                                                        |
-| `ATH-001` | `confirmed` | Athena 识别到生成 Automation 的意图后，先询问用户是否需要生成 Test Plan。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `ATH-002` | `confirmed` | 用户选择需要时，Athena 先生成 Test Plan，再引导生成 Automation；选择不需要时可直接生成未关联 Automation。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `ATH-003` | `confirmed` | Yes 路径完成后，Athena 同时给出 Test Plan 与 Automation 的可点击入口；Skip 路径只给出 Automation 入口并明确未关联 Test Plan。Automation 入口直接打开对应详情。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `ATH-004` | `confirmed` | 用户可以在 Athena 对话中 Review 生成结果，也可以进入 Automation 详情继续调整并执行。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `ATH-005` | `confirmed` | 对话历史遵循一条 Conversation 一条历史记录：空白 New Chat 不进入历史；首条消息发送后立即创建历史项并以首条消息生成标题；后续轮次追加到同一项。当前项始终可见且高亮，跨模块、刷新和重新打开页面后可恢复。                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `ATH-006` | `confirmed` | Composer 中已选择的 Knowledge、AI Agent 与 Skill 必须显示为可移除标签；每项提供明确的删除按钮，删除只影响当前 Conversation 后续消息的上下文，不改写历史 Turn 已记录的上下文。                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `ATH-007` | `confirmed` | 产品一级 Rail 的 Athena 入口使用白色背景的 `A` 替代聊天气泡图标，紫色只保留在一级入口的外层选中态。该入口是页面中唯一的 `A` 品牌徽标；Athena 二级 Sidebar 标题、欢迎区和每条 Assistant 消息均不重复显示头像式 `A`。                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `ATH-008` | `confirmed` | Athena Composer 使用 Codex 式模型触发器：输入框底部只显示当前模型名称和下拉箭头，不显示前置闪电；所有模型名称以 `GPT-` 开头，只提供模型选择，不显示或提供 Fast、Ultra 或其他推理强度。模型选择属于单个 Conversation，新对话默认 `GPT-5.6 Sol`，当前纯前端原型不宣称真实调用对应模型。                                                                                                                                                                                                                                                                                                                                                                |
-| `ATH-009` | `confirmed` | 右侧 Knowledge sources 可以独立收起和展开；使用与左栏同语法、右侧镜像且能区分展开/收起状态的面板图标，收起后按钮移动到聊天区右上角并释放完整列宽，已选来源和搜索状态不丢失。两侧面板共用同一短时收展曲线、裁切和减弱动态效果规则。窄屏采用右侧遮罩抽屉，并支持 Escape、背景 inert、滚动锁定与焦点恢复。                                                                                                                                                                                                                                                                                                                                              |
-| `ATH-010` | `confirmed` | Athena 对话视口左缘按用户已发送的问题生成 Codex 式短线 minimap：每个 Turn 对应一条横向短线，刻度组在可用视口内垂直居中并使用 `14px` 节拍；默认刻度为 `12 × 4px`、`#dbdbdb`，全部固定在距聊天区左缘 `14px` 的同一左锚点。滚动对应的当前刻度保持相同尺寸，只加深为 `#8a8a8a`，不得让邻近刻度永久扩散。仅在 Hover 或键盘 Focus 时，目标及相邻刻度按 `12 / 14 / 18 / 24 / 34 / 24 / 18 / 14 / 12px` 从同一左边缘向右形成紧凑鱼眼放大，目标刻度为 `#222529` 并显示问题预览。点击平滑跳转到对应 Turn，当前项随点击与滚动更新。对话继续支持键盘、触控板和滚轮滚动，但不同时显示浏览器原生滚动条；导航自身也不产生第二条滚动条。减弱动态效果时改为即时跳转。 |
-| `ATH-011` | `confirmed` | 当问题总数超过输入框上方对话内容区按 `14px` 节拍可容纳的数量时，minimap 不压缩刻度也不继续向屏幕外或输入框区域增长，而是进入固定高度的滑动窗口。可见容量根据 Transcript 行从页面顶部到 Composer 上沿的真实高度动态计算并取奇数，刻度组在该区域内垂直居中并与 Composer 至少保留 `32px` 安全间距；窗口尺寸、Composer 高度或上下文标签换行变化时通过 `ResizeObserver` 重新计算。窗口默认围绕当前问题居中，在首尾处自然钳制。主对话滚动会让窗口重新跟随当前问题；在 minimap 上滚轮可浏览相邻隐藏节点。窗口上下端使用无独立滚动轨道的渐隐续接刻度，Hover/Focus 显示隐藏问题数量，点击按一页移动。minimap 只挂载当前窗口内的问题按钮，不生成第二条滚动条。 |
-| `LIB-001` | `confirmed` | Library 的默认列表页签命名为 `All`，并提供关键词搜索、Type 与 Status 条件筛选、结果数量和清空筛选；搜索与筛选可以组合使用。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `LIB-002` | `confirmed` | Knowledge Graph 使用 Graphify 式高密度关系图体验：圆形节点、社区聚类、节点度数大小、社区筛选、搜索高亮、节点详情、关系溯源以及缩放/平移/重置；当前原型使用确定性 fixture，不宣称运行真实图谱抽取或布局引擎。                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `VIS-001` | `confirmed` | Test Management 与 Low Code Automation 必须以当前 Athena 视觉语言为基准，共用页面背景、字体层级、边框、圆角、按钮、状态色和间距，不建立彼此独立的暖色或杂志化视觉主题。                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `DOC-001` | `confirmed` | 后续每轮原型设计和产品需求都必须同步到项目文档；已确认、提议和未决内容必须分开记录。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ID        | 状态            | 需求                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NAV-001` | `confirmed`     | 产品一级导航保留 Athena、Test Management、Low Code Automation；Athena 自身承载 New Chat、Agent、Skills、Library。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `NAV-002` | `confirmed`     | 点击 Athena 后，在一级导航右侧显示 Athena 上下文菜单，体验上像在 TAP 中嵌入一个完整的 Manus 式工作区，而不是把所有入口平铺在同一层。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `NAV-003` | `confirmed`     | Athena 上下文 Sidebar 采用 Codex 式菜单反馈：`New chat` 使用方框铅笔图标、透明背景和普通菜单文字，不使用黑色主按钮；Agent、Skills、Library 的当前项使用整行浅灰圆角背景，不显示紫色侧边线，Hover 使用更浅的灰色，键盘 Focus 保留清晰描边。                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `NAV-004` | `confirmed`     | 最左 `68px` 产品一级 Rail 始终保留，不参与收起；Athena 二级 Sidebar 使用 Codex 式面板图标收展。图标必须表达当前状态：面板收起时对应侧只显示窄线，展开时对应侧显示更宽的面板留白，左右两侧互为镜像。展开时按钮位于 Sidebar 标题区，收起后移动到工作区左上角，点击后恢复 Sidebar 与按钮焦点。收展采用同一短时曲线与外层裁切，不使用透明度叠影。                                                                                                                                                                                                                                                                                                        |
+| `AUT-001` | `confirmed`     | Low Code Automation 默认展示 Automation 列表和总数；点击一项进入该 Automation 详情。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `AUT-002` | `confirmed`     | Automation 详情展示可编辑的 BDD 测试步骤，用户既可手动调整，也可与详情内的平台 Agent 对话调整。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `AUT-003` | `confirmed`     | 当前 Web Automation 执行前选择 Jenkins Pipeline Agent；Mobile 的设备及 iOS/Android 执行配置作为 P1 之后的历史原型方向保留，不进入当前实现。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `AUT-004` | `confirmed`     | 新建 Automation 时可以选择类型并手写 BDD，也可以只描述要完成的目标后点击 `✨`，由平台分析意图并生成 BDD。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `AUT-005` | `confirmed`     | 当前生成只接受 Web 意图；识别到 Mobile 或无法确认是 Web 时必须明确说明当前范围并要求用户调整或确认，不能把 Mobile 请求静默生成为 Web。Web/Mobile 自动分型后移到 P1 之后。                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `AUT-006` | `confirmed`     | Test Plan 与 Automation 采用可选、严格双向 `1:1`：一个 Test Plan 最多关联一个 Automation，一个 Automation 也最多关联一个 Test Plan；未关联是合法状态。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `AUT-007` | `future-target` | 同一个 Mobile Automation 支持 iOS、Android 或两者的交互设计保留到 P1 之后；RFC-009 的正式后端、目标前端契约和 V0–P1 验收不得包含 Mobile/Appium。遗留纯前端原型仍保留已交付的模拟页面。                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `AUT-008` | `confirmed`     | Athena 中的 Agent 是负责理解、生成和调整的 AI Agent；Web Automation 的 Execution Agent 是 Jenkins Pipeline Agent，两者必须分开建模、授权和呈现。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `AUT-009` | `confirmed`     | Automation Copilot 对 BDD 的调整先展示建议差异，由用户 Apply 或 Reject，不静默覆盖手工编辑。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `AUT-010` | `confirmed`     | 当前纯前端原型提供一次单目标的模拟 Run、状态和有限日志，并明确标记 `Simulated`；不生成或暗示真实执行证据。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `AUT-011` | `confirmed`     | 每个 Automation BDD Step 必须显式关联其一个或多个实现动作；`Click`、`Send keys`、`Navigate`、`Wait`、`Assert` 等动作在对应 BDD Step 下展示和编辑，不能作为与业务步骤无关的独立列表。                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `AUT-012` | `confirmed`     | 已关联 Automation 的 Test Plan 可以直接发起 Automation Run；只要 Run 开始时存在关联，无论从 Test Plan 还是 Automation 详情发起，同一个 Run 都进入 Automation Run History 和 Test Plan Execution History。未关联 Run 不产生 Test Plan 执行记录，后续解除关联也不删除历史快照。                                                                                                                                                                                                                                                                                                                                                                        |
+| `ATH-001` | `confirmed`     | Athena 识别到生成 Automation 的意图后，先询问用户是否需要生成 Test Plan。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `ATH-002` | `confirmed`     | 用户选择需要时，Athena 先生成 Test Plan，再引导生成 Automation；选择不需要时可直接生成未关联 Automation。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `ATH-003` | `confirmed`     | Yes 路径完成后，Athena 同时给出 Test Plan 与 Automation 的可点击入口；Skip 路径只给出 Automation 入口并明确未关联 Test Plan。Automation 入口直接打开对应详情。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `ATH-004` | `confirmed`     | 用户可以在 Athena 对话中 Review 生成结果，也可以进入 Automation 详情继续调整并执行。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `ATH-005` | `confirmed`     | 对话历史遵循一条 Conversation 一条历史记录：空白 New Chat 不进入历史；首条消息发送后立即创建历史项并以首条消息生成标题；后续轮次追加到同一项。当前项始终可见且高亮，跨模块、刷新和重新打开页面后可恢复。                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `ATH-006` | `confirmed`     | Composer 中已选择的 Knowledge、AI Agent 与 Skill 必须显示为可移除标签；每项提供明确的删除按钮，删除只影响当前 Conversation 后续消息的上下文，不改写历史 Turn 已记录的上下文。                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ATH-007` | `confirmed`     | 产品一级 Rail 的 Athena 入口使用白色背景的 `A` 替代聊天气泡图标，紫色只保留在一级入口的外层选中态。该入口是页面中唯一的 `A` 品牌徽标；Athena 二级 Sidebar 标题、欢迎区和每条 Assistant 消息均不重复显示头像式 `A`。                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `ATH-008` | `confirmed`     | Athena Composer 使用 Codex 式模型触发器：输入框底部只显示当前模型名称和下拉箭头，不显示前置闪电；所有模型名称以 `GPT-` 开头，只提供模型选择，不显示或提供 Fast、Ultra 或其他推理强度。模型选择属于单个 Conversation，新对话默认 `GPT-5.6 Sol`，当前纯前端原型不宣称真实调用对应模型。                                                                                                                                                                                                                                                                                                                                                                |
+| `ATH-009` | `confirmed`     | 右侧 Knowledge sources 可以独立收起和展开；使用与左栏同语法、右侧镜像且能区分展开/收起状态的面板图标，收起后按钮移动到聊天区右上角并释放完整列宽，已选来源和搜索状态不丢失。两侧面板共用同一短时收展曲线、裁切和减弱动态效果规则。窄屏采用右侧遮罩抽屉，并支持 Escape、背景 inert、滚动锁定与焦点恢复。                                                                                                                                                                                                                                                                                                                                              |
+| `ATH-010` | `confirmed`     | Athena 对话视口左缘按用户已发送的问题生成 Codex 式短线 minimap：每个 Turn 对应一条横向短线，刻度组在可用视口内垂直居中并使用 `14px` 节拍；默认刻度为 `12 × 4px`、`#dbdbdb`，全部固定在距聊天区左缘 `14px` 的同一左锚点。滚动对应的当前刻度保持相同尺寸，只加深为 `#8a8a8a`，不得让邻近刻度永久扩散。仅在 Hover 或键盘 Focus 时，目标及相邻刻度按 `12 / 14 / 18 / 24 / 34 / 24 / 18 / 14 / 12px` 从同一左边缘向右形成紧凑鱼眼放大，目标刻度为 `#222529` 并显示问题预览。点击平滑跳转到对应 Turn，当前项随点击与滚动更新。对话继续支持键盘、触控板和滚轮滚动，但不同时显示浏览器原生滚动条；导航自身也不产生第二条滚动条。减弱动态效果时改为即时跳转。 |
+| `ATH-011` | `confirmed`     | 当问题总数超过输入框上方对话内容区按 `14px` 节拍可容纳的数量时，minimap 不压缩刻度也不继续向屏幕外或输入框区域增长，而是进入固定高度的滑动窗口。可见容量根据 Transcript 行从页面顶部到 Composer 上沿的真实高度动态计算并取奇数，刻度组在该区域内垂直居中并与 Composer 至少保留 `32px` 安全间距；窗口尺寸、Composer 高度或上下文标签换行变化时通过 `ResizeObserver` 重新计算。窗口默认围绕当前问题居中，在首尾处自然钳制。主对话滚动会让窗口重新跟随当前问题；在 minimap 上滚轮可浏览相邻隐藏节点。窗口上下端使用无独立滚动轨道的渐隐续接刻度，Hover/Focus 显示隐藏问题数量，点击按一页移动。minimap 只挂载当前窗口内的问题按钮，不生成第二条滚动条。 |
+| `LIB-001` | `confirmed`     | Library 的默认列表页签命名为 `All`，并提供关键词搜索、Type 与 Status 条件筛选、结果数量和清空筛选；搜索与筛选可以组合使用。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `LIB-002` | `confirmed`     | Knowledge Graph 使用 Graphify 式高密度关系图体验：圆形节点、社区聚类、节点度数大小、社区筛选、搜索高亮、节点详情、关系溯源以及缩放/平移/重置；当前原型使用确定性 fixture，不宣称运行真实图谱抽取或布局引擎。                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `VIS-001` | `confirmed`     | Test Management 与 Low Code Automation 必须以当前 Athena 视觉语言为基准，共用页面背景、字体层级、边框、圆角、按钮、状态色和间距，不建立彼此独立的暖色或杂志化视觉主题。                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `DOC-001` | `confirmed`     | 后续每轮原型设计和产品需求都必须同步到项目文档；已确认、提议和未决内容必须分开记录。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### 产品目标
 
@@ -88,15 +97,15 @@ related-adrs:
 ### 当前原型不承诺
 
 - 不新增 Test Plan、Automation、Run、Agent 或 Device 后端 API；当前纯前端原型只允许用浏览器本地存储模拟会话与原型资产恢复，不能把它描述为服务端持久化。
-- 不接入真实浏览器、移动设备、BrowserStack、Azure DevOps Pipeline、执行网格或生产凭据。
+- 不接入真实浏览器、移动设备、BrowserStack、Azure DevOps/Jenkins Pipeline、执行网格或生产凭据。
 - 不把页面内 `Passed`、日志或进度 fixture 描述成真实执行证据。
 - 不实现跨浏览器或跨设备矩阵、并发调度、重试策略、视频/HAR/截图采集或计费。
 - 不在本 RFC 中改变 Release Management、Project、权限、多租户或生产部署范围。
-- 不把 Athena Catalog 中用于理解、生成和调整的 `AI Agent` 等同于执行 Web Automation 的 Azure DevOps Pipeline Agent。
+- 不把 Athena Catalog 中用于理解、生成和调整的 `AI Agent` 等同于执行 Web Automation 的 Jenkins Pipeline Agent。
 
 ### 阶段边界
 
-本 RFC 可以用 `prototype-only` 数据演示未来完整旅程，但不能据此改写已接受的 ADR-019。如果未来要把正式 Test Asset 或真实 Browser/Device Execution 提前到当前 Phase 1，必须新建替代 ADR，并同步 RFC-007、路线图、架构、契约和 README。
+本 RFC 可以用 `prototype-only` 数据保留既有完整旅程，但实现顺序已经由 RFC-009、ADR-020 和 ADR-021 重排。V0–VG 在固定 Validation Scope 中依次交付知识问答、Graph、测试设计、Web LCA/Recorder、Playwright/Jenkins 和结果闭环；P0 才实现身份/RBAC/多 Project，P1 才完成生产加固。原型中的 Mobile、Azure DevOps 和跨类型推断均不构成当前实施授权。
 
 ## 方案
 
@@ -198,7 +207,7 @@ Low Code Automation · 12 automations                  [+ New automation]
 
 Name                         Type     Test Plan    Scenarios   Last run
 Life insurance application   Web      TP-104       3           Never
-Claims photo upload           Mobile   Not linked   2           Failed
+Claims status lookup          Web      Not linked   2           Failed
 ```
 
 #### `confirmed`
@@ -207,7 +216,7 @@ Claims photo upload           Mobile   Not linked   2           Failed
 - 点击既有项进入对应详情。
 - `+ New automation` 进入新建流程。
 - 未关联 Test Plan 是合法状态，而不是错误。
-- 列表项至少显示名称、Web/Mobile 类型、Test Plan 关联状态和 Scenario 数量。
+- 列表项至少显示名称、固定 Web 类型、Test Plan 关联状态和 Scenario 数量。
 
 #### `proposed`
 
@@ -226,7 +235,7 @@ What do you want to automate?
 [ Describe the goal.................................. ] [✨ Generate BDD]
 
 Automation type
-[ Detect automatically ]  [ Web ]  [ Mobile ]
+[ Web ]
 
 Test Plan
 [ No Test Plan / Select an available Test Plan ]
@@ -236,7 +245,7 @@ Test Plan
 
 #### 手动路径（`confirmed`）
 
-1. 用户选择 Web 或 Mobile。
+1. 当前版本固定创建 Web Automation。
 2. 用户可选择一个 Test Plan，也可保持未关联。
 3. 创建空白 Automation 后，在详情中手写 BDD。
 
@@ -244,14 +253,14 @@ Test Plan
 
 1. 用户在标题或目标输入中描述想要完成的事情。
 2. 点击 `✨` 后，平台分析意图并生成 BDD 草稿。
-3. 平台推断类型；可以判断时展示 `Detected: Web/Mobile` 并允许修改。
-4. 无法判断时停在当前流程，让用户明确选择 Web 或 Mobile 后继续。
+3. 平台确认目标属于 Web；识别到 Mobile 或无法确认时明确说明当前范围。
+4. 用户只有在调整或确认 Web 目标后才能继续，不能静默改变原意。
 
 #### 推荐细化（`proposed`）
 
 - 输入标签使用 `Goal / Describe what to automate`，平台从目标中自动提炼标题；仅写标题仍可触发生成。
 - 不展示没有校准依据的“置信度百分比”。
-- 单个 Automation 只对应 Web 或 Mobile；同时包含两个渠道时先询问用户创建哪一个。
+- 当前单个 Automation 固定对应 Web；同时包含 Web 与 Mobile 时只处理用户明确确认的 Web 部分，Mobile 部分标记为未覆盖。
 
 ### 4. Automation Detail
 
@@ -288,22 +297,22 @@ Web · Linked to TP-104 · Created by Athena · Last run: Never
 
 ### 5. 执行配置
 
-执行目标属于每次 Run。当前原型每次运行都显式选择目标，只展示配置、状态和模拟日志；是否允许 Automation 保存默认目标留待真实执行设计确认。
+执行目标属于每次 Run。当前已交付的历史原型每次运行都显式选择模拟 Azure DevOps Agent 或 Mobile Device，只展示配置、状态和模拟日志；下列 Web/Jenkins 内容是 2026-09-04 后的正式目标合同，尚未表示当前原型已经替换 Provider。是否允许 Automation 保存默认目标留待真实执行设计确认。
 
 #### Web Automation（`confirmed`）
 
 ```text
-Execution agent · Azure DevOps Pipeline
-[ ado-web-agent-03 · Online ]
+Execution agent · Jenkins Pipeline
+[ jenkins-web-agent · Online ]
 
 [Run automation]
 ```
 
 - 未选择可用 Agent 时禁用 Run，并就地说明原因。
-- Execution Agent 即 Azure DevOps Pipeline Agent，使用独立的 `ExecutionAgent` 语义和状态，不复用 Athena Catalog AI Agent。
-- 当前原型只使用 Agent fixture 和模拟状态，不连接 Azure DevOps 或触发真实 Pipeline。
+- Execution Agent 即 Jenkins Pipeline Agent，使用独立的 `ExecutionAgent` 语义和状态，不复用 Athena Catalog AI Agent。
+- 当前原型只使用 Agent fixture 和模拟状态，不连接 Jenkins 或触发真实 Pipeline。
 
-#### Mobile Automation（`confirmed`）
+#### Mobile Automation（`future-target`，P1 之后）
 
 ```text
 Supported platforms   [iOS ✓] [Android ✓]
@@ -313,6 +322,7 @@ Device     [iPhone 15 · Available]
 [Run automation]
 ```
 
+- 本节只保留已确认的历史交互方向；RFC-009 的正式后端、目标前端契约和 V0–P1 验收不包含 Mobile/Appium，遗留纯前端模拟页面不受此句追溯改写。
 - 同一个 Mobile Automation 可以支持 iOS、Android 或两者，并共用业务 BDD。
 - 每次 Run 只选择一个受支持平台下的具体设备；未选择平台或设备时禁用 Run。
 - 设备列表按 iOS/Android 过滤，并显示 Available、Busy、Offline。
@@ -329,14 +339,14 @@ Device     [iPhone 15 · Available]
 
 #### 确认关系（`confirmed`）
 
-Test Plan 与 Automation 采用可选、严格双向 `1:1`：一个 Test Plan 最多关联一个 Automation，一个 Automation 也最多关联一个 Test Plan。一个 Test Plan 的多个测试场景映射为同一个 Automation 内的多个 BDD Scenario；Web 与 Mobile 两套实现分别建立两组 Test Plan / Automation。
+Test Plan 与 Automation 采用可选、严格双向 `1:1`：一个 Test Plan 最多关联一个 Automation，一个 Automation 也最多关联一个 Test Plan。一个 Test Plan 的多个测试场景映射为同一个 Web Automation 内的多个 BDD Scenario。未来若增加 Mobile，也必须创建独立 Test Plan / Automation 关系，不能让一个 Test Plan 同时绑定 Web 与 Mobile 两份 Automation。
 
 选择关联对象时，已经被其他资产占用的 Test Plan 或 Automation 不再作为可选项；解除关联后才重新可选。
 
 #### Test Plan 执行入口与记录（`confirmed`）
 
 - Test Plan 已关联 Automation 时，详情页显示 `Run automation`；未关联时不提供可运行按钮，并显示 `Link an Automation to run this plan`。
-- Test Plan 发起 Run 时复用 Automation 的目标配置：Web 选择 Azure DevOps Pipeline Agent，Mobile 选择受支持的平台和 Device。
+- Test Plan 发起 Run 时复用 Automation 的目标配置，并选择 Jenkins Pipeline Agent；Mobile 目标不属于当前范围。
 - `AutomationRun` 是唯一运行事实。它在开始时快照 `automationId`、`testPlanIdAtRun`、`triggeredFrom`、执行目标和步骤映射，Test Plan Execution History 是对该事实的关联视图，不复制一份可漂移的结果。
 - 只要 Run 开始时 `testPlanIdAtRun` 非空，同一个 Run ID 无论从 Automation 还是 Test Plan 发起，都同时显示在 Automation Run History 与对应 Test Plan Execution History。
 - Run 开始时未关联 Test Plan，则只进入 Automation Run History。之后建立关联不会回填旧 Run；之后解除关联也不会删除已经归档到 Test Plan 的历史快照。
@@ -350,10 +360,10 @@ flowchart TD
     B -->|需要| C[生成并 Review Test Plan 草稿]
     B -->|暂不需要| D[跳过 Test Plan]
     C --> E[确认关联]
-    E --> F{能否判断 Web / Mobile?}
+    E --> F{是否属于当前 Web 范围?}
     D --> F
-    F -->|可以| G[生成 Automation + BDD 草稿]
-    F -->|不可以| H[询问用户选择类型]
+    F -->|是| G[生成 Web Automation + BDD 草稿]
+    F -->|否 / 不确定| H[说明范围并要求确认 Web 目标]
     H --> G
     G --> I[对话内 Review 和修订]
     I --> J{是否存在 Test Plan?}
@@ -393,12 +403,12 @@ AUTO-104 · Web · 3 scenarios · Ready to configure
 
 | 对象                   | 核心字段                                                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `Automation`           | ID、标题、Web/Mobile 类型、来源、状态、可选 Test Plan ID、BDD Scenarios、实现绑定、更新时间                                     |
+| `Automation`           | ID、标题、固定 Web 类型、来源、状态、可选 Test Plan ID、BDD Scenarios、实现绑定、更新时间                                       |
 | `TestPlan`             | ID、标题、Scenarios、来源、状态、可选 Automation ID                                                                             |
 | `BddScenario`          | ID、标题、可选 Test Plan Scenario ID、Given/When/Then/And Steps                                                                 |
 | `BddStep`              | ID、Keyword、业务文本、可选 Test Plan Step ID、按顺序关联的 Implementation Action IDs                                           |
 | `ImplementationAction` | ID、BDD Step ID、动作类型、Locator/Target、可选 Value 与平台差异                                                                |
-| `ExecutionTarget`      | Web Azure DevOps Pipeline Agent，或 Mobile OS + Device                                                                          |
+| `ExecutionTarget`      | Web Jenkins Pipeline Agent；Mobile OS + Device 属于 P1 之后的未来契约                                                           |
 | `AutomationRun`        | ID、Automation ID、运行开始时的可选 Test Plan ID、触发入口、Target、场景/步骤/动作结果、状态、开始/结束时间、模拟或真实证据标记 |
 | `ArtifactRef`          | Athena Turn 指向 Test Plan 或 Automation 的类型与 ID                                                                            |
 
@@ -421,7 +431,7 @@ Athena Turn 应保存 `ArtifactRef`，不再保存可覆盖现有编辑的 Autom
 
 - Library、创建、详情、对话生成和执行配置都要覆盖 Loading、Empty、Error 和 Disabled 原因。
 - 对话历史必须覆盖空白 New Chat、首轮入列、当前项选中、跨模块恢复、本地恢复失败回退和无历史空态。
-- 生成 BDD 时应显示可取消的进行状态；类型不明属于需要用户输入，不是系统错误。
+- 生成 BDD 时应显示可取消的进行状态；无法确认 Web 范围属于需要用户输入，不是系统错误。
 - Run 按钮的禁用原因必须可见且能被屏幕阅读器理解。
 - 所有核心操作支持键盘，交互目标至少 `44px`，焦点样式清晰，状态不只依赖颜色。
 - 移动端将详情右栏变成全屏抽屉，Scenario 列表收敛为选择器，避免出现多重窄侧栏。
@@ -439,15 +449,15 @@ Athena Turn 应保存 `ArtifactRef`，不再保存可覆盖现有编辑的 Autom
 
 ## 替代方案
 
-### A. 资产优先的统一 Builder（推荐）
+### A. 资产优先的统一 Builder（采用）
 
-Web 与 Mobile 共用 Library、BDD、Test Plan 关联和 Copilot，只在执行目标上分流。优点是资产身份和用户心智稳定；代价是详情页必须通过清晰分栏和响应式收敛控制复杂度。
+当前 Web Automation 共用 Library、BDD、Test Plan 关联和 Copilot，并保留未来以相同资产模式扩展 Mobile 的可能。优点是资产身份和用户心智稳定；代价是详情页必须通过清晰分栏和响应式收敛控制复杂度。
 
 ### B. Chat-first 生成工作台
 
 所有 Automation 都从对话创建和编辑。首次生成轻量，但会与 Athena 重复，也不利于列表管理、长期维护和重复执行。
 
-### C. Web 与 Mobile 两套独立工作室
+### C. Web 与 Mobile 两套独立工作室（未采用的历史方案）
 
 可分别深度定制执行配置，但会重复实现 BDD、Test Plan、Copilot 和历史记录，并割裂同一种 Automation 资产，因此不建议用于当前原型。
 
@@ -474,7 +484,7 @@ Web 与 Mobile 共用 Library、BDD、Test Plan 关联和 Copilot，只在执行
 1. 将 Low Code Automation 顶层落点从单份硬编码详情改为 Automation Library。
 2. 引入页面内 Automation 集合、稳定 ID、列表/新建/详情位置状态和 fixture。
 3. 将现有技术动作编辑器包在 BDD Scenario 模型下，保留脚本预览作为辅助视图。
-4. 增加 Web/Mobile 类型与模拟执行目标配置。
+4. 正式目标实现固定 Web 类型与 Jenkins 执行目标；在完成对应实施任务前，旧原型的 Mobile/Azure DevOps fixture 继续作为有明确标签的历史参考。
 5. 增加详情 Copilot 和 Athena 多轮编排状态，聊天 Turn 改存 ArtifactRef。
 6. 增加 Test Plan 双向链接，并按可选、严格双向 `1:1` 约束关联选择。
 7. 建立 BDD Step → Implementation Action 的内联映射，并让 Test Plan 与 Automation 使用同一 Run 记录。
@@ -496,7 +506,9 @@ Web 与 Mobile 共用 Library、BDD、Test Plan 关联和 Copilot，只在执行
 - 后续实施 Plan、原型页面和测试都能引用稳定 Requirement ID。
 - 每次用户批准或改变方向后，RFC 的条目状态和变更记录同步更新。
 
-### 产品原型验收
+### 正式目标原型验收
+
+以下清单同时包含已交付的通用交互与 RFC-009 要求的新 Web/Jenkins 目标。凡涉及移除 Mobile/ADO 或接入 Jenkins 的条目当前均为待实施验收，不能从 RFC 的 `accepted` 状态推断为代码已经完成；当前仓库事实以上文快照和 README 为准。
 
 - 点击 Athena 展开其上下文菜单；点击其他产品模块不会继续占用 Athena Sidebar 宽度。
 - Athena Sidebar 中的 `New chat` 使用方框铅笔图标且没有黑色背景；Agent、Skills、Library 的当前项使用整行浅灰圆角背景且没有紫色侧边线。
@@ -507,12 +519,11 @@ Web 与 Mobile 共用 Library、BDD、Test Plan 关联和 Copilot，只在执行
 - 对话中每条用户问题都在左缘生成一个 `12 × 4px` 横向短线，按 `14px` 节拍组成垂直居中的刻度组；全部刻度左边缘对齐。滚动当前项只变深，默认态不得出现邻近长度梯度。Hover/Focus 时目标项与三层邻近项按 `34 / 24 / 18 / 14px` 向右展开并显示预览；点击定位对应 Turn，当前项随点击和滚动更新；浏览器原生滚动条与导航自身滚动条均不可见。
 - Athena Composer 显示 Codex 式模型选择器；触发器没有闪电，只显示 `GPT-` 前缀的模型名称和下拉箭头。菜单只包含模型，没有 Fast、Ultra 或其他推理强度；选择跟随 Conversation 保存，新对话默认 `GPT-5.6 Sol`。
 - 点击 Low Code Automation 首先看到带总数的 Automation Library，而不是具体寿险 Automation 标题。
-- 用户可以新建 Web 或 Mobile Automation，手写 BDD 或使用 `✨` 生成草稿。
-- 类型无法判断时必须停下来让用户选择。
+- 用户可以新建 Web Automation，手写 BDD 或使用 `✨` 生成草稿。
+- 无法确认目标属于 Web 时必须停下来说明范围并让用户确认。
 - Automation 详情可手动编辑 BDD，也可通过 Copilot 提议并 Review 修改。
 - 每个 BDD Step 下能直接看到并编辑其 `Click`、`Send keys` 等实现动作；删除或新增动作不会失去所属 BDD Step。
-- Web 运行要求选择 Execution Agent；Mobile 运行要求选择 OS 和 Device。
-- 同一个 Mobile Automation 可支持 iOS、Android 或两者，每次模拟 Run 选择一个具体设备。
+- Web 运行要求选择 Jenkins Pipeline Agent；当前实现与验收不得出现 Mobile OS/Device。
 - Automation 可以保持未关联 Test Plan；关联后两端都可跳转。
 - 已关联 Test Plan 可以直接运行 Automation；同一 Run ID 同时出现在 Automation Run History 和 Test Plan Execution History，并可追溯到 Scenario、BDD Step 与实现动作。
 - 未关联 Run 不产生 Test Plan 执行记录；后续关联不回填，解除关联不删除既有执行历史。
@@ -555,3 +566,4 @@ Web 与 Mobile 共用 Library、BDD、Test Plan 关联和 Copilot，只在执行
 | 2026-09-03 | `confirmed`  | 长对话 minimap 改为视口自适应的固定高度滑动窗口；当前问题自动居中跟随，上下渐隐续接可显示隐藏数量并翻页，滚轮可浏览隐藏节点，且不增加第二条滚动轨道。                                 |
 | 2026-09-03 | `confirmed`  | Minimap 垂直节拍由 `20px` 收紧为 `16px`；Hover/Focus 鱼眼最大长度由 `52px` 收敛至 `40px`，三层邻近刻度同步调整为 `30 / 22 / 16px`。                                                   |
 | 2026-09-03 | `confirmed`  | Minimap 再收紧为 `14px` 垂直节拍；Hover/Focus 鱼眼最大长度调整为 `34px`，三层邻近刻度调整为 `24 / 18 / 14px`。                                                                        |
+| 2026-09-04 | `confirmed`  | RFC-009 重排正式范围：当前只实施 Web/Playwright/Jenkins；Mobile、Web/Mobile 推断和 Azure DevOps 后移到 P1 之后。2026-09-03 的 Mobile/ADO 行只保留为历史原型决定。                     |

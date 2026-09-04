@@ -1,6 +1,6 @@
 ---
 id: RFC-004
-status: draft
+status: withdrawn
 date: 2026-08-24
 related-adrs:
   - ADR-002
@@ -8,9 +8,13 @@ related-adrs:
   - ADR-005
   - ADR-011
   - ADR-012
+  - ADR-022
+  - ADR-023
 ---
 
 # RFC-004：以 Milvus 为实验默认的可替换检索后端
+
+> **撤回说明（2026-09-04）**：本 RFC 已撤回，不再是待评审或实施入口。其本地 Milvus `doc` 实验事实与 provider-neutral `SearchPort` 原则继续有效，但共享/生产后端、部署和 Knowledge Graph 的现行选择已由 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)、[ADR-022](../decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md) 与 [ADR-023](../decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md) 取代：当前采用自托管 Compose、Milvus `doc` 投影和 MySQL Knowledge Graph，Azure 不再是必选企业基线。下文的 `draft`、Azure 发布门禁及待建 superseding ADR 均只记录 2026-08-24 的原提案过程，不得继续执行。
 
 ## 摘要
 
@@ -89,15 +93,15 @@ MilvusSearchAdapter    AzureAISearchAdapter
 
 Milvus adapter 的首轮资源边界固定如下；调用方不能通过请求提高这些值：
 
-| 边界 | 默认值 | 绝对上限与来源 |
-| --- | --- | --- |
-| source family fan-out | `1`（只启用 `doc`） | `4`，来自闭合 `SourceFamily` |
-| 每 target 候选/返回行 | `50` | `50`；`QueryPlan.candidate_limit` 仍保持 `1..100`，取两者最小值 |
-| provider deadline | `8s` | `30s` |
-| provider connections | `4` | `16` |
-| Policy group IDs | 最多 `128` 个 | 每个最多 `256` 字符；超限在 authorization/adapter 边界拒绝，禁止截断 |
-| resource scope | 最多 `20` 个 resource | 沿用 `QueryPlan` 上限；每个 subtree locator tuple 最多 `32` 项、每项最多 `256` 字符 |
-| 编译后 filter | 不超过 `32KiB` UTF-8 | 超限在任何 provider I/O 前拒绝 |
+| 边界                  | 默认值                | 绝对上限与来源                                                                      |
+| --------------------- | --------------------- | ----------------------------------------------------------------------------------- |
+| source family fan-out | `1`（只启用 `doc`）   | `4`，来自闭合 `SourceFamily`                                                        |
+| 每 target 候选/返回行 | `50`                  | `50`；`QueryPlan.candidate_limit` 仍保持 `1..100`，取两者最小值                     |
+| provider deadline     | `8s`                  | `30s`                                                                               |
+| provider connections  | `4`                   | `16`                                                                                |
+| Policy group IDs      | 最多 `128` 个         | 每个最多 `256` 字符；超限在 authorization/adapter 边界拒绝，禁止截断                |
+| resource scope        | 最多 `20` 个 resource | 沿用 `QueryPlan` 上限；每个 subtree locator tuple 最多 `32` 项、每项最多 `256` 字符 |
+| 编译后 filter         | 不超过 `32KiB` UTF-8  | 超限在任何 provider I/O 前拒绝                                                      |
 
 连接、deadline、候选和 filter 大小只能由服务端配置进一步收紧。Milvus 与 Azure conformance tests 使用相同的 Policy/Plan 输入上限；若现有 provider-neutral 类型尚未实现表中更严格的 group 数量/长度限制，首轮必须先在共同授权边界补齐，而不是只在 Milvus 路径特殊截断。
 
@@ -107,14 +111,14 @@ Milvus adapter 的首轮资源边界固定如下；调用方不能通过请求�
 
 `doc`、`code`、`bdd`、`failure` 四个 `SourceFamily` 继续是稳定逻辑边界。provider 配置把每个已启用 family 映射到一个可信 target：
 
-| 概念 | Milvus | Azure AI Search |
-| --- | --- | --- |
-| 查询身份 | collection alias | index name/alias |
-| 物理身份 | physical collection | physical index |
-| 版本约束 | schema/corpus/model metadata | schema/corpus/model metadata |
-| 关键词检索 | BM25 sparse field | searchable text/BM25 |
-| 向量检索 | dense vector field | vector field |
-| ACL | scalar/ARRAY filter | OData filter |
+| 概念       | Milvus                       | Azure AI Search              |
+| ---------- | ---------------------------- | ---------------------------- |
+| 查询身份   | collection alias             | index name/alias             |
+| 物理身份   | physical collection          | physical index               |
+| 版本约束   | schema/corpus/model metadata | schema/corpus/model metadata |
+| 关键词检索 | BM25 sparse field            | searchable text/BM25         |
+| 向量检索   | dense vector field           | vector field                 |
+| ACL        | scalar/ARRAY filter          | OData filter                 |
 
 首轮只配置并只由实验 Policy 允许 `doc`；请求选择未配置的 family 时 fail closed，不能忽略该 family 或放宽到其他 collection。后续扩展另外三个 family 时复用相同端口与门禁，但允许不同 schema、analyzer、向量索引和排序 profile。
 
@@ -126,15 +130,15 @@ Milvus 配置只保存可信 logical alias、family、允许的物理名称模�
 
 首轮 schema 使用显式字段，关闭把未知动态字段当作权威元数据的路径：
 
-| 字段组 | 主要字段 | 用途 |
-| --- | --- | --- |
-| 稳定身份 | `chunk_id`、`logical_chunk_id`、`root_id`、`parent_id` | 幂等、结构范围与引用 |
-| 内容 | `title`、`content`、`content_role` | BM25、回答上下文与展示 |
-| 权限 | `tenant_id`、`project_id`、`allowed_group_ids`、`classification_rank`、`environment`、`deleted` | 查询期强制 ACL |
-| 版本 | `index_family`、`physical_collection`、`corpus_version`、`schema_version`、`embedding_model_version` | 防止误报逻辑/物理来源或混合不兼容投影 |
-| 来源 | `source_id`、`source_type`、`source_revision`、`source_content_hash`、`chunk_content_hash`、`anchor_json` | 不可变 provenance |
-| 派生关系 | `derived_from_chunk_ids` | 摘要与派生内容回链 |
-| 检索 | BM25 sparse field、`dense_vector` | lexical、vector 与 hybrid |
+| 字段组   | 主要字段                                                                                                  | 用途                                  |
+| -------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 稳定身份 | `chunk_id`、`logical_chunk_id`、`root_id`、`parent_id`                                                    | 幂等、结构范围与引用                  |
+| 内容     | `title`、`content`、`content_role`                                                                        | BM25、回答上下文与展示                |
+| 权限     | `tenant_id`、`project_id`、`allowed_group_ids`、`classification_rank`、`environment`、`deleted`           | 查询期强制 ACL                        |
+| 版本     | `index_family`、`physical_collection`、`corpus_version`、`schema_version`、`embedding_model_version`      | 防止误报逻辑/物理来源或混合不兼容投影 |
+| 来源     | `source_id`、`source_type`、`source_revision`、`source_content_hash`、`chunk_content_hash`、`anchor_json` | 不可变 provenance                     |
+| 派生关系 | `derived_from_chunk_ids`                                                                                  | 摘要与派生内容回链                    |
+| 检索     | BM25 sparse field、`dense_vector`                                                                         | lexical、vector 与 hybrid             |
 
 `chunk_id` 使用现有 `h_` 加 64 位小写 SHA-256 hex。每个实体重复写入发布时已知的 `index_family=doc` 与 `physical_collection`，adapter 将两者与可信 target/alias resolution 交叉验证，不能只凭结果行声明逻辑或物理来源。`allowed_group_ids` 使用有界同质 ARRAY；tenant、project、classification、environment、corpus 和 `deleted` 建立适合过滤的 scalar index。`classification_rank` 只能由闭合的 `Classification` enum 映射，不能接收浏览器数字。`source_type`、anchor 与 revision kind 必须保持 `doc` family 兼容。向量维度和 embedding model ID 在 collection 创建时固定，不允许同 collection 混用。
 
@@ -196,10 +200,10 @@ provider 原始 score 可以进入受控诊断记录，但公共正确性不依�
 
 本地/CI bootstrap 以默认 root 完成一次性初始化后立即轮换默认密码，并把 root 凭据排除在应用、loader 与普通健康检查环境之外。固定三类运行身份：
 
-| 身份 | 必需权限 | 明确禁止 |
-| --- | --- | --- |
-| retrieval reader | bootstrap base inventory 中 `Global/*` 的 `DescribeAlias`、`DescribeCollection`；已发布 `doc` target 上 `Collection` + exact database/name 的 `Search`、`Query` | Insert/Upsert/Delete/Flush、collection/index/alias 管理、RBAC，以及把 `Global` record 当作 target-scoped grant |
-| fixture writer | 指定未发布 physical fixture collection 上的 `Insert`、`Upsert`、`Delete`、`Flush` 及 flush 状态读取 | Search/Query、alias 切换、collection/index 管理、RBAC |
+| 身份                  | 必需权限                                                                                                                                                                                                                                                                                                                                                                                                          | 明确禁止                                                                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| retrieval reader      | bootstrap base inventory 中 `Global/*` 的 `DescribeAlias`、`DescribeCollection`；已发布 `doc` target 上 `Collection` + exact database/name 的 `Search`、`Query`                                                                                                                                                                                                                                                   | Insert/Upsert/Delete/Flush、collection/index/alias 管理、RBAC，以及把 `Global` record 当作 target-scoped grant                                                      |
+| fixture writer        | 指定未发布 physical fixture collection 上的 `Insert`、`Upsert`、`Delete`、`Flush` 及 flush 状态读取                                                                                                                                                                                                                                                                                                               | Search/Query、alias 切换、collection/index 管理、RBAC                                                                                                               |
 | provisioner/publisher | bootstrap base inventory 中 `Global/*` 的 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership`、`SelectOwnership`；`Collection/*` 的 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release`，用于本地/CI 的 collection/index create/drop/load/release、alias create/alter/drop、逐 target reader/writer 授权与安全 grant inventory | 被 Retrieval application 持有、出现在普通 runtime env；任意 provisioner concrete target grant，或用 root/admin 代替 provisioner 完成 publisher grant reconciliation |
 
 2026-08-26 的仓库 live probe 观察到，固定 Milvus/PyMilvus 组合在 grant inventory 中把 reader 的 `DescribeAlias`、`DescribeCollection` 表达为 `Global`。同日第三次只读 preflight 又证明 provisioner 的 `CreateAlias`、`CreateCollection`、`DescribeAlias`、`DropAlias`、`DropCollection`、`ManageOwnership` 精确表达为 `Global/*`，而 `CreateIndex`、`GetLoadState`、`GetLoadingProgress`、`IndexDetail`、`Load`、`Release` 精确表达为 `Collection/*`。第四次 live publish 随后证明，仅有 `ManageOwnership` 时 grant mutation 可以完成，但 provisioner 调用 publisher 安全对账所需的 `describe_role` 会以 permission denied 明确要求 `PrivilegeSelectOwnership`。闭合契约因此只增加 `Global/*` 的 `SelectOwnership`，使 provisioner base 精确为七项 `Global/*` 与六项 `Collection/*`；`SelectOwnership` 只用于 publisher 的 `describe_role`/grant inventory，`ManageOwnership` 继续负责既有 grant mutation。不得把前者授予 reader/writer，不得让 publisher 用 root/admin 绕过自身 inventory 权限。这是固定组合的仓库实测，不是官方 privilege 层级承诺，也不能泛化为其他 privilege、版本、API 或 resource level 的规则。publisher 不再对每个 physical target 重复授予 reader Describe privileges。reader 的 target-scoped grant set 严格只有 `Search`、`Query`，且 inventory 必须同时匹配 `object_type=Collection`、exact database、exact physical name 和 exact reader role。任何以 target 名称出现的 `Global` record、同名但不同 database/object type/role 的记录或额外 target privilege 都不能冒充合法 target grant，必须 fail closed。
@@ -252,12 +256,12 @@ ACL 收紧和删除必须先 upsert 新 metadata 或写入 `deleted=true`，以 
 
 测试和实验完成门禁分为四项：
 
-| 层级 | 必须覆盖 |
-| --- | --- |
-| Unit/contract | filter escaping 与 bounds、空 ACL fail closed、默认空 source 只形成 `doc` Plan、同 filter 多通道、严格 row mapping、共享错误与 HTTP 503 映射、deadline/cancel、未配置 family、秘密不进 repr/log |
+| 层级                 | 必须覆盖                                                                                                                                                                                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit/contract        | filter escaping 与 bounds、空 ACL fail closed、默认空 source 只形成 `doc` Plan、同 filter 多通道、严格 row mapping、共享错误与 HTTP 503 映射、deadline/cancel、未配置 family、秘密不进 repr/log                              |
 | Provider conformance | 每条出站请求含精确 ACL filter、allowed positive、denied provider rows/hits zero、tenant/project/classification/environment/corpus 隔离、scope/subtree、撤权窗口、delete、provenance、bounded result、alias/physical identity |
-| Real Milvus CI | Docker Milvus 建表/写入/hybrid、版本化预计算 vectors、ACL 收紧、重启持久性、重建对账、alias/corpus 发布 |
-| Embedding research | 真实 direct Bailian embedding、ignored cache、模型/维度绑定、正向检索与调用/成本记录；完成实验报告前必跑，日常 CI 不重复调用 |
+| Real Milvus CI       | Docker Milvus 建表/写入/hybrid、版本化预计算 vectors、ACL 收紧、重启持久性、重建对账、alias/corpus 发布                                                                                                                      |
+| Embedding research   | 真实 direct Bailian embedding、ignored cache、模型/维度绑定、正向检索与调用/成本记录；完成实验报告前必跑，日常 CI 不重复调用                                                                                                 |
 
 Milvus real database integration 是本地研究和日常 CI 的必跑门禁。Azure adapter 继续运行相同的 unit/contract/conformance tests；真实 Azure gate 对本地 Milvus 实验与每次提交改为 opt-in，仅在提供 `non-production-sanitized` 凭据时运行，skip 不阻塞日常 Milvus 开发。但任何 Azure-backed 环境的发布、ADR-002 企业基线验证或当前 Azure-specific Task 3 的正式关闭仍必须运行真实 Azure gate；本 RFC 不用一次本地 Milvus GREEN 代替 Azure 部署验收。真实 direct Bailian embedding research profile 是完成首轮实验报告的必跑项，但不是每次 CI 的前置条件。禁止使用 fake/skip 代替 Milvus 的真实 ACL GREEN，也禁止用预计算 vectors 冒充真实 embedding 已运行。
 
@@ -291,7 +295,7 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 
 ### 文档与决策生命周期
 
-本 RFC 为 `draft` 时不改写已接受 ADR 的语义，也不把 Milvus 写成当前已实施能力。RFC 接受后应创建两份独立 superseding ADR：
+本 RFC 仍为 `draft` 时不改写已接受 ADR 的语义，也不把 Milvus 写成当前已实施能力。当时设想 RFC 接受后创建两份独立 superseding ADR；该流程现已由 RFC-009 与 ADR-022/023 取代：
 
 1. 替代 ADR-005 的新 ADR 必须完整重述仍保留的决策：`doc`、`code`、`bdd`、`failure` 四个逻辑 family；BM25、vector、AST/symbol、轻量 code-test dependency 等适用多路召回；单 target/跨 family 的 RRF 与可选 reranker 边界；文档 Parent/Child 与 Document Summary/Section Summary/Leaf Chunk；代码不转 Markdown；查询前 ACL filter。它只把四个 Azure 物理索引改为 provider-neutral targets，并新增 Milvus 本地实验默认、Azure 可选、共享非生产另行批准。
 2. 替代 ADR-012 的新 ADR 必须完整重述仍保留的决策：TAP 拥有 typed parsing/chunking、稳定 `logicalChunkId`、不可变 `chunkId`、ACL/provenance、embedding、删除传播和 push writer；每个 child 重复 parent/ACL/lineage，不做 query-time join；Writer 写 physical target，Reader 经 alias 查已发布 target；schema/chunker/model 不兼容升级使用新 physical target、同一 Golden Dataset、评估和 alias 切换；provider 的 index projection 不得直接写 active corpus。它只把 Azure 专名职责改成 Search Provider adapter。
@@ -355,8 +359,8 @@ Entra/Project-Policy 门禁保持独立。本实验可使用现有 verified subj
 
 ## 未决问题
 
-- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport、reader Describe grants 的 `Global` inventory 层级、provisioner 六项既有 `Global/*`/六项 `Collection/*` inventory 二分，以及 `describe_role` 对 `PrivilegeSelectOwnership` 的明确要求；闭合 provisioner base 因而是七项 `Global/*` 与六项 `Collection/*`。Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项。
-- **Embedding route（真实探针已通过）**：2026-08-27 已通过百炼 `text-embedding-v4` 的有界 direct probe，验证 raw model、1536 维、usage/request ID、CNY calculated-cost report 和三个正向 case 的 top-10 质量；仓库 alias/digest schema 保持不变。此结果只关闭 Task 9 provider probe，不改变 RFC 的 draft 状态或批准共享 Milvus。
+- **Milvus/PyMilvus 精确版本（已固定，探针发现已记录）**：本地实验固定为 Milvus `2.6.22`、PyMilvus `2.6.17` 与 Python `3.13.12`，不放宽版本范围。2026-08-26 live probe 已发现该组合的 BM25 `describe_index` 扁平 transport、canonical `content.params.enable_analyzer` 的精确字符串 `"true"` transport、reader Describe grants 的 `Global` inventory 层级、provisioner 六项既有 `Global/*`/六项 `Collection/*` inventory 二分，以及 `describe_role` 对 `PrivilegeSelectOwnership` 的明确要求；闭合 provisioner base 因而是七项 `Global/*` 与六项 `Collection/*`。Task 5/7 必须先按上述闭合规则完成 TDD 修正，Task 8 才能从零资源状态重跑完整发布验收。上述实现事实当时不改变 canonical schema digest 或本 RFC 的 `draft` 状态，也不解决 embedding route、共享部署或生产形态等其余未决项；本 RFC 现已 `withdrawn`。
+- **Embedding route（真实探针已通过）**：2026-08-27 已通过百炼 `text-embedding-v4` 的有界 direct probe，验证 raw model、1536 维、usage/request ID、CNY calculated-cost report 和三个正向 case 的 top-10 质量；仓库 alias/digest schema 保持不变。此结果当时只关闭 Task 9 provider probe，不批准共享 Milvus；本 RFC 现已 `withdrawn`。
 - **中文 analyzer**：由首轮脱敏 fixture 的实际语言分布选择并固化；若包含中文，必须对默认与中文 analyzer 输出做可复现对比后选择，选择结果进入 schema version。
 - **共享非生产部署**：本 RFC 提议的首轮批准范围只有本地 Docker。是否把 Standalone 放到共享 VM/容器环境，在本地资源、恢复和安全 review 后另行批准，并强制 TLS 与 secret 注入。
 - **生产形态**：Standalone、Distributed 或 Azure AI Search 的生产选择推迟到真实 corpus 容量、SLO/RPO/RTO 和运维成本具备后，由实施计划的 [Task 8 容量与部署门禁](../plans/2026-08-23-phase-1-application-implementation.md#task-8-deployment-observability-and-capacity-gates) 处理。

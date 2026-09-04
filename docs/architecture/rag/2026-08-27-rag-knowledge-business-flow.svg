@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="diagram-title diagram-desc">
   <title id="diagram-title">TAP RAG｜可信知识问答</title>
-  <desc id="diagram-desc">管理层视角的 TAP RAG 架构图。上方展示企业知识从知识源、解析切片、Azure AI Search 到已发布知识库的建设链路；中部展示用户提问经权限过滤、检索生成到可信回答的在线问答链路；底部展示权限安全、版本溯源和持续评测三项保障。</desc>
+  <desc id="diagram-desc">管理层视角的 TAP 知识架构图。上方展示企业知识从知识源、解析切片到知识存储与服务边界的建设链路，并区分已经实现的 Milvus 文档检索与 V2 尚未实现的 MySQL Knowledge Graph；中部展示用户提问经权限过滤、检索生成到可信回答的在线问答链路；底部展示权限安全、版本溯源和持续评测三项保障。</desc>
   <defs>
     <style>
       text { font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
@@ -26,8 +26,8 @@
     <rect x="120" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
     <text x="260" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">企业知识源</text>
     <text x="260" y="298" text-anchor="middle" fill="#66788A" font-size="17">
-      <tspan x="260" dy="0">文档 · 代码 · BDD ·</tspan>
-      <tspan x="260" dy="23">历史失败</tspan>
+      <tspan x="260" dy="0">PDF · DOCX ·</tspan>
+      <tspan x="260" dy="23">Markdown · TXT</tspan>
     </text>
 
     <rect x="473" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
@@ -38,12 +38,15 @@
     </text>
 
     <rect x="826" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
-    <text x="966" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">Azure AI Search</text>
-    <text x="966" y="306" text-anchor="middle" fill="#66788A" font-size="17">全文 + 向量混合检索</text>
+    <text x="966" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">知识存储</text>
+    <text x="966" y="294" text-anchor="middle" fill="#66788A" font-size="16">
+      <tspan x="966" dy="0">Milvus doc：本地已实现</tspan>
+      <tspan x="966" dy="22">MySQL Graph：V2 未实现</tspan>
+    </text>
 
     <rect x="1179" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
-    <text x="1319" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">已发布知识库</text>
-    <text x="1319" y="306" text-anchor="middle" fill="#66788A" font-size="17">版本化 · 可删除 · 可重建</text>
+    <text x="1319" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">知识服务边界</text>
+    <text x="1319" y="306" text-anchor="middle" fill="#66788A" font-size="17">当前文档 · 后续图谱</text>
 
     <line x1="400" y1="280" x2="473" y2="280" stroke="#2F6FED" stroke-width="2" marker-end="url(#arrow-blue)"/>
     <line x1="753" y1="280" x2="826" y2="280" stroke="#2F6FED" stroke-width="2" marker-end="url(#arrow-blue)"/>
@@ -56,7 +59,7 @@
 
     <rect x="120" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
     <text x="260" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">用户提问</text>
-    <text x="260" y="576" text-anchor="middle" fill="#66788A" font-size="17">Knowledge Chat</text>
+    <text x="260" y="576" text-anchor="middle" fill="#66788A" font-size="17">Athena Q&amp;A</text>
 
     <rect x="473" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
     <text x="613" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">权限过滤</text>
@@ -64,7 +67,10 @@
 
     <rect x="826" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
     <text x="966" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">检索与生成</text>
-    <text x="966" y="576" text-anchor="middle" fill="#66788A" font-size="17">找到证据后组织答案</text>
+    <text x="966" y="566" text-anchor="middle" fill="#66788A" font-size="16">
+      <tspan x="966" dy="0">当前：Milvus 证据</tspan>
+      <tspan x="966" dy="22">V2：有界图扩展</tspan>
+    </text>
 
     <rect x="1179" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
     <text x="1319" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">可信回答</text>
@@ -96,5 +102,5 @@
     <text x="1291" y="780" text-anchor="middle" fill="#66788A" font-size="17">质量 · 时延 · 成本 · 用户反馈</text>
   </g>
 
-  <text x="800" y="863" text-anchor="middle" fill="#66788A" font-size="16">Azure AI Search 是当前企业检索基线；实现细节与实验方案保留在专项技术文档中。</text>
+  <text x="800" y="863" text-anchor="middle" fill="#66788A" font-size="16">交付状态：Milvus doc 本地切片已实现；MySQL Knowledge Graph 已选型、V2 尚未实现。</text>
 </svg>

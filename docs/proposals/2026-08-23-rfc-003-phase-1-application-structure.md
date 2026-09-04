@@ -6,11 +6,12 @@ related-adrs:
   - ADR-013
   - ADR-015
   - ADR-019
+  - ADR-021
 ---
 
 # RFC-003：Phase 1 应用工程结构
 
-> **范围处置（2026-09-02）**：[RFC-007](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 与 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已重排当前 Phase 1 的产品范围。本文的单仓、模块依赖、契约生成、多运行角色和测试边界继续有效；完整 Knowledge Chat、企业四索引、Entra、AKS 和生产门禁不再是当前 Phase 1 出口，而是后置 Knowledge Plane/企业平台设计。本文正文保留原接受时语义，不代表这些后置能力已实现或仍为当前优先级。
+> **范围处置（2026-09-04）**：[RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已再次重排交付优先级。本文的单仓、模块依赖、契约生成、多运行角色和测试边界继续有效；正文把 Azure AI Search、Entra、AKS、Blob 和 Git 列为 “Phase 1 必需” 的内容只记录本 RFC 于 2026-08-23 被接受时的历史语义。当前顺序是 V0–VG 固定 Validation Scope 下的 Knowledge-first Web/Jenkins 闭环，P0 身份/RBAC/多 Project，P1 Compose 生产加固；当前数据面为 MySQL、Redis、Milvus、MinIO、LiteLLM，Automation revision 由 TAP 管理且 Git 可选。
 
 ## 摘要
 
@@ -64,18 +65,18 @@ tap/
 
 应用脚手架和部署定义必须显式覆盖下列 Phase 1 依赖，不能只在 adapter、环境变量或 SDK 名称中隐含服务边界：
 
-| 服务 | Phase 1 职责 | 依赖级别与开发边界 |
-| --- | --- | --- |
-| Azure AI Search | 承载文档、代码、BDD 与失败知识四个可重建的 hybrid/vector 索引 | 必需；本地单元测试可使用 fake，集成、契约和容量验收必须连接受控 Azure 资源 |
-| PaaS MySQL | Project/Policy、Chat/Turn/Queue、materialized snapshot、domain event/Outbox、ingestion ledger/checkpoint 与审计的 operational SoR | 必需；本地开发可使用与目标版本一致的容器，迁移由 Backend 单一链路管理 |
-| PaaS Redis | command/worker 分发、lease、SSE live fanout、短锁、限流与可丢弃短期缓存 | 必需；本地开发可使用与目标版本一致的容器，不保存唯一业务事实 |
-| Azure Blob Storage | 原始文档及大型 Trace/Eval Artifact | 必需；开发替代必须通过同一 Blob port，不能改变对象 identity、hash、retention 和授权语义 |
-| LiteLLM Gateway | 统一 Chat、Embedding 与 Reranker 的协议、路由、超时、重试和 fallback | 必需；保持无状态，不为管理功能额外引入未决 PostgreSQL 依赖 |
-| 受治理的模型 endpoint | 提供固定版本的 LLM、Embedding 与 Reranker 能力 | 必需；具体 provider、模型和区域由实施计划及评测确定，调用必须经过 LiteLLM 与 TAP Model Policy |
-| Microsoft Entra ID + Project Policy | 提供身份起点，并由服务端构造 tenant、project、group、classification 与 environment 范围 | 必需；测试身份或 stub 只能用于本地/自动化测试，安全验收必须覆盖真实 token、group 与撤权路径 |
-| Azure Key Vault + Workload Identity | 保存和轮换模型、数据库及外部服务凭据，向工作负载提供短期身份 | 必需；不得把生产秘密写入仓库、镜像、前端配置或 `.env` 示例 |
-| AKS + Ingress/API Gateway | 运行 Web、API/SSE 和 worker；提供 REST/SSE 入口、TLS、认证衔接、超时及禁用响应缓冲 | Phase 1 部署基线；本地进程或容器编排用于开发，不替代 AKS 网络和 SSE 行为验收 |
-| OpenTelemetry Collector + 可观测性后端 | 汇聚跨 API、worker、Knowledge、Search 和模型调用的 trace、metric 与 log，并支撑 dashboard 和告警 | Phase 1 出口依赖；后端产品可替换，但 OTel 语义、关联字段和告警验收不能省略 |
+| 服务                                   | Phase 1 职责                                                                                                                      | 依赖级别与开发边界                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Azure AI Search                        | 承载文档、代码、BDD 与失败知识四个可重建的 hybrid/vector 索引                                                                     | 必需；本地单元测试可使用 fake，集成、契约和容量验收必须连接受控 Azure 资源                    |
+| PaaS MySQL                             | Project/Policy、Chat/Turn/Queue、materialized snapshot、domain event/Outbox、ingestion ledger/checkpoint 与审计的 operational SoR | 必需；本地开发可使用与目标版本一致的容器，迁移由 Backend 单一链路管理                         |
+| PaaS Redis                             | command/worker 分发、lease、SSE live fanout、短锁、限流与可丢弃短期缓存                                                           | 必需；本地开发可使用与目标版本一致的容器，不保存唯一业务事实                                  |
+| Azure Blob Storage                     | 原始文档及大型 Trace/Eval Artifact                                                                                                | 必需；开发替代必须通过同一 Blob port，不能改变对象 identity、hash、retention 和授权语义       |
+| LiteLLM Gateway                        | 统一 Chat、Embedding 与 Reranker 的协议、路由、超时、重试和 fallback                                                              | 必需；保持无状态，不为管理功能额外引入未决 PostgreSQL 依赖                                    |
+| 受治理的模型 endpoint                  | 提供固定版本的 LLM、Embedding 与 Reranker 能力                                                                                    | 必需；具体 provider、模型和区域由实施计划及评测确定，调用必须经过 LiteLLM 与 TAP Model Policy |
+| Microsoft Entra ID + Project Policy    | 提供身份起点，并由服务端构造 tenant、project、group、classification 与 environment 范围                                           | 必需；测试身份或 stub 只能用于本地/自动化测试，安全验收必须覆盖真实 token、group 与撤权路径   |
+| Azure Key Vault + Workload Identity    | 保存和轮换模型、数据库及外部服务凭据，向工作负载提供短期身份                                                                      | 必需；不得把生产秘密写入仓库、镜像、前端配置或 `.env` 示例                                    |
+| AKS + Ingress/API Gateway              | 运行 Web、API/SSE 和 worker；提供 REST/SSE 入口、TLS、认证衔接、超时及禁用响应缓冲                                                | Phase 1 部署基线；本地进程或容器编排用于开发，不替代 AKS 网络和 SSE 行为验收                  |
+| OpenTelemetry Collector + 可观测性后端 | 汇聚跨 API、worker、Knowledge、Search 和模型调用的 trace、metric 与 log，并支撑 dashboard 和告警                                  | Phase 1 出口依赖；后端产品可替换，但 OTel 语义、关联字段和告警验收不能省略                    |
 
 Git、Blob 和 MySQL 可以是 ingestion 的权威输入来源，但 Git 托管产品不是本 RFC 新增的中间件选择。Azure Document Intelligence 或 Content Understanding 只可作为 PDF/Office 结构提取 adapter，不是所有 Phase 1 部署的硬依赖。Phase 1 不引入 Azure Service Bus、Event Hubs 或 PostgreSQL；异步可靠性使用 MySQL transactional Outbox、Relay/Reconciler 与 Redis 分发。Codex Runtime、Selenium/Appium Grid、KEDA、多可用区和完整 DR 分别属于后续阶段或生产硬化，不得成为首个 Phase 1 纵向切片的前置条件。
 

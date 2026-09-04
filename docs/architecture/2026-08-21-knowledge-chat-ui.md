@@ -1,13 +1,13 @@
 # TAP Knowledge Chat
 
-| 字段 | 值 |
-| --- | --- |
-| 阶段 | 后置 Knowledge Plane 交互设计；已由 ADR-019 重排 |
-| 目标 | 用一个可持续使用的聊天界面验收 RAG 的权限、检索、回答、引用与反馈闭环 |
-| 交互参考 | Codex 与 Claude Code 的项目/会话、流式状态、中断、排队追问和资源引用模式 |
-| 边界 | 借鉴交互模型，不复制品牌、视觉资产或像素布局；该后置知识入口不执行 Shell、代码修改或测试任务 |
+| 字段     | 值                                                                                                        |
+| -------- | --------------------------------------------------------------------------------------------------------- |
+| 阶段     | RFC-009 V0–VG Knowledge-first 当前目标；正文保留 2026-08-21 完整企业交互设计                              |
+| 目标     | 先用固定 Validation Scope 验收可持久、可核验的知识问答，再由 P0 补充身份/RBAC/多 Project、P1 完成生产加固 |
+| 交互参考 | Codex 与 Claude Code 的项目/会话、流式状态、中断、排队追问和资源引用模式                                  |
+| 边界     | 借鉴交互模型，不复制品牌、视觉资产或像素布局；V1 知识问答不执行 Shell、代码修改或测试任务                 |
 
-> **阶段说明（2026-09-02）**：[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已用 `TAP Intelligence Lab` 替代完整 Knowledge Chat 作为当前 Phase 1 验收面。本文保留为后续交互设计；当前实施范围以 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 为准。
+> **当前范围（2026-09-04）**：[RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已替代 ADR-019 的交付优先级。当前先恢复真实 Knowledge Answer/Citation 与服务端 Conversation 主链，使用 Milvus `doc`、MySQL/MinIO、LiteLLM 和固定 Validation Project/Actor；P0 才增加登录、Membership/RBAC 与多 Project。正文涉及 Entra、Azure AI Search、完整 Trace/队列和企业 Policy 的部分保留为历史/后续设计，不是 V0 的已实现能力。
 
 ## 1. 产品目标
 
@@ -15,7 +15,7 @@
 
 该 Knowledge Chat 设计不把知识问答扩展为通用 Agent：没有工具执行、多 Agent 规划、Test IR 编辑、Git 写入、测试运行或审批流。后续平台可以在同一 App Shell 中增加其他能力，但不能改变这里的 Retrieval 与 Citation 契约。
 
-当前 RFC-007 定义的 Intelligence Task 是显式、独立的异步对象，不是聊天回答背后的隐藏路径。普通 `quick/deep` 问答仍由确定性 Retrieval Pipeline 完成；关闭 Intelligence Runtime 不影响本页面。Test IR/代码生成在后续测试工作台接入。
+RFC-007 定义的 Intelligence Task 是显式、独立的异步对象，不是聊天回答背后的隐藏路径；其独立 Lab 交付优先级已被 RFC-009/ADR-021 替代。普通知识问答仍由确定性 Retrieval Pipeline 完成；关闭生成 Runtime 不影响本页面。Test Plan/BDD/Automation Draft 按 RFC-009 的后续验证里程碑接入，并始终经过引用验证与人工发布边界。
 
 ### 1.1 Athena 本地工作区与正式 Knowledge Chat 的边界
 
@@ -35,9 +35,9 @@
 - 问答使用一次 JSON 响应；没有 SSE、answer delta、停止、排队追问、`@resource`、fork 或断线游标恢复。
 - 普通用户可选择最多 20 份 ready 文档并打开行内引用；processing/failed/deleting 文档不可进入选择范围。
 - 知识库把上传和运维从 composer 分离，直接显示 `stored → parsing → chunking → embedding → publishing → ready` 六阶段，以及失败重试与删除。
-- 本地 Demo 无身份验证、Trace、Feedback 或当前 ACL 重授权，只允许精确 loopback 使用；正式 Knowledge Chat 仍必须实现 Entra/Project Policy、历史权限收紧与受限诊断。
+- 本地 Demo 无身份验证、Trace、Feedback 或当前 ACL 重授权，只允许精确 loopback 使用；V0–VG 使用服务端固定 Validation Scope/Policy，P0 才实现内建 Session、Membership/RBAC、历史权限收紧与受限诊断。本路线不以前置 Entra/SSO 为条件。
 
-这一区分是产品边界，不是临时命名差异：Athena 验证“喂资料、限定来源、核验回答”，下面章节描述后置 Knowledge Plane 的 durable Conversation/SSE/queue/stop/Trace/Feedback/auth 目标。
+这一区分是产品边界，不是临时命名差异：Athena 已有切片验证“喂资料、限定来源、核验回答”；下面章节中的 durable Conversation/SSE/Citation 属于 V1 当前目标，queue、完整 Trace/Feedback 与更广资源类型属于后续扩展，身份/RBAC 属于 P0。各项不能因写在同一设计页中而被当作已经实现。
 
 ## 2. 页面布局
 
@@ -57,7 +57,7 @@
 
 ### 左栏：Project 与会话
 
-- 只列出当前 Entra 身份可访问的 Project 和会话。
+- V0–VG 只显示服务端固定的 Validation Project 和其 Conversation；P0 后只列出当前 Session 用户具有 Membership 的 Project 和会话。
 - Project 保存默认 `environment`、source families 与 corpus scope；客户端选择只能收窄范围，不能扩大权限。
 - 支持新建、搜索、置顶和恢复会话。一个独立问题目标建议使用一个会话，避免上下文无界增长。
 - 每个 turn 固化 `queryPlanId`、`contextSnapshotId`、`corpusVersion`、`retrievalProfileId`、`traceId` 和回答模型版本。
@@ -69,7 +69,7 @@
 - 阶段只展示可审计事件、命中数量、降级状态和耗时；不展示模型隐藏思维链、系统提示词或内部推理文本。
 - 回答以 Markdown 流式呈现；每个实质 claim 后显示可点击的 `[1]`、`[2]` 引用。
 - Composer 固定在底部，支持键盘操作、`@resource`、`/command`、发送与停止。
-- Composer 提供 `Quick / Deep` AnswerMode：Quick 优先低延迟 exact/hybrid；Deep 使用有界问题拆解、跨索引融合与冲突检查。服务端将 AnswerMode 映射到版本化 RetrievalProfile；二者都不自动启动 Agent。
+- Composer 提供 `Quick / Deep` AnswerMode：Quick 优先低延迟 exact/hybrid；Deep 使用有界问题拆解、Milvus 文档检索、可用时的有界 Graph 扩展与冲突检查。服务端将 AnswerMode 映射到版本化 RetrievalProfile；二者都不自动启动 Agent。
 
 ### 右栏：证据与诊断
 
@@ -99,24 +99,24 @@
 
 后置 Knowledge Chat 计划支持：
 
-| 命令 | 行为 |
-| --- | --- |
-| `/new` | 新建会话 |
-| `/scope` | 查看或收窄 Project、Environment、source family |
-| `/status` | 查看当前 turn、corpus 与检索 profile 状态 |
-| `/trace` | 打开当前 turn 的证据摘要；完整诊断受角色限制 |
-| `/debug` | 诊断角色临时请求可审计 debug 信息，不改变生产 profile |
-| `/feedback` | 打开结构化反馈表单 |
-| `/quick` | 当前 turn 请求低延迟 AnswerMode；服务端选择版本化 RetrievalProfile |
-| `/deep` | 当前 turn 请求有界多查询、跨索引和冲突检查 AnswerMode |
-| `/fork` | 从选定 turn 创建新会话分支，不改写原 QueryPlan/Trace |
-| `/clear` | 清空未发送 composer 内容，不删除审计历史 |
+| 命令        | 行为                                                               |
+| ----------- | ------------------------------------------------------------------ |
+| `/new`      | 新建会话                                                           |
+| `/scope`    | 查看或收窄 Project、Environment、source family                     |
+| `/status`   | 查看当前 turn、corpus 与检索 profile 状态                          |
+| `/trace`    | 打开当前 turn 的证据摘要；完整诊断受角色限制                       |
+| `/debug`    | 诊断角色临时请求可审计 debug 信息，不改变生产 profile              |
+| `/feedback` | 打开结构化反馈表单                                                 |
+| `/quick`    | 当前 turn 请求低延迟 AnswerMode；服务端选择版本化 RetrievalProfile |
+| `/deep`     | 当前 turn 请求有界多查询、跨索引和冲突检查 AnswerMode              |
+| `/fork`     | 从选定 turn 创建新会话分支，不改写原 QueryPlan/Trace               |
+| `/clear`    | 清空未发送 composer 内容，不删除审计历史                           |
 
 命令由前端解析为显式 API 操作，不能作为自然语言拼接给模型。
 
 ### 3.5 `@` 资源引用
 
-输入 `@` 后按用户权限搜索并选择：
+V1 只承诺按 Project/Source 授权搜索和选择 `@doc`；下面的 `@code`、`@bdd` 与 `@failure` 是当前路线之外的历史扩展构想，不能进入 V1 验收：
 
 ```text
 @doc:architecture
@@ -146,11 +146,11 @@
 
 不同语料的精确定位：
 
-| 类型 | 定位方式 |
-| --- | --- |
-| 文档 | heading path、页码/bounding box 或字符 offset |
-| 代码 | `repo@commit/path#Lx-Ly` 与 symbol |
-| BDD | Feature → Scenario → Step 与 stable Test ID |
+| 类型    | 定位方式                                                  |
+| ------- | --------------------------------------------------------- |
+| 文档    | heading path、页码/bounding box 或字符 offset             |
+| 代码    | `repo@commit/path#Lx-Ly` 与 symbol                        |
+| BDD     | Feature → Scenario → Step 与 stable Test ID               |
 | Failure | incident、run、fingerprint、时间窗口和 evidence reference |
 
 模型只允许输出 prompt 中分配的 evidence label。服务端将 label 映射为 Citation；不存在的 label、模型生成 URL 或不属于本 turn context 的 chunk 一律拒绝。派生 summary 必须显式标为 `generated_summary` 并列出 `derivedFromChunkIds`，不能伪装成原文证据。
@@ -164,7 +164,7 @@
 1. 原始/规范化 query、Query Class 与有界分解 query。
 2. 目标 index family、physical index、schema/corpus/profile/model version。
 3. server-side scope 与脱敏 ACL digest。
-4. exact、BM25、vector 候选及 rank；Azure 单索引 RRF 与 TAP 跨索引 RRF 分开显示。
+4. exact、sparse/BM25、dense vector 候选及 rank；Milvus hybrid 融合与可选 Graph 扩展分开显示。只有未来重新引入多索引 Provider 时才增加跨索引 RRF。
 5. rerank 前后顺序、parent/adjacent/dependency expansion 和淘汰原因。
 6. 最终 context、token budget、引用校验、各阶段耗时与 degraded/abstain 原因。
 
@@ -172,11 +172,13 @@ Trace 不显示隐藏思维链、系统提示词、原始 group IDs、秘密、�
 
 ## 6. 前后端 API
 
-浏览器只访问 TAP BFF；绝不直连 Azure AI Search、LiteLLM、MySQL、Blob 或 Git。
+浏览器只访问 TAP BFF；绝不直连 Milvus、LiteLLM、MySQL、MinIO/Azurite、Jenkins 或未来的检索 Provider。
+
+下列 URL 是 2026-08-21 的交互草案，不是当前 OpenAPI。RFC-009 的正式资源必须位于 `/api/v1/projects/{project_id}/...` 范围；实施时由 Backend 生成契约并以[当前核心契约](../reference/2026-09-04-athena-platform-contracts.md)校验语义，不能照抄下面的无 Project 路径。
 
 ```text
 POST   /v1/chats
-GET    /v1/projects/{projectId}/chats?cursor=&limit=
+GET    /api/v1/projects/{project_id}/conversations?cursor=&limit=
 GET    /v1/chats/{chatId}?cursor=&limit=
 POST   /v1/chats/{chatId}/turns
 POST   /v1/turns/{turnId}/fork
@@ -211,12 +213,12 @@ turn.canceled
 turn.failed
 ```
 
-每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。正式 DTO 和状态约束见 [Knowledge Chat Contract](../reference/2026-08-20-contracts.md#9-knowledge-chat-contract)。
+每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。当前稳定边界见 [Athena 平台核心契约](../reference/2026-09-04-athena-platform-contracts.md#3-knowledge-与-conversation)；旧 Knowledge Chat Contract 仅保留历史细化参考。
 
 ## 7. 前端实现基线
 
-- React + TypeScript；是否采用 Next.js 由企业部署与现有 Design System 决定。
-- Entra ID 登录，BFF 换取服务端可信身份/策略上下文。
+- React 19 + TypeScript + Vite，沿用当前仓库应用壳和生成契约。
+- V0–VG 由服务端固定 Validation Scope 产生可信上下文；P0 改用内建 Cookie Session + Membership Policy。Entra/企业 SSO 不在当前路线。
 - REST 承担 mutation，SSE 承担单向事件和 answer delta；断线恢复依赖持久事件游标。
 - 消息、引用、queue 与运行状态按服务端事实归并，不在浏览器猜测最终状态。
 - 可访问性覆盖键盘、焦点管理、屏幕阅读器和非颜色状态提示。
@@ -260,13 +262,15 @@ stateDiagram-v2
 
 ## 8. 安全要求
 
-- Public Chat DTO 不接受 `tenantId`、group IDs、classification ceiling 或任意 filter；BFF 从 Entra 与 Policy 服务注入，客户端 scope 只能做交集。
+- Public Chat DTO 不接受 actor、role、enterprise、权威 Project、group IDs、classification ceiling 或任意 filter；BFF 从当前可信 ScopeProvider 与 Policy 注入，客户端选择只能收窄来源范围。
 - Markdown 使用 allowlist sanitizer；代码块作为文本渲染；链接只允许批准的 URL scheme，并经 Citation Resolver 跳转，防止 XSS、伪造链接和路径泄漏。
 - Cookie/session 使用 Secure、HttpOnly、SameSite 与 CSRF 防护；设置严格 CSP，禁止内联脚本和任意外域资源。
 - 每次 Citation、Trace、历史 turn 与 source preview 读取都重新授权并记录审计；防止 citation/trace IDOR。
 - 外部文档内容一律视为不可信数据；不得借 prompt injection 影响 ACL、工具或系统指令。Knowledge Chat 本身没有工具执行能力。
 
-## 9. 后置 Knowledge Chat 验收
+## 9. 分阶段 Knowledge Chat 验收
+
+V1 必须验收持久 Conversation/SSE/Citation、停止与恢复；queue、Slash command、Feedback 和完整 Trace 属于后续增强，未实现时应在 Review 中明确记为 `not in current gate`，不能阻塞或冒充 V1 出口。
 
 - 完成 `选择 Project → 新建/恢复会话 → 流式提问 → 查看活动摘要 → 打开精确引用 → 反馈` 的端到端链路。
 - 刷新/断线后可从 SSE cursor 恢复，不能重复生成 turn。

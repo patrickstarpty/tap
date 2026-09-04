@@ -1,6 +1,7 @@
 ---
-status: active
+status: completed
 date: 2026-09-02
+completed: 2026-09-04
 ---
 
 # Athena 交互原型实施计划
@@ -16,6 +17,26 @@ date: 2026-09-02
 **Spec:** [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。本 Plan 只实施已经获批的原型范围；RFC 中仍为 `proposed` 或 `unresolved` 的条目不得被当作实施授权。
 
 **Scope update (2026-09-03):** 本 Plan 继续拥有 Athena 壳层、会话、Catalog、Library 来源和双语交互；旧的单草稿 Low Code 编辑器验收已由 [Low Code Automation 交互原型实施计划](2026-09-03-low-code-automation-interaction-prototype.md) 取代，不得恢复为当前产品要求。用户随后确认采用行业通用 Conversation 历史：首轮后入列、当前项可见高亮、同会话多轮合并，并在跨模块与刷新后恢复。Athena 左右面板进一步统一为 Codex 式面板按钮换位交互，聊天视口增加由用户问题生成的导航轨。
+
+## 完成与验证记录（2026-09-04）
+
+四个 Task 均已在当前前端原型实现；Low Code Automation 的后续扩展继续由 successor Plan 管理，Mobile/Azure DevOps 历史模拟不重新进入本 Plan。完成状态经本次鲜活验证确认：
+
+```bash
+corepack pnpm --dir apps/web exec vitest run \
+  src/widgets/tap/prototype/model.test.ts \
+  src/widgets/tap/TapProductPrototype.interactions.test.tsx \
+  src/pages/AthenaPage.test.tsx
+# 3 files, 113 tests passed
+
+corepack pnpm --dir apps/web run check
+# ESLint、Prettier、architecture、TypeScript、Vite build passed
+
+corepack pnpm --dir apps/web test -- --run
+# 14 files, 246 tests passed
+```
+
+1440×900 与 390×844 浏览器检查未发现裁切、重叠或页面横向溢出。Impeccable detector 只报告 Knowledge Graph canvas 的网格背景 advisory；该用法属于图谱画布语义，不是阻塞项。
 
 ## Global Constraints
 
@@ -49,7 +70,7 @@ date: 2026-09-02
 - Produces: `Locale`, `ProductModule`, `AthenaSurface`, `AssistantIntent`, `AssistantTurn`, `Conversation`, `CatalogItem`, `LibrarySource`, `detectIntent`, `createConversation`, `appendTurn`, `PROTOTYPE_COPY`.
 - `Conversation` owns its turns, selected source IDs, selected Agent IDs and selected Skill IDs so history restoration is lossless.
 
-- [ ] **Step 1: Write failing model and component tests**
+- [x] **Step 1: Write failing model and component tests**
 
 ```ts
 expect(detectIntent("Create BDD tests for underwriting")).toBe("test-plan");
@@ -63,13 +84,13 @@ expect(
 ).not.toBeInTheDocument();
 ```
 
-- [ ] **Step 2: Run the tests and confirm RED**
+- [x] **Step 2: Run the tests and confirm RED**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/widgets/tap/prototype/model.test.ts src/widgets/tap/TapProductPrototype.interactions.test.tsx`
 
 Expected: FAIL because the model exports and the new interaction behavior do not exist.
 
-- [ ] **Step 3: Implement the typed model and bilingual copy**
+- [x] **Step 3: Implement the typed model and bilingual copy**
 
 ```ts
 export type Locale = "en" | "zh";
@@ -85,11 +106,11 @@ export interface Conversation {
 }
 ```
 
-- [ ] **Step 4: Run model tests until GREEN**
+- [x] **Step 4: Run model tests until GREEN**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/widgets/tap/prototype/model.test.ts`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/widgets/tap/prototype apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx apps/web/src/pages/AthenaPage.test.tsx
@@ -112,7 +133,7 @@ git commit -m "test: define Athena prototype interactions"
 - Consumes: all Task 1 model and copy exports.
 - Produces: accessible product rail, contextual `PrototypeSidebar`, `AthenaChat`, shared `PanelToggleIcon`, and independently collapsible `KnowledgeSourcesPanel` components controlled by the root prototype state.
 
-- [ ] **Step 1: Extend failing tests for sidebar and session restoration**
+- [x] **Step 1: Extend failing tests for sidebar and session restoration**
 
 ```ts
 await sendMessage(user, "What documents are required for a life policy?");
@@ -128,13 +149,13 @@ expect(
 ).toBeVisible();
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/widgets/tap/TapProductPrototype.interactions.test.tsx`
 
 Expected: FAIL on missing collapse, New Chat/history, source search, and context picker controls.
 
-- [ ] **Step 3: Implement the integrated sidebar and session state**
+- [x] **Step 3: Implement the integrated sidebar and session state**
 
 ```tsx
 <PrototypeSidebar
@@ -148,19 +169,19 @@ Expected: FAIL on missing collapse, New Chat/history, source search, and context
 
 The root appends turns only to the active conversation. New Chat creates a new empty conversation and leaves every prior conversation unchanged.
 
-- [ ] **Step 4: Implement composer `+` menu and searchable source panel**
+- [x] **Step 4: Implement composer `+` menu and searchable source panel**
 
 The menu exposes exactly `Add from Library`, `Use Agents`, and `Use Skills`. Each picker filters by name and updates the active conversation context. The right source search only changes visible rows and never changes selection.
 
-- [ ] **Step 5: Add Codex-style panel toggles and the question navigator**
+- [x] **Step 5: Add Codex-style panel toggles and the question navigator**
 
 Use one authored outline icon with left/right and expanded/collapsed variants. The collapsed variant compresses the corresponding side to a narrow divider; the expanded variant shows a visibly wider pane area. Keep the product Rail mounted; move the left toggle between the Athena header and workspace edge, and move the mirrored right toggle between Knowledge sources and the chat edge. Preserve source selection across collapse. Drive both panels with the same `200ms` exponential ease-out, transform, clipping and reduced-motion rules without opacity cross-fades. Generate one left-edge horizontal marker per Turn in a vertically centered `14px`-pitch stack. Keep every default marker `12 × 4px` on the same `14px` left anchor, darken only the scroll-active marker, and derive the `14 / 18 / 24 / 34px` rightward fisheye solely from the Hover/Focus target. Expose the full prompt on Hover/Focus, hide native and minimap scrollbars, and use `scrollIntoView` with a reduced-motion fallback. Measure the Transcript row above the Composer with `ResizeObserver` plus a window-resize fallback, derive an odd slot capacity after a `64px` vertical safety inset, center the rail within that boundary, and reserve two continuation slots once overflow begins. Keep the rail at least `32px` above the Composer and recompute it when either region changes size. Keep only the visible Turn buttons mounted; recenter the window from transcript scroll, shift three nodes per minimap wheel event, and page by the visible count from the faded continuation controls.
 
-- [ ] **Step 6: Run focused tests until GREEN**
+- [x] **Step 6: Run focused tests until GREEN**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/widgets/tap/TapProductPrototype.interactions.test.tsx src/pages/AthenaPage.test.tsx`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/web/src/widgets/tap
@@ -181,7 +202,7 @@ git commit -m "feat: add Athena conversations and context controls"
 - Consumes: Task 1 catalog/source types and controlled arrays from `TapProductPrototype`.
 - Produces: searchable create/edit catalog workspaces and a Library list/graph workspace with an in-memory add-source action.
 
-- [ ] **Step 1: Add failing catalog and Library tests**
+- [x] **Step 1: Add failing catalog and Library tests**
 
 ```ts
 await user.click(screen.getByRole("button", { name: "Agent" }));
@@ -200,23 +221,23 @@ expect(
 ).toBeVisible();
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/widgets/tap/TapProductPrototype.interactions.test.tsx`
 
-- [ ] **Step 3: Implement reusable catalog management**
+- [x] **Step 3: Implement reusable catalog management**
 
 `CatalogWorkspace` accepts `kind`, localized copy, items, `onCreate`, `onUpdate`, and `onUse`. Search is case-insensitive; create/edit mutations only update page state.
 
-- [ ] **Step 4: Implement Library list and graph modes**
+- [x] **Step 4: Implement Library list and graph modes**
 
 List mode renders source thumbnails/status and search. Graph mode renders an accessible SVG with document and life-insurance concept nodes plus labeled relationships. Add source stores filename/type only in local state.
 
-- [ ] **Step 5: Run focused tests until GREEN**
+- [x] **Step 5: Run focused tests until GREEN**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/widgets/tap/TapProductPrototype.interactions.test.tsx src/pages/AthenaPage.test.tsx`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/web/src/widgets/tap
@@ -236,19 +257,19 @@ git commit -m "feat: add Athena catalogs and knowledge graph"
 - Consumes: all prior components and state.
 - Produces: Manus-inspired idle/active chat layout, fixed desktop product rail, expanded/collapsed Athena contextual sidebar, usable mobile overlay drawer, and localized Test Management/Low Code labels.
 
-- [ ] **Step 1: Add any missing regression assertions**
+- [x] **Step 1: Add any missing regression assertions**
 
 Assert Test Management retains `Test Plan`/`Test Data`, generated BDD can still import, the Low Code product entry remains reachable, and Chinese mode changes visible shell labels without changing saved conversation data. Low Code asset/editor behavior is verified only by the successor Plan linked above.
 
-- [ ] **Step 2: Run focused tests and confirm any new assertion fails before styling/integration**
+- [x] **Step 2: Run focused tests and confirm any new assertion fails before styling/integration**
 
 Run: `corepack pnpm --dir apps/web exec vitest run src/pages/AthenaPage.test.tsx src/widgets/tap/TapProductPrototype.interactions.test.tsx`
 
-- [ ] **Step 3: Implement CSS and final integration**
+- [x] **Step 3: Implement CSS and final integration**
 
-Use a light product rail plus Athena contextual sidebar, retain a 44px minimum interaction target, preserve focus-visible states, keep active-chat composer at the bottom, and provide responsive behavior at desktop and 390px widths.
+Use a light product rail plus Athena contextual sidebar, retain a 44px minimum interaction target for ordinary controls, preserve focus-visible states, keep active-chat composer at the bottom, and provide responsive behavior at desktop and 390px widths. The desktop minimap navigator is the deliberate dense-control exception: it keeps the separately specified 14px pitch and exposes its prompt through Hover/Focus rather than expanding every target to 44px.
 
-- [ ] **Step 4: Run automated verification**
+- [x] **Step 4: Run automated verification**
 
 ```bash
 corepack pnpm --dir apps/web exec vitest run src/pages/AthenaPage.test.tsx src/widgets/tap/TapProductPrototype.interactions.test.tsx
@@ -257,7 +278,7 @@ corepack pnpm --dir apps/web test -- --run
 git diff --check
 ```
 
-- [ ] **Step 5: Run one desktop/mobile browser inspection and the Impeccable detector**
+- [x] **Step 5: Run one desktop/mobile browser inspection and the Impeccable detector**
 
 Verify 1440×900 and 390×844, then run:
 
@@ -265,7 +286,7 @@ Verify 1440×900 and 390×844, then run:
 node .agents/skills/impeccable/scripts/detect.mjs --json apps/web/src/widgets/tap/TapProductPrototype.tsx apps/web/src/widgets/tap/TapProductPrototype.css apps/web/src/widgets/tap/prototype
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/web/src/widgets/tap apps/web/src/pages/AthenaPage.test.tsx

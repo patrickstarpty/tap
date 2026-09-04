@@ -1,6 +1,6 @@
 # 后置 Knowledge Plane：Azure AI Search 检索调优方案
 
-> **阶段说明（2026-09-02）**：本文保留旧企业 RAG 阶段的检索实验设计；[ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已将完整 Azure AI Search 调优后置。当前 Intelligence 评测只对实际接入的 Athena `doc` 来源能力作结论。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 将 Milvus `doc` 检索纳入 Knowledge-first 的 V0–VG 主线。冻结语料/query、版本化 chunk/embedding/profile、逐层评测、安全过滤、引用正确性和只对实测能力作结论等原则继续适用；本文的 Azure AI Search API、semantic ranker、scoring profile 与跨四索引步骤是 2026-08-21 的 provider-specific 历史实验设计，不是当前实现目标。
 
 本文定义 TAP 如何从可复现 baseline 出发，逐步调优 Azure AI Search 的全文、向量、RRF、semantic ranker、scoring profile、跨索引融合与回答上下文。目标不是“把所有高级开关都打开”，而是让每项能力在真实评测集上证明增益。
 
@@ -18,15 +18,15 @@
 
 先确定 query class，再选择检索 profile：
 
-| Query class | 识别信号 | 默认路径 | 主要指标 |
-| --- | --- | --- | --- |
-| Exact identifier | Test ID、symbol FQN、commit、error code、fingerprint | keyword/filter exact → hybrid fallback | Top-1/Top-3 |
-| Document QA | “如何/为什么/是什么”、自然语言概念 | doc hybrid → semantic ranker → Parent/Child | Recall/nDCG/citation |
-| Code navigation | path、symbol、signature、调用关系 | exact symbol + code hybrid + 一跳关系 | symbol hit、line accuracy |
-| BDD/Test asset | Feature/Scenario/Step/tag | exact stable ID + bdd hybrid | scenario hit、asset precision |
-| Failure diagnosis lookup | error/fingerprint/environment | exact fingerprint + failure hybrid | incident hit、resolution precision |
-| Cross-index question | code ↔ BDD ↔ failure 或跨章节 | per-index retrieval → cross-index RRF → bounded expansion | coverage、faithfulness |
-| No-answer/conflict | 语料无证据或 revision 冲突 | retrieval → calibrated abstention | abstention accuracy |
+| Query class              | 识别信号                                             | 默认路径                                                  | 主要指标                           |
+| ------------------------ | ---------------------------------------------------- | --------------------------------------------------------- | ---------------------------------- |
+| Exact identifier         | Test ID、symbol FQN、commit、error code、fingerprint | keyword/filter exact → hybrid fallback                    | Top-1/Top-3                        |
+| Document QA              | “如何/为什么/是什么”、自然语言概念                   | doc hybrid → semantic ranker → Parent/Child               | Recall/nDCG/citation               |
+| Code navigation          | path、symbol、signature、调用关系                    | exact symbol + code hybrid + 一跳关系                     | symbol hit、line accuracy          |
+| BDD/Test asset           | Feature/Scenario/Step/tag                            | exact stable ID + bdd hybrid                              | scenario hit、asset precision      |
+| Failure diagnosis lookup | error/fingerprint/environment                        | exact fingerprint + failure hybrid                        | incident hit、resolution precision |
+| Cross-index question     | code ↔ BDD ↔ failure 或跨章节                        | per-index retrieval → cross-index RRF → bounded expansion | coverage、faithfulness             |
+| No-answer/conflict       | 语料无证据或 revision 冲突                           | retrieval → calibrated abstention                         | abstention accuracy                |
 
 分类结果只影响检索策略，不能扩大客户端的 source/tenant/project 范围。ID/symbol/fingerprint 路径禁止默认 query rewrite，避免精确标识符被改写。
 
@@ -34,15 +34,15 @@
 
 每个阶梯保存完整配置、结果和差异：
 
-| Lane | 配置 | 用途 |
-| --- | --- | --- |
-| B0 | BM25 only | 词法 baseline；验证 analyzer、exact、searchFields |
-| B1 | Vector only | 验证 embedding、chunk 语义质量与 HNSW Recall |
-| B2 | BM25 + Vector + Azure RRF | 单索引 hybrid baseline |
-| B3a | B2 + Azure semantic ranker | 评估内建 L2 rerank |
-| B3b | B2 + 外部 cross-encoder reranker | 与 B3a 对照；不默认双重 rerank |
-| B4 | 最优单索引方案 + cross-index RRF + Parent/Child/一跳依赖 | 完整 Retrieval API |
-| B5 | B4 + bounded query decomposition | 只用于确有跨章节增益的 query class |
+| Lane | 配置                                                     | 用途                                              |
+| ---- | -------------------------------------------------------- | ------------------------------------------------- |
+| B0   | BM25 only                                                | 词法 baseline；验证 analyzer、exact、searchFields |
+| B1   | Vector only                                              | 验证 embedding、chunk 语义质量与 HNSW Recall      |
+| B2   | BM25 + Vector + Azure RRF                                | 单索引 hybrid baseline                            |
+| B3a  | B2 + Azure semantic ranker                               | 评估内建 L2 rerank                                |
+| B3b  | B2 + 外部 cross-encoder reranker                         | 与 B3a 对照；不默认双重 rerank                    |
+| B4   | 最优单索引方案 + cross-index RRF + Parent/Child/一跳依赖 | 完整 Retrieval API                                |
+| B5   | B4 + bounded query decomposition                         | 只用于确有跨章节增益的 query class                |
 
 发布规则：
 
@@ -156,16 +156,16 @@ Profile 存入 Git，发布记录进入 MySQL。Retrieval Trace 必须记录实�
 
 首版至少 120 个经人工复核的问题：每个 family 至少 25 个，另有至少 20 个跨索引、无答案、冲突来源或过期 revision 样例；另运行至少 1,000 个 ACL negative probes。
 
-| 层 | 指标 |
-| --- | --- |
-| Exact | Top-1、Top-3、identifier normalization errors |
-| Retrieval | Recall@K、Precision@K、MRR、nDCG@10、per-family coverage、zero-result rate |
-| Expansion | useful parent/edge rate、ACL rejection count、context duplication |
-| Answer | citation precision/coverage、faithfulness、unsupported claim、abstention accuracy |
-| Freshness | change/delete/revoke 到生效的 P50/P95/P100 |
-| Performance | Search、rerank、首 token、完整回答 P50/P95、token/cost |
-| Security | unauthorized candidate/context/citation/trace/history/facet count |
-| Planning | intent/source-family accuracy、standalone-query correctness、required-resource hit/abstain、subquery usefulness |
+| 层          | 指标                                                                                                            |
+| ----------- | --------------------------------------------------------------------------------------------------------------- |
+| Exact       | Top-1、Top-3、identifier normalization errors                                                                   |
+| Retrieval   | Recall@K、Precision@K、MRR、nDCG@10、per-family coverage、zero-result rate                                      |
+| Expansion   | useful parent/edge rate、ACL rejection count、context duplication                                               |
+| Answer      | citation precision/coverage、faithfulness、unsupported claim、abstention accuracy                               |
+| Freshness   | change/delete/revoke 到生效的 P50/P95/P100                                                                      |
+| Performance | Search、rerank、首 token、完整回答 P50/P95、token/cost                                                          |
+| Security    | unauthorized candidate/context/citation/trace/history/facet count                                               |
+| Planning    | intent/source-family accuracy、standalone-query correctness、required-resource hit/abstain、subquery usefulness |
 
 首轮候选门槛：
 
@@ -175,7 +175,7 @@ Profile 存入 Git，发布记录进入 MySQL。Retrieval Trace 必须记录实�
 - citation precision `≥ 0.95`，citation coverage `≥ 0.90`。
 - 无答案识别准确率 `≥ 0.90`，unsupported claim rate `≤ 0.02`。
 - 1,000 个 ACL probes 中 unauthorized hit/context/citation/facet/trace/history 为 `0`。
-- 新 profile 相比当前生产 profile 的主要指标有稳定增益，且任一 family 不出现未批准回退。
+- 新 profile 相比已批准的验证 baseline/profile 的主要指标有稳定增益，且任一 family 不出现未批准回退。
 
 时延、撤权和成本先测真实基线，再由 Owner 批准 SLO，不把实验数值直接承诺为生产目标。
 

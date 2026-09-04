@@ -4,6 +4,8 @@
 
 产品需求的规范性事实源仍是 [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。本文是面向演示的图文说明，不替代 RFC、ADR、实施计划或验收记录。
 
+> **现行目标与原型边界**：[RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已确定 Web-only/Jenkins-first。本文截图中的 Mobile/iOS/Android 与 Azure DevOps Pipeline Agent 是遗留的模拟原型探索，只能用于解释曾验证的交互，不属于当前 V0–VG、P0 或 P1 目标；Mobile 与 Azure DevOps 均在 P1 之后另行设计。演示现行路线时，应把 Web 执行口径改为外置 Jenkins Pipeline Agent，且不得把截图中的 ADO 文案解释为计划中的 Provider。
+
 ## 演示前须知
 
 ### 启动方式
@@ -28,15 +30,15 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 必须主动说明的边界
 
-| 原型中可演示                                                       | 当前不应宣称                                                   |
-| ------------------------------------------------------------------ | -------------------------------------------------------------- |
-| 浏览器内保存 Conversation、Test Plan、Automation 和模拟 Run 状态   | 已完成服务端资产持久化、多人协作或企业级权限                   |
-| Web 选择 Azure DevOps Pipeline Agent，Mobile 选择 iOS/Android 设备 | 已连接、排队或触发真实 Azure DevOps Pipeline、浏览器或移动设备 |
-| 运行结果标记为 `Simulated`，并展示有限日志                         | 已产生真实 Execution Evidence、真实通过结论或生产 SLA          |
-| Graphify 式节点、社区、关系和详情交互                              | 已接入生产图数据库、实时图谱抽取或企业知识治理                 |
-| Composer 中选择 GPT 模型                                           | 已真实调用 UI 中所选模型，或已实现模型路由、计费与配额治理     |
+| 原型中可演示                                                     | 当前不应宣称                                                                 |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 浏览器内保存 Conversation、Test Plan、Automation 和模拟 Run 状态 | 已完成服务端资产持久化、多人协作或企业级权限                                 |
+| 遗留截图模拟 Azure DevOps Pipeline Agent 与 Mobile 设备选择      | Azure DevOps/Mobile 属于当前正式路线，或已连接、排队、触发真实 Provider/设备 |
+| 运行结果标记为 `Simulated`，并展示有限日志                       | 已产生真实 Execution Evidence、真实通过结论或生产 SLA                        |
+| Graphify 式节点、社区、关系和详情交互                            | 已接入生产图数据库、实时图谱抽取或企业知识治理                               |
+| Composer 中选择 GPT 模型                                         | 已真实调用 UI 中所选模型，或已实现模型路由、计费与配额治理                   |
 
-术语必须保持清晰：**AI Agent** 是 Athena 中负责分析、生成和调整资产的智能体；**Execution Agent** 是 Azure DevOps **Pipeline Agent**，负责实际执行 Web Automation。两者不是同一类 Agent。
+术语必须保持清晰：**AI Agent** 是 Athena 中负责分析、生成和调整资产的智能体；**Execution Agent** 是负责实际执行 Web Automation 的 **Pipeline Agent**。现行首个 Provider 是 Jenkins；截图中的 Azure DevOps Agent 只属于遗留模拟探索。两者不是同一类 Agent。
 
 ## 一、产品壳层与 Athena
 
@@ -213,7 +215,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ![Test Plan 执行配置](../assets/prototype-demo/21-test-plan-run-config.jpg)
 
-- Web Automation 必须先选择在线 Azure DevOps Pipeline Agent，例如 `ADO Web Agent 03`。
+- 该遗留模拟屏幕要求先选择虚构的 Azure DevOps Pipeline Agent（例如 `ADO Web Agent 03`）再启用按钮；它只验证选择门禁交互。现行正式目标改为 Jenkins Pipeline Agent。
 - 选择后才允许点击 `Run automation`，避免把 AI Agent 误当执行资源。
 - 当前按钮触发的是模拟运行，并在页面上持续显示 `Simulated · No execution evidence`。
 
@@ -256,9 +258,9 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ![创建 Automation](../assets/prototype-demo/26-create-automation.jpg)
 
-- 用户先输入目标，再选择 Web、Mobile 或让 Athena 尝试推断类型。
+- 该遗留模拟屏幕允许用户选择 Web、Mobile 或让 Athena 推断类型；现行正式目标只创建 Web Automation，Mobile 入口不属于 V0–P1。
 - 用户可以手动编写 BDD，也可以在标题/目标中描述需求并通过 AI 生成草稿。
-- 当 Athena 无法可靠判断 Web 或 Mobile 时，必须让用户明确选择，不能静默猜测。
+- 在该遗留原型的 Web/Mobile 双类型假设下，Athena 无法可靠判断时会让用户明确选择；现行 Web-only 路线不再需要该类型推断。
 - Test Plan 关联是可选的，但必须遵守严格 `1:1` 可用性校验。
 
 ### 27. Web Automation：BDD 与动作映射
@@ -290,12 +292,12 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ![Web Automation 执行历史](../assets/prototype-demo/30-web-automation-run-history.jpg)
 
-- Web 类型通过 Execution Agent 下拉框选择 Azure DevOps Pipeline Agent。
+- 该遗留模拟屏幕通过 Execution Agent 下拉框选择 Azure DevOps Pipeline Agent；现行正式目标的 Web 执行使用 Jenkins Pipeline Agent。
 - 运行历史显示触发来源：从 Test Plan 触发或从 Automation 详情触发。
 - 若 Automation 已关联 Test Plan，两处引用同一 Run；若未关联，则结果只保留在 Automation 历史中。
 - 所有当前结果仍标为模拟，且明确说明没有连接 provider、pipeline、browser 或 device。
 
-### 31. Mobile Automation：平台与设备
+### 历史附录 A：Mobile Automation 平台与设备（非主线演示）
 
 ![Mobile Automation 的平台与设备选择](../assets/prototype-demo/31-mobile-automation-device.jpg)
 
@@ -304,7 +306,7 @@ corepack pnpm --dir apps/web dev --port 4175
 - BDD 步骤同样映射到底层动作，例如图片上传场景中的 `Click` 和 `Send keys`。
 - 该 Automation 当前未关联 Test Plan，因此其 Run 不会出现在任何 Test Plan history。
 
-### 32. Mobile Automation 模拟运行结果
+### 历史附录 B：Mobile Automation 模拟运行结果（非主线演示）
 
 ![Mobile Automation 模拟运行结果](../assets/prototype-demo/32-mobile-automation-run-result.jpg)
 
@@ -335,13 +337,13 @@ corepack pnpm --dir apps/web dev --port 4175
 - `Generate linked automation` 会以该 Test Plan 为来源创建 Automation，并建立严格 `1:1` 关联。
 - 演示时强调 AI 生成的是可 Review 的资产草稿，不是未经确认的生产变更。
 
-### 35. 无法判断时选择 Web 或 Mobile
+### 35. 遗留探索：无法判断时选择 Web 或 Mobile
 
 ![Athena 请求选择 Web 或 Mobile](../assets/prototype-demo/35-athena-channel-choice.jpg)
 
-- 当用户意图无法可靠区分 Web 与 Mobile 时，Athena 展示明确选择，不做隐藏推断。
-- `Create Web automation` 进入 Pipeline Agent 执行模型；`Create Mobile automation` 进入平台和设备选择模型。
-- 这是重要的可解释交互：模型承认不确定性，并把会影响执行配置的决策交给用户。
+- 该屏幕记录旧的 Web/Mobile 双类型探索：当用户意图无法可靠区分时，Athena 展示明确选择，不做隐藏推断。
+- 遗留原型中 `Create Web automation` 进入 Pipeline Agent 执行模型，`Create Mobile automation` 进入平台和设备选择模型；现行正式路线只保留 Web/Jenkins，Mobile 选择仅供历史交互讲解。
+- 这保留了“模型承认不确定性”的历史交互原则，但不构成现行 Mobile 范围。
 
 ### 36. 生成关联资产与双向跳转
 
@@ -388,12 +390,12 @@ corepack pnpm --dir apps/web dev --port 4175
 3. 通过 `+` 依次添加一个 Knowledge、一个 AI Agent 和一个 Skill，再逐个展示可删除按钮。
 4. 进入 Library，演示 All、关键字/类型/状态组合筛选、Add source 和 Knowledge Graph 节点详情。
 5. 进入 Test Management，打开 `TP-101`，指出 Scenario、BDD Step ID、`Mapped · AUTO-101` 和 Linked Automation。
-6. 选择 `ADO Web Agent 03` 并触发模拟运行，说明同一个 Run 同步出现在 Test Plan 与 Automation history。
+6. 如需讲解遗留截图，可选择 `ADO Web Agent 03` 触发模拟运行，同时明确它不是现行 Provider；现行目标使用 Jenkins Pipeline Agent，并保留同一 Run 投影到 Test Plan 与 Automation history 的语义。
 7. 进入 Low Code Automation，打开 `AUTO-101`，从 BDD Step 展开 Click、Send keys、Navigate、Assert 映射。
 8. 切到 AI Agent 标签，展示“建议—Review—人工决定”的调整方式。
-9. 打开 Mobile Automation，演示 iOS/Android 与设备选择，以及未关联时不回写 Test Plan 的规则。
+9. Mobile 页面仅作为遗留模拟探索选讲；必须说明 iOS/Android/设备能力不在当前正式路线，P1 后才可能另行设计。未关联时不回写 Test Plan 的规则仍可用于解释产品语义。
 10. 回到 Athena，新建 Conversation，输入 `Generate an automation script for a life insurance application`。
-11. 选择先创建 Test Plan，Review BDD 草稿；继续生成关联 Automation；在 Web/Mobile 不确定提示中选择 Web。
+11. 选择先创建 Test Plan，Review BDD 草稿并继续生成关联的 Web Automation；Web/Mobile 不确定提示仅在讲解遗留交互时展示。
 12. 用最终两个资产卡片收尾：分别跳转 Test Plan 和 Automation，强调 Athena 是跨模块编排入口，不是取代专业工作区。
 
 ### 路线 B：5 分钟管理层演示
@@ -408,7 +410,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### “AI Agent 和 Execution Agent 有什么区别？”
 
-AI Agent 在 Athena 或 Automation 详情中负责理解意图、生成 BDD、提出修改建议和辅助 Review。Execution Agent 是 Azure DevOps Pipeline Agent，负责在获得配置后执行 Web Automation。生产版中两者的权限、生命周期、审计和故障模型完全不同。
+AI Agent 在 Athena 或 Automation 详情中负责理解意图、生成 BDD、提出修改建议和辅助 Review。Execution Agent 是 Pipeline Agent，负责在获得配置后执行 Web Automation；现行首个 Provider 是 Jenkins，Azure DevOps 只存在于遗留模拟截图。生产版中两者的权限、生命周期、审计和故障模型完全不同。
 
 ### “一个 Test Plan 能关联多个 Automation 吗？”
 
@@ -428,7 +430,7 @@ BDD 是业务可读的意图层；每一个 BDD Step 下方有显式 Automation 
 
 ### “Knowledge Graph 已经是生产能力吗？”
 
-不是。当前图谱验证 Graphify 式交互和信息架构，节点、关系、社区和布局来自确定性 fixture。生产版需要选择图存储/检索技术，建立抽取、溯源、权限、增量更新和质量评测链路。
+不是。当前图谱验证 Graphify 式交互和信息架构，节点、关系、社区和布局来自确定性 fixture。已接受的正式方案选择 **MySQL 保存 Knowledge Graph 权威数据、Milvus 保存可重建文档检索投影**，但尚未实现；后续仍需完成抽取、证据绑定、权限、增量更新和质量评测链路。
 
 ### “模型选择会真实调用对应 GPT 吗？”
 
@@ -438,4 +440,4 @@ BDD 是业务可读的意图层；每一个 BDD Step 下方有显式 Automation 
 
 1. TAP 把知识上下文、业务测试意图、低代码实现和执行记录放进一条可审查链路。
 2. Athena 负责理解、生成和跨模块引导；Test Management 与 Low Code Automation 仍是专业资产工作区。
-3. 当前成果是纯前端交互原型，已经验证核心产品语义，但真实持久化、权限、Pipeline、浏览器、设备和 Evidence 仍需后续工程化交付。
+3. 当前产品壳中的 Conversation、Test Plan、Automation 和 Run 仍是纯前端交互原型；现有 Athena 本地知识切片已经具备文档、ingestion 与索引状态持久化，但服务端会话/测试资产、权限、Jenkins、Recorder、真实浏览器执行和 Evidence 仍需后续工程化交付。

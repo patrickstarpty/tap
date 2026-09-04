@@ -1,16 +1,19 @@
 ---
 id: ADR-019
-status: accepted
+status: superseded
 date: 2026-09-02
 supersedes:
   - ADR-011
   - ADR-013
-superseded-by: []
+superseded-by:
+  - ADR-021
 related-rfcs:
   - RFC-007
 ---
 
 # ADR-019：Phase 1 优先探索 Intelligence Layer
+
+> **生命周期**：本决策已由 [ADR-021](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代；以下正文保留 2026-09-02 的原始决策语义，durable task、artifact、validator 与 Review 模式继续作为实现参考。
 
 ## 背景
 

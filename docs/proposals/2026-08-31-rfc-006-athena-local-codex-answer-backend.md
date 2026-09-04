@@ -9,6 +9,8 @@ related-adrs:
 
 # RFC-006：Athena 本地可选 Codex CLI 回答后端
 
+> **现行处置（2026-09-04）**：本 RFC 保持 `implemented`，只记录 Athena 既有 loopback Answer Adapter 的实现事实；直接 Codex CLI `AnswerGenerationPort`、个人 ChatGPT 登录和 `ATHENA_ANSWER_BACKEND=codex` 不属于 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) V1 合同，也不得计入 V1 出口证据。可复用的解析、grounding 或错误处理逻辑若迁入新路线，必须经唯一 `ModelGateway` 和 LiteLLM Adapter/conformance suite 收口，不能保留第二模型出口。本 RFC 不授权独立 Intelligence Lab 或 Specialist Runtime；当前交付顺序以 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 为准，下文关于 Intelligence-first、Azure 四索引企业基线及 ADR-014 旧 P1.2/P1.3 授权的表述均只保留历史语境。
+
 > **当前阶段处置（2026-09-02）**：本 RFC 的已实现 Athena Answer Adapter 继续作为独立本地能力维护；其中“完整 Phase 1 仍 active”沿用的是旧 RAG/Knowledge Chat 路线，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Intelligence Lab 使用独立、provider-neutral 的 `AgentRuntime`，不复用 Knowledge Answer 语义。
 
 ## 摘要
