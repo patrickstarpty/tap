@@ -1,5 +1,7 @@
 .worktrees/
 .superpowers/
+.pnpm-store/
+.impeccable/
 .env
 .local/milvus-active-corpus.json
 .local/milvus-embedding-cache/
