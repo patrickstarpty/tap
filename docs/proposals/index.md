@@ -11,5 +11,5 @@
 - [RFC-006：Athena 本地可选 Codex CLI 回答后端](2026-08-31-rfc-006-athena-local-codex-answer-backend.md)（`implemented`）：拆分 Embedding/回答端口，保持百炼向量空间，并为单机 Demo 交付精确 `0.149.0`、单智能体、无工具、无 fallback 的 Codex 回答路径与模型链路诊断。
 - [RFC-007：Phase 1 Intelligence Layer 探索](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)（`accepted`）：先用可选资料、仓库与失败材料验证可追溯的 AI 理解、自动化设计、长期任务、候选工程和 Review Package，再建设 BrowserStack-like 测试平台主体。
 - [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)（`accepted`，范围重排评审中）：记录两级产品导航、Automation 资产工作区和 Athena 编排体验；RFC-009 若被接受，将把第一阶段收窄为 Web-only/Jenkins-first，并把 Mobile 与跨类型推断后移，具体冲突清单以 RFC-009 §22.2 为准。
-- [RFC-009：Athena 知识与 Web 测试自动化平台设计](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)（`in-review`）：把可信知识问答与 Knowledge Graph 放在最前面，定义多 Project RBAC、Web LCA/Recorder、Playwright Revision、Jenkins Execution Provider 和结果闭环；当前是待书面确认的目标设计，不代表生产能力已实现。
+- [RFC-009：Athena 知识与 Web 测试自动化平台设计](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)（`in-review`）：采用 validation-first 顺序，以固定可信 Scope 先验证知识问答、Graph、Web LCA/Recorder、Playwright/Jenkins 与结果闭环，验证通过后再产品化多用户认证、RBAC 和多 Project；当前是待书面确认的目标设计，不代表生产能力已实现。
 - [RFC 模板](rfc-template.md)：提供新 RFC 的必填元数据与正文结构。
