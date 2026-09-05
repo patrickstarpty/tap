@@ -257,6 +257,8 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/interfaces/http/dependencies.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
 - Modify: `apps/backend/src/tap/interfaces/http/knowledge_service.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/application/{documents,answers,citations}.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/ports/{documents,answers,citations}.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_answers.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/citations.py`
@@ -267,10 +269,11 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/web/src/features/knowledge/api/queries.tsx`
 - Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
 - Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
-- Modify: `apps/web/src/app/App.tsx`
+- Inspect: `apps/web/src/app/App.tsx`（已通过 `AppProviders` 包裹 `TapperPage`，保持原型入口）
 - Modify: `apps/web/src/app/providers.tsx`
 - Modify: `apps/web/src/app/styles.css`
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.css`
 - Modify: `apps/web/src/pages/TapperPage.test.tsx`
 - Modify: `apps/web/vite.config.ts`
 - Modify: `apps/web/tests/e2e/prototype-demo-capture.spec.ts`
@@ -280,15 +283,19 @@ class AuthorizationPolicy(Protocol):
 
 Runtime 尚未返回可信 Project 时保留原型外壳和导航，明确显示连接状态并禁用依赖服务器的操作，不能生成浏览器端 Project 回退值或伪造已验证身份。原型截图 fixture 显式模拟 runtime endpoint；实际预览与业务请求使用服务端响应。
 
+HTTP 装配必须核对实际 application / repository 绑定的 Scope；不能仅比较独立的 `HttpServices.scope` 标签。
+
 **API:** Project Knowledge 路径统一为 `GET/POST /api/v1/projects/{project_id}/knowledge/documents`、`GET/DELETE /api/v1/projects/{project_id}/knowledge/documents/{document_id}`、`POST /api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry`、`POST /api/v1/projects/{project_id}/knowledge/answers` 与 `GET /api/v1/projects/{project_id}/knowledge/citations/{citation_id}`，另加 `GET /api/v1/runtime-mode`。`project_id != scope.project_id` 返回 `scope-mismatch`；请求 Header/Cookie/DTO 出现身份、角色或企业覆盖字段直接拒绝。所有浏览器状态变更校验精确 Origin，不开启宽泛 CORS。
 
-- [ ] 写 HTTP contract，覆盖正确 Project、错误 Project、伪造 `X-Actor-Id`/`X-Role`、跨源 mutation 和 runtime-mode DTO；写 Banner 可访问性/持久显示以及 Knowledge client/path/query key 包含固定 Validation Project 的测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 FAIL，原因为新路由/组件不存在且旧 client 仍调用 `/v1/knowledge/*`。
-- [ ] 实现 Project path dependency、Origin gate 与 runtime-mode；旧 `/v1/knowledge/documents`、`/v1/knowledge/answers` 与 `/v1/knowledge/citations/{citation_id}` 只可在 validation/local 装配中映射同一 Scope，并在 OpenAPI 标为 deprecated。
-- [ ] 实现 Banner 文案“操作统一记录到固定 Validation Actor，不代表个人身份”，不能被用户永久关闭。
-- [ ] 让 runtime query 提供固定 Validation Project ID，Knowledge client/query keys 从创建时就显式接收 `project_id`；旧路径只由后端 validation compatibility router 使用，正式 Web 不调用 deprecated path。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(web): expose validation scope boundary`
+- [x] 写 HTTP contract，覆盖正确 Project、错误 Project、伪造 `X-Actor-Id`/`X-Role`、跨源 mutation 和 runtime-mode DTO；写 Banner 可访问性/持久显示以及 Knowledge client/path/query key 包含固定 Validation Project 的测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 FAIL，原因为新路由/组件不存在且旧 client 仍调用 `/v1/knowledge/*`。
+- [x] 实现 Project path dependency、Origin gate 与 runtime-mode；旧 `/v1/knowledge/documents`、`/v1/knowledge/answers` 与 `/v1/knowledge/citations/{citation_id}` 只可在 validation/local 装配中映射同一 Scope，并在 OpenAPI 标为 deprecated。
+- [x] 实现 Banner 文案“操作统一记录到固定 Validation Actor，不代表个人身份”，不能被用户永久关闭。
+- [x] 让 runtime query 提供固定 Validation Project ID，Knowledge client/query keys 从创建时就显式接收 `project_id`；旧路径只由后端 validation compatibility router 使用，正式 Web 不调用 deprecated path。
+- [x] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(web): expose validation scope boundary`
+
+**验收：** `7395d70`；[Task 3 验收记录](../reviews/2026-09-06-tapper-v0-http-review.md)。原始完整 Backend 的唯一旧断言失败保留记录，修正后定向验证通过。
 
 ### Task 3A: Persist the Project Audit ledger before operator actions
 
@@ -304,7 +311,9 @@ Runtime 尚未返回可信 Project 时保留原型外壳和导航，明确显示
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
-**Contract:** `ProjectAuditPort.append(scope, action, resource, outcome, safe_metadata)` 只接受 `ProjectScopeContext`，正文、query、Prompt、Secret 和 Provider payload 均不允许进入 metadata。需要审计的应用事务必须通过同一 SQLAlchemy connection 同时提交业务状态、Audit 与 Outbox；失败时三者一起回滚。
+**Contract:** `ProjectAuditPort.append(scope, action, resource, outcome, safe_metadata, *, correlation_id, idempotency_key)` 只接受 `ProjectScopeContext`；correlation 与业务幂等键由调用者显式传入，保留原 HTTP / command / event 的关联，不能从身份 context 猜测或由 Adapter 重新生成。Adapter 绑定调用者已有的 SQLAlchemy connection，要求 active transaction，不能自行 begin/commit；业务状态、Audit 与 Outbox 同事务，失败时三者一起回滚。
+
+Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/origin、action/resource/outcome、correlation、idempotency key、内容 digest 和安全 metadata。Action/resource/outcome 与 metadata 使用封闭契约；metadata 仅接受已登记的有界计数、枚举或 digest，不接受任意字符串。正文、query、Prompt、Secret、对象存储定位符和 Provider payload 均拒绝。幂等范围为 Enterprise + Project + key；相同业务内容返回原 Audit（包括原时间和 correlation），内容变化冲突，不把重试生成的 ID/时间当作新事实。资源存在性与状态转换仍由同事务的领域应用校验。V0 先覆盖后续 Task 4 的有界 Operator 结果；其他领域在其任务接入，不能把基础表完成等同于 RFC 全量 Audit 覆盖。
 
 - [ ] 写 scope/actor 非空、metadata 闭集与大小、敏感值拒绝、事务三写/回滚、重复 idempotency 和 `0005 → 0008` 数据保持测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 FAIL，原因为 Audit port/table/revision 不存在。
