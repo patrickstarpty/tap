@@ -111,6 +111,10 @@ def build_demo_policy_context(
     )
 
 
+class DocumentPolicyChanged(AuthorizationDenied):
+    """Previously selected document facts are stale rather than actor-denied."""
+
+
 class DemoCurrentPolicyVerifier:
     """Reload the document ledger before each provider action and fail closed."""
 
@@ -143,13 +147,13 @@ class DemoCurrentPolicyVerifier:
         except Exception as error:
             raise PolicyUnavailable("current document policy is unavailable") from error
         if tuple(sorted(document_ids)) != tuple(sorted(row.document_id for row in current_rows)):
-            raise AuthorizationDenied("selected document is no longer ready and current")
+            raise DocumentPolicyChanged("selected document is no longer ready and current")
         try:
             current = build_demo_policy_context(current_rows)
         except (TypeError, ValueError) as error:
-            raise AuthorizationDenied("current document policy is invalid") from error
+            raise DocumentPolicyChanged("current document policy is invalid") from error
         if current != expected:
-            raise AuthorizationDenied("selected document revision or content hash changed")
+            raise DocumentPolicyChanged("selected document revision or content hash changed")
         return current
 
 

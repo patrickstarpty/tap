@@ -15,6 +15,7 @@ import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { knowledgeKeys } from "../../features/knowledge/api/queries";
 import type {
   DocumentPage,
+  ProblemDetails,
   RetrievalAnswerResponse,
 } from "../../features/knowledge/api/types";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
@@ -151,10 +152,13 @@ describe("TapperWorkspace source selection", () => {
     pendingRender.unmount();
 
     const problem = new KnowledgeClientError({
+      correlationId: "request-test",
+      retryable: true,
+      failureStage: "search",
       type: "https://tap.example/problems/search-unavailable",
-      title: "provider secret",
+      title: "Search unavailable",
       status: 503,
-      detail: "provider secret",
+      detail: "The search provider is currently unavailable.",
     });
     const failedRender = renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient().withListProblem(problem),
@@ -415,11 +419,15 @@ describe("TapperWorkspace answer lifecycle", () => {
       .withDocuments([readyDocument("doc-a")])
       .withAnswerProblem(
         new KnowledgeClientError({
+          // Deliberately bypass the wire validator to test UI defense in depth.
+          correlationId: "request-test",
+          retryable: true,
+          failureStage: "search",
           type: "https://tap.example/problems/search-unavailable",
           title: "provider=/srv/private",
           status: 503,
           detail: "secret=sk-provider",
-        }),
+        } as unknown as ProblemDetails),
       );
     renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
@@ -440,11 +448,15 @@ describe("TapperWorkspace answer lifecycle", () => {
       .withDocuments([readyDocument("doc-a")])
       .withAnswerProblem(
         new KnowledgeClientError({
+          // Deliberately bypass the wire validator to test UI defense in depth.
+          correlationId: "request-test",
+          retryable: true,
+          failureStage: "answer",
           type: "https://tap.example/problems/answer-unavailable",
           title: "provider=/srv/private",
           status: 503,
           detail: "secret=sk-provider",
-        }),
+        } as unknown as ProblemDetails),
       );
     renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
@@ -738,10 +750,12 @@ describe("TapperWorkspace claim and citation integrity", () => {
 
     api.withCitationProblem(
       new KnowledgeClientError({
+        correlationId: "request-test",
+        retryable: false,
         type: "https://tap.example/problems/citation-stale",
-        title: "provider secret",
+        title: "Citation stale",
         status: 404,
-        detail: "provider secret",
+        detail: "The citation no longer resolves to its exact source revision.",
       }),
     );
     await act(async () => {

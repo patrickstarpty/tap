@@ -1418,11 +1418,17 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
         assert liveness.status_code == 200
         assert liveness.json() == {"status": "ok"}
         assert response.status_code == 503
+        correlation_id = response.headers["X-Correlation-ID"]
+        assert len(correlation_id) == 32
+        assert all(character in "0123456789abcdef" for character in correlation_id)
         assert response.json() == {
             "type": "https://tap.example/problems/answer-unavailable",
             "title": "Answer unavailable",
             "status": 503,
             "detail": "The answer service is currently unavailable.",
+            "correlationId": correlation_id,
+            "retryable": True,
+            "failureStage": "answer",
         }
         assert "private" not in response.text
         assert "login" not in response.text

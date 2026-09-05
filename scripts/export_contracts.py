@@ -1,4 +1,4 @@
-"""Deterministically export TAP's public OpenAPI and SSE JSON Schema artifacts."""
+"""Deterministically export public HTTP/SSE and private Project contracts."""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ if str(BACKEND_SOURCE) not in sys.path:
     sys.path.insert(0, str(BACKEND_SOURCE))
 
 from tap.contracts.chat_stream import ChatEventEnvelope  # noqa: E402
+from tap.contracts.events import project_event_schema  # noqa: E402
+from tap.contracts.problems import problem_registry_document  # noqa: E402
 from tap.contracts.http import (  # noqa: E402
     CitationPreview,
     DocumentAccepted,
@@ -57,7 +59,7 @@ def canonical_json(value: object) -> bytes:
 
 
 def generated_contracts() -> dict[Path, bytes]:
-    """Return the two public contract artifacts without writing to disk."""
+    """Return public and private contract artifacts without writing to disk."""
     event_schema: dict[str, Any] = ChatEventEnvelope.model_json_schema(by_alias=True)
     event_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     openapi = create_app().openapi()
@@ -70,6 +72,10 @@ def generated_contracts() -> dict[Path, bytes]:
     return {
         Path("openapi/api.json"): canonical_json(openapi),
         Path("events/chat-stream.schema.json"): canonical_json(event_schema),
+        Path("events/project-event.schema.json"): canonical_json(
+            project_event_schema()
+        ),
+        Path("problem-types.json"): canonical_json(problem_registry_document()),
     }
 
 
@@ -77,6 +83,21 @@ def write_or_check(output_directory: Path, *, check: bool) -> int:
     """Write artifacts, or confirm the destination already contains the exact bytes."""
     expected_files = generated_contracts()
     mismatches: list[Path] = []
+    if check:
+        # Only these namespaces/extensions belong to this exporter; never treat
+        # documentation or unrelated contracts as generated output to remove.
+        owned = set(output_directory.glob("openapi/*.json")) | set(
+            output_directory.glob("events/*.schema.json")
+        )
+        owned |= {output_directory / "problem-types.json"}
+        mismatches.extend(
+            sorted(
+                path.relative_to(output_directory)
+                for path in owned
+                if path.is_file()
+                and path.relative_to(output_directory) not in expected_files
+            )
+        )
 
     for relative_path, expected in expected_files.items():
         destination = output_directory / relative_path

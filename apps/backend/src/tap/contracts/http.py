@@ -17,6 +17,8 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
+from tap.contracts.problems import ProblemDetails as ProblemDetails
+
 
 class ContractModel(BaseModel):
     """Base model that exposes camelCase JSON without accepting unknown fields."""
@@ -587,13 +589,3 @@ class ChatTurnAccepted(ContractModel):
     chat_id: str
     turn_id: str
     state: Literal["queued"]
-
-
-class ProblemDetails(ContractModel):
-    """RFC 9457 problem details returned by the public HTTP interface."""
-
-    type: str = Field(pattern=r"^https://")
-    title: str = Field(min_length=1)
-    status: int = Field(ge=100, le=599)
-    detail: str = Field(min_length=1)
-    instance: str | None = None

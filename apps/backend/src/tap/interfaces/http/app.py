@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, Request, status
 
-from tap.contracts.http import ChatTurnAccepted, ChatTurnRequest, ProblemDetails
+from tap.contracts.http import ChatTurnAccepted, ChatTurnRequest
 from tap.interfaces.http.dependencies import HttpServices
 from tap.interfaces.http.problems import (
     problem_response,
@@ -18,14 +18,6 @@ from tap.interfaces.http.routes.citations import router as citations_router
 from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
-
-NOT_IMPLEMENTED_PROBLEM = ProblemDetails(
-    type="https://tap.example/problems/turn-not-implemented",
-    title="Turn workflow not implemented",
-    status=status.HTTP_501_NOT_IMPLEMENTED,
-    detail="The durable chat turn workflow is not available yet.",
-)
-
 
 Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
@@ -54,10 +46,12 @@ def create_app(
             ),
         },
     )
-    async def create_chat_turn(chat_id: str, request: ChatTurnRequest) -> ChatTurnAccepted:
+    async def create_chat_turn(
+        chat_id: str, request: ChatTurnRequest, http_request: Request
+    ) -> ChatTurnAccepted:
         """Reserve the public route until the durable turn workflow is implemented."""
         del chat_id, request
-        return problem_response(NOT_IMPLEMENTED_PROBLEM)  # type: ignore[return-value]
+        return problem_response("turn-not-implemented", http_request)  # type: ignore[return-value]
 
     app.include_router(knowledge_documents_router)
     app.include_router(knowledge_answers_router)

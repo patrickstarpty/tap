@@ -339,8 +339,8 @@ def test_document_command_failures_are_redacted_stable_problems(
         ),
         (
             AuthorizationDenied("secret"),
-            409,
-            "https://tap.example/problems/document-state-changed",
+            403,
+            "https://tap.example/problems/authorization-denied",
         ),
         (
             PolicyUnavailable("secret"),
@@ -385,6 +385,9 @@ def test_litellm_answer_failure_is_not_reported_as_embedding_failure() -> None:
 
     assert response.status_code == 503
     assert response.json() == {
+        "correlationId": response.headers["x-correlation-id"],
+        "retryable": True,
+        "failureStage": "answer",
         "type": "https://tap.example/problems/answer-unavailable",
         "title": "Answer unavailable",
         "status": 503,

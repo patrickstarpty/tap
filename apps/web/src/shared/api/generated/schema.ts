@@ -488,6 +488,414 @@ export interface components {
              */
             type: "openapi";
         };
+        /**
+         * ProblemDetails
+         * @description Closed RFC 9457 error projection; only registered safe text is accepted.
+         */
+        ProblemDetails: {
+            /** Correlationid */
+            correlationId: string;
+            /** Detail */
+            detail: string;
+            /**
+             * Failurestage
+             * @default null
+             */
+            failureStage?: ("search" | "embedding" | "answer" | "graph" | "model" | "recorder" | "execution") | null;
+            /**
+             * Instance
+             * @default null
+             */
+            instance?: string | null;
+            /** Retryable */
+            retryable: boolean;
+            /** Status */
+            status: number;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+        } & ({
+            /** @constant */
+            detail?: "The grounded answer could not be committed atomically.";
+            /** @constant */
+            failureStage: "answer";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Answer snapshot unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/answer-snapshot-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The answer service is currently unavailable.";
+            /** @constant */
+            failureStage: "answer";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Answer unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/answer-unavailable";
+        } | {
+            /** @constant */
+            detail?: "An asset is already associated with another asset.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Association conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/association-conflict";
+        } | {
+            /** @constant */
+            detail?: "The current actor and scope do not allow this operation.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 403;
+            /** @constant */
+            title?: "Authorization denied";
+            /** @constant */
+            type?: "https://tap.example/problems/authorization-denied";
+        } | {
+            /** @constant */
+            detail?: "The published revision requires a compatible step mapping.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Automation mapping required";
+            /** @constant */
+            type?: "https://tap.example/problems/automation-mapping-required";
+        } | {
+            /** @constant */
+            detail?: "The citation no longer resolves to its exact source revision.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Citation stale";
+            /** @constant */
+            type?: "https://tap.example/problems/citation-stale";
+        } | {
+            /** @constant */
+            detail?: "The citation provider is currently unavailable.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Citation unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/citation-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The local knowledge space has reached its document limit.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 429;
+            /** @constant */
+            title?: "Document limit reached";
+            /** @constant */
+            type?: "https://tap.example/problems/document-limit-reached";
+        } | {
+            /** @constant */
+            detail?: "The requested document does not exist.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Document not found";
+            /** @constant */
+            type?: "https://tap.example/problems/document-not-found";
+        } | {
+            /** @constant */
+            detail?: "Only a failed document can be retried.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Document is not retryable";
+            /** @constant */
+            type?: "https://tap.example/problems/document-not-retryable";
+        } | {
+            /** @constant */
+            detail?: "A selected document is no longer ready at its selected revision.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Document state changed";
+            /** @constant */
+            type?: "https://tap.example/problems/document-state-changed";
+        } | {
+            /** @constant */
+            detail?: "The document exceeds the 25 MiB upload limit.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 413;
+            /** @constant */
+            title?: "Document too large";
+            /** @constant */
+            type?: "https://tap.example/problems/document-too-large";
+        } | {
+            /** @constant */
+            detail?: "The embedding service is currently unavailable.";
+            /** @constant */
+            failureStage: "embedding";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Embedding unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/embedding-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The document contains no processable content.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Empty document";
+            /** @constant */
+            type?: "https://tap.example/problems/empty-document";
+        } | {
+            /** @constant */
+            detail?: "The execution provider is currently unavailable.";
+            /** @constant */
+            failureStage: "execution";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Execution provider unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/execution-provider-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The graph service is currently unavailable.";
+            /** @constant */
+            failureStage: "graph";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Graph unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/graph-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The idempotency key already identifies a different request.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Idempotency conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/idempotency-conflict";
+        } | {
+            /** @constant */
+            detail?: "The knowledge runtime is not configured.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Knowledge runtime unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/knowledge-runtime-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The model service is currently unavailable.";
+            /** @constant */
+            failureStage: "model";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Model unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/model-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The recorder service is currently unavailable.";
+            /** @constant */
+            failureStage: "recorder";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Recorder unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/recorder-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The request body does not match the public API contract.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Request validation failed";
+            /** @constant */
+            type?: "https://tap.example/problems/request-validation";
+        } | {
+            /** @constant */
+            detail?: "The requested revision conflicts with the current revision.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Revision conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/revision-conflict";
+        } | {
+            /** @constant */
+            detail?: "The requested project does not match the current scope.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 403;
+            /** @constant */
+            title?: "Scope mismatch";
+            /** @constant */
+            type?: "https://tap.example/problems/scope-mismatch";
+        } | {
+            /** @constant */
+            detail?: "The search execution exceeded a safety bound.";
+            /** @constant */
+            failureStage: "search";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Search execution rejected";
+            /** @constant */
+            type?: "https://tap.example/problems/search-execution-rejected";
+        } | {
+            /** @constant */
+            detail?: "The search provider is currently unavailable.";
+            /** @constant */
+            failureStage: "search";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Search unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/search-unavailable";
+        } | {
+            /** @constant */
+            detail?: "Select between one and twenty unique ready documents.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Source selection required";
+            /** @constant */
+            type?: "https://tap.example/problems/source-selection-required";
+        } | {
+            /** @constant */
+            detail?: "The durable chat turn workflow is not available yet.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 501;
+            /** @constant */
+            title?: "Turn workflow not implemented";
+            /** @constant */
+            type?: "https://tap.example/problems/turn-not-implemented";
+        } | {
+            /** @constant */
+            detail?: "The answer request contains a control unavailable in this demo.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Unsupported answer control";
+            /** @constant */
+            type?: "https://tap.example/problems/unsupported-answer-control";
+        } | {
+            /** @constant */
+            detail?: "The document filename, media type, or content is not supported.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Unsupported document";
+            /** @constant */
+            type?: "https://tap.example/problems/unsupported-document";
+        });
         /** ReadyHealth */
         ReadyHealth: {
             /** Components */
@@ -841,18 +1249,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Turn workflow not implemented */
@@ -861,18 +1258,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -903,18 +1289,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Invalid citation ID */
@@ -923,18 +1298,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -943,18 +1307,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -987,18 +1340,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Document state changed */
@@ -1007,18 +1349,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Invalid answer request */
@@ -1027,18 +1358,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -1047,18 +1367,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -1090,18 +1399,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -1110,18 +1408,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -1154,18 +1441,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Document too large */
@@ -1174,18 +1450,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Invalid document upload */
@@ -1194,18 +1459,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Document limit reached */
@@ -1214,18 +1468,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -1234,18 +1477,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -1276,18 +1508,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Invalid document ID */
@@ -1296,18 +1517,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -1316,18 +1526,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -1356,18 +1555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Document state changed */
@@ -1376,18 +1564,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Invalid document ID */
@@ -1396,18 +1573,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -1416,18 +1582,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -1458,18 +1613,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Document is not retryable */
@@ -1478,18 +1622,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Invalid document ID */
@@ -1498,18 +1631,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Knowledge runtime unavailable */
@@ -1518,18 +1640,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

@@ -9,7 +9,7 @@ from tap.modules.access.adapters.validation import (
     ValidationScopeProvider,
 )
 from tap.modules.access.domain.authorization import ActorPrincipal
-from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.access.domain.policy import PolicyUnavailable
 from tap.modules.knowledge.application import demo_policy
 from tap.modules.knowledge.application.answers import ReadyDocumentRevision
 from tap.modules.knowledge.application.demo_policy import (
@@ -125,7 +125,7 @@ def test_current_policy_verifier_reloads_mysql_and_fails_closed_on_changed_sourc
         assert repository.requests == [("doc_a",)]
 
         repository.rows = (ready("doc_a", "rev_changed", HASH_B),)
-        with pytest.raises(AuthorizationDenied):
+        with pytest.raises(demo_policy.DocumentPolicyChanged):
             await verifier.verify_current(expected)
 
     asyncio.run(scenario())

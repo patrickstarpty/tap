@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createKnowledgeClient, KnowledgeClientError } from "./client";
+import {
+  createKnowledgeClient,
+  KnowledgeClientError,
+  KnowledgeTransportError,
+} from "./client";
 import type { RetrievalAnswerRequest } from "./types";
 
 class TestUploadRequest {
@@ -13,6 +17,11 @@ class TestUploadRequest {
   status = 0;
   responseText = "";
   aborted = false;
+  contentType = "application/problem+json";
+
+  getResponseHeader(): string {
+    return this.contentType;
+  }
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
@@ -62,10 +71,12 @@ describe("KnowledgeClient", () => {
     const fetch = async (): Promise<Response> =>
       Response.json(
         {
-          type: "https://tap.local/problems/document-too-large",
-          title: "Provider said /srv/private/key",
+          type: "https://tap.example/problems/document-too-large",
+          title: "Document too large",
           status: 413,
-          detail: "secret=sk-live-internal at /srv/private/key",
+          detail: "The document exceeds the 25 MiB upload limit.",
+          correlationId: "request-123",
+          retryable: false,
         },
         {
           status: 413,
@@ -144,10 +155,12 @@ describe("KnowledgeClient", () => {
     );
 
     request.respond(413, {
-      type: "https://tap.local/problems/document-too-large",
-      title: "Provider failed at /srv/private/key",
+      type: "https://tap.example/problems/document-too-large",
+      title: "Document too large",
       status: 413,
-      detail: "secret=sk-live-internal at /srv/private/key",
+      detail: "The document exceeds the 25 MiB upload limit.",
+      correlationId: "request-123",
+      retryable: false,
       instance: "/internal/jobs/provider-secret",
     });
     const error = await upload.catch((caught: unknown) => caught);
@@ -255,8 +268,192 @@ describe("KnowledgeClient", () => {
       .getCitation("citation-a")
       .catch((caught: unknown) => caught);
 
-    expect(error).toBeInstanceOf(KnowledgeClientError);
-    expect(error).toMatchObject({ code: "request-failed", status: 503 });
+    expect(error).toBeInstanceOf(KnowledgeTransportError);
+    expect(error).not.toBeInstanceOf(KnowledgeClientError);
+    expect(error).toMatchObject({ code: "invalid-problem", status: 503 });
     expect(String(error)).not.toContain("provider secret");
   });
+});
+
+describe("strict failure boundary", () => {
+  const problem = {
+    type: "https://tap.example/problems/answer-unavailable",
+    title: "Answer unavailable",
+    status: 503,
+    detail: "The answer service is currently unavailable.",
+    correlationId: "request-123",
+    retryable: true,
+    failureStage: "answer",
+  };
+
+  it.each([
+    { ...problem, type: "https://evil.example/problems/answer-unavailable" },
+    { ...problem, detail: "provider-secret" },
+    { ...problem, correlationId: undefined },
+    { ...problem, retryable: undefined },
+    { ...problem, failureStage: undefined },
+    { ...problem, failureStage: "unknown" },
+    { ...problem, retryable: false },
+    { ...problem, secret: "provider-secret" },
+  ])("rejects unregistered or malformed server Problems", async (body) => {
+    const client = createKnowledgeClient({
+      fetch: async () =>
+        Response.json(body, {
+          status: 503,
+          headers: { "content-type": "application/problem+json" },
+        }),
+    });
+    const error = await client
+      .listDocuments({ limit: 25 })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KnowledgeTransportError);
+    expect(error).not.toBeInstanceOf(KnowledgeClientError);
+    expect(error).toMatchObject({ code: "invalid-problem", status: 503 });
+    expect(error).not.toHaveProperty("correlationId");
+    expect(String(error)).not.toContain("provider-secret");
+  });
+
+  it.each(["text/html", "application/json"])(
+    "rejects non-Problem media %s",
+    async (media) => {
+      const client = createKnowledgeClient({
+        fetch: async () =>
+          new Response("provider-secret", {
+            status: 503,
+            headers: { "content-type": media },
+          }),
+      });
+      await expect(client.listDocuments({ limit: 25 })).rejects.toMatchObject({
+        name: "KnowledgeTransportError",
+        code: "invalid-problem",
+        status: 503,
+      });
+    },
+  );
+
+  it("keeps fetch network failures separate without a forged status or correlation", async () => {
+    const client = createKnowledgeClient({
+      fetch: async () => {
+        throw new TypeError("provider-secret");
+      },
+    });
+    const error = await client
+      .listDocuments({ limit: 25 })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: "KnowledgeTransportError",
+      code: "network-failure",
+    });
+    expect(error).not.toHaveProperty("correlationId");
+    expect(error).not.toHaveProperty("status");
+    expect(String(error)).not.toContain("provider-secret");
+  });
+
+  it("keeps XHR network failure separate", async () => {
+    const request = new TestUploadRequest();
+    const client = createKnowledgeClient({
+      xhrFactory: () => request as unknown as XMLHttpRequest,
+    });
+    const upload = client.uploadDocument(
+      new File(["notes"], "notes.txt"),
+      () => undefined,
+    );
+    request.onerror?.();
+    await expect(upload).rejects.toMatchObject({
+      name: "KnowledgeTransportError",
+      code: "network-failure",
+    });
+  });
+});
+
+describe("failure stream boundaries", () => {
+  it("accepts explicit null stage on a non-workflow registered Problem", async () => {
+    const client = createKnowledgeClient({
+      fetch: async () =>
+        Response.json(
+          {
+            type: "https://tap.example/problems/document-too-large",
+            title: "Document too large",
+            status: 413,
+            detail: "The document exceeds the 25 MiB upload limit.",
+            correlationId: "request-test",
+            retryable: false,
+            failureStage: null,
+          },
+          {
+            status: 413,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+    await expect(client.listDocuments({ limit: 25 })).rejects.toMatchObject({
+      name: "KnowledgeClientError",
+      correlationId: "request-test",
+      code: "document-too-large",
+    });
+  });
+
+  it("redacts failures reading an error response body", async () => {
+    const client = createKnowledgeClient({
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("provider-secret"));
+            },
+          }),
+          {
+            status: 503,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+    const error = await client
+      .listDocuments({ limit: 25 })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: "KnowledgeTransportError",
+      code: "network-failure",
+    });
+    expect(String(error)).not.toContain("provider-secret");
+  });
+
+  it("preserves fetch cancellation as AbortError", async () => {
+    const client = createKnowledgeClient({
+      fetch: async () => {
+        throw new DOMException("Aborted", "AbortError");
+      },
+    });
+    await expect(client.listDocuments({ limit: 25 })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
+
+  it.each(["application/json", "text/html"])(
+    "rejects XHR errors with media %s",
+    async (media) => {
+      const request = new TestUploadRequest();
+      request.contentType = media;
+      const client = createKnowledgeClient({
+        xhrFactory: () => request as unknown as XMLHttpRequest,
+      });
+      const upload = client.uploadDocument(
+        new File(["notes"], "notes.txt"),
+        () => undefined,
+      );
+      request.respond(413, {
+        type: "https://tap.example/problems/document-too-large",
+        title: "Document too large",
+        status: 413,
+        detail: "The document exceeds the 25 MiB upload limit.",
+        correlationId: "request-test",
+        retryable: false,
+      });
+      await expect(upload).rejects.toMatchObject({
+        name: "KnowledgeTransportError",
+        code: "invalid-problem",
+        status: 413,
+      });
+    },
+  );
 });

@@ -1,5 +1,7 @@
 import createOpenApiClient from "openapi-fetch";
 
+import problemRegistry from "../../../../../../contracts/problem-types.json";
+
 import type { paths } from "../../../shared/api/generated/schema";
 import type {
   DocumentAccepted,
@@ -24,49 +26,86 @@ interface KnowledgeClientOptions {
   xhrFactory?: () => XMLHttpRequest;
 }
 
-function problemCode(type: string): string {
-  const withoutQuery = type.split(/[?#]/u, 1)[0] ?? "";
-  const segments = withoutQuery.split("/").filter(Boolean);
-  const code = segments.at(-1);
-  return code === undefined || code.includes(":") ? "request-failed" : code;
-}
-
 export class KnowledgeClientError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly correlationId: string;
+  readonly retryable: boolean;
+  readonly failureStage: ProblemDetails["failureStage"];
 
   constructor(problem: ProblemDetails) {
-    const code = problemCode(problem.type);
+    const code = problem.type.slice(problem.type.lastIndexOf("/") + 1);
     super(`Knowledge request failed (${code}).`);
     this.name = "KnowledgeClientError";
     this.code = code;
     this.status = problem.status;
+    this.correlationId = problem.correlationId;
+    this.retryable = problem.retryable;
+    this.failureStage = problem.failureStage;
   }
 }
 
-function fallbackProblem(status: number): ProblemDetails {
-  return {
-    detail: "",
-    status,
-    title: "Request failed",
-    type: "about:blank",
-  };
+export class KnowledgeTransportError extends Error {
+  readonly code: "invalid-problem" | "network-failure";
+  declare readonly status?: number;
+
+  constructor(code: "invalid-problem" | "network-failure", status?: number) {
+    super(`Knowledge request failed (${code}).`);
+    this.name = "KnowledgeTransportError";
+    this.code = code;
+    if (status !== undefined) this.status = status;
+  }
 }
 
-function asProblemDetails(value: unknown, status: number): ProblemDetails {
-  if (typeof value !== "object" || value === null)
-    return fallbackProblem(status);
-  const candidate = value as Partial<ProblemDetails>;
+function responseError(
+  value: unknown,
+  status: number,
+  mediaType: string | null,
+): Error {
+  const invalid = () => new KnowledgeTransportError("invalid-problem", status);
   if (
-    typeof candidate.type !== "string" ||
-    typeof candidate.title !== "string" ||
-    typeof candidate.status !== "number" ||
+    mediaType?.split(";", 1)[0]?.trim().toLowerCase() !==
+      "application/problem+json" ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  )
+    return invalid();
+  const candidate = value as Record<string, unknown>;
+  const definition = problemRegistry.problems.find(
+    (item) => item.type === candidate.type,
+  );
+  if (
+    definition === undefined ||
     candidate.status !== status ||
-    typeof candidate.detail !== "string"
-  ) {
-    return fallbackProblem(status);
-  }
-  return candidate as ProblemDetails;
+    definition.status !== status ||
+    candidate.title !== definition.title ||
+    candidate.detail !== definition.detail ||
+    candidate.retryable !== definition.retryable ||
+    (candidate.failureStage ?? undefined) !== definition.failureStage ||
+    typeof candidate.correlationId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(candidate.correlationId) ||
+    (candidate.instance !== undefined &&
+      candidate.instance !== null &&
+      (typeof candidate.instance !== "string" ||
+        candidate.instance.length === 0 ||
+        candidate.instance.length > 2048)) ||
+    Object.keys(candidate).some(
+      (key) =>
+        ![
+          "type",
+          "title",
+          "status",
+          "detail",
+          "instance",
+          "correlationId",
+          "retryable",
+          "failureStage",
+        ].includes(key),
+    )
+  )
+    return invalid();
+  return new KnowledgeClientError(candidate as unknown as ProblemDetails);
 }
 
 function origin(): string {
@@ -118,6 +157,36 @@ export function createKnowledgeClient(
     baseUrl,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   });
+  http.use({
+    async onResponse({ response }) {
+      if (!response.ok) {
+        let body: unknown;
+        try {
+          body = parseJson(await response.text());
+        } catch (error) {
+          if (
+            (error instanceof DOMException || error instanceof Error) &&
+            error.name === "AbortError"
+          )
+            throw error;
+          throw new KnowledgeTransportError("network-failure");
+        }
+        throw responseError(
+          body,
+          response.status,
+          response.headers.get("content-type"),
+        );
+      }
+    },
+    onError({ error }) {
+      if (
+        (error instanceof DOMException || error instanceof Error) &&
+        error.name === "AbortError"
+      )
+        throw error;
+      return new KnowledgeTransportError("network-failure");
+    },
+  });
   const xhrFactory = options.xhrFactory ?? (() => new XMLHttpRequest());
 
   return {
@@ -127,8 +196,10 @@ export function createKnowledgeClient(
         signal,
       });
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
@@ -140,8 +211,10 @@ export function createKnowledgeClient(
         signal,
       });
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
@@ -174,14 +247,16 @@ export function createKnowledgeClient(
           }
           finish(() =>
             reject(
-              new KnowledgeClientError(
-                asProblemDetails(body, request.status || 500),
+              responseError(
+                body,
+                request.status,
+                request.getResponseHeader("content-type"),
               ),
             ),
           );
         };
         request.onerror = () => {
-          finish(() => reject(new KnowledgeClientError(fallbackProblem(503))));
+          finish(() => reject(new KnowledgeTransportError("network-failure")));
         };
         request.onabort = () => {
           finish(() =>
@@ -207,8 +282,10 @@ export function createKnowledgeClient(
         { params: { path: { document_id: documentId } } },
       );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
@@ -220,8 +297,10 @@ export function createKnowledgeClient(
         { params: { path: { document_id: documentId } } },
       );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
     },
@@ -232,8 +311,10 @@ export function createKnowledgeClient(
         signal,
       });
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
@@ -245,8 +326,10 @@ export function createKnowledgeClient(
         signal,
       });
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;

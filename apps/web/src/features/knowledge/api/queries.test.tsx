@@ -738,10 +738,13 @@ describe("grounded answer queries", () => {
       ...base,
       async createAnswer() {
         throw new KnowledgeClientError({
+          correlationId: "request-test",
+          retryable: false,
           type: "https://tap.example/problems/document-state-changed",
-          title: "provider secret",
+          title: "Document state changed",
           status: 409,
-          detail: "provider secret",
+          detail:
+            "A selected document is no longer ready at its selected revision.",
         });
       },
     };

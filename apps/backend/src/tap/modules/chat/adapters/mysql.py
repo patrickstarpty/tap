@@ -387,8 +387,30 @@ class OutboxStore:
                 .mappings()
                 .all()
             )
+            valid_rows = []
             for row in rows:
-                validate_outbox_row(cast(Mapping[str, object], row))
+                try:
+                    validate_outbox_row(cast(Mapping[str, object], row))
+                except ValueError:
+                    # Persist rejection in this claim transaction so one corrupt
+                    # envelope cannot roll back or starve the rest of the batch.
+                    await session.execute(
+                        update(outbox)
+                        .where(
+                            *scope_predicates(outbox, self._scope),
+                            outbox.c.outbox_id == row["outbox_id"],
+                            outbox.c.claim_token == row["claim_token"],
+                        )
+                        .values(
+                            status="delivery_failed",
+                            claimed_by=None,
+                            claim_token=None,
+                            lease_until=None,
+                            last_error="invalid_persisted_event",
+                        )
+                    )
+                    continue
+                valid_rows.append(row)
             return [
                 ClaimedOutbox(
                     message=DispatchMessage(
@@ -403,7 +425,7 @@ class OutboxStore:
                     attempt_count=cast(int, row["attempt_count"]),
                     claim_token=cast(str, row["claim_token"]),
                 )
-                for row in rows
+                for row in valid_rows
             ]
 
     async def mark_published(
