@@ -1,4 +1,4 @@
-"""Shared SQLAlchemy metadata and provider-neutral transactional Outbox table."""
+"""Runtime table metadata and transactional Outbox; migrations use db.registry."""
 
 from sqlalchemy import BigInteger, Column, Index, Integer, MetaData, String, Table, Text
 from sqlalchemy.dialects.mysql import DATETIME

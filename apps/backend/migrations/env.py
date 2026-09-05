@@ -6,9 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from tap.modules.chat.adapters import mysql as _chat_schema  # noqa: F401
-from tap.modules.knowledge.adapters import mysql_documents as _knowledge_schema  # noqa: F401
-from tap.platform.db.schema import metadata
+from tap.platform.db.registry import load_authoritative_metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -18,7 +16,7 @@ database_url = os.getenv("TAP_ALEMBIC_DATABASE_URL")
 if database_url is not None:
     config.set_main_option("sqlalchemy.url", database_url)
 
-target_metadata = metadata
+target_metadata = load_authoritative_metadata()
 
 
 def run_migrations_offline() -> None:
