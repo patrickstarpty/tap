@@ -103,6 +103,8 @@ class ProjectEventEnvelope:
 
 完成事件的 `outcome` 使用以下闭集：Conversation 沿用 Turn 终态 `completed | abstained | canceled | failed`，均须引用已持久化的 Answer/Evidence Snapshot，失败或空结果也不能省略该事实；Debug Execution 和 Execution Run 使用 §7 的 `TestOutcome`；Recorder Session 使用 `OperationStatus` 的终态 `SUCCEEDED | FAILED | CANCELLED | TIMED_OUT`。状态改变事件的 `from/to` 使用 §7 的 `OperationStatus`，合法转换由对应领域状态机验证。Provider 原始状态不得直接代替这些值。事件类型已登记不代表对应生产流程已经实现。
 
+`aggregate_id` 与 payload 中的资源 ID 上限为 64 字符，与现有 Outbox 存储一致；scope、event、correlation 与 idempotency ID 上限为 128 字符。时间戳必须带时区且可表示为 canonical UTC，不能只检查语法后让转换溢出阻塞持久事件处理。
+
 ### 2.1 现有唤醒的迁移兼容契约
 
 V0 Task 2B 在同一封闭 registry 中先登记以下 major version 1 的 transport compatibility events。它们只表达已有的处理/通知意图，不能被改名为需要 Input Snapshot 或 Source 的新领域事件；新领域流程切换后不再产生相应兼容事件，历史记录仍可验证。

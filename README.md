@@ -134,7 +134,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-2026-09-05 已启动 V0：完成 authoritative migration metadata、固定 Validation Scope/共同授权、`0006` identity registry 与 `0007` Project 数据回填。[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)和[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)记录当前范围；Task 2B 完整回归仍有一项待复核的启动脚本测试失败。事件与错误契约及其余平台能力继续按计划实施。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
+V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)和[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)；目前继续接入 Project API 与 Validation Mode，V0 完整出口尚未通过。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
 
 ## Tapper 本地知识工作区
 

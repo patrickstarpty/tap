@@ -232,11 +232,13 @@ class AuthorizationPolicy(Protocol):
 
 **执行期接口补全：** 按核心契约 §9，所有 Problem 要求 `correlationId/retryable`，只有工作流错误要求封闭 `failureStage`，不为请求校验等错误制造工作流阶段。每次响应使用当前关联 ID，不能在 import 时固定一个 ID。Web 客户端的传输失败与注册 Problem 分开表达，不能继续伪造 `about:blank` 或服务器关联 ID。私有事件 Schema 不进入公开 SSE/HTTP payload；不透明资源 ID 的 Project 归属由拥有该资源的 scoped application transaction 验证，不能通过 ID 前缀或 payload 形状假装完成归属检查。
 
-- [ ] 写 envelope 缺字段、未知主版本 dead-letter、内部 payload 不可公开、短 slug 不合法、URI/status 漂移、缺 `correlationId/failureStage/retryable` 和敏感 detail 拒绝测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 FAIL，原因为 event/problem registry 与生成制品不存在。
-- [ ] 实现唯一 event/problem registry；Outbox、HTTP 和 SSE 只引用该 registry，Web 只消费生成类型。`scripts/export_contracts.py` 生成 OpenAPI、所有公开 SSE schema、Project event schema 与 problem registry，`--check` 检测多余/缺失制品。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(contracts): freeze events and problem details`
+- [x] 写 envelope 缺字段、未知主版本 dead-letter、内部 payload 不可公开、短 slug 不合法、URI/status 漂移、缺 `correlationId/failureStage/retryable` 和敏感 detail 拒绝测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 FAIL，原因为 event/problem registry 与生成制品不存在。
+- [x] 实现唯一 event/problem registry；Outbox、HTTP 和 SSE 只引用该 registry，Web 只消费生成类型。`scripts/export_contracts.py` 生成 OpenAPI、所有公开 SSE schema、Project event schema 与 problem registry，`--check` 检测多余/缺失制品。
+- [x] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(contracts): freeze events and problem details`
+
+**验收：** `2728053`；[Task 2C 验收记录](../reviews/2026-09-06-tapper-v0-contracts-review.md)。最终字面量 68 例、runtime 176 例、Web 267 例及 check/复审通过；原完整 Backend 回归的 4 个旧断言失败已定向关闭，保留其原始结果与源码时序限制，不声称最终源码完整 Backend suite 已重跑。
 
 ### Task 3: Enforce Project HTTP paths and show Validation Mode
 
@@ -246,6 +248,8 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/src/tap/interfaces/http/middleware/origin.py`
 - Create: `apps/backend/tests/contract/test_validation_scope_http.py`
 - Create: `apps/backend/tests/contract/test_origin_policy.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_api.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Create: `apps/web/src/features/runtime/api/client.ts`
 - Create: `apps/web/src/features/runtime/api/queries.ts`
 - Create: `apps/web/src/features/runtime/components/ValidationModeBanner.tsx`
@@ -264,11 +268,17 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
 - Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
 - Modify: `apps/web/src/app/App.tsx`
+- Modify: `apps/web/src/app/providers.tsx`
 - Modify: `apps/web/src/app/styles.css`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
 - Modify: `apps/web/src/pages/TapperPage.test.tsx`
+- Modify: `apps/web/vite.config.ts`
+- Modify: `apps/web/tests/e2e/prototype-demo-capture.spec.ts`
 - Modify: `scripts/export_contracts.py`
 
 **UI 基线：** Banner 接入 `TapperPage` 展示的 `TapProductPrototype` / App 外壳，沿用已确认的浅色原型。旧 `TapperWorkspace` 只因 API 调用签名变化更新兼容测试，不作为本次实施的产品页面；同步原型中 `useDocumentListQuery` 的 Project 参数。
+
+Runtime 尚未返回可信 Project 时保留原型外壳和导航，明确显示连接状态并禁用依赖服务器的操作，不能生成浏览器端 Project 回退值或伪造已验证身份。原型截图 fixture 显式模拟 runtime endpoint；实际预览与业务请求使用服务端响应。
 
 **API:** Project Knowledge 路径统一为 `GET/POST /api/v1/projects/{project_id}/knowledge/documents`、`GET/DELETE /api/v1/projects/{project_id}/knowledge/documents/{document_id}`、`POST /api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry`、`POST /api/v1/projects/{project_id}/knowledge/answers` 与 `GET /api/v1/projects/{project_id}/knowledge/citations/{citation_id}`，另加 `GET /api/v1/runtime-mode`。`project_id != scope.project_id` 返回 `scope-mismatch`；请求 Header/Cookie/DTO 出现身份、角色或企业覆盖字段直接拒绝。所有浏览器状态变更校验精确 Origin，不开启宽泛 CORS。
 
