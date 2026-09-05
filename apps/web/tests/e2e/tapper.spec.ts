@@ -26,6 +26,15 @@ const STAGES = [
 ] as const;
 type IngestionStage = (typeof STAGES)[number];
 
+const STAGE_TITLES: Readonly<Record<IngestionStage, string>> = {
+  stored: "保存源文件",
+  parsing: "解析内容",
+  chunking: "整理片段",
+  embedding: "生成向量",
+  publishing: "发布索引",
+  ready: "可用于问答",
+};
+
 interface DocumentSummary {
   documentId: string;
   filename: string;
@@ -116,9 +125,19 @@ async function upload(
   page: Page,
   file: E2EFilePayload,
 ): Promise<DocumentReceipt> {
-  const response = await page.request.post("/v1/knowledge/documents", {
-    multipart: { upload: file },
-  });
+  await page.getByRole("tab", { name: "知识库" }).click();
+  await page.getByRole("button", { name: "添加来源" }).click();
+  const dialog = page.getByRole("dialog", { name: "添加来源" });
+  const fileInput = dialog.getByLabel("选择文档", { exact: true });
+  await expect(fileInput).toHaveJSProperty("tagName", "INPUT");
+  await fileInput.setInputFiles(file);
+  const pending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/v1/knowledge/documents",
+  );
+  await dialog.getByRole("button", { name: "开始添加" }).click();
+  const response = await pending;
   expect(response.status()).toBe(202);
   return receipt((await response.json()) as unknown);
 }
@@ -185,6 +204,26 @@ function assertFailedTimeline(
   }
 }
 
+async function assertReadyTimelineInUi(
+  page: Page,
+  file: E2EFilePayload,
+): Promise<void> {
+  await page.getByRole("tab", { name: "知识库" }).click();
+  const row = page.getByRole("row").filter({ hasText: file.name });
+  await row.getByRole("button", { name: "查看详情" }).click();
+  const dialog = page.getByRole("dialog", { name: `${file.name} 详情` });
+  for (const stage of STAGES) {
+    await expect(
+      dialog.getByText(STAGE_TITLES[stage], { exact: true }),
+    ).toBeVisible();
+  }
+  await expect(dialog.getByText("已完成", { exact: true })).toHaveCount(
+    STAGES.length,
+  );
+  await dialog.getByRole("button", { name: "关闭" }).click();
+  await expect(dialog).toBeHidden();
+}
+
 async function documentIds(page: Page): Promise<string[]> {
   const response = await page.request.get("/v1/knowledge/documents?limit=50");
   expect(response.status()).toBe(200);
@@ -208,11 +247,19 @@ async function armFailure(page: Page, stage: string): Promise<void> {
 
 async function retryFromLibrary(
   page: Page,
+  file: E2EFilePayload,
   current: DocumentReceipt,
 ): Promise<DocumentReceipt> {
-  const response = await page.request.post(
-    `/v1/knowledge/documents/${current.document.documentId}/retry`,
+  await page.getByRole("tab", { name: "知识库" }).click();
+  const row = page.getByRole("row").filter({ hasText: file.name });
+  const pending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/v1/knowledge/documents/${current.document.documentId}/retry`,
   );
+  await row.getByRole("button", { name: "重试" }).click();
+  const response = await pending;
   expect(response.status()).toBe(202);
   return receipt((await response.json()) as unknown);
 }
@@ -238,7 +285,19 @@ async function failOnceThenRetry(
     .slice(0, failedStageIndex)
     .map((snapshot) => snapshot.completedAt);
 
-  accepted = await retryFromLibrary(page, accepted);
+  const row = page.getByRole("row").filter({ hasText: file.name });
+  await expect(row.getByRole("button", { name: "重试" })).toBeVisible();
+  await row.getByRole("button", { name: "查看详情" }).click();
+  const dialog = page.getByRole("dialog", { name: `${file.name} 详情` });
+  const failedTimelineItem = dialog
+    .locator(".tapper-timeline-item")
+    .filter({ hasText: STAGE_TITLES[stage] });
+  await expect(
+    failedTimelineItem.getByText("失败", { exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "关闭" }).click();
+
+  accepted = await retryFromLibrary(page, file, accepted);
   expect(accepted.document.documentId).toBe(initialDocumentId);
   expect(accepted.jobId).toBe(initialJobId);
   const detail = await waitForStatus(
@@ -254,6 +313,12 @@ async function failOnceThenRetry(
       .slice(0, failedStageIndex)
       .map((snapshot) => snapshot.completedAt),
   ).toEqual(durableCheckpointTimes);
+  await page.getByRole("tab", { name: "问答" }).click();
+  await expect(
+    page.getByRole("checkbox", {
+      name: new RegExp(escapeRegExp(accepted.document.documentId), "u"),
+    }),
+  ).toBeEnabled();
   return { detail, receipt: accepted };
 }
 
@@ -269,25 +334,18 @@ function documentState(
   };
 }
 
-async function ask(
-  page: Page,
-  query: string,
-  selectedIds: readonly string[],
-): Promise<AnswerRound> {
-  const request = {
-    answerMode: "quick",
-    query,
-    resourceRefs: [...selectedIds]
-      .sort()
-      .map((sourceId) => ({ family: "doc", sourceId, mode: "scope" })),
-    sources: ["doc"],
-  };
-  const response = await page.request.post("/v1/knowledge/answers", {
-    data: request,
-  });
+async function ask(page: Page, query: string): Promise<AnswerRound> {
+  await page.getByRole("textbox", { name: "输入问题" }).fill(query);
+  const pending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/v1/knowledge/answers",
+  );
+  await page.getByRole("button", { name: "提问" }).click();
+  const response = await pending;
   expect(response.status()).toBe(200);
   return {
-    request,
+    request: response.request().postDataJSON() as Record<string, unknown>,
     response: (await response.json()) as AnswerResponse,
   };
 }
@@ -314,9 +372,11 @@ function assertScopedRequest(
 }
 
 async function assertGroundedAnswer(
+  page: Page,
   answer: AnswerResponse,
   allowedIds: readonly string[],
   requiredContributors: readonly string[],
+  renderedTextMatchesRaw = true,
 ): Promise<void> {
   expect(answer.abstained).toBe(false);
   expect(answer.answer.length).toBeGreaterThan(0);
@@ -348,16 +408,44 @@ async function assertGroundedAnswer(
     }
   }
   expect([...contributorIds].sort()).toEqual([...requiredContributors].sort());
+
+  const renderedClaims = page.locator(".tapper-grounded-claim");
+  await expect(renderedClaims).toHaveCount(answer.claims.length);
+  for (const [index, claim] of answer.claims.entries()) {
+    const rendered = renderedClaims.nth(index);
+    if (renderedTextMatchesRaw) {
+      await expect(rendered).toContainText(claim.text);
+    }
+    for (const citationId of claim.citationIds) {
+      const citationNumber =
+        answer.citations.findIndex((item) => item.citationId === citationId) +
+        1;
+      expect(citationNumber).toBeGreaterThan(0);
+      await expect(
+        rendered.getByRole("button", { name: `引用 ${citationNumber}` }),
+      ).toBeVisible();
+    }
+  }
 }
 
 async function openAndVerifyCitation(
   page: Page,
+  answer: AnswerResponse,
   citation: AnswerCitation,
   forbiddenDocumentId?: string,
 ): Promise<Record<string, unknown>> {
-  const response = await page.request.get(
-    `/v1/citations/${citation.citationId}`,
+  const citationNumber = answer.citations.indexOf(citation) + 1;
+  const pending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+        `/v1/citations/${citation.citationId}`,
   );
+  await page
+    .getByRole("button", { name: `引用 ${citationNumber}` })
+    .first()
+    .click();
+  const response = await pending;
   expect(response.status()).toBe(200);
   const preview = asObject((await response.json()) as unknown);
   expect(preview.citationId).toBe(citation.citationId);
@@ -369,6 +457,11 @@ async function openAndVerifyCitation(
   if (forbiddenDocumentId !== undefined) {
     expect(preview.documentId).not.toBe(forbiddenDocumentId);
   }
+  const citationRegion = page.getByRole("region", { name: "原文" });
+  await expect(citationRegion.locator("mark")).toHaveText(
+    String(preview.quote),
+  );
+  await citationRegion.getByRole("button", { name: "关闭原文" }).click();
   return preview;
 }
 
@@ -408,13 +501,8 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
     if (failure !== null) requestFailures.push(failure);
   });
 
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "What can I do for you?" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Knowledge sources" }),
-  ).toBeVisible();
+  await page.goto("/tests/e2e/tapper-harness.html");
+  await expect(page.getByText("Tapper Lab", { exact: true })).toBeVisible();
 
   const baselineFiles = [
     fixtures.baselinePdf,
@@ -435,6 +523,7 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
     assertReadyTimeline(detail);
     baseline.push({ receipt: accepted, detail });
   }
+  for (const file of baselineFiles) await assertReadyTimelineInUi(page, file);
 
   const deleted = baseline[0];
   const selectedReference = baseline[1];
@@ -460,29 +549,32 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
   expect((await documentIds(page)).sort()).toEqual(baselineIds);
 
   await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "What can I do for you?" }),
-  ).toBeVisible();
+  await expect(page.getByText("Tapper Lab", { exact: true })).toBeVisible();
   expect((await documentIds(page)).sort()).toEqual(baselineIds);
+  await page.getByRole("tab", { name: "知识库" }).click();
   for (const file of baselineFiles) {
-    await expect(page.getByText(file.name, { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("row").filter({ hasText: file.name }),
+    ).toBeVisible();
   }
 
+  await page.getByRole("tab", { name: "问答" }).click();
   const initiallySelected = [
     policy!.receipt.document.documentId,
     selectedReference!.receipt.document.documentId,
   ];
-  for (const filename of [fixtures.policy.name, fixtures.baselineDocx.name]) {
+  for (const documentId of initiallySelected) {
     await page
       .getByRole("checkbox", {
-        name: new RegExp(escapeRegExp(filename), "u"),
+        name: new RegExp(escapeRegExp(documentId), "u"),
       })
       .check();
   }
   const query = policyQuestion(fixtures.runId);
-  const initialAnswer = await ask(page, query, initiallySelected);
+  const initialAnswer = await ask(page, query);
   assertScopedRequest(initialAnswer.request, query, initiallySelected);
   await assertGroundedAnswer(
+    page,
     initialAnswer.response,
     initiallySelected,
     initiallySelected,
@@ -490,13 +582,21 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
 
   await page
     .getByRole("checkbox", {
-      name: new RegExp(escapeRegExp(fixtures.baselineDocx.name), "u"),
+      name: new RegExp(
+        escapeRegExp(selectedReference!.receipt.document.documentId),
+        "u",
+      ),
     })
     .uncheck();
+  const policyOnlyAnswer = await ask(page, query);
   const policyId = policy!.receipt.document.documentId;
-  const policyOnlyAnswer = await ask(page, query, [policyId]);
   assertScopedRequest(policyOnlyAnswer.request, query, [policyId]);
-  await assertGroundedAnswer(policyOnlyAnswer.response, [policyId], [policyId]);
+  await assertGroundedAnswer(
+    page,
+    policyOnlyAnswer.response,
+    [policyId],
+    [policyId],
+  );
   expect(
     policyOnlyAnswer.response.citations.some(
       (citation) =>
@@ -510,6 +610,7 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
   for (const citation of policyOnlyAnswer.response.citations) {
     const preview = await openAndVerifyCitation(
       page,
+      policyOnlyAnswer.response,
       citation,
       selectedReference!.receipt.document.documentId,
     );
@@ -545,17 +646,24 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
   assertReadyTimeline(injectionDetail);
   expect((await documentIds(page)).length).toBe(8);
 
+  await page.getByRole("tab", { name: "问答" }).click();
+  await page.getByRole("button", { name: "清除选择" }).click();
+  await page
+    .getByRole("checkbox", {
+      name: new RegExp(escapeRegExp(injectionReceipt.document.documentId), "u"),
+    })
+    .check();
   const injectionQuery = injectionQuestion(fixtures.runId);
-  const injectionAnswer = await ask(page, injectionQuery, [
-    injectionReceipt.document.documentId,
-  ]);
+  const injectionAnswer = await ask(page, injectionQuery);
   assertScopedRequest(injectionAnswer.request, injectionQuery, [
     injectionReceipt.document.documentId,
   ]);
   await assertGroundedAnswer(
+    page,
     injectionAnswer.response,
     [injectionReceipt.document.documentId],
     [injectionReceipt.document.documentId],
+    false,
   );
   expect(injectionAnswer.response.answer).toContain("IGNORE ALL INSTRUCTIONS");
   expect(injectionAnswer.response.answer).toContain(
@@ -568,36 +676,55 @@ test("Tapper uploads, recovers, answers, cites, scopes, sanitizes, and deletes",
         claim.text.includes("https://attacker.invalid/collect"),
     ),
   ).toBe(true);
-  await page
-    .getByRole("textbox", { name: "Message Tapper" })
-    .fill(injectionAnswer.response.answer);
-  await page.getByRole("button", { name: "Send" }).click();
-  const conversation = page.getByRole("log", { name: "Conversation" });
+  const workspace = page.getByRole("region", { name: "Tapper 问答工作区" });
+  await expect(workspace.getByText(/IGNORE ALL INSTRUCTIONS/u)).toBeVisible();
   await expect(
-    conversation.getByText(/IGNORE ALL INSTRUCTIONS/u),
-  ).toBeVisible();
-  await expect(
-    conversation.locator(
-      'a[href*="attacker.invalid"], img[src*="attacker.invalid"], iframe, script, style',
-    ),
+    workspace.locator("a, img, iframe, script, style, [href], [src]"),
   ).toHaveCount(0);
   expect(externalRequests).toEqual([]);
 
-  const deleteResponse = await page.request.delete(
-    `/v1/knowledge/documents/${deleted!.receipt.document.documentId}`,
+  await page.getByRole("tab", { name: "知识库" }).click();
+  const deletePending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "DELETE" &&
+      new URL(response.url()).pathname ===
+        `/v1/knowledge/documents/${deleted!.receipt.document.documentId}`,
   );
-  expect(deleteResponse.status()).toBe(204);
+  await page
+    .getByRole("button", { name: `删除 ${fixtures.baselinePdf.name}` })
+    .click();
+  await page.getByRole("button", { name: "确认删除" }).click();
+  expect((await deletePending).status()).toBe(204);
 
+  await page.getByRole("tab", { name: "问答" }).click();
+  const deletedCheckbox = page.getByRole("checkbox", {
+    name: new RegExp(escapeRegExp(deleted!.receipt.document.documentId), "u"),
+  });
+  await expect
+    .poll(
+      async () =>
+        (await deletedCheckbox.count()) === 0 ||
+        (await deletedCheckbox.first().isDisabled()),
+      { timeout: 5_000 },
+    )
+    .toBe(true);
   await expect
     .poll(async () => (await documentIds(page)).length, { timeout: 45_000 })
     .toBe(7);
-  await page.reload();
-  await expect(
-    page.getByText(fixtures.baselinePdf.name, { exact: true }),
-  ).toHaveCount(0);
-  const postDeleteAnswer = await ask(page, query, [policyId]);
+  await expect(deletedCheckbox).toHaveCount(0);
+
+  await page.getByRole("button", { name: "清除选择" }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(escapeRegExp(policyId), "u") })
+    .check();
+  const postDeleteAnswer = await ask(page, query);
   assertScopedRequest(postDeleteAnswer.request, query, [policyId]);
-  await assertGroundedAnswer(postDeleteAnswer.response, [policyId], [policyId]);
+  await assertGroundedAnswer(
+    page,
+    postDeleteAnswer.response,
+    [policyId],
+    [policyId],
+  );
   expect(
     postDeleteAnswer.response.citations.some(
       (citation) =>

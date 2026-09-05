@@ -1332,7 +1332,7 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
 
     assert environment["LITELLM_BASE_URL"] == "http://127.0.0.1:24000"
     assert environment["LITELLM_IMAGE"] == "ghcr.io/berriai/litellm:v1.87.0"
-    assert environment["LITELLM_ATHENA_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert environment["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
     assert environment["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert environment["DASHSCOPE_API_KEY"] == ""
     assert environment["DASHSCOPE_API_HOST"] == (
@@ -1360,24 +1360,24 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
             "${DASHSCOPE_API_BASE:-https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}"
         ),
         "DASHSCOPE_API_KEY": "${DASHSCOPE_API_KEY:-}",
-        "LITELLM_ATHENA_EMBEDDING_MODEL": (
-            "${LITELLM_ATHENA_EMBEDDING_MODEL:-dashscope/text-embedding-v4}"
+        "LITELLM_TAPPER_EMBEDDING_MODEL": (
+            "${LITELLM_TAPPER_EMBEDDING_MODEL:-dashscope/text-embedding-v4}"
         ),
         "LITELLM_MASTER_KEY": "${LITELLM_MASTER_KEY:-tap-local-master-key}",
         "LITELLM_MODEL": "${LITELLM_MODEL:-dashscope/qwen-plus}",
     }
     assert not any(key.startswith("LITELLM_EMBEDDING_") for key in compose_environment)
-    chat_route = next(item for item in gateway["model_list"] if item["model_name"] == "athena-chat")
+    chat_route = next(item for item in gateway["model_list"] if item["model_name"] == "tapper-chat")
     assert chat_route["litellm_params"] == {
         "model": "os.environ/LITELLM_MODEL",
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
     embedding_route = next(
-        item for item in gateway["model_list"] if item["model_name"] == "athena-embedding"
+        item for item in gateway["model_list"] if item["model_name"] == "tapper-embedding"
     )
     assert embedding_route["litellm_params"] == {
-        "model": "os.environ/LITELLM_ATHENA_EMBEDDING_MODEL",
+        "model": "os.environ/LITELLM_TAPPER_EMBEDDING_MODEL",
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }

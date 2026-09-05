@@ -110,47 +110,34 @@ test("Tapper durable state survives the selected restart boundary", async ({
       externalRequests.push("outside-allowlist");
   });
 
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "What can I do for you?" }),
-  ).toBeVisible();
+  await page.goto("/tests/e2e/tapper-harness.html");
+  await page.getByRole("tab", { name: "知识库" }).click();
   for (const survivor of survivors) {
     const listed = list.items.find(
       (item) => item.documentId === survivor.documentId,
     );
     expect(listed).toBeDefined();
     await expect(
-      page.getByText(listed!.filename, { exact: true }),
+      page.getByRole("row").filter({ hasText: listed!.filename }),
     ).toBeVisible();
   }
-  const policy = list.items.find(
-    (item) => item.documentId === state.policy.documentId,
-  );
-  expect(policy).toBeDefined();
+  await expect(page.getByText("已就绪 7", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "问答" }).click();
   await page
     .getByRole("checkbox", {
-      name: new RegExp(escapeRegExp(policy!.filename), "u"),
+      name: new RegExp(escapeRegExp(state.policy.documentId), "u"),
     })
     .check();
-  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
-  const query = policyQuestion(state.runId);
-  await page.getByRole("textbox", { name: "Message Tapper" }).fill(query);
-  await page.getByRole("button", { name: "Send" }).click();
-  await expect(
-    page.getByRole("log", { name: "Conversation" }).getByText(query, {
-      exact: true,
-    }),
-  ).toBeVisible();
-  const answerHttp = await page.request.post("/v1/knowledge/answers", {
-    data: {
-      answerMode: "quick",
-      query,
-      resourceRefs: [
-        { family: "doc", sourceId: state.policy.documentId, mode: "scope" },
-      ],
-      sources: ["doc"],
-    },
-  });
+  await page
+    .getByRole("textbox", { name: "输入问题" })
+    .fill(policyQuestion(state.runId));
+  const pending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/v1/knowledge/answers",
+  );
+  await page.getByRole("button", { name: "提问" }).click();
+  const answerHttp = await pending;
   expect(answerHttp.status()).toBe(200);
   const answer = (await answerHttp.json()) as AnswerResponse;
   expect(answer.abstained).toBe(false);
@@ -166,17 +153,24 @@ test("Tapper durable state survives the selected restart boundary", async ({
       (citation) => citation.source.sourceId === state.deleted.documentId,
     ),
   ).toBe(false);
-  for (const claim of answer.claims) {
+  const renderedClaims = page.locator(".tapper-grounded-claim");
+  await expect(renderedClaims).toHaveCount(answer.claims.length);
+  for (const [index, claim] of answer.claims.entries()) {
+    const rendered = renderedClaims.nth(index);
+    await expect(rendered).toContainText(claim.text);
     expect(claim.citationIds.length).toBeGreaterThan(0);
+    await expect(
+      rendered.getByRole("button", { name: /^引用 \d+$/u }).first(),
+    ).toBeVisible();
   }
-  expect(
-    answer.claims.filter((claim) =>
-      new RegExp(
-        `Tapper ${escapeRegExp(state.runId)} refund requests`,
-        "u",
-      ).test(claim.text),
+  const persistedFactClaims = renderedClaims.filter({
+    hasText: new RegExp(
+      `Tapper ${escapeRegExp(state.runId)} refund requests`,
+      "u",
     ),
-  ).toHaveLength(1);
+  });
+  await expect(persistedFactClaims).toHaveCount(1);
+  await expect(persistedFactClaims).toBeVisible();
   expect(externalRequests).toEqual([]);
   expect(pageErrors).toEqual([]);
   expect(consoleFailures).toEqual([]);
