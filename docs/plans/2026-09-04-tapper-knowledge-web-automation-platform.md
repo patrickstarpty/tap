@@ -64,6 +64,7 @@ date: 2026-09-04
 - 所有 Problem Details `type` 使用契约中登记的绝对 HTTPS URI，并固定 HTTP status、`correlationId`、工作流失败的封闭 `failureStage` 与 `retryable`；日志与公开错误不得包含凭据、Provider 请求正文或敏感内容。
 - Backend domain 不依赖 FastAPI、Pydantic HTTP DTO、SQLAlchemy、Redis、MinIO、Milvus、LiteLLM、Playwright、Jenkins 或 subprocess。跨 bounded context 只调用公开 application API/Port。
 - Web 保持 `app/pages → widgets → features → shared`，Feature 不导入 Prototype 状态。所有公开 DTO 从 Backend 生成到 `contracts/openapi/api.json` 和 `apps/web/src/shared/api/generated/schema.ts`，不得手写镜像类型。
+- 所有后续 UI 接入均以 `App → TapperPage → TapProductPrototype` 及其已确认的 FWD 浅色子组件为产品基线。旧 `TapperWorkspace` 仅保留必要调用兼容，不作为页面替换、视觉参照或验收入口。
 - 所有 Project 业务表从创建时就有非空 `project_id` 与 Actor/Origin 字段；所有 Repository 查询强制 Project filter。客户端不能传入 actor、role、enterprise 或权威 scope。
 - V0–VG 只允许固定 Validation Enterprise/Project/Actor、验证数据、验证 Secret 和非生产目标；只能绑定 loopback 或受控企业内网。Validation build/configuration 不得晋级 Staging/Production。
 - AI、Graph、Recorder 与 Copilot 只产生 Draft/Proposal。Published Revision 必须经过确定性验证与人工发布；Published/Superseded 不可编辑。
@@ -357,6 +358,8 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `apps/backend/tests/contract/authorization_policy_conformance.py`
 - Modify: `apps/backend/tests/contract/test_alternate_authorization_policy.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/adapters/milvus_documents.py`
+- Modify: `apps/backend/tests/contract/test_document_index_contract.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/tests/contract/test_blob_artifact_contract.py`
 - Modify: `apps/backend/tests/integration/test_azurite_artifacts.py`
@@ -373,6 +376,7 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - `0009` 增加 Project-scoped `knowledge_operator_operation`，保存调用身份、参数摘要、幂等键、原 correlation、lease/fencing 与完成结果。初始 claim/续租属于运行协调；只有完成结果持久化才构成完成事实。完成结果、Task 3A Audit 与 `knowledge.operator.completed` Outbox 在同一 connection 提交或回滚，不把 Provider 效果描述成 SQL 事务的一部分。重试先读已有 receipt，相同 key/参数返回原结果，不同参数冲突；活跃 lease 不重复执行，过期 takeover 保留原关联并依靠既有 primitive 的幂等和 fencing 恢复。
 - 完成事件的 `KnowledgeOperation` aggregate ID 是稳定 operation ID，version 固定为首个完成事实的 `1`；payload 与 [Core Contracts §2](../reference/2026-09-04-tapper-platform-contracts.md#2-project-事件信封) 一致，不借用 ingestion compatibility event。CLI 可生成一次性的调用幂等键，并提供显式重试键；它不是身份或范围输入。Audit 只记录 `completed | partial | failed` 的实际结果，不制造已成功的启动事件。
 - 新 staging 写入使用从可信 Enterprise/Project 派生的物理 namespace，scavenger 仅扫描该 namespace 并尊重本 Project 的可见引用、时间与 ETag/claim 条件。不能凭调用者字段或对象自述扩大范围。已有旧 staging locator 只可由有范围约束的持久 reservation 恢复；无法确定归属的 legacy orphan 保留，不因不在当前 Project 的 pins 内而删除。
+- rebuild 的 SQL/artifact snapshot 必须在已有全局 alias mutation lock 内取得，SQL 读事务也在取得锁后开始。还要覆盖 Provider upsert 已释放锁、SQL ready 尚未提交的 PUBLISHING 空档：存在无法确认的活跃发布时拒绝/延后 cutover，或以等价协调证明不会漏掉该版本。超过快照上限必须中止，不能以截断结果重建完整索引。
 - Redis trim 必须保留所有相关 consumer group 的 pending/未读消息。对共享 stream 不能只按当前 Project 的 ACK 或 MAXLEN 截断其他 Project 的工作；scope 隔离与旧 hint 的可重建迁移必须显式验证。归档/dead-letter 保存原 envelope、identity 与 digest；历史 raw provider error 不进入公开 CLI/Audit 输出。
 
 - [ ] 写 pending message、过期 lease、重复 redrive、archive batch、上传恢复、staging scavenger、Milvus rebuild、Audit 三写和 `0005 → 0009` 数据保持测试。
@@ -402,8 +406,20 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `scripts/tapper_collection.py`
 - Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `README.md`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
+- Modify: `apps/web/src/widgets/tap/prototype/LibraryWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`
+- Modify: `apps/web/tests/e2e/tapper.spec.ts`
+- Modify: `apps/web/tests/e2e/persistence.spec.ts`
+- Modify: `apps/web/src/shared/testing/e2eRequestFailures.ts`
+- Modify: `apps/web/src/shared/testing/e2eRequestFailures.test.ts`
+- Inspect: `apps/web/src/features/knowledge/api/queries.tsx`（复用已具备 Project 绑定的 upload mutation）
 
 **Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
+
+**V0 E2E 接入前置：** 当前产品原型的 Library 已读取真实文档，但文件选择仅生成本地名称；旧 `tapper.spec.ts` / `persistence.spec.ts` 则依赖已不作为产品入口的独立知识页。先把已确认 Library 的现有文件选择动作接到 Project-bound Document upload mutation，保留原布局；未取得 runtime Project 时禁用上传，不制造本地成功。这个最小接入用于当前摄取/存储和下一项恶意上传门禁，不提前实现 Source ledger 或持久 Conversation。
+
+V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project API 保留 Answer/Citation/digest/删除及重启后的持久性断言；写请求携带精确 Origin，Project 来自 runtime，错误审计 allowlist 同步正式路径。测试清楚区分浏览器上传/UI 可见性与 API 持久性，不再宣称旧知识页交互验收；完整问答、history 与 SSE 的产品 UI 在 Task 9 验收。不能改回旧页面、跳过持久性断言或用 route mock 代替真实中间件。新增上传接入执行已有原型交互测试与截图检查，所有数据门禁仍用独占 E2E 环境。
 
 - [ ] 抽取现有 Azure Blob contract 为共同 conformance，增加 digest mismatch、staging orphan、oversize、path traversal、opaque ref 和 MinIO restart 测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v`；预期 FAIL，原因为 shared port/S3 Adapter 不存在。
@@ -523,7 +539,11 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `apps/web/src/features/knowledge/api/client.ts`
 - Modify: `apps/web/src/features/knowledge/api/queries.tsx`
-- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
+- Modify: `apps/web/src/widgets/tap/prototype/LibraryWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`
+
+Source Picker 接入当前 Tapper 产品壳的来源区域和 Library；不替换为旧独立知识页。
 
 **API/projection:** `/api/v1/projects/{project_id}/knowledge/sources` 提供 create-by-upload、list、detail、delete 和 retry；Document endpoint 只处理 Source 下的具体版本/状态。Milvus 新物理 collection 使用 canonical `enterprise_id/project_id/source_id`；旧 collection 的 `tenant_id` 与 `source_id=document_id` 只作为迁移输入，经 Task 6 的 legacy map 转换，绝不进入新 schema 或公共 DTO。写入与读回闭集验证 enterprise/project/source/document/revision/chunk/anchor/digest。Schema version 变更通过新 collection → fixture/rebuild → 完整性检查 → atomic alias cutover，不能原地假定旧 row 已有新字段。
 
@@ -667,8 +687,7 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Create: `apps/web/tests/e2e/knowledge-conversation.spec.ts`
 - Modify: `apps/web/src/pages/TapperPage.tsx`
 - Modify: `apps/web/src/pages/TapperPage.test.tsx`
-- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
-- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`
 - Modify: `apps/web/src/features/knowledge/components/GroundedAnswer.tsx`
 - Modify: `apps/web/src/features/knowledge/components/CitationViewer.tsx`
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
@@ -676,12 +695,12 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `scripts/run-tapper-e2e.sh`
 
-**UX:** 保留 RFC-008 的一级 Rail、Tapper 二级 Sidebar、可移除 Context chips、上箭头输入历史、Codex 式 composer/minimap/收展和模型触发器；回答、Conversation history、Source、Citation 与模型均来自真实 API。Prototype localStorage Conversation 不迁入服务端，也不再作为默认数据源。
+**UX:** 在当前 `TapProductPrototype` 产品壳中替换本地数据连接，保持页面入口；保留 RFC-008 的一级 Rail、Tapper 二级 Sidebar、可移除 Context chips、上箭头输入历史、Codex 式 composer/minimap/收展和模型触发器；回答、Conversation history、Source、Citation 与模型均来自真实 API。Prototype localStorage Conversation 不迁入服务端，也不再作为默认数据源。
 
 - [ ] 写首条消息创建历史、后续轮次追加同一项、跨模块/刷新恢复、SSE reconnect/cancel、Source/Agent/Skill 删除只影响未来 Turn、上箭头召回不自动发送、Citation deep-link 和错误/空/加载态测试。
-- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest`；预期 FAIL，原因为真实 Conversation client/state 或 E2E 登记尚未接入。
+- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tap/TapProductPrototype.interactions.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest`；预期 FAIL，原因为真实 Conversation client/state 或 E2E 登记尚未接入。
 - [ ] 以生成类型实现 client/query/stream reducer，把默认 Tapper 页面接到真实服务；保留 Prototype 作为明确 demo fixture，不从它读取权威资产。E2E runner 注册 `knowledge-conversation.spec.ts`，检查报告至少执行该 spec 的声明用例且 zero unexpected/flaky/skipped，不再写死 `expected == 1`。
-- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest && make demo-e2e`；预期 PASS：真实 Source/Agent/Skill、Conversation、SSE reconnect 与重启旅程全部通过。再运行 `make check && make test && git diff --check`。
+- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tap/TapProductPrototype.interactions.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest && make demo-e2e`；预期 PASS：真实 Source/Agent/Skill、Conversation、SSE reconnect 与重启旅程全部通过。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(web): connect tapper to durable conversations`
 
 ### Task 10: Gate V1 with QUALITY-KB-01
