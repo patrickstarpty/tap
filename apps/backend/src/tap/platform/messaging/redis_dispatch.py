@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.application.ports import (
     Clock,
     DispatchMessage,
     MessagePublisher,
     OutboxRepository,
 )
+from tap.platform.db.project_scope import require_project_scope
 
 _PUBLISH_ONCE_SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then
@@ -76,10 +79,12 @@ class RedisDispatchPublisher:
         self,
         *,
         redis: AsyncRedis,
+        scope: ProjectScopeContext,
         stream_name: str,
         dedup_ttl: timedelta,
         max_stream_length: int = 10_000,
     ) -> None:
+        self._scope = require_project_scope(scope)
         if dedup_ttl.total_seconds() < 1:
             raise ValueError("dedup_ttl must be at least one second")
         if max_stream_length < 1:
@@ -90,8 +95,20 @@ class RedisDispatchPublisher:
         self._max_stream_length = max_stream_length
 
     async def publish_once(self, message: DispatchMessage) -> bool:
+        if (message.enterprise_id, message.project_id) != (
+            self._scope.enterprise_id,
+            self._scope.project_id,
+        ):
+            raise ValueError("dispatch message scope does not match publisher scope")
+        dedup_identity = json.dumps(
+            [self._scope.enterprise_id, self._scope.project_id, str(message.command_id)],
+            separators=(",", ":"),
+        )
+        dedup_key = "tap:dispatch-dedup:" + hashlib.sha256(dedup_identity.encode()).hexdigest()
         payload = json.dumps(
             {
+                "enterpriseId": self._scope.enterprise_id,
+                "projectId": self._scope.project_id,
                 "aggregateId": message.aggregate_id,
                 "aggregateType": message.aggregate_type,
                 "commandId": str(message.command_id),
@@ -104,7 +121,7 @@ class RedisDispatchPublisher:
         result = await self._redis.eval(
             _PUBLISH_ONCE_SCRIPT,
             2,
-            f"tap:dispatch-dedup:{message.command_id}",
+            dedup_key,
             self._stream_name,
             self._dedup_ttl_seconds,
             self._max_stream_length,

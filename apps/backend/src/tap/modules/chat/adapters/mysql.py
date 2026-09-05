@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.chat_stream import ChatEventEnvelope
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.application.ports import (
     ClaimedOutbox,
     CreateTurnCommand,
@@ -35,7 +36,13 @@ from tap.modules.chat.application.ports import (
     TurnNotFound,
 )
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId, TurnState
-from tap.platform.db.schema import metadata, outbox
+from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
+from tap.platform.db.schema import augment_project_table, metadata, outbox
+from tap.platform.messaging.mysql_outbox import (
+    compatibility_outbox_values,
+    scoped_outbox_id,
+    validate_outbox_row,
+)
 
 chat_turn = Table(
     "chat_turn",
@@ -83,6 +90,10 @@ turn_snapshot = Table(
     Column("updated_at", DATETIME(fsp=6), nullable=False),
 )
 
+for _table in (chat_turn, chat_event, turn_snapshot):
+    augment_project_table(_table)
+
+
 _TERMINAL_AND_RUNNING_STATES: Mapping[str, TurnState] = {
     "turn.started": TurnState.RUNNING,
     "turn.completed": TurnState.COMPLETED,
@@ -115,8 +126,15 @@ def _turn_from_row(row: RowMapping) -> Turn:
 
 
 class MysqlTurnRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._scope = require_project_scope(scope)
         self._sessions = sessions
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
 
     async def create_with_outbox(self, command: CreateTurnCommand) -> Turn:
         created_at = _utc_naive(command.occurred_at)
@@ -124,6 +142,7 @@ class MysqlTurnRepository:
             async with self._sessions() as session, session.begin():
                 await session.execute(
                     insert(chat_turn).values(
+                        **scope_values(self._scope),
                         turn_id=command.turn_id,
                         chat_id=command.chat_id,
                         client_request_id=command.client_request_id,
@@ -135,16 +154,21 @@ class MysqlTurnRepository:
                 )
                 await session.execute(
                     insert(outbox).values(
-                        outbox_id=f"turn-command:{command.command_id}",
-                        command_id=command.command_id,
-                        aggregate_type="chat_turn",
-                        aggregate_id=command.turn_id,
-                        sequence=None,
-                        message_type="turn.process_requested",
+                        **compatibility_outbox_values(
+                            self._scope,
+                            outbox_id=scoped_outbox_id(
+                                self._scope, kind="turn-command", identity=command.command_id
+                            ),
+                            command_id=command.command_id,
+                            aggregate_type="chat_turn",
+                            aggregate_id=command.turn_id,
+                            sequence=None,
+                            message_type="turn.process_requested",
+                            created_at=created_at,
+                        ),
                         status="pending",
                         attempt_count=0,
                         next_attempt_at=created_at,
-                        created_at=created_at,
                     )
                 )
         except IntegrityError as error:
@@ -153,6 +177,8 @@ class MysqlTurnRepository:
                 client_request_id=command.client_request_id,
             )
             if existing is not None:
+                if existing.message != command.message:
+                    raise ValueError("idempotency-conflict") from error
                 return existing
             raise error
 
@@ -175,6 +201,7 @@ class MysqlTurnRepository:
         async with self._sessions() as session:
             result = await session.execute(
                 select(chat_turn).where(
+                    *scope_predicates(chat_turn, self._scope),
                     chat_turn.c.chat_id == chat_id,
                     chat_turn.c.client_request_id == client_request_id,
                 )
@@ -192,7 +219,9 @@ class MysqlTurnRepository:
             return
         async with self._sessions() as session, session.begin():
             result = await session.execute(
-                select(chat_turn).where(chat_turn.c.turn_id == turn_id).with_for_update()
+                select(chat_turn)
+                .where(*scope_predicates(chat_turn, self._scope), chat_turn.c.turn_id == turn_id)
+                .with_for_update()
             )
             turn_row = result.mappings().one_or_none()
             if turn_row is None:
@@ -217,6 +246,7 @@ class MysqlTurnRepository:
                 event_type = envelope.event.type
                 await session.execute(
                     insert(chat_event).values(
+                        **scope_values(self._scope),
                         event_id=envelope.event_id,
                         turn_id=turn_id,
                         sequence=envelope.sequence,
@@ -228,23 +258,28 @@ class MysqlTurnRepository:
                 )
                 await session.execute(
                     insert(outbox).values(
-                        outbox_id=f"chat-event:{envelope.event_id}",
-                        command_id=f"chat-event:{envelope.event_id}",
-                        aggregate_type="chat_turn",
-                        aggregate_id=turn_id,
-                        sequence=envelope.sequence,
-                        message_type="chat.event_appended",
+                        **compatibility_outbox_values(
+                            self._scope,
+                            outbox_id=scoped_outbox_id(
+                                self._scope, kind="chat-event", identity=envelope.event_id
+                            ),
+                            command_id=f"chat-event:{envelope.event_id}",
+                            aggregate_type="chat_turn",
+                            aggregate_id=turn_id,
+                            sequence=envelope.sequence,
+                            message_type="chat.event_appended",
+                            created_at=occurred_at,
+                        ),
                         status="pending",
                         attempt_count=0,
                         next_attempt_at=occurred_at,
-                        created_at=occurred_at,
                     )
                 )
                 state = _TERMINAL_AND_RUNNING_STATES.get(event_type, state)
 
             await session.execute(
                 update(chat_turn)
-                .where(chat_turn.c.turn_id == turn_id)
+                .where(*scope_predicates(chat_turn, self._scope), chat_turn.c.turn_id == turn_id)
                 .values(
                     last_sequence=expected_sequence + len(events),
                     state=state.value,
@@ -253,8 +288,15 @@ class MysqlTurnRepository:
 
 
 class OutboxStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._scope = require_project_scope(scope)
         self._sessions = sessions
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
 
     async def reconcile_expired(self, now: datetime, limit: int) -> int:
         if limit <= 0:
@@ -265,6 +307,7 @@ class OutboxStore:
                     await session.execute(
                         select(outbox.c.outbox_id)
                         .where(
+                            *scope_predicates(outbox, self._scope),
                             outbox.c.status == "publishing",
                             outbox.c.lease_until <= _utc_naive(now),
                         )
@@ -278,7 +321,7 @@ class OutboxStore:
                 return 0
             await session.execute(
                 update(outbox)
-                .where(outbox.c.outbox_id.in_(expired_ids))
+                .where(*scope_predicates(outbox, self._scope), outbox.c.outbox_id.in_(expired_ids))
                 .values(
                     status="pending",
                     claimed_by=None,
@@ -306,6 +349,7 @@ class OutboxStore:
                     await session.execute(
                         select(outbox.c.outbox_id)
                         .where(
+                            *scope_predicates(outbox, self._scope),
                             outbox.c.status == "pending",
                             outbox.c.next_attempt_at <= claim_time,
                         )
@@ -321,7 +365,7 @@ class OutboxStore:
             for outbox_id, claim_token in claim_tokens.items():
                 await session.execute(
                     update(outbox)
-                    .where(outbox.c.outbox_id == outbox_id)
+                    .where(*scope_predicates(outbox, self._scope), outbox.c.outbox_id == outbox_id)
                     .values(
                         status="publishing",
                         claimed_by=worker_id,
@@ -332,11 +376,24 @@ class OutboxStore:
                     )
                 )
             rows = (
-                await session.execute(select(outbox).where(outbox.c.outbox_id.in_(pending_ids)))
-            ).mappings()
+                (
+                    await session.execute(
+                        select(outbox).where(
+                            *scope_predicates(outbox, self._scope),
+                            outbox.c.outbox_id.in_(pending_ids),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            for row in rows:
+                validate_outbox_row(cast(Mapping[str, object], row))
             return [
                 ClaimedOutbox(
                     message=DispatchMessage(
+                        enterprise_id=cast(str, row["enterprise_id"]),
+                        project_id=cast(str, row["project_id"]),
                         command_id=CommandId(cast(str, row["command_id"])),
                         outbox_id=cast(str, row["outbox_id"]),
                         aggregate_type=cast(str, row["aggregate_type"]),
@@ -360,6 +417,7 @@ class OutboxStore:
             result = await session.execute(
                 update(outbox)
                 .where(
+                    *scope_predicates(outbox, self._scope),
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
                     outbox.c.claim_token == claim_token,
@@ -388,6 +446,7 @@ class OutboxStore:
             result = await session.execute(
                 update(outbox)
                 .where(
+                    *scope_predicates(outbox, self._scope),
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
                     outbox.c.claim_token == claim_token,
@@ -415,6 +474,7 @@ class OutboxStore:
             result = await session.execute(
                 update(outbox)
                 .where(
+                    *scope_predicates(outbox, self._scope),
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
                     outbox.c.claim_token == claim_token,

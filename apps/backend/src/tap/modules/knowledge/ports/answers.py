@@ -199,6 +199,8 @@ class AnswerSnapshot:
 
 
 class AnswerSnapshotRepository(Protocol):
+    """Durable operations run in the server-bound Project, independent of creator Actor."""
+
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...

@@ -20,28 +20,29 @@ from tap.modules.knowledge.adapters.mysql_projection import (
 )
 from tap.platform.db.schema import outbox
 
+# Explicit Project business inventory, separate from identity-registry ownership.
+# Adapter-local declarations carry the scope contract before they are copied.
+BUSINESS_TABLES = (
+    outbox,
+    chat_turn,
+    chat_event,
+    turn_snapshot,
+    knowledge_document,
+    knowledge_document_revision,
+    knowledge_ingestion_job,
+    knowledge_chunk_manifest,
+    knowledge_answer_snapshot,
+    knowledge_citation_snapshot,
+    knowledge_projection_state,
+    knowledge_projection_fence,
+    knowledge_projection_cleanup,
+    knowledge_projection_lineage,
+)
+
 
 def load_authoritative_metadata() -> MetaData:
-    """Return only explicitly owned tables, copied into a fresh migration registry."""
+    """Return registered identities and scoped business tables in a fresh registry."""
     authoritative = MetaData()
-    for table in (
-        enterprise,
-        project,
-        actor_principal,
-        outbox,
-        chat_turn,
-        chat_event,
-        turn_snapshot,
-        knowledge_document,
-        knowledge_document_revision,
-        knowledge_ingestion_job,
-        knowledge_chunk_manifest,
-        knowledge_answer_snapshot,
-        knowledge_citation_snapshot,
-        knowledge_projection_state,
-        knowledge_projection_fence,
-        knowledge_projection_cleanup,
-        knowledge_projection_lineage,
-    ):
+    for table in (enterprise, project, actor_principal, *BUSINESS_TABLES):
         table.to_metadata(authoritative)
     return authoritative

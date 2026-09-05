@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from tap.entrypoints import tapper_ingestion_worker
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application import ingestion
@@ -199,7 +200,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="source.md",
@@ -306,7 +307,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
             completed_stage = NeverCalled()
             index = RecordingIndex()
             restarted = IngestionWorker(
-                repository=MysqlDocumentRepository(sessions),
+                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
                 artifacts=artifacts,  # type: ignore[arg-type]
                 parser=completed_stage,
                 chunker=completed_stage,
@@ -362,7 +363,7 @@ def test_real_mysql_ordinary_list_excludes_deleting_document_immediately() -> No
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="delete.md",
@@ -393,7 +394,7 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="race.md",
@@ -517,7 +518,7 @@ def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="crashed-owner.md",
@@ -598,7 +599,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="blocked.md",
@@ -731,7 +732,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                 index_version="tapper-index-v1",
             )
             deleting_worker = IngestionWorker(
-                repository=MysqlDocumentRepository(sessions),
+                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
                 artifacts=artifacts,  # type: ignore[arg-type]
                 parser=completed_stage,
                 chunker=completed_stage,
@@ -812,7 +813,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
         old_task: asyncio.Task | None = None
         artifacts = BlockingChunkArtifacts()
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="blocked-artifact.md",
@@ -877,7 +878,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                 index_version="tapper-index-v1",
             )
             deletion_owner = IngestionWorker(
-                repository=MysqlDocumentRepository(sessions),
+                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
                 artifacts=artifacts,  # type: ignore[arg-type]
                 parser=completed,
                 chunker=chunker,

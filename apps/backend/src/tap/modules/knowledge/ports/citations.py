@@ -41,6 +41,8 @@ class CitationLookup:
 
 
 class CitationRepository(Protocol):
+    """Durable operations run in the server-bound Project, independent of creator Actor."""
+
     async def load_citation(self, citation_id: str) -> CitationLookup | None: ...
 
     async def citation_is_current(self, citation: CitationSnapshot) -> bool: ...

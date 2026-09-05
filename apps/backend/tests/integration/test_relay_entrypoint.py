@@ -174,7 +174,7 @@ async def test_relay_partial_construction_closes_every_prior_owner(
         monkeypatch.setattr(
             relay_reconciler,
             "_build_relay",
-            lambda *_args: (_ for _ in ()).throw(primary),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(primary),
             raising=False,
         )
 
@@ -216,7 +216,7 @@ async def test_relay_cancellation_and_close_failures_settle_all_without_masking(
     monkeypatch.setattr(
         relay_reconciler,
         "_build_relay",
-        lambda *_args: Relay(),
+        lambda *_args, **_kwargs: Relay(),
         raising=False,
     )
 
@@ -252,7 +252,7 @@ async def test_relay_signal_install_failure_closes_complete_runtime(
         lambda _settings: (Engine(), object()),
     )
     monkeypatch.setattr(relay_reconciler, "create_redis_client", lambda _url: Redis())
-    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args: object())
+    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args, **_kwargs: object())
 
     def fail_install(_stop: asyncio.Event):
         raise primary
@@ -292,7 +292,7 @@ async def test_relay_remove_failure_still_closes_every_runtime_owner(
         lambda _settings: (Engine(), object()),
     )
     monkeypatch.setattr(relay_reconciler, "create_redis_client", lambda _url: Redis())
-    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args: Relay())
+    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args, **_kwargs: Relay())
 
     def install(_stop: asyncio.Event):
         def remove() -> None:
@@ -403,7 +403,7 @@ async def test_relay_signal_stop_removes_handlers_and_closes_reverse(
     monkeypatch.setattr(
         relay_reconciler,
         "_build_relay",
-        lambda *_args: Relay(),
+        lambda *_args, **_kwargs: Relay(),
         raising=False,
     )
 

@@ -17,6 +17,7 @@ import traceback
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,6 +34,7 @@ from tap.contracts.http import (
 from tap.entrypoints.tapper_runtime import TapperSettings
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.domain.models import (
     ContentRole,
     DocumentAnchor,
@@ -1056,7 +1058,7 @@ def test_http_readiness_uses_injected_service_and_keeps_http_200_for_unready() -
 def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> None:
     """The composition root must assemble the approved graph, not a parallel RAG stack."""
 
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
     artifacts = object()
     search = object()
     model = object()
@@ -1125,7 +1127,7 @@ async def test_codex_api_composes_litellm_embeddings_and_codex_answers(
     search = Resource("search")
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def create_search(_settings):  # type: ignore[no-untyped-def]
         return search, object(), object()
@@ -1508,7 +1510,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     events: list[str] = []
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
     reader = object()
     target = object()
 
@@ -1582,7 +1584,7 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     search = Resource()
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def create_search(_settings):  # type: ignore[no-untyped-def]
         return search, object(), object()
@@ -1646,7 +1648,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     events: list[str] = []
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
 
     class Resource:
         def __init__(self, name: str) -> None:
@@ -1706,7 +1708,7 @@ async def test_codex_owner_closes_once_when_api_construction_fails_after_selecti
     codex = Resource("codex")
 
     async def create_database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def fail_search(_settings):  # type: ignore[no-untyped-def]
         raise primary
@@ -1784,7 +1786,7 @@ async def test_database_helper_disposes_engine_if_repository_construction_fails(
     engine = Engine()
     monkeypatch.setattr(module, "_open_database", lambda _settings: (engine, object()))
 
-    def fail_repository(_sessions):  # type: ignore[no-untyped-def]
+    def fail_repository(_sessions, *, scope):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_document_repository", fail_repository)
@@ -2048,7 +2050,7 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     resources = module.OwnedResources()
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
     artifacts = object()
     model = object()
     index = object()
@@ -2091,7 +2093,7 @@ async def test_codex_worker_constructs_only_litellm_embeddings(
             return None
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return Resource(), object()
+        return Resource(), SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
         return Resource()
@@ -2152,7 +2154,7 @@ async def test_create_worker_runtime_registers_only_index_and_closes_outer_graph
     redis = Resource("redis")
     model = Resource("model")
     index = Resource("index")
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, repository
@@ -2215,7 +2217,7 @@ async def test_worker_outer_owner_closes_real_document_index_roles_transitively(
     )
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
         return index
@@ -2264,7 +2266,7 @@ async def test_create_worker_runtime_partial_index_failure_closes_prior_owners(
     model = Resource("model")
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def fail_index(_settings, _engine):  # type: ignore[no-untyped-def]
         raise primary
@@ -2314,7 +2316,7 @@ async def test_document_index_helper_closes_all_role_wrappers_if_index_build_fai
     monkeypatch.setattr(
         module,
         "_create_projection_coordinator",
-        lambda _settings, _engine: coordinator,
+        lambda _settings, _engine, *, scope: coordinator,
     )
 
     def fail_build(_settings, _engine, _parts):  # type: ignore[no-untyped-def]
@@ -2364,7 +2366,7 @@ async def test_document_index_helper_preserves_cancel_after_role_clients_return(
     monkeypatch.setattr(
         module,
         "_create_projection_coordinator",
-        lambda _settings, _engine: coordinator,
+        lambda _settings, _engine, *, scope: coordinator,
     )
     monkeypatch.setattr(module, "_build_document_index", cancel_build)
 
@@ -2398,7 +2400,7 @@ async def test_worker_assembly_failure_closes_complete_index_before_prior_owners
     index = Resource("index")
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
         return index

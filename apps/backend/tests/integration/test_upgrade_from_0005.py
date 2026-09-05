@@ -66,10 +66,11 @@ def test_preservation_rejects_empty_evidence_and_changed_historical_values() -> 
             assert_preserved(connection, before, "0005_projection_lineage")
 
 
-def test_0006_identity_revision_is_literal_and_registered() -> None:
+@pytest.mark.parametrize("revision", ["0006_validation_identity", "0007_project_scope_backfill"])
+def test_identity_and_project_scope_revision_is_literal_and_registered(revision: str) -> None:
     from scripts.migration_support import validate_revision
 
-    assert validate_revision("0006_validation_identity") == "0006_validation_identity"
+    assert validate_revision(revision) == revision
 
 
 def test_0006_identity_nonempty_upgrade_and_replay(monkeypatch: pytest.MonkeyPatch) -> None:

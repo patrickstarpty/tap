@@ -10,6 +10,8 @@ from typing import Protocol, cast
 
 from redis.exceptions import RedisError, ResponseError
 
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.platform.db.project_scope import require_project_scope
 from tap.platform.messaging.redis_dispatch import AsyncRedisStream, DispatchWakeup
 
 
@@ -26,11 +28,13 @@ class RedisWakeupConsumer:
         self,
         *,
         redis: AsyncRedisStream,
+        scope: ProjectScopeContext,
         stream_name: str,
         group_name: str,
         consumer_name: str,
         aggregate_type: str,
     ) -> None:
+        self._scope = require_project_scope(scope)
         for name, value in {
             "stream_name": stream_name,
             "group_name": group_name,
@@ -76,6 +80,7 @@ class RedisWakeupConsumer:
                     stream_id,
                     fields,
                     aggregate_type=self._aggregate_type,
+                    scope=self._scope,
                 )
                 if wakeup is not None:
                     return wakeup
@@ -139,6 +144,7 @@ def _decode_wakeup(
     fields: dict[str, object],
     *,
     aggregate_type: str,
+    scope: ProjectScopeContext,
 ) -> DispatchWakeup | None:
     payload = fields.get("payload")
     if not isinstance(payload, str):
@@ -148,6 +154,11 @@ def _decode_wakeup(
     except json.JSONDecodeError:
         return None
     if not isinstance(value, dict) or value.get("aggregateType") != aggregate_type:
+        return None
+    if (value.get("enterpriseId"), value.get("projectId")) != (
+        scope.enterprise_id,
+        scope.project_id,
+    ):
         return None
     aggregate_id = value.get("aggregateId")
     if not isinstance(aggregate_id, str) or not aggregate_id:

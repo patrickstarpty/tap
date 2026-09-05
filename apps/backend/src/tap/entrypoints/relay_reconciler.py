@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, cast
 from redis.asyncio import Redis
 
 from tap.entrypoints.tapper_runtime import OwnedResources, TapperSettings
+from tap.modules.access.adapters.validation import ValidationScopeProvider
+from tap.modules.access.application.scope import RequestFacts
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql import OutboxStore
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_dispatch import (
@@ -86,10 +89,13 @@ def _build_relay(
     settings: RelaySettings,
     sessions: async_sessionmaker[AsyncSession],
     redis: Redis,
+    *,
+    scope: ProjectScopeContext,
 ) -> Relay:
     return Relay(
-        outbox=OutboxStore(sessions),
+        outbox=OutboxStore(sessions, scope=scope),
         publisher=RedisDispatchPublisher(
+            scope=scope,
             redis=cast(AsyncRedis, redis),
             stream_name=settings.stream_name,
             dedup_ttl=timedelta(days=7),
@@ -151,7 +157,8 @@ async def run(
         resources.push(engine)
         redis = create_redis_client(settings.redis_url)
         resources.push(redis)
-        relay = _build_relay(settings, sessions, redis)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        relay = _build_relay(settings, sessions, redis, scope=scope)
         stop = asyncio.Event()
         remove_handlers = signal_installer(stop)
         iterations = 0

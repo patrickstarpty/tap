@@ -582,6 +582,8 @@ class ArtifactStore(Protocol):
 
 
 class DocumentRepository(Protocol):
+    """Durable operations run in the server-bound Project, independent of creator Actor."""
+
     async def reserve_upload(self, command: ReserveUpload) -> UploadReservation: ...
 
     async def activate_upload(

@@ -1631,6 +1631,7 @@ def test_owned_milvus_fixture_settles_coordinator_and_role_clients_if_index_cons
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("TAP_RUN_MILVUS_INTEGRATION", "1")
     monkeypatch.setenv("TAP_MILVUS_OWNED_INSTANCE", "task5-tapper-owned")
+    monkeypatch.setenv("TAP_DATABASE_URL", "mysql+asyncmy://unused:unused@127.0.0.1:1/unused")
     spec = importlib.util.spec_from_file_location(
         "tapper_projection_fixture_ownership_contract",
         ROOT / "apps/backend/tests/integration/test_tapper_milvus_projection.py",

@@ -24,13 +24,19 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.knowledge.adapters.mysql_documents import (
+    knowledge_document,
+    knowledge_document_revision,
+)
 from tap.modules.knowledge.ports.errors import IndexUnavailable
 from tap.modules.knowledge.ports.projection import (
     ProjectionMutationLease,
     ProjectionOwnershipReceipt,
 )
 from tap.operations.milvus.async_call import await_task_terminal
-from tap.platform.db.schema import metadata
+from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
+from tap.platform.db.schema import augment_project_table, metadata
 
 _DATABASE_DEADLINE_SECONDS = 30.0
 _T = TypeVar("_T")
@@ -87,6 +93,15 @@ knowledge_projection_lineage.append_constraint(
 )
 
 
+for _table in (
+    knowledge_projection_state,
+    knowledge_projection_fence,
+    knowledge_projection_cleanup,
+    knowledge_projection_lineage,
+):
+    augment_project_table(_table)
+
+
 class MysqlProjectionCoordinator:
     """Own one connection-scoped MySQL advisory lock per mutation lease."""
 
@@ -94,9 +109,11 @@ class MysqlProjectionCoordinator:
         self,
         engine: AsyncEngine,
         *,
+        scope: ProjectScopeContext,
         authority_namespace: str = "default",
         lock_wait_seconds: int = 10,
     ) -> None:
+        self._scope = require_project_scope(scope)
         if not isinstance(engine, AsyncEngine):
             raise TypeError("projection coordinator requires an async SQLAlchemy engine")
         if type(lock_wait_seconds) is not int or not 1 <= lock_wait_seconds <= 30:
@@ -105,6 +122,10 @@ class MysqlProjectionCoordinator:
         self._engine = engine
         self._authority_namespace = authority_namespace
         self._lock_wait_seconds = lock_wait_seconds
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
 
     @asynccontextmanager
     async def mutation(self, alias: str) -> AsyncIterator[ProjectionMutationLease]:
@@ -126,7 +147,9 @@ class MysqlProjectionCoordinator:
             if value != 1:
                 raise IndexUnavailable("Tapper projection mutation lease is unavailable")
             acquired = True
-            yield _MysqlProjectionLease(connection, authority_key)
+            lease = _MysqlProjectionLease(connection, authority_key, scope=self._scope)
+            await lease.validate_ownership()
+            yield lease
         finally:
             if acquired:
                 try:
@@ -155,9 +178,32 @@ class MysqlProjectionCoordinator:
 
 
 class _MysqlProjectionLease:
-    def __init__(self, connection: AsyncConnection, alias: str) -> None:
+    def __init__(
+        self, connection: AsyncConnection, alias: str, *, scope: ProjectScopeContext
+    ) -> None:
+        self._scope = require_project_scope(scope)
         self._connection = connection
         self._alias = alias
+
+    async def validate_ownership(self) -> None:
+        # The physical alias and advisory lock are globally shared. This bounded
+        # infrastructure probe must precede all provider work under the lease.
+        async def operation() -> None:
+            owner = (
+                await self._connection.execute(
+                    select(
+                        knowledge_projection_state.c.enterprise_id,
+                        knowledge_projection_state.c.project_id,
+                    ).where(knowledge_projection_state.c.alias_name == self._alias)
+                )
+            ).one_or_none()
+            if owner is not None and tuple(owner) != (
+                self._scope.enterprise_id,
+                self._scope.project_id,
+            ):
+                raise IndexUnavailable("Tapper projection alias ownership conflicts")
+
+        await _settled_database(operation(), "verify projection alias ownership")
 
     async def state(self) -> tuple[int, str | None]:
         async def operation() -> tuple[int, str | None]:
@@ -166,7 +212,10 @@ class _MysqlProjectionLease:
                     select(
                         knowledge_projection_state.c.generation,
                         knowledge_projection_state.c.physical_collection,
-                    ).where(knowledge_projection_state.c.alias_name == self._alias)
+                    ).where(
+                        *scope_predicates(knowledge_projection_state, self._scope),
+                        knowledge_projection_state.c.alias_name == self._alias,
+                    )
                 )
             ).one_or_none()
             if row is None:
@@ -183,6 +232,7 @@ class _MysqlProjectionLease:
 
         async def operation() -> None:
             statement = mysql_insert(knowledge_projection_state).values(
+                **scope_values(self._scope),
                 alias_name=self._alias,
                 generation=1,
                 physical_collection=physical,
@@ -202,6 +252,7 @@ class _MysqlProjectionLease:
         async def operation() -> bool:
             value = await self._connection.scalar(
                 select(knowledge_projection_fence.c.revision_id).where(
+                    *scope_predicates(knowledge_projection_fence, self._scope),
                     knowledge_projection_fence.c.alias_name == self._alias,
                     knowledge_projection_fence.c.revision_id == revision_id,
                 )
@@ -215,7 +266,23 @@ class _MysqlProjectionLease:
         _bounded_text(document_id, "document", 64)
 
         async def operation() -> str | None:
+            revision = await self._connection.scalar(
+                select(knowledge_document_revision.c.revision_id)
+                .join(
+                    knowledge_document,
+                    knowledge_document.c.document_id == knowledge_document_revision.c.document_id,
+                )
+                .where(
+                    *scope_predicates(knowledge_document_revision, self._scope),
+                    *scope_predicates(knowledge_document, self._scope),
+                    knowledge_document_revision.c.revision_id == revision_id,
+                    knowledge_document_revision.c.document_id == document_id,
+                )
+            )
+            if revision is None:
+                raise IndexUnavailable("Tapper projection fence identity conflicts")
             statement = mysql_insert(knowledge_projection_fence).values(
+                **scope_values(self._scope),
                 alias_name=self._alias,
                 revision_id=revision_id,
                 document_id=document_id,
@@ -223,6 +290,7 @@ class _MysqlProjectionLease:
             await self._connection.execute(statement.prefix_with("IGNORE"))
             recorded = await self._connection.scalar(
                 select(knowledge_projection_fence.c.document_id).where(
+                    *scope_predicates(knowledge_projection_fence, self._scope),
                     knowledge_projection_fence.c.alias_name == self._alias,
                     knowledge_projection_fence.c.revision_id == revision_id,
                 )
@@ -244,7 +312,10 @@ class _MysqlProjectionLease:
                     knowledge_projection_fence.c.revision_id,
                     knowledge_projection_fence.c.document_id,
                 )
-                .where(knowledge_projection_fence.c.alias_name == self._alias)
+                .where(
+                    *scope_predicates(knowledge_projection_fence, self._scope),
+                    knowledge_projection_fence.c.alias_name == self._alias,
+                )
                 .order_by(knowledge_projection_fence.c.revision_id)
                 .limit(limit)
             )
@@ -277,6 +348,7 @@ class _MysqlProjectionLease:
         async def operation() -> None:
             await self._connection.execute(
                 mysql_insert(knowledge_projection_lineage).values(
+                    **scope_values(self._scope),
                     alias_name=self._alias,
                     physical_collection=physical,
                     operation_id=operation_id,
@@ -306,6 +378,7 @@ class _MysqlProjectionLease:
                         knowledge_projection_lineage.c.predecessor_collection,
                         knowledge_projection_lineage.c.status,
                     ).where(
+                        *scope_predicates(knowledge_projection_lineage, self._scope),
                         knowledge_projection_lineage.c.alias_name == self._alias,
                         knowledge_projection_lineage.c.physical_collection == physical,
                     )
@@ -333,6 +406,7 @@ class _MysqlProjectionLease:
                         knowledge_projection_lineage.c.predecessor_generation,
                         knowledge_projection_lineage.c.status,
                     ).where(
+                        *scope_predicates(knowledge_projection_lineage, self._scope),
                         knowledge_projection_lineage.c.alias_name == self._alias,
                         knowledge_projection_lineage.c.physical_collection
                         == receipt.physical_collection,
@@ -349,6 +423,7 @@ class _MysqlProjectionLease:
             state_update = await self._connection.execute(
                 update(knowledge_projection_state)
                 .where(
+                    *scope_predicates(knowledge_projection_state, self._scope),
                     knowledge_projection_state.c.alias_name == self._alias,
                     knowledge_projection_state.c.generation == generation,
                     knowledge_projection_state.c.physical_collection == recorded,
@@ -364,6 +439,7 @@ class _MysqlProjectionLease:
             await self._connection.execute(
                 update(knowledge_projection_lineage)
                 .where(
+                    *scope_predicates(knowledge_projection_lineage, self._scope),
                     knowledge_projection_lineage.c.alias_name == self._alias,
                     knowledge_projection_lineage.c.physical_collection == recorded,
                     knowledge_projection_lineage.c.generation == generation,
@@ -374,6 +450,7 @@ class _MysqlProjectionLease:
             owned_update = await self._connection.execute(
                 update(knowledge_projection_lineage)
                 .where(
+                    *scope_predicates(knowledge_projection_lineage, self._scope),
                     knowledge_projection_lineage.c.alias_name == self._alias,
                     knowledge_projection_lineage.c.physical_collection
                     == receipt.physical_collection,
@@ -400,6 +477,7 @@ class _MysqlProjectionLease:
             result = await self._connection.execute(
                 update(knowledge_projection_lineage)
                 .where(
+                    *scope_predicates(knowledge_projection_lineage, self._scope),
                     knowledge_projection_lineage.c.alias_name == self._alias,
                     knowledge_projection_lineage.c.physical_collection
                     == receipt.physical_collection,
@@ -429,6 +507,7 @@ class _MysqlProjectionLease:
                     knowledge_projection_lineage.c.status,
                 )
                 .where(
+                    *scope_predicates(knowledge_projection_lineage, self._scope),
                     knowledge_projection_lineage.c.alias_name == self._alias,
                     knowledge_projection_lineage.c.status.in_(("building", "cleanup")),
                 )
@@ -455,6 +534,7 @@ class _MysqlProjectionLease:
         async def operation() -> None:
             result = await self._connection.execute(
                 delete(knowledge_projection_lineage).where(
+                    *scope_predicates(knowledge_projection_lineage, self._scope),
                     knowledge_projection_lineage.c.alias_name == self._alias,
                     knowledge_projection_lineage.c.physical_collection
                     == receipt.physical_collection,

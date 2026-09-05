@@ -6,17 +6,17 @@ import asyncio
 import os
 
 import pytest
+from apps.backend.tests.owned_mysql import owned_project_database_url
+from scripts.migration_support import IsolatedMysql
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
 from tap.modules.knowledge.ports.errors import IndexUnavailable
 from tap.platform.db.session import create_engine_and_session_factory
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
+DATABASE_URL = os.getenv("TAP_DATABASE_URL", "")
 ALIAS = "kb_doc_tapper_demo_active"
 NAMESPACE = "task5-coordinator-contract"
 AUTHORITY_KEY = f"{NAMESPACE}:{ALIAS}"
@@ -42,21 +42,25 @@ async def _clean(engine) -> None:  # type: ignore[no-untyped-def]
         )
 
 
+@pytest.mark.skipif(not DATABASE_URL, reason="requires isolated TAP_DATABASE_URL")
 def test_mysql_projection_authority_is_shared_across_engines_and_reconstruction() -> None:
     async def scenario() -> None:
         first_engine, _ = create_engine_and_session_factory(DATABASE_URL)
         second_engine, _ = create_engine_and_session_factory(DATABASE_URL)
         first = MysqlProjectionCoordinator(
             first_engine,
+            scope=VALIDATION_SCOPE,
             authority_namespace=NAMESPACE,
             lock_wait_seconds=2,
         )
         second = MysqlProjectionCoordinator(
             second_engine,
+            scope=VALIDATION_SCOPE,
             authority_namespace=NAMESPACE,
             lock_wait_seconds=2,
         )
         await _clean(first_engine)
+        await _seed_fence_facts(first_engine)
         entered_second = asyncio.Event()
 
         async def contender() -> tuple[int, str | None, bool]:
@@ -118,6 +122,7 @@ def test_mysql_projection_authority_is_shared_across_engines_and_reconstruction(
                     await lease.record_fence("rev_deleted", "doc_b")
         finally:
             await _clean(first_engine)
+            await _clean_fence_facts(first_engine)
             await first.close()
             await second.close()
             await first_engine.dispose()
@@ -126,6 +131,7 @@ def test_mysql_projection_authority_is_shared_across_engines_and_reconstruction(
     asyncio.run(scenario())
 
 
+@pytest.mark.skipif(not DATABASE_URL, reason="requires isolated TAP_DATABASE_URL")
 def test_cancelled_connection_acquisition_returns_late_checkout_before_rethrow() -> None:
     """A shielded connect that succeeds after cancellation must not exhaust a size-one pool."""
 
@@ -138,6 +144,7 @@ def test_cancelled_connection_acquisition_returns_late_checkout_before_rethrow()
         )
         coordinator = MysqlProjectionCoordinator(
             engine,
+            scope=VALIDATION_SCOPE,
             authority_namespace="task5-connect-cancellation",
             lock_wait_seconds=1,
         )
@@ -161,5 +168,135 @@ def test_cancelled_connection_acquisition_returns_late_checkout_before_rethrow()
         assert engine.sync_engine.pool.checkedout() == 0
         await coordinator.close()
         await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_project_scope_rejects_foreign_physical_alias_before_yield(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    database_url = owned_project_database_url(owned_project_mysql)
+    from dataclasses import replace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    async def scenario() -> None:
+        engine, _ = create_engine_and_session_factory(database_url)
+        first = MysqlProjectionCoordinator(
+            engine, authority_namespace=NAMESPACE, scope=VALIDATION_SCOPE
+        )
+        other_scope = replace(VALIDATION_SCOPE, project_id="projection-other")
+        second = MysqlProjectionCoordinator(
+            engine, authority_namespace=NAMESPACE, scope=other_scope
+        )
+        await _clean(engine)
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO project (project_id, enterprise_id) "
+                    "VALUES ('projection-other', 'local')"
+                )
+            )
+        try:
+            async with first.mutation(ALIAS) as lease:
+                await lease.initialize("owned-physical")
+            entered = False
+            with pytest.raises(IndexUnavailable, match="ownership"):
+                async with second.mutation(ALIAS):
+                    entered = True
+            assert entered is False
+            async with first.mutation(ALIAS) as lease:
+                assert await lease.state() == (1, "owned-physical")
+        finally:
+            await _clean(engine)
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text("DELETE FROM project WHERE project_id='projection-other'")
+                )
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+async def _seed_fence_facts(engine) -> None:
+    from datetime import datetime
+
+    from sqlalchemy import insert
+
+    from tap.modules.knowledge.adapters.mysql_documents import (
+        knowledge_document,
+        knowledge_document_revision,
+    )
+    from tap.platform.db.project_scope import scope_values
+
+    now = datetime(2026, 9, 5)
+    async with engine.begin() as connection:
+        for document_id in ("doc_a", "doc_b"):
+            await connection.execute(
+                insert(knowledge_document).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    document_id=document_id,
+                    filename="fence.txt",
+                    media_type="text/plain",
+                    source_content_hash="sha256:" + "a" * 64,
+                    reservation_parser_version="test",
+                    reservation_chunker_version="test",
+                    reservation_pipeline_version="test",
+                    status="deleted",
+                    stage="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await connection.execute(
+            insert(knowledge_document_revision).values(
+                **scope_values(VALIDATION_SCOPE),
+                revision_id="rev_deleted",
+                document_id="doc_a",
+                source_content_hash="sha256:" + "a" * 64,
+                original_blob_locator="local/fence.txt",
+                parser_version="test",
+                chunker_version="test",
+                pipeline_version="test",
+                created_at=now,
+            )
+        )
+
+
+async def _clean_fence_facts(engine) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("DELETE FROM knowledge_document_revision WHERE revision_id='rev_deleted'")
+        )
+        await connection.execute(
+            text("DELETE FROM knowledge_document WHERE document_id IN ('doc_a', 'doc_b')")
+        )
+
+
+def test_projection_fence_rejects_mismatched_document_on_first_insert(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    database_url = owned_project_database_url(owned_project_mysql)
+
+    async def scenario() -> None:
+        engine, _ = create_engine_and_session_factory(database_url)
+        coordinator = MysqlProjectionCoordinator(
+            engine, scope=VALIDATION_SCOPE, authority_namespace=NAMESPACE
+        )
+        await _clean(engine)
+        await _seed_fence_facts(engine)
+        try:
+            async with coordinator.mutation(ALIAS) as lease:
+                await lease.initialize("fence-parent-physical")
+                with pytest.raises(IndexUnavailable, match="identity"):
+                    await lease.record_fence("rev_deleted", "doc_b")
+                assert await lease.is_fenced("rev_deleted") is False
+                await lease.record_fence("rev_deleted", "doc_a")
+                assert await lease.fences(10) == (("rev_deleted", "doc_a"),)
+        finally:
+            await _clean(engine)
+            await _clean_fence_facts(engine)
+            await coordinator.close()
+            await engine.dispose()
 
     asyncio.run(scenario())

@@ -8,6 +8,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import NoReturn, cast
 from uuid import uuid4
 
@@ -43,6 +44,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     new_document_id,
@@ -97,7 +99,9 @@ from tap.modules.knowledge.ports.documents import (
     initial_stage_results,
     serialize_stage_results,
 )
-from tap.platform.db.schema import metadata, outbox
+from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
+from tap.platform.db.schema import augment_project_table, metadata, outbox
+from tap.platform.messaging.mysql_outbox import compatibility_outbox_values, scoped_outbox_id
 
 CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
 ANSWER_SNAPSHOT_RETENTION = 1_000
@@ -284,6 +288,17 @@ def _utc_naive(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+for _project_table in (
+    knowledge_document,
+    knowledge_document_revision,
+    knowledge_ingestion_job,
+    knowledge_chunk_manifest,
+    knowledge_answer_snapshot,
+    knowledge_citation_snapshot,
+):
+    augment_project_table(_project_table)
 
 
 async def _database_now(session: AsyncSession) -> datetime:
@@ -565,9 +580,20 @@ def _job_from_row(row: RowMapping) -> IngestionJob:
 class MysqlDocumentRepository:
     """The MySQL document/revision/job facts and their transaction boundaries."""
 
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._scope = require_project_scope(scope)
+        self._answer_snapshot_lock_name = (
+            "tap:answer:"
+            + sha256(f"{scope.enterprise_id}/{scope.project_id}".encode()).hexdigest()[:48]
+        )
         self._sessions = sessions
         self._engine = cast(AsyncEngine, sessions.kw["bind"])
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
 
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
@@ -606,6 +632,8 @@ class MysqlDocumentRepository:
                             )
                         )
                         .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_document.c.document_id.in_(ordered_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
                             knowledge_document.c.activated_at.is_not(None),
@@ -676,7 +704,7 @@ class MysqlDocumentRepository:
                         try:
                             await _release_named_lock(
                                 connection,
-                                ANSWER_SNAPSHOT_LOCK_NAME,
+                                self._answer_snapshot_lock_name,
                                 ownership_confirmed=ownership_confirmed,
                                 engine=self._engine,
                                 server_connection_id=server_connection_id,
@@ -726,7 +754,7 @@ class MysqlDocumentRepository:
         outcome = await _bounded_named_lock_query(
             connection,
             ANSWER_SNAPSHOT_LOCK_ACQUIRE_SQL,
-            {"lock_name": ANSWER_SNAPSHOT_LOCK_NAME},
+            {"lock_name": self._answer_snapshot_lock_name},
             timeout_seconds=ANSWER_SNAPSHOT_LOCK_ACQUIRE_DEADLINE_SECONDS,
         )
         malformed = outcome.error is None and outcome.value not in {None, 0, 1}
@@ -740,7 +768,7 @@ class MysqlDocumentRepository:
                 connection,
                 self._engine,
                 connection_id,
-                ANSWER_SNAPSHOT_LOCK_NAME,
+                self._answer_snapshot_lock_name,
                 first_cancellation=(outcome.cancellations[0] if outcome.cancellations else None),
             )
             raise failure from outcome.error
@@ -760,7 +788,10 @@ class MysqlDocumentRepository:
                         knowledge_document.c.activated_at,
                         knowledge_document.c.deleted_at,
                     )
-                    .where(knowledge_document.c.document_id.in_(document_ids))
+                    .where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        knowledge_document.c.document_id.in_(document_ids),
+                    )
                     .order_by(knowledge_document.c.document_id)
                     .with_for_update()
                 )
@@ -798,9 +829,10 @@ class MysqlDocumentRepository:
                         knowledge_document_revision.c.document_id,
                         knowledge_document_revision.c.source_content_hash,
                     ).where(
+                        *scope_predicates(knowledge_document_revision, self._scope),
                         knowledge_document_revision.c.revision_id.in_(
                             tuple(item.revision_id for item in expected)
-                        )
+                        ),
                     )
                 )
             ).mappings()
@@ -828,9 +860,10 @@ class MysqlDocumentRepository:
                             knowledge_chunk_manifest.c.anchor_json,
                         )
                         .where(
+                            *scope_predicates(knowledge_chunk_manifest, self._scope),
                             knowledge_chunk_manifest.c.chunk_id.in_(
                                 tuple(item.chunk_id for item in snapshot.citations)
-                            )
+                            ),
                         )
                         .order_by(knowledge_chunk_manifest.c.chunk_id)
                         .with_for_update()
@@ -862,6 +895,7 @@ class MysqlDocumentRepository:
         now = await _database_now(session)
         await session.execute(
             insert(knowledge_answer_snapshot).values(
+                **scope_values(self._scope),
                 trace_id=snapshot.trace_id,
                 query_hash=snapshot.query_hash,
                 selected_revisions_json=[
@@ -880,6 +914,7 @@ class MysqlDocumentRepository:
                 insert(knowledge_citation_snapshot),
                 [
                     {
+                        **scope_values(self._scope),
                         "citation_id": item.citation_id,
                         "trace_id": item.trace_id,
                         "document_id": item.document_id,
@@ -895,13 +930,18 @@ class MysqlDocumentRepository:
             )
         count = cast(
             int,
-            await session.scalar(select(func.count()).select_from(knowledge_answer_snapshot)),
+            await session.scalar(
+                select(func.count())
+                .select_from(knowledge_answer_snapshot)
+                .where(*scope_predicates(knowledge_answer_snapshot, self._scope))
+            ),
         )
         excess = count - ANSWER_SNAPSHOT_RETENTION
         if excess > 0:
             expired = tuple(
                 await session.scalars(
                     select(knowledge_answer_snapshot.c.trace_id)
+                    .where(*scope_predicates(knowledge_answer_snapshot, self._scope))
                     .order_by(
                         knowledge_answer_snapshot.c.created_at,
                         knowledge_answer_snapshot.c.trace_id,
@@ -912,7 +952,8 @@ class MysqlDocumentRepository:
             if expired:
                 await session.execute(
                     delete(knowledge_answer_snapshot).where(
-                        knowledge_answer_snapshot.c.trace_id.in_(expired)
+                        *scope_predicates(knowledge_answer_snapshot, self._scope),
+                        knowledge_answer_snapshot.c.trace_id.in_(expired),
                     )
                 )
 
@@ -925,11 +966,23 @@ class MysqlDocumentRepository:
         revision = knowledge_document_revision
         manifest = knowledge_chunk_manifest
         source = (
-            citation.join(answer, answer.c.trace_id == citation.c.trace_id)
-            .outerjoin(document, document.c.document_id == citation.c.document_id)
+            citation.join(
+                answer,
+                and_(
+                    answer.c.trace_id == citation.c.trace_id, *scope_predicates(answer, self._scope)
+                ),
+            )
+            .outerjoin(
+                document,
+                and_(
+                    document.c.document_id == citation.c.document_id,
+                    *scope_predicates(document, self._scope),
+                ),
+            )
             .outerjoin(
                 revision,
                 and_(
+                    *scope_predicates(revision, self._scope),
                     revision.c.revision_id == citation.c.revision_id,
                     revision.c.document_id == citation.c.document_id,
                 ),
@@ -937,6 +990,7 @@ class MysqlDocumentRepository:
             .outerjoin(
                 manifest,
                 and_(
+                    *scope_predicates(manifest, self._scope),
                     manifest.c.chunk_id == citation.c.chunk_id,
                     manifest.c.revision_id == citation.c.revision_id,
                 ),
@@ -977,7 +1031,10 @@ class MysqlDocumentRepository:
                             manifest.c.index_version,
                         )
                         .select_from(source)
-                        .where(citation.c.citation_id == citation_id)
+                        .where(
+                            *scope_predicates(citation, self._scope),
+                            citation.c.citation_id == citation_id,
+                        )
                     )
                 )
                 .mappings()
@@ -1079,6 +1136,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_document)
                         .where(
+                            *scope_predicates(knowledge_document, self._scope),
                             knowledge_document.c.dedupe_key.is_not(None),
                             knowledge_document.c.deleted_at.is_(None),
                         )
@@ -1148,6 +1206,7 @@ class MysqlDocumentRepository:
             )
             await session.execute(
                 insert(knowledge_document).values(
+                    **scope_values(self._scope),
                     document_id=document_id,
                     filename=command.filename,
                     media_type=command.media_type,
@@ -1194,7 +1253,10 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document)
-                        .where(knowledge_document.c.document_id == reservation.document_id)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == reservation.document_id,
+                        )
                         .with_for_update()
                     )
                 )
@@ -1219,6 +1281,7 @@ class MysqlDocumentRepository:
             now = await _database_now(session)
             await session.execute(
                 insert(knowledge_document_revision).values(
+                    **scope_values(self._scope),
                     revision_id=reservation.revision_id,
                     document_id=reservation.document_id,
                     source_content_hash=row["source_content_hash"],
@@ -1233,6 +1296,7 @@ class MysqlDocumentRepository:
             results = initial_stage_results(now)
             await session.execute(
                 insert(knowledge_ingestion_job).values(
+                    **scope_values(self._scope),
                     job_id=job_id,
                     revision_id=reservation.revision_id,
                     kind=JobKind.INGESTION.value,
@@ -1256,6 +1320,7 @@ class MysqlDocumentRepository:
             await session.execute(
                 update(knowledge_document)
                 .where(
+                    *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == reservation.document_id,
                     knowledge_document.c.activated_at.is_(None),
                 )
@@ -1270,7 +1335,8 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document).where(
-                            knowledge_document.c.document_id == reservation.document_id
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == reservation.document_id,
                         )
                     )
                 )
@@ -1289,7 +1355,10 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document)
-                        .where(knowledge_document.c.document_id == reservation.document_id)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == reservation.document_id,
+                        )
                         .with_for_update()
                     )
                 )
@@ -1305,7 +1374,8 @@ class MysqlDocumentRepository:
             if row["activated_at"] is not None:
                 persisted_revision = await session.scalar(
                     select(knowledge_document_revision.c.original_blob_locator).where(
-                        knowledge_document_revision.c.revision_id == row["current_revision_id"]
+                        *scope_predicates(knowledge_document_revision, self._scope),
+                        knowledge_document_revision.c.revision_id == row["current_revision_id"],
                     )
                 )
                 if not isinstance(persisted_revision, str):
@@ -1318,6 +1388,7 @@ class MysqlDocumentRepository:
             await session.execute(
                 update(knowledge_document)
                 .where(
+                    *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == reservation.document_id,
                     knowledge_document.c.promoted_blob_locator.is_(None),
                 )
@@ -1331,6 +1402,7 @@ class MysqlDocumentRepository:
             await session.execute(
                 update(knowledge_document)
                 .where(
+                    *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == reservation_id,
                     knowledge_document.c.reservation_owner_token == owner_token,
                     knowledge_document.c.activated_at.is_(None),
@@ -1356,6 +1428,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_document)
                         .where(
+                            *scope_predicates(knowledge_document, self._scope),
                             knowledge_document.c.staging_blob_locator.is_not(None),
                             knowledge_document.c.deleted_at.is_(None),
                             knowledge_document.c.reservation_expires_at <= selection_now,
@@ -1379,6 +1452,7 @@ class MysqlDocumentRepository:
                 result = await session.execute(
                     update(knowledge_document)
                     .where(
+                        *scope_predicates(knowledge_document, self._scope),
                         knowledge_document.c.document_id == row["document_id"],
                         knowledge_document.c.staging_blob_locator == row["staging_blob_locator"],
                         knowledge_document.c.reservation_expires_at <= database_now,
@@ -1429,7 +1503,10 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document)
-                        .where(knowledge_document.c.document_id == reservation_id)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == reservation_id,
+                        )
                         .with_for_update()
                     )
                 )
@@ -1446,6 +1523,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_document)
                 .where(
+                    *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == reservation_id,
                     knowledge_document.c.activated_at.is_not(None),
                     knowledge_document.c.reservation_owner_token == owner_token,
@@ -1464,9 +1542,10 @@ class MysqlDocumentRepository:
     async def list_documents(self, cursor: DocumentCursor | None, limit: int) -> DocumentRecordPage:
         if type(limit) is not int or not 1 <= limit <= 50:
             raise ValueError("document page limit must be between 1 and 50")
-        position = _decode_cursor(cursor) if cursor is not None else None
+        position = _decode_cursor(cursor, self._scope) if cursor is not None else None
         async with self._sessions() as session:
             statement = select(knowledge_document).where(
+                *scope_predicates(knowledge_document, self._scope),
                 knowledge_document.c.activated_at.is_not(None),
                 knowledge_document.c.deleted_at.is_(None),
                 knowledge_document.c.status != DocumentState.DELETING.value,
@@ -1474,13 +1553,14 @@ class MysqlDocumentRepository:
             if position is not None:
                 created_at, document_id = position
                 statement = statement.where(
+                    *scope_predicates(knowledge_document, self._scope),
                     or_(
                         knowledge_document.c.created_at < created_at,
                         and_(
                             knowledge_document.c.created_at == created_at,
                             knowledge_document.c.document_id < document_id,
                         ),
-                    )
+                    ),
                 )
             rows = list(
                 (
@@ -1497,7 +1577,7 @@ class MysqlDocumentRepository:
         if len(rows) > limit:
             last = rows[limit - 1]
             next_cursor = _encode_cursor(
-                cast(datetime, last["created_at"]), cast(str, last["document_id"])
+                cast(datetime, last["created_at"]), cast(str, last["document_id"]), self._scope
             )
         return DocumentRecordPage(records, next_cursor)
 
@@ -1506,13 +1586,15 @@ class MysqlDocumentRepository:
     ) -> DocumentRecord | None:
         async with self._sessions() as session:
             statement = select(knowledge_document).where(
+                *scope_predicates(knowledge_document, self._scope),
                 knowledge_document.c.document_id == document_id,
                 knowledge_document.c.activated_at.is_not(None),
                 knowledge_document.c.deleted_at.is_(None),
             )
             if not include_deleting:
                 statement = statement.where(
-                    knowledge_document.c.status != DocumentState.DELETING.value
+                    *scope_predicates(knowledge_document, self._scope),
+                    knowledge_document.c.status != DocumentState.DELETING.value,
                 )
             row = (await session.execute(statement)).mappings().one_or_none()
             return None if row is None else await self._record_for_row(session, row)
@@ -1522,6 +1604,7 @@ class MysqlDocumentRepository:
         async with self._sessions() as session, session.begin():
             candidate_revision = await session.scalar(
                 select(knowledge_document.c.current_revision_id).where(
+                    *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == document_id,
                     knowledge_document.c.status == DocumentState.FAILED.value,
                     knowledge_document.c.activated_at.is_not(None),
@@ -1535,6 +1618,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.revision_id == candidate_revision,
                             knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
                         )
@@ -1549,6 +1633,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_document)
                         .where(
+                            *scope_predicates(knowledge_document, self._scope),
                             knowledge_document.c.document_id == document_id,
                             knowledge_document.c.current_revision_id == candidate_revision,
                             knowledge_document.c.status == DocumentState.FAILED.value,
@@ -1582,6 +1667,7 @@ class MysqlDocumentRepository:
             await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == job_row["job_id"],
                     knowledge_ingestion_job.c.status == JobState.FAILED.value,
                 )
@@ -1603,6 +1689,7 @@ class MysqlDocumentRepository:
             await session.execute(
                 update(knowledge_document)
                 .where(
+                    *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == document_id,
                     knowledge_document.c.current_revision_id == candidate_revision,
                     knowledge_document.c.status == DocumentState.FAILED.value,
@@ -1640,6 +1727,7 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document).where(
+                            *scope_predicates(knowledge_document, self._scope),
                             knowledge_document.c.document_id == document_id,
                             knowledge_document.c.activated_at.is_not(None),
                             knowledge_document.c.deleted_at.is_(None),
@@ -1656,7 +1744,10 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_ingestion_job)
-                        .where(knowledge_ingestion_job.c.revision_id == revision_id)
+                        .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
+                            knowledge_ingestion_job.c.revision_id == revision_id,
+                        )
                         .order_by(knowledge_ingestion_job.c.kind)
                         .with_for_update()
                     )
@@ -1667,6 +1758,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_document)
                         .where(
+                            *scope_predicates(knowledge_document, self._scope),
                             knowledge_document.c.document_id == document_id,
                             knowledge_document.c.current_revision_id == revision_id,
                             knowledge_document.c.activated_at.is_not(None),
@@ -1706,6 +1798,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         update(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == ingestion["job_id"],
                             knowledge_ingestion_job.c.status != JobState.COMPLETED.value,
                         )
@@ -1720,7 +1813,10 @@ class MysqlDocumentRepository:
                     )
             await session.execute(
                 update(knowledge_document)
-                .where(knowledge_document.c.document_id == document_id)
+                .where(
+                    *scope_predicates(knowledge_document, self._scope),
+                    knowledge_document.c.document_id == document_id,
+                )
                 .values(
                     status=DocumentState.DELETING.value,
                     stage=JobStage.STORED.value,
@@ -1750,6 +1846,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         update(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == existing["job_id"],
                             knowledge_ingestion_job.c.status == JobState.FAILED.value,
                         )
@@ -1789,6 +1886,7 @@ class MysqlDocumentRepository:
             initial_results = initial_stage_results(database_now)
             await session.execute(
                 insert(knowledge_ingestion_job).values(
+                    **scope_values(self._scope),
                     job_id=job_id,
                     revision_id=revision_id,
                     kind=JobKind.DELETION.value,
@@ -1836,6 +1934,8 @@ class MysqlDocumentRepository:
             cancelled_ingestion = knowledge_ingestion_job.alias("cancelled_ingestion")
             active_cancelled_owner = exists(
                 select(1).where(
+                    *scope_predicates(cancelled_ingestion, self._scope),
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     cancelled_ingestion.c.revision_id == knowledge_ingestion_job.c.revision_id,
                     cancelled_ingestion.c.kind == JobKind.INGESTION.value,
                     cancelled_ingestion.c.status == JobState.CANCELLED.value,
@@ -1853,6 +1953,9 @@ class MysqlDocumentRepository:
                     )
                 )
                 .where(
+                    *scope_predicates(knowledge_document_revision, self._scope),
+                    *scope_predicates(knowledge_document, self._scope),
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_document_revision.c.revision_id
                     == knowledge_ingestion_job.c.revision_id,
                     knowledge_document.c.deleted_at.is_(None),
@@ -1888,6 +1991,9 @@ class MysqlDocumentRepository:
                     )
                 )
                 .where(
+                    *scope_predicates(knowledge_document_revision, self._scope),
+                    *scope_predicates(knowledge_document, self._scope),
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_document_revision.c.revision_id
                     == knowledge_ingestion_job.c.revision_id,
                     knowledge_document.c.deleted_at.is_(None),
@@ -1908,7 +2014,11 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_ingestion_job)
-                        .where(initially_claimable, compatible_document)
+                        .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
+                            initially_claimable,
+                            compatible_document,
+                        )
                         .order_by(
                             knowledge_ingestion_job.c.created_at,
                             knowledge_ingestion_job.c.job_id,
@@ -1945,6 +2055,7 @@ class MysqlDocumentRepository:
                 result = await session.execute(
                     update(knowledge_ingestion_job)
                     .where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
                         knowledge_ingestion_job.c.job_id == row["job_id"],
                         freshly_claimable,
                         compatible_document_for_update,
@@ -1989,6 +2100,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == job_id,
                     knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
                     knowledge_ingestion_job.c.status == JobState.CANCELLED.value,
@@ -2021,6 +2133,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == job_id,
                     knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
                     knowledge_ingestion_job.c.status == JobState.CANCELLED.value,
@@ -2055,6 +2168,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == job_id,
                             knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                             knowledge_ingestion_job.c.lease_token == lease_token,
@@ -2074,6 +2188,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == job_id,
                     knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                     knowledge_ingestion_job.c.lease_token == lease_token,
@@ -2114,6 +2229,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == commit.job_id,
                             knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                             knowledge_ingestion_job.c.lease_token == commit.lease_token,
@@ -2161,7 +2277,10 @@ class MysqlDocumentRepository:
             if revision_values:
                 updated_revision = await session.execute(
                     update(knowledge_document_revision)
-                    .where(knowledge_document_revision.c.revision_id == row["revision_id"])
+                    .where(
+                        *scope_predicates(knowledge_document_revision, self._scope),
+                        knowledge_document_revision.c.revision_id == row["revision_id"],
+                    )
                     .values(**revision_values)
                 )
                 if updated_revision.rowcount != 1:
@@ -2175,7 +2294,10 @@ class MysqlDocumentRepository:
                     (
                         await session.execute(
                             select(knowledge_chunk_manifest)
-                            .where(knowledge_chunk_manifest.c.revision_id == row["revision_id"])
+                            .where(
+                                *scope_predicates(knowledge_chunk_manifest, self._scope),
+                                knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                            )
                             .order_by(knowledge_chunk_manifest.c.ordinal)
                         )
                     ).mappings()
@@ -2188,6 +2310,7 @@ class MysqlDocumentRepository:
                         insert(knowledge_chunk_manifest),
                         [
                             {
+                                **scope_values(self._scope),
                                 "chunk_id": item.chunk_id,
                                 "logical_chunk_id": item.logical_chunk_id,
                                 "revision_id": row["revision_id"],
@@ -2206,6 +2329,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == commit.job_id,
                     knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                     knowledge_ingestion_job.c.lease_token == commit.lease_token,
@@ -2227,17 +2351,22 @@ class MysqlDocumentRepository:
                 self._raise_lease_lost(commit.job_id)
             revision = knowledge_document_revision.alias("checkpoint_revision")
             document_id = await session.scalar(
-                select(revision.c.document_id).where(revision.c.revision_id == row["revision_id"])
+                select(revision.c.document_id).where(
+                    *scope_predicates(revision, self._scope),
+                    revision.c.revision_id == row["revision_id"],
+                )
             )
             if row["kind"] == JobKind.DELETION.value and is_complete:
                 await session.execute(
                     delete(knowledge_chunk_manifest).where(
-                        knowledge_chunk_manifest.c.revision_id == row["revision_id"]
+                        *scope_predicates(knowledge_chunk_manifest, self._scope),
+                        knowledge_chunk_manifest.c.revision_id == row["revision_id"],
                     )
                 )
                 await session.execute(
                     update(knowledge_document)
                     .where(
+                        *scope_predicates(knowledge_document, self._scope),
                         knowledge_document.c.document_id == document_id,
                         knowledge_document.c.status == DocumentState.DELETING.value,
                     )
@@ -2247,7 +2376,10 @@ class MysqlDocumentRepository:
                 manifest_count = await session.scalar(
                     select(func.count())
                     .select_from(knowledge_chunk_manifest)
-                    .where(knowledge_chunk_manifest.c.revision_id == row["revision_id"])
+                    .where(
+                        *scope_predicates(knowledge_chunk_manifest, self._scope),
+                        knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                    )
                 )
                 if (
                     require_stage_facts
@@ -2261,6 +2393,7 @@ class MysqlDocumentRepository:
                 await session.execute(
                     update(knowledge_document)
                     .where(
+                        *scope_predicates(knowledge_document, self._scope),
                         knowledge_document.c.document_id == document_id,
                         knowledge_document.c.status != DocumentState.DELETING.value,
                     )
@@ -2288,6 +2421,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == job_id,
                             knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                             knowledge_ingestion_job.c.lease_token == lease_token,
@@ -2308,7 +2442,8 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document_revision).where(
-                            knowledge_document_revision.c.revision_id == job["revision_id"]
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id == job["revision_id"],
                         )
                     )
                 )
@@ -2319,7 +2454,8 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_document).where(
-                            knowledge_document.c.document_id == revision["document_id"]
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.document_id == revision["document_id"],
                         )
                     )
                 )
@@ -2339,7 +2475,10 @@ class MysqlDocumentRepository:
                 (
                     await session.execute(
                         select(knowledge_chunk_manifest)
-                        .where(knowledge_chunk_manifest.c.revision_id == revision["revision_id"])
+                        .where(
+                            *scope_predicates(knowledge_chunk_manifest, self._scope),
+                            knowledge_chunk_manifest.c.revision_id == revision["revision_id"],
+                        )
                         .order_by(knowledge_chunk_manifest.c.ordinal)
                     )
                 ).mappings()
@@ -2371,6 +2510,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == retry.job_id,
                             knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                             knowledge_ingestion_job.c.lease_token == retry.lease_token,
@@ -2399,6 +2539,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == retry.job_id,
                     knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                     knowledge_ingestion_job.c.lease_token == retry.lease_token,
@@ -2427,6 +2568,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(knowledge_ingestion_job)
                         .where(
+                            *scope_predicates(knowledge_ingestion_job, self._scope),
                             knowledge_ingestion_job.c.job_id == failure.job_id,
                             knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                             knowledge_ingestion_job.c.lease_token == failure.lease_token,
@@ -2455,6 +2597,7 @@ class MysqlDocumentRepository:
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
                     knowledge_ingestion_job.c.job_id == failure.job_id,
                     knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
                     knowledge_ingestion_job.c.lease_token == failure.lease_token,
@@ -2476,7 +2619,8 @@ class MysqlDocumentRepository:
                 self._raise_lease_lost(failure.job_id)
             document_id = await session.scalar(
                 select(knowledge_document_revision.c.document_id).where(
-                    knowledge_document_revision.c.revision_id == row["revision_id"]
+                    *scope_predicates(knowledge_document_revision, self._scope),
+                    knowledge_document_revision.c.revision_id == row["revision_id"],
                 )
             )
             public_values = (
@@ -2497,11 +2641,13 @@ class MysqlDocumentRepository:
                 }
             )
             document_update = update(knowledge_document).where(
-                knowledge_document.c.document_id == document_id
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.document_id == document_id,
             )
             if row["kind"] == JobKind.INGESTION.value:
                 document_update = document_update.where(
-                    knowledge_document.c.status != DocumentState.DELETING.value
+                    *scope_predicates(knowledge_document, self._scope),
+                    knowledge_document.c.status != DocumentState.DELETING.value,
                 )
             await session.execute(document_update.values(**public_values))
 
@@ -2511,6 +2657,7 @@ class MysqlDocumentRepository:
                 await session.execute(
                     select(knowledge_ingestion_job)
                     .where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
                         knowledge_ingestion_job.c.revision_id == row["current_revision_id"],
                         knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
                     )
@@ -2542,8 +2689,8 @@ class MysqlDocumentRepository:
             job_id=job.job_id,
         )
 
-    @staticmethod
     async def _insert_job_outbox(
+        self,
         session: AsyncSession,
         *,
         document_id: str,
@@ -2555,16 +2702,19 @@ class MysqlDocumentRepository:
         identity = f"knowledge-{message_type.split('.')[1]}:{job_id}:{attempt}"
         await session.execute(
             insert(outbox).values(
-                outbox_id=identity,
-                command_id=identity,
-                aggregate_type="knowledge_document",
-                aggregate_id=document_id,
-                sequence=None,
-                message_type=message_type,
+                **compatibility_outbox_values(
+                    self._scope,
+                    outbox_id=scoped_outbox_id(self._scope, kind="knowledge", identity=identity),
+                    command_id=identity,
+                    aggregate_type="knowledge_document",
+                    aggregate_id=document_id,
+                    sequence=None,
+                    message_type=message_type,
+                    created_at=now,
+                ),
                 status="pending",
                 attempt_count=0,
                 next_attempt_at=now,
-                created_at=now,
             )
         )
 
@@ -2662,12 +2812,16 @@ def _validate_job_lease(worker_id: str, lease_duration: timedelta) -> None:
         raise ValueError("job lease requires a worker and bounded positive duration")
 
 
-def _encode_cursor(created_at: datetime, document_id: str) -> DocumentCursor:
+def _encode_cursor(
+    created_at: datetime, document_id: str, scope: ProjectScopeContext
+) -> DocumentCursor:
     payload = json.dumps(
         {
             "createdAt": created_at.isoformat(timespec="microseconds"),
             "documentId": document_id,
-            "v": "v1",
+            "v": "v2",
+            "projectId": scope.project_id,
+            "enterpriseId": scope.enterprise_id,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -2675,17 +2829,28 @@ def _encode_cursor(created_at: datetime, document_id: str) -> DocumentCursor:
     return DocumentCursor(base64.urlsafe_b64encode(payload).decode("ascii"))
 
 
-def _decode_cursor(cursor: DocumentCursor) -> tuple[datetime, str]:
-    if not isinstance(cursor, str) or not cursor or len(cursor) > 512:
+def _decode_cursor(cursor: DocumentCursor, scope: ProjectScopeContext) -> tuple[datetime, str]:
+    if not isinstance(cursor, str) or not cursor or len(cursor) > 1024:
         raise InvalidDocumentCursor("document cursor is invalid")
     try:
         decoded = base64.b64decode(cursor, altchars=b"-_", validate=True)
         payload = json.loads(decoded)
     except (ValueError, json.JSONDecodeError) as error:
         raise InvalidDocumentCursor("document cursor is invalid") from error
-    if not isinstance(payload, dict) or set(payload) != {"createdAt", "documentId", "v"}:
+    if not isinstance(payload, dict) or set(payload) != {
+        "createdAt",
+        "documentId",
+        "v",
+        "projectId",
+        "enterpriseId",
+    }:
         raise InvalidDocumentCursor("document cursor shape is invalid")
-    if payload["v"] != "v1" or not isinstance(payload["documentId"], str):
+    if (
+        payload["v"] != "v2"
+        or payload["projectId"] != scope.project_id
+        or payload["enterpriseId"] != scope.enterprise_id
+        or not isinstance(payload["documentId"], str)
+    ):
         raise InvalidDocumentCursor("document cursor version is invalid")
     document_id = payload["documentId"]
     created_at_value = payload["createdAt"]
@@ -2703,7 +2868,7 @@ def _decode_cursor(cursor: DocumentCursor) -> tuple[datetime, str]:
     if (
         created_at.tzinfo is not None
         or created_at.isoformat(timespec="microseconds") != created_at_value
-        or _encode_cursor(created_at, document_id) != cursor
+        or _encode_cursor(created_at, document_id, scope) != cursor
     ):
         raise InvalidDocumentCursor("document cursor position is invalid")
     return created_at, document_id

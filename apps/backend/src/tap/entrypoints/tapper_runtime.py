@@ -26,7 +26,10 @@ from tap.contracts.http import (
     ReadyHealth,
 )
 from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
+from tap.modules.access.adapters.validation import ValidationScopeProvider
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
+from tap.modules.access.application.scope import RequestFacts
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.adapters.codex_exec import (
     CodexExecAnswerAdapter,
     CodexExecConfig,
@@ -728,7 +731,8 @@ async def _create_database(
 ) -> tuple[AsyncEngine, MysqlDocumentRepository]:
     engine, sessions = _open_database(settings)
     try:
-        repository = _build_document_repository(sessions)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        repository = _build_document_repository(sessions, scope=scope)
     except BaseException as error:
         local = OwnedResources()
         local.push(engine)
@@ -747,10 +751,12 @@ def _open_database(
 
 def _build_document_repository(
     sessions: async_sessionmaker[AsyncSession],
+    *,
+    scope: ProjectScopeContext,
 ) -> MysqlDocumentRepository:
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
-    return MysqlDocumentRepository(sessions)
+    return MysqlDocumentRepository(sessions, scope=scope)
 
 
 def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore:
@@ -898,7 +904,8 @@ async def _create_document_index(
     parts = await _open_document_clients(settings)
     coordinator: MysqlProjectionCoordinator | None = None
     try:
-        coordinator = _create_projection_coordinator(settings, engine)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        coordinator = _create_projection_coordinator(settings, engine, scope=scope)
         return _build_document_index(settings, coordinator, parts)
     except BaseException as error:
         local = OwnedResources()
@@ -935,12 +942,15 @@ async def _open_document_clients(
 def _create_projection_coordinator(
     settings: TapperSettings,
     engine: AsyncEngine,
+    *,
+    scope: ProjectScopeContext,
 ) -> MysqlProjectionCoordinator:
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
 
     return MysqlProjectionCoordinator(
         engine,
         authority_namespace=settings.compose_project,
+        scope=scope,
     )
 
 
@@ -1329,6 +1339,7 @@ def _assemble_worker_runtime(
         stage_hook=stage_hook,
     )
     wakeups = RedisWakeupConsumer(
+        scope=repository.scope,
         redis=cast(AsyncRedisStream, redis),
         stream_name=settings.redis_stream,
         group_name="tapper-ingestion",

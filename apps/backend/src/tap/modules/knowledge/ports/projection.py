@@ -6,6 +6,8 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectionOwnershipReceipt:
@@ -53,6 +55,9 @@ class ProjectionMutationLease(Protocol):
 
 class ProjectionMutationCoordinator(Protocol):
     """Provider-neutral durable mutex, fence ledger, and cleanup owner."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
 
     def mutation(
         self,
