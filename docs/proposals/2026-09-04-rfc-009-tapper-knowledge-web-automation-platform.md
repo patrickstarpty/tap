@@ -55,6 +55,14 @@ related-adrs:
 
 本 RFC 已替代旧的“Phase 1 先做独立 Intelligence Lab”交付优先级，并将 Tapper 可信知识能力重新放在第一位。旧文档仍保留为历史决策和实验依据。
 
+## 1.1 2026-09-05 更名与界面实施补充
+
+平台名固定为 **TAP**，智能工作区与 AI Agent 入口固定为 **Tapper**。本次在 RFC-010 已完成的命名迁移上继续实施；现行技术路径使用 `tapper`、`TAPPER_*` / `TAP_TAPPER_*`，稳定的 `tap` package、provider-neutral HTTP API 和业务表不因品牌再次改名。AI Agent 是 Tapper 的分析/生成能力，Execution Agent 仍指 Jenkins Pipeline Agent，两者不可混用。
+
+用户已确认 TAP 整体采用富卫 FWD 启发的浅色风格，并以 Codex / Manus 的简约工作界面为体验参考。界面使用暖白画布、白色内容面、深灰文字与克制的橙色强调；科技感由排版、细线图标、图谱与及时状态反馈表达。所有现有工作区和后续 V0–P1 页面共用[浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)，不得只更改首页或默认主题而留下紫色/深色编辑区。
+
+这次视觉交付覆盖现有原型及真实知识组件；平台实施从 V0 Task 1 开始。视觉完成、Tapper 更名完成与 V0 功能验收是独立事实，不能互相替代；VG、真实依赖和生产门禁保持原约束。
+
 ## 2. 产品范围
 
 ### 2.1 目标生产形态

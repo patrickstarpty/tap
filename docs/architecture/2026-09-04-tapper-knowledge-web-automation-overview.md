@@ -324,3 +324,7 @@ Session Adapter 继续通过同一 `ScopeProvider`/`AuthorizationPolicy` 契约�
 - [ADR-015：React/TypeScript + Python/FastAPI](../decisions/2026-08-21-adr-015-react-typescript-python-fastapi.md)
 
 RFC-009 是完整数据模型、API、事件、质量阈值和风险说明的规范来源；本文只提供当前总体架构视图，不重复扩展 RFC 范围。
+
+## 浅色界面基线（2026-09-05）
+
+平台品牌为 TAP，智能工作区与 AI Agent 入口为 Tapper；Execution Agent 仍为 Jenkins Pipeline Agent。所有 Web 工作区共用[浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)，由 app theme / CSS 语义色统一浅色画布、FWD 橙色强调与组件状态。该规范不改变模块依赖、API、Validation Mode 或 V0–P1 验收边界。
