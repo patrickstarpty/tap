@@ -100,10 +100,14 @@ flowchart LR
 - Create: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Create: `scripts/check-schema-drift.py`
 - Create: `scripts/check-migration.py`
+- Create: `scripts/migration_support.py`
 - Modify: `apps/backend/migrations/env.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/adapters/mysql_projection.py`
 - Modify: `apps/backend/src/tap/platform/db/schema.py`
 - Modify: `apps/backend/tests/architecture/test_module_boundaries.py`
 - Modify: `Makefile`
+
+**Preflight（2026-09-05）：** 当前 Alembic 只注册 10 张表，遗漏 4 张 projection 表；`mysql_projection.py` 还缺少已存在迁移中的 lineage 唯一约束与时间戳默认值。同步 ORM 到既有迁移，不新增 revision。共享 checker 逻辑放在 `scripts/migration_support.py`。全量 Backend 测试会清理表，必须注入一次性数据库 URL，禁止默认 Demo URL。
 
 **Contract:** `load_authoritative_metadata() -> MetaData` 显式导入并合并 platform Outbox、chat、knowledge document/answer/citation 与 projection table metadata；任何运行时偶然 import 都不能决定 Alembic 可见表。`make schema-drift` 在隔离 MySQL 上执行 upgrade head，再比较 ORM metadata 与数据库；除 Alembic 自己的 `alembic_version` 外，额外表、缺表、缺 column/index/constraint 均失败。`make migration-check MIGRATION=revision_id` 校验传入的字面量 revision 位于唯一线性 ancestry，创建一次性 MySQL，从 `0005_projection_lineage` 装载包含 Turn、Outbox、Document/Revision/Job/Manifest/Answer/Citation 与 projection lineage 的旧数据，再升级到指定 revision 并运行该 revision 的数据保持断言。
 
