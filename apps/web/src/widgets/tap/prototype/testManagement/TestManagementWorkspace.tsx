@@ -45,7 +45,7 @@ const TEXT = {
     automation: "Automation",
     source: "Source",
     status: "Status",
-    imported: "Imported from Athena",
+    imported: "Imported from Tapper",
     manual: "Created manually",
     ready: "Ready",
     draft: "Draft",
@@ -80,7 +80,7 @@ const TEXT = {
     automation: "自动化",
     source: "来源",
     status: "状态",
-    imported: "从 Athena 导入",
+    imported: "从 Tapper 导入",
     manual: "手动创建",
     ready: "就绪",
     draft: "草稿",
@@ -154,7 +154,7 @@ function TestPlanDetail({
           <span className="tap-asset-id">{plan.id}</span>
           <h1 id="test-plan-detail-heading">{plan.title}</h1>
           <p>
-            {plan.source === "Athena" ? text.imported : text.manual} ·{" "}
+            {plan.source === "Tapper" ? text.imported : text.manual} ·{" "}
             {plan.status === "ready" ? text.ready : text.draft}
           </p>
         </div>
@@ -449,7 +449,7 @@ export function TestManagementWorkspace({
                   {plan.automationId ?? text.noAutomation}
                 </span>
                 <span role="cell">
-                  {plan.source === "Athena" ? text.imported : text.manual}
+                  {plan.source === "Tapper" ? text.imported : text.manual}
                 </span>
                 <span role="cell" className="tap-status-ready">
                   <CheckCircleFilled aria-hidden="true" />{" "}

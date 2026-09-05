@@ -2,15 +2,15 @@ import { KnowledgeClientError } from "./api/client";
 import type { DocumentStatus, IngestionStage } from "./api/types";
 
 export const COPY = {
-  appName: "Athena",
-  workspaceName: "Athena Lab",
+  appName: "Tapper",
+  workspaceName: "Tapper Lab",
   askTab: "问答",
   libraryTab: "知识库",
   askTitle: "从已就绪的来源开始提问",
   askDescription:
     "完整的来源选择、回答与引用核验将在下一阶段接入。这里不会生成模拟回答。",
   libraryTitle: "知识库",
-  libraryDescription: "管理 Athena 可以引用的本地来源与处理状态。",
+  libraryDescription: "管理 Tapper 可以引用的本地来源与处理状态。",
   addSource: "添加来源",
   emptyTitle: "还没有来源",
   emptyDescription: "添加一份文档，处理完成后即可用于基于来源的问答。",
@@ -69,7 +69,7 @@ export const COPY = {
   sourcesEmptyDescription: "请先在知识库添加文档并等待处理完成。",
   sourcesFailure: "暂时无法加载来源，请稍后重试。",
   questionTitle: "问答",
-  questionDescription: "Athena 只依据当前选择的来源组织可核验回答。",
+  questionDescription: "Tapper 只依据当前选择的来源组织可核验回答。",
   questionLabel: "输入问题",
   questionPlaceholder: "输入一个关于所选来源的问题",
   ask: "提问",

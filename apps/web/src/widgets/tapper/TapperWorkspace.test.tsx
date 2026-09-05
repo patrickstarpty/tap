@@ -26,7 +26,7 @@ import {
   retrievalCitation,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
-import { AthenaWorkspace } from "./AthenaWorkspace";
+import { TapperWorkspace } from "./TapperWorkspace";
 
 const workspaceStyles = readFileSync(resolve("src/app/styles.css"), "utf8");
 
@@ -53,7 +53,7 @@ async function ask(user: ReturnType<typeof userEvent.setup>, question: string) {
   await user.click(screen.getByRole("button", { name: "提问" }));
 }
 
-describe("AthenaWorkspace source selection", () => {
+describe("TapperWorkspace source selection", () => {
   it("starts empty, enables only ready sources, and never submits without a source", async () => {
     const api = fakeKnowledgeClient().withDocuments([
       readyDocument("ready", "same.md"),
@@ -81,7 +81,7 @@ describe("AthenaWorkspace source selection", () => {
         stage: "ready",
       }),
     ]);
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
 
     expect(await screen.findByText("已选择 0 个来源")).toBeVisible();
     expect(
@@ -103,7 +103,7 @@ describe("AthenaWorkspace source selection", () => {
       return readyDocument(id);
     });
     const api = fakeKnowledgeClient().withDocuments(documents);
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
 
     await user.click(
       await screen.findByRole("button", {
@@ -124,7 +124,7 @@ describe("AthenaWorkspace source selection", () => {
       readyDocument("doc-a", "shared.md"),
       readyDocument("doc-b", "shared.md"),
     ]);
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /shared\.md.*doc-a/u);
 
     await user.type(
@@ -143,7 +143,7 @@ describe("AthenaWorkspace source selection", () => {
 
   it("renders truthful pending, error, and empty source states", async () => {
     const pending = fakeKnowledgeClient().deferList();
-    const pendingRender = renderKnowledgeApp(<AthenaWorkspace />, {
+    const pendingRender = renderKnowledgeApp(<TapperWorkspace />, {
       api: pending,
     });
     expect(await screen.findByLabelText("正在加载来源")).toBeVisible();
@@ -156,7 +156,7 @@ describe("AthenaWorkspace source selection", () => {
       status: 503,
       detail: "provider secret",
     });
-    const failedRender = renderKnowledgeApp(<AthenaWorkspace />, {
+    const failedRender = renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient().withListProblem(problem),
     });
     expect(
@@ -165,19 +165,19 @@ describe("AthenaWorkspace source selection", () => {
     expect(screen.queryByText("还没有可用来源")).not.toBeInTheDocument();
     failedRender.unmount();
 
-    renderKnowledgeApp(<AthenaWorkspace />, { api: fakeKnowledgeClient() });
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
     expect(await screen.findByText("还没有可用来源")).toBeVisible();
   });
 });
 
-describe("AthenaWorkspace answer lifecycle", () => {
+describe("TapperWorkspace answer lifecycle", () => {
   it("sends the exact trimmed quick/doc/scope request with no hidden controls", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().withDocuments([
       readyDocument("doc-b"),
       readyDocument("doc-a"),
     ]);
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-b/u);
     await selectSource(user, /doc-a/u);
 
@@ -206,7 +206,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
     const api = fakeKnowledgeClient()
       .withDocuments([readyDocument("doc-a")])
       .deferAnswer();
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     const textbox = screen.getByRole("textbox", { name: "输入问题" });
     await user.type(textbox, "退款规则是什么？");
@@ -220,7 +220,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
   it("keeps Shift+Enter as a multiline edit without submitting", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().withDocuments([readyDocument("doc-a")]);
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     const textbox = screen.getByRole("textbox", { name: "输入问题" });
     await user.type(textbox, "第一行");
@@ -235,7 +235,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
   it("does not submit an Enter key event during IME composition", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().withDocuments([readyDocument("doc-a")]);
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     const textbox = screen.getByRole("textbox", { name: "输入问题" });
     await user.type(textbox, "退款规则");
@@ -257,7 +257,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
     const api = fakeKnowledgeClient()
       .withDocuments([readyDocument("doc-a")])
       .deferAnswer();
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     const textbox = screen.getByRole("textbox", { name: "输入问题" });
     await user.type(textbox, "退款规则是什么？");
@@ -293,7 +293,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
     const api = fakeKnowledgeClient()
       .withDocuments([readyDocument("doc-a"), readyDocument("doc-b")])
       .deferAnswer({ ignoreAbort: true });
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
     expect(api.answerCalls).toHaveLength(1);
@@ -326,7 +326,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
       .withDocuments([readyDocument("doc-a"), readyDocument("doc-b")])
       .deferAnswer({ ignoreAbort: true })
       .deferAnswer({ ignoreAbort: true });
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "第一次问题");
     await selectSource(user, /doc-b/u);
@@ -347,7 +347,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
     const api = fakeKnowledgeClient()
       .withDocuments([readyDocument("doc-a")])
       .deferAnswer();
-    const rendered = renderKnowledgeApp(<AthenaWorkspace />, { api });
+    const rendered = renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
 
@@ -364,7 +364,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
       .withDocuments([readyDocument("doc-a"), readyDocument("doc-b")])
       .withAnswer(response)
       .withCitation(citationPreview());
-    const { queryClient } = renderKnowledgeApp(<AthenaWorkspace />, { api });
+    const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
     expect(await screen.findByText("😀退款需要两人审批。")).toBeVisible();
@@ -421,7 +421,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
           detail: "secret=sk-provider",
         }),
       );
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
 
@@ -446,7 +446,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
           detail: "secret=sk-provider",
         }),
       );
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
 
@@ -495,7 +495,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
       const api = fakeKnowledgeClient()
         .withDocuments([readyDocument("doc-a")])
         .withAnswer(body as unknown as RetrievalAnswerResponse);
-      renderKnowledgeApp(<AthenaWorkspace />, { api });
+      renderKnowledgeApp(<TapperWorkspace />, { api });
       await selectSource(user, /doc-a/u);
       await ask(user, "退款规则是什么？");
 
@@ -512,7 +512,7 @@ describe("AthenaWorkspace answer lifecycle", () => {
   );
 });
 
-describe("AthenaWorkspace claim and citation integrity", () => {
+describe("TapperWorkspace claim and citation integrity", () => {
   it("uses code-point offsets, original claim order, and claim-local stable citation numbers", () => {
     const onOpen = vi.fn();
     const first = retrievalCitation("citation-a");
@@ -543,7 +543,7 @@ describe("AthenaWorkspace claim and citation integrity", () => {
     );
 
     const claims = globalThis.document.querySelectorAll(
-      ".athena-grounded-claim",
+      ".tapper-grounded-claim",
     );
     expect(claims).toHaveLength(2);
     expect(
@@ -666,7 +666,7 @@ describe("AthenaWorkspace claim and citation integrity", () => {
       .withAnswer(response)
       .deferCitation("citation-a", { ignoreAbort: true })
       .deferCitation("citation-b", { ignoreAbort: true });
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
 
@@ -697,7 +697,7 @@ describe("AthenaWorkspace claim and citation integrity", () => {
       .withDocuments([readyDocument("doc-a")])
       .withAnswer(answerResponse())
       .deferCitation("citation-a", { ignoreAbort: true });
-    const { queryClient } = renderKnowledgeApp(<AthenaWorkspace />, { api });
+    const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
     queryClient.setQueryData(
       knowledgeKeys.citation("citation-a", 3),
       citationPreview({ quote: "不应显示的缓存" }),
@@ -730,7 +730,7 @@ describe("AthenaWorkspace claim and citation integrity", () => {
       .withDocuments([readyDocument("doc-a")])
       .withAnswer(answerResponse())
       .withCitation(citationPreview());
-    const { queryClient } = renderKnowledgeApp(<AthenaWorkspace />, { api });
+    const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
     await user.click(await screen.findByRole("button", { name: "引用 1" }));
@@ -769,7 +769,7 @@ describe("AthenaWorkspace claim and citation integrity", () => {
       .withCitation(
         citationPreview({ chunkContentHash: `sha256:${"c".repeat(64)}` }),
       );
-    renderKnowledgeApp(<AthenaWorkspace />, { api });
+    renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
     await user.click(await screen.findByRole("button", { name: "引用 1" }));
@@ -781,7 +781,7 @@ describe("AthenaWorkspace claim and citation integrity", () => {
   });
 
   it("keeps source, question, and preview in DOM order without nesting another main", async () => {
-    renderKnowledgeApp(<AthenaWorkspace />, {
+    renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient().withDocuments([readyDocument("doc-a")]),
     });
     const source = await screen.findByRole("heading", { name: "来源" });
@@ -797,16 +797,16 @@ describe("AthenaWorkspace claim and citation integrity", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      source.closest(".athena-workspace")?.querySelector("main"),
+      source.closest(".tapper-workspace")?.querySelector("main"),
     ).toBeNull();
   });
 
   it("keeps keyboard focus rings and the search clear target locally visible", () => {
     expect(workspaceStyles).toMatch(
-      /\.athena-workspace \.ant-input:focus-visible,[\s\S]*outline:\s*3px solid[^;]*!important;/u,
+      /\.tapper-workspace \.ant-input:focus-visible,[\s\S]*outline:\s*3px solid[^;]*!important;/u,
     );
     expect(workspaceStyles).toMatch(
-      /\.athena-source-search \.ant-input-clear-icon\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
+      /\.tapper-source-search \.ant-input-clear-icon\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
     );
   });
 });

@@ -55,7 +55,7 @@ function isAnswerResponseObject(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function AthenaWorkspace({
+export function TapperWorkspace({
   pollIntervalMs,
 }: { pollIntervalMs?: number } = {}) {
   const queryClient = useQueryClient();
@@ -243,7 +243,7 @@ export function AthenaWorkspace({
   };
 
   return (
-    <section className="athena-workspace" aria-label="Athena 问答工作区">
+    <section className="tapper-workspace" aria-label="Tapper 问答工作区">
       <SourcesPanel
         documents={documents}
         error={documentsQuery.error}
@@ -261,10 +261,10 @@ export function AthenaWorkspace({
       />
 
       <section
-        className="athena-panel athena-question-panel"
+        className="tapper-panel tapper-question-panel"
         aria-labelledby="question-heading"
       >
-        <header className="athena-panel-header">
+        <header className="tapper-panel-header">
           <div>
             <Typography.Title level={3} id="question-heading">
               {COPY.questionTitle}
@@ -274,9 +274,9 @@ export function AthenaWorkspace({
             </Typography.Paragraph>
           </div>
         </header>
-        <div className="athena-answer-surface">
+        <div className="tapper-answer-surface">
           {answerPending ? (
-            <div className="athena-answer-pending" aria-live="polite">
+            <div className="tapper-answer-pending" aria-live="polite">
               <span>{COPY.pendingSearch}</span>
               <span>{COPY.pendingAnswer}</span>
             </div>
@@ -297,7 +297,7 @@ export function AthenaWorkspace({
           {!answerPending &&
           answerError === null &&
           visibleAnswerState === null ? (
-            <p className="athena-panel-placeholder">{COPY.answerEmpty}</p>
+            <p className="tapper-panel-placeholder">{COPY.answerEmpty}</p>
           ) : null}
         </div>
         <QuestionComposer

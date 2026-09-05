@@ -165,7 +165,7 @@ function validateAnswerGraph(
 function SafeMarkdown({ children }: { children: string }) {
   if (children.length === 0) return null;
   return (
-    <div className="athena-markdown">
+    <div className="tapper-markdown">
       <ReactMarkdown
         rehypePlugins={[[rehypeSanitize, answerSchema]]}
         components={{ a: ({ children: label }) => <span>{label}</span> }}
@@ -186,9 +186,9 @@ function CitedClaim({
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
 }) {
   return (
-    <div className="athena-grounded-claim">
+    <div className="tapper-grounded-claim">
       <SafeMarkdown>{claim.text}</SafeMarkdown>
-      <span className="athena-claim-citations" aria-label="本段引用">
+      <span className="tapper-claim-citations" aria-label="本段引用">
         {claim.citationIds.map((citationId) => (
           <Button
             key={citationId}
@@ -272,10 +272,10 @@ export function GroundedAnswer({
   }
 
   return (
-    <div className="athena-grounded-answer">
+    <div className="tapper-grounded-answer">
       {response.degradedMode ? (
         <Alert
-          className="athena-answer-note"
+          className="tapper-answer-note"
           type="warning"
           showIcon
           title="部分检索能力暂时受限，回答仍仅显示已核验依据。"

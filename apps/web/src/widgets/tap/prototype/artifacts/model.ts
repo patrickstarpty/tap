@@ -1,4 +1,4 @@
-export type ArtifactOrigin = "Athena" | "Manual";
+export type ArtifactOrigin = "Tapper" | "Manual";
 export type AutomationType = "web" | "mobile";
 export type MobilePlatform = "ios" | "android";
 export type BddKeyword = "Given" | "When" | "Then" | "And";

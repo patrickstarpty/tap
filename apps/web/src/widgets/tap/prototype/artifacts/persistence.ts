@@ -5,8 +5,8 @@ import {
 } from "../model";
 import type { ArtifactState } from "./model";
 
-export const PROTOTYPE_SNAPSHOT_VERSION = 1 as const;
-export const PROTOTYPE_STORAGE_KEY = "tap.prototype.workspace.v1";
+export const PROTOTYPE_SNAPSHOT_VERSION = 2 as const;
+export const PROTOTYPE_STORAGE_KEY = "tap.prototype.workspace.v2";
 
 export interface PrototypeSnapshot {
   version: typeof PROTOTYPE_SNAPSHOT_VERSION;

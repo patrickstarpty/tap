@@ -34,7 +34,7 @@ import { AccessibleDialog } from "./AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
 
-interface AthenaChatProps {
+interface TapperChatProps {
   agents: readonly CatalogItem[];
   conversation: Conversation;
   copy: PrototypeCopy;
@@ -95,7 +95,7 @@ function formatQuestionCount(
   );
 }
 
-export function AthenaChat({
+export function TapperChat({
   agents,
   conversation,
   copy,
@@ -108,7 +108,7 @@ export function AthenaChat({
   renderAssistantTurn,
   skills,
   sources,
-}: AthenaChatProps) {
+}: TapperChatProps) {
   const [message, setMessage] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -551,8 +551,8 @@ export function AthenaChat({
       aria-label={copy.chat.messageComposer}
       onSubmit={submit}
     >
-      <label className="athena-visually-hidden" htmlFor="tap-message">
-        {copy.chat.messageAthena}
+      <label className="tapper-visually-hidden" htmlFor="tap-message">
+        {copy.chat.messageTapper}
       </label>
       <Input.TextArea
         ref={composerRef}

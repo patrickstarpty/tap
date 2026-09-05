@@ -90,7 +90,7 @@ export function DocumentDetail({
         />
       ) : null}
       {detailQuery.data !== undefined ? (
-        <div className="athena-detail-stack">
+        <div className="tapper-detail-stack">
           <section aria-labelledby="source-facts-heading">
             <Typography.Title level={5} id="source-facts-heading">
               {COPY.immutableFacts}
@@ -100,7 +100,7 @@ export function DocumentDetail({
                 <code>{detailQuery.data.revisionId}</code>
               </Descriptions.Item>
               <Descriptions.Item label={COPY.sourceHash}>
-                <code className="athena-hash">
+                <code className="tapper-hash">
                   {detailQuery.data.sourceContentHash}
                 </code>
               </Descriptions.Item>
@@ -117,7 +117,7 @@ export function DocumentDetail({
                 return {
                   color: TIMELINE_COLOR[snapshot.state],
                   content: (
-                    <div className="athena-timeline-item">
+                    <div className="tapper-timeline-item">
                       <span>{STAGE_TITLES[stage]}</span>
                       <small>{STAGE_STATE_COPY[snapshot.state]}</small>
                     </div>
@@ -131,7 +131,7 @@ export function DocumentDetail({
             <Typography.Title level={5} id="normalized-preview-heading">
               {COPY.normalizedPreview}
             </Typography.Title>
-            <pre className="athena-preview">
+            <pre className="tapper-preview">
               {detailQuery.data.normalizedPreview ?? COPY.previewUnavailable}
             </pre>
           </section>

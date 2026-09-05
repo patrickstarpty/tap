@@ -75,7 +75,7 @@ function circularImport(chunks: readonly string[]): string[] {
 describe("production build", () => {
   it("keeps every minified JavaScript chunk below the Vite warning boundary", async () => {
     const outputDirectory = mkdtempSync(
-      join(tmpdir(), "tap-athena-web-build-"),
+      join(tmpdir(), "tap-tapper-web-build-"),
     );
 
     try {

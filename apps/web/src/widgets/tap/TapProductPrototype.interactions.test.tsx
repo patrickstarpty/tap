@@ -209,7 +209,7 @@ describe("Tap product prototype interactions", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
     const prompt = "Summarize the life insurance underwriting rules";
     await user.click(screen.getByRole("button", { name: prompt }));
 
@@ -218,7 +218,7 @@ describe("Tap product prototype interactions", () => {
     expect(screen.queryByRole("log", { name: "Conversation" })).toBeNull();
   });
 
-  it("separates the product rail from the collapsible Athena sidebar", async () => {
+  it("separates the product rail from the collapsible Tapper sidebar", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -232,32 +232,32 @@ describe("Tap product prototype interactions", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
-    const athenaSidebar = screen.getByRole("complementary", {
-      name: "Athena tools",
+    ).toEqual(["Tapper", "Test Management", "Low Code Automation"]);
+    const tapperSidebar = screen.getByRole("complementary", {
+      name: "Tapper tools",
     });
-    const athenaNavigation = within(athenaSidebar).getByRole("navigation", {
-      name: "Athena tools",
+    const tapperNavigation = within(tapperSidebar).getByRole("navigation", {
+      name: "Tapper tools",
     });
     expect(
-      within(athenaNavigation)
+      within(tapperNavigation)
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
     ).toEqual(["New chat", "Agent", "Skills", "Library"]);
-    const newChatButton = within(athenaNavigation).getByRole("button", {
+    const newChatButton = within(tapperNavigation).getByRole("button", {
       name: "New chat",
     });
     expect(newChatButton.querySelector(".anticon-form")).toBeVisible();
     expect(newChatButton.querySelector(".anticon-plus")).toBeNull();
     expect(
-      within(athenaNavigation)
+      within(tapperNavigation)
         .getAllByRole("button")
         .map((item) => item.className),
     ).toEqual([
-      "tap-navigation-item tap-navigation-item--athena",
-      "tap-navigation-item tap-navigation-item--athena",
-      "tap-navigation-item tap-navigation-item--athena",
-      "tap-navigation-item tap-navigation-item--athena",
+      "tap-navigation-item tap-navigation-item--tapper",
+      "tap-navigation-item tap-navigation-item--tapper",
+      "tap-navigation-item tap-navigation-item--tapper",
+      "tap-navigation-item tap-navigation-item--tapper",
     ]);
 
     const collapseSidebar = screen.getByRole("button", {
@@ -268,7 +268,7 @@ describe("Tap product prototype interactions", () => {
     ).toHaveAttribute("data-panel-state", "expanded");
     await user.click(collapseSidebar);
     expect(
-      screen.queryByRole("complementary", { name: "Athena tools" }),
+      screen.queryByRole("complementary", { name: "Tapper tools" }),
     ).not.toBeInTheDocument();
     const expandSidebar = screen.getByRole("button", {
       name: "Expand sidebar",
@@ -280,7 +280,7 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(expandSidebar);
     const restoredSidebar = screen.getByRole("complementary", {
-      name: "Athena tools",
+      name: "Tapper tools",
     });
     expect(restoredSidebar).toBeVisible();
     expect(
@@ -290,32 +290,32 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
-  it("shows Athena tools only while the Athena workspace is active", async () => {
+  it("shows Tapper tools only while the Tapper workspace is active", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    const athenaButton = screen.getByRole("button", { name: "Athena" });
-    expect(athenaButton).toHaveAttribute("aria-expanded", "true");
+    const tapperButton = screen.getByRole("button", { name: "Tapper" });
+    expect(tapperButton).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("navigation", { name: "Athena tools" }),
+      screen.getByRole("navigation", { name: "Tapper tools" }),
     ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Test Management" }));
 
-    expect(athenaButton).toHaveAttribute("aria-expanded", "false");
+    expect(tapperButton).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.queryByRole("navigation", { name: "Athena tools" }),
+      screen.queryByRole("navigation", { name: "Tapper tools" }),
     ).not.toBeInTheDocument();
 
-    await user.click(athenaButton);
+    await user.click(tapperButton);
 
-    expect(athenaButton).toHaveAttribute("aria-expanded", "true");
+    expect(tapperButton).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("navigation", { name: "Athena tools" }),
+      screen.getByRole("navigation", { name: "Tapper tools" }),
     ).toBeVisible();
   });
 
-  it("restores the last Athena surface when the workspace is reopened", async () => {
+  it("restores the last Tapper surface when the workspace is reopened", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -323,7 +323,7 @@ describe("Tap product prototype interactions", () => {
     expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Test Management" }));
-    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
 
     expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute(
@@ -332,7 +332,7 @@ describe("Tap product prototype interactions", () => {
     );
   });
 
-  it("opens Athena tools as an inert mobile drawer and restores focus when dismissed", async () => {
+  it("opens Tapper tools as an inert mobile drawer and restores focus when dismissed", async () => {
     const matchMedia = mockNarrowViewport();
 
     try {
@@ -341,23 +341,23 @@ describe("Tap product prototype interactions", () => {
       const productRail = screen.getByRole("complementary", {
         name: "Product",
       });
-      const athenaButton = within(productRail).getByRole("button", {
-        name: "Athena",
+      const tapperButton = within(productRail).getByRole("button", {
+        name: "Tapper",
       });
       const main = screen.getByRole("main");
 
       expect(
-        screen.queryByRole("complementary", { name: "Athena tools" }),
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
       ).not.toBeInTheDocument();
       expect(main).not.toHaveAttribute("aria-hidden");
 
-      await user.click(athenaButton);
+      await user.click(tapperButton);
 
       const collapseButton = screen.getByRole("button", {
         name: "Collapse sidebar",
       });
       expect(
-        screen.getByRole("complementary", { name: "Athena tools" }),
+        screen.getByRole("complementary", { name: "Tapper tools" }),
       ).toBeVisible();
       expect(productRail).toBeVisible();
       expect(main).toHaveAttribute("aria-hidden", "true");
@@ -368,7 +368,7 @@ describe("Tap product prototype interactions", () => {
       await user.keyboard("{Escape}");
 
       expect(
-        screen.queryByRole("complementary", { name: "Athena tools" }),
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
       ).not.toBeInTheDocument();
       expect(main).not.toHaveAttribute("aria-hidden");
       expect(main).not.toHaveAttribute("inert");
@@ -386,40 +386,40 @@ describe("Tap product prototype interactions", () => {
         screen.getByRole("button", { name: "Expand sidebar" }),
       ).toHaveFocus();
 
-      await user.click(athenaButton);
+      await user.click(tapperButton);
       await user.click(screen.getByRole("button", { name: "New chat" }));
       expect(
-        screen.queryByRole("complementary", { name: "Athena tools" }),
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole("textbox", { name: "Message Athena" }),
+        screen.getByRole("textbox", { name: "Message Tapper" }),
       ).toHaveFocus();
     } finally {
       matchMedia.mockRestore();
     }
   });
 
-  it("moves focus to a mobile Athena destination and restores that surface", async () => {
+  it("moves focus to a mobile Tapper destination and restores that surface", async () => {
     const matchMedia = mockNarrowViewport();
 
     try {
       const user = userEvent.setup();
       renderPrototype();
-      const athenaButton = screen.getByRole("button", { name: "Athena" });
+      const tapperButton = screen.getByRole("button", { name: "Tapper" });
 
-      await user.click(athenaButton);
+      await user.click(tapperButton);
       await user.click(screen.getByRole("button", { name: "Skills" }));
 
       expect(
-        screen.queryByRole("complementary", { name: "Athena tools" }),
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
       ).not.toBeInTheDocument();
       const skillsHeading = screen.getByRole("heading", { name: "Skills" });
       expect(skillsHeading).toHaveFocus();
 
-      await user.click(athenaButton);
+      await user.click(tapperButton);
 
       expect(
-        screen.getByRole("complementary", { name: "Athena tools" }),
+        screen.getByRole("complementary", { name: "Tapper tools" }),
       ).toBeVisible();
       expect(skillsHeading).toBeVisible();
       expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute(
@@ -431,15 +431,15 @@ describe("Tap product prototype interactions", () => {
     }
   });
 
-  it("keeps the compact Athena and Knowledge sources drawers mutually exclusive", async () => {
+  it("keeps the compact Tapper and Knowledge sources drawers mutually exclusive", async () => {
     const matchMedia = mockNarrowViewport();
 
     try {
       const user = userEvent.setup();
       renderPrototype();
-      const athenaButton = within(
+      const tapperButton = within(
         screen.getByRole("complementary", { name: "Product" }),
-      ).getByRole("button", { name: "Athena" });
+      ).getByRole("button", { name: "Tapper" });
 
       await user.click(
         screen.getByRole("button", { name: "Expand Knowledge sources" }),
@@ -448,7 +448,7 @@ describe("Tap product prototype interactions", () => {
         screen.getByRole("complementary", { name: "Knowledge sources" }),
       ).toBeVisible();
 
-      await user.click(athenaButton);
+      await user.click(tapperButton);
       await user.click(
         screen.getByRole("button", { name: "Collapse sidebar" }),
       );
@@ -470,7 +470,7 @@ describe("Tap product prototype interactions", () => {
     const englishPrompt = "What evidence is needed for life underwriting?";
 
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       englishPrompt,
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -486,7 +486,7 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
     await user.type(
-      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      screen.getByRole("textbox", { name: "向 Tapper 发送消息" }),
       "寿险投保需要什么资料？",
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -510,13 +510,13 @@ describe("Tap product prototype interactions", () => {
     const { container } = renderPrototype();
 
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "What evidence is needed for life underwriting?",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
     await user.click(screen.getByRole("button", { name: "中文" }));
     await user.type(
-      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      screen.getByRole("textbox", { name: "向 Tapper 发送消息" }),
       "寿险投保需要什么资料？",
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -533,7 +533,7 @@ describe("Tap product prototype interactions", () => {
 
     const message = "What evidence is needed for life insurance underwriting?";
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       message,
     );
     await user.keyboard("{Enter}");
@@ -558,7 +558,7 @@ describe("Tap product prototype interactions", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
     const latestPrompt = "Review the beneficiary evidence";
 
     await user.type(composer, "Summarize the underwriting rules");
@@ -689,7 +689,7 @@ describe("Tap product prototype interactions", () => {
     ).toBeNull();
   });
 
-  it("uses a Codex-style model-only selector in the Athena composer", async () => {
+  it("uses a Codex-style model-only selector in the Tapper composer", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -733,7 +733,7 @@ describe("Tap product prototype interactions", () => {
   it("closes the model menu without stealing focus from the composer", async () => {
     const user = userEvent.setup();
     renderPrototype();
-    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
 
     await user.click(
       screen.getByRole("button", {
@@ -760,7 +760,7 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("menuitemradio", { name: "GPT-5.6 Luna" }),
     );
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       prompt,
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -784,30 +784,31 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
   });
 
-  it("uses a single white Athena mark only in the product rail", async () => {
+  it("uses the Tapper ink mark and wordmark in the product shell", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
     const productRail = screen.getByRole("complementary", { name: "Product" });
-    const athenaButton = within(productRail).getByRole("button", {
-      name: "Athena",
+    const tapperButton = within(productRail).getByRole("button", {
+      name: "Tapper",
     });
-    const railMark = within(athenaButton).getByText("A");
+    const railMark = tapperButton.querySelector(
+      'img[src*="tapper-mark-ink.svg"]',
+    );
     expect(railMark).toBeVisible();
     expect(prototypeStyles).toMatch(
-      /^\.tap-athena-rail-mark\s*{[^}]*background:\s*#fff;/m,
+      /^\.tap-tapper-rail-mark\s*\{[^}]*width:\s*24px;[^}]*height:\s*24px;/m,
     );
-    const athenaHeading = screen.getByRole("heading", { name: "Athena" });
-    expect(within(athenaHeading).queryByText("A")).toBeNull();
-    expect(screen.getAllByText("A")).toHaveLength(1);
+    const tapperHeading = screen.getByRole("heading", { name: "Tapper" });
+    expect(
+      tapperHeading.querySelector('img[src*="tapper-wordmark-ink.svg"]'),
+    ).not.toBeNull();
 
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "What evidence is needed?",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
-
-    expect(screen.getAllByText("A")).toHaveLength(1);
 
     await user.click(
       within(productRail).getByRole("button", { name: "Test Management" }),
@@ -872,7 +873,7 @@ describe("Tap product prototype interactions", () => {
     });
     renderPrototype();
 
-    const composer = screen.getByRole("textbox", { name: "Message Athena" });
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
     await user.type(composer, "First underwriting question");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await user.type(composer, "Second underwriting question");
@@ -952,7 +953,7 @@ describe("Tap product prototype interactions", () => {
 
     try {
       renderPrototype();
-      const composer = screen.getByRole("textbox", { name: "Message Athena" });
+      const composer = screen.getByRole("textbox", { name: "Message Tapper" });
       for (let index = 1; index <= 7; index += 1) {
         await user.type(composer, `Question ${index}`);
         await user.click(screen.getByRole("button", { name: "Send" }));
@@ -1342,7 +1343,7 @@ describe("Tap product prototype interactions", () => {
       /--tap-panel-motion-easing:\s*cubic-bezier\(0\.16, 1, 0\.3, 1\);/m,
     );
     expect(prototypeStyles).not.toMatch(
-      /\.tap-athena-sidebar\s*\{[^}]*opacity:/m,
+      /\.tap-tapper-sidebar\s*\{[^}]*opacity:/m,
     );
     expect(prototypeStyles).not.toMatch(
       /\.tap-sources-shell\s*\{[^}]*opacity:/m,
@@ -1409,7 +1410,7 @@ describe("Tap product prototype interactions", () => {
       }),
     );
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       firstPrompt,
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -1425,7 +1426,7 @@ describe("Tap product prototype interactions", () => {
       }),
     );
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "What rules apply to the application?",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -1477,7 +1478,7 @@ describe("Tap product prototype interactions", () => {
     const { container } = renderPrototype();
 
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "What information is needed for a life insurance application?",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -1505,7 +1506,7 @@ describe("Tap product prototype interactions", () => {
       }),
     );
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "Create BDD tests for beneficiary designation",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -1516,7 +1517,7 @@ describe("Tap product prototype interactions", () => {
       }),
     );
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "Generate an automation script for policy submission",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -2064,7 +2065,7 @@ describe("Tap product prototype interactions", () => {
     expect(localSource).not.toHaveAccessibleName(/immutable revision/);
     await user.click(localSource);
     await user.type(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
       "What beneficiary details are needed?",
     );
     await user.click(screen.getByRole("button", { name: "Send" }));

@@ -58,7 +58,7 @@ describe("prototype artifact state", () => {
   });
 
   it("carries generated Test Plan identifiers through the BDD trace mapping", () => {
-    const automation = createLifeAutomation("AUTO-205", "TP-205", "Athena");
+    const automation = createLifeAutomation("AUTO-205", "TP-205", "Tapper");
     const scenario = automation.feature.scenarios[0]!;
     const step = scenario.steps[0]!;
 

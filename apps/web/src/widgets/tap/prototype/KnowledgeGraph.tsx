@@ -611,7 +611,7 @@ export function KnowledgeGraph({
 
         <section
           id="tap-library-graph-summary"
-          className="athena-visually-hidden"
+          className="tapper-visually-hidden"
           aria-label={copy.library.graphSummary}
         >
           <h2>{copy.library.graphSummary}</h2>

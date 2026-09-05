@@ -1,5 +1,5 @@
 .tap-product-shell {
-  --tap-athena-sidebar-width: 236px;
+  --tap-tapper-sidebar-width: 236px;
   --tap-canvas: #f7f7f5;
   --tap-ink: #1f2328;
   --tap-muted: #626871;
@@ -20,9 +20,9 @@
     var(--tap-panel-motion-easing);
 }
 
-.tap-product-shell--athena-open {
+.tap-product-shell--tapper-open {
   grid-template-columns:
-    68px var(--tap-athena-sidebar-width)
+    68px var(--tap-tapper-sidebar-width)
     minmax(0, 1fr);
 }
 
@@ -36,7 +36,7 @@
 }
 
 .tap-product-rail,
-.tap-athena-sidebar {
+.tap-tapper-sidebar {
   position: sticky;
   top: 0;
   display: flex;
@@ -53,9 +53,9 @@
   padding: 14px 10px 12px;
 }
 
-.tap-athena-sidebar {
+.tap-tapper-sidebar {
   z-index: 10;
-  width: var(--tap-athena-sidebar-width);
+  width: var(--tap-tapper-sidebar-width);
   min-width: 0;
   border-right: 1px solid #e0e0dc;
   background: #f5f5f2;
@@ -70,7 +70,7 @@
   will-change: transform;
 }
 
-.tap-athena-sidebar[data-collapsed="true"] {
+.tap-tapper-sidebar[data-collapsed="true"] {
   pointer-events: none;
   transform: translate3d(-100%, 0, 0);
   visibility: hidden;
@@ -79,7 +79,7 @@
     visibility 0s var(--tap-panel-motion-duration);
 }
 
-.tap-athena-sidebar-header {
+.tap-tapper-sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -88,7 +88,7 @@
   padding: 0 2px 12px 8px;
 }
 
-.tap-athena-sidebar-header h2 {
+.tap-tapper-sidebar-header h2 {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -100,18 +100,16 @@
   letter-spacing: -0.025em;
 }
 
-.tap-athena-rail-mark {
-  display: grid;
+.tap-tapper-rail-mark {
   width: 24px;
   height: 24px;
-  border-radius: 8px;
-  background: #fff;
-  color: var(--tap-accent-dark);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1;
-  place-items: center;
+  object-fit: contain;
+}
+
+.tap-tapper-wordmark {
+  display: block;
+  width: 96px;
+  height: auto;
 }
 
 .tap-brand {
@@ -178,12 +176,13 @@
   border-radius: 10px;
   background: #27272a;
   color: #fff;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 19px;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.625rem;
+  font-weight: 750;
+  letter-spacing: -0.035em;
   place-items: center;
 }
 
-.tap-brand strong,
 .tap-product-rail .tap-sidebar-label,
 .tap-product-rail .tap-sidebar-copy {
   display: none;
@@ -197,7 +196,7 @@
   overflow-y: auto;
 }
 
-.tap-athena-navigation {
+.tap-tapper-navigation {
   display: grid;
   gap: 4px;
 }
@@ -249,7 +248,7 @@
   color: #4338a6;
 }
 
-.tap-navigation-item--athena[aria-current="page"] {
+.tap-navigation-item--tapper[aria-current="page"] {
   border-radius: 12px;
   background: #e7e7e5;
   color: #202328;
@@ -399,7 +398,7 @@
   overflow-x: hidden;
 }
 
-.tap-athena-layout {
+.tap-tapper-layout {
   --tap-sources-width: 300px;
   position: relative;
   display: grid;
@@ -409,7 +408,7 @@
     var(--tap-panel-motion-easing);
 }
 
-.tap-athena-layout--sources-collapsed {
+.tap-tapper-layout--sources-collapsed {
   grid-template-columns: minmax(0, 1fr) 0;
 }
 
@@ -3410,12 +3409,12 @@
 
 @media (max-width: 1100px) {
   .tap-product-shell {
-    --tap-athena-sidebar-width: 220px;
+    --tap-tapper-sidebar-width: 220px;
   }
 
-  .tap-product-shell--athena-open {
+  .tap-product-shell--tapper-open {
     grid-template-columns:
-      68px var(--tap-athena-sidebar-width)
+      68px var(--tap-tapper-sidebar-width)
       minmax(0, 1fr);
   }
 
@@ -3453,8 +3452,8 @@
 }
 
 @media (max-width: 820px) {
-  .tap-athena-layout,
-  .tap-athena-layout--sources-collapsed {
+  .tap-tapper-layout,
+  .tap-tapper-layout--sources-collapsed {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -3556,7 +3555,7 @@
 
 @media (max-width: 640px) {
   .tap-product-shell,
-  .tap-product-shell--athena-open {
+  .tap-product-shell--tapper-open {
     grid-template-columns: 64px 0 minmax(0, 1fr);
     padding-bottom: 0;
   }
@@ -3573,7 +3572,7 @@
       max(12px, env(safe-area-inset-bottom));
   }
 
-  .tap-athena-sidebar {
+  .tap-tapper-sidebar {
     position: fixed;
     z-index: 45;
     inset-block: 0;
@@ -3605,7 +3604,7 @@
     width: 100%;
   }
 
-  .tap-athena-layout {
+  .tap-tapper-layout {
     width: 100%;
   }
 
@@ -3999,8 +3998,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tap-product-shell,
-  .tap-athena-sidebar,
-  .tap-athena-layout,
+  .tap-tapper-sidebar,
+  .tap-tapper-layout,
   .tap-sources-shell,
   .tap-navigation-item,
   .tap-quick-prompts button,

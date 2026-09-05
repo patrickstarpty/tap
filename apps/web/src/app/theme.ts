@@ -1,6 +1,6 @@
 import type { ThemeConfig } from "antd";
 
-export const athenaTheme: ThemeConfig = {
+export const tapperTheme: ThemeConfig = {
   token: {
     colorPrimary: "#4f46e5",
     colorInfo: "#4f46e5",

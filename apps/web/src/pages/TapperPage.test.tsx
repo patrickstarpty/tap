@@ -7,7 +7,7 @@ import {
   fakeKnowledgeClient,
 } from "../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../features/knowledge/testing/renderKnowledgeApp";
-import { AthenaPage } from "./AthenaPage";
+import { TapperPage } from "./TapperPage";
 
 function renderPrototype() {
   const api = fakeKnowledgeClient().withDocuments([
@@ -24,25 +24,39 @@ function renderPrototype() {
       stage: "ready",
     }),
   ]);
-  return renderKnowledgeApp(<AthenaPage />, { api });
+  return renderKnowledgeApp(<TapperPage />, { api });
 }
 
 async function sendMessage(
   user: ReturnType<typeof userEvent.setup>,
   text: string,
 ) {
-  const composer = screen.getByRole("textbox", { name: "Message Athena" });
+  const composer = screen.getByRole("textbox", { name: "Message Tapper" });
   await user.clear(composer);
   await user.type(composer, text);
   await user.click(screen.getByRole("button", { name: "Send" }));
 }
 
-describe("Athena product prototype", () => {
+describe("Tapper product prototype", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
-  it("uses the integrated Athena navigation and keeps sources inside Athena", async () => {
+  it("shows TAP platform and Tapper workspace identities", () => {
+    renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
+
+    expect(screen.getByLabelText("TAP platform")).toHaveTextContent(/^TAP$/);
+    const entry = screen.getByRole("button", { name: "Tapper" });
+    expect(
+      entry.querySelector('img[src*="tapper-mark-ink.svg"]'),
+    ).not.toBeNull();
+    const heading = screen.getByRole("heading", { name: "Tapper" });
+    expect(
+      heading.querySelector('img[src*="tapper-wordmark-ink.svg"]'),
+    ).not.toBeNull();
+  });
+
+  it("uses the integrated Tapper navigation and keeps sources inside Tapper", async () => {
     renderPrototype();
 
     const navigation = screen.getByRole("navigation", { name: "Product" });
@@ -50,9 +64,9 @@ describe("Athena product prototype", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Athena", "Test Management", "Low Code Automation"]);
+    ).toEqual(["Tapper", "Test Management", "Low Code Automation"]);
     expect(
-      within(screen.getByRole("navigation", { name: "Athena tools" }))
+      within(screen.getByRole("navigation", { name: "Tapper tools" }))
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
     ).toEqual(["New chat", "Agent", "Skills", "Library"]);
@@ -99,7 +113,7 @@ describe("Athena product prototype", () => {
     ).toHaveAttribute("aria-current", "page");
 
     await user.click(screen.getByRole("button", { name: "Test Management" }));
-    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
     expect(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
@@ -203,7 +217,7 @@ describe("Athena product prototype", () => {
     ).toEqual(["Test Plan", "Test Data"]);
     const importedCell = within(
       screen.getByRole("table", { name: "Test plan list" }),
-    ).getByText("Imported from Athena");
+    ).getByText("Imported from Tapper");
     const importedRow = importedCell.closest<HTMLElement>('[role="row"]');
     expect(importedRow).not.toBeNull();
     expect(
@@ -288,7 +302,7 @@ describe("Athena product prototype", () => {
     ).toBeVisible();
   });
 
-  it("infers Mobile automation in Athena and uses device execution", async () => {
+  it("infers Mobile automation in Tapper and uses device execution", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -320,7 +334,7 @@ describe("Athena product prototype", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("asks for Web or Mobile when Athena cannot infer the channel", async () => {
+  it("asks for Web or Mobile when Tapper cannot infer the channel", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -436,7 +450,7 @@ describe("Athena product prototype", () => {
     await user.clear(firstStep);
     await user.type(firstStep, "an edited first conversation step");
 
-    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
     await sendMessage(
       user,
       "Create another automation script for a life policy",
@@ -462,7 +476,7 @@ describe("Athena product prototype", () => {
     ).toHaveValue("an adult applicant starts a term life application");
   });
 
-  it("keeps both linked artifact handoffs in the Athena response", async () => {
+  it("keeps both linked artifact handoffs in the Tapper response", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -605,7 +619,7 @@ describe("Athena product prototype", () => {
 
     await user.click(screen.getByRole("button", { name: "中文" }));
     await user.type(
-      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      screen.getByRole("textbox", { name: "向 Tapper 发送消息" }),
       "寿险投保需要什么资料？",
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -614,7 +628,7 @@ describe("Athena product prototype", () => {
     expect(
       screen.getByText(/此轮对话未选择知识上下文。此原型输出使用内置演示内容/),
     ).toBeVisible();
-    expect(screen.getByRole("region", { name: "Athena 助手" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Tapper 助手" })).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Import to Test Plan" }),
     ).not.toBeInTheDocument();
@@ -626,7 +640,7 @@ describe("Athena product prototype", () => {
 
     await user.click(screen.getByRole("button", { name: "中文" }));
     await user.type(
-      screen.getByRole("textbox", { name: "向 Athena 发送消息" }),
+      screen.getByRole("textbox", { name: "向 Tapper 发送消息" }),
       "为寿险投保申请生成自动化脚本",
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -692,7 +706,7 @@ describe("Athena product prototype", () => {
     expect(screen.getByRole("table", { name: "低代码自动化" })).toBeVisible();
     expect(screen.getByRole("button", { name: /新建自动化/ })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Athena" }));
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
     await user.click(
       screen.getByRole("button", {
         name: /What evidence is needed for life underwriting\?/,
@@ -714,7 +728,7 @@ describe("Athena product prototype", () => {
     ).toBeVisible();
 
     const composer = within(start).getByRole("textbox", {
-      name: "Message Athena",
+      name: "Message Tapper",
     });
     await user.type(composer, "寿险投保需要什么资料？");
     await user.keyboard("{Enter}");
@@ -727,7 +741,7 @@ describe("Athena product prototype", () => {
       screen.getByRole("form", { name: "Message composer" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("textbox", { name: "Message Athena" }),
+      screen.getByRole("textbox", { name: "Message Tapper" }),
     ).toHaveFocus();
   });
 });

@@ -141,10 +141,10 @@ export function CitationViewer({
 
   return (
     <section
-      className="athena-panel athena-citation-panel"
+      className="tapper-panel tapper-citation-panel"
       aria-labelledby="citation-heading"
     >
-      <header className="athena-panel-header">
+      <header className="tapper-panel-header">
         <Typography.Title level={3} id="citation-heading">
           {COPY.citationTitle}
         </Typography.Title>
@@ -156,7 +156,7 @@ export function CitationViewer({
       </header>
 
       {active === null ? (
-        <p className="athena-panel-placeholder">{COPY.citationEmpty}</p>
+        <p className="tapper-panel-placeholder">{COPY.citationEmpty}</p>
       ) : null}
       {active !== null && citationQuery.isFetching ? (
         <div aria-live="polite">
@@ -182,7 +182,7 @@ export function CitationViewer({
         <Alert type="error" showIcon title={COPY.citationInvalid} />
       ) : null}
       {preview !== null ? (
-        <div className="athena-citation-content">
+        <div className="tapper-citation-content">
           <Typography.Title level={4}>{COPY.citationEvidence}</Typography.Title>
           <Typography.Text strong>{preview.filename}</Typography.Text>
           <Descriptions column={1} size="small" bordered>
@@ -210,7 +210,7 @@ export function CitationViewer({
                 : `${preview.anchor.startOffset}–${preview.anchor.endOffset}`}
             </Descriptions.Item>
           </Descriptions>
-          <blockquote className="athena-citation-quote">
+          <blockquote className="tapper-citation-quote">
             <span>{preview.prefix ?? ""}</span>
             <mark>{preview.quote}</mark>
             <span>{preview.suffix ?? ""}</span>

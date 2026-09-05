@@ -96,7 +96,7 @@ describe("GroundedAnswer Markdown safety", () => {
       />,
     );
 
-    const pre = container.querySelector(".athena-markdown pre");
+    const pre = container.querySelector(".tapper-markdown pre");
     expect(pre).not.toBeNull();
     expect(pre?.textContent).toContain(code);
   });
