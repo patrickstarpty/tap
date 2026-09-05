@@ -1,6 +1,6 @@
 # TAP 客户原型演示指南
 
-本文用于向客户演示 TAP 当前纯前端交互原型。它按实际演示顺序覆盖 Athena、Library、Test Management 和 Low Code Automation 的页面、弹窗、关键状态与跨模块旅程，并给出演示话术和能力边界。
+本文用于向客户演示 TAP 当前纯前端交互原型。它按实际演示顺序覆盖 Tapper、Library、Test Management 和 Low Code Automation 的页面、弹窗、关键状态与跨模块旅程，并给出演示话术和能力边界。
 
 产品需求的规范性事实源仍是 [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。本文是面向演示的图文说明，不替代 RFC、ADR、实施计划或验收记录。
 
@@ -22,11 +22,11 @@ corepack pnpm --dir apps/web dev --port 4175
 
 | 时长   | 内容                       | 客户应获得的结论                                                     |
 | ------ | -------------------------- | -------------------------------------------------------------------- |
-| 2 分钟 | 产品壳层与 Athena          | TAP 用统一 AI 入口串联知识、测试资产与自动化工作流。                 |
+| 2 分钟 | 产品壳层与 Tapper          | TAP 用统一 AI 入口串联知识、测试资产与自动化工作流。                 |
 | 3 分钟 | Library 与 Knowledge Graph | 用户可以选择知识上下文，并以高密度关系图探索领域实体。               |
 | 3 分钟 | Test Management            | Test Plan 是业务测试意图和执行结果的管理入口。                       |
 | 4 分钟 | Low Code Automation        | BDD 步骤与 Click、Send keys、Navigate、Assert 等动作显式映射。       |
-| 3 分钟 | Athena 端到端生成旅程      | Athena 先询问 Test Plan，再生成并关联 Automation，最后提供双向跳转。 |
+| 3 分钟 | Tapper 端到端生成旅程      | Tapper 先询问 Test Plan，再生成并关联 Automation，最后提供双向跳转。 |
 
 ### 必须主动说明的边界
 
@@ -38,22 +38,22 @@ corepack pnpm --dir apps/web dev --port 4175
 | Graphify 式节点、社区、关系和详情交互                            | 已接入生产图数据库、实时图谱抽取或企业知识治理                               |
 | Composer 中选择 GPT 模型                                         | 已真实调用 UI 中所选模型，或已实现模型路由、计费与配额治理                   |
 
-术语必须保持清晰：**AI Agent** 是 Athena 中负责分析、生成和调整资产的智能体；**Execution Agent** 是负责实际执行 Web Automation 的 **Pipeline Agent**。现行首个 Provider 是 Jenkins；截图中的 Azure DevOps Agent 只属于遗留模拟探索。两者不是同一类 Agent。
+术语必须保持清晰：**AI Agent** 是 Tapper 中负责分析、生成和调整资产的智能体；**Execution Agent** 是负责实际执行 Web Automation 的 **Pipeline Agent**。现行首个 Provider 是 Jenkins；截图中的 Azure DevOps Agent 只属于遗留模拟探索。两者不是同一类 Agent。
 
-## 一、产品壳层与 Athena
+## 一、产品壳层与 Tapper
 
-### 1. Athena 新对话首页
+### 1. Tapper 新对话首页
 
-![Athena 新对话首页](../assets/prototype-demo/01-athena-new-chat.jpg)
+![Tapper 新对话首页](../assets/prototype-demo/01-tapper-new-chat.jpg)
 
 - **页面目的**：提供全产品统一的自然语言入口，并保持与测试管理、低代码自动化一致的视觉体系。
-- **界面结构**：最左侧是一级产品 Rail；Athena 激活后显示二级菜单 `New chat`、`Agent`、`Skills`、`Library`；中间是对话区；右侧是可折叠的 Knowledge sources。
+- **界面结构**：最左侧是一级产品 Rail；Tapper 激活后显示二级菜单 `New chat`、`Agent`、`Skills`、`Library`；中间是对话区；右侧是可折叠的 Knowledge sources。
 - **演示重点**：输入框底部只显示 `GPT-5.6 Sol` 和下拉箭头，不出现 Fast、Ultra 或闪电图标；`+` 用于添加 Knowledge、AI Agent 或 Skill。
-- **建议话术**：“用户可以从一个问题开始，也可以先组合知识、Agent 和 Skill，再让 Athena 生成测试资产。”
+- **建议话术**：“用户可以从一个问题开始，也可以先组合知识、Agent 和 Skill，再让 Tapper 生成测试资产。”
 
 ### 2. Conversation 历史与问题 Minimap
 
-![Athena Conversation 与 Minimap](../assets/prototype-demo/02-athena-conversation-minimap.jpg)
+![Tapper Conversation 与 Minimap](../assets/prototype-demo/02-tapper-conversation-minimap.jpg)
 
 - **Conversation 规则**：空白 New chat 不创建历史；发出第一条消息后才新增一条 Conversation；同一 Conversation 的后续问答继续追加，不会一问一条历史。
 - **恢复行为**：当前纯前端原型使用版本化浏览器本地存储模拟跨模块和刷新恢复；这是原型恢复，不是服务端持久化。
@@ -62,7 +62,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 3. 模型选择器
 
-![Athena 模型选择器](../assets/prototype-demo/03-athena-model-selector.jpg)
+![Tapper 模型选择器](../assets/prototype-demo/03-tapper-model-selector.jpg)
 
 - **可选模型**：原型只展示 Codex 当前模型族，例如 `GPT-5.6 Sol`、`GPT-5.6 Terra`、`GPT-5.6 Luna`、`GPT-5.5` 和 `GPT-5.4`。
 - **保存语义**：模型选择属于单个 Conversation；新对话默认回到 `GPT-5.6 Sol`，返回旧 Conversation 时恢复它自己的模型。
@@ -70,7 +70,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 4. Composer 上下文入口
 
-![Athena Composer 上下文菜单](../assets/prototype-demo/04-athena-context-menu.jpg)
+![Tapper Composer 上下文菜单](../assets/prototype-demo/04-tapper-context-menu.jpg)
 
 - `Add from Library`：添加本轮可使用的知识来源。
 - `Use Agents`：选择负责领域分析和资产生成的 AI Agent。
@@ -79,15 +79,15 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 5. 从 Library 选择知识来源
 
-![Athena 知识来源选择器](../assets/prototype-demo/05-athena-source-picker.jpg)
+![Tapper 知识来源选择器](../assets/prototype-demo/05-tapper-source-picker.jpg)
 
 - 弹窗显示当前 Library 中可用来源，并支持关键字搜索。
 - 点击来源后立即加入当前 Conversation 的 Composer 上下文。
-- 演示时可选择 `tap-demo-life-underwriting-rules.md`，再说明正式产品会在服务端执行权限校验、revision 绑定和引用溯源。
+- 演示时可选择 `Life underwriting guide.pdf`，再说明正式产品会在服务端执行权限校验、revision 绑定和引用溯源。
 
 ### 6. 选择 AI Agent
 
-![Athena AI Agent 选择器](../assets/prototype-demo/06-athena-agent-picker.jpg)
+![Tapper AI Agent 选择器](../assets/prototype-demo/06-tapper-agent-picker.jpg)
 
 - 选择器突出 Agent 的职责，而不是把它与执行机器混在一起。
 - 示例 `Life Underwriting Analyst` 负责寿险核保领域分析。
@@ -95,7 +95,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 7. 选择 Skill
 
-![Athena Skill 选择器](../assets/prototype-demo/07-athena-skill-picker.jpg)
+![Tapper Skill 选择器](../assets/prototype-demo/07-tapper-skill-picker.jpg)
 
 - Skill 表示可复用的方法，例如 `BDD Scenario Design`。
 - Agent 回答“由谁分析”，Skill 回答“采用什么方法”，Knowledge 回答“可以依据哪些资料”。
@@ -103,7 +103,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 8. 已选择上下文与删除按钮
 
-![Athena 已选择上下文](../assets/prototype-demo/08-athena-selected-context.jpg)
+![Tapper 已选择上下文](../assets/prototype-demo/08-tapper-selected-context.jpg)
 
 - Composer 同时显示 Knowledge、AI Agent 和 Skill 标签。
 - 每个标签都有独立删除按钮，行为与 Codex 的可移除上下文一致。
@@ -111,15 +111,15 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 9. Agent 目录
 
-![Athena Agent 目录](../assets/prototype-demo/09-athena-agent-catalog.jpg)
+![Tapper Agent 目录](../assets/prototype-demo/09-tapper-agent-catalog.jpg)
 
-- **页面目的**：集中浏览和管理可用于 Athena 的 AI Agent。
+- **页面目的**：集中浏览和管理可用于 Tapper 的 AI Agent。
 - **主要动作**：搜索、查看状态、在聊天中使用，以及进入创建流程。
 - **演示重点**：该页面管理的是 AI Agent；Web 自动化详情中的 Execution Agent 是 Pipeline Agent，两者在入口、字段和措辞上完全分开。
 
 ### 10. 创建 Agent
 
-![Athena 创建 Agent](../assets/prototype-demo/10-athena-create-agent.jpg)
+![Tapper 创建 Agent](../assets/prototype-demo/10-tapper-create-agent.jpg)
 
 - 创建弹窗收集名称、描述和指令等原型字段。
 - 用户完成创建后可以返回 Agent 目录，并在对话中选择该 Agent。
@@ -127,7 +127,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 11. Skill 目录
 
-![Athena Skill 目录](../assets/prototype-demo/11-athena-skill-catalog.jpg)
+![Tapper Skill 目录](../assets/prototype-demo/11-tapper-skill-catalog.jpg)
 
 - **页面目的**：统一管理可复用的测试设计和分析方法。
 - **主要动作**：搜索、查看状态、在聊天中使用，以及创建新 Skill。
@@ -135,7 +135,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 12. 创建 Skill
 
-![Athena 创建 Skill](../assets/prototype-demo/12-athena-create-skill.jpg)
+![Tapper 创建 Skill](../assets/prototype-demo/12-tapper-create-skill.jpg)
 
 - 创建弹窗验证最小的信息架构和表单节奏。
 - 原型中的创建结果是页面状态；生产版需要服务端版本、发布、权限和审计。
@@ -144,7 +144,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 13. Library 空状态
 
-![Athena Library 空状态](../assets/prototype-demo/13-athena-library-empty.jpg)
+![Tapper Library 空状态](../assets/prototype-demo/13-tapper-library-empty.jpg)
 
 - 空状态直接说明当前没有来源，并把主动作集中到 `Add source`。
 - 页面不展示内部实现名 `Thumbnail list`；默认标签使用客户可理解的 `All`。
@@ -152,7 +152,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 14. Library 全部来源
 
-![Athena Library 全部来源](../assets/prototype-demo/14-athena-library-all.jpg)
+![Tapper Library 全部来源](../assets/prototype-demo/14-tapper-library-all.jpg)
 
 - 列表展示来源名称、类型、状态和来源范围。
 - 顶部同时提供关键字、类型、状态筛选以及 `Clear filters`。
@@ -161,15 +161,15 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 15. Library 组合筛选
 
-![Athena Library 组合筛选](../assets/prototype-demo/15-athena-library-filtered.jpg)
+![Tapper Library 组合筛选](../assets/prototype-demo/15-tapper-library-filtered.jpg)
 
-- 示例同时使用关键字 `underwriting` 和类型 `MD`，结果从 4 个收敛到 1 个。
+- 示例同时使用关键字 `underwriting`、类型 `PDF` 和状态 `Ready`，结果从 4 个收敛到 1 个。
 - 组合筛选用于验证大规模资产目录的查找模式；正式产品的大列表还需要分页或虚拟化。
 - `Clear filters` 可一键回到全部来源。
 
 ### 16. 添加来源
 
-![Athena 添加来源](../assets/prototype-demo/16-athena-add-source.jpg)
+![Tapper 添加来源](../assets/prototype-demo/16-tapper-add-source.jpg)
 
 - 弹窗提供文件添加入口，并在提交前明确支持的原型文件类型。
 - 当前截图所示操作只把来源加入本次页面状态；刷新后不会当作服务端持久资产恢复。
@@ -177,7 +177,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 17. Graphify 式 Knowledge Graph
 
-![Athena Knowledge Graph](../assets/prototype-demo/17-athena-knowledge-graph.jpg)
+![Tapper Knowledge Graph](../assets/prototype-demo/17-tapper-knowledge-graph.jpg)
 
 - **视觉模型**：深色图画布、高密度圆形节点、按度数区分节点大小、按社区区分颜色，并显示关系连线和标签。
 - **探索工具**：左侧社区筛选，中间支持缩放、平移和重置，右侧显示节点详情。
@@ -186,7 +186,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 18. Knowledge Graph 节点详情
 
-![Athena Knowledge Graph 节点详情](../assets/prototype-demo/18-athena-knowledge-graph-node.jpg)
+![Tapper Knowledge Graph 节点详情](../assets/prototype-demo/18-tapper-knowledge-graph-node.jpg)
 
 - 点击节点后，右侧展示节点所属社区、连接数量和关系列表。
 - 图中相邻节点与关系可被强调，帮助用户从可视化回到具体业务语义。
@@ -258,9 +258,9 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ![创建 Automation](../assets/prototype-demo/26-create-automation.jpg)
 
-- 该遗留模拟屏幕允许用户选择 Web、Mobile 或让 Athena 推断类型；现行正式目标只创建 Web Automation，Mobile 入口不属于 V0–P1。
+- 该遗留模拟屏幕允许用户选择 Web、Mobile 或让 Tapper 推断类型；现行正式目标只创建 Web Automation，Mobile 入口不属于 V0–P1。
 - 用户可以手动编写 BDD，也可以在标题/目标中描述需求并通过 AI 生成草稿。
-- 在该遗留原型的 Web/Mobile 双类型假设下，Athena 无法可靠判断时会让用户明确选择；现行 Web-only 路线不再需要该类型推断。
+- 在该遗留原型的 Web/Mobile 双类型假设下，Tapper 无法可靠判断时会让用户明确选择；现行 Web-only 路线不再需要该类型推断。
 - Test Plan 关联是可选的，但必须遵守严格 `1:1` 可用性校验。
 
 ### 27. Web Automation：BDD 与动作映射
@@ -314,51 +314,51 @@ corepack pnpm --dir apps/web dev --port 4175
 - 未关联状态保持可见，用于向客户说明“Automation 可以独立存在和运行”。
 - 原型未连接真实 iPhone、Android 设备云或自动化框架，不产生截图、视频、网络日志或其他真实 Evidence。
 
-## 五、Athena 生成 Test Plan 与 Automation
+## 五、Tapper 生成 Test Plan 与 Automation
 
-这一段建议作为演示高潮，完整展示 Athena 如何把自然语言意图转换为可评审、可关联、可跳转的测试资产。
+这一段建议作为演示高潮，完整展示 Tapper 如何把自然语言意图转换为可评审、可关联、可跳转的测试资产。
 
 ### 33. 先询问是否创建 Test Plan
 
-![Athena 询问是否先创建 Test Plan](../assets/prototype-demo/33-athena-test-plan-first.jpg)
+![Tapper 询问是否先创建 Test Plan](../assets/prototype-demo/33-tapper-test-plan-first.jpg)
 
-- 用户提出“为寿险投保生成自动化脚本”后，Athena 不直接跳到代码，而是先询问是否创建 Test Plan。
+- 用户提出“为寿险投保生成自动化脚本”后，Tapper 不直接跳到代码，而是先询问是否创建 Test Plan。
 - 用户可以选择 `Create Test Plan first`，也可以 `Skip Test Plan` 创建独立 Automation。
 - 该决策保护业务测试意图：需要治理和结果回写时先建 Test Plan；一次性或独立脚本可以跳过。
 
 ### 34. Test Plan 草稿评审
 
-![Athena 生成 Test Plan 草稿](../assets/prototype-demo/34-athena-test-plan-review.jpg)
+![Tapper 生成 Test Plan 草稿](../assets/prototype-demo/34-tapper-test-plan-review.jpg)
 
-![Athena 展示完整 BDD 并生成关联 Automation](../assets/prototype-demo/34b-athena-generate-linked-automation.jpg)
+![Tapper 展示完整 BDD 并生成关联 Automation](../assets/prototype-demo/34b-tapper-generate-linked-automation.jpg)
 
-- Athena 生成 Test Plan 草稿（截图示例为 `TP-104`），并提供三个 BDD Scenario。
+- Tapper 生成 Test Plan 草稿（截图示例为 `TP-103`），并提供三个 BDD Scenario。
 - 用户可以先点击 `Review Test Plan` 检查业务覆盖，再继续生成 Automation。
 - `Generate linked automation` 会以该 Test Plan 为来源创建 Automation，并建立严格 `1:1` 关联。
 - 演示时强调 AI 生成的是可 Review 的资产草稿，不是未经确认的生产变更。
 
 ### 35. 遗留探索：无法判断时选择 Web 或 Mobile
 
-![Athena 请求选择 Web 或 Mobile](../assets/prototype-demo/35-athena-channel-choice.jpg)
+![Tapper 请求选择 Web 或 Mobile](../assets/prototype-demo/35-tapper-channel-choice.jpg)
 
-- 该屏幕记录旧的 Web/Mobile 双类型探索：当用户意图无法可靠区分时，Athena 展示明确选择，不做隐藏推断。
+- 该屏幕记录旧的 Web/Mobile 双类型探索：当用户意图无法可靠区分时，Tapper 展示明确选择，不做隐藏推断。
 - 遗留原型中 `Create Web automation` 进入 Pipeline Agent 执行模型，`Create Mobile automation` 进入平台和设备选择模型；现行正式路线只保留 Web/Jenkins，Mobile 选择仅供历史交互讲解。
 - 这保留了“模型承认不确定性”的历史交互原则，但不构成现行 Mobile 范围。
 
 ### 36. 生成关联资产与双向跳转
 
-![Athena 生成关联的 Test Plan 与 Automation](../assets/prototype-demo/36-athena-linked-artifacts.jpg)
+![Tapper 生成关联的 Test Plan 与 Automation](../assets/prototype-demo/36-tapper-linked-artifacts.jpg)
 
-- 最终卡片同时显示 Test Plan 与 Automation（截图示例为 `TP-104` 和 `AUTO-105`），并明确 Automation 类型为 Web、已关联 Test Plan。
+- 最终卡片同时显示 Test Plan 与 Automation（截图示例为 `TP-103` 和 `AUTO-103`），并明确 Automation 类型为 Web、已关联 Test Plan。
 - `Open Test Plan` 跳转到 Test Management 详情；`Open in Low Code Automation` 跳转到 Automation 详情。
-- BDD 场景和动作类型摘要保留在对话结果中，用户可以先在 Athena Review，再进入专业工作区继续编辑或执行。
+- BDD 场景和动作类型摘要保留在对话结果中，用户可以先在 Tapper Review，再进入专业工作区继续编辑或执行。
 - 后续从任一详情发起的模拟运行会遵守同一关联关系和共享历史语义。
 
 ## 六、长对话导航与工作区折叠
 
 ### 37. Minimap Hover 预览
 
-![Athena Minimap Hover 预览](../assets/prototype-demo/37-athena-minimap-preview.jpg)
+![Tapper Minimap Hover 预览](../assets/prototype-demo/37-tapper-minimap-preview.jpg)
 
 - 每条用户问题生成一条左对齐短刻度。
 - Hover 或键盘 Focus 到某个刻度时，该刻度有限加长，并显示对应用户问题的预览卡片。
@@ -367,17 +367,17 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 38. 收起 Knowledge sources
 
-![收起 Knowledge sources](../assets/prototype-demo/38-athena-sources-collapsed.jpg)
+![收起 Knowledge sources](../assets/prototype-demo/38-tapper-sources-collapsed.jpg)
 
 - 点击右侧 Codex 式面板图标后，Knowledge sources 平滑收起，主对话区扩展。
 - 收起后图标的内部线条方向发生变化，让用户能从形状判断下一次点击会展开哪一侧。
 - 适合长回答、代码或 BDD 内容的专注阅读。
 
-### 39. 同时收起 Athena 二级菜单
+### 39. 同时收起 Tapper 二级菜单
 
-![收起 Athena 二级菜单](../assets/prototype-demo/39-athena-sidebar-collapsed.jpg)
+![收起 Tapper 二级菜单](../assets/prototype-demo/39-tapper-sidebar-collapsed.jpg)
 
-- Athena 二级 Sidebar 收起后，一级产品 Rail 保持常驻，用户仍能切换 Test Management 和 Low Code Automation。
+- Tapper 二级 Sidebar 收起后，一级产品 Rail 保持常驻，用户仍能切换 Test Management 和 Low Code Automation。
 - 左、右面板都收起时，中间获得最大的阅读宽度，Minimap 和固定 Composer 仍保留。
 - 两侧使用同一套面板图标语义、动画节奏和选中反馈，避免出现不同组件各自为政的体验。
 
@@ -385,7 +385,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ### 路线 A：12–15 分钟完整演示
 
-1. 从 Athena 新对话首页说明一级 Rail、二级 Athena Sidebar 和三栏布局。
+1. 从 Tapper 新对话首页说明一级 Rail、二级 Tapper Sidebar 和三栏布局。
 2. 打开模型菜单，说明模型按 Conversation 保存，但当前只是选择器原型。
 3. 通过 `+` 依次添加一个 Knowledge、一个 AI Agent 和一个 Skill，再逐个展示可删除按钮。
 4. 进入 Library，演示 All、关键字/类型/状态组合筛选、Add source 和 Knowledge Graph 节点详情。
@@ -394,23 +394,23 @@ corepack pnpm --dir apps/web dev --port 4175
 7. 进入 Low Code Automation，打开 `AUTO-101`，从 BDD Step 展开 Click、Send keys、Navigate、Assert 映射。
 8. 切到 AI Agent 标签，展示“建议—Review—人工决定”的调整方式。
 9. Mobile 页面仅作为遗留模拟探索选讲；必须说明 iOS/Android/设备能力不在当前正式路线，P1 后才可能另行设计。未关联时不回写 Test Plan 的规则仍可用于解释产品语义。
-10. 回到 Athena，新建 Conversation，输入 `Generate an automation script for a life insurance application`。
+10. 回到 Tapper，新建 Conversation，输入 `Generate an automation script for a life insurance application`。
 11. 选择先创建 Test Plan，Review BDD 草稿并继续生成关联的 Web Automation；Web/Mobile 不确定提示仅在讲解遗留交互时展示。
-12. 用最终两个资产卡片收尾：分别跳转 Test Plan 和 Automation，强调 Athena 是跨模块编排入口，不是取代专业工作区。
+12. 用最终两个资产卡片收尾：分别跳转 Test Plan 和 Automation，强调 Tapper 是跨模块编排入口，不是取代专业工作区。
 
 ### 路线 B：5 分钟管理层演示
 
-1. 展示 Athena 新对话首页：统一入口与上下文组合。
+1. 展示 Tapper 新对话首页：统一入口与上下文组合。
 2. 展示 Knowledge Graph：企业知识可以进入测试设计上下文。
 3. 展示已关联 Test Plan：业务意图、BDD、执行入口和历史在一页汇合。
 4. 展示 Web Automation：BDD 步骤与底层动作一一可见。
-5. 展示 Athena 最终资产卡片：从自然语言得到关联的 Test Plan 和 Automation，并能双向跳转。
+5. 展示 Tapper 最终资产卡片：从自然语言得到关联的 Test Plan 和 Automation，并能双向跳转。
 
 ## 客户常见问题与回答口径
 
 ### “AI Agent 和 Execution Agent 有什么区别？”
 
-AI Agent 在 Athena 或 Automation 详情中负责理解意图、生成 BDD、提出修改建议和辅助 Review。Execution Agent 是 Pipeline Agent，负责在获得配置后执行 Web Automation；现行首个 Provider 是 Jenkins，Azure DevOps 只存在于遗留模拟截图。生产版中两者的权限、生命周期、审计和故障模型完全不同。
+AI Agent 在 Tapper 或 Automation 详情中负责理解意图、生成 BDD、提出修改建议和辅助 Review。Execution Agent 是 Pipeline Agent，负责在获得配置后执行 Web Automation；现行首个 Provider 是 Jenkins，Azure DevOps 只存在于遗留模拟截图。生产版中两者的权限、生命周期、审计和故障模型完全不同。
 
 ### “一个 Test Plan 能关联多个 Automation 吗？”
 
@@ -439,5 +439,5 @@ BDD 是业务可读的意图层；每一个 BDD Step 下方有显式 Automation 
 ## 演示结束时的三句话
 
 1. TAP 把知识上下文、业务测试意图、低代码实现和执行记录放进一条可审查链路。
-2. Athena 负责理解、生成和跨模块引导；Test Management 与 Low Code Automation 仍是专业资产工作区。
-3. 当前产品壳中的 Conversation、Test Plan、Automation 和 Run 仍是纯前端交互原型；现有 Athena 本地知识切片已经具备文档、ingestion 与索引状态持久化，但服务端会话/测试资产、权限、Jenkins、Recorder、真实浏览器执行和 Evidence 仍需后续工程化交付。
+2. Tapper 负责理解、生成和跨模块引导；Test Management 与 Low Code Automation 仍是专业资产工作区。
+3. 当前产品壳中的 Conversation、Test Plan、Automation 和 Run 仍是纯前端交互原型；现有 Tapper 本地知识切片已经具备文档、ingestion 与索引状态持久化，但服务端会话/测试资产、权限、Jenkins、Recorder、真实浏览器执行和 Evidence 仍需后续工程化交付。

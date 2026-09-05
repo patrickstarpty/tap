@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "architecture": "node scripts/check-architecture.mjs",
+    "prototype:capture": "playwright test --config playwright.prototype.config.ts",
     "check": "corepack pnpm run lint && corepack pnpm run format:check && corepack pnpm run architecture && corepack pnpm run build"
   },
   "devDependencies": {

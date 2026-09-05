@@ -16,11 +16,11 @@ corepack pnpm --dir apps/web dev --port 4175
 
 | Tapper 统一对话入口                                                                          | Graphify 式 Knowledge Graph                                                                    |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| ![Tapper 新对话入口](docs/assets/prototype-demo/01-athena-new-chat.jpg)                      | ![Knowledge Graph](docs/assets/prototype-demo/17-athena-knowledge-graph.jpg)                   |
+| ![Tapper 新对话入口](docs/assets/prototype-demo/01-tapper-new-chat.jpg)                      | ![Knowledge Graph](docs/assets/prototype-demo/17-tapper-knowledge-graph.jpg)                   |
 | **已关联的 Test Plan**                                                                       | **BDD 与 Automation actions 映射**                                                             |
 | ![已关联 Automation 的 Test Plan](docs/assets/prototype-demo/20-test-plan-detail-linked.jpg) | ![Web Automation BDD 与动作映射](docs/assets/prototype-demo/27-web-automation-bdd-mapping.jpg) |
 | **Web Automation 执行历史**                                                                  | **Tapper 生成并关联两类资产**                                                                  |
-| ![Web Automation 执行历史](docs/assets/prototype-demo/30-web-automation-run-history.jpg)     | ![Tapper 生成关联资产](docs/assets/prototype-demo/36-athena-linked-artifacts.jpg)              |
+| ![Web Automation 执行历史](docs/assets/prototype-demo/30-web-automation-run-history.jpg)     | ![Tapper 生成关联资产](docs/assets/prototype-demo/36-tapper-linked-artifacts.jpg)              |
 
 演示时必须明确：Tapper 中的 **AI Agent** 负责分析、生成和调整；正式路线中的 **Execution Agent** 是 Jenkins **Pipeline Agent**。截图中的 Azure DevOps 与 Mobile 是旧的模拟交互探索，不属于当前实施范围。当前 Conversation、资产和 Run 使用浏览器状态模拟，所有运行均标为 `Simulated`；这不表示已连接真实 Pipeline、浏览器、移动设备或生成真实 Execution Evidence。
 
