@@ -40,7 +40,7 @@ interface GraphData {
 const GRAPH_WIDTH = 680;
 const GRAPH_HEIGHT = 460;
 const GRAPH_HORIZONTAL_MARGIN = 24;
-const MIN_ZOOM = 0.5;
+const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 1.75;
 const ZOOM_STEP = 0.25;
 

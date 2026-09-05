@@ -7,6 +7,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import type { components } from "../../src/shared/api/generated/schema";
 
 const OUTPUT_DIR = resolve(process.cwd(), "../../docs/assets/prototype-demo");
+const MIN_GRAPH_CAPTURE_LABEL_HEIGHT = 12;
 
 const OUTPUTS = [
   "01-tapper-new-chat.jpg",
@@ -639,10 +640,8 @@ test("14 through 18 capture Library list and graph states", async ({
     name: "Life insurance knowledge graph",
   });
   await expect(graph).toBeVisible();
-  await page.getByRole("button", { name: "Zoom out" }).click();
-  await page.getByRole("button", { name: "Zoom out" }).click();
   await expect(page.getByRole("status", { name: "Zoom level" })).toHaveText(
-    "50%",
+    "100%",
   );
   await expect(
     page.getByRole("region", { name: "Node details" }),
@@ -650,6 +649,10 @@ test("14 through 18 capture Library list and graph states", async ({
   const graphBox = await graph.boundingBox();
   expect(graphBox).not.toBeNull();
   if (graphBox === null) throw new Error("Graph capture geometry is missing");
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  if (viewport === null)
+    throw new Error("Capture viewport geometry is missing");
   for (const label of [
     "Life underwriting guide.pdf",
     "Beneficiary workflow.docx",
@@ -660,14 +663,22 @@ test("14 through 18 capture Library list and graph states", async ({
     expect(labelBox).not.toBeNull();
     if (labelBox === null)
       throw new Error(`Graph label geometry is missing: ${label}`);
+    expect(
+      labelBox.height,
+      `${label} must remain legible in the customer screenshot`,
+    ).toBeGreaterThanOrEqual(MIN_GRAPH_CAPTURE_LABEL_HEIGHT);
     expect(labelBox.x).toBeGreaterThanOrEqual(graphBox.x);
     expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(
       graphBox.x + graphBox.width,
     );
     expect(labelBox.y).toBeGreaterThanOrEqual(graphBox.y);
     expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(
-      Math.min(graphBox.y + graphBox.height, page.viewportSize()?.height ?? 0),
+      graphBox.y + graphBox.height,
     );
+    expect(labelBox.x).toBeGreaterThanOrEqual(0);
+    expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(viewport.width);
+    expect(labelBox.y).toBeGreaterThanOrEqual(0);
+    expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(viewport.height);
   }
   await capture(page, "17-tapper-knowledge-graph.jpg");
 

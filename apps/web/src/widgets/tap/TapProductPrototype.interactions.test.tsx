@@ -2274,7 +2274,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(zoomOut);
     expect(
       screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("50%");
+    ).toHaveTextContent("75%");
     expect(zoomOut).toBeDisabled();
   });
 
