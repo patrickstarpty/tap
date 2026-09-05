@@ -179,7 +179,7 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/tests/contract/test_legacy_event_envelope.py`
 - Create: `apps/backend/migrations/versions/0007_project_scope_backfill.py`
 - Create: `apps/backend/tests/integration/test_project_scope_backfill.py`
-- Modify: `apps/backend/src/tap/modules/chat/domain/models.py`
+- Inspect: `apps/backend/src/tap/modules/chat/domain/models.py`（保留原领域 ID/模型；Project scope 绑定在 repository 构造参数中）
 - Modify: `apps/backend/src/tap/modules/chat/application/ports.py`
 - Modify: `apps/backend/src/tap/modules/chat/adapters/mysql.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
@@ -197,11 +197,13 @@ class AuthorizationPolicy(Protocol):
 
 需要同步的调用点还包括 `scripts/migration_support.py`、`entrypoints/relay_reconciler.py`、`platform/messaging/redis_dispatch.py` / `redis_wakeup.py` 及现有 repository integration fixtures。Redis 去重和提示带 Project，可信 scope 仍由服务端提供。Projection 保留物理 alias 的全局所有权和原锁名，同一 alias 的另一 Project 必须在 Provider I/O 前拒绝；不能仅添加 Project 锁便共享物理 alias。Cursor 和问答保留锁按 Project 绑定。
 
-- [ ] 扩展旧数据 fixture，使每张当前表至少有一行，并写 ID/digest/sequence 保留、nullable 中间态、global dedupe constraint 被替换、跨 Project 同 digest 可共存、未知/孤儿 Actor 拒绝和 repository 无 scope 不可调用测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 FAIL，原因为 `0007` 与 Project-bound repository 尚不存在。
-- [ ] 实现 `0007` 与 repository 签名；所有 read/write/filter/idempotency key 均包含 Project，Outbox 增加非空 Project/Actor/identity mode 并保留 aggregate sequence。
-- [ ] 运行 `make migration-check MIGRATION=0007_project_scope_backfill && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(access): backfill project scoped records`
+- [x] 扩展旧数据 fixture，使每张当前表至少有一行，并写 ID/digest/sequence 保留、nullable 中间态、global dedupe constraint 被替换、跨 Project 同 digest 可共存、未知/孤儿 Actor 拒绝和 repository 无 scope 不可调用测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 FAIL，原因为 `0007` 与 Project-bound repository 尚不存在。
+- [x] 实现 `0007` 与 repository 签名；所有 read/write/filter/idempotency key 均包含 Project，Outbox 增加非空 Project/Actor/identity mode 并保留 aggregate sequence。
+- [x] 运行 `make migration-check MIGRATION=0007_project_scope_backfill && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(access): backfill project scoped records`
+
+**验收：** `4160984`；[Task 2B 验收记录](../reviews/2026-09-05-tapper-v0-project-scope-review.md)。迁移、定向验证、check 与复审通过；完整 Backend 回归为 2393 passed、9 skipped、1 failed，两次单独复跑通过，原因未定，不将完整 target 标为通过。保留该观察并继续同一 V0 内的 Task 2C，V0 出口仍需完整门禁。
 
 ### Task 2C: Freeze Project event and Problem Details contracts
 
@@ -221,8 +223,14 @@ class AuthorizationPolicy(Protocol):
 - Extend: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`（Task 2B 的同事务基础）
 - Modify: `scripts/export_contracts.py`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
+- Modify: `apps/web/src/features/knowledge/api/client.ts`
+- Modify: `apps/web/src/features/knowledge/api/client.test.ts`
+- Modify: `apps/backend/tests/contract/test_generated_contracts.py`
+- Modify: `apps/backend/tests/contract/test_http_problem_details.py`
 
 **Contracts:** `ProjectEventEnvelope` 固定 `event_id/event_type/schema_version/occurred_at/scope_kind/enterprise_id/project_id/actor_id/identity_mode/aggregate_type/aggregate_id/aggregate_version/correlation_id/causation_id/idempotency_key/payload`；payload 必须匹配登记的 event type/version。Problem registry 固定绝对 URI、HTTP status、safe title/detail、`correlationId`、封闭 `failureStage` 与 `retryable`，包含 RFC 的 scope、authorization、idempotency、revision、association、mapping、answer、graph、model/search、recorder 与 execution 错误。相同 idempotency key/相同 canonical request 返回原结果；同 key/不同 request 返回 `409 idempotency-conflict`。
+
+**执行期接口补全：** 按核心契约 §9，所有 Problem 要求 `correlationId/retryable`，只有工作流错误要求封闭 `failureStage`，不为请求校验等错误制造工作流阶段。每次响应使用当前关联 ID，不能在 import 时固定一个 ID。Web 客户端的传输失败与注册 Problem 分开表达，不能继续伪造 `about:blank` 或服务器关联 ID。私有事件 Schema 不进入公开 SSE/HTTP payload；不透明资源 ID 的 Project 归属由拥有该资源的 scoped application transaction 验证，不能通过 ID 前缀或 payload 形状假装完成归属检查。
 
 - [ ] 写 envelope 缺字段、未知主版本 dead-letter、内部 payload 不可公开、短 slug 不合法、URI/status 漂移、缺 `correlationId/failureStage/retryable` 和敏感 detail 拒绝测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 FAIL，原因为 event/problem registry 与生成制品不存在。

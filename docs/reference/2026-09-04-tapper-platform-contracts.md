@@ -101,6 +101,8 @@ class ProjectEventEnvelope:
 
 每个消费者声明接受的 `schema_version`、业务幂等键和 retry/dead-letter 策略；未知 major、缺字段或跨 Project payload 进入可审计 dead-letter，不能 ack 后静默丢弃。状态改变事件必须与对应状态、Audit 和 Outbox 同事务；完成事件不能在必需 Manifest 尚未持久化时发出。SSE Schema 是这些内部事件的授权闭集投影，单独生成版本化 JSON Schema。
 
+完成事件的 `outcome` 使用以下闭集：Conversation 沿用 Turn 终态 `completed | abstained | canceled | failed`，均须引用已持久化的 Answer/Evidence Snapshot，失败或空结果也不能省略该事实；Debug Execution 和 Execution Run 使用 §7 的 `TestOutcome`；Recorder Session 使用 `OperationStatus` 的终态 `SUCCEEDED | FAILED | CANCELLED | TIMED_OUT`。状态改变事件的 `from/to` 使用 §7 的 `OperationStatus`，合法转换由对应领域状态机验证。Provider 原始状态不得直接代替这些值。事件类型已登记不代表对应生产流程已经实现。
+
 ### 2.1 现有唤醒的迁移兼容契约
 
 V0 Task 2B 在同一封闭 registry 中先登记以下 major version 1 的 transport compatibility events。它们只表达已有的处理/通知意图，不能被改名为需要 Input Snapshot 或 Source 的新领域事件；新领域流程切换后不再产生相应兼容事件，历史记录仍可验证。
