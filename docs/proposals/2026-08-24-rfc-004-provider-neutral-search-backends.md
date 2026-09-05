@@ -12,9 +12,11 @@ related-adrs:
   - ADR-023
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # RFC-004：以 Milvus 为实验默认的可替换检索后端
 
-> **撤回说明（2026-09-04）**：本 RFC 已撤回，不再是待评审或实施入口。其本地 Milvus `doc` 实验事实与 provider-neutral `SearchPort` 原则继续有效，但共享/生产后端、部署和 Knowledge Graph 的现行选择已由 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)、[ADR-022](../decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md) 与 [ADR-023](../decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md) 取代：当前采用自托管 Compose、Milvus `doc` 投影和 MySQL Knowledge Graph，Azure 不再是必选企业基线。下文的 `draft`、Azure 发布门禁及待建 superseding ADR 均只记录 2026-08-24 的原提案过程，不得继续执行。
+> **撤回说明（2026-09-04）**：本 RFC 已撤回，不再是待评审或实施入口。其本地 Milvus `doc` 实验事实与 provider-neutral `SearchPort` 原则继续有效，但共享/生产后端、部署和 Knowledge Graph 的现行选择已由 [RFC-009](2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)、[ADR-022](../decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md) 与 [ADR-023](../decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md) 取代：当前采用自托管 Compose、Milvus `doc` 投影和 MySQL Knowledge Graph，Azure 不再是必选企业基线。下文的 `draft`、Azure 发布门禁及待建 superseding ADR 均只记录 2026-08-24 的原提案过程，不得继续执行。
 
 ## 摘要
 

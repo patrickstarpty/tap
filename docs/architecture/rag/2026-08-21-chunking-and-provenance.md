@@ -2,7 +2,7 @@
 
 本文同时记录当前文档知识的切片/provenance 原则，以及 2026-08-21 将 Git、Blob 和 MySQL 中四类语料转换为 Azure AI Search chunk 的历史/provider-specific 设计。
 
-> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 将 Knowledge 放回当前主线。V0–VG 延续文档稳定 revision/chunk identity、content hash、structured anchor、Citation、manifest、删除/重建和 derived fact 证据绑定，当前存储/检索为 MinIO + Milvus `doc`，关系图事实进入 MySQL Knowledge Graph。正文中的四类语料、Git/Blob 权威输入、Azure AI Search/AKS 和 “Phase 1” 是历史设计；Git 对 Automation 也只是可选同步，不是当前强制事实源。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 将 Knowledge 放回当前主线。V0–VG 延续文档稳定 revision/chunk identity、content hash、structured anchor、Citation、manifest、删除/重建和 derived fact 证据绑定，当前存储/检索为 MinIO + Milvus `doc`，关系图事实进入 MySQL Knowledge Graph。正文中的四类语料、Git/Blob 权威输入、Azure AI Search/AKS 和 “Phase 1” 是历史设计；Git 对 Automation 也只是可选同步，不是当前强制事实源。
 
 ## 1. 设计结论
 

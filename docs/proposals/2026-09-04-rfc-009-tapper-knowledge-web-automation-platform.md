@@ -23,7 +23,9 @@ related-adrs:
   - ADR-025
 ---
 
-# RFC-009：Athena 知识与 Web 测试自动化平台设计
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
+# RFC-009：Tapper 知识与 Web 测试自动化平台设计
 
 ## 1. 文档目的与事实边界
 
@@ -42,16 +44,16 @@ related-adrs:
   → 用户 / 认证 / RBAC / 多 Project 产品化
 ```
 
-本文描述的是**已接受但尚未实现的目标设计**，不是当前完成状态。当前仓库真实实现仍是较窄的 Athena 本地知识切片，以及使用浏览器状态和 fixture 的产品交互原型：
+本文描述的是**已接受但尚未实现的目标设计**，不是当前完成状态。当前仓库真实实现仍是较窄的 Tapper 本地知识切片，以及使用浏览器状态和 fixture 的产品交互原型：
 
 - Backend 已实现文档摄取、MySQL 账本、Outbox/Redis 唤醒、Milvus `doc` 检索、LiteLLM 模型端口、grounded answer 和引用核验基础。
-- Web 已实现 Athena、Library、Knowledge Graph、Test Management 和 Low Code Automation 的交互原型。
-- 当前默认 `AthenaPage` 挂载的是 `TapProductPrototype`；它只复用真实文档列表，发送消息、Graph、Test Plan、Automation 和 Run 仍是本地原型状态。真正调用 Knowledge Answer/Citation API 的 `AthenaWorkspace` 尚未接回默认产品壳。
+- Web 已实现 Tapper、Library、Knowledge Graph、Test Management 和 Low Code Automation 的交互原型。
+- 当前默认 `TapperPage` 挂载的是 `TapProductPrototype`；它只复用真实文档列表，发送消息、Graph、Test Plan、Automation 和 Run 仍是本地原型状态。真正调用 Knowledge Answer/Citation API 的 `TapperWorkspace` 尚未接回默认产品壳。
 - 当前运行时已有固定的 `tenant_id`、`project_id`、`user_id` 和服务端策略校验器，可作为隔离的 Validation Scope 起点；可配置多 Project、用户认证、Membership/RBAC、服务端 Conversation、真实 Knowledge Graph 抽取、正式 Test Plan/Automation 后端、Recorder Worker、Jenkins Provider 和真实 Execution Evidence 尚未完成。
 - 在对应发布门禁通过前，原型中的 `Passed`、Run、Graph、Agent 和资产都不得描述为生产实现或真实执行证据。
 - Validation Mode 不等于匿名生产模式：它只能运行在 loopback 或有独立基础设施访问控制的隔离验证环境，不能直接晋级为 Staging/Production，也不能宣称具有个人身份归因或多 Project 隔离能力。
 
-本 RFC 已替代旧的“Phase 1 先做独立 Intelligence Lab”交付优先级，并将 Athena 可信知识能力重新放在第一位。旧文档仍保留为历史决策和实验依据。
+本 RFC 已替代旧的“Phase 1 先做独立 Intelligence Lab”交付优先级，并将 Tapper 可信知识能力重新放在第一位。旧文档仍保留为历史决策和实验依据。
 
 ## 2. 产品范围
 
@@ -61,7 +63,7 @@ related-adrs:
 
 1. 用户能够上传和管理项目知识，并获得有来源、可核验、可恢复历史的回答。
 2. 用户能够用 Graphify 式关系图探索知识实体、关系、社区和来源证据。
-3. Athena 能根据知识与对话生成可审查的 Test Plan、Test Case 和 BDD 草稿。
+3. Tapper 能根据知识与对话生成可审查的 Test Plan、Test Case 和 BDD 草稿。
 4. LCA 作为独立功能，支持自然语言生成、手工设计和录制 Web 操作。
 5. 每个 BDD Step 都能追溯到 Test IR Action、生成的 Playwright 代码、Step Result 和 Evidence。
 6. Jenkins 作为首个 Execution Provider，使用用户选择的 Pipeline Agent 执行确定版本的 Automation。
@@ -74,7 +76,7 @@ related-adrs:
 - PDF、DOCX、Markdown、TXT 的文本摄取；延续当前无 OCR 边界。
 - Milvus 文档混合检索和 MySQL Knowledge Graph。
 - 服务端持久化 Conversation、Turn 和上下文快照。
-- Athena AI Agent、Skill、Knowledge 和模型选择。
+- Tapper AI Agent、Skill、Knowledge 和模型选择。
 - Test Plan、Test Case、BDD、Automation、Test IR 和不可变发布版本。
 - Web Automation，生成目标固定为 Playwright + TypeScript。
 - 受控 Chromium Web 录制。
@@ -134,7 +136,7 @@ TAP 保存知识、对话、Test Plan、Automation Revision 和 Run 的权威状
 4. **Draft is not authority**：AI、录制和手工编辑先产生 Draft，人工发布后才形成不可变版本。
 5. **Evidence before claims**：回答、Graph Fact、生成建议和执行结论都必须链接可验证证据。
 6. **Provider-neutral core**：模型、检索、对象存储、录制和执行实现位于稳定 Port 之后。
-7. **AI Agent is not a Pipeline Agent**：Athena AI Agent 负责理解和生成；Jenkins Pipeline Agent 负责运行。
+7. **AI Agent is not a Pipeline Agent**：Tapper AI Agent 负责理解和生成；Jenkins Pipeline Agent 负责运行。
 8. **Validate through the production seam**：验证适配器可以固定身份，但领域对象、应用服务、事件和仓储必须通过与正式身份相同的可信 Scope/Policy 接口。
 
 ## 4. 核心产品旅程
@@ -145,23 +147,23 @@ TAP 保存知识、对话、Test Plan、Automation Revision 和 Run 的权威状
 2. Ingestion Worker 保存原件、生成标准化文本、切块、Embedding 和 Milvus 投影。
 3. Graph Worker 从同一 Document Revision 抽取实体与关系，并绑定原文 Evidence。
 4. 文档检索索引 ready 后即可问答；Graph Snapshot 完成后独立原子发布，不阻塞基本问答。
-5. 用户在 Athena 中选择 Knowledge、AI Agent、Skill 和模型后发送问题。
+5. 用户在 Tapper 中选择 Knowledge、AI Agent、Skill 和模型后发送问题。
 6. 服务端通过可信 Scope/Policy 接口构造检索策略：Validation Mode 使用固定 Project/Actor，产品化后使用当前 Session/Membership；随后执行 Milvus hybrid search 和有界图扩展。
 7. 回答经过 claim/citation 验证；无法获得充分证据时明确 abstain，不伪造引用。
 8. 用户可从回答引用或 Knowledge Graph 节点/边打开精确原文位置。
 
-### 4.2 Athena 生成测试资产
+### 4.2 Tapper 生成测试资产
 
-1. Athena 识别生成测试用例或自动化的意图。
-2. 若用户直接要求 Automation，Athena 先询问是否需要生成 Test Plan。
+1. Tapper 识别生成测试用例或自动化的意图。
+2. 若用户直接要求 Automation，Tapper 先询问是否需要生成 Test Plan。
 3. 用户选择“需要”时，平台基于当前知识上下文生成 Draft Test Plan、Test Case 和 BDD，并标注引用、假设、风险和未覆盖项。
-4. 用户在 Test Management 或 Athena 对话中审阅，发布后形成不可变 Test Plan Revision。
-5. Athena 引导生成关联的 Draft Automation，并返回 Test Plan 与 Automation 深链接。
-6. 用户选择“不需要”时，Athena 直接调用 LCA 创建独立 Draft Automation。
+4. 用户在 Test Management 或 Tapper 对话中审阅，发布后形成不可变 Test Plan Revision。
+5. Tapper 引导生成关联的 Draft Automation，并返回 Test Plan 与 Automation 深链接。
+6. 用户选择“不需要”时，Tapper 直接调用 LCA 创建独立 Draft Automation。
 
 ### 4.3 独立 LCA 创建与录制
 
-LCA 不依赖 Athena 或 Test Plan。用户可以：
+LCA 不依赖 Tapper 或 Test Plan。用户可以：
 
 - 描述目标并点击 `✨` 生成 Web BDD、Test IR 和 Playwright Draft。
 - 创建空白 Automation，手工编辑 BDD 和动作。
@@ -195,7 +197,7 @@ flowchart TB
       Identity[Identity / Validation Scope & Project]
       Knowledge[Knowledge & Citation]
       Graph[Knowledge Graph]
-      Conversation[Conversation & Athena]
+      Conversation[Conversation & Tapper]
       TestMgmt[Test Management]
       Automation[LCA & Test IR]
       Execution[Execution Orchestration]
@@ -638,7 +640,7 @@ Node 与 Edge 使用独立 Evidence 关联表，避免一条证据记录被错�
 - Inspector 展示 Node/Edge 类型、置信度、相邻关系和 Evidence 深链接。
 - 大图先返回摘要子图，按需扩展；不一次向浏览器发送整个企业图谱。
 
-## 10. Athena 与持久化 Conversation
+## 10. Tapper 与持久化 Conversation
 
 ### 10.1 Conversation 规则
 
@@ -697,7 +699,7 @@ Test Plan Execution History 是 Run 的投影，不创建另一份相互独立�
 
 ### 12.1 LCA 是独立功能
 
-Automation 可以没有 Test Plan，也可以不经过 Athena 创建。LCA 提供 Library、New Automation、Automation Detail、Automation Copilot、Recorder、Run Configuration 和 History。
+Automation 可以没有 Test Plan，也可以不经过 Tapper 创建。LCA 提供 Library、New Automation、Automation Detail、Automation Copilot、Recorder、Run Configuration 和 History。
 
 Draft 的“调试执行”使用提交时冻结的 Draft Snapshot，由平台内置 Automation Debug Worker 在固定 Playwright Runner Image 中隔离运行。它保存独立的 `debug_execution`、短期诊断和 Draft digest，不创建正式 `EXECUTION_RUN`，不调用 Jenkins，也不向 Test Plan 投影；V4 先交付这条本地调试路径，V5 才开放 Published Revision 的 Jenkins 正式执行。
 
@@ -1165,7 +1167,7 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 2. 刷新和服务重启后，已提交 Conversation、Turn、资产和运行记录仍可恢复。
 3. 每个 Knowledge Answer Claim 都能打开支持该 Claim 的当前可访问 Citation；证据不足时回答必须 abstain，不能把“证据不足”当成一种无来源 Claim。
 4. 每条 `EXTRACTED` Graph Edge 都能打开原文 Evidence；每条 `INFERRED` Edge 都显式标识并链接输入 Fact/推导 provenance，且在没有原文支持时不能作为已验证事实生成测试结论。
-5. Athena 能生成带引用、假设和风险的 Draft Test Plan，并在人工发布后返回稳定链接。
+5. Tapper 能生成带引用、假设和风险的 Draft Test Plan，并在人工发布后返回稳定链接。
 6. LCA 能从自然语言、手工和录制三条路径得到同一种 BDD/Test IR/Playwright Draft。
 7. 每个 BDD Step 能高亮对应 Action、代码和 Step Result。
 8. Published Automation 的 Bundle 可用 digest 复现；Run 记录固定 Revision、镜像和环境。
@@ -1191,7 +1193,7 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 - 当前 `DemoCurrentPolicyVerifier` 及固定 `tenant_id/project_id/user_id` 证明服务端可以统一注入检索 Policy Context；方案验证阶段复用其边界思想，但显式命名和标记为 Validation Scope，不把 `demo` 信任语义包装成生产认证。
 - 文档 Parser、Chunker、Embedding、Milvus Document Index 和检索 Adapter。
 - MySQL Document/Answer/Citation 账本、Blob Artifact Store、Outbox 与 Relay/Reconciler。
-- 现有 LiteLLM Query Embedding 与 Answer Generation 窄端口可作为迁移输入，但 V1 必须把调用者收口到唯一 `ModelGateway` 和 LiteLLM Adapter/conformance suite；RFC-006 的直接 Codex CLI `AnswerGenerationPort` 不迁入 V1，也不保留第二模型出口。若继续保留该历史能力，必须从默认 `athena_runtime.py` 和 V1 import graph 中移出，放入仅由显式命令启动、只绑定 loopback 且不挂载 RFC-009 Project API 的 legacy composition；它不能计入任何 V1/VG 证据。
+- 现有 LiteLLM Query Embedding 与 Answer Generation 窄端口可作为迁移输入，但 V1 必须把调用者收口到唯一 `ModelGateway` 和 LiteLLM Adapter/conformance suite；RFC-006 的直接 Codex CLI `AnswerGenerationPort` 不迁入 V1，也不保留第二模型出口。若继续保留该历史能力，必须从默认 `tapper_runtime.py` 和 V1 import graph 中移出，放入仅由显式命令启动、只绑定 loopback 且不挂载 RFC-009 Project API 的 legacy composition；它不能计入任何 V1/VG 证据。
 - grounded output、Citation Resolver 和 HTTP Problem Details 基础。
 - `apps/web/src/features/knowledge/` 的 Library、Answer、Source、Citation 组件。
 - `apps/web/src/widgets/tap/prototype/` 已确认的信息架构和交互语言。
@@ -1214,7 +1216,7 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 1. V0 在 MySQL 建立最小 Enterprise、Project 和 typed Actor Principal 注册事实，将固定 tenant/project/user 配置收敛为显式 Validation Scope/Actor，所有 Project 应用服务从可信适配器取得 `ProjectScopeContext`；UI 标记 Validation Mode，禁止客户端扩展范围。
 2. 补齐 migration metadata/schema drift、Redis pending reclaim/trim/redrive、Outbox 归档、上传恢复、staging scavenger 和 Milvus rebuild 运维入口；这些可靠性基础不因认证延后而取消。
 3. 保持现有本地 Demo 测试可运行，把文档、回答快照、Citation 和所有新增业务表映射到保留 Validation Project，并从一开始保存稳定 `project_id/actor_id`。
-4. 建立持久 Conversation，并将 Athena 产品壳从本地回答 fixture 接到真实 Answer/Citation API；随后依次增加 Graph、Test Management、Automation、Recorder 和 Execution。
+4. 建立持久 Conversation，并将 Tapper 产品壳从本地回答 fixture 接到真实 Answer/Citation API；随后依次增加 Graph、Test Management、Automation、Recorder 和 Execution。
 5. 每个模块先通过确定性 Adapter/Stub，再打开真实模型、Milvus、Recorder 或 Jenkins 门禁；以代表性知识与 Web 流程完成 VG。
 6. 只有 VG 通过并决定产品化后，P0 才引入 User、完整 Project 生命周期、Membership、密码登录/Session/RBAC 和 Project 切换，以 Session Identity Adapter 替换 Validation Adapter。
 7. 用显式 migration 保留 Validation Project 的资产和历史 ID，完成管理权交接、Membership/配置回填和模式切换；固定 Actor 的旧事件继续标记 `identity_mode=validation`，不伪造用户归属。Validation 来源执行配置和 Published Test Plan/Automation 只能历史读取或 fork，Project Admin 必须重新审查并发布 `PRODUCT` Revision。
@@ -1229,7 +1231,7 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 | V0 Validation Scope 与基线 | 最小 Enterprise/Project/Actor Principal、Scope/Authorization Adapter、模式标识、origin 字段、migration metadata、对象存储、Outbox 运维骨架 | Scope 不可覆盖、Policy contract/Actor FK/origin/schema drift/恢复及 Outbox/Redis 运维门禁通过     |
 | V1 可信知识问答            | 摄取/Milvus、上传恢复/scavenger/rebuild、持久 Conversation/SSE、脱敏/审计、模型目录                                                        | 重启/摄取恢复、引用核验、真实 Milvus/模型及 `QUALITY-KB-01` 通过                                  |
 | V2 Knowledge Graph         | 真实模型 Graph 抽取、Snapshot、Evidence/Provenance、查询和 WebGL UI                                                                        | Evidence 解析、推断标识及 `QUALITY-GRAPH-01` 通过                                                 |
-| V3 AI 测试设计             | Test Plan/Test Case/BDD、Revision、Athena 生成和深链接                                                                                     | 带引用 Draft、人审发布及 `QUALITY-TEST-01` 通过                                                   |
+| V3 AI 测试设计             | Test Plan/Test Case/BDD、Revision、Tapper 生成和深链接                                                                                     | 带引用 Draft、人审发布及 `QUALITY-TEST-01` 通过                                                   |
 | V4 Web LCA 与 Recorder     | Test IR、三层编辑、Playwright Generator、1:1 Link、Debug Worker、受控 Chromium 录制                                                        | BDD/Action/Code 映射、可重复制品、真实流程重放、egress/Secret/脱敏/回收门禁通过                   |
 | V5 Jenkins 结果闭环        | Execution Provider、Pipeline Agent、Evidence、BDD Step Result 与 Test Plan 结果投影                                                        | 真实 Jenkins E2E、未知提交/重复 callback/claim fencing、证据完整性与结果投影通过                  |
 | VG 方案验证出口            | 以代表性知识、真实模型和目标 Web 流程完成端到端业务验收                                                                                    | §19.3 VG 全部通过，并由产品负责人决定继续、调整或停止；不产生 Production ready 声明               |
@@ -1258,9 +1260,9 @@ Mobile、SSO、Azure DevOps、Git Sync、专用 Graph DB 和 Kubernetes HA 只�
 ### 22.2 相关文档
 
 - 产品交互事实源：[RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。冲突范围以本 RFC 为准：`AUT-003` 的 Web Provider 从 Azure DevOps 改为 Jenkins，其 Mobile 部分以及 `AUT-005` 的 Web/Mobile 类型推断、`AUT-007` 全部后移到 P1 之后；`AUT-008` 保留 AI Agent 与 Pipeline Agent 分离，但首个 Pipeline Provider 改为 Jenkins。`ATH-008` 与最近一次消息上键召回语义继续有效。
-- 当前实现事实源：[RFC-005：Athena 本地知识工作区 Demo](../proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md)。
-- 当前 Backend 装配入口：[`athena_runtime.py`](../../apps/backend/src/tap/entrypoints/athena_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
-- 当前默认 Web 产品壳：[`AthenaPage.tsx`](../../apps/web/src/pages/AthenaPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/web/src/widgets/tap/TapProductPrototype.tsx)；真实知识组件入口：[`AthenaWorkspace.tsx`](../../apps/web/src/widgets/athena/AthenaWorkspace.tsx)。
+- 当前实现事实源：[RFC-005：Tapper 本地知识工作区 Demo](../proposals/2026-08-27-rfc-005-tapper-local-knowledge-demo.md)。
+- 当前 Backend 装配入口：[`tapper_runtime.py`](../../apps/backend/src/tap/entrypoints/tapper_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
+- 当前默认 Web 产品壳：[`TapperPage.tsx`](../../apps/web/src/pages/TapperPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/web/src/widgets/tap/TapProductPrototype.tsx)；真实知识组件入口：[`TapperWorkspace.tsx`](../../apps/web/src/widgets/tapper/TapperWorkspace.tsx)。
 - Milvus 实验证据：[Milvus 本地检索实验评审](../reviews/2026-08-27-milvus-local-search-experiment.md)。
 - 文档治理：[TAP 文档治理规范](../reference/2026-08-22-document-governance.md)。
 - 本 RFC 的接受动作同步创建替代 ADR，并更新[架构决策索引](../decisions/index.md)、总体架构、README 和路线图；既有 Azure/Git/Intelligence 决策仅通过生命周期元数据进入历史，不静默改写原语义。

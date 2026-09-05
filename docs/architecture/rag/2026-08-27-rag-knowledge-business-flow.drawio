@@ -83,7 +83,7 @@
         <mxCell id="user-question-title" value="用户提问" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="142" y="509" width="236" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="user-question-body" value="Athena Q&amp;A" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="user-question-body" value="Tapper Q&amp;A" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="142" y="554" width="236" height="34" as="geometry"/>
         </mxCell>
 

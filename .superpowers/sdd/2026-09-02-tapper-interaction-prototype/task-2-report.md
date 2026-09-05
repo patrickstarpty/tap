@@ -1,16 +1,16 @@
-# Task 2 report — Athena conversations and context controls
+# Task 2 report — Tapper conversations and context controls
 
 ## Status
 
-Implemented and committed as `ea3d81a` (`feat: add Athena conversations and context controls`).
+Implemented and committed as `ea3d81a` (`feat: add Tapper conversations and context controls`).
 
 ## Delivered
 
 - Added `PrototypeSidebar` as the single product navigation surface.
-  - Orders Athena, New Chat, Agent, Skills, Library, Test Management, and Low Code Automation in one navigation.
+  - Orders Tapper, New Chat, Agent, Skills, Library, Test Management, and Low Code Automation in one navigation.
   - Supports expanded/collapsed states, English/Chinese switching, and inactive conversation history.
   - Selecting history restores the prior conversation; New Chat creates an independent empty conversation without mutating prior turns or context.
-- Added controlled `AthenaChat`.
+- Added controlled `TapperChat`.
   - Suggested prompts only fill and focus the composer.
   - Send/Enter appends a turn only to the active conversation and preserves the existing BDD/automation handoffs.
   - The `Add to message` menu exposes exactly `Add from Library`, `Use Agents`, and `Use Skills`.
@@ -23,7 +23,7 @@ Implemented and committed as `ea3d81a` (`feat: add Athena conversations and cont
 - Kept Agent, Skills, and Library management as simple placeholders. No Task 3 create/edit/graph UI was implemented.
 - Continued using Task 1 `PROTOTYPE_COPY`, with English default and a working Chinese switch for the current shell/chat acceptance test.
 - Preserved Test Management, Low Code Automation, BDD import, automation handoff, editable automation steps, and page-local-only state.
-- Updated the Athena page navigation assertion from the stale `Primary` label to the approved `Product` contract.
+- Updated the Tapper page navigation assertion from the stale `Primary` label to the approved `Product` contract.
 
 ## TDD evidence
 
@@ -46,7 +46,7 @@ Result: 8 passed, 3 skipped by the test-name filter.
 ## Regression and static verification
 
 ```sh
-corepack pnpm --dir apps/web exec vitest run src/pages/AthenaPage.test.tsx
+corepack pnpm --dir apps/web exec vitest run src/pages/TapperPage.test.tsx
 ```
 
 Result: 11 passed.
@@ -57,17 +57,17 @@ corepack pnpm --dir apps/web exec prettier --check \
   src/widgets/tap/TapProductPrototype.css \
   src/widgets/tap/TapProductPrototype.interactions.test.tsx \
   src/widgets/tap/prototype/PrototypeSidebar.tsx \
-  src/widgets/tap/prototype/AthenaChat.tsx \
+  src/widgets/tap/prototype/TapperChat.tsx \
   src/widgets/tap/prototype/KnowledgeSourcesPanel.tsx \
-  src/pages/AthenaPage.test.tsx
+  src/pages/TapperPage.test.tsx
 
 corepack pnpm --dir apps/web exec eslint \
   src/widgets/tap/TapProductPrototype.tsx \
   src/widgets/tap/TapProductPrototype.interactions.test.tsx \
   src/widgets/tap/prototype/PrototypeSidebar.tsx \
-  src/widgets/tap/prototype/AthenaChat.tsx \
+  src/widgets/tap/prototype/TapperChat.tsx \
   src/widgets/tap/prototype/KnowledgeSourcesPanel.tsx \
-  src/pages/AthenaPage.test.tsx
+  src/pages/TapperPage.test.tsx
 
 corepack pnpm --dir apps/web exec tsc -p tsconfig.json --noEmit
 git diff --check
@@ -103,7 +103,7 @@ The pre-existing untracked `.impeccable/` directory was not modified or staged. 
 
 The new focused interaction tests were first run before their production changes. Result: 4 failed, covering the missing context-only history entry, missing menu focus/navigation, missing dialog keyboard operation/focus restoration, and hard-coded false `aria-selected` state.
 
-The Athena page regression was also run before removing the right-panel action. Result: 1 failed because `Manage knowledge` was still present.
+The Tapper page regression was also run before removing the right-panel action. Result: 1 failed because `Manage knowledge` was still present.
 
 ### GREEN and regression evidence
 
@@ -119,7 +119,7 @@ cd apps/web
 Result: 12 passed, 3 skipped by the exact Task 2 name filter.
 
 ```sh
-./node_modules/.bin/vitest run src/pages/AthenaPage.test.tsx
+./node_modules/.bin/vitest run src/pages/TapperPage.test.tsx
 ```
 
 Result: 11 passed.
@@ -127,20 +127,20 @@ Result: 11 passed.
 ```sh
 ./node_modules/.bin/eslint \
   src/widgets/tap/prototype/PrototypeSidebar.tsx \
-  src/widgets/tap/prototype/AthenaChat.tsx \
+  src/widgets/tap/prototype/TapperChat.tsx \
   src/widgets/tap/prototype/KnowledgeSourcesPanel.tsx \
   src/widgets/tap/TapProductPrototype.tsx \
   src/widgets/tap/TapProductPrototype.interactions.test.tsx \
-  src/pages/AthenaPage.test.tsx
+  src/pages/TapperPage.test.tsx
 
 ./node_modules/.bin/prettier --check \
   src/widgets/tap/prototype/PrototypeSidebar.tsx \
-  src/widgets/tap/prototype/AthenaChat.tsx \
+  src/widgets/tap/prototype/TapperChat.tsx \
   src/widgets/tap/prototype/KnowledgeSourcesPanel.tsx \
   src/widgets/tap/TapProductPrototype.tsx \
   src/widgets/tap/TapProductPrototype.css \
   src/widgets/tap/TapProductPrototype.interactions.test.tsx \
-  src/pages/AthenaPage.test.tsx
+  src/pages/TapperPage.test.tsx
 
 ./node_modules/.bin/tsc -b --pretty false
 ```

@@ -67,7 +67,7 @@
           <mxGeometry x="60" y="405" width="235" height="150" as="geometry" />
         </mxCell>
 
-        <mxCell id="workbench" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;统一工作台&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;Athena · Test Management · Low Code Automation (LCA)&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#2F6FED;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=center;verticalAlign=middle;spacingLeft=24;spacingRight=24;" vertex="1" parent="1">
+        <mxCell id="workbench" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;统一工作台&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;Tapper · Test Management · Low Code Automation (LCA)&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#2F6FED;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=center;verticalAlign=middle;spacingLeft=24;spacingRight=24;" vertex="1" parent="1">
           <mxGeometry x="390" y="235" width="780" height="105" as="geometry" />
         </mxCell>
 

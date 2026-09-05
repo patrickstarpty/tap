@@ -7,9 +7,9 @@
 | 核心技术   | 当前：React/TypeScript、Python + FastAPI/ASGI、MySQL、Redis、Milvus、MinIO、LiteLLM、Docker Compose；历史 provider-specific 方案：AKS、Azure AI Search、Blob、Entra ID、Key Vault |
 | 主要用户面 | TAP Knowledge Chat、Retrieval API、Citation/Trace Inspector                                                                                                                       |
 
-> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已替代 ADR-019 的交付优先级。当前路线 Knowledge-first，方案验证使用 TAP 管理的来源/revision、MinIO 原件与 artifact、Milvus 单一 `doc` family、MySQL Knowledge Graph 和 LiteLLM，并在 V0–VG 后依次进入 P0、P1。本文有关 Git/Blob/MySQL 四类来源、Azure AI Search 四索引、Entra 与 AKS 的内容，是 2026-08-21 接受范围的历史/provider-specific 设计，不是当前实现要求；其中稳定 revision/hash/anchor、引用、删除传播、可重建与评测原则继续适用。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已替代 ADR-019 的交付优先级。当前路线 Knowledge-first，方案验证使用 TAP 管理的来源/revision、MinIO 原件与 artifact、Milvus 单一 `doc` family、MySQL Knowledge Graph 和 LiteLLM，并在 V0–VG 后依次进入 P0、P1。本文有关 Git/Blob/MySQL 四类来源、Azure AI Search 四索引、Entra 与 AKS 的内容，是 2026-08-21 接受范围的历史/provider-specific 设计，不是当前实现要求；其中稳定 revision/hash/anchor、引用、删除传播、可重建与评测原则继续适用。
 
-> **阅读规则**：除 [3.4 节](#34-athena-本地-doc-切片的当前已交付事实) 外，下面第 1–10 节原文记录 2026-08-21 的 Azure Knowledge Plane 方案；标题已统一标为“历史”。当前要实施的 API、Scope、Milvus/MySQL Graph、质量门禁与交付顺序只以 [RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)、[当前架构](../2026-09-04-athena-knowledge-web-automation-overview.md)和[当前核心契约](../../reference/2026-09-04-athena-platform-contracts.md)为准。历史正文中的“必须”“出口”“正式”只对当时方案成立。
+> **阅读规则**：除 [3.4 节](#34-tapper-本地-doc-切片的当前已交付事实) 外，下面第 1–10 节原文记录 2026-08-21 的 Azure Knowledge Plane 方案；标题已统一标为“历史”。当前要实施的 API、Scope、Milvus/MySQL Graph、质量门禁与交付顺序只以 [RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)、[当前架构](../2026-09-04-tapper-knowledge-web-automation-overview.md)和[当前核心契约](../../reference/2026-09-04-tapper-platform-contracts.md)为准。历史正文中的“必须”“出口”“正式”只对当时方案成立。
 
 ## 1. 历史阶段目标（2026-08-21）
 
@@ -134,7 +134,7 @@ QueryPlan 至少固定：原始问题与 raw request hash、standalone query、i
 
 ### 3.2 与历史 Intelligence Layer 探索的关系
 
-Knowledge、Chat、Policy、Citation 和 Ingestion 在不启动 Intelligence Runtime 时仍必须独立工作。RFC-007 的 Intelligence Task/Artifact/Validator 是可复用的历史探索成果，但其独立 Lab 不再是当前交付出口。当前 Athena 生成能力只能经 TAP Knowledge/Citation 边界读取快照，不能直接查询/写入 Milvus、决定 Policy、chunk identity、删除或 active corpus；派生内容仍必须经过确定性 Validator 与人工发布。历史边界见 [RFC-007](../../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-014](../../decisions/2026-08-21-adr-014-codex-specialist-runtime.md)，当前顺序见 RFC-009/ADR-021。
+Knowledge、Chat、Policy、Citation 和 Ingestion 在不启动 Intelligence Runtime 时仍必须独立工作。RFC-007 的 Intelligence Task/Artifact/Validator 是可复用的历史探索成果，但其独立 Lab 不再是当前交付出口。当前 Tapper 生成能力只能经 TAP Knowledge/Citation 边界读取快照，不能直接查询/写入 Milvus、决定 Policy、chunk identity、删除或 active corpus；派生内容仍必须经过确定性 Validator 与人工发布。历史边界见 [RFC-007](../../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-014](../../decisions/2026-08-21-adr-014-codex-specialist-runtime.md)，当前顺序见 RFC-009/ADR-021。
 
 ### 3.3 历史前后端与运行角色边界
 
@@ -150,9 +150,9 @@ Knowledge、Chat、Policy、Citation 和 Ingestion 在不启动 Intelligence Run
 
 首版可以共享一个 Python package 和数据库迁移，但使用独立 entrypoint/Deployment。FastAPI 在线 handler 只做异步 I/O；parser/OCR/AST、本地模型和大对象处理不在 event loop 或进程内 Background Task 运行。完整性能、容量与 AKS 边界见 [总体技术架构](../2026-08-20-overview.md#11-可靠性性能与容量)。
 
-### 3.4 Athena 本地 `doc` 切片的当前已交付事实
+### 3.4 Tapper 本地 `doc` 切片的当前已交付事实
 
-Athena 本地 Demo 已经交付一组可被当前 Knowledge-first 路线和历史 Intelligence 探索复用、但范围严格受限的 RAG 能力：
+Tapper 本地 Demo 已经交付一组可被当前 Knowledge-first 路线和历史 Intelligence 探索复用、但范围严格受限的 RAG 能力：
 
 - provider-neutral Knowledge HTTP/API、Search/Model/Citation ports 与公共 OpenAPI/TypeScript 生成链；
 - PDF/DOCX/MD/TXT 文档的有界上传、稳定 revision/chunk 身份、typed parse/chunk、可恢复 job/lease/retry/delete 和 MySQL Outbox/Redis 唤醒；

@@ -31,7 +31,7 @@
 
 2026-09-02 的产品讨论曾确认：TAP 的长期主体参考 BrowserStack 的测试自动化、运行和证据体验，先探索 Intelligence Layer。用户可以只提供一个 `goal`；长期 Context 模型允许 Requirement、Release、Project、产品源码、测试仓库和失败材料成为可选关系，但 P1.0–P1.2 wire 只接 goal、可选人工步骤和用户选择的 `ready` Knowledge Source。第一步交付的是 Brief、事实/推断/假设/未知分析、Automation Blueprint、可恢复任务和 Review Package，而不是完整 Test Management、Release Management 或真实 Browser/Device 执行。该变化由 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 记录；其交付优先级已于 2026-09-04 被替代，但技术探索事实保留。
 
-2026-09-04 的正式决策确认：以 [RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 和 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 作为当前基线。交付先在固定 Validation Scope 中按 V0–VG 完成可信知识问答、MySQL Knowledge Graph、测试资产、Web Low Code/Recorder 和 Jenkins 结果闭环；通过 VG 后才进入 P0 用户/认证/RBAC/多 Project，再由 P1 完成生产加固。部署基线是自托管 Docker Compose、MySQL、Redis、Milvus、MinIO、LiteLLM 与外置 Jenkins；Automation Revision 由 TAP/MySQL 管理、Bundle 存 MinIO，Git 仅为可选同步。Mobile 与 Azure DevOps Provider 均在 P1 之后另行设计。
+2026-09-04 的正式决策确认：以 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 和 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 作为当前基线。交付先在固定 Validation Scope 中按 V0–VG 完成可信知识问答、MySQL Knowledge Graph、测试资产、Web Low Code/Recorder 和 Jenkins 结果闭环；通过 VG 后才进入 P0 用户/认证/RBAC/多 Project，再由 P1 完成生产加固。部署基线是自托管 Docker Compose、MySQL、Redis、Milvus、MinIO、LiteLLM 与外置 Jenkins；Automation Revision 由 TAP/MySQL 管理、Bundle 存 MinIO，Git 仅为可选同步。Mobile 与 Azure DevOps Provider 均在 P1 之后另行设计。
 
 ```text
 历史 Azure 目标栈（2026-08-20/21，已被当前 Compose 基线替代）：

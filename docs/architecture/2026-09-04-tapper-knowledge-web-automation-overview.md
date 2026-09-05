@@ -1,19 +1,19 @@
-# Athena 知识与 Web 自动化平台架构
+# Tapper 知识与 Web 自动化平台架构
 
 | 字段         | 值                                                                                                                           |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | 文档状态     | Architecture Baseline v0.4，已接受                                                                                           |
 | 生效日期     | 2026-09-04                                                                                                                   |
-| 规范来源     | [RFC-009：Athena 知识与 Web 测试自动化平台设计](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) |
+| 规范来源     | [RFC-009：Tapper 知识与 Web 测试自动化平台设计](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) |
 | 当前交付主线 | V0–VG：Validation-first、Knowledge-first、Web-only、Jenkins-first                                                            |
 | 目标产品形态 | 单一企业、多 Project、多用户；P0 才实施身份/RBAC/多 Project                                                                  |
 | 应用技术栈   | React + TypeScript；Python 3.13 + FastAPI/ASGI；MySQL、Redis、MinIO、Milvus、LiteLLM                                         |
 | 部署基线     | 企业内网 Linux + Docker Compose；Jenkins Controller/Agent 外置                                                               |
-| 当前实现事实 | 已有 loopback Athena `doc` 知识切片和纯前端产品原型；本架构其余能力尚未实现                                                  |
+| 当前实现事实 | 已有 loopback Tapper `doc` 知识切片和纯前端产品原型；本架构其余能力尚未实现                                                  |
 
 ## 1. 架构目标与边界
 
-TAP 把 Athena 的可信知识能力放在最前面，并沿一条可追溯链路逐步增加 Knowledge Graph、AI 测试设计、Web Low Code Automation、录制、Playwright 生成、Jenkins 执行和 Test Plan 结果回写。平台的核心不是一次性生成脚本，而是保存可审查、可发布、可执行和可核验的权威资产。
+TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链路逐步增加 Knowledge Graph、AI 测试设计、Web Low Code Automation、录制、Playwright 生成、Jenkins 执行和 Test Plan 结果回写。平台的核心不是一次性生成脚本，而是保存可审查、可发布、可执行和可核验的权威资产。
 
 当前方案先验证产品闭环，再产品化账号体系：
 
@@ -58,7 +58,7 @@ flowchart TB
       Scope[ScopeProvider + AuthorizationPolicy]
       Knowledge[Knowledge + Citation]
       Graph[Knowledge Graph]
-      Chat[Conversation + Athena]
+      Chat[Conversation + Tapper]
       TestMgmt[Test Management]
       Automation[LCA + Test IR]
       Execution[Execution Orchestration]
@@ -180,7 +180,7 @@ Test Plan 与 Automation 是可选、严格双向 `1:1`：数据库同时约束 
 ```mermaid
 sequenceDiagram
     actor U as User
-    participant A as Athena API
+    participant A as Tapper API
     participant P as Scope / Policy
     participant S as Milvus
     participant G as Graph Store
@@ -209,11 +209,11 @@ Document Revision ready 后可触发独立 Graph Extraction。模型输出只形
 
 在线回答最多做两跳、受关系类型与节点数量预算约束的图扩展。Graph 页面使用有界子图、搜索、社区筛选、邻居展开、路径高亮和 Evidence Inspector；不能把一次性全图下载或无界路径查询交给浏览器。
 
-### 5.3 Athena 测试设计
+### 5.3 Tapper 测试设计
 
-Athena 检测到测试设计意图后，同时固定当前 Turn 的 Input Snapshot digest 与 Answer/Evidence Snapshot digest，再生成 Test Plan Draft：前者提供用户选择、Agent/Skill、模型和策略，后者提供实际检索、Graph 与 Citation Evidence。内容至少包括目标、范围、前置条件、风险、Test Case、BDD、Citation、Assumption、Unknown 和 Coverage Gap。模型只能创建 Draft；用户在 Test Management 中审查并发布不可变 Revision。
+Tapper 检测到测试设计意图后，同时固定当前 Turn 的 Input Snapshot digest 与 Answer/Evidence Snapshot digest，再生成 Test Plan Draft：前者提供用户选择、Agent/Skill、模型和策略，后者提供实际检索、Graph 与 Citation Evidence。内容至少包括目标、范围、前置条件、风险、Test Case、BDD、Citation、Assumption、Unknown 和 Coverage Gap。模型只能创建 Draft；用户在 Test Management 中审查并发布不可变 Revision。
 
-用户直接要求 Automation 时，Athena 先询问是否创建 Test Plan。Yes 路径返回 Test Plan 与 Automation 深链接并建立严格 1:1；Skip 路径只创建未关联 Automation。Conversation Turn 保存稳定 Artifact Link，不保存可漂移的资产副本。
+用户直接要求 Automation 时，Tapper 先询问是否创建 Test Plan。Yes 路径返回 Test Plan 与 Automation 深链接并建立严格 1:1；Skip 路径只创建未关联 Automation。Conversation Turn 保存稳定 Artifact Link，不保存可漂移的资产副本。
 
 ### 5.4 Web LCA 与 Recorder
 
@@ -309,7 +309,7 @@ Session Adapter 继续通过同一 `ScopeProvider`/`AuthorizationPolicy` 契约�
 | P0     | Validation Adapter 禁用，Session/CSRF/RBAC/last-admin/跨 Project/origin adoption 全部通过    |
 | P1     | 恢复、容量、安全负矩阵和受控客户 Pilot 全部通过                                              |
 
-具体编码顺序、精确文件、测试与提交边界见 [实施计划](../plans/2026-09-04-athena-knowledge-web-automation-platform.md)。
+具体编码顺序、精确文件、测试与提交边界见 [实施计划](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md)。
 
 ## 10. 当前决策链
 

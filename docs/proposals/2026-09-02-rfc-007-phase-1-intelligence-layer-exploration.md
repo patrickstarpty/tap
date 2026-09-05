@@ -12,9 +12,11 @@ related-adrs:
   - ADR-021
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # RFC-007：Phase 1 Intelligence Layer 探索
 
-> **撤回处置（2026-09-04）**：本 RFC 在实施前被 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 取代，不再授权独立 Intelligence Lab 的 P1.0–P1.3 路线。durable task、artifact、validator、引用与真实性边界仍可作为历史工程参考；本文所有“当前”“接下来”“Phase 1/P1.0–P1.3”均按 2026-09-02 历史范围理解。现行顺序为 Knowledge-first V0–VG、P0 身份/RBAC/多 Project、P1 生产加固，并以 Web-only/Jenkins-first 为自动化范围。
+> **撤回处置（2026-09-04）**：本 RFC 在实施前被 [RFC-009](2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 取代，不再授权独立 Intelligence Lab 的 P1.0–P1.3 路线。durable task、artifact、validator、引用与真实性边界仍可作为历史工程参考；本文所有“当前”“接下来”“Phase 1/P1.0–P1.3”均按 2026-09-02 历史范围理解。现行顺序为 Knowledge-first V0–VG、P0 身份/RBAC/多 Project、P1 生产加固，并以 Web-only/Jenkins-first 为自动化范围。
 
 ## 摘要
 
@@ -84,7 +86,7 @@ flowchart TB
 
 ### 先做 Intelligence Layer 的原因
 
-当前 Athena 已经证明了一个很窄但有价值的路径：上传文本可提取资料，持久化摄取状态，在指定来源内回答，并将结论定位到不可变 revision、hash 和 anchor。它为 Intelligence Layer 提供了来源和引用基础，但当前本地切片仍是单次问答，不具备通用 Agent Task、代码工作区、测试执行或正式测试资产。
+当前 Tapper 已经证明了一个很窄但有价值的路径：上传文本可提取资料，持久化摄取状态，在指定来源内回答，并将结论定位到不可变 revision、hash 和 anchor。它为 Intelligence Layer 提供了来源和引用基础，但当前本地切片仍是单次问答，不具备通用 Agent Task、代码工作区、测试执行或正式测试资产。
 
 如果下一步直接建设完整 Test Management、设备矩阵、执行调度和 Release 流程，将在尚未验证 AI 差异化价值之前投入大量平台工程。相反，如果只继续扩展自由问答，又无法验证 Codex、Claude Code 和 Manus 式能力是否能在测试工程中产生可复用产物。
 
@@ -116,7 +118,7 @@ flowchart TB
 - [ADR-011](../decisions/2026-08-20-adr-011-phase-1-rag-foundation.md) 与 [ADR-013](../decisions/2026-08-21-adr-013-phase-1-knowledge-chat.md) 分别将 RAG Foundation 和 Knowledge Chat 定义为原 Phase 1 验收面。[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已正式替代这两项阶段优先级；来源、引用和后置 Knowledge Plane 设计仍保留。
 - [RFC-003](2026-08-23-rfc-003-phase-1-application-structure.md) 中单仓、模块边界、契约生成和多 entrypoint 等工程约束继续有效；其中把完整 Knowledge Chat、企业四索引、Entra 和 AKS 作为当时 Phase 1 出口的产品范围，曾由本 RFC 和 ADR-019 重排，现行优先级再由 RFC-009/ADR-021 替代。
 - [ADR-014](../decisions/2026-08-21-adr-014-codex-specialist-runtime.md) 已接受 Codex 作为首个可替换、可关闭的实验 Runtime Adapter；[RFC-001](2026-08-21-rfc-001-codex-agent-runtime.md) 已进入 `rejected`，不再保留与本 RFC 冲突的 Phase 1.5/Phase 2 划分。
-- [ADR-018](../decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md) 只约束当前 Athena 本地回答后端。新的 Agent Runtime 必须独立实现，不能通过打开现有 Answer Adapter 的工具权限来获得。
+- [ADR-018](../decisions/2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md) 只约束当前 Tapper 本地回答后端。新的 Agent Runtime 必须独立实现，不能通过打开现有 Answer Adapter 的工具权限来获得。
 
 ## 目标
 
@@ -133,12 +135,12 @@ flowchart TB
 
 ### 工程目标
 
-1. 复用 Athena 已有的不可变来源、引用、授权检索、MySQL/Outbox/lease、Redis 唤醒和 Blob artifact 经验。
+1. 复用 Tapper 已有的不可变来源、引用、授权检索、MySQL/Outbox/lease、Redis 唤醒和 Blob artifact 经验。
 2. 新建独立的 Intelligence Task/Attempt 状态机，不复用 Chat Turn 或 Knowledge Ingestion Job。
 3. 在 `AgentRuntime` 端口后接入首个 Runtime Adapter，公共契约不暴露供应商、模型、sandbox 或工具配置。
 4. 将模型控制的 Runtime、TAP Tool Gateway、Artifact Broker 和 Deterministic Validator 分开。
 5. 对每个任务记录输入、策略、Runtime、模型 Profile、指令 Profile 版本、工具集版本、输出 Schema、成本和人工审查版本；Prompt 正文与 provider transcript 不进入公开产物。
-6. 保证关闭 Intelligence Runtime 后，现有 Athena 摄取、检索、引用和回答路径仍可独立运行。
+6. 保证关闭 Intelligence Runtime 后，现有 Tapper 摄取、检索、引用和回答路径仍可独立运行。
 
 ## 非目标
 
@@ -620,7 +622,7 @@ Runtime 不得直接连接 MySQL、Redis、Blob、Milvus/Azure AI Search、Key V
 
 P1.2 另允许一个严格受限的 **单用户 loopback Lab 例外**：固定 native CLI 可以作为可信 Adapter 启动器拥有单独的服务端认证目录，但 Prompt、请求拥有的空工作目录、模型可控工具和 Artifact 均不能读取或复制该目录及凭据。该 Adapter 必须是零工具、read-only、无 MCP/Browser/web/network action、忽略个人配置与规则，并通过受控 argv、输出 Schema、事件审计、超时和进程组清理测试。同一 OS 用户的子进程不等于生产隔离；因此该路径只能用于显式 opt-in 的本地价值评测，不能部署为共享/远程服务，也不能把 host credential isolation 记为已通过。P1.3 仍必须满足上面的服务模式硬要求。
 
-### 9. 与 Athena 现有实现的关系
+### 9. 与 Tapper 现有实现的关系
 
 Phase 1 复用以下基础：
 
@@ -632,7 +634,7 @@ Phase 1 复用以下基础：
 
 Phase 1 明确不泛化以下实现：
 
-- Athena 固定的 `local/athena-demo` Policy 不是正式 Workspace/Project 权限；
+- Tapper 固定的 `local/tapper-demo` Policy 不是正式 Workspace/Project 权限；
 - 当前 Citation Resolver 校验 revision/hash/currentness，但不是 identity-aware 的通用授权服务；Intelligence BFF/Tool Gateway 必须增加当前 actor/scope 授权，不能直接把现有 Citation HTTP endpoint 当安全边界；
 - Knowledge Ingestion Job 不是 Intelligence Task；
 - Chat Turn 不是 Agent Attempt；
@@ -640,7 +642,7 @@ Phase 1 明确不泛化以下实现：
 - 当前 tool-free Codex Answer Adapter 不是 AgentRuntime；
 - 当前 answer snapshot/Citation 不是执行 Evidence Manifest。
 
-现有 Athena 页面和 API 保留为回归基线。Intelligence Runtime 故障或关闭时，现有文档摄取、检索、引用和回答仍必须工作。
+现有 Tapper 页面和 API 保留为回归基线。Intelligence Runtime 故障或关闭时，现有文档摄取、检索、引用和回答仍必须工作。
 
 本机实验凭据只能由可信 Adapter 启动器和 CLI 的认证子系统读取；子进程环境至多包含服务端注入的非秘密认证目录定位，不能包含 token/key 值。凭据不得进入 Prompt、请求工作目录、模型工具、日志、事件或 Artifact。共享后台不得复用操作者个人 ChatGPT/Codex 登录；任何共享或远程部署必须另行设计服务身份与进程隔离。
 
@@ -735,7 +737,7 @@ Phase 1 IntelligenceArtifact
 
 优点是延续现有路线，检索与权限基础最稳。缺点是容易继续优化“回答问题”，却没有验证结构化测试设计、长期任务、工程候选和 Review Package 是否构成真正差异化。
 
-本 RFC 不选择它作为下一阶段主线，但保留 Athena 和 Knowledge/Citation 基础，不丢弃已有成果。
+本 RFC 不选择它作为下一阶段主线，但保留 Tapper 和 Knowledge/Citation 基础，不丢弃已有成果。
 
 ### 方案 B：先建设完整 BrowserStack-like 平台
 
@@ -770,7 +772,7 @@ Phase 1 IntelligenceArtifact
 | 为了展示 AI 而过早引入完整测试平台      | Phase 1 明确没有正式 Test Asset、Run、Provider、Release 或外部写入              |
 | 代码候选被误认为已验证                  | Validator 与 Runtime 分离；强制 Diff、检查证据和 `execution_status=not_run`     |
 | Agent 通过仓库文本或 Prompt 越权        | Runtime Policy、工具、网络和凭据在 Agent 外；repo instructions 只作为不可信输入 |
-| 当前 Athena demo 安全假设被带入共享服务 | Phase 1 保持 loopback 单用户；正式身份/多租户需独立安全设计后才能共享           |
+| 当前 Tapper demo 安全假设被带入共享服务 | Phase 1 保持 loopback 单用户；正式身份/多租户需独立安全设计后才能共享           |
 | Agent Task 与 Chat/Ingestion 状态混用   | 新建独立 Task/Attempt/Event 表和状态机，只复用 Outbox/lease 模式                |
 | Artifact 污染未来权威测试资产           | Phase 1 Artifact 均为 candidate；未来必须经过 Adapter、Validator 和人工接纳     |
 | 供应商锁定                              | 公共 API 不暴露 Provider；Runtime 通过 capability 协商并保留 baseline/off 开关  |
@@ -789,7 +791,7 @@ Phase 1 IntelligenceArtifact
 
 ### P1.1：Grounded Intelligence
 
-- 将 Athena 的来源选择、revision/hash/anchor 和 Citation 能力接入 Context Builder。
+- 将 Tapper 的来源选择、revision/hash/anchor 和 Citation 能力接入 Context Builder。
 - 交付 assumption-first 与 source-grounded 两条路径。
 - 生成版本化 Intelligence Report、Assumption Register 和 Automation Blueprint。
 
@@ -822,7 +824,7 @@ Phase 1 IntelligenceArtifact
 2. [ADR-014](../decisions/2026-08-21-adr-014-codex-specialist-runtime.md) 接受首个可替换 Runtime Adapter 边界，[RFC-001](2026-08-21-rfc-001-codex-agent-runtime.md) 被拒绝并转为历史设计记录；
 3. README、总体架构、路线图、核心契约、来源说明和目录索引与本决策同步；
 4. [Phase 1 Intelligence Core 实施计划](../plans/2026-09-02-phase-1-intelligence-core-implementation.md) 独立承载 P1.0–P1.2 的 TDD 任务与门禁，P1.3 在前置门禁达标后另行计划；
-5. Athena 保持唯一已实现的产品切片，Intelligence 能力在计划验收前均为 `planned`，不因 RFC 被接受而变成已交付。
+5. Tapper 保持唯一已实现的产品切片，Intelligence 能力在计划验收前均为 `planned`，不因 RFC 被接受而变成已交付。
 
 发布只面向本机 loopback Lab。不得扩大监听地址、共享用户、接入生产资料或宣称企业可用，除非另有身份、授权、网络和数据治理设计。
 
@@ -843,7 +845,7 @@ Phase 1 IntelligenceArtifact
 - 所有 Artifact 在 Runtime 停止写入后由 Broker 封存并计算 hash；Envelope 不含可变验证状态，独立 Validator 只追加精确绑定 body hash 的结果，查询层再派生 Artifact View。
 - 工程实验只修改一次性测试 workspace；产品源码、远端 Git、真实系统和外部服务零写入。
 - Code Bundle/Candidate Patch 始终包含完整 Diff、固定检查证据、未验证项和 `execution_status=not_run`。
-- Runtime 关闭或不可用时，现有 Athena 摄取、检索、引用和回答回归仍通过。
+- Runtime 关闭或不可用时，现有 Tapper 摄取、检索、引用和回答回归仍通过。
 
 ### 安全与真实性验收
 
@@ -859,7 +861,7 @@ Phase 1 IntelligenceArtifact
 - 至少 24 个 Golden Tasks 按四个 lane 单独报告，不用总体均值掩盖弱项。
 - deterministic fake 覆盖 Schema、Claim basis、Citation、状态、取消、越权、注入、Artifact 封存和虚假执行状态。
 - `make intelligence-integration` 默认运行完整 allowlist，`make intelligence-e2e` 必须证明页面重载和 Runtime result 已持久化、首个 seal 前的 Worker 进程重启不会重复激活 Runtime 或丢失/重复 Artifact。
-- RFC-007 新增的 `make intelligence-real-smoke` 显式 opt-in：未设置 `TAP_RUN_INTELLIGENCE_REAL_MODEL_SMOKE=1` 时，该命令对应的 Intelligence smoke 模块精确产生一个有意 skip；启用后的第一例必须把 committed registry 和本次 exact `openai-structured-outputs-subset-v1` root Schema 真实提交给 provider，任何 Schema 拒绝、路由、版本、安全、引用或清理失败都必须失败而不是转为 skip。它不改变现有 Athena real-model/Codex smoke 的命令和 skip 语义。
+- RFC-007 新增的 `make intelligence-real-smoke` 显式 opt-in：未设置 `TAP_RUN_INTELLIGENCE_REAL_MODEL_SMOKE=1` 时，该命令对应的 Intelligence smoke 模块精确产生一个有意 skip；启用后的第一例必须把 committed registry 和本次 exact `openai-structured-outputs-subset-v1` root Schema 真实提交给 provider，任何 Schema 拒绝、路由、版本、安全、引用或清理失败都必须失败而不是转为 skip。它不改变现有 Tapper real-model/Codex smoke 的命令和 skip 语义。
 - 阶段报告包含相对 baseline 的质量收益、人工编辑量、时延、成本和 stop/retain 决策。
 
 ### 仓库验收
@@ -870,7 +872,7 @@ Phase 1 IntelligenceArtifact
 
 ## 未决问题
 
-接受时已裁决两项 P1.0–P1.2 边界：本阶段不接浏览器录制、截图或 failure bundle，只接 goal、可选人工步骤与 ready Athena 来源；Artifact 导出固定为人类可读 Markdown 和 canonical JSON。代码 archive/patch 与 failure bundle 留到 P1.3 单独设计。
+接受时已裁决两项 P1.0–P1.2 边界：本阶段不接浏览器录制、截图或 failure bundle，只接 goal、可选人工步骤与 ready Tapper 来源；Artifact 导出固定为人类可读 Markdown 和 canonical JSON。代码 archive/patch 与 failure bundle 留到 P1.3 单独设计。
 
 | 问题                        | 建议默认值                                                               | 何时必须决定       |
 | --------------------------- | ------------------------------------------------------------------------ | ------------------ |

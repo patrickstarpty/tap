@@ -7,7 +7,7 @@
 | 交互参考 | Codex 与 Claude Code 的项目/会话、流式状态、中断、排队追问和资源引用模式                                  |
 | 边界     | 借鉴交互模型，不复制品牌、视觉资产或像素布局；V1 知识问答不执行 Shell、代码修改或测试任务                 |
 
-> **当前范围（2026-09-04）**：[RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已替代 ADR-019 的交付优先级。当前先恢复真实 Knowledge Answer/Citation 与服务端 Conversation 主链，使用 Milvus `doc`、MySQL/MinIO、LiteLLM 和固定 Validation Project/Actor；P0 才增加登录、Membership/RBAC 与多 Project。正文涉及 Entra、Azure AI Search、完整 Trace/队列和企业 Policy 的部分保留为历史/后续设计，不是 V0 的已实现能力。
+> **当前范围（2026-09-04）**：[RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已替代 ADR-019 的交付优先级。当前先恢复真实 Knowledge Answer/Citation 与服务端 Conversation 主链，使用 Milvus `doc`、MySQL/MinIO、LiteLLM 和固定 Validation Project/Actor；P0 才增加登录、Membership/RBAC 与多 Project。正文涉及 Entra、Azure AI Search、完整 Trace/队列和企业 Policy 的部分保留为历史/后续设计，不是 V0 的已实现能力。
 
 ## 1. 产品目标
 
@@ -17,9 +17,9 @@
 
 RFC-007 定义的 Intelligence Task 是显式、独立的异步对象，不是聊天回答背后的隐藏路径；其独立 Lab 交付优先级已被 RFC-009/ADR-021 替代。普通知识问答仍由确定性 Retrieval Pipeline 完成；关闭生成 Runtime 不影响本页面。Test Plan/BDD/Automation Draft 按 RFC-009 的后续验证里程碑接入，并始终经过引用验证与人工发布边界。
 
-### 1.1 Athena 本地工作区与正式 Knowledge Chat 的边界
+### 1.1 Tapper 本地工作区与正式 Knowledge Chat 的边界
 
-当前仓库已交付的 Athena 本地工作区复用了本设计的来源、claim citation 和证据侧栏原则，但采用更窄的来源优先信息架构：
+当前仓库已交付的 Tapper 本地工作区复用了本设计的来源、claim citation 和证据侧栏原则，但采用更窄的来源优先信息架构：
 
 ```text
 ┌─ Ready Sources ─┬──── 单次来源限定问答 ────┬─ Citation Preview ─┐
@@ -30,14 +30,14 @@ RFC-007 定义的 Intelligence Task 是显式、独立的异步对象，不是�
                   知识库：上传 / 六阶段状态 / 重试 / 删除
 ```
 
-- Athena 只有固定本地知识空间，不创建 Project/Conversation，也不把回答快照冒充 Chat history。
-- Athena 当前渲染回答只保存在页面内存；刷新会清空回答，但会重新读取持久的文档/ingestion/index 状态，用户可基于仍为 `ready` 的来源重新提问。本版没有历史回答恢复 API。
+- Tapper 只有固定本地知识空间，不创建 Project/Conversation，也不把回答快照冒充 Chat history。
+- Tapper 当前渲染回答只保存在页面内存；刷新会清空回答，但会重新读取持久的文档/ingestion/index 状态，用户可基于仍为 `ready` 的来源重新提问。本版没有历史回答恢复 API。
 - 问答使用一次 JSON 响应；没有 SSE、answer delta、停止、排队追问、`@resource`、fork 或断线游标恢复。
 - 普通用户可选择最多 20 份 ready 文档并打开行内引用；processing/failed/deleting 文档不可进入选择范围。
 - 知识库把上传和运维从 composer 分离，直接显示 `stored → parsing → chunking → embedding → publishing → ready` 六阶段，以及失败重试与删除。
 - 本地 Demo 无身份验证、Trace、Feedback 或当前 ACL 重授权，只允许精确 loopback 使用；V0–VG 使用服务端固定 Validation Scope/Policy，P0 才实现内建 Session、Membership/RBAC、历史权限收紧与受限诊断。本路线不以前置 Entra/SSO 为条件。
 
-这一区分是产品边界，不是临时命名差异：Athena 已有切片验证“喂资料、限定来源、核验回答”；下面章节中的 durable Conversation/SSE/Citation 属于 V1 当前目标，queue、完整 Trace/Feedback 与更广资源类型属于后续扩展，身份/RBAC 属于 P0。各项不能因写在同一设计页中而被当作已经实现。
+这一区分是产品边界，不是临时命名差异：Tapper 已有切片验证“喂资料、限定来源、核验回答”；下面章节中的 durable Conversation/SSE/Citation 属于 V1 当前目标，queue、完整 Trace/Feedback 与更广资源类型属于后续扩展，身份/RBAC 属于 P0。各项不能因写在同一设计页中而被当作已经实现。
 
 ## 2. 页面布局
 
@@ -174,7 +174,7 @@ Trace 不显示隐藏思维链、系统提示词、原始 group IDs、秘密、�
 
 浏览器只访问 TAP BFF；绝不直连 Milvus、LiteLLM、MySQL、MinIO/Azurite、Jenkins 或未来的检索 Provider。
 
-下列 URL 是 2026-08-21 的交互草案，不是当前 OpenAPI。RFC-009 的正式资源必须位于 `/api/v1/projects/{project_id}/...` 范围；实施时由 Backend 生成契约并以[当前核心契约](../reference/2026-09-04-athena-platform-contracts.md)校验语义，不能照抄下面的无 Project 路径。
+下列 URL 是 2026-08-21 的交互草案，不是当前 OpenAPI。RFC-009 的正式资源必须位于 `/api/v1/projects/{project_id}/...` 范围；实施时由 Backend 生成契约并以[当前核心契约](../reference/2026-09-04-tapper-platform-contracts.md)校验语义，不能照抄下面的无 Project 路径。
 
 ```text
 POST   /v1/chats
@@ -213,7 +213,7 @@ turn.canceled
 turn.failed
 ```
 
-每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。当前稳定边界见 [Athena 平台核心契约](../reference/2026-09-04-athena-platform-contracts.md#3-knowledge-与-conversation)；旧 Knowledge Chat Contract 仅保留历史细化参考。
+每个事件包含不透明 `eventId`、Turn 内单调递增 `sequence`、`turnId`、`occurredAt`、`schemaVersion` 和小型 typed payload。创建 turn 必须携带 `clientRequestId` 做幂等；排序/去重/恢复使用 `sequence`，不能依赖字符串 `eventId` 排序。事件重放不能触发新的模型或检索调用。当前稳定边界见 [Tapper 平台核心契约](../reference/2026-09-04-tapper-platform-contracts.md#3-knowledge-与-conversation)；旧 Knowledge Chat Contract 仅保留历史细化参考。
 
 ## 7. 前端实现基线
 

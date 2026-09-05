@@ -2,7 +2,7 @@
 
 本文记录 2026-08-21 将 TAP 四个逻辑知识域映射为 Azure AI Search 索引、别名、字段属性、向量与 semantic configuration 的 provider-specific 历史方案；它不是当前架构契约基线。
 
-> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 采用 Milvus `doc` 检索与 MySQL Knowledge Graph，并按 V0–VG、P0、P1 推进。本文正文中的 “Phase 1”、Azure AI Search、Entra、AKS 和四索引均指 2026-08-21 历史设计，不能描述为当前目标或已实现能力。可继续复用的原则限于 TAP 掌握稳定身份、provenance、Policy filter、manifest、删除传播、可重建与版本化评测；具体 Azure Schema/API 不自动约束当前 Milvus 实现。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 采用 Milvus `doc` 检索与 MySQL Knowledge Graph，并按 V0–VG、P0、P1 推进。本文正文中的 “Phase 1”、Azure AI Search、Entra、AKS 和四索引均指 2026-08-21 历史设计，不能描述为当前目标或已实现能力。可继续复用的原则限于 TAP 掌握稳定身份、provenance、Policy filter、manifest、删除传播、可重建与版本化评测；具体 Azure Schema/API 不自动约束当前 Milvus 实现。
 
 ## 1. 实现边界
 

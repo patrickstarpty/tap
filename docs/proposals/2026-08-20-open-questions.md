@@ -1,6 +1,6 @@
 # 待确认项
 
-> **范围更新（2026-09-04）**：[RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已确认 Validation-first V0–VG → P0 身份/RBAC/多 Project → P1 生产加固、Knowledge-first、Compose/MinIO/LiteLLM/外置 Jenkins、TAP 管理 Automation Revision、Web-only/Jenkins-first。下列旧问题仅在与该基线兼容时继续开放；Mobile、Azure DevOps、Git 强制事实源、AKS/Azure AI Search 首期部署不再是当前待确认项。
+> **范围更新（2026-09-04）**：[RFC-009](2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已确认 Validation-first V0–VG → P0 身份/RBAC/多 Project → P1 生产加固、Knowledge-first、Compose/MinIO/LiteLLM/外置 Jenkins、TAP 管理 Automation Revision、Web-only/Jenkins-first。下列旧问题仅在与该基线兼容时继续开放；Mobile、Azure DevOps、Git 强制事实源、AKS/Azure AI Search 首期部署不再是当前待确认项。
 
 1. 产品负责人和首批使用团队；英文全称已确认为 **Test Automation Platform**。
 2. V0–VG 各验证门禁的代表性数据、目标 Web 场景、成功阈值和产品签字人分别是什么？

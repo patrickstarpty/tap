@@ -1,23 +1,24 @@
 ---
-target: Athena
+target: Tapper
 total_score: 26
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 0
 p1_count: 2
-target_identity: "file:/Users/patrick/Desktop/Workspace/ai-native/tap/apps/web/src/pages/AthenaPage.tsx"
+target_identity: "file:/Users/patrick/Desktop/Workspace/ai-native/tap/apps/web/src/pages/TapperPage.tsx"
 target_fingerprint: "sha256:e397df8aa2a2b335f62a99d6a71b94f83618cb5d9623af6244ccef536ab9e9b5"
-target_path: /Users/patrick/Desktop/Workspace/ai-native/tap/apps/web/src/pages/AthenaPage.tsx
+target_path: /Users/patrick/Desktop/Workspace/ai-native/tap/apps/web/src/pages/TapperPage.tsx
 timestamp: 2026-09-01T17-11-19Z
-slug: apps-web-src-pages-athenapage-tsx
+slug: apps-web-src-pages-tapperpage-tsx
 ---
-# Athena UI Critique
 
-评审方法：将 Athena 作为 Operate 型知识工作台，综合独立人工设计评审、真实页面桌面与 390px 窄屏检查、最新 Web Interface Guidelines 源码审计，以及 Impeccable CLI detector；没有修改产品代码。
+# Tapper UI Critique
+
+评审方法：将 Tapper 作为 Operate 型知识工作台，综合独立人工设计评审、真实页面桌面与 390px 窄屏检查、最新 Web Interface Guidelines 源码审计，以及 Impeccable CLI detector；没有修改产品代码。
 
 ## Executive summary
 
-Athena 的主要问题不是单纯配色，而是产品主次关系仍停留在 Demo 阶段：三块同权卡片同时铺开选资料、得到回答、核验原文，空态时留下两大片无效空间；移动端又把桌面三栏直接纵向堆叠。它有可信知识产品的好底子，但当前更像能工作的组件集合，而非围绕核心任务精心编排的成熟产品。
+Tapper 的主要问题不是单纯配色，而是产品主次关系仍停留在 Demo 阶段：三块同权卡片同时铺开选资料、得到回答、核验原文，空态时留下两大片无效空间；移动端又把桌面三栏直接纵向堆叠。它有可信知识产品的好底子，但当前更像能工作的组件集合，而非围绕核心任务精心编排的成熟产品。
 
 - Visual specificity: 3 / 4
 - Nielsen usability: 26 / 40 — Acceptable
@@ -28,18 +29,18 @@ Athena 的主要问题不是单纯配色，而是产品主次关系仍停留在 
 
 ## Nielsen heuristic scores
 
-| Heuristic | Score | Evidence |
-|---|---:|---|
-| Visibility of system status | 3/4 | Loading, failure and answer-pending states are explicit. |
-| Match with the real world | 3/4 | Source-answer-original-text is natural; Chunks and SHA-256 surface too early. |
-| User control and freedom | 3/4 | Source clearing, deletion cancellation and citation focus restoration exist. |
-| Consistency and standards | 3/4 | Panel language is consistent, but AntD, Tailwind and handwritten CSS are not yet one closed system. |
-| Error prevention | 3/4 | Empty questions and no-source submissions are blocked; deletion is confirmed. |
-| Recognition rather than recall | 2/4 | Zero-source and failure states require users to infer that Knowledge Library is the recovery path. |
-| Flexibility and efficiency | 2/4 | Search, select-all and Enter submit exist; expert acceleration paths do not. |
-| Aesthetic and minimalist design | 3/4 | Restrained palette, but empty answer and original-text panels dominate the first screen. |
-| Error recognition and recovery | 3/4 | Retry exists, but does not explain which trust-chain step failed. |
-| Help and documentation | 1/4 | No onboarding, sample question or discoverable task help. |
+| Heuristic                       | Score | Evidence                                                                                            |
+| ------------------------------- | ----: | --------------------------------------------------------------------------------------------------- |
+| Visibility of system status     |   3/4 | Loading, failure and answer-pending states are explicit.                                            |
+| Match with the real world       |   3/4 | Source-answer-original-text is natural; Chunks and SHA-256 surface too early.                       |
+| User control and freedom        |   3/4 | Source clearing, deletion cancellation and citation focus restoration exist.                        |
+| Consistency and standards       |   3/4 | Panel language is consistent, but AntD, Tailwind and handwritten CSS are not yet one closed system. |
+| Error prevention                |   3/4 | Empty questions and no-source submissions are blocked; deletion is confirmed.                       |
+| Recognition rather than recall  |   2/4 | Zero-source and failure states require users to infer that Knowledge Library is the recovery path.  |
+| Flexibility and efficiency      |   2/4 | Search, select-all and Enter submit exist; expert acceleration paths do not.                        |
+| Aesthetic and minimalist design |   3/4 | Restrained palette, but empty answer and original-text panels dominate the first screen.            |
+| Error recognition and recovery  |   3/4 | Retry exists, but does not explain which trust-chain step failed.                                   |
+| Help and documentation          |   1/4 | No onboarding, sample question or discoverable task help.                                           |
 
 ## Cognitive load
 
@@ -83,7 +84,7 @@ Everyday users need availability, update time and answer provenance first. Chunk
 
 ### P3 — Document structure and navigation state are not fully productized
 
-apps/web/src/pages/AthenaPage.tsx:18 has no H1 or skip link. The Ask/Knowledge Library tab state is not mapped to the URL, so refresh, sharing and browser history do not restore context.
+apps/web/src/pages/TapperPage.tsx:18 has no H1 or skip link. The Ask/Knowledge Library tab state is not mapped to the URL, so refresh, sharing and browser history do not restore context.
 
 ## Persona red flags
 
@@ -105,8 +106,8 @@ The mandatory detector found two side-tab warnings at apps/web/src/app/styles.cs
 
 Current Web Interface Guidelines findings:
 
-- apps/web/src/pages/AthenaPage.tsx:18 — no skip link and no H1.
-- apps/web/src/pages/AthenaPage.tsx:21 — tab state is not represented in the URL.
+- apps/web/src/pages/TapperPage.tsx:18 — no skip link and no H1.
+- apps/web/src/pages/TapperPage.tsx:21 — tab state is not represented in the URL.
 - apps/web/src/features/knowledge/components/SourcesPanel.tsx:79 — search input lacks name/autocomplete metadata.
 - apps/web/src/features/knowledge/components/QuestionComposer.tsx:34 — question textarea lacks name/autocomplete metadata.
 - apps/web/src/features/knowledge/components/DocumentTable.tsx:66 — numeric Chunks column does not use tabular numerals.
@@ -115,7 +116,7 @@ Current Web Interface Guidelines findings:
 
 ### A. Evidence Desk — recommended
 
-Make the answer canvas primary, collapse sources into a rail, open original text only when a citation is selected, and use sheets for sources/evidence on mobile. Preserve the warm editorial tone but unify it with semantic tokens and a clearer hierarchy. This best protects Athena's evidence-first differentiation.
+Make the answer canvas primary, collapse sources into a rail, open original text only when a citation is selected, and use sheets for sources/evidence on mobile. Preserve the warm editorial tone but unify it with semantic tokens and a clearer hierarchy. This best protects Tapper's evidence-first differentiation.
 
 ### B. Conversational Scholar
 
@@ -135,6 +136,6 @@ Build a denser, adjustable multi-pane console with source sets, processing statu
 
 ## Decision questions
 
-1. Should Athena become A Evidence Desk, B Conversational Scholar, or C Evidence Operations?
+1. Should Tapper become A Evidence Desk, B Conversational Scholar, or C Evidence Operations?
 2. Is the primary user a general knowledge worker or a research/legal/audit expert?
 3. Should the first redesign optimize desktop first, or desktop and mobile together?

@@ -1,6 +1,6 @@
 # 后置 Knowledge Plane：Azure AI Search 检索调优方案
 
-> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 将 Milvus `doc` 检索纳入 Knowledge-first 的 V0–VG 主线。冻结语料/query、版本化 chunk/embedding/profile、逐层评测、安全过滤、引用正确性和只对实测能力作结论等原则继续适用；本文的 Azure AI Search API、semantic ranker、scoring profile 与跨四索引步骤是 2026-08-21 的 provider-specific 历史实验设计，不是当前实现目标。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 将 Milvus `doc` 检索纳入 Knowledge-first 的 V0–VG 主线。冻结语料/query、版本化 chunk/embedding/profile、逐层评测、安全过滤、引用正确性和只对实测能力作结论等原则继续适用；本文的 Azure AI Search API、semantic ranker、scoring profile 与跨四索引步骤是 2026-08-21 的 provider-specific 历史实验设计，不是当前实现目标。
 
 本文定义 TAP 如何从可复现 baseline 出发，逐步调优 Azure AI Search 的全文、向量、RRF、semantic ranker、scoring profile、跨索引融合与回答上下文。目标不是“把所有高级开关都打开”，而是让每项能力在真实评测集上证明增益。
 

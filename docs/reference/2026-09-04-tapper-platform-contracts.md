@@ -1,6 +1,6 @@
-# Athena 知识与 Web 自动化平台核心契约
+# Tapper 知识与 Web 自动化平台核心契约
 
-本页把 [RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 中跨模块、必须在实现期间保持稳定的契约集中列出。它不是手写的最终 OpenAPI；HTTP DTO 仍由 Backend 定义并生成 TypeScript。若本页与 RFC-009 冲突，以 RFC 为准。
+本页把 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 中跨模块、必须在实现期间保持稳定的契约集中列出。它不是手写的最终 OpenAPI；HTTP DTO 仍由 Backend 定义并生成 TypeScript。若本页与 RFC-009 冲突，以 RFC 为准。
 
 ## 1. 身份与范围
 
@@ -117,7 +117,7 @@ class ModelGateway(Protocol):
     ) -> StructuredGenerationResult: ...
 ```
 
-Knowledge、Graph、Test Plan 与 Automation generation 共用一个 `ModelGateway` 和 LiteLLM Adapter/conformance suite；模块自己的 Schema Validator 位于 Gateway 之外。Alias 解析、超时、脱敏、实际 provider/model 审计和错误映射不得各自复制。RFC-006 的直接 Codex CLI `AnswerGenerationPort` 只属于既有 loopback Demo，不是 V1 Adapter，也不能作为绕过该 Gateway 的第二模型出口；若保留，必须位于显式 legacy-loopback composition，不能被默认/Validation/Product runtime 导入或挂载 RFC-009 Project API。架构测试必须证明 `athena_runtime.py` 和四类 V1 调用者均无法解析该 Adapter，且默认 composition 对 `ATHENA_ANSWER_BACKEND=codex` fail closed。
+Knowledge、Graph、Test Plan 与 Automation generation 共用一个 `ModelGateway` 和 LiteLLM Adapter/conformance suite；模块自己的 Schema Validator 位于 Gateway 之外。Alias 解析、超时、脱敏、实际 provider/model 审计和错误映射不得各自复制。RFC-006 的直接 Codex CLI `AnswerGenerationPort` 只属于既有 loopback Demo，不是 V1 Adapter，也不能作为绕过该 Gateway 的第二模型出口；若保留，必须位于显式 legacy-loopback composition，不能被默认/Validation/Product runtime 导入或挂载 RFC-009 Project API。架构测试必须证明 `tapper_runtime.py` 和四类 V1 调用者均无法解析该 Adapter，且默认 composition 对 `TAPPER_ANSWER_BACKEND=codex` fail closed。
 
 AI Agent 与 Skill 都是服务器批准、版本化、不可执行的 Catalog 资源。`AgentRevision` 固定 system instruction template、允许的领域命令和输出 Schema；`SkillRevision` 固定指令/模板与适用任务。Validation 配置先提供只读 seed，P0 后由 Project Admin 管理。客户端只能提交可见 Revision ID，服务端重新解析并授权；任意插件代码、工具 URL、Secret 或未登记 Prompt 不进入当前合同。
 

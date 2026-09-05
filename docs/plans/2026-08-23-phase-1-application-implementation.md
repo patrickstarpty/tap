@@ -3,11 +3,13 @@ status: cancelled
 date: 2026-08-23
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # Phase 1 Application Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在同一仓库中交付可部署、可恢复、可观测且通过权限与容量验收的 Phase 1 RAG Foundation 和 Athena Knowledge Chat。
+**Goal:** 在同一仓库中交付可部署、可恢复、可观测且通过权限与容量验收的 Phase 1 RAG Foundation 和 Tapper Knowledge Chat。
 
 **Architecture:** 在单仓库中建立 Vite/React Web 与单 Python package 的 FastAPI 模块化单体，通过独立 entrypoint/image target 运行 API/SSE 和各类 worker。MySQL 是业务事实与 Outbox 的 SoR，Redis 只承担可重建分发和 live fanout，Azure AI Search 是可重建检索投影；浏览器使用 REST snapshot + fetch-based SSE tail，所有 Knowledge 调用都携带服务端构造并在使用时复验的策略上下文。
 
@@ -15,11 +17,11 @@ date: 2026-08-23
 
 **Spec:** `docs/proposals/2026-08-23-rfc-003-phase-1-application-structure.md`
 
-> **取消说明（2026-09-04）**：本计划已取消，不再是当前执行计划。2026-09-02 的 Intelligence-first 次序又被 [RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代；Azure AI Search/Entra/AKS/Git-first 内容只作历史参考。当前实施使用 [Athena 知识与 Web 自动化平台实施计划](2026-09-04-athena-knowledge-web-automation-platform.md)，不得从本文继续执行未完成任务。
+> **取消说明（2026-09-04）**：本计划已取消，不再是当前执行计划。2026-09-02 的 Intelligence-first 次序又被 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代；Azure AI Search/Entra/AKS/Git-first 内容只作历史参考。当前实施使用 [Tapper 知识与 Web 自动化平台实施计划](2026-09-04-tapper-knowledge-web-automation-platform.md)，不得从本文继续执行未完成任务。
 
-## Current Reusable Athena Baseline
+## Current Reusable Tapper Baseline
 
-独立的 [Athena 本地知识 Demo 计划](2026-08-27-athena-local-knowledge-demo.md) 已经交付 Python/FastAPI 与 React/Vite workspace、确定性 OpenAPI/TypeScript 生成、MySQL document/job/manifest 与 Outbox、Redis Relay/worker 唤醒、Azurite artifact、PDF/DOCX/MD/TXT typed ingestion、本地 Milvus `doc` 投影、固定 LiteLLM alias、来源限定 answer/citation，以及真实本地中间件上的浏览器、失败恢复和文档/ingestion/index 持久化门禁。这些能力可被本计划复用，不应再建立第二套 DTO、文档身份、RAG 或 worker 状态机；当前回答正文只在 Web 页面内存中，不具备 history 恢复能力。
+独立的 [Tapper 本地知识 Demo 计划](2026-08-27-tapper-local-knowledge-demo.md) 已经交付 Python/FastAPI 与 React/Vite workspace、确定性 OpenAPI/TypeScript 生成、MySQL document/job/manifest 与 Outbox、Redis Relay/worker 唤醒、Azurite artifact、PDF/DOCX/MD/TXT typed ingestion、本地 Milvus `doc` 投影、固定 LiteLLM alias、来源限定 answer/citation，以及真实本地中间件上的浏览器、失败恢复和文档/ingestion/index 持久化门禁。这些能力可被本计划复用，不应再建立第二套 DTO、文档身份、RAG 或 worker 状态机；当前回答正文只在 Web 页面内存中，不具备 history 恢复能力。
 
 该 baseline 只有 loopback/no-auth/no-OCR 的固定本地知识空间和单次非流式问答。它不完成本计划当时要求的 Entra/Project Policy、Azure AI Search 四 family、durable Conversation/Turn/Queue、REST snapshot + SSE tail、stop/fork/feedback/Trace、AKS/OTel/容量与 Golden Dataset。本计划现为 `cancelled`；下列未完成 checkbox 与原 Phase 1 出口标准只保留历史，不得继续执行。RFC-003 仍为 `accepted`，RFC-004 已为 `withdrawn`。
 
@@ -48,7 +50,7 @@ date: 2026-08-23
 - `apps/backend/src/tap/platform/`：数据库、消息、外部客户端、安全和可观测性技术能力，不承载业务语义。
 - `apps/backend/src/tap/entrypoints/`：仅装配依赖并启动 API/SSE 或单一 worker 角色。
 - `apps/web/src/features/chat/`：Chat API、stream、store、Markdown 与交互实现。
-- `apps/web/src/widgets/athena/`：可嵌入的 `AthenaPanel` 与 `AthenaLauncher` 外壳。
+- `apps/web/src/widgets/tapper/`：可嵌入的 `TapperPanel` 与 `TapperLauncher` 外壳。
 - `deploy/kubernetes/`：实际 Phase 1 角色的 Kubernetes manifests；不保存秘密或未来角色空配置。
 - `loadtests/`：REST、SSE、browser 和组合容量场景。
 
@@ -413,7 +415,7 @@ git add apps/backend contracts
 git commit -m "feat: add recoverable chat streaming"
 ```
 
-### Task 6: Athena Web Application and Embeddable Panel
+### Task 6: Tapper Web Application and Embeddable Panel
 
 **Files:**
 
@@ -425,19 +427,19 @@ git commit -m "feat: add recoverable chat streaming"
 - Create: `apps/web/src/features/chat/state/turnStore.ts`
 - Create: `apps/web/src/features/chat/markdown/StreamingMarkdown.tsx`
 - Create: `apps/web/src/features/chat/components/ChatWorkspace.tsx`
-- Create: `apps/web/src/widgets/athena/AthenaPanel.tsx`
-- Create: `apps/web/src/widgets/athena/AthenaLauncher.tsx`
-- Create: `apps/web/src/pages/AthenaPage.tsx`
-- Create: `apps/web/src/test/AthenaHost.tsx`
+- Create: `apps/web/src/widgets/tapper/TapperPanel.tsx`
+- Create: `apps/web/src/widgets/tapper/TapperLauncher.tsx`
+- Create: `apps/web/src/pages/TapperPage.tsx`
+- Create: `apps/web/src/test/TapperHost.tsx`
 - Create: `apps/web/src/features/chat/stream/fetchSse.test.ts`
 - Create: `apps/web/src/features/chat/state/turnStore.test.ts`
-- Create: `apps/web/src/widgets/athena/AthenaPanel.test.tsx`
-- Create: `apps/web/tests/e2e/athena.spec.ts`
+- Create: `apps/web/src/widgets/tapper/TapperPanel.test.tsx`
+- Create: `apps/web/tests/e2e/tapper.spec.ts`
 
 **Interfaces:**
 
 - Consumes: Task 1 generated TypeScript client/event union and Task 5 REST/SSE endpoints.
-- Produces: standalone Athena page and `AthenaPanelProps { open; contextAnchor; onOpenChange }` embeddable contract validated in a test host.
+- Produces: standalone Tapper page and `TapperPanelProps { open; contextAnchor; onOpenChange }` embeddable contract validated in a test host.
 
 - [ ] **Step 1: Write failing stream/store/component tests**
 
@@ -447,7 +449,7 @@ Test fragmented SSE framing, comments/heartbeat, multi-line data, unknown events
 
 Generate `shared/api/generated/` only through `make contracts`. Implement an abortable fetch adapter that sends authentication headers, parses the response status before consuming bytes, mirrors the last sequence into explicit `afterSequence`, and treats connection close as transport interruption rather than a Turn terminal state.
 
-- [ ] **Step 3: Implement normalized state and Athena UI**
+- [ ] **Step 3: Implement normalized state and Tapper UI**
 
 TanStack Query owns REST server state; a separate store keys hot events by `(turnId, sequence)` and publishes batched render updates. Keep panel, composer, selected citation and focus state local. Sanitize Markdown with an allowlist; lazily load code highlighting, evidence bodies, and Trace details.
 
@@ -456,7 +458,7 @@ TanStack Query owns REST server state; a separate store keys hot events by `(tur
 ```sh
 pnpm --filter @tap/web test
 pnpm --filter @tap/web build
-pnpm --filter @tap/web exec playwright test tests/e2e/athena.spec.ts
+pnpm --filter @tap/web exec playwright test tests/e2e/tapper.spec.ts
 make contracts
 git diff --exit-code -- contracts/ apps/web/src/shared/api/generated/
 make check
@@ -464,11 +466,11 @@ make check
 
 Expected: standalone page and test host pass; context changes cannot display prior-context events or citations; generated files have no manual diff.
 
-- [ ] **Step 5: Commit Athena**
+- [ ] **Step 5: Commit Tapper**
 
 ```sh
 git add apps/web contracts Makefile package.json pnpm-lock.yaml
-git commit -m "feat: add athena knowledge chat"
+git commit -m "feat: add tapper knowledge chat"
 ```
 
 ### Task 7: Citation, History, Queue, Feedback, and Revocation Safety
@@ -484,7 +486,7 @@ git commit -m "feat: add athena knowledge chat"
 - Create: `apps/backend/tests/security/test_revocation.py`
 - Create: `apps/web/src/features/chat/components/CitationDrawer.tsx`
 - Create: `apps/web/src/features/chat/components/QueuedMessages.tsx`
-- Modify: `apps/web/tests/e2e/athena.spec.ts`
+- Modify: `apps/web/tests/e2e/tapper.spec.ts`
 
 **Interfaces:**
 
@@ -508,7 +510,7 @@ Load citation bodies and restricted Trace pages on demand. Clear cached evidence
 ```sh
 uv run --project apps/backend pytest apps/backend/tests/security -v
 pnpm --filter @tap/web test
-pnpm --filter @tap/web exec playwright test tests/e2e/athena.spec.ts
+pnpm --filter @tap/web exec playwright test tests/e2e/tapper.spec.ts
 make check
 ```
 
@@ -530,7 +532,7 @@ git commit -m "feat: complete authorized chat flows"
 - Create: `deploy/otel/collector.yaml`
 - Create: `loadtests/rest/turns.js`
 - Create: `loadtests/sse/connections.js`
-- Create: `loadtests/browser/athena.ts`
+- Create: `loadtests/browser/tapper.ts`
 - Create: `loadtests/scenarios/phase1-capacity.md`
 - Create: `apps/backend/tests/integration/test_trace_propagation.py`
 - Create: `apps/backend/tests/integration/test_health_dependencies.py`

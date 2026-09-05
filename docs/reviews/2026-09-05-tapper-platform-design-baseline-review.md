@@ -1,15 +1,17 @@
-# Athena 知识与 Web 自动化平台设计基线评审
+# Tapper 知识与 Web 自动化平台设计基线评审
+
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
 | 字段     | 结论                                                                                                                                                                                                                                                                                                                      |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 评审对象 | [RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)、[架构总览](../architecture/2026-09-04-athena-knowledge-web-automation-overview.md)、[核心契约](../reference/2026-09-04-athena-platform-contracts.md)、[实施计划](../plans/2026-09-04-athena-knowledge-web-automation-platform.md) |
+| 评审对象 | [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)、[架构总览](../architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)、[核心契约](../reference/2026-09-04-tapper-platform-contracts.md)、[实施计划](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md) |
 | 评审日期 | 2026-09-05                                                                                                                                                                                                                                                                                                                |
 | 评审范围 | 产品边界、领域模型、数据权威、集成 Port、安全边界、迁移顺序、TDD 任务、里程碑门禁、客户文档一致性                                                                                                                                                                                                                         |
 | 结论     | **READY**：可以把本设计作为 V0 方案验证实施基线；尚未实施，不代表 P0 身份已完成，也不代表 Production ready                                                                                                                                                                                                                |
 
 ## 执行摘要
 
-当前基线已把 Athena 的知识问答放在交付顺序最前面，并把 Knowledge Graph、AI Test Design、Web Low Code Automation、Web Recorder、Playwright、Jenkins Pipeline Agent 与 Test Plan 结果回填组织为一条可逐阶段验收的主链路。Mobile 明确后置，不进入当前 Schema、迁移或代码路径。
+当前基线已把 Tapper 的知识问答放在交付顺序最前面，并把 Knowledge Graph、AI Test Design、Web Low Code Automation、Web Recorder、Playwright、Jenkins Pipeline Agent 与 Test Plan 结果回填组织为一条可逐阶段验收的主链路。Mobile 明确后置，不进入当前 Schema、迁移或代码路径。
 
 方案验证使用固定 Validation Enterprise、Project 与 Actor，先验证平台功能价值。用户、Session、RBAC 和多 Project 产品化只在 VG 书面结论为 `continue` 后进入 P0；这项延后不允许把固定 Actor 包装成真实用户认证。P0 完成后仍需 P1 的 TLS、Secret 轮换、审计导出、备份恢复、容量和受控 Pilot，才能声明 Production ready。
 

@@ -9,31 +9,33 @@ related-adrs:
   - ADR-015
 ---
 
-# RFC-005：Athena 本地知识工作区 Demo
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
-> **现行处置（2026-09-04）**：本 RFC 保持 `implemented`，只记录已经交付的 loopback、单知识空间 Athena 本地纵向切片，并作为 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) V1 的可复用起点；它不表示 V0/V1 已完成。现行交付已由 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 恢复为 Knowledge-first Web Automation，下文“当前 Phase 1 是 Intelligence Lab”、Azure 企业基线及“四索引不在当前交付”等表述均只记录 2026-09-02 及更早的历史语境。
+# RFC-005：Tapper 本地知识工作区 Demo
 
-> **当前阶段处置（2026-09-02）**：本 RFC 作为已实现的 Athena 本地能力继续有效；文中“完整 Phase 1 仍 active/回到现有 Phase 1”记录的是当时路线图，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Phase 1 是 Intelligence Lab；Athena 文档、revision/hash/anchor 和 Citation 只作为可选资料能力被复用，不代表完整 Knowledge Chat 或企业四索引成为当前交付项。
+> **现行处置（2026-09-04）**：本 RFC 保持 `implemented`，只记录已经交付的 loopback、单知识空间 Tapper 本地纵向切片，并作为 [RFC-009](2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) V1 的可复用起点；它不表示 V0/V1 已完成。现行交付已由 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 恢复为 Knowledge-first Web Automation，下文“当前 Phase 1 是 Intelligence Lab”、Azure 企业基线及“四索引不在当前交付”等表述均只记录 2026-09-02 及更早的历史语境。
+
+> **当前阶段处置（2026-09-02）**：本 RFC 作为已实现的 Tapper 本地能力继续有效；文中“完整 Phase 1 仍 active/回到现有 Phase 1”记录的是当时路线图，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Phase 1 是 Intelligence Lab；Tapper 文档、revision/hash/anchor 和 Citation 只作为可选资料能力被复用，不代表完整 Knowledge Chat 或企业四索引成为当前交付项。
 
 ## 摘要
 
-本 RFC 定义一个可在开发机运行的 Athena 纵向 Demo：用户在 Web 页面上传 PDF、DOCX、Markdown 或 TXT 文档，查看真实解析与索引状态，选择可用来源进行知识问答，并从回答中的行内引用定位到不可变文档版本的原文片段。
+本 RFC 定义一个可在开发机运行的 Tapper 纵向 Demo：用户在 Web 页面上传 PDF、DOCX、Markdown 或 TXT 文档，查看真实解析与索引状态，选择可用来源进行知识问答，并从回答中的行内引用定位到不可变文档版本的原文片段。
 
-Demo 复用现有 `KnowledgeAPI`、provider-neutral `SearchPort`、Milvus adapter、LiteLLM adapter、MySQL Outbox 与本地中间件，不另建一套简化 RAG。用户体验以 NotebookLM 的来源优先问答为主参考，知识导入与故障处理吸收 RAGFlow 和 Dify 的成熟模式，本地上传路径参考 AnythingLLM 与 Open WebUI。`Athena` 仍只作为产品和 Web 外壳名称；后端领域与公共 API 使用稳定的 `knowledge` 命名。
+Demo 复用现有 `KnowledgeAPI`、provider-neutral `SearchPort`、Milvus adapter、LiteLLM adapter、MySQL Outbox 与本地中间件，不另建一套简化 RAG。用户体验以 NotebookLM 的来源优先问答为主参考，知识导入与故障处理吸收 RAGFlow 和 Dify 的成熟模式，本地上传路径参考 AnythingLLM 与 Open WebUI。`Tapper` 仍只作为产品和 Web 外壳名称；后端领域与公共 API 使用稳定的 `knowledge` 命名。
 
 实施结果：Tasks 1–10 的 runnable vertical slice、mandatory deterministic/local-middleware gate、跨应用/Compose 重启的文档与 ingestion/index 状态恢复、实际手工视觉/键盘验收和文档门禁均已完成，本 RFC 因此为 `implemented`。当前回答正文只在 Web 页面内存中，刷新会清空且本版没有 history 恢复 API。当前验收 checkout 没有 `.env`，真实模型项保持 `not-run: credentials not provided`；runnable LiteLLM route configured, provider unverified。此状态不关闭仍为 `active` 的完整 Phase 1，也不表示真实 provider、完整 Knowledge Chat、Azure AI Search 四 family 或共享/生产部署已验证。
 
 ## 背景
 
-本 RFC 形成时，仓库已经实现公共契约、Turn/Outbox 持久层、可信 Policy 边界、授权 Knowledge 检索、Azure AI Search adapter 与 Milvus 本地检索实验，但尚无 `apps/web/`、用户上传入口、真实 ingestion worker 或可完成问答的 HTTP 纵向链路。当前 Phase 1 计划面向完整企业交付，包含身份、可恢复 Chat/SSE、四类索引、Trace、反馈、AKS 与容量门禁；若把全部能力作为 Demo 前置条件，无法尽快验证用户是否愿意使用 Athena 完成“喂资料、限定来源、核验回答”的核心任务。
+本 RFC 形成时，仓库已经实现公共契约、Turn/Outbox 持久层、可信 Policy 边界、授权 Knowledge 检索、Azure AI Search adapter 与 Milvus 本地检索实验，但尚无 `apps/web/`、用户上传入口、真实 ingestion worker 或可完成问答的 HTTP 纵向链路。当前 Phase 1 计划面向完整企业交付，包含身份、可恢复 Chat/SSE、四类索引、Trace、反馈、AKS 与容量门禁；若把全部能力作为 Demo 前置条件，无法尽快验证用户是否愿意使用 Tapper 完成“喂资料、限定来源、核验回答”的核心任务。
 
-Athena 不是只在聊天框旁增加上传按钮。它必须把来源建设、可用状态、回答范围和证据核验放在同一个工作区内，同时保持 RAG 的数据、检索和引用边界可演进到正式 Phase 1。
+Tapper 不是只在聊天框旁增加上传按钮。它必须把来源建设、可用状态、回答范围和证据核验放在同一个工作区内，同时保持 RAG 的数据、检索和引用边界可演进到正式 Phase 1。
 
 本 RFC 是 ADR-002 已允许的本地 Lab 交付，不改变 Azure 企业部署基线，也不把 RFC-004 的 Milvus 实验结论外推到共享或生产环境。
 
 ## 目标
 
-- 提供一条无需身份登录的本地 Athena 用户路径：添加文档、等待索引、选择来源、提问、核验引用、重试失败任务和删除文档。
+- 提供一条无需身份登录的本地 Tapper 用户路径：添加文档、等待索引、选择来源、提问、核验引用、重试失败任务和删除文档。
 - 支持可提取文本的 PDF、DOCX、Markdown 与 TXT；单文件上限固定为 `25 MiB`。
 - 原文件、normalized artifact、文档元数据、任务账本和 Milvus 投影职责分离，上传与重试不产生重复文档或重复 chunk。
 - 复用现有 `KnowledgeAPI.answer()` 完成服务端可信范围检索、回答生成、claim/citation 校验与证据不足拒答。
@@ -55,14 +57,14 @@ Athena 不是只在聊天框旁增加上传按钮。它必须把来源建设、�
 
 ### 产品基线与信息架构
 
-Athena 采用两个一级入口，并保持用户主流程与知识运维分离：
+Tapper 采用两个一级入口，并保持用户主流程与知识运维分离：
 
 1. **问答**：左侧是可搜索、可勾选的来源列表；中间是基于当前来源的问答；右侧是引用原文查看器。处理中或失败的文档不能被勾选。回答中的引用支持点击后定位原文，而不是只显示文件名。
 2. **知识库**：以文档表格展示文件类型、状态、chunk 数、更新时间与可执行动作；详情区展示保存、解析、切片、Embedding、索引发布阶段。失败文档提供安全错误摘要和重试，已就绪文档提供解析结果预览和删除。
 
 上传使用单一弹窗和拖放区。上传完成后弹窗不承担长任务进度；用户回到知识库查看状态。空知识库先引导添加来源，只有存在至少一个已就绪来源时才启用提问。
 
-首版只有一个固定的本地知识空间 `Athena Lab`，不显示无意义的 workspace selector。知识空间最多保留 `50` 份未删除文档，一次问答最多选择 `20` 份 ready documents；这些是服务端硬上限，不由浏览器或模型提高。
+首版只有一个固定的本地知识空间 `Tapper Lab`，不显示无意义的 workspace selector。知识空间最多保留 `50` 份未删除文档，一次问答最多选择 `20` 份 ready documents；这些是服务端硬上限，不由浏览器或模型提高。
 
 交互模式的来源如下：
 
@@ -71,12 +73,12 @@ Athena 采用两个一级入口，并保持用户主流程与知识运维分离�
 - [Dify Knowledge Retrieval](https://github.com/langgenius/dify-docs/blob/main/en/cloud/use-dify/nodes/knowledge-retrieval.mdx)：知识范围、文档 metadata、检索结果和 citation attribution。
 - [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm)与[Open WebUI Knowledge](https://docs.openwebui.com/features/workspace/knowledge/)：本地优先、拖放上传和低门槛知识库使用路径。
 
-Athena 借鉴这些已经验证的交互，不复制品牌视觉、Agent builder、Studio 产物或管理员调参界面。
+Tapper 借鉴这些已经验证的交互，不复制品牌视觉、Agent builder、Studio 产物或管理员调参界面。
 
 ### 运行组件
 
 ```text
-Browser / Athena Web
+Browser / Tapper Web
         |
         v
 FastAPI Knowledge HTTP API
@@ -89,7 +91,7 @@ FastAPI Knowledge HTTP API
           Outbox / Redis wake-up
                     |
                     v
-           Athena Ingestion Worker
+           Tapper Ingestion Worker
               |             |
               +--> LiteLLM Embedding
               +--> Milvus Index Writer
@@ -100,11 +102,11 @@ FastAPI Knowledge HTTP API
 - Ingestion Worker 是独立 entrypoint。MySQL job/manifest 是任务事实，Outbox 与 Redis 只负责可靠唤醒；Worker 同时扫描可领取的 pending/stale job，因此 Redis 丢失不会永久遗失上传任务。
 - Azurite 保存原文件和 normalized artifact。MySQL 不保存大段原文，只保存 revision、hash、Blob locator、阶段结果和 chunk manifest。
 - Milvus 继续只是可重建投影。Demo 复用 `doc` family collection schema、alias 绑定、strict provenance 与查询期 filter；固定 demo policy 由服务端构造，浏览器不能提交 tenant、group 或任意 filter。
-- LiteLLM 暴露固定 `athena-chat` 与 `athena-embedding` alias；provider/model/key 只从本地环境注入。应用不按 provider 分支，也不把 raw provider model name 返回浏览器。
+- LiteLLM 暴露固定 `tapper-chat` 与 `tapper-embedding` alias；provider/model/key 只从本地环境注入。应用不按 provider 分支，也不把 raw provider model name 返回浏览器。
 
 ### 文档身份与数据模型
 
-新增 Alembic revision `0003_athena_documents`，在现有 Outbox 表之后建立以下事实：
+新增 Alembic revision `0003_tapper_documents`，在现有 Outbox 表之后建立以下事实：
 
 - `knowledge_document`：`document_id`、显示文件名、media type、当前 revision、状态、当前阶段、最后安全错误摘要和时间戳。
 - `knowledge_document_revision`：`revision_id`、`document_id`、source/content SHA-256、原文件 Blob locator、normalized artifact locator、parser/chunker/pipeline version。
@@ -159,7 +161,7 @@ GET    /health/ready
 
 - 上传返回 `202` 与 document/job snapshot；重复内容返回同一个 document identity 和当前 snapshot。
 - 文档状态是闭合联合：`queued | processing | ready | failed | deleting`；`processing` 另带闭合 stage。
-- `/v1/knowledge/answers` 复用现有公开 retrieval request/response 语义，只增加文档选择所需的 closed `ResourceRef` 使用方式，不新增 Athena 专有 answer DTO。
+- `/v1/knowledge/answers` 复用现有公开 retrieval request/response 语义，只增加文档选择所需的 closed `ResourceRef` 使用方式，不新增 Tapper 专有 answer DTO。
 - REST 错误统一使用 RFC 9457 `application/problem+json`。公共 Problem Details 不返回异常堆栈、provider、credential、Blob locator、Milvus target 或原始 filter。
 - cursor、limit、文件大小、文件数量、query 长度、选择文档数量、返回 citation 数和 source preview 字符数全部有服务端固定上限。
 
@@ -186,9 +188,9 @@ GET    /health/ready
 
 ```sh
 make demo-up       # 启动 MySQL、Redis、Azurite、Milvus 与 LiteLLM
-make demo-dev      # 启动 Web、API、Relay 与 Athena Ingestion Worker
+make demo-dev      # 启动 Web、API、Relay 与 Tapper Ingestion Worker
 make demo-check    # 验证数据库、Blob、Redis、Milvus 和两个模型 alias
-make demo-e2e      # 运行本地 Athena 用户路径
+make demo-e2e      # 运行本地 Tapper 用户路径
 make demo-down     # 停止 Demo 服务但不隐式删除命名卷
 ```
 
@@ -213,7 +215,7 @@ make demo-down     # 停止 Demo 服务但不隐式删除命名卷
 
 ### 直接部署 RAGFlow、Dify、AnythingLLM 或 Open WebUI
 
-这些产品适合作为交互与运维参考，但直接嵌入会引入第二套用户、知识身份、模型路由、引用和数据存储边界，无法验证 TAP 自己的 `KnowledgeAPI` 与未来 Athena 嵌入契约，因此拒绝作为产品实现。它们仍可用于行为对标和验收比较。
+这些产品适合作为交互与运维参考，但直接嵌入会引入第二套用户、知识身份、模型路由、引用和数据存储边界，无法验证 TAP 自己的 `KnowledgeAPI` 与未来 Tapper 嵌入契约，因此拒绝作为产品实现。它们仍可用于行为对标和验收比较。
 
 ### 先完成完整 Phase 1 Task 2–7
 
@@ -221,7 +223,7 @@ make demo-down     # 停止 Demo 服务但不隐式删除命名卷
 
 ### 在 Chat composer 临时上传附件
 
-适合一次性问答，但会把来源状态、失败重试、范围选择和长期知识库隐藏在聊天历史里，不符合 Athena 的来源优先定位，因此只保留为未来可选快捷入口，不作为本 Demo 的知识建设主路径。
+适合一次性问答，但会把来源状态、失败重试、范围选择和长期知识库隐藏在聊天历史里，不符合 Tapper 的来源优先定位，因此只保留为未来可选快捷入口，不作为本 Demo 的知识建设主路径。
 
 ## 风险与缓解
 
@@ -231,14 +233,14 @@ make demo-down     # 停止 Demo 服务但不隐式删除命名卷
 - **模型生成无效 citation**：生成结果在返回浏览器前进行 claim/evidence label 校验；无效结果转为明确拒答或受控失败。
 - **Redis 唤醒丢失**：MySQL job 是事实，Worker 扫描 pending/stale job；Redis 只降低延迟。
 - **删除留下可检索投影**：先将 document 从可选集合移除并阻止新查询，再清理 Milvus/Blob/manifest；真实 Milvus negative probe 是验收门禁。
-- **参考产品变成视觉抄袭**：只复用信息架构和行为模式，继续使用 TAP/Athena 品牌、组件 token 与领域语言。
+- **参考产品变成视觉抄袭**：只复用信息架构和行为模式，继续使用 TAP/Tapper 品牌、组件 token 与领域语言。
 - **本地 Demo 被误报为生产能力**：README、RFC、启动命令和验收报告都明确 local-only、no-auth、no-OCR 与真实模型门禁状态。
 
 ## 迁移或发布方式
 
 1. 先扩展公共 document/answer/citation contracts，并取得 deterministic generation RED/GREEN。
 2. 新增 document/revision/job/manifest migration、Blob port、parser/chunker 与 repository，使用 fake adapter 完成可恢复 ingestion。
-3. 复用 Outbox/Redis，增加独立 Athena Ingestion Worker，并接通真实 Azurite 与 Milvus publish/delete/rebuild。
+3. 复用 Outbox/Redis，增加独立 Tapper Ingestion Worker，并接通真实 Azurite 与 Milvus publish/delete/rebuild。
 4. 配置 LiteLLM 的 chat/embedding alias，接通现有 `KnowledgeAPI.answer()` 与 citation resolver。
 5. 创建 `apps/web`，先完成知识库上传/状态/重试，再完成来源选择、问答和原文查看器。
 6. 运行 contract、unit、integration、component 与 Playwright；具备 credential 时追加真实模型 smoke。

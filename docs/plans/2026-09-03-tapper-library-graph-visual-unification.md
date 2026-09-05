@@ -3,11 +3,13 @@ status: completed
 date: 2026-09-03
 ---
 
-# Athena Library、知识图谱与视觉统一实施计划
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
+# Tapper Library、知识图谱与视觉统一实施计划
 
 > **执行方式：** 用户已明确要求在当前任务内联完成纯前端原型，不使用 Subagent-Driven Development。实现遵循测试先行，并保留当前工作区中的既有原型改动。
 
-**Goal:** 交付可删除的 Athena 消息上下文、双层导航 Athena 标识、Codex 式模型选择、可搜索筛选的 Library、Graphify 式交互知识图谱，以及与 Athena 一致的 Test Management/LCA 视觉。
+**Goal:** 交付可删除的 Tapper 消息上下文、双层导航 Tapper 标识、Codex 式模型选择、可搜索筛选的 Library、Graphify 式交互知识图谱，以及与 Tapper 一致的 Test Management/LCA 视觉。
 
 **Architecture:** 在现有 React 页面状态中扩展筛选与图谱视图，不新增后端、路由或第三方图布局依赖。Knowledge Graph 使用确定性的 SVG 图数据和本地交互状态，以便测试稳定并明确保持 `prototype-only` 边界。
 
@@ -17,7 +19,7 @@ date: 2026-09-03
 
 ## 全局约束
 
-- Athena 当前视觉是唯一基线；LCA 与 Test Management 不建立独立主题。
+- Tapper 当前视觉是唯一基线；LCA 与 Test Management 不建立独立主题。
 - 不新增 npm 依赖，不修改 backend 或 contracts。
 - Graph 数据、布局、关系来源和执行结果均为确定性原型 fixture。
 - 所有新增交互可键盘操作，状态不只依赖颜色，并尊重 reduced motion。
@@ -32,7 +34,7 @@ date: 2026-09-03
 **Produces:** 覆盖 `ATH-006`、`ATH-007`、`LIB-001`、`LIB-002` 的失败测试。
 
 - [x] 增加测试：选择 Knowledge、Agent、Skill 后分别出现 `Remove …` 按钮，点击后标签消失且 picker 状态恢复为未选择。
-- [x] 增加测试：Athena 两级导航使用 `A` 标识，空白欢迎区和 Assistant Turn 不再包含头像标识。
+- [x] 增加测试：Tapper 两级导航使用 `A` 标识，空白欢迎区和 Assistant Turn 不再包含头像标识。
 - [x] 把 Library 默认页签断言改为 `All`；增加 Type、Status 组合筛选、结果计数和清空筛选断言。
 - [x] 增加图谱测试：Community 开关、节点搜索高亮、节点 Inspector、缩放与重置控件均通过可访问名称操作。
 - [x] 运行：
@@ -43,11 +45,11 @@ date: 2026-09-03
 
   预期：测试因上述控件或行为尚未实现而失败，而不是编译或测试夹具错误。
 
-## Task 2：实现 Athena 上下文与 Library 筛选
+## Task 2：实现 Tapper 上下文与 Library 筛选
 
 **Files:**
 
-- Modify: `apps/web/src/widgets/tap/prototype/AthenaChat.tsx`
+- Modify: `apps/web/src/widgets/tap/prototype/TapperChat.tsx`
 - Modify: `apps/web/src/widgets/tap/prototype/PrototypeSidebar.tsx`
 - Modify: `apps/web/src/widgets/tap/prototype/LibraryWorkspace.tsx`
 - Modify: `apps/web/src/widgets/tap/prototype/copy.ts`
@@ -56,7 +58,7 @@ date: 2026-09-03
 **Produces:** 可移除上下文标签、两级导航品牌标识，以及 `All` 搜索筛选工具栏。
 
 - [x] 将每个已选上下文渲染为带类型样式和删除按钮的标签，调用既有 `onToggleSource`、`onToggleAgent`、`onToggleSkill`。
-- [x] 移除 Welcome 与 Assistant Turn 中的 `A`，在一级 Athena 入口与二级 Sidebar 标题增加不会污染可访问名称的字母标识。
+- [x] 移除 Welcome 与 Assistant Turn 中的 `A`，在一级 Tapper 入口与二级 Sidebar 标题增加不会污染可访问名称的字母标识。
 - [x] 为 Library 增加 `typeFilter`、`statusFilter` 状态；以查询、类型、状态的交集计算 `visibleSources`。
 - [x] 增加结果计数和仅在存在条件时可用的 `Clear filters`。
 - [x] 运行 Task 1 的定向 Vitest，预期新增上下文、标识和列表筛选测试通过。
@@ -84,10 +86,10 @@ date: 2026-09-03
 
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.css`
 
-**Produces:** 业务结构不变、与 Athena 共用 token 和组件材质的两个工作区。
+**Produces:** 业务结构不变、与 Tapper 共用 token 和组件材质的两个工作区。
 
-- [x] 将 `--tap-workbench-*` 映射到 Athena 的中性背景、边框、文字和蓝青强调色。
-- [x] 将列表、详情、BDD Step、Copilot/Run、Test Plan 记录统一为 Athena 卡片、圆角、阴影和按钮节奏。
+- [x] 将 `--tap-workbench-*` 映射到 Tapper 的中性背景、边框、文字和蓝青强调色。
+- [x] 将列表、详情、BDD Step、Copilot/Run、Test Plan 记录统一为 Tapper 卡片、圆角、阴影和按钮节奏。
 - [x] 保持现有响应式折叠、触控尺寸、焦点和内容溢出规则。
 - [x] 运行定向 Vitest、ESLint 与 build，预期无回归。
 
@@ -95,7 +97,7 @@ date: 2026-09-03
 
 **Files:**
 
-- Modify: `docs/plans/2026-09-03-athena-library-graph-visual-unification.md`
+- Modify: `docs/plans/2026-09-03-tapper-library-graph-visual-unification.md`
 - Modify: `docs/reviews/2026-09-03-low-code-automation-prototype-review.md`
 - Modify: `docs/plans/index.md`
 
@@ -103,7 +105,7 @@ date: 2026-09-03
 
 - [x] 运行相关 Vitest、Web 全量 Vitest、lint、format、architecture、build 与 `git diff --check`。
 - [x] 对变更 UI 运行一次 Impeccable detector，并处理本范围内的有效问题。
-- [x] 在 `http://127.0.0.1:4175/` 批量检查桌面与 `390 × 844`：Athena 标签、Library 列表、Graph、LCA、Test Management 和 console。
+- [x] 在 `http://127.0.0.1:4175/` 批量检查桌面与 `390 × 844`：Tapper 标签、Library 列表、Graph、LCA、Test Management 和 console。
 - [x] 将验证结果追加到 Review，把本计划状态更新为 `completed`。
 
 ## 完成证据
@@ -111,7 +113,7 @@ date: 2026-09-03
 - TDD 红灯：新增交互测试首次运行 `6 failed / 32 passed`，失败点对应尚未实现的删除标签、单一标识、筛选与图谱交互。
 - TDD 绿灯：交互测试 `38 passed`；相关 5 个测试文件 `105 passed`；Web 全量 `14 files / 230 tests passed`。
 - 静态与构建：ESLint、Prettier、依赖边界检查和 production build 均通过。
-- 浏览器：桌面与 `390 × 844` 已复核 Athena 上下文、Library All、Knowledge Graph、Low Code Automation 和 Test Management；窄屏 `scrollWidth = 390`，未出现横向溢出。
+- 浏览器：桌面与 `390 × 844` 已复核 Tapper 上下文、Library All、Knowledge Graph、Low Code Automation 和 Test Management；窄屏 `scrollWidth = 390`，未出现横向溢出。
 - Console：仅有 Vite/React 开发信息与 HMR debug，未观察到 error 或 warning。
 - Impeccable detector：唯一 advisory 为图谱画布网格；该网格仅存在于实际关系图坐标空间，符合 detector 的保留条件。
 - 边界：图数据、布局、关系与执行数据仍是确定性纯前端原型，不代表生产图数据库或真实 Pipeline Agent 执行。
@@ -120,10 +122,10 @@ date: 2026-09-03
 
 本补充是已完成原型上的 bounded follow-up，不新增独立实施 Plan。
 
-- [x] Athena Composer 底部使用 `当前模型 + 下拉箭头` 触发器，不显示闪电；触发器和菜单的模型名称统一使用 `GPT-` 前缀，菜单不加入 Fast、Ultra 或 reasoning effort。
+- [x] Tapper Composer 底部使用 `当前模型 + 下拉箭头` 触发器，不显示闪电；触发器和菜单的模型名称统一使用 `GPT-` 前缀，菜单不加入 Fast、Ultra 或 reasoning effort。
 - [x] 模型选择写入当前 Conversation；新对话默认 `GPT-5.6 Sol`，切换历史 Conversation 后恢复原选择。
 - [x] 显示名称调整不改变模型 ID；旧版浏览器快照缺少模型字段时迁移到默认模型，不丢弃既有 Conversation 与资产。
-- [x] 一级产品 Rail 的 Athena 聊天气泡改为 `A`；二级标题保留 `A`，Assistant Turn 不显示该标识。
+- [x] 一级产品 Rail 的 Tapper 聊天气泡改为 `A`；二级标题保留 `A`，Assistant Turn 不显示该标识。
 - [x] 一级与二级导航中的 `A` 徽标统一使用白色背景；一级选中时，紫色只保留在外层导航按钮。
 - [x] TDD 红灯为 `5 failed / 71 passed`；实现后的 3 个定向测试文件为 `77 passed`，Web 全量为 `14 files / 234 tests passed`。
 - [x] 桌面与 `390 × 844` 浏览器已复核模型菜单、双层导航标识和无横向溢出；Console 无 error 或 warning。
@@ -133,6 +135,6 @@ date: 2026-09-03
 - [x] 模型命名与图标补充先以定向测试 `1 failed` 捕获旧名称和闪电，修改后定向测试 `1 passed`、交互测试 `41 passed`、Web 全量 `14 files / 234 tests passed`；静态检查与 production build 通过。
 - [x] 桌面与 `390 × 844` 浏览器确认触发器和五个菜单项均使用 `GPT-` 前缀、闪电数量为 `0`，窄屏 `scrollWidth = 390`，Console 无 error 或 warning。
 - [x] `New chat` 使用方框铅笔图标、透明背景和普通字重；不改变空白草稿、历史入列或窄屏关闭 Sidebar 的行为。
-- [x] Athena 二级菜单当前项使用整行浅灰圆角背景并移除紫色侧边线；Hover 使用更浅的灰色，键盘 Focus 保留描边。
+- [x] Tapper 二级菜单当前项使用整行浅灰圆角背景并移除紫色侧边线；Hover 使用更浅的灰色，键盘 Focus 保留描边。
 - [x] 导航补充的定向测试先以 `1 failed` 捕获旧文案，修改后定向测试 `1 passed`、交互测试 `41 passed`、Web 全量 `14 files / 234 tests passed`；ESLint、Prettier、架构边界与 production build 通过。
 - [x] 桌面与 `390 × 844` 浏览器确认 `New chat` 默认背景透明、方框铅笔图标数量为 `1`，当前项背景为 `rgb(231, 231, 229)`、圆角为 `12px` 且无侧边阴影；窄屏无横向溢出，Console 无 error 或 warning。

@@ -47,7 +47,7 @@
   <g id="workbench" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
     <rect x="390" y="235" width="780" height="105" rx="12" fill="#EAF2FF" stroke="#2F6FED" stroke-width="2" />
     <text x="780" y="278" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">统一工作台</text>
-    <text x="780" y="314" text-anchor="middle" fill="#12304A" font-size="17">Athena · Test Management · Low Code Automation (LCA)</text>
+    <text x="780" y="314" text-anchor="middle" fill="#12304A" font-size="17">Tapper · Test Management · Low Code Automation (LCA)</text>
   </g>
 
   <g id="capabilities" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">

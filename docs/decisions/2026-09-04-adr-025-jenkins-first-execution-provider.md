@@ -9,6 +9,8 @@ related-rfcs:
   - RFC-009
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # ADR-025：Jenkins 作为首个 Execution Provider
 
 ## 背景
@@ -17,7 +19,7 @@ ADR-006 以 Selenium Grid、Appium Device Farm 和可选 BrowserStack 为执行�
 
 ## 决策
 
-核心保持 provider-neutral `ExecutionProvider`。首个正式 Adapter 使用 Jenkins Remote Access API 与版本化 Jenkinsfile/Pipeline 参数，在用户选择的受限 Pipeline Agent Label 上执行 Published Automation Revision 的 Playwright + TypeScript Bundle。Athena AI Agent 负责理解、生成和调整；Jenkins Pipeline Agent 只负责确定性执行，两者必须分开建模、授权和呈现。
+核心保持 provider-neutral `ExecutionProvider`。首个正式 Adapter 使用 Jenkins Remote Access API 与版本化 Jenkinsfile/Pipeline 参数，在用户选择的受限 Pipeline Agent Label 上执行 Published Automation Revision 的 Playwright + TypeScript Bundle。Tapper AI Agent 负责理解、生成和调整；Jenkins Pipeline Agent 只负责确定性执行，两者必须分开建模、授权和呈现。
 
 TAP 是 Run、Attempt、状态、关联快照和 Evidence 的权威源。每次提交使用稳定 `submission_key`，Pipeline 开始前校验并 claim Run/Attempt/Revision/Bundle digest；未知提交进入 `SUBMIT_UNKNOWN`，Reconciler 通过 `ExecutionProvider.reconcile_submission(target, submission_key)` 查询统一的 `NOT_FOUND | QUEUED | STARTED` 结果，不调用 Adapter 私有 API、不盲目重试。Jenkins callback 与 polling 进入同一个幂等 Result Normalizer，产出统一 Evidence Manifest 和 BDD/Test IR Step Result。
 

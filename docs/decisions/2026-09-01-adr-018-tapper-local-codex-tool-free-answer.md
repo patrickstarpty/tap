@@ -9,13 +9,15 @@ related-rfcs:
   - RFC-006
 ---
 
-# ADR-018：Athena 本地 Codex 回答固定为单智能体、无工具
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
+# ADR-018：Tapper 本地 Codex 回答固定为单智能体、无工具
 
 ## 背景
 
-[ADR-017](2026-08-31-adr-017-athena-local-codex-answer-backend.md) 接受了 Athena 本地 `.env` 可选 Codex 回答端口，并保留 Ultra 内部委派。真实生产形态验收随后证明，精确 `gpt-5.6-sol` 的内建 catalog 会带入 CodeModeOnly、多智能体与 apply-patch metadata；只依赖 feature disable matrix 不能形成可验证的空工具面。当前需求也明确要求一个智能体、无工具，而不是委派继承。
+[ADR-017](2026-08-31-adr-017-tapper-local-codex-answer-backend.md) 接受了 Tapper 本地 `.env` 可选 Codex 回答端口，并保留 Ultra 内部委派。真实生产形态验收随后证明，精确 `gpt-5.6-sol` 的内建 catalog 会带入 CodeModeOnly、多智能体与 apply-patch metadata；只依赖 feature disable matrix 不能形成可验证的空工具面。当前需求也明确要求一个智能体、无工具，而不是委派继承。
 
-这仍是 loopback、无认证、单操作者 Athena Lab 的回答后端决策。文档和 query Embedding 已固定经 LiteLLM `athena-embedding` 调用阿里云百炼/DashScope `text-embedding-v4`，维度 1536；本决策不改变该向量空间、本地 Milvus `doc` 投影或企业 Azure AI Search 四索引目标。
+这仍是 loopback、无认证、单操作者 Tapper Lab 的回答后端决策。文档和 query Embedding 已固定经 LiteLLM `tapper-embedding` 调用阿里云百炼/DashScope `text-embedding-v4`，维度 1536；本决策不改变该向量空间、本地 Milvus `doc` 投影或企业 Azure AI Search 四索引目标。
 
 ## 决策
 
@@ -40,6 +42,6 @@ related-rfcs:
 - catalog entry schema 已成为精确 `0.149.0` 能力契约的一部分。升级 CLI 必须先更新 schema、渲染期望、feature/override matrix、fake contracts 和真实 opt-in gate，不能把未知字段或默认值宽松接受为 ready。
 - 版本、登录、catalog 或能力漂移会牺牲可用性以保持边界清晰：readiness 失败，请求返回稳定 `503 answer-unavailable`，不尝试另一回答后端。
 - 默认 300 秒 timeout、单 API 进程并发 1、有界 stdin/stdout/stderr/output、进程组清理、grounded claim/citation 复验和脱敏日志边界保持不变。
-- Athena 本地仍依赖 LiteLLM 完成文档/query Embedding；本决策不表示本地 `doc` Milvus 投影已完成企业四索引、Entra、共享凭据或完整 Phase 1。
+- Tapper 本地仍依赖 LiteLLM 完成文档/query Embedding；本决策不表示本地 `doc` Milvus 投影已完成企业四索引、Entra、共享凭据或完整 Phase 1。
 
-实现与验收证据见 [RFC-006](../proposals/2026-08-31-rfc-006-athena-local-codex-answer-backend.md)。
+实现与验收证据见 [RFC-006](../proposals/2026-08-31-rfc-006-tapper-local-codex-answer-backend.md)。

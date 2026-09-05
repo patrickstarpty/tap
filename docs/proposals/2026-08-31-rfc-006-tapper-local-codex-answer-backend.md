@@ -7,27 +7,29 @@ related-adrs:
   - ADR-018
 ---
 
-# RFC-006：Athena 本地可选 Codex CLI 回答后端
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
-> **现行处置（2026-09-04）**：本 RFC 保持 `implemented`，只记录 Athena 既有 loopback Answer Adapter 的实现事实；直接 Codex CLI `AnswerGenerationPort`、个人 ChatGPT 登录和 `ATHENA_ANSWER_BACKEND=codex` 不属于 [RFC-009](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) V1 合同，也不得计入 V1 出口证据。可复用的解析、grounding 或错误处理逻辑若迁入新路线，必须经唯一 `ModelGateway` 和 LiteLLM Adapter/conformance suite 收口，不能保留第二模型出口。本 RFC 不授权独立 Intelligence Lab 或 Specialist Runtime；当前交付顺序以 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 为准，下文关于 Intelligence-first、Azure 四索引企业基线及 ADR-014 旧 P1.2/P1.3 授权的表述均只保留历史语境。
+# RFC-006：Tapper 本地可选 Codex CLI 回答后端
 
-> **当前阶段处置（2026-09-02）**：本 RFC 的已实现 Athena Answer Adapter 继续作为独立本地能力维护；其中“完整 Phase 1 仍 active”沿用的是旧 RAG/Knowledge Chat 路线，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Intelligence Lab 使用独立、provider-neutral 的 `AgentRuntime`，不复用 Knowledge Answer 语义。
+> **现行处置（2026-09-04）**：本 RFC 保持 `implemented`，只记录 Tapper 既有 loopback Answer Adapter 的实现事实；直接 Codex CLI `AnswerGenerationPort`、个人 ChatGPT 登录和 `TAPPER_ANSWER_BACKEND=codex` 不属于 [RFC-009](2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) V1 合同，也不得计入 V1 出口证据。可复用的解析、grounding 或错误处理逻辑若迁入新路线，必须经唯一 `ModelGateway` 和 LiteLLM Adapter/conformance suite 收口，不能保留第二模型出口。本 RFC 不授权独立 Intelligence Lab 或 Specialist Runtime；当前交付顺序以 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 为准，下文关于 Intelligence-first、Azure 四索引企业基线及 ADR-014 旧 P1.2/P1.3 授权的表述均只保留历史语境。
+
+> **当前阶段处置（2026-09-02）**：本 RFC 的已实现 Tapper Answer Adapter 继续作为独立本地能力维护；其中“完整 Phase 1 仍 active”沿用的是旧 RAG/Knowledge Chat 路线，现已由 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置。当前 Intelligence Lab 使用独立、provider-neutral 的 `AgentRuntime`，不复用 Knowledge Answer 语义。
 
 ## 摘要
 
-Athena 本地知识 Demo 将查询向量生成与回答生成拆成独立端口。文档摄取和查询向量始终通过 LiteLLM 的固定 `athena-embedding` alias 调用百炼 `text-embedding-v4`，继续使用现有 1536 维 Milvus vector space；最终回答由服务端环境变量在现有 LiteLLM 路径和本机 `codex exec` 路径之间选择，不向浏览器暴露模型选择。
+Tapper 本地知识 Demo 将查询向量生成与回答生成拆成独立端口。文档摄取和查询向量始终通过 LiteLLM 的固定 `tapper-embedding` alias 调用百炼 `text-embedding-v4`，继续使用现有 1536 维 Milvus vector space；最终回答由服务端环境变量在现有 LiteLLM 路径和本机 `codex exec` 路径之间选择，不向浏览器暴露模型选择。
 
 Codex 路径复用本机 Codex CLI 已保存的 ChatGPT 登录，不要求 OpenAI API key。批准配置精确为原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、一个智能体且不提供任何工具。调用只接收本次查询及有界 Evidence，输出继续遵守现有 `AnswerGeneration`、Claim 和 Citation 约束；Codex 不参与摄取、Embedding、检索、ACL、Citation 解析或索引写入。
 
-本 RFC 同时修复当前 LiteLLM 成功 Embedding 响应因缺少可选 `id` 而被误判为 `embedding-unavailable` 的兼容问题，并为 ingestion worker 增加脱敏的阶段失败日志。本方案只适用于 loopback、无认证的 Athena 单机 Demo，不改变企业 Azure 四索引基线，也不把个人 ChatGPT 登录引入共享或生产服务。
+本 RFC 同时修复当前 LiteLLM 成功 Embedding 响应因缺少可选 `id` 而被误判为 `embedding-unavailable` 的兼容问题，并为 ingestion worker 增加脱敏的阶段失败日志。本方案只适用于 loopback、无认证的 Tapper 单机 Demo，不改变企业 Azure 四索引基线，也不把个人 ChatGPT 登录引入共享或生产服务。
 
 ## 背景
 
-2026-08-31 的本地故障证据显示，LiteLLM `POST /v1/embeddings` 已返回 HTTP 200，但 Athena 在约 17 ms 后把文档标记为 `failed / embedding / embedding-unavailable`。当前严格解析器要求 Embedding 顶层字段精确包含 `id`；LiteLLM `1.87.0` 的合法响应可以省略该可选字段，因此成功响应被错误包装为 `ModelUnavailable`。同时，`IngestionWorker.run_once()` 捕获安全阶段错误、持久化失败并继续轮询，却没有发出结构化日志，导致服务端只看到正常进程而没有失败原因。
+2026-08-31 的本地故障证据显示，LiteLLM `POST /v1/embeddings` 已返回 HTTP 200，但 Tapper 在约 17 ms 后把文档标记为 `failed / embedding / embedding-unavailable`。当前严格解析器要求 Embedding 顶层字段精确包含 `id`；LiteLLM `1.87.0` 的合法响应可以省略该可选字段，因此成功响应被错误包装为 `ModelUnavailable`。同时，`IngestionWorker.run_once()` 捕获安全阶段错误、持久化失败并继续轮询，却没有发出结构化日志，导致服务端只看到正常进程而没有失败原因。
 
 本地 Demo 当前还用一个 `ModelPort` 同时表达 query embedding 和 answer generation，并由同一个 `LiteLLMAdapter` 实现文档 Embedding。这个合并边界使“Embedding 继续使用百炼、回答可选本机 Codex CLI”难以安全装配，也会错误暗示 Codex 是摄取依赖。
 
-本 RFC 是 [RFC-005](2026-08-27-rfc-005-athena-local-knowledge-demo.md) 的本地增量。它不是 [RFC-001](2026-08-21-rfc-001-codex-agent-runtime.md) 所定义的共享、异步 Specialist Runtime，也不改变 [ADR-014](../decisions/2026-08-21-adr-014-codex-specialist-runtime.md) 对企业 Agent Runtime、凭据和生产隔离的边界。
+本 RFC 是 [RFC-005](2026-08-27-rfc-005-tapper-local-knowledge-demo.md) 的本地增量。它不是 [RFC-001](2026-08-21-rfc-001-codex-agent-runtime.md) 所定义的共享、异步 Specialist Runtime，也不改变 [ADR-014](../decisions/2026-08-21-adr-014-codex-specialist-runtime.md) 对企业 Agent Runtime、凭据和生产隔离的边界。
 
 ## 目标
 
@@ -66,31 +68,31 @@ Document ingestion ──> LiteLLM Embedding ──> DashScope text-embedding-v4
 User query ──> LiteLLM query Embedding ──> Milvus hybrid search ──> bounded Evidence
                                                                   │
                                                                   v
-                                  ATHENA_ANSWER_BACKEND=litellm ──> LiteLLM answer
-                                  ATHENA_ANSWER_BACKEND=codex   ──> codex exec
+                                  TAPPER_ANSWER_BACKEND=litellm ──> LiteLLM answer
+                                  TAPPER_ANSWER_BACKEND=codex   ──> codex exec
                                                                   │
                                                                   v
                                            Claim validation ──> Citation snapshots ──> response
 ```
 
-确定性 E2E 继续由精确的 `TAP_DEMO_MODE=e2e` 与 `ATHENA_MODEL_BACKEND=fake` 配对控制，不能选择 Codex。普通本地运行继续使用 `ATHENA_MODEL_BACKEND=litellm` 提供真实 Embedding；新的回答选择只在该真实模型模式下生效。
+确定性 E2E 继续由精确的 `TAP_DEMO_MODE=e2e` 与 `TAPPER_MODEL_BACKEND=fake` 配对控制，不能选择 Codex。普通本地运行继续使用 `TAPPER_MODEL_BACKEND=litellm` 提供真实 Embedding；新的回答选择只在该真实模型模式下生效。
 
 ### 服务端配置
 
 `.env.example` 增加以下非秘密配置；真实 `.env` 继续 ignored：
 
 ```dotenv
-ATHENA_MODEL_BACKEND=litellm
-ATHENA_ANSWER_BACKEND=codex
-ATHENA_CODEX_MODEL=gpt-5.6-sol
-ATHENA_CODEX_REASONING_EFFORT=ultra
-ATHENA_CODEX_TIMEOUT_SECONDS=300
+TAPPER_MODEL_BACKEND=litellm
+TAPPER_ANSWER_BACKEND=codex
+TAPPER_CODEX_MODEL=gpt-5.6-sol
+TAPPER_CODEX_REASONING_EFFORT=ultra
+TAPPER_CODEX_TIMEOUT_SECONDS=300
 ```
 
-- `ATHENA_ANSWER_BACKEND` 只接受 `litellm | codex`，默认 `litellm`，因此现有环境升级后行为不变。
-- Settings parser 先对 `ATHENA_CODEX_MODEL` 应用 `[a-z0-9][a-z0-9._-]{0,127}` 语法上限、对 reasoning 应用 `low | medium | high | xhigh | max | ultra` 闭合集；已实现 Codex adapter/readiness 在此基础上进一步只接受精确 `gpt-5.6-sol + ultra`，其他语法合法值仍 fail closed 为 `answer-unavailable`。
-- `ATHENA_CODEX_TIMEOUT_SECONDS` 默认 `300`，允许范围 `30..900` 秒。并发固定为 `1`，首版不增加可调并发变量。
-- LiteLLM 模式继续使用现有 `ATHENA_CHAT_ALIAS=athena-chat`；Codex 模式仍要求 `ATHENA_EMBEDDING_ALIAS=athena-embedding` 和 `ATHENA_EMBEDDING_DIMENSION=1536`。
+- `TAPPER_ANSWER_BACKEND` 只接受 `litellm | codex`，默认 `litellm`，因此现有环境升级后行为不变。
+- Settings parser 先对 `TAPPER_CODEX_MODEL` 应用 `[a-z0-9][a-z0-9._-]{0,127}` 语法上限、对 reasoning 应用 `low | medium | high | xhigh | max | ultra` 闭合集；已实现 Codex adapter/readiness 在此基础上进一步只接受精确 `gpt-5.6-sol + ultra`，其他语法合法值仍 fail closed 为 `answer-unavailable`。
+- `TAPPER_CODEX_TIMEOUT_SECONDS` 默认 `300`，允许范围 `30..900` 秒。并发固定为 `1`，首版不增加可调并发变量。
+- LiteLLM 模式继续使用现有 `TAPPER_CHAT_ALIAS=tapper-chat`；Codex 模式仍要求 `TAPPER_EMBEDDING_ALIAS=tapper-embedding` 和 `TAPPER_EMBEDDING_DIMENSION=1536`。
 - 两种真实回答模式都需要现有 `DASHSCOPE_API_KEY` 完成文档和查询 Embedding；Codex 模式只是不需要额外的 OpenAI API key。
 - Codex 配置可以与 LiteLLM 配置同时存在于 `.env`；只有被选择的回答后端参与 readiness 和请求执行。
 
@@ -102,7 +104,7 @@ ATHENA_CODEX_TIMEOUT_SECONDS=300
 
 `CodexExecAnswerAdapter` 使用 `asyncio.create_subprocess_exec` 和启动前解析的原生 CLI 绝对路径直接构造 argv，不经过 shell。若 `command -v codex` 指向 npm 的 `#!/usr/bin/env node` launcher，resolver 必须解析其包内、与当前平台匹配的 `vendor/.../bin/codex` 原生 executable；不能执行 JS launcher，也不能依赖继承的 `PATH`。原生 binary、symlink target 和安装根之间的路径组件必须由当前用户或 root 拥有，且不能对其他主体开放写权限；版本/capability 检查与真实请求使用同一个已验证 target，target identity 变化后 readiness 失效。
 
-每个请求创建权限收紧的空临时目录、临时 `HOME` 和输出 schema，查询与 Evidence 以 UTF-8 JSON 从 stdin 传入，绝不放进 argv、环境变量或日志。子进程环境从空 mapping 构建，只设置 `LANG`/`LC_ALL`、本次请求的 `TMPDIR`/`HOME`，以及启动前解析的真实 `CODEX_HOME` 供 CLI 读取认证；不得继承 `PATH`、`DASHSCOPE_API_KEY`、LiteLLM key、数据库/Blob/Milvus 凭据或任意 `ATHENA_*` 请求配置。调用固定以下边界：
+每个请求创建权限收紧的空临时目录、临时 `HOME` 和输出 schema，查询与 Evidence 以 UTF-8 JSON 从 stdin 传入，绝不放进 argv、环境变量或日志。子进程环境从空 mapping 构建，只设置 `LANG`/`LC_ALL`、本次请求的 `TMPDIR`/`HOME`，以及启动前解析的真实 `CODEX_HOME` 供 CLI 读取认证；不得继承 `PATH`、`DASHSCOPE_API_KEY`、LiteLLM key、数据库/Blob/Milvus 凭据或任意 `TAPPER_*` 请求配置。调用固定以下边界：
 
 - `--ephemeral`：不保存 thread/session 历史。
 - `--ignore-user-config` 和 `--ignore-rules`：不加载个人配置、repo rules 或其模型/能力覆盖；认证仍使用本机 Codex CLI 保存的登录状态。
@@ -116,7 +118,7 @@ Adapter 在启动/ready 检查中通过同一原生 target 验证精确版本、
 
 内建 Sol catalog 会带入 CodeModeOnly/协作/apply-patch metadata，仅检查 CLI help 或 feature inventory 不足以证明零工具。实现因此把 catalog 内容、渲染后的 model descriptor、24 个 feature 状态和三个显式 config override 都纳入 readiness。这个 request-owned catalog 的固定 entry schema 有意与精确 CLI `0.149.0` 耦合，不是跨版本保证；字段、默认值、rendering 或 Direct registry 语义任何漂移都使 backend 不 ready，不能放宽 parser、恢复工具、切换模型或降低 `ultra` 来绕过门禁。
 
-并发 `1` 是单个、唯一 Athena API 进程内的 semaphore。`make demo-dev` 继续只支持一个 API process/worker；本 RFC 不声称为多个 API 进程提供全局额度互斥。任何多进程或共享部署都超出 local-only 范围，必须另行设计分布式限流和认证隔离。
+并发 `1` 是单个、唯一 Tapper API 进程内的 semaphore。`make demo-dev` 继续只支持一个 API process/worker；本 RFC 不声称为多个 API 进程提供全局额度互斥。任何多进程或共享部署都超出 local-only 范围，必须另行设计分布式限流和认证隔离。
 
 ### Grounding、语言与来源
 
@@ -141,7 +143,7 @@ LiteLLM Embedding parser 把 `object`、`model`、`data` 和 `usage` 作为必�
 Ingestion worker 在安全阶段错误已经持久化之后记录一条结构化事件，至少包含：
 
 ```text
-event=athena.ingestion.stage_failed
+event=tapper.ingestion.stage_failed
 document_id / revision_id / job_id / attempt
 stage / safe_error_code / internal_diagnostic_code
 exception_type / duration_ms
@@ -151,8 +153,8 @@ exception_type / duration_ms
 
 ### Readiness 与错误语义
 
-- Embedding readiness 始终检查 LiteLLM 的 `athena-embedding` route。
-- LiteLLM 回答模式额外检查 `athena-chat` route。
+- Embedding readiness 始终检查 LiteLLM 的 `tapper-embedding` route。
+- LiteLLM 回答模式额外检查 `tapper-chat` route。
 - Codex 回答模式改为检查 CLI 可执行文件、能力和登录状态，不要求 LiteLLM chat route；失败使 readiness/demo-check 失败，并让问答返回受控 `503`。
 - Liveness 不因外部模型暂时不可用而失败。
 - Codex 模式绝不自动回退 LiteLLM；日志记录实际选中的 backend、内部失败分类和匿名 timing，不记录输入输出。
@@ -211,17 +213,17 @@ exception_type / duration_ms
 
 - 全量确定性/本地门禁：`make check` exit `0`；`make test` 为 Backend `2244 passed, 26 skipped, 5 warnings`、Web `128 passed`；Codex 模式 `make demo-check` 的 `mysql/redis/blob/milvus/models` 五项均为 `ok`；`make demo-e2e` 为 `12 passed, 2 warnings` 且隔离 journey 通过。七条 warning 都来自未修改的 `apps/backend/alembic.ini` `path_separator` 弃用基线。
 - 默认未授权执行：两个 opt-in smoke 精确 `2 skipped in 0.63s`，exit `0`，没有进入 provider/Codex 请求体。
-- 阿里 Embedding：alias `athena-embedding`，维度 `1536`，zh→en 与 en→zh 均为 `true`，`elapsed_ms=669`，exit `0`；输入与向量未记录。
+- 阿里 Embedding：alias `tapper-embedding`，维度 `1536`，zh→en 与 en→zh 均为 `true`，`elapsed_ms=669`，exit `0`；输入与向量未记录。
 - Codex bootstrap：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=55379`，`1 passed`，exit `0`。
 - Codex 生产未打补丁 gate 最新复验：`version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=21652`，`1 passed in 21.71s`，exit `0`。
 
-这些结果实现了本 RFC；完整 Phase 1 仍为 `active`，RFC-005 保持 `implemented`。本 RFC 的当前单智能体、无工具决策见 [ADR-018](../decisions/2026-09-01-adr-018-athena-local-codex-tool-free-answer.md)，它替代了 ADR-017 的历史多智能体选择。
+这些结果实现了本 RFC；完整 Phase 1 仍为 `active`，RFC-005 保持 `implemented`。本 RFC 的当前单智能体、无工具决策见 [ADR-018](../decisions/2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md)，它替代了 ADR-017 的历史多智能体选择。
 
 ## 验收标准
 
 - LiteLLM 返回合法、无顶层 `id` 的 Embedding 200 response 时，文档完成 embedding/publishing 并进入 `ready`；非法结构仍以稳定错误失败。
 - 任一 ingestion 阶段失败后，MySQL 中保留安全状态，服务端同时出现一条可关联的脱敏结构化日志；秘密、原文、向量和 provider body 均不出现。
-- 默认未设置 `ATHENA_ANSWER_BACKEND` 时，行为与现有 LiteLLM answer path 一致。
+- 默认未设置 `TAPPER_ANSWER_BACKEND` 时，行为与现有 LiteLLM answer path 一致。
 - 配置 `codex + gpt-5.6-sol + ultra` 且本机已登录时，回答经过 Codex CLI 并通过同一 claim/citation validation，无需 OpenAI API key。
 - Codex 缺失、未登录、能力不兼容、超时、取消、输出超限、非法 JSON 或越界工具事件都明确失败，LiteLLM answer 调用次数保持为零。
 - Codex 子进程的 argv、环境、临时目录和日志中没有 query、Evidence、provider key 或回答；子进程环境不含 DashScope、LiteLLM、数据库、Blob 或 Milvus 凭据；请求结束后无遗留子进程或 session 文件。

@@ -3,35 +3,37 @@ status: completed
 date: 2026-08-27
 ---
 
-# Athena Local Knowledge Demo Implementation Plan
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
-> **现行处置（2026-09-04）**：本计划保持 `completed`，只记录已经完成的 Athena 本地纵向 Demo，不恢复任何任务，也不表示 [RFC-009](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md) 的 V0/V1 已完成。当前执行入口是 [Athena 知识与 Web 自动化平台实施计划](2026-09-04-athena-knowledge-web-automation-platform.md)；下文“完整 Phase 1 仍 active”和“当前 Phase 1 是 Intelligence Lab”只记录旧验收语境。
+# Tapper Local Knowledge Demo Implementation Plan
 
-> **当前阶段处置（2026-09-02）**：本计划保持 `completed`，用于记录已交付的 Athena 本地能力。文中“完整 Phase 1 仍 active”属于当时验收语境；[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已把完整 RAG/Knowledge Chat 后置，当前 Phase 1 改为 Intelligence Lab。
+> **现行处置（2026-09-04）**：本计划保持 `completed`，只记录已经完成的 Tapper 本地纵向 Demo，不恢复任何任务，也不表示 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 的 V0/V1 已完成。当前执行入口是 [Tapper 知识与 Web 自动化平台实施计划](2026-09-04-tapper-knowledge-web-automation-platform.md)；下文“完整 Phase 1 仍 active”和“当前 Phase 1 是 Intelligence Lab”只记录旧验收语境。
+
+> **当前阶段处置（2026-09-02）**：本计划保持 `completed`，用于记录已交付的 Tapper 本地能力。文中“完整 Phase 1 仍 active”属于当时验收语境；[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已把完整 RAG/Knowledge Chat 后置，当前 Phase 1 改为 Intelligence Lab。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付一个可在开发机长期保存数据的 Athena Web Demo，让用户上传可提取文本的 PDF、DOCX、Markdown 与 TXT，观察真实 ingestion 状态，限定来源问答，并点击引用核验同一文档 revision 的原文。
+**Goal:** 交付一个可在开发机长期保存数据的 Tapper Web Demo，让用户上传可提取文本的 PDF、DOCX、Markdown 与 TXT，观察真实 ingestion 状态，限定来源问答，并点击引用核验同一文档 revision 的原文。
 
-**Architecture:** 在现有 provider-neutral `KnowledgeAPI` 外增加 document ledger、artifact storage、ingestion worker、只含 query/所选 revisions 的 answer resolver snapshot、citation resolver 与薄 HTTP 层；MySQL 是事实与 job checkpoint，但不保存回答正文/history，Azurite 保存原文件及派生 artifact，Milvus 是可重建投影，Redis 只做唤醒，LiteLLM 固定提供 chat/embedding alias。Web 采用来源优先的 Athena 工作区，不建立第二套 Chat/RAG，也不把本地 Demo 约定扩展为共享环境或生产基线。
+**Architecture:** 在现有 provider-neutral `KnowledgeAPI` 外增加 document ledger、artifact storage、ingestion worker、只含 query/所选 revisions 的 answer resolver snapshot、citation resolver 与薄 HTTP 层；MySQL 是事实与 job checkpoint，但不保存回答正文/history，Azurite 保存原文件及派生 artifact，Milvus 是可重建投影，Redis 只做唤醒，LiteLLM 固定提供 chat/embedding alias。Web 采用来源优先的 Tapper 工作区，不建立第二套 Chat/RAG，也不把本地 Demo 约定扩展为共享环境或生产基线。
 
 **Tech Stack:** Python 3.13.12、FastAPI、Pydantic v2、SQLAlchemy 2、Alembic、Azure Blob SDK、PyPDF、python-docx、tiktoken、PyMilvus、LiteLLM、MySQL 8.4、Redis 7.4、Azurite、Milvus 2.6；Node 22.22.0、pnpm 10.15.1、Vite、React、TypeScript、Ant Design、Tailwind CSS、TanStack Query、React Markdown、Vitest、Testing Library、Playwright。
 
-**Spec:** `docs/proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md`
+**Spec:** `docs/proposals/2026-08-27-rfc-005-tapper-local-knowledge-demo.md`
 
 **Acceptance result:** Tasks 1–10 已完成 mandatory deterministic/local-middleware、实际手工视觉/键盘与文档门禁，本计划因此为 `completed`，RFC-005 为 `implemented`。当前 checkout 没有 `.env`，可选真实模型项准确记录为 `not-run: credentials not provided`；runnable LiteLLM route configured, provider unverified，这不等于真实 provider 已验证。完整 Phase 1 仍为 `active`。
 
 ## Global Constraints
 
-- `Athena` 只用于 Web 产品外壳和用户文案；Backend 模块、公共 DTO 与路由保持 `knowledge` / `document` / `citation` 命名。
-- 首版固定单一知识空间 `Athena Lab`，最多保留 `50` 份未删除文档，一次问答最多选择 `20` 份 `ready` 文档。
+- `Tapper` 只用于 Web 产品外壳和用户文案；Backend 模块、公共 DTO 与路由保持 `knowledge` / `document` / `citation` 命名。
+- 首版固定单一知识空间 `Tapper Lab`，最多保留 `50` 份未删除文档，一次问答最多选择 `20` 份 `ready` 文档。
 - 单文件硬上限为 `25 MiB`；只接受可提取文本的 PDF、DOCX、Markdown 与 TXT，不实现 OCR、PPTX、表格语义、网页抓取或外部数据源。
 - 文档公开状态固定为 `queued | processing | ready | failed | deleting`；processing stage 固定为 `stored | parsing | chunking | embedding | publishing | ready`。
 - 上传、解析、切片、Embedding、发布、重试与删除必须使用真实持久事实；不得以浏览器内存、API 进程内队列、假进度或内嵌 fixture 回答冒充成功。
 - 相同 content SHA-256 与 media type 的重复上传必须返回同一个 document/revision，不新增 job、manifest 或 vector。
 - MySQL 保存 document/revision/job/manifest/answer/citation facts；Azurite 保存 original、normalized、chunk 与 embedding artifact；Milvus 只保存可重建 projection；Redis 丢失不能丢 job。
 - 问答必须调用现有 `KnowledgeAPI.answer()`，固定 demo policy 只能由服务端构造，浏览器不能提交 tenant、group、classification、environment、corpus 或任意 provider filter。
-- LiteLLM 公共模型名固定为 `athena-chat` 与 `athena-embedding`；raw provider model、API key、base URL、Blob locator、Milvus physical collection 和 SDK 异常都不能进入公共响应。
+- LiteLLM 公共模型名固定为 `tapper-chat` 与 `tapper-embedding`；raw provider model、API key、base URL、Blob locator、Milvus physical collection 和 SDK 异常都不能进入公共响应。
 - 首版 answer 使用单次 JSON 响应；citation/claim 校验和最小 snapshot 提交成功前不能向浏览器返回未验证 answer delta。
 - 服务端固定 query 最长 `8,000` 字符、列表默认 `25`/最大 `50`、cursor 最长 `512` 字符、answer citation 最多 `20` 个、quote 最长 `4,000` 字符且前后文各 `500` 字符；只保留最近 `1,000` 个 answer resolver snapshots（query hash/所选 revisions，不含回答正文/history）；Web 不提供修改这些上限的入口。
 - 所有非拒答实质 claim 至少包含一个可解析 citation；revision/hash/anchor 不一致或文档删除时返回 `citation-stale`，不能展示近似内容。
@@ -53,15 +55,15 @@ date: 2026-08-27
 - `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`：Azurite original/normalized/chunk/embedding artifact lifecycle。
 - `apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py`：PDF、DOCX、Markdown、TXT 的闭合 parser registry。
 - `apps/backend/src/tap/modules/knowledge/adapters/document_chunker.py`：结构优先、token 有界、anchor 可回查的 chunker。
-- `apps/backend/src/tap/modules/knowledge/adapters/milvus_documents.py`：Athena `doc` collection bootstrap、upsert、对账与删除。
+- `apps/backend/src/tap/modules/knowledge/adapters/milvus_documents.py`：Tapper `doc` collection bootstrap、upsert、对账与删除。
 - `apps/backend/src/tap/interfaces/http/routes/`：薄 route、multipart 边界与 RFC 9457 error mapping。
-- `apps/backend/src/tap/entrypoints/athena_api.py` 与 `athena_ingestion_worker.py`：只负责配置校验、依赖装配、生命周期和启动。
-- `apps/web/src/pages/AthenaPage.tsx`：问答/知识库一级导航页。
-- `apps/web/src/widgets/athena/AthenaWorkspace.tsx`：来源、问答、原文三栏工作区与响应式编排。
+- `apps/backend/src/tap/entrypoints/tapper_api.py` 与 `tapper_ingestion_worker.py`：只负责配置校验、依赖装配、生命周期和启动。
+- `apps/web/src/pages/TapperPage.tsx`：问答/知识库一级导航页。
+- `apps/web/src/widgets/tapper/TapperWorkspace.tsx`：来源、问答、原文三栏工作区与响应式编排。
 - `apps/web/src/features/knowledge/`：单一 feature 内的 API、query hooks、selection、上传、知识库、answer 和 citation UI；不存在 `feature → feature` import。
 - `apps/web/src/shared/api/generated/schema.ts`：由提交的 OpenAPI 确定性生成，不人工编辑。
-- `scripts/check-athena-demo.py`：数据库、Blob、Redis、Milvus 与两个 LiteLLM alias 的真实 preflight。
-- `scripts/run-athena-dev.sh`：Web、API、Relay、Worker 四进程的本地 supervisor，接收信号后完整收尾。
+- `scripts/check-tapper-demo.py`：数据库、Blob、Redis、Milvus 与两个 LiteLLM alias 的真实 preflight。
+- `scripts/run-tapper-dev.sh`：Web、API、Relay、Worker 四进程的本地 supervisor，接收信号后完整收尾。
 
 ---
 
@@ -75,7 +77,7 @@ date: 2026-08-27
 - Create: `apps/backend/src/tap/interfaces/http/routes/knowledge_answers.py`
 - Create: `apps/backend/src/tap/interfaces/http/routes/citations.py`
 - Create: `apps/backend/src/tap/interfaces/http/routes/health.py`
-- Create: `apps/backend/tests/contract/test_athena_http_contract.py`
+- Create: `apps/backend/tests/contract/test_tapper_http_contract.py`
 - Create: `apps/web/package.json`
 - Create: `apps/web/tsconfig.json`
 - Create: `apps/web/src/shared/api/generated/schema.ts`
@@ -125,7 +127,7 @@ def test_document_contract_is_closed_and_bounded() -> None:
     )
 
 
-def test_athena_routes_have_stable_provider_neutral_operation_ids() -> None:
+def test_tapper_routes_have_stable_provider_neutral_operation_ids() -> None:
     paths = create_app().openapi()["paths"]
     assert paths["/v1/knowledge/documents"]["post"]["operationId"] == "knowledge_upload_document"
     assert paths["/v1/knowledge/answers"]["post"]["operationId"] == "knowledge_create_answer"
@@ -138,7 +140,7 @@ Also assert `limit` is `1..50`, public error media type is `application/problem+
 
 ```sh
 uv run --project apps/backend pytest \
-  apps/backend/tests/contract/test_athena_http_contract.py \
+  apps/backend/tests/contract/test_tapper_http_contract.py \
   apps/backend/tests/contract/test_generated_contracts.py -v
 ```
 
@@ -220,7 +222,7 @@ class ReadyHealth(ContractModel):
 
 `HealthComponent` contains closed name `mysql | redis | blob | milvus | models`, state `ok | failed`, and optional fixed remediation code; it exposes no endpoint or exception. `DocumentStageSnapshot` is `{stage, state, completedAt, errorCode}` with state limited to `pending | processing | completed | failed`. `DocumentDetail` must reject error fields for non-failed status and require them for failed status through a model validator.
 
-Extend the provider-neutral `RetrievalClaim` with strict `answer_start` and `answer_end` non-negative Unicode code-point offsets. `RetrievalAnswerResponse` validates ordered, non-overlapping spans, requires `answer[answer_start:answer_end] == claim.text`, and requires each claim span to occupy a complete paragraph boundary (`start == 0` or preceded by `\n\n`; `end == len(answer)` or followed by `\n\n`). This is a general grounded-answer contract, not an Athena-only field.
+Extend the provider-neutral `RetrievalClaim` with strict `answer_start` and `answer_end` non-negative Unicode code-point offsets. `RetrievalAnswerResponse` validates ordered, non-overlapping spans, requires `answer[answer_start:answer_end] == claim.text`, and requires each claim span to occupy a complete paragraph boundary (`start == 0` or preceded by `\n\n`; `end == len(answer)` or followed by `\n\n`). This is a general grounded-answer contract, not an Tapper-only field.
 
 Extend the domain `Claim` with the same fields. In `AuthorizedRetrieval.answer`, require each generated claim text to occur exactly once as a complete answer paragraph, compute the Unicode code-point span, sort spans and abstain on missing/ambiguous/overlapping text. Map both offsets in `answer_response_to_http`. Tighten the LiteLLM system prompt to require every claim text to be one complete paragraph copied exactly into `answer`, while retaining server-side validation as authority.
 
@@ -265,7 +267,7 @@ contracts:
 corepack pnpm install
 make contracts
 uv run --project apps/backend pytest \
-  apps/backend/tests/contract/test_athena_http_contract.py \
+  apps/backend/tests/contract/test_tapper_http_contract.py \
   apps/backend/tests/contract/test_generated_contracts.py \
   apps/backend/tests/contract/test_public_retrieval_contract_strict.py \
   apps/backend/tests/contract/test_knowledge_api.py \
@@ -298,8 +300,8 @@ git commit -m "feat: add knowledge document contracts"
 - Create: `apps/backend/tests/unit/knowledge/test_document_identities.py`
 - Create: `apps/backend/tests/unit/knowledge/test_document_parsers.py`
 - Create: `apps/backend/tests/unit/knowledge/test_document_chunker.py`
-- Create: `apps/backend/tests/fixtures/athena/source.md`
-- Create: `apps/backend/tests/fixtures/athena/source.txt`
+- Create: `apps/backend/tests/fixtures/tapper/source.md`
+- Create: `apps/backend/tests/fixtures/tapper/source.txt`
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `uv.lock`
 
@@ -357,8 +359,8 @@ Define immutable values and exact bounds:
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_NORMALIZED_CHARACTERS = 8_000_000
 MAX_CHUNKS_PER_DOCUMENT = 10_000
-PARSER_VERSION = "athena-parser-v1"
-CHUNKER_VERSION = "athena-structure-512-v1"
+PARSER_VERSION = "tapper-parser-v1"
+CHUNKER_VERSION = "tapper-structure-512-v1"
 
 
 def new_document_id(id_factory: Callable[[], str]) -> DocumentId:
@@ -423,7 +425,7 @@ Expected: all supported format tests pass, scanned PDF returns only `ocr-require
 
 ```sh
 git add apps/backend/pyproject.toml uv.lock apps/backend/src/tap/modules/knowledge \
-  apps/backend/tests/unit/knowledge apps/backend/tests/fixtures/athena
+  apps/backend/tests/unit/knowledge apps/backend/tests/fixtures/tapper
 git commit -m "feat: parse and chunk knowledge documents"
 ```
 
@@ -431,7 +433,7 @@ git commit -m "feat: parse and chunk knowledge documents"
 
 **Files:**
 
-- Create: `apps/backend/migrations/versions/0003_athena_documents.py`
+- Create: `apps/backend/migrations/versions/0003_tapper_documents.py`
 - Create: `apps/backend/src/tap/platform/db/schema.py`
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/mysql_documents.py`
 - Create: `apps/backend/src/tap/modules/knowledge/application/documents.py`
@@ -484,11 +486,11 @@ uv run --project apps/backend pytest \
   apps/backend/tests/integration/test_document_upload_recovery.py -v
 ```
 
-Expected: FAIL because migration `0003_athena_documents`, the repository and application service are absent.
+Expected: FAIL because migration `0003_tapper_documents`, the repository and application service are absent.
 
 - [ ] **Step 3: Create the exact durable schema**
 
-Make `0003_athena_documents` depend on `0002_outbox_claim_token` and create:
+Make `0003_tapper_documents` depend on `0002_outbox_claim_token` and create:
 
 ```text
 knowledge_document
@@ -613,12 +615,12 @@ make check
 git diff --check
 ```
 
-Expected: `alembic current` reports `0003_athena_documents`, duplicate/concurrency tests show one job and one outbox row, and reconstructing repository objects preserves all visible state.
+Expected: `alembic current` reports `0003_tapper_documents`, duplicate/concurrency tests show one job and one outbox row, and reconstructing repository objects preserves all visible state.
 
 - [ ] **Step 8: Commit the durable ledger**
 
 ```sh
-git add apps/backend/migrations/versions/0003_athena_documents.py \
+git add apps/backend/migrations/versions/0003_tapper_documents.py \
   apps/backend/migrations/env.py apps/backend/src/tap/platform/db/schema.py \
   apps/backend/src/tap/modules/knowledge apps/backend/src/tap/modules/chat/adapters/mysql.py \
   apps/backend/tests/unit/knowledge apps/backend/tests/integration \
@@ -632,7 +634,7 @@ git commit -m "feat: persist knowledge document jobs"
 
 - Create: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Create: `apps/backend/src/tap/platform/messaging/redis_wakeup.py`
-- Create: `apps/backend/src/tap/entrypoints/athena_ingestion_worker.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_ingestion_worker.py`
 - Create: `apps/backend/tests/unit/knowledge/test_ingestion_worker.py`
 - Create: `apps/backend/tests/integration/test_ingestion_recovery.py`
 - Create: `apps/backend/tests/integration/test_ingestion_entrypoint.py`
@@ -757,7 +759,7 @@ If any step fails, retain enough locators/manifest facts for a retry. List/selec
 
 - [ ] **Step 6: Add Redis wake-up without making it authoritative**
 
-Use the existing Outbox relay stream with a dedicated consumer group `athena-ingestion`. `RedisWakeupConsumer.wait(max_wait_seconds=1.0)` may shorten idle latency and ACK a Knowledge message only after a DB claim attempt; it ACKs unrelated aggregate types for this group without consuming them for other groups. The entrypoint must still call `run_once` once per second when Redis is empty, unavailable, reset, or contains a duplicate command. Stream payload supplies only `aggregateId`; all job details come from MySQL.
+Use the existing Outbox relay stream with a dedicated consumer group `tapper-ingestion`. `RedisWakeupConsumer.wait(max_wait_seconds=1.0)` may shorten idle latency and ACK a Knowledge message only after a DB claim attempt; it ACKs unrelated aggregate types for this group without consuming them for other groups. The entrypoint must still call `run_once` once per second when Redis is empty, unavailable, reset, or contains a duplicate command. Stream payload supplies only `aggregateId`; all job details come from MySQL.
 
 ```python
 wakeup = await wakeups.wait(max_wait_seconds=1.0)
@@ -784,7 +786,7 @@ Expected: each injected failure exposes its exact stage, retries do not redo a c
 
 ```sh
 git add apps/backend/src/tap/modules/knowledge apps/backend/src/tap/platform/messaging \
-  apps/backend/src/tap/entrypoints/athena_ingestion_worker.py \
+  apps/backend/src/tap/entrypoints/tapper_ingestion_worker.py \
   apps/backend/tests/unit/knowledge apps/backend/tests/integration
 git commit -m "feat: add recoverable ingestion worker"
 ```
@@ -799,8 +801,8 @@ git commit -m "feat: add recoverable ingestion worker"
 - Create: `apps/backend/tests/contract/test_blob_artifact_contract.py`
 - Create: `apps/backend/tests/contract/test_document_index_contract.py`
 - Create: `apps/backend/tests/integration/test_azurite_artifacts.py`
-- Create: `apps/backend/tests/integration/test_athena_milvus_projection.py`
-- Create: `apps/backend/tests/integration/test_athena_milvus_rebuild.py`
+- Create: `apps/backend/tests/integration/test_tapper_milvus_projection.py`
+- Create: `apps/backend/tests/integration/test_tapper_milvus_rebuild.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/litellm.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/milvus/transport.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/errors.py`
@@ -816,7 +818,7 @@ git commit -m "feat: add recoverable ingestion worker"
 **Interfaces:**
 
 - Consumes: artifact/index/embedding ports, canonical doc schema, existing strict `MilvusSearchAdapter` and `LiteLLMAdapter` transport rules.
-- Produces: content-addressed `AzureBlobArtifactStore`, batch `LiteLLMAdapter.embed_many`, `MilvusDocumentIndex.ensure_target/upsert_revision/delete_revision/count_revision/rebuild`, and a reader-compatible Athena alias.
+- Produces: content-addressed `AzureBlobArtifactStore`, batch `LiteLLMAdapter.embed_many`, `MilvusDocumentIndex.ensure_target/upsert_revision/delete_revision/count_revision/rebuild`, and a reader-compatible Tapper alias.
 
 - [ ] **Step 1: Write provider contract RED tests**
 
@@ -826,11 +828,11 @@ Use the same conformance suite for fakes and real adapters:
 @pytest.mark.asyncio
 async def test_embedding_artifact_round_trip_is_revision_scoped(store) -> None:
     locator = await store.put_embeddings(
-        revision_id="rev_a", model="athena-embedding", dimension=3,
+        revision_id="rev_a", model="tapper-embedding", dimension=3,
         batches=(EmbeddingBatch(("h_1",), ((0.1, 0.2, 0.3),)),),
     )
     restored = await store.read_embeddings(locator)
-    assert restored.model == "athena-embedding"
+    assert restored.model == "tapper-embedding"
     assert restored.vectors_by_chunk_id == {"h_1": (0.1, 0.2, 0.3)}
 
 
@@ -851,7 +853,7 @@ uv run --project apps/backend pytest \
   apps/backend/tests/contract/test_blob_artifact_contract.py \
   apps/backend/tests/contract/test_document_index_contract.py \
   apps/backend/tests/integration/test_azurite_artifacts.py \
-  apps/backend/tests/integration/test_athena_milvus_projection.py -v
+  apps/backend/tests/integration/test_tapper_milvus_projection.py -v
 ```
 
 Expected: FAIL because the real artifact/index adapters and batch embedding operation do not exist.
@@ -861,11 +863,11 @@ Expected: FAIL because the real artifact/index adapters and batch embedding oper
 Pin `azure-storage-blob` with `uv add --project apps/backend --exact`. Use the async Blob client and exactly two containers:
 
 ```text
-athena-originals
+tapper-originals
   staging/{upload_id}
   revisions/{revision_id}/{source_sha256_without_prefix}
 
-athena-artifacts
+tapper-artifacts
   revisions/{revision_id}/normalized-v1.json
   revisions/{revision_id}/chunks-v1.jsonl.gz
   revisions/{revision_id}/embeddings/{model}/{dimension}-v1.jsonl.gz
@@ -881,10 +883,10 @@ Expose:
 
 ```python
 async def embed_many(self, texts: tuple[str, ...]) -> tuple[Embedding, ...]:
-    """Embed 1..32 bounded texts on fixed alias athena-embedding."""
+    """Embed 1..32 bounded texts on fixed alias tapper-embedding."""
 ```
 
-Send one `/v1/embeddings` request per batch of at most 32 texts, total request at most 262,144 bytes, model exactly `athena-embedding`, and dimension exactly the configured integer. Reorder results by the provider `index` field; reject duplicate/missing/out-of-range indices, non-finite values, wrong dimension, widened response fields and a returned model outside the fixed allowlist. Do not add provider-specific environment variables to application DTOs. Move `ModelUnavailable` to `tap.modules.knowledge.ports.errors` and import it from the LiteLLM adapter; keep a compatibility re-export if existing callers require it. HTTP mappings only catch the provider-neutral exception.
+Send one `/v1/embeddings` request per batch of at most 32 texts, total request at most 262,144 bytes, model exactly `tapper-embedding`, and dimension exactly the configured integer. Reorder results by the provider `index` field; reject duplicate/missing/out-of-range indices, non-finite values, wrong dimension, widened response fields and a returned model outside the fixed allowlist. Do not add provider-specific environment variables to application DTOs. Move `ModelUnavailable` to `tap.modules.knowledge.ports.errors` and import it from the LiteLLM adapter; keep a compatibility re-export if existing callers require it. HTTP mappings only catch the provider-neutral exception.
 
 - [ ] **Step 5: Extract a reusable doc schema without weakening fixture trust**
 
@@ -907,19 +909,19 @@ def doc_collection_description(metadata: DocCollectionMetadata) -> str: ...
 
 Keep fixture-only manifest digest, exact 12-row identity checks and trusted corpus constants in `fixtures.py`. The existing digest must remain exactly `sha256:998b3ca8933a0ad33e61d2acc6b5aa629b10fa691f42860bbe3fe2074402c71f` after the extraction.
 
-- [ ] **Step 6: Implement Athena's dedicated mutable Milvus target**
+- [ ] **Step 6: Implement Tapper's dedicated mutable Milvus target**
 
 Use these exact local defaults, all overrideable only by server environment:
 
 ```text
-physical collection: kb_doc_v1_athena_demo
-reader alias:        kb_doc_athena_demo_active
+physical collection: kb_doc_v1_tapper_demo
+reader alias:        kb_doc_tapper_demo_active
 schema version:      doc-schema-v1
-corpus version:      athena-demo-v1
-embedding model:     athena-embedding
+corpus version:      tapper-demo-v1
+embedding model:     tapper-embedding
 vector dimension:   1536
-tenant/project:      local / athena-demo
-group/environment:   athena-local / global
+tenant/project:      local / tapper-demo
+group/environment:   tapper-local / global
 classificationRank: 1
 ```
 
@@ -929,7 +931,7 @@ Map every row to the existing strict output schema, including `source_id=documen
 
 - [ ] **Step 7: Implement delete and full rebuild parity**
 
-`delete_revision` deletes explicit chunk IDs in batches of at most 256, flushes, then queries `source_revision == <escaped revision>` and requires zero rows. `rebuild(records)` creates a new physical name `kb_doc_v1_athena_demo_<12 hex>`, writes every ready revision from artifact storage, verifies row/hash parity, grants the two scoped roles, atomically alters the alias, and only then retires the previous physical collection. Cancellation/failure restores the previous alias and leaves a cleanup report; it never points the alias at a partial collection.
+`delete_revision` deletes explicit chunk IDs in batches of at most 256, flushes, then queries `source_revision == <escaped revision>` and requires zero rows. `rebuild(records)` creates a new physical name `kb_doc_v1_tapper_demo_<12 hex>`, writes every ready revision from artifact storage, verifies row/hash parity, grants the two scoped roles, atomically alters the alias, and only then retires the previous physical collection. Cancellation/failure restores the previous alias and leaves a cleanup report; it never points the alias at a partial collection.
 
 ```python
 class DocumentIndex(Protocol):
@@ -946,8 +948,8 @@ class DocumentIndex(Protocol):
 TAP_RUN_AZURITE_INTEGRATION=1 uv run --project apps/backend pytest \
   apps/backend/tests/integration/test_azurite_artifacts.py -v
 TAP_RUN_MILVUS_INTEGRATION=1 uv run --project apps/backend pytest \
-  apps/backend/tests/integration/test_athena_milvus_projection.py \
-  apps/backend/tests/integration/test_athena_milvus_rebuild.py -v
+  apps/backend/tests/integration/test_tapper_milvus_projection.py \
+  apps/backend/tests/integration/test_tapper_milvus_rebuild.py -v
 uv run --project apps/backend pytest \
   apps/backend/tests/contract/test_blob_artifact_contract.py \
   apps/backend/tests/contract/test_document_index_contract.py \
@@ -1043,8 +1045,8 @@ Build verified facts and current project policy, then call `build_retrieval_poli
 
 ```python
 DEMO_SUBJECT = VerifiedSubjectFacts(
-    tenant_id="local", user_id="athena-local-user",
-    group_ids=frozenset({"athena-local"}), roles=frozenset(), token_verified=True,
+    tenant_id="local", user_id="tapper-local-user",
+    group_ids=frozenset({"tapper-local"}), roles=frozenset(), token_verified=True,
 )
 
 
@@ -1055,13 +1057,13 @@ def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectP
         allow_all_anchors=True,
     ) for item in revisions)
     return ProjectPolicy(
-        tenant_id="local", project_id="athena-demo", permission_granted=True,
-        allowed_group_ids=frozenset({"athena-local"}),
+        tenant_id="local", project_id="tapper-demo", permission_granted=True,
+        allowed_group_ids=frozenset({"tapper-local"}),
         classification_ceiling=Classification.INTERNAL,
         allowed_environments=frozenset({"global"}),
         allowed_source_families=frozenset({"doc"}),
-        active_corpus_version="athena-demo-v1",
-        acl_digest=digest_grants(grants), policy_version="athena-demo-policy-v1",
+        active_corpus_version="tapper-demo-v1",
+        acl_digest=digest_grants(grants), policy_version="tapper-demo-policy-v1",
         decision_id=digest_decision(grants), resource_grants=grants,
     )
 ```
@@ -1168,7 +1170,7 @@ git add apps/backend/src/tap/modules/knowledge apps/backend/src/tap/interfaces/h
 git commit -m "feat: answer from selected knowledge sources"
 ```
 
-### Task 7: Athena App Shell and Knowledge Library
+### Task 7: Tapper App Shell and Knowledge Library
 
 **Files:**
 
@@ -1181,7 +1183,7 @@ git commit -m "feat: answer from selected knowledge sources"
 - Create: `apps/web/src/app/providers.tsx`
 - Create: `apps/web/src/app/theme.ts`
 - Create: `apps/web/src/app/styles.css`
-- Create: `apps/web/src/pages/AthenaPage.tsx`
+- Create: `apps/web/src/pages/TapperPage.tsx`
 - Create: `apps/web/src/features/knowledge/api/client.ts`
 - Create: `apps/web/src/features/knowledge/api/types.ts`
 - Create: `apps/web/src/features/knowledge/api/queries.ts`
@@ -1201,7 +1203,7 @@ git commit -m "feat: answer from selected knowledge sources"
 **Interfaces:**
 
 - Consumes: generated OpenAPI types and document endpoints from Tasks 1/6.
-- Produces: runnable Athena shell with `问答/知识库` navigation, real knowledge library/upload/detail/retry/delete behavior, query hooks and a typed `KnowledgeClient` reused by the workspace.
+- Produces: runnable Tapper shell with `问答/知识库` navigation, real knowledge library/upload/detail/retry/delete behavior, query hooks and a typed `KnowledgeClient` reused by the workspace.
 
 - [ ] **Step 1: Install exact compatible Web dependencies**
 
@@ -1293,9 +1295,9 @@ export interface KnowledgeClient {
 
 Use generated `components`/`paths` types; never duplicate public response shapes by hand. Upload alone may use `XMLHttpRequest` for progress, but it must parse the same Problem Details and abort on component unmount. Document list polling is `2_000 ms` only when at least one item is `queued | processing | deleting`; otherwise `refetchInterval=false`.
 
-- [ ] **Step 5: Implement the benchmarked Athena shell**
+- [ ] **Step 5: Implement the benchmarked Tapper shell**
 
-Register `@tailwindcss/vite` in Vite. Use Ant Design for form/table/modal/timeline semantics and centralized theme tokens; use Tailwind for layout, spacing and responsive composition, with a restrained neutral palette, 14px base type and clear focus rings. The header shows `Athena` and `Athena Lab`, with only `问答` and `知识库` tabs. The knowledge library follows the approved RAGFlow/Dify-inspired operational pattern:
+Register `@tailwindcss/vite` in Vite. Use Ant Design for form/table/modal/timeline semantics and centralized theme tokens; use Tailwind for layout, spacing and responsive composition, with a restrained neutral palette, 14px base type and clear focus rings. The header shows `Tapper` and `Tapper Lab`, with only `问答` and `知识库` tabs. The knowledge library follows the approved RAGFlow/Dify-inspired operational pattern:
 
 ```text
 toolbar: title + ready/processing/failed counts + 添加来源
@@ -1358,22 +1360,22 @@ Expected: component tests pass without React act warnings, generated types remai
 
 ```sh
 git add apps/web pnpm-lock.yaml Makefile
-git commit -m "feat: add athena knowledge library"
+git commit -m "feat: add tapper knowledge library"
 ```
 
 ### Task 8: Source-First Question Workspace and Citation Viewer
 
 **Files:**
 
-- Create: `apps/web/src/widgets/athena/AthenaWorkspace.tsx`
+- Create: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
 - Create: `apps/web/src/features/knowledge/components/SourcesPanel.tsx`
 - Create: `apps/web/src/features/knowledge/components/QuestionComposer.tsx`
 - Create: `apps/web/src/features/knowledge/components/GroundedAnswer.tsx`
 - Create: `apps/web/src/features/knowledge/components/CitationViewer.tsx`
 - Create: `apps/web/src/features/knowledge/model/sourceSelection.ts`
-- Create: `apps/web/src/features/knowledge/components/AthenaWorkspace.test.tsx`
+- Create: `apps/web/src/features/knowledge/components/TapperWorkspace.test.tsx`
 - Create: `apps/web/src/features/knowledge/components/MarkdownSafety.test.tsx`
-- Modify: `apps/web/src/pages/AthenaPage.tsx`
+- Modify: `apps/web/src/pages/TapperPage.tsx`
 - Modify: `apps/web/src/features/knowledge/api/queries.ts`
 - Modify: `apps/web/src/app/styles.css`
 
@@ -1392,7 +1394,7 @@ it("removes a selected source when it stops being ready", async () => {
     document({ documentId: "doc_a", status: "ready" }),
     document({ documentId: "doc_b", status: "ready" }),
   ]);
-  renderApp(<AthenaWorkspace />, { api });
+  renderApp(<TapperWorkspace />, { api });
   await userEvent.click(await screen.findByRole("checkbox", { name: /doc_a/ }));
   api.replaceDocument(
     "doc_a",
@@ -1404,7 +1406,7 @@ it("removes a selected source when it stops being ready", async () => {
 });
 
 it("opens only an internal citation preview and clears it for a new question", async () => {
-  renderApp(<AthenaWorkspace />, { api: answeredFake() });
+  renderApp(<TapperWorkspace />, { api: answeredFake() });
   await ask("退款需要几人审批？");
   await userEvent.click(await screen.findByRole("button", { name: "引用 1" }));
   expect(await screen.findByText("原文依据")).toBeVisible();
@@ -1441,7 +1443,7 @@ Also test `javascript:`, data URLs, SVG, iframe, style attributes, raw HTML, ove
 - [ ] **Step 3: Run workspace tests and confirm RED**
 
 ```sh
-corepack pnpm --filter @tap/web test -- AthenaWorkspace.test.tsx MarkdownSafety.test.tsx --run
+corepack pnpm --filter @tap/web test -- TapperWorkspace.test.tsx MarkdownSafety.test.tsx --run
 ```
 
 Expected: FAIL because the workspace, selection model and safe answer renderer do not exist.
@@ -1463,7 +1465,7 @@ It emits no environment, corpus, revision, anchor or topK. A state snapshot with
 
 - [ ] **Step 5: Build the approved three-panel workspace**
 
-Desktop grid is `280px minmax(420px, 1fr) 360px`; left is searchable ready/processing/failed sources with checkboxes, center is question/composer/answer, right is citation preview. Use the approved source-first interaction influenced by NotebookLM and the operational status vocabulary from RAGFlow/Dify, while retaining Athena colors/copy.
+Desktop grid is `280px minmax(420px, 1fr) 360px`; left is searchable ready/processing/failed sources with checkboxes, center is question/composer/answer, right is citation preview. Use the approved source-first interaction influenced by NotebookLM and the operational status vocabulary from RAGFlow/Dify, while retaining Tapper colors/copy.
 
 At widths below 1,024px, keep DOM and reading order `来源 → 问答 → 原文`; source and citation panels become full-width sections, not tiny columns. The composer stays attached to the answer section and maintains at least 44px touch targets.
 
@@ -1527,27 +1529,27 @@ Expected: all source-state and XSS tests pass, no external link is interactive, 
 
 ```sh
 git add apps/web/src apps/web/package.json pnpm-lock.yaml
-git commit -m "feat: add athena grounded question workspace"
+git commit -m "feat: add tapper grounded question workspace"
 ```
 
 ### Task 9: Local Runtime, Stable Make Commands, and Playwright Journey
 
 **Files:**
 
-- Create: `apps/backend/src/tap/entrypoints/athena_api.py`
-- Create: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_api.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Create: `apps/backend/src/tap/testing/deterministic_model.py`
 - Create: `apps/backend/src/tap/testing/failure_injection.py`
-- Create: `apps/backend/tests/unit/entrypoints/test_athena_runtime.py`
+- Create: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`
 - Create: `apps/backend/tests/contract/test_demo_commands.py`
-- Create: `apps/backend/tests/integration/test_athena_persistence_restart.py`
-- Create: `scripts/check-athena-demo.py`
-- Create: `scripts/run-athena-dev.sh`
-- Create: `scripts/run-athena-e2e.sh`
-- Create: `scripts/athena_collection.py`
+- Create: `apps/backend/tests/integration/test_tapper_persistence_restart.py`
+- Create: `scripts/check-tapper-demo.py`
+- Create: `scripts/run-tapper-dev.sh`
+- Create: `scripts/run-tapper-e2e.sh`
+- Create: `scripts/tapper_collection.py`
 - Create: `apps/web/playwright.config.ts`
 - Create: `apps/web/tests/e2e/fixtureBuilder.ts`
-- Create: `apps/web/tests/e2e/athena.spec.ts`
+- Create: `apps/web/tests/e2e/tapper.spec.ts`
 - Create: `apps/web/tests/e2e/persistence.spec.ts`
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
@@ -1579,23 +1581,23 @@ def test_demo_down_never_removes_named_volumes() -> None:
 
 def test_runtime_rejects_non_loopback_bind_without_auth() -> None:
     with pytest.raises(ValueError, match="loopback"):
-        AthenaSettings.from_mapping(valid_settings() | {"ATHENA_API_HOST": "0.0.0.0"})
+        TapperSettings.from_mapping(valid_settings() | {"TAPPER_API_HOST": "0.0.0.0"})
 
 
-def test_litellm_exposes_only_fixed_athena_aliases_for_demo() -> None:
+def test_litellm_exposes_only_fixed_tapper_aliases_for_demo() -> None:
     config = yaml.safe_load(Path("deploy/local/litellm/config.yaml").read_text())
     assert {item["model_name"] for item in config["model_list"]} >= {
-        "athena-chat", "athena-embedding"
+        "tapper-chat", "tapper-embedding"
     }
 ```
 
-Add tests for all five Make targets, fixed/validated Compose project names, named volumes, Vite proxy only `/v1` and `/health`, no wildcard CORS, required migration, alias/model/dimension settings, missing credentials producing actionable preflight failure, fake model forbidden outside `TAP_DEMO_MODE=e2e`, and E2E cleanup restricted to exact project `tap-athena-e2e`.
+Add tests for all five Make targets, fixed/validated Compose project names, named volumes, Vite proxy only `/v1` and `/health`, no wildcard CORS, required migration, alias/model/dimension settings, missing credentials producing actionable preflight failure, fake model forbidden outside `TAP_DEMO_MODE=e2e`, and E2E cleanup restricted to exact project `tap-tapper-e2e`.
 
 - [ ] **Step 2: Run runtime tests and confirm RED**
 
 ```sh
 uv run --project apps/backend pytest \
-  apps/backend/tests/unit/entrypoints/test_athena_runtime.py \
+  apps/backend/tests/unit/entrypoints/test_tapper_runtime.py \
   apps/backend/tests/contract/test_demo_commands.py -v
 ```
 
@@ -1607,71 +1609,71 @@ Keep application aliases fixed while reading raw provider values only from envir
 
 ```yaml
 model_list:
-  - model_name: athena-chat
+  - model_name: tapper-chat
     litellm_params:
       model: os.environ/LITELLM_MODEL
       api_key: os.environ/OPENAI_API_KEY
-  - model_name: athena-embedding
+  - model_name: tapper-embedding
     litellm_params:
       model: os.environ/LITELLM_EMBEDDING_MODEL
       api_key: os.environ/LITELLM_EMBEDDING_API_KEY
       api_base: os.environ/LITELLM_EMBEDDING_API_BASE
 ```
 
-Pass these variables through Compose but never print their values. Update the existing embedding-configuration contract test to distinguish the earlier paid fixture-research path from the newly accepted Athena runtime path; it must still reject credentials in committed files and public contracts. Pin `uvicorn` and any remaining runtime dependencies exactly.
+Pass these variables through Compose but never print their values. Update the existing embedding-configuration contract test to distinguish the earlier paid fixture-research path from the newly accepted Tapper runtime path; it must still reject credentials in committed files and public contracts. Pin `uvicorn` and any remaining runtime dependencies exactly.
 
 - [ ] **Step 4: Build a strict composition root and health checks**
 
-`AthenaSettings.from_mapping()` validates all values before constructing clients, including:
+`TapperSettings.from_mapping()` validates all values before constructing clients, including:
 
 ```text
-ATHENA_API_HOST=127.0.0.1
-ATHENA_API_PORT=8000
-ATHENA_WEB_HOST=127.0.0.1
-ATHENA_WEB_PORT=5173
-ATHENA_MODEL_BACKEND=litellm
-ATHENA_EMBEDDING_DIMENSION=1536
-ATHENA_POLL_SECONDS=1
-ATHENA_JOB_BATCH_SIZE=10
-ATHENA_COLLECTION=kb_doc_v1_athena_demo
-ATHENA_ALIAS=kb_doc_athena_demo_active
-ATHENA_CORPUS_VERSION=athena-demo-v1
+TAPPER_API_HOST=127.0.0.1
+TAPPER_API_PORT=8000
+TAPPER_WEB_HOST=127.0.0.1
+TAPPER_WEB_PORT=5173
+TAPPER_MODEL_BACKEND=litellm
+TAPPER_EMBEDDING_DIMENSION=1536
+TAPPER_POLL_SECONDS=1
+TAPPER_JOB_BATCH_SIZE=10
+TAPPER_COLLECTION=kb_doc_v1_tapper_demo
+TAPPER_ALIAS=kb_doc_tapper_demo_active
+TAPPER_CORPUS_VERSION=tapper-demo-v1
 ```
 
 `/health/live` returns `200` after the event loop starts and performs no external I/O. `/health/ready` checks migration head, artifact containers, Redis ping, Milvus alias metadata and LiteLLM model inventory under individual deadlines; it returns one closed component status per dependency and no endpoint/credential.
 
 - [ ] **Step 5: Add stable Make command semantics**
 
-Implement these exact flows with default project `tap-athena-demo`:
+Implement these exact flows with default project `tap-tapper-demo`:
 
 ```make
 demo-up:
-	docker compose -p "$(TAP_ATHENA_COMPOSE_PROJECT)" --profile milvus up -d --wait --wait-timeout 180
+	docker compose -p "$(TAP_TAPPER_COMPOSE_PROJECT)" --profile milvus up -d --wait --wait-timeout 180
 	TAP_ALEMBIC_DATABASE_URL="$${TAP_ALEMBIC_DATABASE_URL:-mysql+pymysql://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4}" \
 		uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
 	TAP_ALLOW_INITIAL_MILVUS_ROOT=1 uv run --project apps/backend python scripts/milvus_bootstrap.py
-	uv run --project apps/backend python scripts/athena_collection.py ensure
+	uv run --project apps/backend python scripts/tapper_collection.py ensure
 
 demo-check:
-	uv run --project apps/backend python scripts/check-athena-demo.py
+	uv run --project apps/backend python scripts/check-tapper-demo.py
 
 demo-dev:
-	bash scripts/run-athena-dev.sh
+	bash scripts/run-tapper-dev.sh
 
 demo-e2e:
-	bash scripts/run-athena-e2e.sh
+	bash scripts/run-tapper-e2e.sh
 
 demo-down:
-	docker compose -p "$(TAP_ATHENA_COMPOSE_PROJECT)" --profile milvus down --remove-orphans
+	docker compose -p "$(TAP_TAPPER_COMPOSE_PROJECT)" --profile milvus down --remove-orphans
 ```
 
-Before any command, validate the project name against `^[a-z0-9][a-z0-9_-]{2,62}$`. Add `demo-reset` separately; it requires both exact project `tap-athena-demo` and `TAP_ALLOW_ATHENA_VOLUME_RESET=1` before `down -v`. Ordinary commands never call reset.
+Before any command, validate the project name against `^[a-z0-9][a-z0-9_-]{2,62}$`. Add `demo-reset` separately; it requires both exact project `tap-tapper-demo` and `TAP_ALLOW_TAPPER_VOLUME_RESET=1` before `down -v`. Ordinary commands never call reset.
 
 - [ ] **Step 6: Implement preflight and four-process supervisor**
 
-`check-athena-demo.py` performs real MySQL `SELECT 1` and migration-head query, Redis `PING`, Azurite write/read/delete canary, Milvus alias/schema/model/dimension query, and LiteLLM `/v1/models` membership for both aliases. It reports only component + `ok|failed` + safe remediation; provider calls are reserved for the explicit real smoke.
+`check-tapper-demo.py` performs real MySQL `SELECT 1` and migration-head query, Redis `PING`, Azurite write/read/delete canary, Milvus alias/schema/model/dimension query, and LiteLLM `/v1/models` membership for both aliases. It reports only component + `ok|failed` + safe remediation; provider calls are reserved for the explicit real smoke.
 
-`run-athena-dev.sh` loads ignored `.env` with `set -a`, starts API, existing Relay, ingestion worker and Vite, records each PID separately, waits for readiness, and on INT/TERM stops each child by PID then waits. It must not use `kill 0`. API and Vite bind loopback; Vite proxies `/v1` and `/health` to the API and no application CORS middleware is enabled.
+`run-tapper-dev.sh` loads ignored `.env` with `set -a`, starts API, existing Relay, ingestion worker and Vite, records each PID separately, waits for readiness, and on INT/TERM stops each child by PID then waits. It must not use `kill 0`. API and Vite bind loopback; Vite proxies `/v1` and `/health` to the API and no application CORS middleware is enabled.
 
 ```sh
 api_pid=""; relay_pid=""; worker_pid=""; web_pid=""
@@ -1686,7 +1688,7 @@ trap cleanup EXIT INT TERM
 
 - [ ] **Step 7: Add deterministic E2E model and fail-once hooks**
 
-The fake backend is available only when both `ATHENA_MODEL_BACKEND=fake` and `TAP_DEMO_MODE=e2e`. Its embedding is a stable normalized 1,536-dimensional hashed-token vector; its answer copies exact evidence sentences into `answer` and `claims`, with the current evidence labels. It makes no network call and is never the `demo-dev` default.
+The fake backend is available only when both `TAPPER_MODEL_BACKEND=fake` and `TAP_DEMO_MODE=e2e`. Its embedding is a stable normalized 1,536-dimensional hashed-token vector; its answer copies exact evidence sentences into `answer` and `claims`, with the current evidence labels. It makes no network call and is never the `demo-dev` default.
 
 ```python
 def deterministic_vector(text: str, dimension: int = 1536) -> tuple[float, ...]:
@@ -1701,7 +1703,7 @@ Failure hooks are registered only in E2E mode and outside OpenAPI. They support 
 
 - [ ] **Step 8: Build the Playwright fixtures and full journey**
 
-Pin `@playwright/test@1.62.1`, `pdf-lib@1.17.1` and `docx@9.5.1` with `pnpm add -DE`. `fixtureBuilder.ts` generates PDF, DOCX, Markdown and TXT files at test runtime with the same fictional policy facts and one malicious prompt-injection source. Run Playwright serially against an isolated Compose project `tap-athena-e2e` with offset ports.
+Pin `@playwright/test@1.62.1`, `pdf-lib@1.17.1` and `docx@9.5.1` with `pnpm add -DE`. `fixtureBuilder.ts` generates PDF, DOCX, Markdown and TXT files at test runtime with the same fictional policy facts and one malicious prompt-injection source. Run Playwright serially against an isolated Compose project `tap-tapper-e2e` with offset ports.
 
 Install the pinned Chromium runtime with `corepack pnpm --filter @tap/web exec playwright install chromium`; `demo-e2e` checks for it and prints that exact remediation instead of downloading silently during a test.
 
@@ -1721,7 +1723,7 @@ stop API/worker/Web -> restart those processes -> documents and citations still 
 demo-down -> demo-up without -v -> persisted document list remains
 ```
 
-`run-athena-e2e.sh` validates project name exactly, creates fresh test volumes, runs the journey, and removes only `tap-athena-e2e` volumes in an EXIT trap. It never targets the user's `tap-athena-demo` project.
+`run-tapper-e2e.sh` validates project name exactly, creates fresh test volumes, runs the journey, and removes only `tap-tapper-e2e` volumes in an EXIT trap. It never targets the user's `tap-tapper-demo` project.
 
 - [ ] **Step 9: Verify local runtime GREEN**
 
@@ -1730,9 +1732,9 @@ docker compose config
 make demo-up
 make demo-check
 uv run --project apps/backend pytest \
-  apps/backend/tests/unit/entrypoints/test_athena_runtime.py \
+  apps/backend/tests/unit/entrypoints/test_tapper_runtime.py \
   apps/backend/tests/contract/test_demo_commands.py \
-  apps/backend/tests/integration/test_athena_persistence_restart.py -v
+  apps/backend/tests/integration/test_tapper_persistence_restart.py -v
 make demo-e2e
 make demo-down
 make demo-up
@@ -1748,15 +1750,15 @@ Expected: middleware and application restarts retain documents; E2E uses real My
 ```sh
 git add apps/backend apps/web compose.yaml deploy/local/litellm .env.example \
   Makefile scripts pnpm-lock.yaml uv.lock
-git commit -m "feat: run athena knowledge demo locally"
+git commit -m "feat: run tapper knowledge demo locally"
 ```
 
 ### Task 10: Full Acceptance, Real-Model Smoke, and Documentation Lifecycle
 
 **Files:**
 
-- Create: `apps/backend/tests/smoke/test_athena_real_model.py`
-- Create: `docs/reviews/2026-08-27-athena-local-knowledge-demo.md`
+- Create: `apps/backend/tests/smoke/test_tapper_real_model.py`
+- Create: `docs/reviews/2026-08-27-tapper-local-knowledge-demo.md`
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `docs/architecture/2026-08-20-overview.md`
@@ -1765,9 +1767,9 @@ git commit -m "feat: run athena knowledge demo locally"
 - Modify: `docs/reference/2026-08-20-contracts.md`
 - Modify: `docs/plans/2026-08-20-roadmap.md`
 - Modify: `docs/plans/2026-08-23-phase-1-application-implementation.md`
-- Modify: `docs/plans/2026-08-27-athena-local-knowledge-demo.md`
+- Modify: `docs/plans/2026-08-27-tapper-local-knowledge-demo.md`
 - Modify: `docs/plans/index.md`
-- Modify: `docs/proposals/2026-08-27-rfc-005-athena-local-knowledge-demo.md`
+- Modify: `docs/proposals/2026-08-27-rfc-005-tapper-local-knowledge-demo.md`
 - Modify: `docs/proposals/index.md`
 - Modify: `docs/reviews/index.md`
 
@@ -1782,9 +1784,9 @@ The opt-in test must execute one embedding and one grounded answer through LiteL
 
 ```python
 @pytest.mark.asyncio
-async def test_real_athena_aliases_produce_grounded_cited_answer(runtime) -> None:
-    if os.environ.get("TAP_RUN_ATHENA_REAL_MODEL_SMOKE") != "1":
-        pytest.skip("real Athena model smoke requires explicit opt-in")
+async def test_real_tapper_aliases_produce_grounded_cited_answer(runtime) -> None:
+    if os.environ.get("TAP_RUN_TAPPER_REAL_MODEL_SMOKE") != "1":
+        pytest.skip("real Tapper model smoke requires explicit opt-in")
     embedding = await runtime.model.embed("退款审批")
     assert len(embedding.vector) == runtime.settings.embedding_dimension
     response = await runtime.answer_service.answer(runtime.smoke_request())
@@ -1815,8 +1817,8 @@ Expected: all commands exit `0`, Backend reports no unexpected skips inside sele
 set -a
 . ./.env
 set +a
-TAP_RUN_ATHENA_REAL_MODEL_SMOKE=1 uv run --project apps/backend pytest \
-  apps/backend/tests/smoke/test_athena_real_model.py -v
+TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 uv run --project apps/backend pytest \
+  apps/backend/tests/smoke/test_tapper_real_model.py -v
 ```
 
 If credentials are not configured, record `not-run: credentials not provided` in the review and do not imply a real-provider GREEN. If configured, require the test to pass; provider `401`, wrong dimension, malformed claims or unresolvable citations are failures, not skips.
@@ -1825,7 +1827,7 @@ If credentials are not configured, record `not-run: credentials not provided` in
 
 - [x] **Step 4: Perform manual visual and keyboard acceptance**
 
-Open the loopback Web at desktop and 390px widths. Verify the approved Athena visual hierarchy, tab order, focus rings, upload keyboard flow, source checkbox labels, inline citation focus, right-panel close/return focus, six-stage statuses, Chinese/English wrapping and no horizontal overflow. Save screenshots only to the review evidence directory; commit screenshots only if they materially clarify a documented UI change.
+Open the loopback Web at desktop and 390px widths. Verify the approved Tapper visual hierarchy, tab order, focus rings, upload keyboard flow, source checkbox labels, inline citation focus, right-panel close/return focus, six-stage statuses, Chinese/English wrapping and no horizontal overflow. Save screenshots only to the review evidence directory; commit screenshots only if they materially clarify a documented UI change.
 
 - [x] **Step 5: Update current developer and architecture documentation**
 
@@ -1834,9 +1836,9 @@ Make these statements exact and non-overlapping:
 ```text
 README/AGENTS: repository now contains Python and Web applications; list exact bootstrap,
                check, test and demo commands; document loopback/no-auth/no-OCR/local-only.
-overview:      Athena local vertical slice is implemented; Azure AI Search remains the
+overview:      Tapper local vertical slice is implemented; Azure AI Search remains the
                enterprise baseline and full Phase 1 remains active.
-UI design:     distinguish the source-first local Athena workspace from future durable
+UI design:     distinguish the source-first local Tapper workspace from future durable
                Conversation/SSE/Trace/Feedback Knowledge Chat.
 RAG foundation: record doc-only local Milvus projection without claiming four-family completion.
 contracts:     document statuses/stages/routes/Problem Details, answer claim spans and citation preview.
@@ -1882,7 +1884,7 @@ fresh whole-branch review 已以 Critical/Important/Minor 全部为 `0` 的 `APP
 ```sh
 git add README.md AGENTS.md apps/backend/tests/smoke \
   apps/web/vite.config.ts apps/web/src/shared/testing/productionBuild.test.ts docs
-git commit -m "docs: record athena demo acceptance"
+git commit -m "docs: record tapper demo acceptance"
 ```
 
 The branch is ready for `verification-before-completion`, a fresh whole-branch code review, and `finishing-a-development-branch`; do not merge or push without separate user authorization.

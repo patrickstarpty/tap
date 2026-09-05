@@ -3,7 +3,7 @@ status: planned
 date: 2026-09-04
 ---
 
-# Athena Knowledge and Web Automation Platform Implementation Plan
+# Tapper Knowledge and Web Automation Platform Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -13,11 +13,11 @@ date: 2026-09-04
 
 **Tech Stack:** Python 3.13、FastAPI、Pydantic v2、SQLAlchemy 2、Alembic、MySQL 8.4、Redis 7.4、MinIO S3 API、Milvus 2.6、LiteLLM、pytest；React 19、TypeScript、Vite、TanStack Query、Ant Design、Vitest、Testing Library、Sigma.js、Graphology、ForceAtlas2 Worker；Playwright + TypeScript、Chromium/Xvfb/noVNC、Jenkins Pipeline；Docker Compose、OpenTelemetry、Prometheus、Grafana。
 
-**Spec:** [RFC-009：Athena 知识与 Web 测试自动化平台设计](../proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)
+**Spec:** [RFC-009：Tapper 知识与 Web 测试自动化平台设计](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)
 
-**Architecture Baseline:** [Athena 知识与 Web 自动化平台架构 v0.4](../architecture/2026-09-04-athena-knowledge-web-automation-overview.md)
+**Architecture Baseline:** [Tapper 知识与 Web 自动化平台架构 v0.4](../architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)
 
-**Contracts:** [Athena 知识与 Web 自动化平台核心契约](../reference/2026-09-04-athena-platform-contracts.md)
+**Contracts:** [Tapper 知识与 Web 自动化平台核心契约](../reference/2026-09-04-tapper-platform-contracts.md)
 
 **Decisions:** [ADR-020–025 与当前有效决策](../decisions/index.md)
 
@@ -26,12 +26,12 @@ date: 2026-09-04
 - 实施前先形成并记录 planning baseline SHA：父工作区中的本计划、RFC-009、Architecture Baseline、Core Contracts、ADR-020–025 与 Decisions index 必须已被 Git 跟踪且相对 `HEAD` 无 staged/unstaged 差异。执行者必须从父工作区根目录逐条执行以下完整命令；任一失败即停止：
 
   ```sh
-  git ls-files --error-unmatch docs/plans/2026-09-04-athena-knowledge-web-automation-platform.md docs/proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md docs/architecture/2026-09-04-athena-knowledge-web-automation-overview.md docs/reference/2026-09-04-athena-platform-contracts.md docs/decisions/index.md docs/decisions/2026-09-04-adr-020-validation-first-delivery.md docs/decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md docs/decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md docs/decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md docs/decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md docs/decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md
-  git diff --quiet HEAD -- docs/plans/2026-09-04-athena-knowledge-web-automation-platform.md docs/proposals/2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md docs/architecture/2026-09-04-athena-knowledge-web-automation-overview.md docs/reference/2026-09-04-athena-platform-contracts.md docs/decisions/index.md docs/decisions/2026-09-04-adr-020-validation-first-delivery.md docs/decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md docs/decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md docs/decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md docs/decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md docs/decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md
+  git ls-files --error-unmatch docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md docs/reference/2026-09-04-tapper-platform-contracts.md docs/decisions/index.md docs/decisions/2026-09-04-adr-020-validation-first-delivery.md docs/decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md docs/decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md docs/decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md docs/decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md docs/decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md
+  git diff --quiet HEAD -- docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md docs/reference/2026-09-04-tapper-platform-contracts.md docs/decisions/index.md docs/decisions/2026-09-04-adr-020-validation-first-delivery.md docs/decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md docs/decisions/2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md docs/decisions/2026-09-04-adr-023-milvus-mysql-knowledge-backend.md docs/decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md docs/decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md
   git rev-parse HEAD
   ```
 
-  把最后一条命令的完整 SHA 写入首个执行 Review，再从该 SHA 新建 `codex/athena-platform-v0` 分支与独立 worktree。不得清理、覆盖或提交用户已有改动。
+  把最后一条命令的完整 SHA 写入首个执行 Review，再从该 SHA 新建 `codex/tapper-platform-v0` 分支与独立 worktree。不得清理、覆盖或提交用户已有改动。
 
 - 严格按 V0 → V1 → V2 → V3 → V4 → V5 → VG → P0 → P1 执行。每个里程碑 Review 通过前不得进入下一里程碑；P0 的硬前置是 VG 书面结论为 `continue`。
 - 所有行为变更使用 TDD：先提交能因缺少目标行为而失败的窄测试，确认失败原因正确，再写最小实现并运行同一命令至通过。
@@ -116,7 +116,7 @@ flowchart LR
 - Modify: `apps/backend/src/tap/modules/knowledge/application/demo_policy.py`
 - Modify: `apps/backend/src/tap/platform/db/schema.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
 **Core types:**
@@ -133,7 +133,7 @@ class AuthorizationPolicy(Protocol):
     ) -> AuthorizationDecision: ...
 ```
 
-`0006` 创建 `enterprise`、`project`、`actor_principal`，并 seed `local` / `athena-demo` / `athena-local-user`，principal type 为 `VALIDATION`。`AnonymousContext` 包含服务端确定的 `enterprise_id`；Validation composition 只产生一个固定 `ProjectScopeContext`，不开放 Anonymous/Platform 业务能力。
+`0006` 创建 `enterprise`、`project`、`actor_principal`，并 seed `local` / `tapper-demo` / `tapper-local-user`，principal type 为 `VALIDATION`。`AnonymousContext` 包含服务端确定的 `enterprise_id`；Validation composition 只产生一个固定 `ProjectScopeContext`，不开放 Anonymous/Platform 业务能力。
 
 - [ ] 先写 scope/value-object、Validation policy、第二个 in-memory policy Adapter、identity registry 与 `0005 → 0006` 非空升级测试；共同 conformance 覆盖未知 action、非法 scope/resource、跨 Project、Platform scope 读 Project 内容、禁用 Actor 与 Provider I/O 前拒绝。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 FAIL，原因为新 context/Adapter/table/revision 不存在。
@@ -157,7 +157,7 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/mysql_projection.py`
 - Modify: `apps/backend/src/tap/platform/db/schema.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
 **Migration contract:** `0007` 以 nullable columns → bounded batch backfill → orphan/duplicate validation → Project/Actor FK 与 Project-prefixed index/unique constraint → non-null 的顺序处理当前 14 张业务表。现有 `knowledge_document.dedupe_key` 改为 `(project_id, dedupe_key)` 唯一；所有 Chat/Knowledge/Projection/Outbox repository 强制绑定 `ProjectScopeContext`。Migration 保留原主键、revision、sequence、digest、时间戳和对象 locator。
@@ -218,21 +218,21 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `apps/web/src/features/knowledge/api/client.ts`
 - Modify: `apps/web/src/features/knowledge/api/queries.tsx`
-- Modify: `apps/web/src/widgets/athena/AthenaWorkspace.tsx`
-- Modify: `apps/web/src/widgets/athena/AthenaWorkspace.test.tsx`
+- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
 - Modify: `apps/web/src/app/App.tsx`
 - Modify: `apps/web/src/app/styles.css`
-- Modify: `apps/web/src/pages/AthenaPage.test.tsx`
+- Modify: `apps/web/src/pages/TapperPage.test.tsx`
 - Modify: `scripts/export_contracts.py`
 
 **API:** Project Knowledge 路径统一为 `GET/POST /api/v1/projects/{project_id}/knowledge/documents`、`GET/DELETE /api/v1/projects/{project_id}/knowledge/documents/{document_id}`、`POST /api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry`、`POST /api/v1/projects/{project_id}/knowledge/answers` 与 `GET /api/v1/projects/{project_id}/knowledge/citations/{citation_id}`，另加 `GET /api/v1/runtime-mode`。`project_id != scope.project_id` 返回 `scope-mismatch`；请求 Header/Cookie/DTO 出现身份、角色或企业覆盖字段直接拒绝。所有浏览器状态变更校验精确 Origin，不开启宽泛 CORS。
 
 - [ ] 写 HTTP contract，覆盖正确 Project、错误 Project、伪造 `X-Actor-Id`/`X-Role`、跨源 mutation 和 runtime-mode DTO；写 Banner 可访问性/持久显示以及 Knowledge client/path/query key 包含固定 Validation Project 的测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/athena/AthenaWorkspace.test.tsx src/pages/AthenaPage.test.tsx`；预期 FAIL，原因为新路由/组件不存在且旧 client 仍调用 `/v1/knowledge/*`。
+- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 FAIL，原因为新路由/组件不存在且旧 client 仍调用 `/v1/knowledge/*`。
 - [ ] 实现 Project path dependency、Origin gate 与 runtime-mode；旧 `/v1/knowledge/documents`、`/v1/knowledge/answers` 与 `/v1/knowledge/citations/{citation_id}` 只可在 validation/local 装配中映射同一 Scope，并在 OpenAPI 标为 deprecated。
 - [ ] 实现 Banner 文案“操作统一记录到固定 Validation Actor，不代表个人身份”，不能被用户永久关闭。
 - [ ] 让 runtime query 提供固定 Validation Project ID，Knowledge client/query keys 从创建时就显式接收 `project_id`；旧路径只由后端 validation compatibility router 使用，正式 Web 不调用 deprecated path。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/athena/AthenaWorkspace.test.tsx src/pages/AthenaPage.test.tsx`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 PASS。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(web): expose validation scope boundary`
 
 ### Task 3A: Persist the Project Audit ledger before operator actions
@@ -246,7 +246,7 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/tests/contract/test_project_audit_port.py`
 - Create: `apps/backend/tests/integration/test_project_audit_transaction.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
 **Contract:** `ProjectAuditPort.append(scope, action, resource, outcome, safe_metadata)` 只接受 `ProjectScopeContext`，正文、query、Prompt、Secret 和 Provider payload 均不允许进入 metadata。需要审计的应用事务必须通过同一 SQLAlchemy connection 同时提交业务状态、Audit 与 Outbox；失败时三者一起回滚。
@@ -279,7 +279,7 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/modules/chat/application/ports.py`
 - Modify: `apps/backend/src/tap/modules/chat/adapters/mysql.py`
 - Modify: `apps/backend/src/tap/entrypoints/relay_reconciler.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `Makefile`
 
@@ -303,14 +303,14 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/tests/integration/test_minio_artifacts.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `uv.lock`
 - Modify: `compose.yaml`
 - Modify: `.env.example`
-- Modify: `scripts/check-athena-demo.py`
-- Modify: `scripts/athena_collection.py`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/check-tapper-demo.py`
+- Modify: `scripts/tapper_collection.py`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `README.md`
 
 **Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
@@ -327,22 +327,22 @@ class AuthorizationPolicy(Protocol):
 **Files:**
 
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/isolated_parser.py`
-- Create: `apps/backend/src/tap/entrypoints/athena_parser_worker.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_parser_worker.py`
 - Create: `deploy/parser/Dockerfile`
 - Create: `deploy/parser/worker.py`
 - Create: `apps/backend/tests/contract/test_isolated_parser.py`
 - Create: `apps/backend/tests/security/test_document_upload_security.py`
 - Create: `apps/backend/tests/fixtures/documents/hostile/README.md`
 - Create: `scripts/build-hostile-document-fixtures.py`
-- Create: `scripts/athena-e2e-specs.json`
+- Create: `scripts/tapper-e2e-specs.json`
 - Create: `apps/web/tests/e2e/knowledge-upload-security.spec.ts`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `compose.yaml`
-- Modify: `scripts/run-athena-dev.sh`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `Makefile`
 
@@ -358,7 +358,7 @@ class AuthorizationPolicy(Protocol):
 
 **Files:**
 
-- Create: `scripts/run-athena-v0-gate.sh`
+- Create: `scripts/run-tapper-v0-gate.sh`
 - Create: `apps/backend/tests/gates/test_v0_gate_report.py`
 - Create: `docs/reviews/<review-date>-v0-validation-scope-reliability-gate.md`
 - Modify: `docs/reviews/index.md`
@@ -368,7 +368,7 @@ class AuthorizationPolicy(Protocol):
 
 - [ ] 写 gate report parser，并用缺 planning SHA、缺命令、skipped test 与失败 migration 的 fixtures 验证非零退出。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 FAIL，原因为 V0 gate runner/report schema 不存在。
-- [ ] 实现 `scripts/run-athena-v0-gate.sh` 和 `make gate-v0`；脚本只调用明确命令，任何 skip、缺日志或非零子命令都使总 gate 失败。
+- [ ] 实现 `scripts/run-tapper-v0-gate.sh` 和 `make gate-v0`；脚本只调用明确命令，任何 skip、缺日志或非零子命令都使总 gate 失败。
 - [ ] 运行 `make gate-v0 && uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 PASS。用实际日期替换 `<review-date>`，写入证据与唯一结论 `pass | fail`；只有 `pass` 才进入 V1。再运行 `git diff --check`。
 - [ ] Commit: `test(platform): record v0 validation gate`
 
@@ -395,7 +395,7 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/contracts/events.py`
 - Modify: `contracts/events/project-event.schema.json`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
 **Rules/migration:** `knowledge_source` 是用户选择的 Project 资源，一个 Source 拥有一到多个 Document；当前上传流程原子创建一个 Source 与一个 Document。`0010` 对每个旧 `knowledge_document` 创建新 legacy Source；Source ID 固定为 `src_` 加 `sha256("legacy-source-v1\0" + project_id + "\0" + document_id)` 的前 32 个小写 hex，并在 `knowledge_source_legacy_map` 保存旧 `source_id=document_id` 到新 Source ID 的映射。给 Document/Revision/Answer/Citation 加 Source FK，保留所有原 Document/Revision/Citation ID、digest/locator，再按 nullable → backfill → validate → FK/index → non-null 收紧。摄取事务写业务状态、Task 3A Project Audit 和 `knowledge.document-revision.accepted` Outbox；ready 时写 `knowledge.document-revision.ready`。Search Audit 只保存 query hash、scope、policy/version、family、候选/结果数量和拒绝原因，不保存原 query/evidence。
@@ -426,14 +426,14 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/milvus/transport.py`
 - Modify: `apps/backend/src/tap/operations/milvus/doc_schema.py`
 - Modify: `apps/backend/tests/fixtures/milvus/doc-fixture-v1.json`
-- Modify: `scripts/athena_collection.py`
+- Modify: `scripts/tapper_collection.py`
 - Modify: `scripts/milvus_fixture.py`
 - Modify: `scripts/export_contracts.py`
 - Modify: `contracts/openapi/api.json`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `apps/web/src/features/knowledge/api/client.ts`
 - Modify: `apps/web/src/features/knowledge/api/queries.tsx`
-- Modify: `apps/web/src/widgets/athena/AthenaWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
 
 **API/projection:** `/api/v1/projects/{project_id}/knowledge/sources` 提供 create-by-upload、list、detail、delete 和 retry；Document endpoint 只处理 Source 下的具体版本/状态。Milvus 新物理 collection 使用 canonical `enterprise_id/project_id/source_id`；旧 collection 的 `tenant_id` 与 `source_id=document_id` 只作为迁移输入，经 Task 6 的 legacy map 转换，绝不进入新 schema 或公共 DTO。写入与读回闭集验证 enterprise/project/source/document/revision/chunk/anchor/digest。Schema version 变更通过新 collection → fixture/rebuild → 完整性检查 → atomic alias cutover，不能原地假定旧 row 已有新字段。
 
@@ -459,12 +459,12 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/tests/architecture/test_model_gateway_composition.py`
 - Create: `apps/backend/tests/unit/entrypoints/test_legacy_loopback_answer_runtime.py`
 - Create: `apps/backend/src/tap/entrypoints/legacy_loopback_answer_runtime.py`
-- Create: `scripts/run-athena-legacy-codex-dev.sh`
+- Create: `scripts/run-tapper-legacy-codex-dev.sh`
 - Create: `apps/web/src/features/knowledge/api/modelCatalog.ts`
 - Create: `apps/web/src/features/knowledge/components/ModelSelector.tsx`
 - Create: `apps/web/src/features/knowledge/components/ModelSelector.test.tsx`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_api.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_api.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/search.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/litellm.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/application/retrieve.py`
@@ -474,16 +474,16 @@ class AuthorizationPolicy(Protocol):
 - Modify: `scripts/export_contracts.py`
 - Modify: `contracts/openapi/api.json`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
-- Modify: `apps/web/src/widgets/tap/prototype/AthenaChat.tsx`
-- Modify: `scripts/run-athena-dev.sh`
+- Modify: `apps/web/src/widgets/tap/prototype/TapperChat.tsx`
+- Modify: `scripts/run-tapper-dev.sh`
 - Modify: `Makefile`
 
-**Port/API and composition:** 唯一 `ModelGateway` 提供 `catalog(scope)`、`chat`、`embed` 与 `generate_structured`；请求固定 Project scope、model alias、operation kind、schema/prompt digest、redacted context、timeout 和 idempotency key，结果记录实际 provider/model 与 usage，但不向业务 DTO 暴露 provider credential。`GET /api/v1/projects/{project_id}/ai/models` 返回允许的 alias/display name/capabilities；首个默认 display name 为 `GPT-5.6 Sol`。V1 的 Knowledge、Graph 与 Test/Automation Generation 全部依赖同一 Port/LiteLLM Adapter，`athena_runtime.py` 和默认 `make demo-dev` 不再解析 `ATHENA_ANSWER_BACKEND=codex`，也不能导入 RFC-006 的直接 Codex Adapter。
+**Port/API and composition:** 唯一 `ModelGateway` 提供 `catalog(scope)`、`chat`、`embed` 与 `generate_structured`；请求固定 Project scope、model alias、operation kind、schema/prompt digest、redacted context、timeout 和 idempotency key，结果记录实际 provider/model 与 usage，但不向业务 DTO 暴露 provider credential。`GET /api/v1/projects/{project_id}/ai/models` 返回允许的 alias/display name/capabilities；首个默认 display name 为 `GPT-5.6 Sol`。V1 的 Knowledge、Graph 与 Test/Automation Generation 全部依赖同一 Port/LiteLLM Adapter，`tapper_runtime.py` 和默认 `make demo-dev` 不再解析 `TAPPER_ANSWER_BACKEND=codex`，也不能导入 RFC-006 的直接 Codex Adapter。
 
-RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `AnswerGenerationPort` 装配整体迁入显式 `legacy_loopback_answer_runtime.py`，只由 `make legacy-athena-codex-dev` 在 loopback 启动；它不挂载 RFC-009 Project API、不能被 V1 worker/import graph 解析，也不能产生 V1 质量或里程碑证据。默认/Validation/Product composition 遇到 `ATHENA_ANSWER_BACKEND=codex` 必须 fail closed，而不是自动切到 legacy runtime。
+RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `AnswerGenerationPort` 装配整体迁入显式 `legacy_loopback_answer_runtime.py`，只由 `make legacy-tapper-codex-dev` 在 loopback 启动；它不挂载 RFC-009 Project API、不能被 V1 worker/import graph 解析，也不能产生 V1 质量或里程碑证据。默认/Validation/Product composition 遇到 `TAPPER_ANSWER_BACKEND=codex` 必须 fail closed，而不是自动切到 legacy runtime。
 
-- [ ] 写 fake 与 LiteLLM 共同 conformance，覆盖四种 operation、disabled/unknown alias、跨 Project、schema-locked output、timeout/retry、redaction-before-I/O、actual model audit 和稳定 Problem Details；写无 reasoning/provider 字段及键盘模型菜单测试。架构/运行时测试必须证明 V1 Knowledge/Graph/Test/Automation 和 `athena_runtime.py` 都不能导入/解析直接 Codex Adapter 或 `ATHENA_ANSWER_BACKEND=codex`，默认命令不会启动 legacy composition；显式 legacy 命令则保持 loopback/fail-closed 边界。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/ai/test_model_catalog.py apps/backend/tests/contract/test_litellm_model_gateway.py apps/backend/tests/contract/test_model_catalog_http.py apps/backend/tests/architecture/test_model_gateway_composition.py apps/backend/tests/unit/entrypoints/test_legacy_loopback_answer_runtime.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/ModelSelector.test.tsx`；预期 FAIL，原因为共享 ModelGateway/catalog route/component 和隔离的 legacy composition 尚不存在，或现有 `athena_runtime.py` 仍解析 Codex selector。
+- [ ] 写 fake 与 LiteLLM 共同 conformance，覆盖四种 operation、disabled/unknown alias、跨 Project、schema-locked output、timeout/retry、redaction-before-I/O、actual model audit 和稳定 Problem Details；写无 reasoning/provider 字段及键盘模型菜单测试。架构/运行时测试必须证明 V1 Knowledge/Graph/Test/Automation 和 `tapper_runtime.py` 都不能导入/解析直接 Codex Adapter 或 `TAPPER_ANSWER_BACKEND=codex`，默认命令不会启动 legacy composition；显式 legacy 命令则保持 loopback/fail-closed 边界。
+- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/ai/test_model_catalog.py apps/backend/tests/contract/test_litellm_model_gateway.py apps/backend/tests/contract/test_model_catalog_http.py apps/backend/tests/architecture/test_model_gateway_composition.py apps/backend/tests/unit/entrypoints/test_legacy_loopback_answer_runtime.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/ModelSelector.test.tsx`；预期 FAIL，原因为共享 ModelGateway/catalog route/component 和隔离的 legacy composition 尚不存在，或现有 `tapper_runtime.py` 仍解析 Codex selector。
 - [ ] 实现共享 Port 与单一 LiteLLM Adapter；把旧 Knowledge 调用迁到该 Gateway，并从默认 runtime/import graph 移除直接 Codex selector/Adapter。若保留 RFC-006 能力，只在新建的显式 legacy loopback entrypoint/command 中装配，且不共享 RFC-009 Project API。默认 alias 不可用时明确失败，不静默 fallback。
 - [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/ai/test_model_catalog.py apps/backend/tests/contract/test_litellm_model_gateway.py apps/backend/tests/contract/test_model_catalog_http.py apps/backend/tests/architecture/test_model_gateway_composition.py apps/backend/tests/unit/entrypoints/test_legacy_loopback_answer_runtime.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/ModelSelector.test.tsx`；预期 PASS：字面量 RED 命令已转绿，V1 只有一个模型出口且 legacy loopback 仍可由专用命令独立验收。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(ai): add governed model gateway and catalog`
@@ -505,7 +505,7 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Create: `apps/web/src/features/knowledge/components/AgentSkillSelector.test.tsx`
 - Modify: `apps/backend/src/tap/contracts/http.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `scripts/export_contracts.py`
@@ -528,7 +528,7 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Create: `apps/backend/src/tap/modules/chat/application/conversations.py`
 - Create: `apps/backend/src/tap/modules/chat/application/process_turn.py`
 - Create: `apps/backend/src/tap/modules/chat/adapters/mysql_conversations.py`
-- Create: `apps/backend/src/tap/entrypoints/athena_generation_worker.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_generation_worker.py`
 - Create: `apps/backend/src/tap/interfaces/http/routes/conversations.py`
 - Create: `apps/backend/src/tap/interfaces/http/sse.py`
 - Create: `apps/backend/migrations/versions/0012_conversations.py`
@@ -541,7 +541,7 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
 - Modify: `apps/backend/src/tap/contracts/http.py`
 - Modify: `apps/backend/src/tap/contracts/chat_stream.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
 - Modify: `apps/backend/src/tap/contracts/events.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
@@ -551,8 +551,8 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Modify: `contracts/events/project-event.schema.json`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `compose.yaml`
-- Modify: `scripts/run-athena-dev.sh`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `scripts/run-tapper-e2e.sh`
 
 **Data/API:** `0012` 创建 `conversation`、`turn_input_snapshot`、`turn_answer_evidence_snapshot`、`turn_artifact_link`，为每个旧 `chat_turn.chat_id` 创建同 ID 的 Conversation 后才增加 FK；保留 Turn/Event/Snapshot ID、sequence、payload 与时间。API 提供 create/list/detail、append turn、events 与 cancel；首个 create 同时提交第一条消息，空白 New Chat 不落库。接受 Turn 的事务先固化不可变 Input Snapshot：Project、Actor、identity mode、model alias、Source/Document Revision、Agent/Skill Revision/digest 与 retrieval policy digest，`conversation.turn.requested` 只引用它的 `inputSnapshotDigest`。检索、Graph、回答和 Citation 核验结束后，完成事务另存不可变 Answer/Evidence Snapshot：输入 digest、回答 digest、retrieval summary、`graphContextStatus`、实际使用的可选 `graphSnapshotId` 与 Citation Snapshot，并由 `conversation.turn.completed` 引用 Snapshot ID/digest；只有 `APPLIED` 可带 Graph Snapshot ID，任何完成字段都不得回写 Input Snapshot。
 
@@ -564,7 +564,7 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - [ ] 运行 `make migration-check MIGRATION=0012_conversations && make schema-drift && make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/chat/test_conversation_service.py apps/backend/tests/unit/chat/test_turn_processor.py apps/backend/tests/contract/test_conversation_http.py apps/backend/tests/integration/test_conversation_persistence.py apps/backend/tests/integration/test_chat_sse_resume.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'conversation or turn or sse or 0012' && uv run --project apps/backend pytest apps/backend/tests/integration/test_turn_outbox.py -v -k outbox`；预期 PASS，字面量 RED 命令已转绿且 Outbox 扩展场景通过。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(chat): persist and stream scoped conversations`
 
-### Task 9: Connect the Athena shell to real Conversation and Citation APIs
+### Task 9: Connect the Tapper shell to real Conversation and Citation APIs
 
 **Files:**
 
@@ -575,24 +575,24 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Create: `apps/web/src/features/conversations/components/ConversationHistory.test.tsx`
 - Create: `apps/web/src/features/conversations/model/stream.test.ts`
 - Create: `apps/web/tests/e2e/knowledge-conversation.spec.ts`
-- Modify: `apps/web/src/pages/AthenaPage.tsx`
-- Modify: `apps/web/src/pages/AthenaPage.test.tsx`
-- Modify: `apps/web/src/widgets/athena/AthenaWorkspace.tsx`
-- Modify: `apps/web/src/widgets/athena/AthenaWorkspace.test.tsx`
+- Modify: `apps/web/src/pages/TapperPage.tsx`
+- Modify: `apps/web/src/pages/TapperPage.test.tsx`
+- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
 - Modify: `apps/web/src/features/knowledge/components/GroundedAnswer.tsx`
 - Modify: `apps/web/src/features/knowledge/components/CitationViewer.tsx`
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
-- Modify: `scripts/athena-e2e-specs.json`
+- Modify: `scripts/tapper-e2e-specs.json`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-e2e.sh`
 
-**UX:** 保留 RFC-008 的一级 Rail、Athena 二级 Sidebar、可移除 Context chips、上箭头输入历史、Codex 式 composer/minimap/收展和模型触发器；回答、Conversation history、Source、Citation 与模型均来自真实 API。Prototype localStorage Conversation 不迁入服务端，也不再作为默认数据源。
+**UX:** 保留 RFC-008 的一级 Rail、Tapper 二级 Sidebar、可移除 Context chips、上箭头输入历史、Codex 式 composer/minimap/收展和模型触发器；回答、Conversation history、Source、Citation 与模型均来自真实 API。Prototype localStorage Conversation 不迁入服务端，也不再作为默认数据源。
 
 - [ ] 写首条消息创建历史、后续轮次追加同一项、跨模块/刷新恢复、SSE reconnect/cancel、Source/Agent/Skill 删除只影响未来 Turn、上箭头召回不自动发送、Citation deep-link 和错误/空/加载态测试。
-- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/AthenaPage.test.tsx src/widgets/athena/AthenaWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest`；预期 FAIL，原因为真实 Conversation client/state 或 E2E 登记尚未接入。
-- [ ] 以生成类型实现 client/query/stream reducer，把默认 Athena 页面接到真实服务；保留 Prototype 作为明确 demo fixture，不从它读取权威资产。E2E runner 注册 `knowledge-conversation.spec.ts`，检查报告至少执行该 spec 的声明用例且 zero unexpected/flaky/skipped，不再写死 `expected == 1`。
-- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/AthenaPage.test.tsx src/widgets/athena/AthenaWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest && make demo-e2e`；预期 PASS：真实 Source/Agent/Skill、Conversation、SSE reconnect 与重启旅程全部通过。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(web): connect athena to durable conversations`
+- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest`；预期 FAIL，原因为真实 Conversation client/state 或 E2E 登记尚未接入。
+- [ ] 以生成类型实现 client/query/stream reducer，把默认 Tapper 页面接到真实服务；保留 Prototype 作为明确 demo fixture，不从它读取权威资产。E2E runner 注册 `knowledge-conversation.spec.ts`，检查报告至少执行该 spec 的声明用例且 zero unexpected/flaky/skipped，不再写死 `expected == 1`。
+- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest && make demo-e2e`；预期 PASS：真实 Source/Agent/Skill、Conversation、SSE reconnect 与重启旅程全部通过。再运行 `make check && make test && git diff --check`。
+- [ ] Commit: `feat(web): connect tapper to durable conversations`
 
 ### Task 10: Gate V1 with QUALITY-KB-01
 
@@ -665,16 +665,16 @@ class GraphStorePort(Protocol):
 - Create: `apps/backend/src/tap/modules/graph/application/extraction.py`
 - Create: `apps/backend/src/tap/modules/graph/domain/validation.py`
 - Create: `apps/backend/src/tap/modules/graph/adapters/model_gateway_extraction.py`
-- Create: `apps/backend/src/tap/entrypoints/athena_graph_worker.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_graph_worker.py`
 - Create: `apps/backend/tests/contract/test_graph_extraction_contract.py`
 - Create: `apps/backend/tests/integration/test_graph_snapshot_publication.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Modify: `apps/backend/src/tap/modules/ai/ports/gateway.py`
 - Modify: `apps/backend/src/tap/contracts/events.py`
 - Modify: `contracts/events/project-event.schema.json`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `compose.yaml`
-- Modify: `scripts/run-athena-dev.sh`
+- Modify: `scripts/run-tapper-dev.sh`
 
 **Port/output:** `GraphExtractionPort.extract(GraphExtractionRequest) -> GraphExtractionDraft` 通过 Task 7 唯一 `ModelGateway.generate_structured` 实现，不持有第二个 LiteLLM client。每个 Fact 必须包含 canonical node/relation type、`EXTRACTED | INFERRED`、confidence、source revision、chunk、anchor、digest；INFERRED 还包含输入 Fact IDs 与推导 provenance。`knowledge.graph-snapshot.requested/ready` 的 payload 注册到事件闭集，状态、Audit、Outbox 同事务。
 
@@ -716,9 +716,9 @@ class GraphStorePort(Protocol):
 - Modify: `apps/web/src/widgets/tap/prototype/LibraryWorkspace.tsx`
 - Modify: `apps/web/src/widgets/tap/prototype/KnowledgeGraph.tsx`
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.css`
-- Modify: `scripts/athena-e2e-specs.json`
+- Modify: `scripts/tapper-e2e-specs.json`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-e2e.sh`
 
 **API/status:** list snapshots、graph query、node detail/neighbors、bounded path、node/edge evidence 均在 Project 路径。Answer 与对应 Turn Answer/Evidence Snapshot 同时保存 `graphContextStatus = APPLIED | NOT_READY | FAILED | UNAVAILABLE | NOT_SELECTED` 以及实际使用的可选 `graphSnapshotId`；只有 `APPLIED` 才可带 ID 并使用两跳以内、有 type/count budget 的扩展，Input Snapshot 保持不变。Graph 专用请求故障返回 `503 graph-unavailable`，不能伪装空图。
 
@@ -789,12 +789,12 @@ class GraphStorePort(Protocol):
 - Create: `apps/backend/src/tap/modules/test_management/application/generation.py`
 - Create: `apps/backend/src/tap/modules/test_management/adapters/model_gateway_generation.py`
 - Modify: `apps/backend/src/tap/modules/test_management/adapters/mysql.py`
-- Create: `apps/backend/src/tap/entrypoints/athena_test_design_worker.py`
+- Create: `apps/backend/src/tap/entrypoints/tapper_test_design_worker.py`
 - Create: `apps/backend/src/tap/interfaces/http/routes/test_plans.py`
 - Create: `apps/backend/tests/contract/test_test_design_generator.py`
 - Create: `apps/backend/tests/contract/test_test_plan_http.py`
 - Create: `apps/backend/tests/integration/test_test_plan_generation.py`
-- Create: `apps/web/tests/e2e/athena-test-plan.spec.ts`
+- Create: `apps/web/tests/e2e/tapper-test-plan.spec.ts`
 - Create: `apps/web/src/features/testManagement/api/client.ts`
 - Create: `apps/web/src/features/testManagement/api/queries.ts`
 - Create: `apps/web/src/features/testManagement/components/TestPlanLibrary.tsx`
@@ -810,20 +810,20 @@ class GraphStorePort(Protocol):
 - Modify: `contracts/events/project-event.schema.json`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `apps/web/src/widgets/tap/prototype/testManagement/TestManagementWorkspace.tsx`
-- Modify: `apps/web/src/widgets/tap/prototype/AthenaChat.tsx`
-- Modify: `apps/web/src/pages/AthenaPage.tsx`
+- Modify: `apps/web/src/widgets/tap/prototype/TapperChat.tsx`
+- Modify: `apps/web/src/pages/TapperPage.tsx`
 - Modify: `compose.yaml`
-- Modify: `scripts/run-athena-dev.sh`
-- Modify: `scripts/athena-e2e-specs.json`
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-e2e.sh`
 
 **Generation/API:** `TestDesignGenerationRequest` 固定 scope、conversation/turn、同一 Turn 的 `inputSnapshotDigest` 与 `answerEvidenceSnapshotDigest`、model alias、Agent/Skill Revision 与 objective；服务端重新校验两个 digest 的 Turn/Project 归属后，经唯一 `ModelGateway.generate_structured` 生成。结果必须包含目标、范围、前置条件、风险、Test Cases、BDD、Citation、Assumption、Unknown、Coverage Gap；模型只能保存 Draft。Create/publish 使用 `Idempotency-Key`，edit 使用 `If-Match`，generation 返回 202；状态、Audit、携带双 digest 的 `test-plan.generation.requested` Outbox 同事务，完成后用 Conversation Artifact Link 关联稳定 Test Plan ID/Revision/深链接。
 
 - [ ] 写 source-grounded、无 Source、Graph INFERRED、malformed model output、duplicate job、Worker restart、双 snapshot digest 篡改/跨 Turn/跨 Project/重放、模型不得发布、HTTP idempotency/If-Match/deep-link 和 Web Review/发布可访问性测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_test_design_generator.py apps/backend/tests/contract/test_test_plan_http.py apps/backend/tests/integration/test_test_plan_generation.py apps/backend/tests/contract/test_demo_commands.py -v -k 'test_plan or generation or e2e_manifest' && corepack pnpm --filter @tap/web test -- --run src/features/testManagement`；预期 FAIL，原因为 generator/route/feature/E2E 登记不存在。
-- [ ] 实现基于共享 ModelGateway 的 schema-locked Adapter、Worker、API 和 Web；把 Worker 加入 Compose/dev/e2e supervisor 并注册 `athena-test-plan.spec.ts`。Test Management 与 Athena 只共享 Artifact Link，不复制 Test Plan 内容。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_test_design_generator.py apps/backend/tests/contract/test_test_plan_http.py apps/backend/tests/integration/test_test_plan_generation.py apps/backend/tests/contract/test_demo_commands.py -v -k 'test_plan or generation or e2e_manifest' && corepack pnpm --filter @tap/web test -- --run src/features/testManagement && make demo-e2e`；预期 PASS：Athena→Test Plan deep-link、Worker restart 和 zero-skip E2E 全部通过。再运行 `make check && make test && git diff --check`。
+- [ ] 实现基于共享 ModelGateway 的 schema-locked Adapter、Worker、API 和 Web；把 Worker 加入 Compose/dev/e2e supervisor 并注册 `tapper-test-plan.spec.ts`。Test Management 与 Tapper 只共享 Artifact Link，不复制 Test Plan 内容。
+- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_test_design_generator.py apps/backend/tests/contract/test_test_plan_http.py apps/backend/tests/integration/test_test_plan_generation.py apps/backend/tests/contract/test_demo_commands.py -v -k 'test_plan or generation or e2e_manifest' && corepack pnpm --filter @tap/web test -- --run src/features/testManagement && make demo-e2e`；预期 PASS：Tapper→Test Plan deep-link、Worker restart 和 zero-skip E2E 全部通过。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(test-plan): generate and review grounded drafts`
 
 ### Task 17: Gate V3 with QUALITY-TEST-01
@@ -932,16 +932,16 @@ class ScriptGeneratorPort(Protocol):
 - Create: `apps/backend/src/tap/contracts/automation_generation.py`
 - Modify: `apps/backend/src/tap/contracts/events.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `scripts/export_contracts.py`
 - Modify: `contracts/openapi/api.json`
 - Modify: `contracts/events/project-event.schema.json`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `compose.yaml`
-- Modify: `scripts/run-athena-dev.sh`
-- Modify: `scripts/athena-e2e-specs.json`
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-e2e.sh`
 
 **Flow:** natural-language request + 同一 Turn 的 `inputSnapshotDigest`/`answerEvidenceSnapshotDigest` + frozen Test Plan/Agent/Skill/model context → 服务端校验双快照的 Turn/Project/digest → `ModelGateway.generate_structured` → schema-validated `AutomationDraftProposal` → deterministic diff against the selected Draft. Request transaction writes `AutomationGenerationJob`、Audit 和携带双 digest 的 `automation.generation.requested` Outbox；Worker 通过 Task 18 的 MySQL Adapter 原子封存 Proposal payload/digest 并把 Job 转入终态。`apply(proposal_id, expected_draft_version)` 重新校验 scope/base digest，并在单事务写新 Draft version、append-only Decision、Audit 与 artifact link；Reject 只写 append-only Decision，不改 Draft。同一 request/idempotency digest 和 duplicate delivery 返回原 Job/Proposal，不重复调用模型或应用决策。模型不能 publish、link、解析 Secret 或产生任意代码。
 
@@ -979,8 +979,8 @@ class ScriptGeneratorPort(Protocol):
 - Modify: `apps/web/src/widgets/tap/prototype/automation/AutomationWorkspace.tsx`
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.css`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 
 **API:** list/create Automations、get/patch Revision、publish、put/delete Test Plan link。Create/publish/link 使用 `Idempotency-Key`，Patch 使用 `If-Match`。响应只暴露 Web type，不包含 Mobile union。生成代码只读；选择 BDD Step 必须高亮 Actions 与代码行，反向选择 Action/代码行也定位所属 BDD Step。
 
@@ -1004,7 +1004,7 @@ class ScriptGeneratorPort(Protocol):
 - Create: `apps/backend/tests/integration/test_secret_lease_lifecycle.py`
 - Create: `apps/backend/tests/security/test_secret_non_disclosure.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `compose.yaml`
 - Modify: `.env.example`
@@ -1051,7 +1051,7 @@ class SecretLeaseResolver(Protocol):
 - Create: `apps/backend/tests/integration/test_validation_environment.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `scripts/export_contracts.py`
 - Modify: `contracts/openapi/api.json`
@@ -1091,11 +1091,11 @@ class SecretLeaseResolver(Protocol):
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `compose.yaml`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
-- Modify: `scripts/run-athena-dev.sh`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `Makefile`
 
 **Port/events:** `DebugRunnerPort.execute(request, lease)` 与 `cancel(debug_execution_id, lease)`；事件为 `automation.debug-execution.requested/status-changed/completed`。创建时冻结 Draft digest，Debug 记录独立于正式 `ExecutionRun`，不调用 Jenkins、不投影 Test Plan。
@@ -1148,9 +1148,9 @@ class SecretLeaseResolver(Protocol):
 - Create: `apps/backend/tests/integration/test_recorder_worker.py`
 - Create: `apps/backend/tests/smoke/test_real_recorder.py`
 - Modify: `apps/backend/src/tap/platform/security/secret_broker.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `compose.yaml`
-- Modify: `scripts/run-athena-dev.sh`
+- Modify: `scripts/run-tapper-dev.sh`
 - Modify: `Makefile`
 
 **Isolation:** Chromium/Xvfb/VNC/noVNC 位于独立非 root、read-only rootfs、固定 digest 的 worker；没有 Docker socket、host workspace 或任意公网，目标、Artifact/heartbeat 与代理均来自 server-approved allowlist。单 Session 有 CPU/RAM/PID/磁盘/时长上限，idle/stop/crash 必须清理浏览器、临时 profile 与 Secret lease。
@@ -1181,8 +1181,8 @@ class SecretLeaseResolver(Protocol):
 - Modify: `apps/web/src/features/automation/api/client.ts`
 - Modify: `apps/web/src/features/automation/components/AutomationDetail.tsx`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `Makefile`
 
 **API/stream:** API create/stop/get/proposal/apply/reject/stream-ticket；WSS ticket 绑定 actor/project/session、single-use、TTL ≤60 秒和精确 Origin。控制与 captured event 必须可靠、有序、可重放；视频帧显式 best-effort、有界 backpressure，可丢旧帧。Proposal 必须复用 Task 19A 的 Apply/Reject 语义，用户确认后才生成新 Draft version。
@@ -1197,7 +1197,7 @@ class SecretLeaseResolver(Protocol):
 
 **Files:**
 
-- Create: `scripts/run-athena-v4-gate.py`
+- Create: `scripts/run-tapper-v4-gate.py`
 - Create: `apps/backend/tests/contract/test_v4_gate.py`
 - Create: `docs/reviews/<review-date>-v4-web-lca-recorder-gate.md`
 - Modify: `docs/reviews/index.md`
@@ -1237,7 +1237,7 @@ class SecretLeaseResolver(Protocol):
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
 - Modify: `apps/backend/src/tap/platform/security/secret_broker.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `scripts/export_contracts.py`
 - Modify: `contracts/openapi/api.json`
@@ -1292,7 +1292,7 @@ class SecretLeaseResolver(Protocol):
 - Create: `apps/backend/tests/contract/test_jenkins_adapter.py`
 - Create: `apps/backend/tests/integration/test_jenkins_configuration_wiring.py`
 - Create: `apps/backend/tests/smoke/test_real_jenkins.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/operations/execution/bootstrap_validation_configuration.py`
 - Modify: `apps/backend/src/tap/entrypoints/bootstrap_validation_execution.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/execution_configuration.py`
@@ -1431,7 +1431,7 @@ Jenkins Adapter 只接受 Target Revision allowlist 的 Controller、Job、Agent
 - Create: `apps/web/src/features/execution/components/RunHistory.test.tsx`
 - Create: `apps/web/tests/e2e/automation-jenkins.spec.ts`
 - Create: `scripts/run-automation-jenkins-smoke.sh`
-- Create: `scripts/run-athena-v5-gate.py`
+- Create: `scripts/run-tapper-v5-gate.py`
 - Create: `apps/backend/tests/contract/test_v5_gate.py`
 - Create: `contracts/events/run-stream.schema.json`
 - Create: `docs/reviews/<review-date>-v5-jenkins-result-loop-gate.md`
@@ -1444,14 +1444,14 @@ Jenkins Adapter 只接受 Target Revision allowlist 的 Controller、Job、Agent
 - Modify: `apps/web/src/features/automation/components/AutomationDetail.tsx`
 - Modify: `apps/web/src/features/testManagement/components/TestPlanDetail.tsx`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/run-athena-dev.sh`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `compose.yaml`
 - Modify: `docs/reviews/index.md`
 - Modify: `Makefile`
 
-**API/UX and compositions:** create/get/cancel Run 和 SSE events；SSE 支持 `Last-Event-ID`。UI 分开展示 operation、test、evidence、submission 状态，并显示 trigger surface、actor、Environment、Jenkins Pipeline Agent、Automation/Test Plan/link/mapping/config Revision snapshot。`make demo-e2e` 只能通过 `apps/backend/tests/fakes/isolated_execution_composition.py` 在一次性 Compose project 中注入 Task 23A fake；该测试 entrypoint 不被应用镜像打包，不能被 `athena_runtime.py`、Validation 或 production 配置选中，且只能启用保留的 synthetic E2E Target/Profile。`make gate-v5` 只接受 `providerMode=jenkins`、真实 Controller/Job/Agent observation 和 Task 24 bootstrap 生成的 enabled revision；report 为 fake 或缺真实 provider evidence 时必须非零退出。
+**API/UX and compositions:** create/get/cancel Run 和 SSE events；SSE 支持 `Last-Event-ID`。UI 分开展示 operation、test、evidence、submission 状态，并显示 trigger surface、actor、Environment、Jenkins Pipeline Agent、Automation/Test Plan/link/mapping/config Revision snapshot。`make demo-e2e` 只能通过 `apps/backend/tests/fakes/isolated_execution_composition.py` 在一次性 Compose project 中注入 Task 23A fake；该测试 entrypoint 不被应用镜像打包，不能被 `tapper_runtime.py`、Validation 或 production 配置选中，且只能启用保留的 synthetic E2E Target/Profile。`make gate-v5` 只接受 `providerMode=jenkins`、真实 Controller/Job/Agent observation 和 Task 24 bootstrap 生成的 enabled revision；report 为 fake 或缺真实 provider evidence 时必须非零退出。
 
 - [ ] 写 HTTP idempotency/authorization/cancel/current-attempt/SSE resume 与封闭 schema；Web 写所有状态组合、Evidence incomplete、配置选择、同一 Run 双端 History、无 link 和错误恢复；E2E manifest contract 证明 automation Jenkins spec 被登记。Composition contract 证明 fake 只能由 isolated E2E entrypoint 注入、应用镜像无 test fake、Validation/production 启动遇 fake 即失败；Gate contract 先以缺真实 Jenkins 或 fake report 运行并预期非零，不得把 skip 计为 PASS。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_execution_http_contract.py apps/backend/tests/contract/test_execution_composition_modes.py apps/backend/tests/contract/test_v5_gate.py apps/backend/tests/contract/test_demo_commands.py -v -k 'execution or composition or v5 or e2e_manifest' && corepack pnpm --filter @tap/web test -- --run src/features/execution`；预期 FAIL，原因为 Run API/SSE/UI/isolated composition/E2E/gate 不存在。
@@ -1466,24 +1466,24 @@ Jenkins Adapter 只接受 Target Revision allowlist 的 Controller、Job、Agent
 
 **Files:**
 
-- Create: `apps/web/tests/e2e/athena-web-automation-validation.spec.ts`
-- Create: `scripts/run-athena-platform-vg.sh`
+- Create: `apps/web/tests/e2e/tapper-web-automation-validation.spec.ts`
+- Create: `scripts/run-tapper-platform-vg.sh`
 - Create: `apps/backend/tests/contract/test_vg_gate.py`
 - Create: `docs/reviews/<review-date>-vg-solution-validation.md`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `docs/reviews/index.md`
 - Modify: `Makefile`
 
-**Journey:** ingest representative approved enterprise knowledge → verify answer/citations → explore grounded Graph → ask Athena for Test Plan → review/publish → generate/link Web Automation → inspect BDD/Action/code mapping → record/edit/publish → choose Jenkins Agent → run → verify Evidence and same Run in Test Plan history.
+**Journey:** ingest representative approved enterprise knowledge → verify answer/citations → explore grounded Graph → ask Tapper for Test Plan → review/publish → generate/link Web Automation → inspect BDD/Action/code mapping → record/edit/publish → choose Jenkins Agent → run → verify Evidence and same Run in Test Plan history.
 
 - [ ] 写 E2E 断言，覆盖 Yes/Skip Test Plan 路径、严格 1:1、无 link Run、recorded Secret、Jenkins unknown/duplicate callback 和证据不完整；写 manifest/gate contract，并先以缺真实配置运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_vg_gate.py apps/backend/tests/contract/test_demo_commands.py -v -k 'vg or e2e_manifest'`；预期 FAIL：gate preflight 非零且 E2E 尚未登记，不能以 fake/skip PASS。
-- [ ] 实现 `scripts/run-athena-platform-vg.sh` 的配置 preflight：代表性 dataset/model alias、Validation host/network、目标 Web allowlist、Jenkins Controller/Job/Agent/Runner/Pipeline digest、Secret/retention 与产品签字人均必须显式提供。
+- [ ] 实现 `scripts/run-tapper-platform-vg.sh` 的配置 preflight：代表性 dataset/model alias、Validation host/network、目标 Web allowlist、Jenkins Controller/Job/Agent/Runner/Pipeline digest、Secret/retention 与产品签字人均必须显式提供。
 - [ ] 把 VG spec 加入 E2E manifest；实现 `make gate-vg`，在隔离环境依次运行 `make check`、`make test`、`make demo-e2e`、V1/V2/V3 三个真实质量 Profile、真实 Recorder smoke、真实 Jenkins smoke和完整 VG E2E；任何必需 case 未配置、未收集、skip 或 flaky 均非零退出。保存版本/digest/时延/失败注入摘要，不保存 Secret 或敏感正文。
 - [ ] Review 必须逐项引用测试证据，并给出唯一结论 `continue | revise | stop`。`continue` 只授权 P0，不构成 Production ready；`revise` 指回具体 V 任务与未达指标；`stop` 封存证据并停止后续实现。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_vg_gate.py apps/backend/tests/contract/test_demo_commands.py -v -k 'vg or e2e_manifest' && make gate-vg && git diff --check`；预期 PASS：字面量 RED 命令已转绿，全部真实 gate zero skip/flake。执行时用 `date +%F` 替换 Review 路径 `<review-date>`、更新 index，并由产品负责人签署结论。
-- [ ] Commit: `docs: record athena solution validation decision`
+- [ ] Commit: `docs: record tapper solution validation decision`
 
 ## P0 — Built-in Identity, RBAC and Multi-Project
 
@@ -1604,7 +1604,7 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Create: `apps/web/tests/e2e/multi-project-rbac.spec.ts`
 - Modify: `apps/web/src/app/App.tsx`
 - Modify: `apps/web/src/app/providers.tsx`
-- Modify: `apps/web/src/pages/AthenaPage.tsx`
+- Modify: `apps/web/src/pages/TapperPage.tsx`
 - Modify: `apps/web/src/features/runtime/api/client.ts`
 - Modify: `apps/web/src/features/runtime/api/queries.ts`
 - Modify: `apps/web/src/features/knowledge/api/client.ts`
@@ -1626,8 +1626,8 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Modify: `apps/web/src/features/execution/api/client.ts`
 - Modify: `apps/web/src/features/execution/api/queries.ts`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 
 **UX:** 普通 Project list 只包含当前 User 的 Membership。所有 React Query key 必含 `project_id`；切换时取消旧请求、清除/隔离旧 cache 和 SSE，再加载新 Project。Viewer 不渲染写/执行动作，但服务端仍为最终门禁。登录、成员、切换、空态和错误态支持键盘、焦点和屏幕阅读器。
 
@@ -1675,7 +1675,7 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Create: `apps/web/src/features/admin/components/SupportAccessAdministration.tsx`
 - Create: `apps/web/src/features/admin/components/SupportAccessAdministration.test.tsx`
 - Create: `docs/reviews/<review-date>-p0-identity-productization-gate.md`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/modules/identity/application/platform_audit.py`
 - Modify: `apps/backend/src/tap/contracts/platform_events.py`
 - Modify: `apps/backend/src/tap/modules/ai/application/assets.py`
@@ -1704,10 +1704,10 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Modify: `apps/web/src/features/execution/api/configurationClient.ts`
 - Modify: `apps/web/src/features/execution/api/configurationQueries.ts`
 - Modify: `apps/web/src/app/App.tsx`
-- Modify: `apps/web/src/pages/AthenaPage.tsx`
+- Modify: `apps/web/src/pages/TapperPage.tsx`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
-- Modify: `scripts/athena-e2e-specs.json`
-- Modify: `scripts/run-athena-e2e.sh`
+- Modify: `scripts/tapper-e2e-specs.json`
+- Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `compose.yaml`
 - Modify: `.env.example`
 - Modify: `docs/reviews/index.md`
@@ -1775,7 +1775,7 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Modify: `contracts/openapi/api.json`
 - Modify: `contracts/events/platform-auth-event.schema.json`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `uv.lock`
 - Modify: `Makefile`
@@ -1799,12 +1799,12 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Create: `deploy/production/grafana/dashboards/tap-overview.json`
 - Create: `deploy/production/alerts/tap.yml`
 - Create: `apps/backend/tests/integration/test_observability.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_api.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_api.py`
 - Modify: `apps/backend/src/tap/entrypoints/relay_reconciler.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_ingestion_worker.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_graph_worker.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_generation_worker.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_test_design_worker.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_ingestion_worker.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_graph_worker.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_generation_worker.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_test_design_worker.py`
 - Modify: `apps/backend/src/tap/entrypoints/automation_generation_worker.py`
 - Modify: `apps/backend/src/tap/entrypoints/automation_debug_worker.py`
 - Modify: `apps/backend/src/tap/entrypoints/recorder_worker.py`
@@ -1837,7 +1837,7 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Modify: `apps/backend/src/tap/modules/identity/adapters/mysql_platform_audit.py`
 - Modify: `apps/backend/src/tap/platform/storage/objects.py`
 - Modify: `apps/backend/src/tap/platform/security/redaction.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `deploy/production/compose.yaml`
 - Modify: `deploy/production/env.schema`
 
@@ -1940,7 +1940,7 @@ P0 只能在执行时生成的 `docs/reviews/<review-date>-vg-solution-validatio
 - Create: `docs/reference/2026-09-04-customer-pilot-checklist.md`
 - Create: `docs/reviews/<review-date>-production-readiness-gate.md`
 - Modify: `deploy/production/env.schema`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/web/src/features/conversations/components/ConversationHistory.tsx`
 - Modify: `apps/web/src/features/automation/components/RecorderPanel.tsx`
 - Modify: `apps/web/src/features/execution/components/RunStatus.tsx`

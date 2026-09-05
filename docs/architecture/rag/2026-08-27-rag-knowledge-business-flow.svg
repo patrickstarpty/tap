@@ -59,7 +59,7 @@
 
     <rect x="120" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
     <text x="260" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">用户提问</text>
-    <text x="260" y="576" text-anchor="middle" fill="#66788A" font-size="17">Athena Q&amp;A</text>
+    <text x="260" y="576" text-anchor="middle" fill="#66788A" font-size="17">Tapper Q&amp;A</text>
 
     <rect x="473" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
     <text x="613" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">权限过滤</text>

@@ -1,6 +1,6 @@
 # TAP 核心契约（历史 Intelligence-first 版本）
 
-本页保留 2026-08-20 至 2026-09-02 的 Intelligence-first 契约演进，不再是当前实施入口。当前架构级契约见 [Athena 知识与 Web 自动化平台契约](2026-09-04-athena-platform-contracts.md)；历史内容仍可作为 durable task、artifact、validator 与通用幂等模式的参考。
+本页保留 2026-08-20 至 2026-09-02 的 Intelligence-first 契约演进，不再是当前实施入口。当前架构级契约见 [Tapper 知识与 Web 自动化平台契约](2026-09-04-tapper-platform-contracts.md)；历史内容仍可作为 durable task、artifact、validator 与通用幂等模式的参考。
 
 > **历史阶段入口（2026-09-02）**：当时的 Phase 1 实施入口是[第 5 节的 Intelligence Contract](#phase-1-intelligence-contract)。该优先级已经被 RFC-009/ADR-021 替代；本文中的 Git 强制事实源、Project 非必需和 Test IR/Run 后置不适用于当前基线。
 
@@ -1653,9 +1653,9 @@ GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 
 页面行为与验收标准见 [TAP Knowledge Chat](../architecture/2026-08-21-knowledge-chat-ui.md)。
 
-## 10. Athena 本地 Document/Answer/Citation HTTP Contract
+## 10. Tapper 本地 Document/Answer/Citation HTTP Contract
 
-Athena 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为后置 Knowledge Chat stub，当前只返回 `501 turn-not-implemented`，不计入 Athena 九个已实现操作。
+Tapper 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为后置 Knowledge Chat stub，当前只返回 `501 turn-not-implemented`，不计入 Tapper 九个已实现操作。
 
 ### 10.1 文档与 ingestion 状态
 
@@ -1703,9 +1703,9 @@ type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 | `redis`  | `PING`                                                                                                                                                                                                   | `start-redis`      |
 | `blob`   | originals/artifacts 两个 private container                                                                                                                                                               | `start-blob`       |
 | `milvus` | alias/schema/model/dimension 绑定及有界读探针                                                                                                                                                            | `start-milvus`     |
-| `models` | 始终要求 LiteLLM `/v1/models` 包含 `athena-embedding`；`ATHENA_ANSWER_BACKEND=litellm` 另要求 `athena-chat`，`codex` 则要求精确原生 CLI `0.149.0`、ChatGPT 登录、固定 feature/catalog/tool-free contract | `configure-models` |
+| `models` | 始终要求 LiteLLM `/v1/models` 包含 `tapper-embedding`；`TAPPER_ANSWER_BACKEND=litellm` 另要求 `tapper-chat`，`codex` 则要求精确原生 CLI `0.149.0`、ChatGPT 登录、固定 feature/catalog/tool-free contract | `configure-models` |
 
-Athena 的文档/query Embedding 在两种真实回答模式下都经 LiteLLM `athena-embedding` 调用百炼 `text-embedding-v4`，固定 1536 维。回答后端由服务端 `.env` 在进程启动时独占选择且没有相互 fallback；Codex 只实现 API answer port，版本、登录、feature、与 `0.149.0` entry schema 耦合的 request-owned catalog、事件或输出任一漂移都返回 `503 https://tap.example/problems/answer-unavailable`。公共 `detail` 保持固定安全英文，Web 按 `503:answer-unavailable` 映射为“回答模型暂时不可用，请稍后重试。”，两者都不暴露 CLI/provider 细节。
+Tapper 的文档/query Embedding 在两种真实回答模式下都经 LiteLLM `tapper-embedding` 调用百炼 `text-embedding-v4`，固定 1536 维。回答后端由服务端 `.env` 在进程启动时独占选择且没有相互 fallback；Codex 只实现 API answer port，版本、登录、feature、与 `0.149.0` entry schema 耦合的 request-owned catalog、事件或输出任一漂移都返回 `503 https://tap.example/problems/answer-unavailable`。公共 `detail` 保持固定安全英文，Web 按 `503:answer-unavailable` 映射为“回答模型暂时不可用，请稍后重试。”，两者都不暴露 CLI/provider 细节。
 
 该实现没有修改任何公共 document/answer/citation request 或 success response DTO，也没有增加 browser-selectable backend/model/reasoning 字段；生成的 OpenAPI/Web client 中唯一新增的 HTTP 语义是上述 `answer-unavailable` Problem type。Codex query/所选 Evidence 发往 OpenAI，Embedding 内容发往阿里云百炼；这个数据边界和无认证 API 只适用于精确 loopback 本地 Demo。
 
