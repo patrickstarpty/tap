@@ -56,11 +56,11 @@ def test_fixed_demo_policy_is_deterministic_and_binds_only_selected_revisions() 
     assert policy.acl_digest != narrower.acl_digest
     assert policy.decision_id != narrower.decision_id
     assert policy.tenant_id == "local"
-    assert policy.project_id == "athena-demo"
-    assert policy.allowed_group_ids == frozenset({"athena-local"})
+    assert policy.project_id == "tapper-demo"
+    assert policy.allowed_group_ids == frozenset({"tapper-local"})
     assert policy.allowed_environments == frozenset({"global"})
     assert policy.allowed_source_families == frozenset({"doc"})
-    assert policy.active_corpus_version == "athena-demo-v1"
+    assert policy.active_corpus_version == "tapper-demo-v1"
     assert tuple(grant.source_id for grant in policy.resource_grants) == ("doc_a", "doc_b")
     assert all(grant.revision_kind == "blob_version" for grant in policy.resource_grants)
     assert all(grant.allow_all_anchors for grant in policy.resource_grants)
@@ -87,9 +87,9 @@ def test_demo_policy_context_uses_the_verified_authorization_factory() -> None:
     context = build_demo_policy_context((ready("doc_a", "rev_a", HASH_A),))
 
     assert context.tenant_id == "local"
-    assert context.project_id == "athena-demo"
-    assert context.actor.user_id == "athena-local-user"
-    assert context.actor.allowed_group_ids == frozenset({"athena-local"})
+    assert context.project_id == "tapper-demo"
+    assert context.actor.user_id == "tapper-local-user"
+    assert context.actor.allowed_group_ids == frozenset({"tapper-local"})
     assert context.resource_grants[0].revision == "rev_a"
 
 

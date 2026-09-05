@@ -136,7 +136,7 @@ def document_evidence(content: str) -> Evidence:
         index_revision=IndexRevision(
             physical_index="kb-doc-v1-20260828",
             schema_version="search-schema-v1",
-            corpus_version="athena-demo-v1",
+            corpus_version="tapper-demo-v1",
         ),
         embedding_model_version="tap-embed-fixed-v1",
         acl_decision_id="decision-17",
@@ -166,7 +166,7 @@ def embedding_response(
 def batch_embedding_response(
     rows: list[dict[str, object]],
     *,
-    model: str = "athena-embedding",
+    model: str = "tapper-embedding",
 ) -> dict[str, object]:
     return {
         "id": "embedding-batch-17",
@@ -1512,9 +1512,9 @@ async def test_embed_many_uses_exact_fixed_route_and_restores_provider_index_ord
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1522,7 +1522,7 @@ async def test_embed_many_uses_exact_fixed_route_and_restores_provider_index_ord
 
     assert tuple(item.vector for item in vectors) == ((0.25, 0.5), (0.75, 1.0))
     assert json.loads(requests[0].content) == {
-        "model": "athena-embedding",
+        "model": "tapper-embedding",
         "input": ["first", "second"],
         "dimensions": 2,
         "encoding_format": "float",
@@ -1543,9 +1543,9 @@ async def test_embed_many_accepts_valid_response_without_optional_top_level_id()
         return httpx.Response(200, json=body)
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1574,14 +1574,14 @@ async def test_embed_many_accepts_closed_litellm_row_and_usage_extensions() -> N
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"x-litellm-model-group": "athena-embedding"},
+            headers={"x-litellm-model-group": "tapper-embedding"},
             json=body,
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1603,14 +1603,14 @@ async def test_embed_many_requires_body_model_to_equal_requested_alias() -> None
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"x-litellm-model-group": "athena-embedding"},
+            headers={"x-litellm-model-group": "tapper-embedding"},
             json=body,
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1625,16 +1625,16 @@ async def test_embed_many_huge_integer_vector_fails_as_model_unavailable() -> No
             {"embedding": [10**400, 0.4], "index": 0},
             {"embedding": [0.1, 0.2], "index": 1},
         ],
-        model="athena-embedding",
+        model="tapper-embedding",
     )
 
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=body)
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1659,9 +1659,9 @@ async def test_embed_many_rejects_wrong_model_group() -> None:
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1721,9 +1721,9 @@ async def test_embed_many_rejects_non_bijective_or_malformed_provider_rows(
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1747,9 +1747,9 @@ async def test_embed_many_rejects_batch_bounds_before_egress(texts: tuple[str, .
         return httpx.Response(500)
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
         max_request_bytes=262_144,
     )
@@ -1774,9 +1774,9 @@ async def test_embed_many_rejects_unapproved_returned_model() -> None:
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1785,7 +1785,7 @@ async def test_embed_many_rejects_unapproved_returned_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_embed_many_requires_exact_athena_embedding_alias() -> None:
+async def test_embed_many_requires_exact_tapper_embedding_alias() -> None:
     """A generic configured alias would let ingestion publish a different vector space."""
     calls = 0
 
@@ -1816,9 +1816,9 @@ async def test_embed_documents_partitions_count_and_binds_chunk_order() -> None:
         return httpx.Response(200, json=batch_embedding_response(rows))
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
         max_request_bytes=262_144,
     )
@@ -1827,13 +1827,13 @@ async def test_embed_documents_partitions_count_and_binds_chunk_order() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         artifact = await LiteLLMAdapter(fixed, client=client).embed_documents(
             texts,
-            model_alias="athena-embedding",
+            model_alias="tapper-embedding",
             chunk_ids=chunk_ids,
         )
 
     assert [len(json.loads(request.content)["input"]) for request in requests] == [10, 10, 10, 3]
     assert all(len(request.content) <= 262_144 for request in requests)
-    assert artifact.model_alias == "athena-embedding"
+    assert artifact.model_alias == "tapper-embedding"
     assert artifact.dimension == 2
     assert artifact.chunk_ids == chunk_ids
     assert artifact.vectors[0] == (0.0, 1.0)
@@ -1856,9 +1856,9 @@ async def test_embed_documents_partitions_by_complete_encoded_request_size() -> 
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
         max_request_bytes=262_144,
     )
@@ -1867,7 +1867,7 @@ async def test_embed_documents_partitions_by_complete_encoded_request_size() -> 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         artifact = await LiteLLMAdapter(fixed, client=client).embed_documents(
             texts,
-            model_alias="athena-embedding",
+            model_alias="tapper-embedding",
             chunk_ids=chunk_ids,
         )
 
@@ -1898,9 +1898,9 @@ async def test_embed_documents_applies_deadline_per_batch_not_whole_document() -
         )
 
     fixed = config(
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         allowed_embedding_model_labels=frozenset(
-            {"athena-embedding", "provider-embed-v1", "gateway-embed-v1"}
+            {"tapper-embedding", "provider-embed-v1", "gateway-embed-v1"}
         ),
         deadline_seconds=0.35,
         max_request_bytes=262_144,
@@ -1910,7 +1910,7 @@ async def test_embed_documents_applies_deadline_per_batch_not_whole_document() -
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         artifact = await LiteLLMAdapter(fixed, client=client).embed_documents(
             texts,
-            model_alias="athena-embedding",
+            model_alias="tapper-embedding",
             chunk_ids=chunk_ids,
         )
 

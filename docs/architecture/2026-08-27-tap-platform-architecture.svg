@@ -47,28 +47,28 @@
   <g id="workbench" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
     <rect x="390" y="235" width="780" height="105" rx="12" fill="#EAF2FF" stroke="#2F6FED" stroke-width="2" />
     <text x="780" y="278" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">统一工作台</text>
-    <text x="780" y="314" text-anchor="middle" fill="#12304A" font-size="17">Knowledge Chat · Test Workspace · API</text>
+    <text x="780" y="314" text-anchor="middle" fill="#12304A" font-size="17">Tapper · Test Management · Low Code Automation (LCA)</text>
   </g>
 
   <g id="capabilities" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
     <g id="knowledge-capability">
       <rect x="390" y="400" width="250" height="170" rx="12" fill="#EAF2FF" stroke="#2F6FED" stroke-width="2" />
-      <text x="414" y="433" fill="#2F6FED" font-size="16" font-weight="700">当前重点</text>
+      <text x="414" y="433" fill="#2457B3" font-size="16" font-weight="700">V1–V2</text>
       <text x="414" y="471" fill="#12304A" font-size="21" font-weight="700">知识问答</text>
       <text x="414" y="514" fill="#12304A" font-size="17">检索 · 生成 · 逐条引用</text>
     </g>
     <g id="test-assets-capability">
       <rect x="655" y="400" width="250" height="170" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="2" />
-      <text x="679" y="433" fill="#66788A" font-size="16" font-weight="700">后续演进</text>
+      <text x="679" y="433" fill="#4E6072" font-size="16" font-weight="700">V3–V4</text>
       <text x="679" y="471" fill="#12304A" font-size="21" font-weight="700">测试资产</text>
       <text x="679" y="510" fill="#12304A" font-size="17">自然语言 / BDD</text>
-      <text x="679" y="540" fill="#12304A" font-size="17">→ Test IR</text>
+      <text x="679" y="540" fill="#12304A" font-size="17">→ 统一测试模型 (Test IR)</text>
     </g>
     <g id="test-execution-capability">
       <rect x="920" y="400" width="250" height="170" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="2" />
-      <text x="944" y="433" fill="#66788A" font-size="16" font-weight="700">后续演进</text>
+      <text x="944" y="433" fill="#4E6072" font-size="16" font-weight="700">V5</text>
       <text x="944" y="471" fill="#12304A" font-size="21" font-weight="700">测试执行</text>
-      <text x="944" y="510" fill="#12304A" font-size="17">Web · Mobile · API</text>
+      <text x="944" y="510" fill="#12304A" font-size="17">Web · Jenkins Pipeline Agent</text>
       <text x="944" y="540" fill="#12304A" font-size="17">→ 统一证据</text>
     </g>
   </g>
@@ -85,10 +85,10 @@
   <g id="foundation" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
     <rect x="340" y="690" width="880" height="95" rx="12" fill="#EAF8F4" stroke="#0F8F78" stroke-width="2" />
     <text x="368" y="728" fill="#12304A" font-size="21" font-weight="700">共享平台底座</text>
-    <text x="368" y="762" fill="#12304A" font-size="16">身份与权限 · Git / MySQL / Blob · Azure AI Search / LiteLLM · 审计与审批</text>
+    <text x="368" y="762" fill="#12304A" font-size="16">Validation Scope → P0 RBAC · MySQL / MinIO · Milvus / LiteLLM · 审计与审批</text>
   </g>
 
   <text id="footer" x="60" y="852" fill="#66788A" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif" font-size="16">
-    <tspan font-weight="700">当前重点：</tspan><tspan>Azure AI Search RAG 与 Knowledge Chat；测试自动化能力按统一契约逐步接入。</tspan>
+    <tspan font-weight="700">当前重点：</tspan><tspan>可信知识问答 → Knowledge Graph → AI Test Design → Web LCA/Recorder → Jenkins 结果闭环。</tspan>
   </text>
 </svg>

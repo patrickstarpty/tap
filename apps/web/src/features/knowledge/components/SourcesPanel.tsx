@@ -61,10 +61,10 @@ export function SourcesPanel({
 
   return (
     <section
-      className="athena-panel athena-sources-panel"
+      className="tapper-panel tapper-sources-panel"
       aria-labelledby="sources-heading"
     >
-      <header className="athena-panel-header">
+      <header className="tapper-panel-header">
         <div>
           <Typography.Title level={3} id="sources-heading">
             {COPY.sourcesTitle}
@@ -77,7 +77,7 @@ export function SourcesPanel({
       </header>
 
       <Input
-        className="athena-source-search"
+        className="tapper-source-search"
         type="search"
         allowClear
         aria-label={COPY.searchSources}
@@ -85,7 +85,7 @@ export function SourcesPanel({
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
-      <div className="athena-source-actions">
+      <div className="tapper-source-actions">
         <Button disabled={readyCount === 0} onClick={onSelectAllReady}>
           {COPY.selectAllReady}
         </Button>
@@ -95,12 +95,12 @@ export function SourcesPanel({
       </div>
 
       {atLimit && readyCount > MAX_SELECTED_SOURCES ? (
-        <p className="athena-source-limit" role="status">
+        <p className="tapper-source-limit" role="status">
           {COPY.sourceLimit}
         </p>
       ) : null}
       {isPending ? (
-        <div className="athena-source-loading" aria-label={COPY.sourcesLoading}>
+        <div className="tapper-source-loading" aria-label={COPY.sourcesLoading}>
           <Skeleton active paragraph={{ rows: 7 }} />
         </div>
       ) : null}
@@ -117,13 +117,13 @@ export function SourcesPanel({
         />
       ) : null}
       {!isPending && !isError && documents.length === 0 ? (
-        <div className="athena-source-empty">
+        <div className="tapper-source-empty">
           <strong>{COPY.sourcesEmpty}</strong>
           <span>{COPY.sourcesEmptyDescription}</span>
         </div>
       ) : null}
       {!isPending && !isError && documents.length > 0 ? (
-        <ul className="athena-source-list">
+        <ul className="tapper-source-list">
           {visibleDocuments.map((document) => {
             const checked = selected.has(document.documentId);
             const isReady = document.status === "ready";
@@ -137,7 +137,7 @@ export function SourcesPanel({
                   aria-label={`${document.filename} · ${document.documentId} · ${status}`}
                   onChange={() => onToggle(document.documentId)}
                 >
-                  <span className="athena-source-label">
+                  <span className="tapper-source-label">
                     <strong>{document.filename}</strong>
                     <small>{document.documentId}</small>
                     <span>{status}</span>

@@ -129,7 +129,7 @@ def answer_response(
         trace_id="trace-a",
         query_plan_id="plan-a",
         context_snapshot_id="context-a",
-        corpus_version="athena-demo-v1",
+        corpus_version="tapper-demo-v1",
         retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
         answer=answer,
         abstained=abstained,
@@ -146,9 +146,9 @@ def answer_response(
             ),
         ),
         citations=evidence,
-        embedding_provenance=ModelCallProvenance("athena-embedding", "embed-request"),
+        embedding_provenance=ModelCallProvenance("tapper-embedding", "embed-request"),
         answer_provenance=(
-            None if abstained else ModelCallProvenance("athena-chat", "answer-request")
+            None if abstained else ModelCallProvenance("tapper-chat", "answer-request")
         ),
     )
 
@@ -272,7 +272,7 @@ def test_empty_selection_fails_before_search_or_model_io() -> None:
         (
             AnswerRequest(
                 query="q",
-                requested_corpus_version="athena-demo-v1",
+                requested_corpus_version="tapper-demo-v1",
                 resource_refs=request_for("doc_a").resource_refs,
             ),
             "unsupported-answer-control",

@@ -39,16 +39,16 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
-.athena-shell {
+.tapper-shell {
   background: #f7f6f3;
 }
 
-.athena-header {
+.tapper-header {
   border-bottom: 1px solid #dedbd4;
   background: rgb(255 254 250 / 94%);
 }
 
-.athena-wordmark {
+.tapper-wordmark {
   color: #252525;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 25px;
@@ -56,8 +56,8 @@ button:focus-visible,
   letter-spacing: -0.025em;
 }
 
-.athena-workspace-name,
-.athena-eyebrow {
+.tapper-workspace-name,
+.tapper-eyebrow {
   color: #67635d;
   font-size: 12px;
   font-weight: 650;
@@ -65,32 +65,32 @@ button:focus-visible,
   text-transform: uppercase;
 }
 
-.athena-primary-tabs > .ant-tabs-nav {
+.tapper-primary-tabs > .ant-tabs-nav {
   margin-bottom: 0;
 }
 
-.athena-primary-tabs > .ant-tabs-content-holder {
+.tapper-primary-tabs > .ant-tabs-content-holder {
   padding-top: 28px;
 }
 
-.athena-ask-shell {
+.tapper-ask-shell {
   min-height: 62vh;
   max-width: 760px;
   padding: clamp(52px, 9vw, 112px) 10px 40px;
 }
 
-.athena-ask-shell .ant-typography {
+.tapper-ask-shell .ant-typography {
   max-width: 620px;
 }
 
-.athena-ask-rule {
+.tapper-ask-rule {
   width: 44px;
   height: 3px;
   margin-bottom: 28px;
   background: #4f46e5;
 }
 
-.athena-workspace {
+.tapper-workspace {
   display: grid;
   grid-template-columns: 280px minmax(420px, 1fr) 360px;
   align-items: start;
@@ -99,15 +99,15 @@ button:focus-visible,
   min-height: 64vh;
 }
 
-.athena-workspace > *,
-.athena-panel,
-.athena-panel-header > *,
-.athena-answer-surface,
-.athena-citation-content {
+.tapper-workspace > *,
+.tapper-panel,
+.tapper-panel-header > *,
+.tapper-answer-surface,
+.tapper-citation-content {
   min-width: 0;
 }
 
-.athena-panel {
+.tapper-panel {
   overflow: hidden;
   border: 1px solid #e2dfd8;
   border-radius: 10px;
@@ -116,7 +116,7 @@ button:focus-visible,
   padding: 20px;
 }
 
-.athena-panel-header {
+.tapper-panel-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -124,31 +124,31 @@ button:focus-visible,
   margin-bottom: 18px;
 }
 
-.athena-panel-header h3.ant-typography,
-.athena-panel-header h4.ant-typography {
+.tapper-panel-header h3.ant-typography,
+.tapper-panel-header h4.ant-typography {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
-.athena-panel-header p.ant-typography {
+.tapper-panel-header p.ant-typography {
   margin: 5px 0 0;
   line-height: 1.5;
 }
 
-.athena-panel-placeholder {
+.tapper-panel-placeholder {
   margin: 0;
   color: #77736c;
   line-height: 1.65;
 }
 
-.athena-source-search.ant-input-affix-wrapper {
+.tapper-source-search.ant-input-affix-wrapper {
   min-height: 44px;
   padding-block: 0;
 }
 
-.athena-source-search .ant-input-clear-icon {
+.tapper-source-search .ant-input-clear-icon {
   display: inline-grid;
   min-width: 44px;
   min-height: 44px;
@@ -156,25 +156,25 @@ button:focus-visible,
   place-items: center;
 }
 
-.athena-source-actions {
+.tapper-source-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin: 12px 0 14px;
 }
 
-.athena-source-limit {
+.tapper-source-limit {
   margin: 0 0 12px;
   color: #8a4b42;
   font-size: 12px;
 }
 
-.athena-source-loading {
+.tapper-source-loading {
   min-height: 290px;
   padding-top: 14px;
 }
 
-.athena-source-empty {
+.tapper-source-empty {
   display: grid;
   gap: 7px;
   min-height: 190px;
@@ -183,11 +183,11 @@ button:focus-visible,
   text-align: center;
 }
 
-.athena-source-empty strong {
+.tapper-source-empty strong {
   color: #393734;
 }
 
-.athena-source-list {
+.tapper-source-list {
   display: grid;
   gap: 4px;
   max-height: 520px;
@@ -197,7 +197,7 @@ button:focus-visible,
   list-style: none;
 }
 
-.athena-source-list .ant-checkbox-wrapper {
+.tapper-source-list .ant-checkbox-wrapper {
   display: flex;
   align-items: center;
   width: 100%;
@@ -207,51 +207,51 @@ button:focus-visible,
   padding: 6px 7px;
 }
 
-.athena-source-list .ant-checkbox-wrapper:hover {
+.tapper-source-list .ant-checkbox-wrapper:hover {
   background: #f6f4ef;
 }
 
-.athena-source-list
+.tapper-source-list
   .ant-checkbox-wrapper:has(.ant-checkbox-input:focus-visible) {
   outline: 3px solid rgb(79 70 229 / 30%);
   outline-offset: 1px;
 }
 
-.athena-source-label {
+.tapper-source-label {
   display: grid;
   min-width: 0;
   line-height: 1.35;
 }
 
-.athena-source-label strong,
-.athena-source-label small,
-.athena-source-label span {
+.tapper-source-label strong,
+.tapper-source-label small,
+.tapper-source-label span {
   overflow-wrap: anywhere;
 }
 
-.athena-source-label small,
-.athena-source-label span {
+.tapper-source-label small,
+.tapper-source-label span {
   color: #77736c;
   font-size: 11px;
 }
 
-.athena-question-panel {
+.tapper-question-panel {
   display: grid;
   gap: 18px;
   min-height: 560px;
 }
 
-.athena-question-panel > .athena-panel-header {
+.tapper-question-panel > .tapper-panel-header {
   margin-bottom: 0;
 }
 
-.athena-answer-surface {
+.tapper-answer-surface {
   min-height: 260px;
   border-block: 1px solid #ece9e2;
   padding-block: 20px;
 }
 
-.athena-answer-pending {
+.tapper-answer-pending {
   display: grid;
   gap: 8px;
   border-left: 3px solid #7c75d7;
@@ -259,24 +259,24 @@ button:focus-visible,
   color: #5f5b55;
 }
 
-.athena-question-composer {
+.tapper-question-composer {
   display: grid;
   gap: 9px;
   align-self: end;
 }
 
-.athena-question-composer > label {
+.tapper-question-composer > label {
   color: #393734;
   font-weight: 650;
 }
 
-.athena-question-composer textarea.ant-input {
+.tapper-question-composer textarea.ant-input {
   min-height: 132px;
   resize: vertical;
   line-height: 1.6;
 }
 
-.athena-composer-footer {
+.tapper-composer-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -285,54 +285,54 @@ button:focus-visible,
   font-size: 12px;
 }
 
-.athena-workspace .ant-btn {
+.tapper-workspace .ant-btn {
   min-height: 44px;
 }
 
-.athena-workspace .ant-input:focus-visible,
-.athena-source-search.ant-input-affix-wrapper:has(input:focus-visible) {
+.tapper-workspace .ant-input:focus-visible,
+.tapper-source-search.ant-input-affix-wrapper:has(input:focus-visible) {
   outline: 3px solid rgb(79 70 229 / 30%) !important;
   outline-offset: 2px !important;
 }
 
-.athena-grounded-answer {
+.tapper-grounded-answer {
   display: grid;
   gap: 14px;
 }
 
-.athena-answer-note {
+.tapper-answer-note {
   margin-bottom: 4px;
 }
 
-.athena-grounded-claim {
+.tapper-grounded-claim {
   min-width: 0;
   border-left: 3px solid #d9d5f2;
   padding-left: 14px;
 }
 
-.athena-grounded-claim .athena-markdown > :last-child,
-.athena-markdown > :last-child {
+.tapper-grounded-claim .tapper-markdown > :last-child,
+.tapper-markdown > :last-child {
   margin-bottom: 0;
 }
 
-.athena-claim-citations {
+.tapper-claim-citations {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 5px;
   margin-top: 6px;
 }
 
-.athena-claim-citations .ant-btn {
+.tapper-claim-citations .ant-btn {
   padding-inline: 4px;
 }
 
-.athena-markdown {
+.tapper-markdown {
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.7;
 }
 
-.athena-markdown pre {
+.tapper-markdown pre {
   max-width: 100%;
   overflow-x: auto;
   border: 1px solid #e2dfd8;
@@ -341,30 +341,30 @@ button:focus-visible,
   padding: 12px;
 }
 
-.athena-markdown :not(pre) > code {
+.tapper-markdown :not(pre) > code {
   white-space: break-spaces;
   overflow-wrap: anywhere;
 }
 
-.athena-citation-panel {
+.tapper-citation-panel {
   min-height: 320px;
 }
 
-.athena-citation-content {
+.tapper-citation-content {
   display: grid;
   gap: 13px;
 }
 
-.athena-citation-content h4.ant-typography {
+.tapper-citation-content h4.ant-typography {
   margin: 0;
 }
 
-.athena-citation-content code {
+.tapper-citation-content code {
   overflow-wrap: anywhere;
   word-break: break-all;
 }
 
-.athena-citation-quote {
+.tapper-citation-quote {
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -374,16 +374,16 @@ button:focus-visible,
   line-height: 1.7;
 }
 
-.athena-citation-quote mark {
+.tapper-citation-quote mark {
   background: #fff0a8;
   color: inherit;
 }
 
-.athena-library {
+.tapper-library {
   min-height: 64vh;
 }
 
-.athena-library-toolbar {
+.tapper-library-toolbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -391,7 +391,7 @@ button:focus-visible,
   margin-bottom: 22px;
 }
 
-.athena-library-toolbar h2.ant-typography {
+.tapper-library-toolbar h2.ant-typography {
   margin: 0 0 4px;
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(26px, 3vw, 34px);
@@ -399,97 +399,97 @@ button:focus-visible,
   letter-spacing: -0.025em;
 }
 
-.athena-library-toolbar p.ant-typography {
+.tapper-library-toolbar p.ant-typography {
   margin-bottom: 12px;
 }
 
-.athena-library-alert {
+.tapper-library-alert {
   margin-bottom: 14px;
 }
 
-.athena-library-loading,
-.athena-empty-state {
+.tapper-library-loading,
+.tapper-empty-state {
   min-height: 320px;
   padding: 72px 24px;
   border: 1px solid #e2dfd8;
   background: #fffefa;
 }
 
-.athena-empty-state .ant-empty-description > div {
+.tapper-empty-state .ant-empty-description > div {
   display: grid;
   gap: 7px;
 }
 
-.athena-empty-state .ant-empty-description span {
+.tapper-empty-state .ant-empty-description span {
   color: #77736c;
 }
 
-.athena-document-table .ant-table {
+.tapper-document-table .ant-table {
   border: 1px solid #e2dfd8;
   border-radius: 8px;
   background: #fffefa;
 }
 
-.athena-document-table .ant-table-tbody > tr {
+.tapper-document-table .ant-table-tbody > tr {
   cursor: pointer;
 }
 
-.athena-document-table .ant-table-tbody > tr[aria-disabled="true"] {
+.tapper-document-table .ant-table-tbody > tr[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.68;
 }
 
-.athena-filename {
+.tapper-filename {
   max-width: 340px;
   font-weight: 610;
 }
 
-.athena-status-cell {
+.tapper-status-cell {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 7px;
 }
 
-.athena-safe-summary {
+.tapper-safe-summary {
   width: 100%;
   color: #80605e;
   font-size: 12px;
   line-height: 1.45;
 }
 
-.athena-stage-copy {
+.tapper-stage-copy {
   width: 100%;
   color: #5f5b55;
   font-size: 12px;
 }
 
-.athena-safe-code {
+.tapper-safe-code {
   color: #7a4a48;
   font-size: 11px;
 }
 
-.athena-detail-stack {
+.tapper-detail-stack {
   display: grid;
   gap: 30px;
 }
 
-.athena-hash {
+.tapper-hash {
   overflow-wrap: anywhere;
 }
 
-.athena-timeline-item {
+.tapper-timeline-item {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 18px;
 }
 
-.athena-timeline-item small {
+.tapper-timeline-item small {
   color: #77736c;
 }
 
-.athena-preview {
+.tapper-preview {
   max-height: 320px;
   margin: 0;
   overflow: auto;
@@ -504,7 +504,7 @@ button:focus-visible,
   line-height: 1.65;
 }
 
-.athena-drop-zone {
+.tapper-drop-zone {
   display: grid;
   place-items: center;
   gap: 8px;
@@ -517,27 +517,27 @@ button:focus-visible,
   text-align: center;
 }
 
-.athena-drop-zone > .anticon {
+.tapper-drop-zone > .anticon {
   margin-bottom: 4px;
   font-size: 30px;
 }
 
-.athena-drop-zone .ant-typography {
+.tapper-drop-zone .ant-typography {
   display: block;
   margin: 0;
 }
 
-.athena-drop-zone[aria-disabled="true"] {
+.tapper-drop-zone[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.68;
 }
 
-.athena-drop-formats {
+.tapper-drop-formats {
   margin-top: 5px !important;
   font-size: 12px;
 }
 
-.athena-visually-hidden {
+.tapper-visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -547,8 +547,8 @@ button:focus-visible,
   clip-path: inset(50%);
 }
 
-.athena-selected-file,
-.athena-upload-progress {
+.tapper-selected-file,
+.tapper-upload-progress {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -556,72 +556,72 @@ button:focus-visible,
   margin-top: 14px;
 }
 
-.athena-selected-file span,
-.athena-upload-progress span {
+.tapper-selected-file span,
+.tapper-upload-progress span {
   color: #77736c;
   font-size: 12px;
 }
 
-.athena-upload-progress .ant-progress {
+.tapper-upload-progress .ant-progress {
   flex: 1;
 }
 
-.athena-dialog-alert {
+.tapper-dialog-alert {
   margin-top: 14px;
 }
 
 @media (max-width: 640px) {
-  .athena-primary-tabs > .ant-tabs-content-holder {
+  .tapper-primary-tabs > .ant-tabs-content-holder {
     padding-top: 20px;
   }
 
-  .athena-library-toolbar {
+  .tapper-library-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .athena-library-toolbar > .ant-btn {
+  .tapper-library-toolbar > .ant-btn {
     width: 100%;
   }
 
-  .athena-document-table .ant-table-cell {
+  .tapper-document-table .ant-table-cell {
     padding: 12px 10px;
   }
 
-  .athena-drop-zone {
+  .tapper-drop-zone {
     min-height: 190px;
   }
 }
 
 @media (max-width: 1199px) {
-  .athena-workspace {
+  .tapper-workspace {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .athena-source-list {
+  .tapper-source-list {
     max-height: 360px;
   }
 }
 
 @media (max-width: 640px) {
-  .athena-panel {
+  .tapper-panel {
     border-radius: 8px;
     padding: 16px;
   }
 
-  .athena-panel-header {
+  .tapper-panel-header {
     flex-wrap: wrap;
   }
 
-  .athena-source-actions {
+  .tapper-source-actions {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .athena-question-panel {
+  .tapper-question-panel {
     min-height: 0;
   }
 
-  .athena-answer-surface {
+  .tapper-answer-surface {
     min-height: 180px;
   }
 }

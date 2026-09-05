@@ -12,8 +12,8 @@ from os.path import splitext
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_NORMALIZED_CHARACTERS = 8_000_000
 MAX_CHUNKS_PER_DOCUMENT = 10_000
-PARSER_VERSION = "athena-parser-v1"
-CHUNKER_VERSION = "athena-structure-512-v1"
+PARSER_VERSION = "tapper-parser-v1"
+CHUNKER_VERSION = "tapper-structure-512-v1"
 NORMALIZED_ARTIFACT_SCHEMA = "normalized-artifact-v1"
 STABLE_ID_SCHEMA = "stable-id-v1"
 

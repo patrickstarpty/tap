@@ -42,7 +42,7 @@ export function DocumentTable({
       key: "filename",
       render: (filename: string) => (
         <Typography.Text
-          className="athena-filename"
+          className="tapper-filename"
           ellipsis={{ tooltip: filename }}
         >
           {filename}
@@ -137,7 +137,7 @@ export function DocumentTable({
 
   return (
     <Table<DocumentSummary>
-      className="athena-document-table"
+      className="tapper-document-table"
       columns={columns}
       dataSource={documents}
       rowKey="documentId"

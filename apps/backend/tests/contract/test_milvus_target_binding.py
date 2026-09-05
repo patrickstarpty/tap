@@ -109,7 +109,7 @@ async def test_bind_target_rejects_a_physical_name_outside_the_configured_prefix
 
 @pytest.mark.asyncio
 async def test_strict_bind_target_rejects_a_prefix_sharing_unowned_name() -> None:
-    base = "kb_doc_v1_athena_demo"
+    base = "kb_doc_v1_tapper_demo"
 
     class ForgedAliasReader(AliasReader):
         async def describe_alias(self, alias: str) -> str:

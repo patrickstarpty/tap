@@ -19,8 +19,18 @@ from pymilvus.decorators import _log_rpc_error
 
 ROOT = Path(__file__).resolve().parents[4]
 E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173)
+EXPECTED_ENV = {
+    "TAP_TAPPER_COMPOSE_PROJECT",
+    "TAPPER_API_HOST",
+    "TAPPER_API_PORT",
+    "TAPPER_WEB_HOST",
+    "TAPPER_WEB_PORT",
+    "TAPPER_MODEL_BACKEND",
+    "TAPPER_ANSWER_BACKEND",
+    "LITELLM_TAPPER_EMBEDDING_MODEL",
+}
 _RECORDED_ENVIRONMENT_NAMES = (
-    "ATHENA_API_HOST",
+    "TAPPER_API_HOST",
     "AZURE_STORAGE_CONNECTION_STRING",
     "BAILIAN_API_BASE",
     "BAILIAN_API_KEY",
@@ -30,7 +40,7 @@ _RECORDED_ENVIRONMENT_NAMES = (
     "DASHSCOPE_API_BASE",
     "DASHSCOPE_API_KEY",
     "DASHSCOPE_BASE_URL",
-    "LITELLM_ATHENA_EMBEDDING_MODEL",
+    "LITELLM_TAPPER_EMBEDDING_MODEL",
     "LITELLM_EMBEDDING_API_BASE",
     "LITELLM_EMBEDDING_API_KEY",
     "LITELLM_EMBEDDING_MODEL",
@@ -46,7 +56,7 @@ _RECORDED_ENVIRONMENT_NAMES = (
 
 
 def _write_environment_name_probe(directory: Path) -> None:
-    probe = directory / "athena-env-names"
+    probe = directory / "tapper-env-names"
     pattern = "|".join(_RECORDED_ENVIRONMENT_NAMES)
     probe.write_text(
         f"""#!/bin/sh
@@ -80,9 +90,9 @@ class socket:
             or type(address[1]) is not int
         ):
             raise AssertionError("unexpected socket address")
-        with open(os.environ["ATHENA_E2E_SOCKET_LOG"], "a", encoding="utf-8") as log:
+        with open(os.environ["TAPPER_E2E_SOCKET_LOG"], "a", encoding="utf-8") as log:
             log.write(f"{address[0]}:{address[1]}\\n")
-        occupied = os.environ.get("ATHENA_E2E_SOCKET_OCCUPIED", "")
+        occupied = os.environ.get("TAPPER_E2E_SOCKET_OCCUPIED", "")
         if occupied != "" and address[1] == int(occupied):
             raise OSError("controlled occupied port")
 
@@ -99,7 +109,7 @@ def _write_stub(directory: Path, name: str) -> None:
     path.write_text(
         """#!/bin/sh
 set -eu
-if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
+if [ "${TAPPER_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
   case "${0##*/}" in
     docker)
       [ -n "${DASHSCOPE_API_KEY:-}" ] || exit 71
@@ -111,7 +121,7 @@ if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
       ;;
   esac
 fi
-if [ "${ATHENA_ASSERT_CHECK_PROVIDER_SCOPE:-}" = 1 ]; then
+if [ "${TAPPER_ASSERT_CHECK_PROVIDER_SCOPE:-}" = 1 ]; then
   case "${0##*/}" in
     uv)
       [ -n "${DASHSCOPE_API_KEY:-}" ] || exit 74
@@ -129,7 +139,7 @@ fi
       ;;
   esac
   printf '\\0'
-} >> "$ATHENA_STUB_LOG"
+} >> "$TAPPER_STUB_LOG"
 exit 0
 """,
         encoding="utf-8",
@@ -152,14 +162,14 @@ def _run_make_with_stubs(
     for name in (
         "COMPOSE_FILE",
         "COMPOSE_PROJECT_NAME",
-        "TAP_ALLOW_ATHENA_VOLUME_RESET",
-        "TAP_ATHENA_COMPOSE_PROJECT",
+        "TAP_ALLOW_TAPPER_VOLUME_RESET",
+        "TAP_TAPPER_COMPOSE_PROJECT",
     ):
         environment.pop(name, None)
     environment.update(
         {
-            "ATHENA_STUB_LOG": str(log),
-            "DOCKER_HOST": "unix:///athena-contract-must-not-reach-real-docker.sock",
+            "TAPPER_STUB_LOG": str(log),
+            "DOCKER_HOST": "unix:///tapper-contract-must-not-reach-real-docker.sock",
             "PATH": f"{stubs}:{os.environ['PATH']}",
         }
     )
@@ -215,11 +225,11 @@ def _supervisor_fixture(
     vite_dir.mkdir(parents=True)
     fake_bin.mkdir()
     _write_environment_name_probe(fake_bin)
-    (root / "apps/web/index.html").write_text("<main>Athena</main>\n", encoding="utf-8")
+    (root / "apps/web/index.html").write_text("<main>Tapper</main>\n", encoding="utf-8")
     (root / "apps/web/vite.config.ts").write_text("export default {};\n", encoding="utf-8")
-    supervisor = scripts / "run-athena-dev.sh"
+    supervisor = scripts / "run-tapper-dev.sh"
     supervisor.write_text(
-        (ROOT / "scripts/run-athena-dev.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts/run-tapper-dev.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     supervisor.chmod(supervisor.stat().st_mode | stat.S_IXUSR)
@@ -229,54 +239,54 @@ def _supervisor_fixture(
     temp_directory.mkdir()
     child = """#!/bin/sh
 set -eu
-if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
+if [ "${TAPPER_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
   [ -z "${DASHSCOPE_API_KEY:-}${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}" ] || exit 103
   [ -z "${LITELLM_EMBEDDING_API_KEY:-}${LITELLM_EMBEDDING_API_BASE:-}" ] || exit 104
 fi
 role="$1"
-printf 'start %s %s\n' "$role" "$$" >> "$ATHENA_CHILD_LOG"
-environment_names="$(athena-env-names)"
-printf 'env %s %s\n' "$role" "$environment_names" >> "$ATHENA_CHILD_LOG"
+printf 'start %s %s\n' "$role" "$$" >> "$TAPPER_CHILD_LOG"
+environment_names="$(tapper-env-names)"
+printf 'env %s %s\n' "$role" "$environment_names" >> "$TAPPER_CHILD_LOG"
 trap '
-  sleep "$ATHENA_STUB_TERM_DELAY"
-  printf "term %s %s\\n" "$role" "$$" >> "$ATHENA_CHILD_LOG"
+  sleep "$TAPPER_STUB_TERM_DELAY"
+  printf "term %s %s\\n" "$role" "$$" >> "$TAPPER_CHILD_LOG"
   exit 0
 ' TERM INT
-if [ "$role" = api ] && [ -n "$ATHENA_STUB_API_EXIT" ]; then
+if [ "$role" = api ] && [ -n "$TAPPER_STUB_API_EXIT" ]; then
   sleep 0.2
-  exit "$ATHENA_STUB_API_EXIT"
+  exit "$TAPPER_STUB_API_EXIT"
 fi
 while :; do sleep 0.1; done
 """
-    child_path = fake_bin / "athena-child"
+    child_path = fake_bin / "tapper-child"
     child_path.write_text(child, encoding="utf-8")
     child_path.chmod(child_path.stat().st_mode | stat.S_IXUSR)
     uv = fake_bin / "uv"
     uv.write_text(
         """#!/bin/sh
 set -eu
-if [ "${ATHENA_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
+if [ "${TAPPER_ASSERT_PROVIDER_SCOPE:-}" = 1 ]; then
   [ -z "${DASHSCOPE_API_KEY:-}${OPENAI_API_KEY:-}${BAILIAN_API_KEY:-}" ] || exit 103
   [ -z "${LITELLM_EMBEDDING_API_KEY:-}${LITELLM_EMBEDDING_API_BASE:-}" ] || exit 104
 fi
 case " $* " in
   *" python -c "*)
-    environment_names="$(athena-env-names)"
-    printf 'env validation %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
-    [ "$TAP_ATHENA_COMPOSE_PROJECT" = "$ATHENA_EXPECTED_PROJECT" ] || exit 89
+    environment_names="$(tapper-env-names)"
+    printf 'env validation %s\n' "$environment_names" >> "$TAPPER_CHILD_LOG"
+    [ "$TAP_TAPPER_COMPOSE_PROJECT" = "$TAPPER_EXPECTED_PROJECT" ] || exit 89
     exit 0
     ;;
   *" python - "*)
-    environment_names="$(athena-env-names)"
-    printf 'env readiness %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
+    environment_names="$(tapper-env-names)"
+    printf 'env readiness %s\n' "$environment_names" >> "$TAPPER_CHILD_LOG"
     last=""
     for item in "$@"; do last="$item"; done
     grep -q '"status"[[:space:]]*:[[:space:]]*"ready"' "$last"
     exit $?
     ;;
-  *" tap.entrypoints.athena_api "*) exec athena-child api ;;
-  *" tap.entrypoints.relay_reconciler "*) exec athena-child relay ;;
-  *" tap.entrypoints.athena_ingestion_worker "*) exec athena-child worker ;;
+  *" tap.entrypoints.tapper_api "*) exec tapper-child api ;;
+  *" tap.entrypoints.relay_reconciler "*) exec tapper-child relay ;;
+  *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
 esac
 exit 99
 """,
@@ -287,10 +297,10 @@ exit 99
     curl.write_text(
         """#!/bin/sh
 set -eu
-environment_names="$(athena-env-names)"
-printf 'env curl %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
-printf 'curl-argv %s\n' "$*" >> "$ATHENA_CHILD_LOG"
-printf '{"status":"%s"}\n' "$ATHENA_STUB_READY_STATUS"
+environment_names="$(tapper-env-names)"
+printf 'env curl %s\n' "$environment_names" >> "$TAPPER_CHILD_LOG"
+printf 'curl-argv %s\n' "$*" >> "$TAPPER_CHILD_LOG"
+printf '{"status":"%s"}\n' "$TAPPER_STUB_READY_STATUS"
 """,
         encoding="utf-8",
     )
@@ -300,18 +310,18 @@ printf '{"status":"%s"}\n' "$ATHENA_STUB_READY_STATUS"
         """#!/bin/sh
 set -eu
 [ "$#" -eq 8 ] || exit 94
-[ "$1" = "$ATHENA_EXPECTED_WEB_ROOT" ] || exit 95
+[ "$1" = "$TAPPER_EXPECTED_WEB_ROOT" ] || exit 95
 [ "$2" = --config ] || exit 96
-[ "$3" = "$ATHENA_EXPECTED_WEB_ROOT/vite.config.ts" ] || exit 97
+[ "$3" = "$TAPPER_EXPECTED_WEB_ROOT/vite.config.ts" ] || exit 97
 [ "$4" = --host ] || exit 98
-[ "$5" = "$ATHENA_WEB_HOST" ] || exit 99
+[ "$5" = "$TAPPER_WEB_HOST" ] || exit 99
 [ "$6" = --port ] || exit 100
-[ "$7" = "$ATHENA_WEB_PORT" ] || exit 101
+[ "$7" = "$TAPPER_WEB_PORT" ] || exit 101
 [ "$8" = --strictPort ] || exit 102
-printf 'vite-root %s config %s\n' "$1" "$3" >> "$ATHENA_CHILD_LOG"
-environment_names="$(athena-env-names)"
-printf 'env web %s\n' "$environment_names" >> "$ATHENA_CHILD_LOG"
-exec athena-child web
+printf 'vite-root %s config %s\n' "$1" "$3" >> "$TAPPER_CHILD_LOG"
+environment_names="$(tapper-env-names)"
+printf 'env web %s\n' "$environment_names" >> "$TAPPER_CHILD_LOG"
+exec tapper-child web
 """,
         encoding="utf-8",
     )
@@ -319,13 +329,13 @@ exec athena-child web
     environment = dict(os.environ)
     environment.update(
         {
-            "ATHENA_CHILD_LOG": str(log),
-            "ATHENA_EXPECTED_PROJECT": "tap-athena-demo",
-            "ATHENA_EXPECTED_WEB_ROOT": str(root / "apps/web"),
-            "ATHENA_STUB_API_EXIT": api_exit,
-            "ATHENA_STUB_READY_STATUS": ready_status,
-            "ATHENA_STUB_TERM_DELAY": term_delay,
-            "ATHENA_SUPERVISOR_ENV": "preloaded",
+            "TAPPER_CHILD_LOG": str(log),
+            "TAPPER_EXPECTED_PROJECT": "tap-tapper-demo",
+            "TAPPER_EXPECTED_WEB_ROOT": str(root / "apps/web"),
+            "TAPPER_STUB_API_EXIT": api_exit,
+            "TAPPER_STUB_READY_STATUS": ready_status,
+            "TAPPER_STUB_TERM_DELAY": term_delay,
+            "TAPPER_SUPERVISOR_ENV": "preloaded",
             "TMPDIR": str(temp_directory),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "TAP_DATABASE_URL": (
@@ -382,8 +392,8 @@ def _e2e_runner_fixture(
     _write_environment_name_probe(stubs)
     temporary.mkdir()
     socket_log = _write_behavioral_socket_stub(root)
-    runner = scripts / "run-athena-e2e.sh"
-    runner_source = (ROOT / "scripts/run-athena-e2e.sh").read_text(encoding="utf-8")
+    runner = scripts / "run-tapper-e2e.sh"
+    runner_source = (ROOT / "scripts/run-tapper-e2e.sh").read_text(encoding="utf-8")
     if readiness_failure:
         deadline = "ready_deadline=$(( SECONDS + 120 ))"
         assert runner_source.count(deadline) == 1
@@ -396,17 +406,17 @@ def _e2e_runner_fixture(
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
     (root / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     (root / ".env").write_text(
-        """TAP_ATHENA_COMPOSE_PROJECT=shared-project
+        """TAP_TAPPER_COMPOSE_PROJECT=shared-project
 MYSQL_PORT=3306
 REDIS_PORT=6379
 AZURITE_BLOB_PORT=10000
 LITELLM_PORT=4000
 MILVUS_PORT=19530
 MILVUS_HEALTH_PORT=9091
-ATHENA_API_PORT=8000
-ATHENA_WEB_PORT=5173
+TAPPER_API_PORT=8000
+TAPPER_WEB_PORT=5173
 TAP_DEMO_MODE=
-ATHENA_MODEL_BACKEND=litellm
+TAPPER_MODEL_BACKEND=litellm
 TAP_DATABASE_URL=mysql+asyncmy://shared@127.0.0.1:3306/tap
 TAP_REDIS_URL=redis://127.0.0.1:6379/0
 MILVUS_URI=http://127.0.0.1:19530
@@ -416,7 +426,7 @@ OPENAI_API_KEY=provider-secret
 BAILIAN_API_KEY=provider-secret
 BAILIAN_API_BASE=https://provider-secret.invalid/bailian
 DASHSCOPE_API_KEY=provider-secret
-LITELLM_ATHENA_EMBEDDING_MODEL=provider-secret-route
+LITELLM_TAPPER_EMBEDDING_MODEL=provider-secret-route
 LITELLM_EMBEDDING_MODEL=provider-secret-model
 LITELLM_EMBEDDING_API_KEY=provider-secret
 LITELLM_EMBEDDING_API_BASE=https://provider-secret.invalid/v1
@@ -432,7 +442,7 @@ MILVUS_READER_PASSWORD=provider-secret
 MILVUS_WRITER_PASSWORD=provider-secret
 MILVUS_PROVISIONER_PASSWORD=provider-secret
 preflight_only=0
-e2e_project=tap-athena-demo
+e2e_project=tap-tapper-demo
 repo_root=/provider-secret/invalid
 compose_file=/provider-secret/invalid.yaml
 state_root=/provider-secret/invalid
@@ -455,17 +465,17 @@ lock_owned=1
 set -eu
 case " $* " in
   *" exec node "*)
-    printf 'chromium\n' >> "$ATHENA_E2E_STUB_LOG"
-    printf '%s' "$ATHENA_STUB_CHROMIUM"
+    printf 'chromium\n' >> "$TAPPER_E2E_STUB_LOG"
+    printf '%s' "$TAPPER_STUB_CHROMIUM"
     ;;
   *" playwright test "*)
-    printf 'playwright|%s|%s\n' "$ATHENA_E2E_PHASE" "$*" >> "$ATHENA_E2E_STUB_LOG"
-    if [ "$ATHENA_STUB_FAIL_PHASE" = "$ATHENA_E2E_PHASE" ]; then exit 37; fi
-    if [ "$ATHENA_STUB_MALFORMED_PHASE" = "$ATHENA_E2E_PHASE" ]; then
+    printf 'playwright|%s|%s\n' "$TAPPER_E2E_PHASE" "$*" >> "$TAPPER_E2E_STUB_LOG"
+    if [ "$TAPPER_STUB_FAIL_PHASE" = "$TAPPER_E2E_PHASE" ]; then exit 37; fi
+    if [ "$TAPPER_STUB_MALFORMED_PHASE" = "$TAPPER_E2E_PHASE" ]; then
       printf '%s\n' '{not-json'
       exit 0
     fi
-    if [ "$ATHENA_STUB_SKIPPED_PHASE" = "$ATHENA_E2E_PHASE" ]; then
+    if [ "$TAPPER_STUB_SKIPPED_PHASE" = "$TAPPER_E2E_PHASE" ]; then
       printf '%s\n' '{"stats":{"expected":1,"unexpected":0,"flaky":0,"skipped":1}}'
       exit 0
     fi
@@ -483,12 +493,12 @@ esac
 set -eu
 case " $* " in
   *" python -c "*)
-    printf 'uv|settings\n' >> "$ATHENA_E2E_STUB_LOG"
-    environment_names="$(athena-env-names)"
-    printf 'env|settings|%s\n' "$environment_names" >> "$ATHENA_E2E_STUB_LOG"
-    [ "$TAP_DEMO_MODE:$ATHENA_MODEL_BACKEND:$ATHENA_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    printf 'uv|settings\n' >> "$TAPPER_E2E_STUB_LOG"
+    environment_names="$(tapper-env-names)"
+    printf 'env|settings|%s\n' "$environment_names" >> "$TAPPER_E2E_STUB_LOG"
+    [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
     [ "$LITELLM_MODEL" = dashscope/e2e-chat-unused ] || exit 72
-    [ "$LITELLM_ATHENA_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
+    [ "$LITELLM_TAPPER_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
     [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
     [ "$DASHSCOPE_API_KEY" = tap-e2e-unused ] || exit 75
     [ "$DASHSCOPE_API_BASE" = http://127.0.0.1:14000 ] || exit 76
@@ -497,22 +507,22 @@ case " $* " in
     [ -z "${CODEX_HOME+x}${CODEX_API_KEY+x}" ] || exit 78
     ;;
   *" python - "*)
-    printf 'uv|probe\n' >> "$ATHENA_E2E_STUB_LOG"
+    printf 'uv|probe\n' >> "$TAPPER_E2E_STUB_LOG"
     shift 4
-    exec "$ATHENA_TEST_PYTHON" "$@"
+    exec "$TAPPER_TEST_PYTHON" "$@"
     ;;
-  *" alembic "*) printf 'uv|alembic\n' >> "$ATHENA_E2E_STUB_LOG" ;;
+  *" alembic "*) printf 'uv|alembic\n' >> "$TAPPER_E2E_STUB_LOG" ;;
   *" scripts/milvus_bootstrap.py "*)
     [ "${TAP_ALLOW_INITIAL_MILVUS_ROOT:-}" = 1 ] || exit 91
-    printf 'uv|bootstrap|initial=1\n' >> "$ATHENA_E2E_STUB_LOG"
+    printf 'uv|bootstrap|initial=1\n' >> "$TAPPER_E2E_STUB_LOG"
     ;;
-  *" scripts/athena_collection.py ensure "*)
-    printf 'uv|ensure\n' >> "$ATHENA_E2E_STUB_LOG"
-    [ "$ATHENA_STUB_ENSURE_FAILURE" != 1 ] || exit 41
+  *" scripts/tapper_collection.py ensure "*)
+    printf 'uv|ensure\n' >> "$TAPPER_E2E_STUB_LOG"
+    [ "$TAPPER_STUB_ENSURE_FAILURE" != 1 ] || exit 41
     ;;
-  *"test_athena_persistence_restart.py "*)
-    [ "${ATHENA_E2E_PHASE:-}:${TAP_RUN_ATHENA_E2E:-}" = verify:1 ] || exit 92
-    printf 'uv|verify|%s\n' "$ATHENA_E2E_PHASE" >> "$ATHENA_E2E_STUB_LOG"
+  *"test_tapper_persistence_restart.py "*)
+    [ "${TAPPER_E2E_PHASE:-}:${TAP_RUN_TAPPER_E2E:-}" = verify:1 ] || exit 92
+    printf 'uv|verify|%s\n' "$TAPPER_E2E_PHASE" >> "$TAPPER_E2E_STUB_LOG"
     ;;
   *) exit 97 ;;
 esac
@@ -525,18 +535,18 @@ esac
         """#!/bin/sh
 set -eu
 case " $* " in
-  " context show ") printf 'context|show\n' >> "$ATHENA_E2E_STUB_LOG"; printf 'default\n' ;;
+  " context show ") printf 'context|show\n' >> "$TAPPER_E2E_STUB_LOG"; printf 'default\n' ;;
   *" context inspect "*)
-    printf 'context|inspect\n' >> "$ATHENA_E2E_STUB_LOG"
+    printf 'context|inspect\n' >> "$TAPPER_E2E_STUB_LOG"
     printf 'unix:///tmp/docker.sock\n'
     ;;
   *" compose "*)
-    [ "$TAP_ATHENA_COMPOSE_PROJECT" = tap-athena-e2e ] || exit 81
+    [ "$TAP_TAPPER_COMPOSE_PROJECT" = tap-tapper-e2e ] || exit 81
     middleware_ports="$MYSQL_PORT:$REDIS_PORT:$AZURITE_BLOB_PORT:$LITELLM_PORT"
     [ "$middleware_ports" = 13306:16379:11000:14000 ] || exit 82
-    app_ports="$MILVUS_PORT:$MILVUS_HEALTH_PORT:$ATHENA_API_PORT:$ATHENA_WEB_PORT"
+    app_ports="$MILVUS_PORT:$MILVUS_HEALTH_PORT:$TAPPER_API_PORT:$TAPPER_WEB_PORT"
     [ "$app_ports" = 29530:19091:18000:15173 ] || exit 83
-    [ "$TAP_DEMO_MODE:$ATHENA_MODEL_BACKEND:$ATHENA_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 84
+    [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 84
     expected_database='mysql+asyncmy://tap:tap-e2e@127.0.0.1:13306/tap?charset=utf8mb4'
     [ "$TAP_DATABASE_URL" = "$expected_database" ] || exit 85
     [ "$TAP_REDIS_URL" = 'redis://127.0.0.1:16379/0' ] || exit 86
@@ -548,11 +558,11 @@ case " $* " in
       *'BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1;'*) ;;
       *) exit 88 ;;
     esac
-    printf 'docker|%s\n' "$*" >> "$ATHENA_E2E_STUB_LOG"
+    printf 'docker|%s\n' "$*" >> "$TAPPER_E2E_STUB_LOG"
     case " $* " in
       *" down --volumes --remove-orphans "*)
-        cleanup_marker="$ATHENA_E2E_STUB_LOG.down-volumes"
-        if [ "$ATHENA_STUB_CLEANUP_FAILURE" = 1 ] && [ -f "$cleanup_marker" ]; then
+        cleanup_marker="$TAPPER_E2E_STUB_LOG.down-volumes"
+        if [ "$TAPPER_STUB_CLEANUP_FAILURE" = 1 ] && [ -f "$cleanup_marker" ]; then
           exit 93
         fi
         : > "$cleanup_marker"
@@ -575,18 +585,18 @@ case " $* " in
 esac
 case " $* " in
   *"/health/ready"*)
-    if [ "${ATHENA_STUB_READINESS_FAILURE:-}" = api-http ]; then
+    if [ "${TAPPER_STUB_READINESS_FAILURE:-}" = api-http ]; then
       printf '%s\n' '{"status":"ready"}'
       exit 22
     fi
-    if [ "${ATHENA_STUB_READINESS_FAILURE:-}" = api-body ]; then
+    if [ "${TAPPER_STUB_READINESS_FAILURE:-}" = api-body ]; then
       printf '%s\n' '{"status":"unready"}'
     else
       printf '%s\n' '{"status":"ready"}'
     fi
     ;;
   *"15173/"*)
-    [ "${ATHENA_STUB_READINESS_FAILURE:-}" != web-http ] || exit 22
+    [ "${TAPPER_STUB_READINESS_FAILURE:-}" != web-http ] || exit 22
     printf '%s\n' '<html></html>'
     ;;
   *) exit 94 ;;
@@ -595,12 +605,12 @@ esac
         encoding="utf-8",
     )
     curl.chmod(curl.stat().st_mode | stat.S_IXUSR)
-    (scripts / "run-athena-dev.sh").write_text(
+    (scripts / "run-tapper-dev.sh").write_text(
         """#!/bin/bash
 set -eu
-printf 'apps|start|%s\n' "$$" >> "$ATHENA_E2E_STUB_LOG"
-[ "${ATHENA_STUB_READINESS_FAILURE:-}" != supervisor ] || exit 17
-trap 'printf "apps|term|%s\\n" "$$" >> "$ATHENA_E2E_STUB_LOG"; exit 143' TERM
+printf 'apps|start|%s\n' "$$" >> "$TAPPER_E2E_STUB_LOG"
+[ "${TAPPER_STUB_READINESS_FAILURE:-}" != supervisor ] || exit 17
+trap 'printf "apps|term|%s\\n" "$$" >> "$TAPPER_E2E_STUB_LOG"; exit 143' TERM
 while :; do sleep 0.1; done
 """,
         encoding="utf-8",
@@ -608,17 +618,17 @@ while :; do sleep 0.1; done
     environment = dict(os.environ)
     environment.update(
         {
-            "ATHENA_E2E_STUB_LOG": str(log),
-            "ATHENA_E2E_SOCKET_OCCUPIED": "",
-            "ATHENA_STUB_CLEANUP_FAILURE": "1" if cleanup_failure else "0",
-            "ATHENA_STUB_CHROMIUM": str(chromium),
-            "ATHENA_STUB_FAIL_PHASE": fail_phase,
-            "ATHENA_STUB_ENSURE_FAILURE": "1" if ensure_failure else "0",
-            "ATHENA_STUB_MALFORMED_PHASE": malformed_phase,
-            "ATHENA_STUB_READINESS_FAILURE": readiness_failure,
-            "ATHENA_STUB_SKIPPED_PHASE": skipped_phase,
-            "ATHENA_E2E_SOCKET_LOG": str(socket_log),
-            "ATHENA_TEST_PYTHON": sys.executable,
+            "TAPPER_E2E_STUB_LOG": str(log),
+            "TAPPER_E2E_SOCKET_OCCUPIED": "",
+            "TAPPER_STUB_CLEANUP_FAILURE": "1" if cleanup_failure else "0",
+            "TAPPER_STUB_CHROMIUM": str(chromium),
+            "TAPPER_STUB_FAIL_PHASE": fail_phase,
+            "TAPPER_STUB_ENSURE_FAILURE": "1" if ensure_failure else "0",
+            "TAPPER_STUB_MALFORMED_PHASE": malformed_phase,
+            "TAPPER_STUB_READINESS_FAILURE": readiness_failure,
+            "TAPPER_STUB_SKIPPED_PHASE": skipped_phase,
+            "TAPPER_E2E_SOCKET_LOG": str(socket_log),
+            "TAPPER_TEST_PYTHON": sys.executable,
             "PATH": f"{stubs}:{os.environ['PATH']}",
             "TMPDIR": str(temporary),
         }
@@ -642,12 +652,19 @@ def test_five_public_demo_targets_and_separate_reset_resolve() -> None:
     }
 
     assert all(result.returncode == 0 for result in recipes.values())
-    assert "scripts/check-athena-demo.py" in recipes["demo-check"].stdout
-    assert "scripts/run-athena-dev.sh" in recipes["demo-dev"].stdout
-    assert "scripts/run-athena-e2e.sh" in recipes["demo-e2e"].stdout
+    assert "scripts/check-tapper-demo.py" in recipes["demo-check"].stdout
+    assert "scripts/run-tapper-dev.sh" in recipes["demo-dev"].stdout
+    assert "scripts/run-tapper-e2e.sh" in recipes["demo-e2e"].stdout
     assert "upgrade head" in recipes["demo-up"].stdout
-    assert "scripts/athena_collection.py ensure" in recipes["demo-up"].stdout
+    assert "scripts/tapper_collection.py ensure" in recipes["demo-up"].stdout
     assert "--remove-orphans" in recipes["demo-down"].stdout
+
+
+def test_demo_up_uses_tapper_project_and_collection_script() -> None:
+    result = _make_dry_run("demo-up")
+
+    assert "tap-tapper-demo" in result.stdout
+    assert "scripts/tapper_collection.py ensure" in result.stdout
 
 
 def test_demo_down_never_removes_named_volumes() -> None:
@@ -675,7 +692,7 @@ def test_demo_down_executes_only_exact_project_scoped_non_volume_argv(
             "-f",
             str(ROOT / "compose.yaml"),
             "-p",
-            "tap-athena-demo",
+            "tap-tapper-demo",
             "--profile",
             "milvus",
             "down",
@@ -692,7 +709,7 @@ def test_invalid_project_fails_before_fake_docker_is_invoked(tmp_path: Path) -> 
     docker.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 99\n", encoding="utf-8")
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
     completed = subprocess.run(
-        ["make", "--no-print-directory", "demo-down", "TAP_ATHENA_COMPOSE_PROJECT=Bad Project"],
+        ["make", "--no-print-directory", "demo-down", "TAP_TAPPER_COMPOSE_PROJECT=Bad Project"],
         cwd=ROOT,
         env=os.environ | {"PATH": f"{tmp_path}:{os.environ['PATH']}"},
         text=True,
@@ -702,7 +719,7 @@ def test_invalid_project_fails_before_fake_docker_is_invoked(tmp_path: Path) -> 
 
     assert completed.returncode != 0
     assert not marker.exists()
-    assert "invalid Athena Compose project" in completed.stderr
+    assert "invalid Tapper Compose project" in completed.stderr
 
 
 def test_reset_requires_both_exact_project_and_opt_in_before_fake_docker(tmp_path: Path) -> None:
@@ -727,8 +744,8 @@ def test_reset_requires_both_exact_project_and_opt_in_before_fake_docker(tmp_pat
             "make",
             "--no-print-directory",
             "demo-reset",
-            "TAP_ATHENA_COMPOSE_PROJECT=tap-athena-e2e",
-            "TAP_ALLOW_ATHENA_VOLUME_RESET=1",
+            "TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-e2e",
+            "TAP_ALLOW_TAPPER_VOLUME_RESET=1",
         ],
         cwd=ROOT,
         env=base_env,
@@ -746,7 +763,7 @@ def test_valid_reset_targets_only_exact_default_project_volumes(tmp_path: Path) 
     completed, calls = _run_make_with_stubs(
         tmp_path,
         "demo-reset",
-        extra_env={"TAP_ALLOW_ATHENA_VOLUME_RESET": "1"},
+        extra_env={"TAP_ALLOW_TAPPER_VOLUME_RESET": "1"},
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -757,7 +774,7 @@ def test_valid_reset_targets_only_exact_default_project_volumes(tmp_path: Path) 
             "-f",
             str(ROOT / "compose.yaml"),
             "-p",
-            "tap-athena-demo",
+            "tap-tapper-demo",
             "--profile",
             "milvus",
             "down",
@@ -779,7 +796,7 @@ def test_env_file_cannot_authorize_reset_or_run_before_invalid_project_guard(
     (isolated / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     side_effect = isolated / "env-sourced"
     (isolated / ".env").write_text(
-        f"TAP_ALLOW_ATHENA_VOLUME_RESET=1\ntouch '{side_effect}'\n",
+        f"TAP_ALLOW_TAPPER_VOLUME_RESET=1\ntouch '{side_effect}'\n",
         encoding="utf-8",
     )
     stubs = isolated / "bin"
@@ -789,10 +806,10 @@ def test_env_file_cannot_authorize_reset_or_run_before_invalid_project_guard(
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"TAP_ALLOW_ATHENA_VOLUME_RESET", "TAP_ATHENA_COMPOSE_PROJECT"}
+        if key not in {"TAP_ALLOW_TAPPER_VOLUME_RESET", "TAP_TAPPER_COMPOSE_PROJECT"}
     } | {
-        "ATHENA_STUB_LOG": str(log),
-        "DOCKER_HOST": "unix:///athena-contract-must-not-reach-real-docker.sock",
+        "TAPPER_STUB_LOG": str(log),
+        "DOCKER_HOST": "unix:///tapper-contract-must-not-reach-real-docker.sock",
         "PATH": f"{stubs}:{os.environ['PATH']}",
     }
 
@@ -809,7 +826,7 @@ def test_env_file_cannot_authorize_reset_or_run_before_invalid_project_guard(
             "make",
             "--no-print-directory",
             "demo-up",
-            "TAP_ATHENA_COMPOSE_PROJECT=Bad Project",
+            "TAP_TAPPER_COMPOSE_PROJECT=Bad Project",
         ],
         cwd=isolated,
         env=environment,
@@ -838,7 +855,7 @@ def test_demo_up_reasserts_captured_project_after_dotenv_shell_collisions(
         """project=tap-hostile
 repo_root=/provider-secret/invalid
 TAP_REPO_ROOT=/provider-secret/invalid
-TAP_ATHENA_COMPOSE_PROJECT=tap-hostile
+TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
 """,
         encoding="utf-8",
     )
@@ -850,8 +867,8 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-hostile
         path.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
-            '[ "$TAP_ATHENA_COMPOSE_PROJECT" = tap-athena-demo ] || exit 88\n'
-            f"printf '%s\\n' \"$TAP_ATHENA_COMPOSE_PROJECT\" >> '{marker}'\n",
+            '[ "$TAP_TAPPER_COMPOSE_PROJECT" = tap-tapper-demo ] || exit 88\n'
+            f"printf '%s\\n' \"$TAP_TAPPER_COMPOSE_PROJECT\" >> '{marker}'\n",
             encoding="utf-8",
         )
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -861,9 +878,9 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-hostile
         cwd=isolated,
         env=os.environ
         | {
-            "DOCKER_HOST": "unix:///athena-contract-must-not-reach-real-docker.sock",
+            "DOCKER_HOST": "unix:///tapper-contract-must-not-reach-real-docker.sock",
             "PATH": f"{stubs}:{os.environ['PATH']}",
-            "TAP_ATHENA_COMPOSE_PROJECT": "tap-athena-demo",
+            "TAP_TAPPER_COMPOSE_PROJECT": "tap-tapper-demo",
         },
         text=True,
         capture_output=True,
@@ -872,10 +889,10 @@ TAP_ATHENA_COMPOSE_PROJECT=tap-hostile
 
     assert completed.returncode == 0, completed.stderr
     assert marker.read_text(encoding="utf-8").splitlines() == [
-        "tap-athena-demo",
-        "tap-athena-demo",
-        "tap-athena-demo",
-        "tap-athena-demo",
+        "tap-tapper-demo",
+        "tap-tapper-demo",
+        "tap-tapper-demo",
+        "tap-tapper-demo",
     ]
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -893,7 +910,7 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
             "-f",
             str(ROOT / "compose.yaml"),
             "-p",
-            "tap-athena-demo",
+            "tap-tapper-demo",
             "--profile",
             "milvus",
             "up",
@@ -928,7 +945,7 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
             "--project",
             "apps/backend",
             "python",
-            "scripts/athena_collection.py",
+            "scripts/tapper_collection.py",
             "ensure",
         ],
     ]
@@ -941,7 +958,7 @@ def test_demo_up_scopes_provider_secrets_to_the_gateway_process(
         tmp_path,
         "demo-up",
         extra_env={
-            "ATHENA_ASSERT_PROVIDER_SCOPE": "1",
+            "TAPPER_ASSERT_PROVIDER_SCOPE": "1",
             "DASHSCOPE_API_KEY": "current-provider-secret",
             "OPENAI_API_KEY": "legacy-openai-secret",
             "BAILIAN_API_KEY": "legacy-bailian-secret",
@@ -959,7 +976,7 @@ def test_demo_check_keeps_only_the_current_gateway_provider_secret(
         tmp_path,
         "demo-check",
         extra_env={
-            "ATHENA_ASSERT_CHECK_PROVIDER_SCOPE": "1",
+            "TAPPER_ASSERT_CHECK_PROVIDER_SCOPE": "1",
             "DASHSCOPE_API_KEY": "current-provider-secret",
             "OPENAI_API_KEY": "legacy-openai-secret",
             "BAILIAN_API_KEY": "legacy-bailian-secret",
@@ -993,18 +1010,18 @@ def test_demo_dry_run_never_renders_connection_strings_or_credentials() -> None:
     assert "AccountKey=" not in rendered
 
 
-def test_athena_ensure_creates_and_verifies_both_private_containers_before_index(
+def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
 
     events: list[str] = []
 
@@ -1024,8 +1041,8 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
             events.append("close:blob")
 
     class Receipt:
-        physical_collection = "kb_doc_v1_athena_demo"
-        alias = "kb_doc_athena_demo_active"
+        physical_collection = "kb_doc_v1_tapper_demo"
+        alias = "kb_doc_tapper_demo_active"
 
     class Index:
         async def ensure_target(self) -> Receipt:
@@ -1041,22 +1058,22 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
     async def index(_settings, _engine):  # type: ignore[no-untyped-def]
         return Index()
 
-    monkeypatch.setattr(athena_collection, "_create_database", database)
-    monkeypatch.setattr(athena_collection, "_create_blob", lambda _settings: Blob())
-    monkeypatch.setattr(athena_collection, "_create_document_index", index)
-    settings = AthenaSettings.from_mapping(
+    monkeypatch.setattr(tapper_collection, "_create_database", database)
+    monkeypatch.setattr(tapper_collection, "_create_blob", lambda _settings: Blob())
+    monkeypatch.setattr(tapper_collection, "_create_document_index", index)
+    settings = TapperSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
 
-    asyncio.run(athena_collection.ensure(settings))
+    asyncio.run(tapper_collection.ensure(settings))
 
     assert events == [
         "ensure:containers",
-        "verify:athena-originals",
-        "verify:athena-artifacts",
+        "verify:tapper-originals",
+        "verify:tapper-artifacts",
         "ensure:index",
         "close:index",
         "close:blob",
@@ -1081,7 +1098,7 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:athena-originals",
+                "blob:tapper-originals",
                 "close:blob",
                 "close:engine",
             ],
@@ -1093,8 +1110,8 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:athena-originals",
-                "blob:athena-artifacts",
+                "blob:tapper-originals",
+                "blob:tapper-artifacts",
                 "milvus-client",
                 "close:blob",
                 "close:engine",
@@ -1107,8 +1124,8 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:athena-originals",
-                "blob:athena-artifacts",
+                "blob:tapper-originals",
+                "blob:tapper-artifacts",
                 "milvus-client",
                 "milvus-target",
                 "close:index",
@@ -1123,8 +1140,8 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
                 "database",
                 "blob",
                 "blob:containers",
-                "blob:athena-originals",
-                "blob:athena-artifacts",
+                "blob:tapper-originals",
+                "blob:tapper-artifacts",
                 "milvus-client",
                 "milvus-target",
                 "close:index",
@@ -1134,7 +1151,7 @@ def test_athena_ensure_creates_and_verifies_both_private_containers_before_index
         ),
     ],
 )
-def test_athena_ensure_cli_reports_only_the_closed_failure_stage_and_settles_prior_owners(
+def test_tapper_ensure_cli_reports_only_the_closed_failure_stage_and_settles_prior_owners(
     monkeypatch,
     capsys,
     failure_point: str,
@@ -1142,12 +1159,12 @@ def test_athena_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
     expected_events: list[str],
 ) -> None:  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        f"athena_collection_{failure_point}_contract",
-        ROOT / "scripts/athena_collection.py",
+        f"tapper_collection_{failure_point}_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
     events: list[str] = []
 
     class Engine:
@@ -1181,9 +1198,9 @@ def test_athena_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
                     "physical_collection": (
                         "wrong_collection"
                         if failure_point == "milvus-receipt"
-                        else "kb_doc_v1_athena_demo"
+                        else "kb_doc_v1_tapper_demo"
                     ),
-                    "alias": "kb_doc_athena_demo_active",
+                    "alias": "kb_doc_tapper_demo_active",
                 },
             )()
 
@@ -1208,14 +1225,14 @@ def test_athena_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
             raise RuntimeError("provider-secret-detail")
         return Index()
 
-    monkeypatch.setattr(athena_collection, "_create_database", database)
-    monkeypatch.setattr(athena_collection, "_create_blob", blob)
-    monkeypatch.setattr(athena_collection, "_create_document_index", index)
-    result = athena_collection.main(
+    monkeypatch.setattr(tapper_collection, "_create_database", database)
+    monkeypatch.setattr(tapper_collection, "_create_blob", blob)
+    monkeypatch.setattr(tapper_collection, "_create_document_index", index)
+    result = tapper_collection.main(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1224,36 +1241,36 @@ def test_athena_ensure_cli_reports_only_the_closed_failure_stage_and_settles_pri
     assert events == expected_events
     assert output.out == ""
     assert output.err == (
-        f"Athena resource ensure failed at {expected_stage}; "
+        f"Tapper resource ensure failed at {expected_stage}; "
         "check local middleware configuration.\n"
     )
     assert "provider-secret-detail" not in output.err
 
 
-def test_athena_ensure_cli_reports_configuration_failure_before_any_resource_stage(
+def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_stage(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_configuration_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_configuration_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
     calls: list[str] = []
     monkeypatch.setattr(
-        athena_collection,
+        tapper_collection,
         "ensure",
         lambda *_args, **_kwargs: calls.append("resource"),
     )
 
-    result = athena_collection.main(
+    result = tapper_collection.main(
         ["ensure"],
         {
-            "ATHENA_API_HOST": "provider-secret-invalid-host",
+            "TAPPER_API_HOST": "provider-secret-invalid-host",
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1262,24 +1279,24 @@ def test_athena_ensure_cli_reports_configuration_failure_before_any_resource_sta
     assert calls == []
     assert output.out == ""
     assert output.err == (
-        "Athena resource ensure failed at configuration; check local middleware configuration.\n"
+        "Tapper resource ensure failed at configuration; check local middleware configuration.\n"
     )
     assert "provider-secret-invalid-host" not in output.err
 
 
-def test_athena_ensure_parses_codex_selection_without_discovery(
+def test_tapper_ensure_parses_codex_selection_without_discovery(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     import shutil
 
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_codex_configuration_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_codex_configuration_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
     seen: list[str] = []
 
     async def ensure(settings, **_kwargs):  # type: ignore[no-untyped-def]
@@ -1289,12 +1306,12 @@ def test_athena_ensure_parses_codex_selection_without_discovery(
         raise AssertionError("collection ensure performed Codex discovery")
 
     monkeypatch.setattr(shutil, "which", forbidden_discovery)
-    monkeypatch.setattr(athena_collection, "ensure", ensure)
+    monkeypatch.setattr(tapper_collection, "ensure", ensure)
 
-    result = athena_collection.main(
+    result = tapper_collection.main(
         ["ensure"],
         {
-            "ATHENA_ANSWER_BACKEND": "codex",
+            "TAPPER_ANSWER_BACKEND": "codex",
             "LITELLM_MODEL": "openai/test-chat",
             "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
@@ -1303,34 +1320,34 @@ def test_athena_ensure_parses_codex_selection_without_discovery(
     output = capsys.readouterr()
     assert result == 0
     assert seen == ["codex"]
-    assert output.out == "Athena resources ready.\n"
+    assert output.out == "Tapper resources ready.\n"
     assert output.err == ""
 
 
-def test_athena_ensure_cli_redacts_provider_failures(
+def test_tapper_ensure_cli_redacts_provider_failures(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     from tap.modules.knowledge.ports.errors import IndexUnavailable
 
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_failure_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_failure_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
 
     async def fail(_settings, *, stage):  # type: ignore[no-untyped-def]
         stage.set("milvus-target")
         raise IndexUnavailable("provider-secret-detail")
 
-    monkeypatch.setattr(athena_collection, "ensure", fail)
-    result = athena_collection.main(
+    monkeypatch.setattr(tapper_collection, "ensure", fail)
+    result = tapper_collection.main(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1338,34 +1355,34 @@ def test_athena_ensure_cli_redacts_provider_failures(
     assert result == 1
     assert output.out == ""
     assert output.err == (
-        "Athena resource ensure failed at milvus-target; check local middleware configuration.\n"
+        "Tapper resource ensure failed at milvus-target; check local middleware configuration.\n"
     )
     assert "provider-secret-detail" not in output.err
 
 
-def test_athena_ensure_cli_maps_keyboard_interrupt_to_130_without_output(
+def test_tapper_ensure_cli_maps_keyboard_interrupt_to_130_without_output(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_keyboard_interrupt_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_keyboard_interrupt_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
 
     async def interrupt(_settings, *, stage):  # type: ignore[no-untyped-def]
         stage.set("milvus-target")
         raise KeyboardInterrupt("provider-secret-interrupt")
 
-    monkeypatch.setattr(athena_collection, "ensure", interrupt)
+    monkeypatch.setattr(tapper_collection, "ensure", interrupt)
 
-    result = athena_collection.main(
+    result = tapper_collection.main(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1375,29 +1392,29 @@ def test_athena_ensure_cli_maps_keyboard_interrupt_to_130_without_output(
     assert output.err == ""
 
 
-def test_athena_ensure_cli_redacts_direct_cancelled_error(
+def test_tapper_ensure_cli_redacts_direct_cancelled_error(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_cancelled_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_cancelled_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
 
     async def cancel(_settings, *, stage):  # type: ignore[no-untyped-def]
         stage.set("milvus-client")
         raise asyncio.CancelledError("provider-secret-cancelled")
 
-    monkeypatch.setattr(athena_collection, "ensure", cancel)
+    monkeypatch.setattr(tapper_collection, "ensure", cancel)
 
-    result = athena_collection.main(
+    result = tapper_collection.main(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1405,22 +1422,22 @@ def test_athena_ensure_cli_redacts_direct_cancelled_error(
     assert result == 1
     assert output.out == ""
     assert output.err == (
-        "Athena resource ensure failed at milvus-client; check local middleware configuration.\n"
+        "Tapper resource ensure failed at milvus-client; check local middleware configuration.\n"
     )
     assert "provider-secret" not in output.err
 
 
-def test_athena_ensure_cli_redacts_cancelled_error_and_cleanup_group(
+def test_tapper_ensure_cli_redacts_cancelled_error_and_cleanup_group(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_cancelled_cleanup_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_cancelled_cleanup_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
     events: list[str] = []
 
     class Engine:
@@ -1455,15 +1472,15 @@ def test_athena_ensure_cli_redacts_cancelled_error_and_cleanup_group(
         events.append("index")
         return Index()
 
-    monkeypatch.setattr(athena_collection, "_create_database", database)
-    monkeypatch.setattr(athena_collection, "_create_blob", lambda _settings: Blob())
-    monkeypatch.setattr(athena_collection, "_create_document_index", index)
+    monkeypatch.setattr(tapper_collection, "_create_database", database)
+    monkeypatch.setattr(tapper_collection, "_create_blob", lambda _settings: Blob())
+    monkeypatch.setattr(tapper_collection, "_create_document_index", index)
 
-    result = athena_collection.main(
+    result = tapper_collection.main(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1472,8 +1489,8 @@ def test_athena_ensure_cli_redacts_cancelled_error_and_cleanup_group(
     assert events == [
         "database",
         "ensure:containers",
-        "verify:athena-originals",
-        "verify:athena-artifacts",
+        "verify:tapper-originals",
+        "verify:tapper-artifacts",
         "index",
         "ensure:index",
         "close:index",
@@ -1482,7 +1499,7 @@ def test_athena_ensure_cli_redacts_cancelled_error_and_cleanup_group(
     ]
     assert output.out == ""
     assert output.err == (
-        "Athena resource ensure failed at milvus-target; check local middleware configuration.\n"
+        "Tapper resource ensure failed at milvus-target; check local middleware configuration.\n"
     )
     assert "provider-secret" not in output.err
 
@@ -1511,7 +1528,7 @@ def test_athena_ensure_cli_redacts_cancelled_error_and_cleanup_group(
         "cleanup",
     ),
 )
-def test_athena_ensure_cli_maps_only_closed_target_failure_stages(
+def test_tapper_ensure_cli_maps_only_closed_target_failure_stages(
     monkeypatch,
     capsys,
     target_stage: str,
@@ -1522,24 +1539,24 @@ def test_athena_ensure_cli_maps_only_closed_target_failure_stages(
     )
 
     spec = importlib.util.spec_from_file_location(
-        f"athena_collection_target_{target_stage}_contract",
-        ROOT / "scripts/athena_collection.py",
+        f"tapper_collection_target_{target_stage}_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
 
     async def fail(_settings, *, stage):  # type: ignore[no-untyped-def]
         stage.set("milvus-target")
         raise IndexTargetProvisioningFailed(_IndexTargetStage(target_stage))
 
-    monkeypatch.setattr(athena_collection, "ensure", fail)
+    monkeypatch.setattr(tapper_collection, "ensure", fail)
 
-    result = athena_collection.main(
+    result = tapper_collection.main(
         ["ensure"],
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         },
     )
     output = capsys.readouterr()
@@ -1547,7 +1564,7 @@ def test_athena_ensure_cli_maps_only_closed_target_failure_stages(
     assert result == 1
     assert output.out == ""
     assert output.err == (
-        f"Athena resource ensure failed at milvus-target-{target_stage}; "
+        f"Tapper resource ensure failed at milvus-target-{target_stage}; "
         "check local middleware configuration.\n"
     )
 
@@ -1568,17 +1585,17 @@ def _emit_provider_rpc_error(details: str) -> None:
         _log_rpc_error("synthetic_call", "RPC error", details, time.monotonic())
 
 
-def test_athena_ensure_cli_suppresses_worker_thread_rpc_details(
+def test_tapper_ensure_cli_suppresses_worker_thread_rpc_details(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        "athena_collection_rpc_log_contract",
-        ROOT / "scripts/athena_collection.py",
+        "tapper_collection_rpc_log_contract",
+        ROOT / "scripts/tapper_collection.py",
     )
     assert spec is not None and spec.loader is not None
-    athena_collection = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(athena_collection)
+    tapper_collection = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tapper_collection)
     logger, handler, provider_output = _capture_provider_rpc_logs()
 
     async def fail(_settings, *, stage):  # type: ignore[no-untyped-def]
@@ -1586,13 +1603,13 @@ def test_athena_ensure_cli_suppresses_worker_thread_rpc_details(
         await asyncio.to_thread(_emit_provider_rpc_error, "provider-secret-rpc-detail")
         raise RuntimeError("provider failure")
 
-    monkeypatch.setattr(athena_collection, "ensure", fail)
+    monkeypatch.setattr(tapper_collection, "ensure", fail)
     try:
-        result = athena_collection.main(
+        result = tapper_collection.main(
             ["ensure"],
             {
                 "LITELLM_MODEL": "openai/test-chat",
-                "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+                "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
             },
         )
         _emit_provider_rpc_error("ensure-filter-restored-after-main")
@@ -1603,7 +1620,7 @@ def test_athena_ensure_cli_suppresses_worker_thread_rpc_details(
     assert result == 1
     assert output.out == ""
     assert output.err == (
-        "Athena resource ensure failed at milvus-target; check local middleware configuration.\n"
+        "Tapper resource ensure failed at milvus-target; check local middleware configuration.\n"
     )
     assert "provider-secret-rpc-detail" not in provider_output.getvalue()
     assert "ensure-filter-restored-after-main" in provider_output.getvalue()
@@ -1613,10 +1630,10 @@ def test_owned_milvus_fixture_settles_coordinator_and_role_clients_if_index_cons
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("TAP_RUN_MILVUS_INTEGRATION", "1")
-    monkeypatch.setenv("TAP_MILVUS_OWNED_INSTANCE", "task5-athena-owned")
+    monkeypatch.setenv("TAP_MILVUS_OWNED_INSTANCE", "task5-tapper-owned")
     spec = importlib.util.spec_from_file_location(
-        "athena_projection_fixture_ownership_contract",
-        ROOT / "apps/backend/tests/integration/test_athena_milvus_projection.py",
+        "tapper_projection_fixture_ownership_contract",
+        ROOT / "apps/backend/tests/integration/test_tapper_milvus_projection.py",
     )
     assert spec is not None and spec.loader is not None
     projection = importlib.util.module_from_spec(spec)
@@ -1665,7 +1682,7 @@ def test_owned_milvus_fixture_settles_coordinator_and_role_clients_if_index_cons
         "create_engine_and_session_factory",
         lambda _url: (Engine(), object()),
     )
-    monkeypatch.setattr(projection, "create_athena_document_clients", clients)
+    monkeypatch.setattr(projection, "create_tapper_document_clients", clients)
     monkeypatch.setattr(projection, "MysqlProjectionCoordinator", Coordinator)
     monkeypatch.setattr(projection, "MilvusDocumentIndex", fail_index)
     monkeypatch.setattr(projection, "sdk", lambda: object())
@@ -1693,8 +1710,8 @@ def test_owned_milvus_fixture_settles_coordinator_and_role_clients_if_index_cons
 
 def _load_safe_check_module():  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location(
-        "athena_safe_check_contract",
-        ROOT / "scripts/check-athena-demo.py",
+        "tapper_safe_check_contract",
+        ROOT / "scripts/check-tapper-demo.py",
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -1705,13 +1722,13 @@ def _load_safe_check_module():  # type: ignore[no-untyped-def]
 def test_safe_check_runs_all_five_probes_independently(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = AthenaSettings.from_mapping(
+    settings = TapperSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
     events: list[str] = []
@@ -1756,7 +1773,7 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
         result = safe_check.main(
             {
                 "LITELLM_MODEL": "openai/test-chat",
-                "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+                "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
             }
         )
     finally:
@@ -1778,13 +1795,13 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
 def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = AthenaSettings.from_mapping(
+    settings = TapperSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
     events: list[str] = []
@@ -1810,7 +1827,7 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
 
     class Service:
         def get_blob_client(self, container: str, name: str) -> BlobClient:
-            assert container == "athena-artifacts"
+            assert container == "tapper-artifacts"
             assert name.startswith("readiness/canary-")
             return BlobClient()
 
@@ -1841,8 +1858,8 @@ def test_safe_blob_canary_delete_failure_is_failed_and_still_closes(
 
     assert states["blob"] is False
     assert events == [
-        "container:athena-originals",
-        "container:athena-artifacts",
+        "container:tapper-originals",
+        "container:tapper-artifacts",
         "upload",
         "download",
         "read",
@@ -1856,13 +1873,13 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
 ) -> None:  # type: ignore[no-untyped-def]
     import httpx
 
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = AthenaSettings.from_mapping(
+    settings = TapperSettings.from_mapping(
         {
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
     )
     requests: list[tuple[str, str]] = []
@@ -1874,9 +1891,9 @@ def test_safe_models_probe_requires_provider_config_and_uses_get_models_only(
             json={
                 "object": "list",
                 "data": [
-                    {"id": "athena-chat", "object": "model", "created": 0, "owned_by": "tap"},
+                    {"id": "tapper-chat", "object": "model", "created": 0, "owned_by": "tap"},
                     {
-                        "id": "athena-embedding",
+                        "id": "tapper-embedding",
                         "object": "model",
                         "created": 0,
                         "owned_by": "tap",
@@ -1922,14 +1939,14 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
     answer_backend: str,
     provider: dict[str, str],
 ) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = AthenaSettings.from_mapping(
+    settings = TapperSettings.from_mapping(
         {
-            "ATHENA_ANSWER_BACKEND": answer_backend,
+            "TAPPER_ANSWER_BACKEND": answer_backend,
             "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
             "LITELLM_EMBEDDING_MODEL": "direct-research-only",
         }
     )
@@ -1946,8 +1963,8 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
 @pytest.mark.parametrize(
     ("labels", "expected", "readiness_calls"),
     [
-        (("athena-embedding",), True, 1),
-        (("athena-chat",), False, 0),
+        (("tapper-embedding",), True, 1),
+        (("tapper-chat",), False, 0),
     ],
 )
 def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
@@ -1956,12 +1973,12 @@ def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
     expected: bool,
     readiness_calls: int,
 ) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.athena_runtime import AthenaAnswerBackend, AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = AthenaSettings.from_mapping(
+    settings = TapperSettings.from_mapping(
         {
-            "ATHENA_ANSWER_BACKEND": "codex",
+            "TAPPER_ANSWER_BACKEND": "codex",
             "LITELLM_MODEL": "openai/test-chat",
             "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
@@ -2021,7 +2038,7 @@ def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
     monkeypatch.setattr(
         safe_check,
         "_create_answer_backend",
-        lambda _settings, *, embeddings: AthenaAnswerBackend(
+        lambda _settings, *, embeddings: TapperAnswerBackend(
             generator=codex,
             readiness=codex.check_ready,
             owner=codex,
@@ -2044,12 +2061,12 @@ def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
 def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.athena_runtime import AthenaAnswerBackend, AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = AthenaSettings.from_mapping(
+    settings = TapperSettings.from_mapping(
         {
-            "ATHENA_ANSWER_BACKEND": "codex",
+            "TAPPER_ANSWER_BACKEND": "codex",
             "LITELLM_MODEL": "openai/test-chat",
             "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         }
@@ -2063,7 +2080,7 @@ def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
                 "object": "list",
                 "data": [
                     {
-                        "id": "athena-embedding",
+                        "id": "tapper-embedding",
                         "object": "model",
                         "created": 0,
                         "owned_by": "tap",
@@ -2103,7 +2120,7 @@ def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
     monkeypatch.setattr(
         safe_check,
         "_create_answer_backend",
-        lambda _settings, *, embeddings: AthenaAnswerBackend(
+        lambda _settings, *, embeddings: TapperAnswerBackend(
             generator=codex,
             readiness=codex.check_ready,
             owner=codex,
@@ -2121,14 +2138,14 @@ def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
     assert events == ["close:models", "close:codex", "close:embeddings"]
 
 
-def test_litellm_exposes_exactly_the_two_fixed_athena_aliases() -> None:
+def test_litellm_exposes_exactly_the_two_fixed_tapper_aliases() -> None:
     """A legacy or provider-named route must not become part of the Demo model surface."""
 
     config = _load_yaml_as_json(ROOT / "deploy/local/litellm/config.yaml")
 
     assert [item["model_name"] for item in config["model_list"]] == [
-        "athena-chat",
-        "athena-embedding",
+        "tapper-chat",
+        "tapper-embedding",
     ]
     assert config["model_list"][0]["litellm_params"] == {
         "model": "os.environ/LITELLM_MODEL",
@@ -2136,7 +2153,7 @@ def test_litellm_exposes_exactly_the_two_fixed_athena_aliases() -> None:
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
     assert config["model_list"][1]["litellm_params"] == {
-        "model": "os.environ/LITELLM_ATHENA_EMBEDDING_MODEL",
+        "model": "os.environ/LITELLM_TAPPER_EMBEDDING_MODEL",
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
@@ -2205,10 +2222,10 @@ def test_vite_config_is_strict_and_exposes_only_same_origin_api_proxies() -> Non
 
     environment = dict(os.environ)
     for name in (
-        "ATHENA_API_HOST",
-        "ATHENA_API_PORT",
-        "ATHENA_WEB_HOST",
-        "ATHENA_WEB_PORT",
+        "TAPPER_API_HOST",
+        "TAPPER_API_PORT",
+        "TAPPER_WEB_HOST",
+        "TAPPER_WEB_PORT",
         "VITE_API_PORT",
     ):
         environment.pop(name, None)
@@ -2235,7 +2252,7 @@ console.log(JSON.stringify(value.server));
     assert {value["target"] for value in server["proxy"].values()} == {"http://127.0.0.1:8000"}
 
 
-def test_vite_uses_the_exact_offset_athena_ports_and_rejects_unsafe_values() -> None:
+def test_vite_uses_the_exact_offset_tapper_ports_and_rejects_unsafe_values() -> None:
     code = """
 import config from './apps/web/vite.config.ts';
 const value = typeof config === 'function' ? await config({command:'serve', mode:'test'}) : config;
@@ -2246,10 +2263,10 @@ console.log(JSON.stringify(value.server));
         cwd=ROOT,
         env=os.environ
         | {
-            "ATHENA_API_HOST": "127.0.0.1",
-            "ATHENA_API_PORT": "18000",
-            "ATHENA_WEB_HOST": "127.0.0.1",
-            "ATHENA_WEB_PORT": "15173",
+            "TAPPER_API_HOST": "127.0.0.1",
+            "TAPPER_API_PORT": "18000",
+            "TAPPER_WEB_HOST": "127.0.0.1",
+            "TAPPER_WEB_PORT": "15173",
             "VITE_API_PORT": "3306",
         },
         text=True,
@@ -2265,17 +2282,17 @@ console.log(JSON.stringify(value.server));
 
     base_environment = dict(os.environ)
     for name in (
-        "ATHENA_API_HOST",
-        "ATHENA_API_PORT",
-        "ATHENA_WEB_HOST",
-        "ATHENA_WEB_PORT",
+        "TAPPER_API_HOST",
+        "TAPPER_API_PORT",
+        "TAPPER_WEB_HOST",
+        "TAPPER_WEB_PORT",
     ):
         base_environment.pop(name, None)
     for environment in (
-        {"ATHENA_API_HOST": "0.0.0.0"},
-        {"ATHENA_WEB_HOST": "remote.example"},
-        {"ATHENA_API_PORT": "8000junk"},
-        {"ATHENA_WEB_PORT": "0"},
+        {"TAPPER_API_HOST": "0.0.0.0"},
+        {"TAPPER_WEB_HOST": "remote.example"},
+        {"TAPPER_API_PORT": "8000junk"},
+        {"TAPPER_WEB_PORT": "0"},
     ):
         rejected = subprocess.run(
             ["node", "--experimental-strip-types", "--input-type=module", "-e", code],
@@ -2356,8 +2373,7 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         if line and not line.startswith("#")
         for name, value in [line.split("=", 1)]
     }
-    required = {
-        "TAP_ATHENA_COMPOSE_PROJECT",
+    required = EXPECTED_ENV | {
         "TAP_DATABASE_URL",
         "TAP_ALEMBIC_DATABASE_URL",
         "TAP_REDIS_URL",
@@ -2366,7 +2382,6 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "LITELLM_BASE_URL",
         "LITELLM_MASTER_KEY",
         "LITELLM_MODEL",
-        "LITELLM_ATHENA_EMBEDDING_MODEL",
         "LITELLM_EMBEDDING_MODEL",
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_API_HOST",
@@ -2376,27 +2391,27 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "MILVUS_READER_PASSWORD",
         "MILVUS_WRITER_PASSWORD",
         "MILVUS_PROVISIONER_PASSWORD",
-        "ATHENA_COLLECTION",
-        "ATHENA_ALIAS",
-        "ATHENA_CORPUS_VERSION",
-        "ATHENA_RETRIEVAL_PROFILE",
-        "ATHENA_EMBEDDING_DIMENSION",
-        "ATHENA_PIPELINE_VERSION",
-        "ATHENA_WORKER_ID",
-        "ATHENA_API_PORT",
-        "ATHENA_WEB_PORT",
-        "ATHENA_ANSWER_BACKEND",
-        "ATHENA_CODEX_MODEL",
-        "ATHENA_CODEX_REASONING_EFFORT",
-        "ATHENA_CODEX_TIMEOUT_SECONDS",
+        "TAPPER_COLLECTION",
+        "TAPPER_ALIAS",
+        "TAPPER_CORPUS_VERSION",
+        "TAPPER_RETRIEVAL_PROFILE",
+        "TAPPER_EMBEDDING_DIMENSION",
+        "TAPPER_PIPELINE_VERSION",
+        "TAPPER_WORKER_ID",
+        "TAPPER_API_PORT",
+        "TAPPER_WEB_PORT",
+        "TAPPER_ANSWER_BACKEND",
+        "TAPPER_CODEX_MODEL",
+        "TAPPER_CODEX_REASONING_EFFORT",
+        "TAPPER_CODEX_TIMEOUT_SECONDS",
     }
     assert required <= values.keys()
-    assert values["ATHENA_MODEL_BACKEND"] == "litellm"
-    assert values["ATHENA_ANSWER_BACKEND"] == "litellm"
-    assert values["ATHENA_CODEX_MODEL"] == "gpt-5.6-sol"
-    assert values["ATHENA_CODEX_REASONING_EFFORT"] == "ultra"
-    assert values["ATHENA_CODEX_TIMEOUT_SECONDS"] == "300"
-    assert values["LITELLM_ATHENA_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert values["TAPPER_MODEL_BACKEND"] == "litellm"
+    assert values["TAPPER_ANSWER_BACKEND"] == "litellm"
+    assert values["TAPPER_CODEX_MODEL"] == "gpt-5.6-sol"
+    assert values["TAPPER_CODEX_REASONING_EFFORT"] == "ultra"
+    assert values["TAPPER_CODEX_TIMEOUT_SECONDS"] == "300"
+    assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
     assert values["DASHSCOPE_API_KEY"] == ""
     assert values["TAP_DEMO_MODE"] == ""
     assert values["TAP_ALLOW_INITIAL_MILVUS_ROOT"] == "0"
@@ -2416,7 +2431,7 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
         "https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/api/v1"
     )
     assert values["LITELLM_MODEL"] == "dashscope/qwen-plus"
-    assert values["LITELLM_ATHENA_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
+    assert values["LITELLM_TAPPER_EMBEDDING_MODEL"] == "dashscope/text-embedding-v4"
     assert values["LITELLM_EMBEDDING_MODEL"] == "text-embedding-v4"
     assert {
         "MYSQL_PORT": values["MYSQL_PORT"],
@@ -2450,8 +2465,8 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
             (
                 "set -a; . ./.env.example; set +a; "
                 "uv run --project apps/backend python -c 'import os; "
-                "from tap.entrypoints.athena_runtime import AthenaSettings; "
-                "settings=AthenaSettings.from_mapping(dict(os.environ)); "
+                "from tap.entrypoints.tapper_runtime import TapperSettings; "
+                "settings=TapperSettings.from_mapping(dict(os.environ)); "
                 'assert settings.blob_connection_string.count(";") == 4\''
             ),
         ],
@@ -2467,8 +2482,8 @@ def test_runtime_scripts_exist_are_executable_and_parse_as_bash() -> None:
     """A generated but non-executable or Bash-incompatible supervisor is not a stable command."""
 
     scripts = (
-        ROOT / "scripts/run-athena-dev.sh",
-        ROOT / "scripts/run-athena-e2e.sh",
+        ROOT / "scripts/run-tapper-dev.sh",
+        ROOT / "scripts/run-tapper-e2e.sh",
     )
     for script in scripts:
         assert script.is_file()
@@ -2493,7 +2508,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
     )
     environment.update(
         {
-            "ATHENA_ASSERT_PROVIDER_SCOPE": "1",
+            "TAPPER_ASSERT_PROVIDER_SCOPE": "1",
             "DASHSCOPE_API_KEY": "current-provider-secret",
             "OPENAI_API_KEY": "legacy-openai-secret",
             "BAILIAN_API_KEY": "legacy-bailian-secret",
@@ -2527,7 +2542,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
     }
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr + "\n".join(events)
-    assert list((supervisor.parents[1] / "tmp").glob("tap-athena-ready.*")) == []
+    assert list((supervisor.parents[1] / "tmp").glob("tap-tapper-ready.*")) == []
 
 
 def test_dev_supervisor_ignores_dotenv_collisions_with_internal_shell_state(
@@ -2549,12 +2564,12 @@ web_pid=99999996
 ready_file=/provider-secret/invalid-ready
 cleanup_started=1
 shutdown_grace_seconds=0
-TAP_ATHENA_COMPOSE_PROJECT=tap-hostile
+TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
 """,
         encoding="utf-8",
     )
-    environment.pop("ATHENA_SUPERVISOR_ENV")
-    environment["TAP_ATHENA_COMPOSE_PROJECT"] = "tap-athena-demo"
+    environment.pop("TAPPER_SUPERVISOR_ENV")
+    environment["TAP_TAPPER_COMPOSE_PROJECT"] = "tap-tapper-demo"
 
     completed = subprocess.run(
         ["/bin/bash", str(supervisor)],
@@ -2620,7 +2635,7 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     }
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in stdout + stderr + "\n".join(events)
-    assert list((supervisor.parents[1] / "tmp").glob("tap-athena-ready.*")) == []
+    assert list((supervisor.parents[1] / "tmp").glob("tap-tapper-ready.*")) == []
 
 
 @pytest.mark.parametrize("source", ["caller", "dotenv"])
@@ -2647,7 +2662,7 @@ def test_dev_supervisor_scrubs_provider_environment_at_every_child_boundary(
         }
     )
     if source == "dotenv":
-        environment["ATHENA_SUPERVISOR_ENV"] = ""
+        environment["TAPPER_SUPERVISOR_ENV"] = ""
         (supervisor.parents[1] / ".env").write_text(
             """OPENAI_API_KEY=provider-secret
 DASHSCOPE_API_KEY=provider-secret
@@ -2761,7 +2776,7 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     )
 
     assert completed.returncode == 1
-    assert "Athena local applications ready." not in completed.stdout
+    assert "Tapper local applications ready." not in completed.stdout
     events = log.read_text(encoding="utf-8").splitlines()
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
         "api",
@@ -2771,7 +2786,7 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     }
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr + "\n".join(events)
-    assert list((supervisor.parents[1] / "tmp").glob("tap-athena-ready.*")) == []
+    assert list((supervisor.parents[1] / "tmp").glob("tap-tapper-ready.*")) == []
 
 
 def test_e2e_runner_rejects_an_occupied_fixed_port_before_docker(tmp_path: Path) -> None:
@@ -2783,9 +2798,9 @@ def test_e2e_runner_rejects_an_occupied_fixed_port_before_docker(tmp_path: Path)
     scripts.mkdir(parents=True)
     stubs.mkdir()
     socket_log = _write_behavioral_socket_stub(isolated)
-    runner = scripts / "run-athena-e2e.sh"
+    runner = scripts / "run-tapper-e2e.sh"
     runner.write_text(
-        (ROOT / "scripts/run-athena-e2e.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts/run-tapper-e2e.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
@@ -2800,7 +2815,7 @@ def test_e2e_runner_rejects_an_occupied_fixed_port_before_docker(tmp_path: Path)
         """#!/bin/sh
 case " $* " in
   *" python -c "*) exit 0 ;;
-  *" python - "*) shift 4; exec "$ATHENA_TEST_PYTHON" "$@" ;;
+  *" python - "*) shift 4; exec "$TAPPER_TEST_PYTHON" "$@" ;;
 esac
 exit 99
 """,
@@ -2816,9 +2831,9 @@ exit 99
         cwd=isolated,
         env=os.environ
         | {
-            "ATHENA_E2E_SOCKET_LOG": str(socket_log),
-            "ATHENA_E2E_SOCKET_OCCUPIED": "13306",
-            "ATHENA_TEST_PYTHON": sys.executable,
+            "TAPPER_E2E_SOCKET_LOG": str(socket_log),
+            "TAPPER_E2E_SOCKET_OCCUPIED": "13306",
+            "TAPPER_TEST_PYTHON": sys.executable,
             "PATH": f"{stubs}:{os.environ['PATH']}",
         },
         text=True,
@@ -2836,7 +2851,7 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
     tmp_path: Path,
 ) -> None:
     runner, environment, log = _e2e_runner_fixture(tmp_path)
-    assert environment["ATHENA_E2E_SOCKET_OCCUPIED"] == ""
+    assert environment["TAPPER_E2E_SOCKET_OCCUPIED"] == ""
 
     completed = subprocess.run(
         ["/bin/bash", str(runner)],
@@ -2849,7 +2864,7 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
     )
 
     assert completed.returncode == 0, completed.stderr
-    socket_log = Path(environment["ATHENA_E2E_SOCKET_LOG"])
+    socket_log = Path(environment["TAPPER_E2E_SOCKET_LOG"])
     assert socket_log.read_text(encoding="utf-8").splitlines() == [
         f"127.0.0.1:{port}" for port in E2E_FIXED_PORTS
     ]
@@ -2861,7 +2876,7 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
     assert len(compose_calls) == 5
     assert all(
         f"--context default compose -f {runner.parents[1] / 'compose.yaml'} "
-        "-p tap-athena-e2e --profile milvus" in line
+        "-p tap-tapper-e2e --profile milvus" in line
         for line in compose_calls
     )
     assert compose_calls[0].endswith("down --volumes --remove-orphans")
@@ -2884,8 +2899,8 @@ def test_e2e_runner_overrides_env_and_runs_exact_restart_volume_phases(
         [int(line.split("|")[2]) for line in calls if line.startswith("apps|start|")]
     )
     assert "provider-secret" not in completed.stdout + completed.stderr + "\n".join(calls)
-    assert not (runner.parents[1] / "tmp/tap-athena-e2e.lock").exists()
-    assert list((runner.parents[1] / "tmp").glob("tap-athena-e2e.*")) == []
+    assert not (runner.parents[1] / "tmp/tap-tapper-e2e.lock").exists()
+    assert list((runner.parents[1] / "tmp").glob("tap-tapper-e2e.*")) == []
 
 
 @pytest.mark.parametrize("source", ["caller", "dotenv"])
@@ -2895,10 +2910,10 @@ def test_e2e_runner_rejects_codex_after_loading_the_final_environment(
 ) -> None:
     runner, environment, log = _e2e_runner_fixture(tmp_path)
     if source == "caller":
-        environment["ATHENA_ANSWER_BACKEND"] = "codex"
+        environment["TAPPER_ANSWER_BACKEND"] = "codex"
     else:
         with (runner.parents[1] / ".env").open("a", encoding="utf-8") as handle:
-            handle.write("ATHENA_ANSWER_BACKEND=codex\n")
+            handle.write("TAPPER_ANSWER_BACKEND=codex\n")
 
     completed = subprocess.run(
         ["/bin/bash", str(runner), "--preflight-only"],
@@ -2912,7 +2927,7 @@ def test_e2e_runner_rejects_codex_after_loading_the_final_environment(
 
     assert completed.returncode == 2
     assert completed.stdout == ""
-    assert completed.stderr == "Athena E2E does not allow the Codex answer backend.\n"
+    assert completed.stderr == "Tapper E2E does not allow the Codex answer backend.\n"
     assert not log.exists() or log.read_text(encoding="utf-8") == ""
 
 
@@ -2930,7 +2945,7 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
             "DASHSCOPE_API_KEY": "caller-dashscope-key",
             "CODEX_HOME": "/caller/codex-home",
             "CODEX_API_KEY": "caller-codex-key",
-            "LITELLM_ATHENA_EMBEDDING_MODEL": "caller-secret-route",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "caller-secret-route",
             "LITELLM_EMBEDDING_MODEL": "caller-secret-model",
             "LITELLM_EMBEDDING_API_KEY": "caller-embedding-key",
             "LITELLM_EMBEDDING_API_BASE": "https://caller.invalid/embedding",
@@ -2963,7 +2978,7 @@ def test_e2e_preflight_forces_fake_configuration_without_caller_provider_endpoin
     assert {
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_API_BASE",
-        "LITELLM_ATHENA_EMBEDDING_MODEL",
+        "LITELLM_TAPPER_EMBEDDING_MODEL",
         "LITELLM_EMBEDDING_MODEL",
     } <= environment_names
     assert (
@@ -3020,7 +3035,7 @@ def test_e2e_start_apps_reports_only_its_closed_failed_readiness_stage(
     assert completed.returncode == expected_status
     assert completed.stdout == ""
     assert (
-        completed.stderr.count(f"Athena E2E applications did not become ready at {failure}.\n") == 1
+        completed.stderr.count(f"Tapper E2E applications did not become ready at {failure}.\n") == 1
     )
     assert "provider-secret" not in completed.stderr
     compose_calls = [
@@ -3054,7 +3069,7 @@ def test_e2e_runner_preserves_playwright_failure_and_still_cleans_only_owned_vol
     assert compose_calls[0].endswith("down --volumes --remove-orphans")
     assert compose_calls[1].endswith("up -d --wait --wait-timeout 180")
     assert compose_calls[2].endswith("down --volumes --remove-orphans")
-    assert all(" -p tap-athena-e2e " in line for line in compose_calls)
+    assert all(" -p tap-tapper-e2e " in line for line in compose_calls)
     assert "provider-secret" not in completed.stdout + completed.stderr + "\n".join(calls)
 
 
@@ -3076,7 +3091,7 @@ def test_e2e_cleanup_warning_never_masks_the_primary_failure(tmp_path: Path) -> 
     )
 
     assert completed.returncode == 37
-    assert "Athena E2E cleanup failed." in completed.stderr
+    assert "Tapper E2E cleanup failed." in completed.stderr
     compose_calls = [
         line for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("docker|")
     ]
@@ -3117,7 +3132,7 @@ def test_e2e_bootstrap_failure_never_signals_dotenv_seeded_unrelated_pid(
     ]
     assert compose_calls[0].endswith("down --volumes --remove-orphans")
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
-    assert all(" -p tap-athena-e2e " in line for line in compose_calls)
+    assert all(" -p tap-tapper-e2e " in line for line in compose_calls)
 
 
 def test_e2e_preflight_is_read_only_and_skipped_results_fail_closed(
@@ -3134,7 +3149,7 @@ def test_e2e_preflight_is_read_only_and_skipped_results_fail_closed(
             handle.write(
                 f"apps_pid={sentinel.pid}\n"
                 "preflight_only=0\n"
-                "e2e_project=tap-athena-demo\n"
+                "e2e_project=tap-tapper-demo\n"
                 "cleanup_started=0\n"
                 "compose_mutated=1\n"
             )
@@ -3158,7 +3173,7 @@ def test_e2e_preflight_is_read_only_and_skipped_results_fail_closed(
         line.startswith("docker|")
         for line in preflight_log.read_text(encoding="utf-8").splitlines()
     )
-    assert not (preflight_runner.parents[1] / "tmp/tap-athena-e2e.lock").exists()
+    assert not (preflight_runner.parents[1] / "tmp/tap-tapper-e2e.lock").exists()
 
     runner, environment, log = _e2e_runner_fixture(
         tmp_path / "skipped",
@@ -3204,4 +3219,4 @@ def test_e2e_runner_rejects_malformed_playwright_report_and_cleans_owned_state(
     compose_calls = [line for line in calls if line.startswith("docker|")]
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
     assert "returned an invalid result" in rejected.stderr
-    assert list((runner.parents[1] / "tmp").glob("tap-athena-e2e.*")) == []
+    assert list((runner.parents[1] / "tmp").glob("tap-tapper-e2e.*")) == []

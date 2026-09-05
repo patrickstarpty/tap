@@ -4,14 +4,14 @@
 
 ## 目录职责
 
-| 目录 | 职责 |
-| --- | --- |
-| `docs/architecture/` | 当前规范性的系统架构与领域设计。 |
-| `docs/proposals/` | RFC、待评审设计和未决输入。 |
-| `docs/decisions/` | 一项决策一份 ADR，以及被覆盖方案记录。 |
-| `docs/plans/` | 实施、交付和路线图计划。 |
-| `docs/reviews/` | 时间点审查、评估和评分结果。 |
-| `docs/reference/` | 契约、术语、来源和治理规范。 |
+| 目录                 | 职责                                   |
+| -------------------- | -------------------------------------- |
+| `docs/architecture/` | 当前规范性的系统架构与领域设计。       |
+| `docs/proposals/`    | RFC、待评审设计和未决输入。            |
+| `docs/decisions/`    | 一项决策一份 ADR，以及被覆盖方案记录。 |
+| `docs/plans/`        | 实施、交付和路线图计划。               |
+| `docs/reviews/`      | 时间点审查、评估和评分结果。           |
+| `docs/reference/`    | 契约、术语、来源和治理规范。           |
 
 目录按稳定职责组织，不按生命周期状态组织。状态变化不会移动文件。
 
@@ -21,11 +21,11 @@
 
 日期表示文档最初形成或所记录事件发生的日期，并按以下优先级确定：
 
-1. 正文明确记录的创建日期；ADR 使用决策日期，Review 使用评审日期。
+1. 正文明确记录的创建日期；ADR 使用决策记录最初形成的日期，Review 使用评审日期。
 2. 文件首次加入 Git 的日期。
 3. 新文档的创建日期。
 
-后续更新不改变日期前缀；RFC 和 ADR 的编号也是稳定身份，不因移动、状态变化或替代关系重新编号。
+后续更新不改变日期前缀；RFC 和 ADR 的编号也是稳定身份，不因移动、状态变化或替代关系重新编号。ADR 若先以 `proposed` 形成、后在不同日期转为 `accepted`，保留原 `date` 与文件名，并增加 `accepted-date` 记录实际接受日期；直接以 `accepted` 形成时，`date` 即接受日期，不重复填写 `accepted-date`。
 
 ## 生命周期与元数据
 
@@ -33,17 +33,17 @@ RFC、ADR 和 Plan 必须使用 YAML front matter 表达各自的最小生命周
 
 ### RFC
 
-RFC 状态机为 `draft → in-review → accepted → implemented`，并允许 `in-review → rejected`。`implemented` 和 `rejected` 是终态。RFC 使用 `id`、`status`、`date` 和 `related-adrs`。
+RFC 状态机为 `draft → in-review → accepted → implemented`，并允许 `in-review → rejected`，以及尚未实施的 `draft | in-review | accepted → withdrawn`。`implemented`、`rejected` 和 `withdrawn` 是终态。`withdrawn` 表示提案在实施前被撤回或由后续规范取代；正文必须记录原因和现行替代入口。RFC 使用 `id`、`status`、`date` 和 `related-adrs`。
 
 ### ADR
 
-ADR 状态机为 `proposed → accepted → superseded`。ADR 使用 `id`、`status`、`date`、`supersedes`、`superseded-by` 和 `related-rfcs`。一份 ADR 只表达一个决策。
+ADR 状态机为 `proposed → accepted → superseded`。ADR 使用 `id`、`status`、`date`、`supersedes`、`superseded-by` 和 `related-rfcs`；若接受日期晚于 `date`，还必须使用 `accepted-date`。一份 ADR 只表达一个决策。
 
 已接受 ADR 的决策语义不可改写；仅允许原地修正错别字、失效链接等非语义问题。方向变化时必须新建 ADR：新 ADR 的 `supersedes` 列出被替代 ADR，旧 ADR 的 `superseded-by` 列出新 ADR，两个方向都必须更新。
 
 ### Plan
 
-Plan 状态机为 `planned → active → completed`。Plan 使用 `status` 和 `date`。计划完成后仍保留原路径，只更新状态。
+Plan 状态机为 `planned → active → completed`，并允许 `planned | active → cancelled`。`completed` 和 `cancelled` 是终态。`cancelled` 只表示计划停止且不得继续执行，不得伪装为已经完成；正文必须说明原因并链接现行替代计划。Plan 使用 `status` 和 `date`。计划完成或取消后仍保留原路径，只更新状态。
 
 ## 索引与链接
 

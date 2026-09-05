@@ -26,7 +26,7 @@
         <mxCell id="knowledge-source-title" value="企业知识源" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="142" y="239" width="236" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="knowledge-source-body" value="文档 · 代码 · BDD ·&#xa;历史失败" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="knowledge-source-body" value="PDF · DOCX ·&#xa;Markdown · TXT" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="142" y="280" width="236" height="42" as="geometry"/>
         </mxCell>
 
@@ -40,33 +40,33 @@
           <mxGeometry x="495" y="280" width="236" height="42" as="geometry"/>
         </mxCell>
 
-        <mxCell id="azure-search" value="" style="rounded=1;absoluteArcSize=1;arcSize=12;html=0;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#2F6FED;strokeWidth=2;shadow=0;" vertex="1" parent="1">
+        <mxCell id="knowledge-index" value="" style="rounded=1;absoluteArcSize=1;arcSize=12;html=0;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#2F6FED;strokeWidth=2;shadow=0;" vertex="1" parent="1">
           <mxGeometry x="826" y="220" width="280" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="azure-search-title" value="Azure AI Search" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="knowledge-index-title" value="知识存储" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="848" y="239" width="236" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="azure-search-body" value="全文 + 向量混合检索" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
-          <mxGeometry x="848" y="284" width="236" height="34" as="geometry"/>
+        <mxCell id="knowledge-index-body" value="Milvus doc：本地已实现&#xa;MySQL Graph：V2 未实现" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=16;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="838" y="278" width="256" height="46" as="geometry"/>
         </mxCell>
 
         <mxCell id="published-kb" value="" style="rounded=1;absoluteArcSize=1;arcSize=12;html=0;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#2F6FED;strokeWidth=2;shadow=0;" vertex="1" parent="1">
           <mxGeometry x="1179" y="220" width="280" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="published-kb-title" value="已发布知识库" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="published-kb-title" value="知识服务边界" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="1201" y="239" width="236" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="published-kb-body" value="版本化 · 可删除 · 可重建" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="published-kb-body" value="当前文档 · 后续图谱" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="1201" y="284" width="236" height="34" as="geometry"/>
         </mxCell>
 
         <mxCell id="knowledge-edge-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=0;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="knowledge-source" target="parse-slice">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="knowledge-edge-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=0;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="parse-slice" target="azure-search">
+        <mxCell id="knowledge-edge-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=0;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="parse-slice" target="knowledge-index">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="knowledge-edge-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=0;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="azure-search" target="published-kb">
+        <mxCell id="knowledge-edge-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=0;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="knowledge-index" target="published-kb">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
 
@@ -83,7 +83,7 @@
         <mxCell id="user-question-title" value="用户提问" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="142" y="509" width="236" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="user-question-body" value="Knowledge Chat" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="user-question-body" value="Tapper Q&amp;A" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="142" y="554" width="236" height="34" as="geometry"/>
         </mxCell>
 
@@ -103,8 +103,8 @@
         <mxCell id="retrieve-generate-title" value="检索与生成" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#12304A;fontSize=21;fontStyle=1;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="848" y="509" width="236" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="retrieve-generate-body" value="找到证据后组织答案" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=17;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
-          <mxGeometry x="848" y="554" width="236" height="34" as="geometry"/>
+        <mxCell id="retrieve-generate-body" value="当前：Milvus 证据&#xa;V2：有界图扩展" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=16;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="848" y="548" width="236" height="46" as="geometry"/>
         </mxCell>
 
         <mxCell id="trusted-answer" value="" style="rounded=1;absoluteArcSize=1;arcSize=12;html=0;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#0F8F78;strokeWidth=2;shadow=0;" vertex="1" parent="1">
@@ -169,7 +169,7 @@
           <mxGeometry x="1086" y="762" width="410" height="24" as="geometry"/>
         </mxCell>
 
-        <mxCell id="footer" value="Azure AI Search 是当前企业检索基线；实现细节与实验方案保留在专项技术文档中。" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=16;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
+        <mxCell id="footer" value="交付状态：Milvus doc 本地切片已实现；MySQL Knowledge Graph 已选型、V2 尚未实现。" style="text;html=0;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#66788A;fontSize=16;fontFamily=Arial;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="80" y="842" width="1440" height="26" as="geometry"/>
         </mxCell>
       </root>

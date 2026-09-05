@@ -38,7 +38,7 @@ export interface JourneyState {
   schemaVersion: 1;
 }
 
-export interface AthenaFixtures {
+export interface TapperFixtures {
   baselineDocx: E2EFilePayload;
   baselineMarkdown: E2EFilePayload;
   baselinePdf: E2EFilePayload;
@@ -72,7 +72,7 @@ async function pdfPayload(
   const document = await PDFDocument.create();
   const page = document.addPage([612, 792]);
   const font = await document.embedFont(StandardFonts.Helvetica);
-  page.drawText(`Athena ${runId} ${label}.`, {
+  page.drawText(`Tapper ${runId} ${label}.`, {
     x: 48,
     y: 730,
     size: 14,
@@ -101,7 +101,7 @@ async function docxPayload(
       {
         children: [
           new Paragraph(fact),
-          new Paragraph(`Athena ${runId} ${label}.`),
+          new Paragraph(`Tapper ${runId} ${label}.`),
         ],
       },
     ],
@@ -114,8 +114,8 @@ async function docxPayload(
   };
 }
 
-export async function buildFixtures(): Promise<AthenaFixtures> {
-  const runId = `athena-${randomBytes(8).toString("hex")}`;
+export async function buildFixtures(): Promise<TapperFixtures> {
+  const runId = `tapper-${randomBytes(8).toString("hex")}`;
   return {
     runId,
     baselinePdf: await pdfPayload(
@@ -126,12 +126,12 @@ export async function buildFixtures(): Promise<AthenaFixtures> {
     baselineDocx: await docxPayload(
       runId,
       "baseline-docx",
-      "Athena refund requests above five thousand units require finance review.",
+      "Tapper refund requests above five thousand units require finance review.",
     ),
     baselineMarkdown: payload(
       `${runId}-baseline.md`,
       "text/markdown",
-      `# Baseline Markdown\n\nAthena ${runId} audit evidence is retained for 120 days.`,
+      `# Baseline Markdown\n\nTapper ${runId} audit evidence is retained for 120 days.`,
     ),
     parsingFailure: await pdfPayload(
       runId,
@@ -146,12 +146,12 @@ export async function buildFixtures(): Promise<AthenaFixtures> {
     publishingFailure: payload(
       `${runId}-publishing.md`,
       "text/markdown",
-      `# Publishing checkpoint\n\nAthena ${runId} release records are retained for 91 days.`,
+      `# Publishing checkpoint\n\nTapper ${runId} release records are retained for 91 days.`,
     ),
     policy: payload(
       `${runId}-policy.txt`,
       "text/plain",
-      `Athena ${runId} refund requests require two approvers.`,
+      `Tapper ${runId} refund requests require two approvers.`,
     ),
     injection: payload(
       `${runId}-injection.md`,
@@ -168,7 +168,7 @@ export async function buildFixtures(): Promise<AthenaFixtures> {
 }
 
 export function policyQuestion(runId: string): string {
-  return `What approval and finance review rules apply to Athena ${runId} refund requests?`;
+  return `What approval and finance review rules apply to Tapper ${runId} refund requests?`;
 }
 
 export function injectionQuestion(runId: string): string {
@@ -252,7 +252,7 @@ export function validateState(value: unknown): value is JourneyState {
   const state = value as JourneyState;
   if (
     state.schemaVersion !== 1 ||
-    !/^athena-[a-f0-9]{16}$/u.test(state.runId) ||
+    !/^tapper-[a-f0-9]{16}$/u.test(state.runId) ||
     !isDocumentState(state.policy) ||
     !isDocumentState(state.reference) ||
     !isDocumentState(state.injection) ||
@@ -358,15 +358,15 @@ export function canonicalTextHash(value: unknown): string {
 }
 
 function statePath(): string {
-  const value = process.env.ATHENA_E2E_STATE_FILE;
+  const value = process.env.TAPPER_E2E_STATE_FILE;
   if (value === undefined || value.length === 0) {
-    throw new Error("ATHENA_E2E_STATE_FILE is required");
+    throw new Error("TAPPER_E2E_STATE_FILE is required");
   }
   return value;
 }
 
 export async function writeState(state: JourneyState): Promise<void> {
-  if (!validateState(state)) throw new Error("unsafe Athena E2E state");
+  if (!validateState(state)) throw new Error("unsafe Tapper E2E state");
   const target = statePath();
   const temporary = `${target}.${String(process.pid)}.tmp`;
   await writeFile(temporary, `${JSON.stringify(state)}\n`, {
@@ -379,6 +379,6 @@ export async function writeState(state: JourneyState): Promise<void> {
 
 export async function readState(): Promise<JourneyState> {
   const value: unknown = JSON.parse(await readFile(statePath(), "utf8"));
-  if (!validateState(value)) throw new Error("invalid Athena E2E state");
+  if (!validateState(value)) throw new Error("invalid Tapper E2E state");
   return value;
 }

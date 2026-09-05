@@ -20,7 +20,7 @@ from tap.modules.knowledge.domain.documents import (
     canonical_sha256,
 )
 
-PIPELINE_VERSION = "athena-ingestion-v1"
+PIPELINE_VERSION = "tapper-ingestion-v1"
 MAX_DOCUMENTS = 50
 DEFAULT_RESERVATION_LEASE = timedelta(minutes=5)
 DEFAULT_UPLOAD_CLEANUP_LEASE = timedelta(minutes=5)

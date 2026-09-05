@@ -22,10 +22,10 @@ class Searches:
             trace_id="trace-a",
             query_plan_id="plan-a",
             context_snapshot_id="context-a",
-            corpus_version="athena-demo-v1",
+            corpus_version="tapper-demo-v1",
             retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
             evidence=(),
-            embedding_provenance=ModelCallProvenance("athena-embedding", None),
+            embedding_provenance=ModelCallProvenance("tapper-embedding", None),
         )
 
 

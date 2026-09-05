@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import { createKnowledgeClient } from "../features/knowledge/api/client";
 import { KnowledgeClientProvider } from "../features/knowledge/api/queries";
 import type { KnowledgeClient } from "../features/knowledge/api/types";
-import { athenaTheme } from "./theme";
+import { tapperTheme } from "./theme";
 
 interface AppProvidersProps {
   children: ReactNode;
@@ -37,7 +37,7 @@ export function AppProviders({
   }));
 
   return (
-    <ConfigProvider locale={zhCN} theme={athenaTheme}>
+    <ConfigProvider locale={zhCN} theme={tapperTheme}>
       <QueryClientProvider client={clients.query}>
         <KnowledgeClientProvider client={clients.knowledge}>
           {children}

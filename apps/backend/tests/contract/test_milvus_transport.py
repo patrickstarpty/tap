@@ -543,7 +543,7 @@ async def test_reader_rejects_alias_observed_in_a_different_database() -> None:
 
 @pytest.mark.asyncio
 async def test_strict_reader_rejects_prefix_sharing_unowned_physical_name() -> None:
-    base = "kb_doc_v1_athena_demo"
+    base = "kb_doc_v1_tapper_demo"
     target = _target(physical_name_prefix=base, exact_generation_names=True)
     client = RecordingSDKClient()
     client.alias_target = base + "_unowned"
@@ -555,13 +555,13 @@ async def test_strict_reader_rejects_prefix_sharing_unowned_physical_name() -> N
 
 @pytest.mark.parametrize(
     "physical_name",
-    ("kb_doc_v1_athena_demo", "kb_doc_v1_athena_demo_0123456789ab"),
+    ("kb_doc_v1_tapper_demo", "kb_doc_v1_tapper_demo_0123456789ab"),
 )
 @pytest.mark.asyncio
 async def test_strict_reader_accepts_only_base_or_exact_generation_name(
     physical_name: str,
 ) -> None:
-    base = "kb_doc_v1_athena_demo"
+    base = "kb_doc_v1_tapper_demo"
     target = _target(physical_name_prefix=base, exact_generation_names=True)
     client = RecordingSDKClient()
     client.alias_target = physical_name
@@ -1907,7 +1907,7 @@ async def test_caller_cancellation_is_never_swallowed_as_provider_unavailability
 
 @pytest.mark.asyncio
 async def test_runtime_owner_close_terminally_settles_a_cancelled_blocking_sdk_call() -> None:
-    from tap.entrypoints.athena_runtime import OwnedResources
+    from tap.entrypoints.tapper_runtime import OwnedResources
 
     client = CloseInterruptsBlockingSDKClient()
     reader = PyMilvusReader(_config(timeout_seconds=0.2), client=client)
@@ -1933,7 +1933,7 @@ async def test_runtime_owner_close_terminally_settles_a_cancelled_blocking_sdk_c
 async def test_runtime_owner_close_settles_a_deadlined_sdk_call_without_replacing_deadline() -> (
     None
 ):
-    from tap.entrypoints.athena_runtime import OwnedResources
+    from tap.entrypoints.tapper_runtime import OwnedResources
 
     client = CloseInterruptsBlockingSDKClient()
     reader = PyMilvusReader(_config(timeout_seconds=0.02), client=client)

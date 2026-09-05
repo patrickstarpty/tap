@@ -29,12 +29,12 @@ export function QuestionComposer({
   };
 
   return (
-    <form className="athena-question-composer" onSubmit={submit}>
-      <label htmlFor="athena-question">{COPY.questionLabel}</label>
+    <form className="tapper-question-composer" onSubmit={submit}>
+      <label htmlFor="tapper-question">{COPY.questionLabel}</label>
       <Input.TextArea
-        id="athena-question"
+        id="tapper-question"
         value={question}
-        aria-describedby="athena-question-help"
+        aria-describedby="tapper-question-help"
         placeholder={COPY.questionPlaceholder}
         rows={5}
         disabled={pending}
@@ -52,7 +52,7 @@ export function QuestionComposer({
           event.currentTarget.form?.requestSubmit();
         }}
       />
-      <div className="athena-composer-footer" id="athena-question-help">
+      <div className="tapper-composer-footer" id="tapper-question-help">
         <span>{`${trimmedLength.toLocaleString("zh-CN")} / 8,000`}</span>
         <Button
           type="primary"

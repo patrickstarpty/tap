@@ -137,7 +137,7 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
       }
     >
       <div
-        className="athena-drop-zone"
+        className="tapper-drop-zone"
         role="button"
         tabIndex={uploadPending ? -1 : 0}
         aria-disabled={uploadPending}
@@ -154,13 +154,13 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
         <Typography.Text type="secondary">
           {COPY.dropDescription}
         </Typography.Text>
-        <Typography.Text type="secondary" className="athena-drop-formats">
+        <Typography.Text type="secondary" className="tapper-drop-formats">
           {COPY.acceptedFormats}
         </Typography.Text>
       </div>
       <input
         ref={inputRef}
-        className="athena-visually-hidden"
+        className="tapper-visually-hidden"
         type="file"
         accept={ACCEPT_ATTRIBUTE}
         tabIndex={-1}
@@ -170,14 +170,14 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
       />
 
       {file !== null ? (
-        <div className="athena-selected-file">
+        <div className="tapper-selected-file">
           <span>{COPY.selectedFile}</span>
           <strong>{file.name}</strong>
         </div>
       ) : null}
       {validationError !== null ? (
         <Alert
-          className="athena-dialog-alert"
+          className="tapper-dialog-alert"
           type="warning"
           showIcon
           title={validationError}
@@ -185,14 +185,14 @@ export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
       ) : null}
       {requestError !== null ? (
         <Alert
-          className="athena-dialog-alert"
+          className="tapper-dialog-alert"
           type="error"
           showIcon
           title={requestError}
         />
       ) : null}
       {uploadMutation.isPending ? (
-        <div className="athena-upload-progress" aria-live="polite">
+        <div className="tapper-upload-progress" aria-live="polite">
           <span>{COPY.uploadProgress(Math.round(progress * 100))}</span>
           <Progress
             percent={Math.round(progress * 100)}

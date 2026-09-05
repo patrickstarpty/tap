@@ -18,20 +18,20 @@ export function DocumentStatus({ document }: { document: DocumentSummary }) {
       : STATUS_COPY[document.status];
 
   return (
-    <div className="athena-status-cell">
+    <div className="tapper-status-cell">
       <Tag color={STATUS_COLORS[document.status]}>{operationalCopy}</Tag>
       {document.status === "failed" ? (
-        <span className="athena-stage-copy">
+        <span className="tapper-stage-copy">
           {COPY.failedStage(STAGE_TITLES[document.stage])}
         </span>
       ) : null}
       {document.status === "failed" &&
       typeof document.errorSummary === "string" ? (
-        <span className="athena-safe-summary">{document.errorSummary}</span>
+        <span className="tapper-safe-summary">{document.errorSummary}</span>
       ) : null}
       {document.status === "failed" &&
       typeof document.errorCode === "string" ? (
-        <code className="athena-safe-code">{document.errorCode}</code>
+        <code className="tapper-safe-code">{document.errorCode}</code>
       ) : null}
     </div>
   );

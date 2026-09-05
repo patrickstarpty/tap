@@ -6,7 +6,7 @@ describe("generated request defaults", () => {
   it("keeps defaulted retrieval fields optional for the browser request", () => {
     const request = {
       answerMode: "quick",
-      query: "Athena 如何约束回答来源？",
+      query: "Tapper 如何约束回答来源？",
       resourceRefs: [
         {
           family: "doc",
@@ -18,7 +18,7 @@ describe("generated request defaults", () => {
 
     expect(request).toEqual({
       answerMode: "quick",
-      query: "Athena 如何约束回答来源？",
+      query: "Tapper 如何约束回答来源？",
       resourceRefs: [
         {
           family: "doc",

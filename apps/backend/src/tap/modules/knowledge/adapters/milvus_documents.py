@@ -1,4 +1,4 @@
-"""Mutable, strongly reconciled Athena projection over provider-light Milvus ports."""
+"""Mutable, strongly reconciled Tapper projection over provider-light Milvus ports."""
 
 from __future__ import annotations
 
@@ -59,17 +59,17 @@ from tap.operations.milvus.doc_schema import (
     doc_schema_sha256,
 )
 
-ATHENA_PHYSICAL_COLLECTION = "kb_doc_v1_athena_demo"
-ATHENA_ALIAS = "kb_doc_athena_demo_active"
-ATHENA_SCHEMA_VERSION = "doc-schema-v1"
-ATHENA_CORPUS_VERSION = "athena-demo-v1"
-ATHENA_EMBEDDING_MODEL = "athena-embedding"
-ATHENA_VECTOR_DIMENSION = 1536
-ATHENA_TENANT_ID = "local"
-ATHENA_PROJECT_ID = "athena-demo"
-ATHENA_GROUP_ID = "athena-local"
-ATHENA_ENVIRONMENT = "global"
-ATHENA_CLASSIFICATION_RANK = 1
+TAPPER_PHYSICAL_COLLECTION = "kb_doc_v1_tapper_demo"
+TAPPER_ALIAS = "kb_doc_tapper_demo_active"
+TAPPER_SCHEMA_VERSION = "doc-schema-v1"
+TAPPER_CORPUS_VERSION = "tapper-demo-v1"
+TAPPER_EMBEDDING_MODEL = "tapper-embedding"
+TAPPER_VECTOR_DIMENSION = 1536
+TAPPER_TENANT_ID = "local"
+TAPPER_PROJECT_ID = "tapper-demo"
+TAPPER_GROUP_ID = "tapper-local"
+TAPPER_ENVIRONMENT = "global"
+TAPPER_CLASSIFICATION_RANK = 1
 
 _UPSERT_BATCH = 64
 _DELETE_BATCH = 256
@@ -91,18 +91,18 @@ _DOC_READBACK_FIELDS = (
 
 
 @dataclass(frozen=True, slots=True)
-class AthenaMilvusConfig:
-    physical_collection: str = ATHENA_PHYSICAL_COLLECTION
-    alias: str = ATHENA_ALIAS
-    schema_version: str = ATHENA_SCHEMA_VERSION
-    corpus_version: str = ATHENA_CORPUS_VERSION
-    embedding_model: str = ATHENA_EMBEDDING_MODEL
-    vector_dimension: int = ATHENA_VECTOR_DIMENSION
-    tenant_id: str = ATHENA_TENANT_ID
-    project_id: str = ATHENA_PROJECT_ID
-    group_id: str = ATHENA_GROUP_ID
-    environment: str = ATHENA_ENVIRONMENT
-    classification_rank: int = ATHENA_CLASSIFICATION_RANK
+class TapperMilvusConfig:
+    physical_collection: str = TAPPER_PHYSICAL_COLLECTION
+    alias: str = TAPPER_ALIAS
+    schema_version: str = TAPPER_SCHEMA_VERSION
+    corpus_version: str = TAPPER_CORPUS_VERSION
+    embedding_model: str = TAPPER_EMBEDDING_MODEL
+    vector_dimension: int = TAPPER_VECTOR_DIMENSION
+    tenant_id: str = TAPPER_TENANT_ID
+    project_id: str = TAPPER_PROJECT_ID
+    group_id: str = TAPPER_GROUP_ID
+    environment: str = TAPPER_ENVIRONMENT
+    classification_rank: int = TAPPER_CLASSIFICATION_RANK
 
     def __post_init__(self) -> None:
         if (
@@ -118,19 +118,19 @@ class AthenaMilvusConfig:
             self.environment,
             self.classification_rank,
         ) != (
-            ATHENA_PHYSICAL_COLLECTION,
-            ATHENA_ALIAS,
-            ATHENA_SCHEMA_VERSION,
-            ATHENA_CORPUS_VERSION,
-            ATHENA_EMBEDDING_MODEL,
-            ATHENA_VECTOR_DIMENSION,
-            ATHENA_TENANT_ID,
-            ATHENA_PROJECT_ID,
-            ATHENA_GROUP_ID,
-            ATHENA_ENVIRONMENT,
-            ATHENA_CLASSIFICATION_RANK,
+            TAPPER_PHYSICAL_COLLECTION,
+            TAPPER_ALIAS,
+            TAPPER_SCHEMA_VERSION,
+            TAPPER_CORPUS_VERSION,
+            TAPPER_EMBEDDING_MODEL,
+            TAPPER_VECTOR_DIMENSION,
+            TAPPER_TENANT_ID,
+            TAPPER_PROJECT_ID,
+            TAPPER_GROUP_ID,
+            TAPPER_ENVIRONMENT,
+            TAPPER_CLASSIFICATION_RANK,
         ):
-            raise ValueError("Athena Milvus v1 configuration must use the closed local target")
+            raise ValueError("Tapper Milvus v1 configuration must use the closed local target")
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +158,7 @@ class RebuildReceipt:
 class RebuildRejected(IndexReconciliationFailed):
     def __init__(self, cleanup_facts: tuple[str, ...]) -> None:
         self.cleanup_facts = cleanup_facts
-        super().__init__("Athena index rebuild failed before activation")
+        super().__init__("Tapper index rebuild failed before activation")
 
 
 class _IndexTargetStage(StrEnum):
@@ -195,7 +195,7 @@ class _IndexTargetStageTracker:
 
     def set(self, stage: _IndexTargetStage) -> None:
         if not isinstance(stage, _IndexTargetStage):
-            raise TypeError("Athena Milvus target stage is outside the closed set")
+            raise TypeError("Tapper Milvus target stage is outside the closed set")
         self._stage = stage
 
 
@@ -206,9 +206,9 @@ class IndexTargetProvisioningFailed(IndexUnavailable):
 
     def __init__(self, stage: _IndexTargetStage) -> None:
         if not isinstance(stage, _IndexTargetStage):
-            raise TypeError("Athena Milvus target failure requires a closed stage")
+            raise TypeError("Tapper Milvus target failure requires a closed stage")
         self.stage = stage
-        super().__init__("Athena Milvus target provisioning failed")
+        super().__init__("Tapper Milvus target provisioning failed")
 
 
 class MilvusDocumentIndex:
@@ -217,14 +217,14 @@ class MilvusDocumentIndex:
     def __init__(
         self,
         *,
-        config: AthenaMilvusConfig,
+        config: TapperMilvusConfig,
         provisioner: MilvusDocProvisioner,
         writer: MilvusWriter,
         reader: MilvusDocReader,
         coordinator: ProjectionMutationCoordinator,
     ) -> None:
-        if not isinstance(config, AthenaMilvusConfig):
-            raise TypeError("Athena index requires closed configuration")
+        if not isinstance(config, TapperMilvusConfig):
+            raise TypeError("Tapper index requires closed configuration")
         self._config = config
         self._provisioner = provisioner
         self._writer = writer
@@ -264,14 +264,14 @@ class MilvusDocumentIndex:
                         physical,
                         tuple(str(item.chunk_id) for item in chunks),
                     )
-                    raise IndexFenced("Athena revision has a durable deletion fence")
+                    raise IndexFenced("Tapper revision has a durable deletion fence")
                 await self._require_revision_parity(physical, work, chunks)
         except asyncio.CancelledError:
             raise
         except (IndexFenced, IndexReconciliationFailed):
             raise
         except Exception as error:
-            raise IndexUnavailable("Athena Milvus upsert failed") from error
+            raise IndexUnavailable("Tapper Milvus upsert failed") from error
         return IndexReceipt(work.revision_id, index_version, len(chunks))
 
     async def fence_revision(self, target: DeletionTarget) -> None:
@@ -291,18 +291,18 @@ class MilvusDocumentIndex:
                 if persisted != (
                     {
                         "chunk_id": row["chunk_id"],
-                        "source_type": "athena_fence",
+                        "source_type": "tapper_fence",
                         "source_id": target.document_id,
                     },
                 ):
-                    raise IndexReconciliationFailed("Athena deletion fence did not persist exactly")
+                    raise IndexReconciliationFailed("Tapper deletion fence did not persist exactly")
                 await self._delete_ids(physical, target.chunk_ids)
         except asyncio.CancelledError:
             raise
         except IndexReconciliationFailed:
             raise
         except Exception as error:
-            raise IndexUnavailable("Athena Milvus fence failed") from error
+            raise IndexUnavailable("Tapper Milvus fence failed") from error
 
     async def delete_revision(self, target: DeletionTarget) -> None:
         try:
@@ -310,13 +310,13 @@ class MilvusDocumentIndex:
                 physical = await self._current_target_locked(authority)
                 await self._delete_ids(physical, target.chunk_ids)
                 if await self._count_revision_locked(physical, target):
-                    raise IndexReconciliationFailed("Athena revision delete negative probe failed")
+                    raise IndexReconciliationFailed("Tapper revision delete negative probe failed")
         except asyncio.CancelledError:
             raise
         except IndexReconciliationFailed:
             raise
         except Exception as error:
-            raise IndexUnavailable("Athena Milvus delete failed") from error
+            raise IndexUnavailable("Tapper Milvus delete failed") from error
 
     async def count_revision(self, target: DeletionTarget) -> int:
         try:
@@ -326,7 +326,7 @@ class MilvusDocumentIndex:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            raise IndexUnavailable("Athena Milvus count failed") from error
+            raise IndexUnavailable("Tapper Milvus count failed") from error
         raise AssertionError("unreachable")
 
     async def rebuild(
@@ -334,7 +334,7 @@ class MilvusDocumentIndex:
         records: tuple[ReadyRevisionArtifacts, ...],
     ) -> RebuildReceipt:
         if not isinstance(records, tuple):
-            raise ValueError("Athena rebuild requires a closed ready-revision snapshot")
+            raise ValueError("Tapper rebuild requires a closed ready-revision snapshot")
         committed_receipt: RebuildReceipt | None = None
         try:
             async with self._coordinator.mutation(self._config.alias) as authority:
@@ -348,7 +348,7 @@ class MilvusDocumentIndex:
         except Exception as error:
             raise RebuildRejected(("cleanup_unknown:preflight",)) from error
         if committed_receipt is None:
-            raise AssertionError("Athena rebuild exited without an authoritative receipt")
+            raise AssertionError("Tapper rebuild exited without an authoritative receipt")
         return committed_receipt
 
     async def close(self) -> None:
@@ -378,7 +378,7 @@ class MilvusDocumentIndex:
         stage: _IndexTargetStageTracker,
     ) -> IndexTargetReceipt:
         if not isinstance(stage, _IndexTargetStageTracker):
-            raise TypeError("Athena Milvus target ensure requires a per-call stage tracker")
+            raise TypeError("Tapper Milvus target ensure requires a per-call stage tracker")
         physical = self._config.physical_collection
         stage.set(_IndexTargetStage.DISCOVERY)
         alias_target = await self._reader.describe_alias(self._config.alias)
@@ -417,7 +417,7 @@ class MilvusDocumentIndex:
         assert isinstance(alias_target, str)
         stage.set(_IndexTargetStage.DISCOVERY)
         if not await self._reader.collection_exists(alias_target):
-            raise IndexUnavailable("Athena alias target does not exist")
+            raise IndexUnavailable("Tapper alias target does not exist")
         stage.set(_IndexTargetStage.INDEXES)
         await self._require_descriptor(alias_target)
         stage.set(_IndexTargetStage.LOAD)
@@ -439,7 +439,7 @@ class MilvusDocumentIndex:
         if recorded is None:
             _, initialized = await authority.initialize(actual_physical)
             if initialized != actual_physical:
-                raise IndexUnavailable("Athena projection generation initialization conflicted")
+                raise IndexUnavailable("Tapper projection generation initialization conflicted")
             return
         self._require_target_name(recorded)
         if recorded != actual_physical:
@@ -449,7 +449,7 @@ class MilvusDocumentIndex:
                 or ownership.status != "building"
                 or ownership.predecessor_collection != recorded
             ):
-                raise IndexUnavailable("Athena alias drift has no durable ownership lineage")
+                raise IndexUnavailable("Tapper alias drift has no durable ownership lineage")
             await self._revoke_exact_grants(recorded)
             await self._activate_build_resolved(authority, ownership)
 
@@ -478,7 +478,7 @@ class MilvusDocumentIndex:
             _QUERY_LIMIT,
         )
         if len(rows) > MAX_CHUNKS_PER_DOCUMENT:
-            raise IndexReconciliationFailed("Athena revision exceeds the closed chunk bound")
+            raise IndexReconciliationFailed("Tapper revision exceeds the closed chunk bound")
         return len(rows)
 
     async def _reconcile_cleanup_locked(
@@ -493,9 +493,9 @@ class MilvusDocumentIndex:
             physical = ownership.physical_collection
             self._require_target_name(physical)
             if physical == current:
-                raise IndexUnavailable("Athena owned cleanup unexpectedly targets active alias")
+                raise IndexUnavailable("Tapper owned cleanup unexpectedly targets active alias")
             if not await authority.verify_cleanup(ownership):
-                raise IndexUnavailable("Athena projection cleanup ownership changed")
+                raise IndexUnavailable("Tapper projection cleanup ownership changed")
             if await self._reader.describe_alias(self._config.alias) == physical:
                 facts.append(f"cleanup_still_aliased:{physical}")
                 continue
@@ -527,12 +527,12 @@ class MilvusDocumentIndex:
 
             old_fence_rows = await self._reader.query_persisted_rows(
                 old,
-                'source_type == "athena_fence"',
+                'source_type == "tapper_fence"',
                 ("source_revision", "source_id", "source_type"),
                 _QUERY_LIMIT,
             )
             if len(old_fence_rows) >= _QUERY_LIMIT:
-                raise IndexReconciliationFailed("Athena durable fence snapshot exceeds its bound")
+                raise IndexReconciliationFailed("Tapper durable fence snapshot exceeds its bound")
             for row in old_fence_rows:
                 revision = row.get("source_revision")
                 document_id = row.get("source_id")
@@ -541,12 +541,12 @@ class MilvusDocumentIndex:
                     or not revision.startswith("fence:")
                     or not isinstance(document_id, str)
                 ):
-                    raise IndexReconciliationFailed("Athena deletion fence row is malformed")
+                    raise IndexReconciliationFailed("Tapper deletion fence row is malformed")
                 await authority.record_fence(revision.removeprefix("fence:"), document_id)
 
             durable_fences = await authority.fences(_QUERY_LIMIT)
             if len(durable_fences) >= _QUERY_LIMIT:
-                raise IndexReconciliationFailed("Athena durable fence ledger exceeds its bound")
+                raise IndexReconciliationFailed("Tapper durable fence ledger exceeds its bound")
             fence_rows = tuple(
                 self._fence_row(
                     fresh,
@@ -571,7 +571,7 @@ class MilvusDocumentIndex:
                 )
                 row_ids = {str(row["chunk_id"]) for row in rows}
                 if expected_ids & row_ids:
-                    raise ValueError("Athena rebuild contains duplicate chunk identities")
+                    raise ValueError("Tapper rebuild contains duplicate chunk identities")
                 expected_ids.update(row_ids)
                 active_records.append(record)
                 for revision_batch in _batches(rows, _UPSERT_BATCH):
@@ -588,14 +588,14 @@ class MilvusDocumentIndex:
                 if await self._reader.describe_alias(self._config.alias) != fresh:
                     raise
             if await self._reader.describe_alias(self._config.alias) != fresh:
-                raise IndexReconciliationFailed("Athena alias switch did not persist")
+                raise IndexReconciliationFailed("Tapper alias switch did not persist")
 
             old_ownership = await authority.ownership(old)
             await self._revoke_exact_grants(old)
             await self._activate_build_resolved(authority, ownership)
         except asyncio.CancelledError as cancellation:
             cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
-            cancellation.add_note("Athena rebuild cleanup facts: " + ",".join(cleanup))
+            cancellation.add_note("Tapper rebuild cleanup facts: " + ",".join(cleanup))
             raise
         except Exception as error:
             cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
@@ -654,7 +654,7 @@ class MilvusDocumentIndex:
             target,
             exact_generation_names=True,
         ):
-            raise IndexUnavailable("Athena alias targets an untrusted physical collection")
+            raise IndexUnavailable("Tapper alias targets an untrusted physical collection")
 
     async def _require_descriptor(self, physical: str) -> None:
         descriptor = await self._reader.describe_collection_schema(
@@ -693,7 +693,7 @@ class MilvusDocumentIndex:
             getattr(descriptor, "consistency_level", None),
         )
         if not isinstance(descriptor, MilvusCollectionDescriptor) or actual != expected:
-            raise IndexUnavailable("Athena Milvus collection metadata does not match")
+            raise IndexUnavailable("Tapper Milvus collection metadata does not match")
 
     async def _ensure_exact_grants(self, physical: str) -> None:
         for role, expected in (
@@ -704,18 +704,18 @@ class MilvusDocumentIndex:
             grants = await self._provisioner.collection_grants(physical, role)
             privileges = frozenset(item.privilege for item in grants)
             if privileges != expected:
-                raise IndexUnavailable("Athena Milvus scoped privileges are not exact")
+                raise IndexUnavailable("Tapper Milvus scoped privileges are not exact")
 
     async def _revoke_exact_grants(self, physical: str) -> None:
         for role in ("tap_reader", "tap_writer"):
             await self._provisioner.revoke_collection(physical, role)
             if await self._provisioner.collection_grants(physical, role):
-                raise IndexUnavailable("Athena retired Milvus scoped privileges remain")
+                raise IndexUnavailable("Tapper retired Milvus scoped privileges remain")
 
     async def _require_loaded(self, physical: str) -> None:
         await self._provisioner.ensure_loaded(physical)
         if not await self._provisioner.is_loaded(physical):
-            raise IndexUnavailable("Athena Milvus collection is not loaded")
+            raise IndexUnavailable("Tapper Milvus collection is not loaded")
 
     def _revision_rows(
         self,
@@ -740,7 +740,7 @@ class MilvusDocumentIndex:
             or not 1 <= len(work.revision_id) <= 512
             or not 1 <= len(work.filename) <= 1_024
         ):
-            raise ValueError("Athena revision artifacts do not match the closed index target")
+            raise ValueError("Tapper revision artifacts do not match the closed index target")
         try:
             canonical_revision = revision_id_for(
                 DocumentId(work.document_id),
@@ -748,11 +748,11 @@ class MilvusDocumentIndex:
                 work.parser_version,
             )
         except (TypeError, ValueError) as error:
-            raise ValueError("Athena revision provenance is invalid") from error
+            raise ValueError("Tapper revision provenance is invalid") from error
         if work.parser_version != PARSER_VERSION or str(canonical_revision) != work.revision_id:
-            raise ValueError("Athena revision provenance is inconsistent")
+            raise ValueError("Tapper revision provenance is inconsistent")
         if len({str(chunk.chunk_id) for chunk in chunks}) != len(chunks):
-            raise ValueError("Athena revision chunk identities must be unique")
+            raise ValueError("Tapper revision chunk identities must be unique")
         rows: list[Mapping[str, object]] = []
         for chunk, vector in zip(chunks, embeddings.vectors, strict=True):
             if (
@@ -783,14 +783,14 @@ class MilvusDocumentIndex:
                     and (not isinstance(chunk.parent_id, str) or not chunk.parent_id)
                 )
             ):
-                raise ValueError("Athena chunk provenance does not match its revision")
+                raise ValueError("Tapper chunk provenance does not match its revision")
             anchor = json.loads(chunk.anchor_json)
             if (
                 not isinstance(anchor, dict)
                 or json.dumps(anchor, sort_keys=True, separators=(",", ":")) != chunk.anchor_json
                 or anchor.get("type") != "document"
             ):
-                raise ValueError("Athena chunk anchor must be canonical JSON")
+                raise ValueError("Tapper chunk anchor must be canonical JSON")
             rows.append(
                 {
                     "chunk_id": str(chunk.chunk_id),
@@ -831,14 +831,14 @@ class MilvusDocumentIndex:
     def _fence_row(self, physical: str, target: DeletionTarget) -> Mapping[str, object]:
         digest = hashlib.sha256(target.revision_id.encode("utf-8")).hexdigest()
         row_id = "h_" + digest
-        content_hash = "sha256:" + hashlib.sha256(b"athena deletion fence").hexdigest()
+        content_hash = "sha256:" + hashlib.sha256(b"tapper deletion fence").hexdigest()
         return {
             "chunk_id": row_id,
             "logical_chunk_id": row_id,
             "root_id": target.document_id,
             "parent_id": None,
             "title": None,
-            "content": "athena deletion fence",
+            "content": "tapper deletion fence",
             "content_role": "source",
             "tenant_id": self._config.tenant_id,
             "project_id": self._config.project_id,
@@ -852,7 +852,7 @@ class MilvusDocumentIndex:
             "schema_version": self._config.schema_version,
             "embedding_model_version": self._config.embedding_model,
             "source_id": target.document_id,
-            "source_type": "athena_fence",
+            "source_type": "tapper_fence",
             "revision_kind": "deletion_fence",
             "source_revision": "fence:" + target.revision_id,
             "source_content_hash": content_hash,
@@ -869,7 +869,7 @@ class MilvusDocumentIndex:
         revision_id: str,
     ) -> None:
         if await self._is_fenced(authority, physical, revision_id):
-            raise IndexFenced("Athena revision has a durable deletion fence")
+            raise IndexFenced("Tapper revision has a durable deletion fence")
 
     async def _is_fenced(
         self,
@@ -888,13 +888,13 @@ class MilvusDocumentIndex:
         )
         if not rows:
             return False
-        if rows != ({"chunk_id": fence_id, "source_type": "athena_fence"},):
-            raise IndexReconciliationFailed("Athena deletion fence row is malformed")
+        if rows != ({"chunk_id": fence_id, "source_type": "tapper_fence"},):
+            raise IndexReconciliationFailed("Tapper deletion fence row is malformed")
         return True
 
     async def _delete_ids(self, physical: str, chunk_ids: tuple[str, ...]) -> None:
         if not isinstance(chunk_ids, tuple) or len(set(chunk_ids)) != len(chunk_ids):
-            raise ValueError("Athena delete requires unique immutable chunk IDs")
+            raise ValueError("Tapper delete requires unique immutable chunk IDs")
         for batch in _batches(chunk_ids, _DELETE_BATCH):
             await self._writer.delete(physical, batch)
         await self._writer.flush(physical)
@@ -922,7 +922,7 @@ class MilvusDocumentIndex:
         for row in rows:
             chunk_id = row.get("chunk_id")
             if not isinstance(chunk_id, str) or chunk_id in actual:
-                raise IndexReconciliationFailed("Athena readback contains duplicate rows")
+                raise IndexReconciliationFailed("Tapper readback contains duplicate rows")
             if (
                 row.get("source_revision") != work.revision_id
                 or row.get("embedding_model_version") != self._config.embedding_model
@@ -931,13 +931,13 @@ class MilvusDocumentIndex:
                 or row.get("source_type") != "doc"
                 or row.get("physical_collection") != physical
             ):
-                raise IndexReconciliationFailed("Athena readback metadata does not match")
+                raise IndexReconciliationFailed("Tapper readback metadata does not match")
             actual[chunk_id] = (
                 row.get("source_content_hash"),
                 row.get("chunk_content_hash"),
             )
         if actual != expected:
-            raise IndexReconciliationFailed("Athena readback chunk/hash parity failed")
+            raise IndexReconciliationFailed("Tapper readback chunk/hash parity failed")
 
     async def _require_fence_parity(
         self,
@@ -953,7 +953,7 @@ class MilvusDocumentIndex:
         )
         rows = await self._reader.query_persisted_rows(
             physical,
-            'source_type == "athena_fence"',
+            'source_type == "tapper_fence"',
             output_fields,
             _QUERY_LIMIT,
         )
@@ -965,7 +965,7 @@ class MilvusDocumentIndex:
                 physical,
             )
             for row in old_rows
-            if row.get("source_type") == "athena_fence"
+            if row.get("source_type") == "tapper_fence"
         }
         actual = {
             (
@@ -975,10 +975,10 @@ class MilvusDocumentIndex:
                 row.get("physical_collection"),
             )
             for row in rows
-            if row.get("source_type") == "athena_fence"
+            if row.get("source_type") == "tapper_fence"
         }
         if len(actual) != len(rows) or actual != expected:
-            raise IndexReconciliationFailed("Athena rebuild fence parity failed")
+            raise IndexReconciliationFailed("Tapper rebuild fence parity failed")
 
     async def _settle_rebuild_rollback(
         self,
@@ -1016,7 +1016,7 @@ class MilvusDocumentIndex:
                     if await self._reader.describe_alias(self._config.alias) != old:
                         raise
                 if await self._reader.describe_alias(self._config.alias) != old:
-                    raise IndexReconciliationFailed("Athena old alias restoration did not persist")
+                    raise IndexReconciliationFailed("Tapper old alias restoration did not persist")
                 alias_target = old
             except Exception:
                 facts.append(f"alias_restore_failed:{old}")
@@ -1037,12 +1037,12 @@ class MilvusDocumentIndex:
         if created and alias_target != fresh and current_ownership is not None:
             try:
                 if not await authority.verify_cleanup(current_ownership):
-                    raise IndexReconciliationFailed("Athena owned partial cleanup receipt changed")
+                    raise IndexReconciliationFailed("Tapper owned partial cleanup receipt changed")
                 await self._provisioner.revoke_collection(fresh, "tap_reader")
                 await self._provisioner.revoke_collection(fresh, "tap_writer")
                 if await self._reader.describe_alias(self._config.alias) == fresh:
                     raise IndexReconciliationFailed(
-                        "Athena owned partial collection is still aliased"
+                        "Tapper owned partial collection is still aliased"
                     )
                 if await self._reader.collection_exists(fresh):
                     await self._provisioner.drop_collection(fresh)
@@ -1074,12 +1074,12 @@ def _batches[T](items: tuple[T, ...], size: int) -> tuple[tuple[T, ...], ...]:
 
 
 __all__ = [
-    "ATHENA_ALIAS",
-    "ATHENA_CORPUS_VERSION",
-    "ATHENA_EMBEDDING_MODEL",
-    "ATHENA_PHYSICAL_COLLECTION",
-    "ATHENA_SCHEMA_VERSION",
-    "AthenaMilvusConfig",
+    "TAPPER_ALIAS",
+    "TAPPER_CORPUS_VERSION",
+    "TAPPER_EMBEDDING_MODEL",
+    "TAPPER_PHYSICAL_COLLECTION",
+    "TAPPER_SCHEMA_VERSION",
+    "TapperMilvusConfig",
     "IndexFenced",
     "IndexTargetReceipt",
     "MilvusDocumentIndex",

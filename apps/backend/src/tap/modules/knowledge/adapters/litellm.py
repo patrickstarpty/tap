@@ -25,7 +25,7 @@ from tap.modules.knowledge.ports.models import (
 )
 
 _CANONICAL_COST = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.[0-9]{1,18})?\Z")
-_ATHENA_EMBEDDING_ALIAS = "athena-embedding"
+_TAPPER_EMBEDDING_ALIAS = "tapper-embedding"
 _MAX_EMBEDDING_BATCH = 10
 _MAX_EMBEDDING_REQUEST_BYTES = 262_144
 _EMBEDDING_REQUIRED_FIELDS = frozenset({"object", "model", "data", "usage"})
@@ -211,9 +211,9 @@ class LiteLLMAdapter:
             raise ModelUnavailable("LiteLLM exceeded the outer deadline") from error
 
     async def embed_many(self, texts: tuple[str, ...]) -> tuple[Embedding, ...]:
-        """Embed one bounded chunk batch on Athena's fixed ingestion route."""
+        """Embed one bounded chunk batch on Tapper's fixed ingestion route."""
 
-        if self.embedding_model_id != _ATHENA_EMBEDDING_ALIAS:
+        if self.embedding_model_id != _TAPPER_EMBEDDING_ALIAS:
             raise ModelUnavailable("the ingestion embedding route is not configured")
         if (
             not isinstance(texts, tuple)
@@ -233,7 +233,7 @@ class LiteLLMAdapter:
                 response = await self._post(
                     "v1/embeddings",
                     {
-                        "model": _ATHENA_EMBEDDING_ALIAS,
+                        "model": _TAPPER_EMBEDDING_ALIAS,
                         "input": list(texts),
                         "dimensions": self._config.embedding_dimension,
                         "encoding_format": "float",
@@ -258,7 +258,7 @@ class LiteLLMAdapter:
     ) -> EmbeddingArtifact:
         """Implement the ingestion port with exact request-size and identity batching."""
 
-        if model_alias != _ATHENA_EMBEDDING_ALIAS or model_alias != self.embedding_model_id:
+        if model_alias != _TAPPER_EMBEDDING_ALIAS or model_alias != self.embedding_model_id:
             raise ModelUnavailable("the ingestion embedding route is not configured")
         if (
             not isinstance(texts, tuple)
@@ -304,7 +304,7 @@ class LiteLLMAdapter:
             return len(
                 json.dumps(
                     {
-                        "model": _ATHENA_EMBEDDING_ALIAS,
+                        "model": _TAPPER_EMBEDDING_ALIAS,
                         "input": list(texts),
                         "dimensions": self._config.embedding_dimension,
                         "encoding_format": "float",

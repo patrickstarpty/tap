@@ -21,9 +21,9 @@ export function isCodexModelId(value: unknown): value is CodexModelId {
 }
 
 export type ProductModule =
-  "athena" | "agents" | "skills" | "library" | "test-management" | "low-code";
+  "tapper" | "agents" | "skills" | "library" | "test-management" | "low-code";
 
-export type AthenaSurface = "chat" | "agents" | "skills" | "library";
+export type TapperSurface = "chat" | "agents" | "skills" | "library";
 
 export type AssistantIntent = "answer" | "test-plan" | "automation";
 

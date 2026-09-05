@@ -1,4 +1,4 @@
-"""Content-addressed private Azure Blob storage for Athena ingestion artifacts."""
+"""Content-addressed private Azure Blob storage for Tapper ingestion artifacts."""
 
 from __future__ import annotations
 
@@ -53,8 +53,8 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, ArtifactUnavailable
 
-ORIGINALS_CONTAINER = "athena-originals"
-ARTIFACTS_CONTAINER = "athena-artifacts"
+ORIGINALS_CONTAINER = "tapper-originals"
+ARTIFACTS_CONTAINER = "tapper-artifacts"
 _CONTAINERS = frozenset({ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER})
 _SAFE_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,512}\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -69,7 +69,7 @@ _COPY_RECOVERY_PROBE_TIMEOUT_SECONDS = 0.01
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _ACTIVE_COPY_SETTLEMENT_DEADLINE: ContextVar[float | None] = ContextVar(
-    "athena_blob_copy_settlement_deadline",
+    "tapper_blob_copy_settlement_deadline",
     default=None,
 )
 
@@ -1622,7 +1622,7 @@ def _metadata_digest(metadata: Mapping[str, str]) -> str:
 
 def _copy_owner_token(staging_key: str, revision_id: str, digest: str) -> str:
     return sha256(
-        f"athena-original-copy-v1\0{staging_key}\0{revision_id}\0{digest}".encode()
+        f"tapper-original-copy-v1\0{staging_key}\0{revision_id}\0{digest}".encode()
     ).hexdigest()
 
 

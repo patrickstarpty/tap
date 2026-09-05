@@ -36,7 +36,7 @@ class PartialIndexClient:
         self.definitions: dict[str, dict[str, object]] = {}
 
     def list_indexes(self, collection_name: str, **kwargs: object) -> list[str]:
-        assert collection_name == "kb_doc_v1_athena_demo"
+        assert collection_name == "kb_doc_v1_tapper_demo"
         return sorted(self.indexes)
 
     def prepare_index_params(self) -> IndexParams:
@@ -48,7 +48,7 @@ class PartialIndexClient:
         index_params: IndexParams,
         **kwargs: object,
     ) -> None:
-        assert collection_name == "kb_doc_v1_athena_demo"
+        assert collection_name == "kb_doc_v1_tapper_demo"
         assert index_params.index_name is not None
         self.create_attempts.append(index_params.index_name)
         if index_params.index_name == "bm25_sparse" and not self.failed:
@@ -69,10 +69,10 @@ class PartialIndexClient:
         return self.definitions[index_name]
 
     def load_collection(self, collection_name: str, **kwargs: object) -> None:
-        assert collection_name == "kb_doc_v1_athena_demo"
+        assert collection_name == "kb_doc_v1_tapper_demo"
 
     def get_load_state(self, collection_name: str, **kwargs: object) -> dict[str, object]:
-        assert collection_name == "kb_doc_v1_athena_demo"
+        assert collection_name == "kb_doc_v1_tapper_demo"
         return {"state": "Loaded"}
 
 
@@ -82,12 +82,12 @@ class ReleasedCollectionClient:
         self.events: list[str] = []
 
     def load_collection(self, collection_name: str, **kwargs: object) -> None:
-        assert collection_name == "kb_doc_v1_athena_demo"
+        assert collection_name == "kb_doc_v1_tapper_demo"
         self.events.append("load")
         self.loaded = True
 
     def get_load_state(self, collection_name: str, **kwargs: object) -> dict[str, object]:
-        assert collection_name == "kb_doc_v1_athena_demo"
+        assert collection_name == "kb_doc_v1_tapper_demo"
         self.events.append("state")
         return {"state": "Loaded" if self.loaded else "NotLoad"}
 
@@ -95,12 +95,12 @@ class ReleasedCollectionClient:
 class ExactCollectionClient:
     def __init__(self) -> None:
         self.names: list[str] = []
-        self.aliases = {"kb_doc_athena_demo_active": "kb_doc_v1_athena_demo"}
+        self.aliases = {"kb_doc_tapper_demo_active": "kb_doc_v1_tapper_demo"}
 
     def has_collection(self, collection_name: str, **kwargs: object) -> bool:
         assert kwargs["timeout"] == 30.0
         self.names.append(collection_name)
-        return collection_name == "kb_doc_v1_athena_demo" or collection_name in self.aliases
+        return collection_name == "kb_doc_v1_tapper_demo" or collection_name in self.aliases
 
     def describe_alias(self, alias: str, **kwargs: object) -> dict[str, object]:
         assert kwargs["timeout"] == 30.0
@@ -142,15 +142,15 @@ async def test_partial_index_creation_is_reconciled_after_adapter_reconstruction
         DocCollectionMetadata(
             schema_version="doc-schema-v1",
             schema_sha256=doc_schema_sha256(),
-            corpus_version="athena-demo-v1",
-            embedding_model_version="athena-embedding",
+            corpus_version="tapper-demo-v1",
+            embedding_model_version="tapper-embedding",
             vector_dimension=1536,
         )
     )
     first = PyMilvusDocProvisioner(client, sdk(), database_name="default")  # type: ignore[arg-type]
 
     with pytest.raises(RuntimeError, match="second-index interruption"):
-        await first.create_indexes("kb_doc_v1_athena_demo", schema)
+        await first.create_indexes("kb_doc_v1_tapper_demo", schema)
     assert client.indexes == {"dense_vector"}
 
     reconstructed = PyMilvusDocProvisioner(
@@ -158,8 +158,8 @@ async def test_partial_index_creation_is_reconciled_after_adapter_reconstruction
         sdk(),
         database_name="default",  # type: ignore[arg-type]
     )
-    await reconstructed.create_indexes("kb_doc_v1_athena_demo", schema)
-    await reconstructed.validate_collection_indexes("kb_doc_v1_athena_demo", schema)
+    await reconstructed.create_indexes("kb_doc_v1_tapper_demo", schema)
+    await reconstructed.validate_collection_indexes("kb_doc_v1_tapper_demo", schema)
 
     assert client.indexes == set(schema["indexes"])
     assert client.create_attempts.count("dense_vector") == 1
@@ -173,8 +173,8 @@ async def test_index_validation_rejects_extra_collection_scoped_index_inventory(
         DocCollectionMetadata(
             schema_version="doc-schema-v1",
             schema_sha256=doc_schema_sha256(),
-            corpus_version="athena-demo-v1",
-            embedding_model_version="athena-embedding",
+            corpus_version="tapper-demo-v1",
+            embedding_model_version="tapper-embedding",
             vector_dimension=1536,
         )
     )
@@ -183,11 +183,11 @@ async def test_index_validation_rejects_extra_collection_scoped_index_inventory(
         sdk(),
         database_name="default",  # type: ignore[arg-type]
     )
-    await provisioner.create_indexes("kb_doc_v1_athena_demo", schema)
+    await provisioner.create_indexes("kb_doc_v1_tapper_demo", schema)
     client.indexes.add("unmanaged_extra")
 
     with pytest.raises(ValueError, match="canonical schema"):
-        await provisioner.validate_collection_indexes("kb_doc_v1_athena_demo", schema)
+        await provisioner.validate_collection_indexes("kb_doc_v1_tapper_demo", schema)
 
 
 @pytest.mark.asyncio
@@ -200,9 +200,9 @@ async def test_released_collection_has_independent_load_and_exact_readiness_surf
         database_name="default",  # type: ignore[arg-type]
     )
 
-    assert await provisioner.is_loaded("kb_doc_v1_athena_demo") is False
-    await provisioner.ensure_loaded("kb_doc_v1_athena_demo")
-    assert await provisioner.is_loaded("kb_doc_v1_athena_demo") is True
+    assert await provisioner.is_loaded("kb_doc_v1_tapper_demo") is False
+    await provisioner.ensure_loaded("kb_doc_v1_tapper_demo")
+    assert await provisioner.is_loaded("kb_doc_v1_tapper_demo") is True
     assert client.events == ["state", "load", "state"]
 
 
@@ -211,12 +211,12 @@ async def test_reader_observes_only_exact_collection_and_alias_identities() -> N
     client = ExactCollectionClient()
     reader = PyMilvusDocReader(client, database_name="default")  # type: ignore[arg-type]
 
-    assert await reader.collection_exists("kb_doc_v1_athena_demo") is True
-    assert await reader.describe_alias("kb_doc_athena_demo_active") == "kb_doc_v1_athena_demo"
+    assert await reader.collection_exists("kb_doc_v1_tapper_demo") is True
+    assert await reader.describe_alias("kb_doc_tapper_demo_active") == "kb_doc_v1_tapper_demo"
     assert await reader.describe_alias("kb_doc_missing") is None
     assert client.names == [
-        "kb_doc_v1_athena_demo",
-        "kb_doc_athena_demo_active",
+        "kb_doc_v1_tapper_demo",
+        "kb_doc_tapper_demo_active",
         "kb_doc_missing",
     ]
 
@@ -226,28 +226,28 @@ async def test_reader_observes_only_exact_collection_and_alias_identities() -> N
     [
         {
             "alias": "kb_doc_other_alias",
-            "collection_name": "kb_doc_v1_athena_demo",
+            "collection_name": "kb_doc_v1_tapper_demo",
             "db_name": "default",
         },
         {
-            "alias": "kb_doc_athena_demo_active",
-            "collection_name": "kb_doc_v1_athena_demo",
+            "alias": "kb_doc_tapper_demo_active",
+            "collection_name": "kb_doc_v1_tapper_demo",
             "db_name": "other",
         },
         {
-            "alias": "kb_doc_athena_demo_active",
-            "collection_name": "kb_doc_v1_athena_demo",
+            "alias": "kb_doc_tapper_demo_active",
+            "collection_name": "kb_doc_v1_tapper_demo",
             "db_name": "default",
             "extra": "widened",
         },
         {
-            "alias": "kb_doc_athena_demo_active",
+            "alias": "kb_doc_tapper_demo_active",
             "collection_name": "",
             "db_name": "default",
         },
         {
-            "alias": "kb_doc_athena_demo_active",
-            "collection_name": "kb_doc_v1_athena_demo",
+            "alias": "kb_doc_tapper_demo_active",
+            "collection_name": "kb_doc_v1_tapper_demo",
         },
     ],
 )
@@ -260,13 +260,13 @@ async def test_reader_rejects_alias_metadata_not_bound_to_exact_request_and_data
     reader = PyMilvusDocReader(client, database_name="default")  # type: ignore[arg-type]
 
     with pytest.raises(RuntimeError, match="alias metadata"):
-        await reader.describe_alias("kb_doc_athena_demo_active")
+        await reader.describe_alias("kb_doc_tapper_demo_active")
 
 
 def _grant_record(
     *,
     object_type: str = "Collection",
-    object_name: str = "kb_doc_v1_athena_demo",
+    object_name: str = "kb_doc_v1_tapper_demo",
     database_name: str = "default",
     privilege: str = "Search",
 ) -> dict[str, str]:
@@ -299,7 +299,7 @@ async def test_collection_grants_bind_every_same_name_record_to_exact_database_a
     )
 
     grants = await provisioner.collection_grants(
-        "kb_doc_v1_athena_demo",
+        "kb_doc_v1_tapper_demo",
         "tap_reader",
     )
 
@@ -338,6 +338,6 @@ async def test_collection_grants_reject_wrong_database_or_object_type_for_same_n
 
     with pytest.raises(RuntimeError, match="grant metadata"):
         await provisioner.collection_grants(
-            "kb_doc_v1_athena_demo",
+            "kb_doc_v1_tapper_demo",
             "tap_reader",
         )

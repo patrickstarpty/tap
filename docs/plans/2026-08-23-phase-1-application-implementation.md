@@ -1,13 +1,15 @@
 ---
-status: active
+status: cancelled
 date: 2026-08-23
 ---
+
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
 
 # Phase 1 Application Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在同一仓库中交付可部署、可恢复、可观测且通过权限与容量验收的 Phase 1 RAG Foundation 和 Athena Knowledge Chat。
+**Goal:** 在同一仓库中交付可部署、可恢复、可观测且通过权限与容量验收的 Phase 1 RAG Foundation 和 Tapper Knowledge Chat。
 
 **Architecture:** 在单仓库中建立 Vite/React Web 与单 Python package 的 FastAPI 模块化单体，通过独立 entrypoint/image target 运行 API/SSE 和各类 worker。MySQL 是业务事实与 Outbox 的 SoR，Redis 只承担可重建分发和 live fanout，Azure AI Search 是可重建检索投影；浏览器使用 REST snapshot + fetch-based SSE tail，所有 Knowledge 调用都携带服务端构造并在使用时复验的策略上下文。
 
@@ -15,13 +17,13 @@ date: 2026-08-23
 
 **Spec:** `docs/proposals/2026-08-23-rfc-003-phase-1-application-structure.md`
 
-> **重排说明（2026-09-02）**：[ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已将当前交付重点改为 Intelligence Layer Exploration。本计划仍保持 `active`，因为 Plan 状态机没有 paused/canceled，且其完整 RAG/Knowledge Chat 任务尚未完成；它现在是后置 Knowledge Plane 工作流，不再是当前 Phase 1 出口。当前实施使用独立的 [Phase 1 Intelligence Core 实施计划](2026-09-02-phase-1-intelligence-core-implementation.md)，不从本计划继续扩展 Chat 或企业四索引。
+> **取消说明（2026-09-04）**：本计划已取消，不再是当前执行计划。2026-09-02 的 Intelligence-first 次序又被 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代；Azure AI Search/Entra/AKS/Git-first 内容只作历史参考。当前实施使用 [Tapper 知识与 Web 自动化平台实施计划](2026-09-04-tapper-knowledge-web-automation-platform.md)，不得从本文继续执行未完成任务。
 
-## Current Reusable Athena Baseline
+## Current Reusable Tapper Baseline
 
-独立的 [Athena 本地知识 Demo 计划](2026-08-27-athena-local-knowledge-demo.md) 已经交付 Python/FastAPI 与 React/Vite workspace、确定性 OpenAPI/TypeScript 生成、MySQL document/job/manifest 与 Outbox、Redis Relay/worker 唤醒、Azurite artifact、PDF/DOCX/MD/TXT typed ingestion、本地 Milvus `doc` 投影、固定 LiteLLM alias、来源限定 answer/citation，以及真实本地中间件上的浏览器、失败恢复和文档/ingestion/index 持久化门禁。这些能力可被本计划复用，不应再建立第二套 DTO、文档身份、RAG 或 worker 状态机；当前回答正文只在 Web 页面内存中，不具备 history 恢复能力。
+独立的 [Tapper 本地知识 Demo 计划](2026-08-27-tapper-local-knowledge-demo.md) 已经交付 Python/FastAPI 与 React/Vite workspace、确定性 OpenAPI/TypeScript 生成、MySQL document/job/manifest 与 Outbox、Redis Relay/worker 唤醒、Azurite artifact、PDF/DOCX/MD/TXT typed ingestion、本地 Milvus `doc` 投影、固定 LiteLLM alias、来源限定 answer/citation，以及真实本地中间件上的浏览器、失败恢复和文档/ingestion/index 持久化门禁。这些能力可被本计划复用，不应再建立第二套 DTO、文档身份、RAG 或 worker 状态机；当前回答正文只在 Web 页面内存中，不具备 history 恢复能力。
 
-该 baseline 只有 loopback/no-auth/no-OCR 的固定本地知识空间和单次非流式问答。它不完成本计划要求的 Entra/Project Policy、Azure AI Search 四 family、durable Conversation/Turn/Queue、REST snapshot + SSE tail、stop/fork/feedback/Trace、AKS/OTel/容量与 Golden Dataset。故本计划继续保持 `active`，下列 Task 的未完成 checkbox 与 Phase 1 出口标准不因本地 Demo GREEN 自动改变；RFC-003 仍为 `accepted`，RFC-004 仍为 `draft`。
+该 baseline 只有 loopback/no-auth/no-OCR 的固定本地知识空间和单次非流式问答。它不完成本计划当时要求的 Entra/Project Policy、Azure AI Search 四 family、durable Conversation/Turn/Queue、REST snapshot + SSE tail、stop/fork/feedback/Trace、AKS/OTel/容量与 Golden Dataset。本计划现为 `cancelled`；下列未完成 checkbox 与原 Phase 1 出口标准只保留历史，不得继续执行。RFC-003 仍为 `accepted`，RFC-004 已为 `withdrawn`。
 
 ## Global Constraints
 
@@ -48,7 +50,7 @@ date: 2026-08-23
 - `apps/backend/src/tap/platform/`：数据库、消息、外部客户端、安全和可观测性技术能力，不承载业务语义。
 - `apps/backend/src/tap/entrypoints/`：仅装配依赖并启动 API/SSE 或单一 worker 角色。
 - `apps/web/src/features/chat/`：Chat API、stream、store、Markdown 与交互实现。
-- `apps/web/src/widgets/athena/`：可嵌入的 `AthenaPanel` 与 `AthenaLauncher` 外壳。
+- `apps/web/src/widgets/tapper/`：可嵌入的 `TapperPanel` 与 `TapperLauncher` 外壳。
 - `deploy/kubernetes/`：实际 Phase 1 角色的 Kubernetes manifests；不保存秘密或未来角色空配置。
 - `loadtests/`：REST、SSE、browser 和组合容量场景。
 
@@ -57,6 +59,7 @@ date: 2026-08-23
 ### Task 0: Local Middleware Bootstrap
 
 **Files:**
+
 - Create: `compose.yaml`
 - Create: `deploy/local/litellm/config.yaml`
 - Create: `scripts/check-local-services.sh`
@@ -65,6 +68,7 @@ date: 2026-08-23
 - Modify: `docs/plans/2026-08-23-phase-1-application-implementation.md`
 
 **Interfaces:**
+
 - Consumes: Phase 1 middleware baseline in `README.md` and RFC-003 runtime assumptions about MySQL, Redis, Blob Storage, and LiteLLM.
 - Produces: a reproducible local preflight stack for MySQL 8.4 LTS, Redis 7.4, Azurite Blob, and LiteLLM Proxy before any application scaffolding starts.
 
@@ -75,10 +79,11 @@ Create `scripts/check-local-services.sh` before any Compose file. The script mus
 - [ ] **Step 2: Add the minimal local middleware stack**
 
 新增 `compose.yaml`、LiteLLM 只读挂载配置与 `.env.example` 默认值。要求：
-  - MySQL 8.4 LTS、Redis 7.4、Azurite Blob、LiteLLM 都使用固定镜像版本。
-  - MySQL、Redis、Azurite 使用持久命名卷；Redis 开启 append-only。
-  - LiteLLM 只从环境变量读取 provider credential，不引入 PostgreSQL。
-  - 默认 `docker compose up -d` 必须一次拉起全部四个服务。
+
+- MySQL 8.4 LTS、Redis 7.4、Azurite Blob、LiteLLM 都使用固定镜像版本。
+- MySQL、Redis、Azurite 使用持久命名卷；Redis 开启 append-only。
+- LiteLLM 只从环境变量读取 provider credential，不引入 PostgreSQL。
+- 默认 `docker compose up -d` 必须一次拉起全部四个服务。
 
 - [ ] **Step 3: 明确本地边界与测试策略**
 
@@ -108,6 +113,7 @@ git commit -m "build: add local phase 1 middleware"
 ### Task 1: Reproducible Workspace and Contract Generation
 
 **Files:**
+
 - Create: `.python-version`
 - Create: `.gitignore`
 - Create: `.env.example`
@@ -127,6 +133,7 @@ git commit -m "build: add local phase 1 middleware"
 - Modify: `README.md`
 
 **Interfaces:**
+
 - Consumes: RFC-003 contract-generation rules and the Knowledge Chat DTO/event baseline in `docs/reference/2026-08-20-contracts.md`.
 - Produces: `tap.interfaces.http.app:create_app()`, public Pydantic event models, deterministic `make contracts`, pinned workspace commands, and committed schema artifacts used by every later task.
 
@@ -184,6 +191,7 @@ git commit -m "build: scaffold phase 1 workspace"
 ### Task 2: Persistence, Transactional Outbox, and Worker Dispatch
 
 **Files:**
+
 - Create: `apps/backend/alembic.ini`
 - Create: `apps/backend/migrations/env.py`
 - Create: `apps/backend/migrations/versions/0001_turn_outbox.py`
@@ -197,6 +205,7 @@ git commit -m "build: scaffold phase 1 workspace"
 - Create: `apps/backend/tests/integration/test_relay_recovery.py`
 
 **Interfaces:**
+
 - Consumes: Task 1 Pydantic event envelope and configuration conventions.
 - Produces: `TurnRepository.create_with_outbox(command) -> Turn`, `TurnRepository.append_events(turn_id, expected_sequence, events)`, and `Relay.publish_pending(batch_size) -> int` for Task 5.
 
@@ -243,6 +252,7 @@ git commit -m "feat: add durable turn outbox"
 ### Task 3: Trusted Policy Context and Knowledge Public API
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/access/domain/policy.py`
 - Create: `apps/backend/src/tap/modules/access/application/authorize.py`
 - Create: `apps/backend/src/tap/modules/knowledge/api.py`
@@ -258,6 +268,7 @@ git commit -m "feat: add durable turn outbox"
 - Create: `apps/backend/tests/architecture/test_module_boundaries.py`
 
 **Interfaces:**
+
 - Consumes: authenticated subject facts from the BFF and the Retrieval/Citation contracts.
 - Produces: `KnowledgeAPI.search(request: SearchRequest, policy: RetrievalPolicyContext) -> SearchResponse` and `KnowledgeAPI.answer(request: AnswerRequest, policy: RetrievalPolicyContext) -> AnswerResponse` for Chat and future business modules.
 
@@ -304,6 +315,7 @@ git commit -m "feat: add authorized knowledge api"
 ### Task 4: Recoverable Ingestion and Four Search Indexes
 
 **Files:**
+
 - Create: `apps/backend/migrations/versions/0002_ingestion_ledger.py`
 - Create: `apps/backend/src/tap/modules/knowledge/application/ingest.py`
 - Create: `apps/backend/src/tap/modules/knowledge/domain/chunks.py`
@@ -318,6 +330,7 @@ git commit -m "feat: add authorized knowledge api"
 - Create: `apps/backend/tests/integration/test_index_rebuild.py`
 
 **Interfaces:**
+
 - Consumes: Task 2 Outbox/dispatch and Task 3 Search/model ports.
 - Produces: stable `logicalChunkId`, immutable `chunkId`, versioned manifests/checkpoints, and four rebuildable indexes `kb-doc-v1`, `kb-code-v1`, `kb-bdd-v1`, `kb-failure-v1`.
 
@@ -354,6 +367,7 @@ git commit -m "feat: add recoverable knowledge ingestion"
 ### Task 5: Durable Turn Worker, Snapshot, and Fetch-Based SSE
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/chat/application/create_turn.py`
 - Create: `apps/backend/src/tap/modules/chat/application/run_turn.py`
 - Create: `apps/backend/src/tap/modules/chat/application/project_stream.py`
@@ -367,6 +381,7 @@ git commit -m "feat: add recoverable knowledge ingestion"
 - Create: `apps/backend/tests/integration/test_stream_backpressure.py`
 
 **Interfaces:**
+
 - Consumes: Task 2 repositories and Task 3 `KnowledgeAPI.answer`.
 - Produces: `POST /v1/chats/{chatId}/turns`, `GET /v1/turns/{turnId}`, `GET /v1/turns/{turnId}/events?afterSequence=`, cancel, terminal events, RFC 9457 errors, and bounded replay/reset semantics.
 
@@ -400,9 +415,10 @@ git add apps/backend contracts
 git commit -m "feat: add recoverable chat streaming"
 ```
 
-### Task 6: Athena Web Application and Embeddable Panel
+### Task 6: Tapper Web Application and Embeddable Panel
 
 **Files:**
+
 - Create: `apps/web/package.json`
 - Create: `apps/web/vite.config.ts`
 - Create: `apps/web/src/shared/api/generated/`
@@ -411,18 +427,19 @@ git commit -m "feat: add recoverable chat streaming"
 - Create: `apps/web/src/features/chat/state/turnStore.ts`
 - Create: `apps/web/src/features/chat/markdown/StreamingMarkdown.tsx`
 - Create: `apps/web/src/features/chat/components/ChatWorkspace.tsx`
-- Create: `apps/web/src/widgets/athena/AthenaPanel.tsx`
-- Create: `apps/web/src/widgets/athena/AthenaLauncher.tsx`
-- Create: `apps/web/src/pages/AthenaPage.tsx`
-- Create: `apps/web/src/test/AthenaHost.tsx`
+- Create: `apps/web/src/widgets/tapper/TapperPanel.tsx`
+- Create: `apps/web/src/widgets/tapper/TapperLauncher.tsx`
+- Create: `apps/web/src/pages/TapperPage.tsx`
+- Create: `apps/web/src/test/TapperHost.tsx`
 - Create: `apps/web/src/features/chat/stream/fetchSse.test.ts`
 - Create: `apps/web/src/features/chat/state/turnStore.test.ts`
-- Create: `apps/web/src/widgets/athena/AthenaPanel.test.tsx`
-- Create: `apps/web/tests/e2e/athena.spec.ts`
+- Create: `apps/web/src/widgets/tapper/TapperPanel.test.tsx`
+- Create: `apps/web/tests/e2e/tapper.spec.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1 generated TypeScript client/event union and Task 5 REST/SSE endpoints.
-- Produces: standalone Athena page and `AthenaPanelProps { open; contextAnchor; onOpenChange }` embeddable contract validated in a test host.
+- Produces: standalone Tapper page and `TapperPanelProps { open; contextAnchor; onOpenChange }` embeddable contract validated in a test host.
 
 - [ ] **Step 1: Write failing stream/store/component tests**
 
@@ -432,7 +449,7 @@ Test fragmented SSE framing, comments/heartbeat, multi-line data, unknown events
 
 Generate `shared/api/generated/` only through `make contracts`. Implement an abortable fetch adapter that sends authentication headers, parses the response status before consuming bytes, mirrors the last sequence into explicit `afterSequence`, and treats connection close as transport interruption rather than a Turn terminal state.
 
-- [ ] **Step 3: Implement normalized state and Athena UI**
+- [ ] **Step 3: Implement normalized state and Tapper UI**
 
 TanStack Query owns REST server state; a separate store keys hot events by `(turnId, sequence)` and publishes batched render updates. Keep panel, composer, selected citation and focus state local. Sanitize Markdown with an allowlist; lazily load code highlighting, evidence bodies, and Trace details.
 
@@ -441,7 +458,7 @@ TanStack Query owns REST server state; a separate store keys hot events by `(tur
 ```sh
 pnpm --filter @tap/web test
 pnpm --filter @tap/web build
-pnpm --filter @tap/web exec playwright test tests/e2e/athena.spec.ts
+pnpm --filter @tap/web exec playwright test tests/e2e/tapper.spec.ts
 make contracts
 git diff --exit-code -- contracts/ apps/web/src/shared/api/generated/
 make check
@@ -449,16 +466,17 @@ make check
 
 Expected: standalone page and test host pass; context changes cannot display prior-context events or citations; generated files have no manual diff.
 
-- [ ] **Step 5: Commit Athena**
+- [ ] **Step 5: Commit Tapper**
 
 ```sh
 git add apps/web contracts Makefile package.json pnpm-lock.yaml
-git commit -m "feat: add athena knowledge chat"
+git commit -m "feat: add tapper knowledge chat"
 ```
 
 ### Task 7: Citation, History, Queue, Feedback, and Revocation Safety
 
 **Files:**
+
 - Create: `apps/backend/src/tap/modules/chat/application/queue.py`
 - Create: `apps/backend/src/tap/modules/chat/application/history.py`
 - Create: `apps/backend/src/tap/modules/knowledge/application/citations.py`
@@ -468,9 +486,10 @@ git commit -m "feat: add athena knowledge chat"
 - Create: `apps/backend/tests/security/test_revocation.py`
 - Create: `apps/web/src/features/chat/components/CitationDrawer.tsx`
 - Create: `apps/web/src/features/chat/components/QueuedMessages.tsx`
-- Modify: `apps/web/tests/e2e/athena.spec.ts`
+- Modify: `apps/web/tests/e2e/tapper.spec.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 3, 5, and 6 policy, Chat, citation, and UI contracts.
 - Produces: cursor-paginated history/trace, queue operations, feedback, authorized citation resolution, and fail-closed replay/history behavior after revocation.
 
@@ -491,7 +510,7 @@ Load citation bodies and restricted Trace pages on demand. Clear cached evidence
 ```sh
 uv run --project apps/backend pytest apps/backend/tests/security -v
 pnpm --filter @tap/web test
-pnpm --filter @tap/web exec playwright test tests/e2e/athena.spec.ts
+pnpm --filter @tap/web exec playwright test tests/e2e/tapper.spec.ts
 make check
 ```
 
@@ -507,12 +526,13 @@ git commit -m "feat: complete authorized chat flows"
 ### Task 8: Deployment, Observability, and Capacity Gates
 
 **Files:**
+
 - Create: `deploy/kubernetes/base/`
 - Create: `deploy/kubernetes/overlays/dev/`
 - Create: `deploy/otel/collector.yaml`
 - Create: `loadtests/rest/turns.js`
 - Create: `loadtests/sse/connections.js`
-- Create: `loadtests/browser/athena.ts`
+- Create: `loadtests/browser/tapper.ts`
 - Create: `loadtests/scenarios/phase1-capacity.md`
 - Create: `apps/backend/tests/integration/test_trace_propagation.py`
 - Create: `apps/backend/tests/integration/test_health_dependencies.py`
@@ -520,6 +540,7 @@ git commit -m "feat: complete authorized chat flows"
 - Modify: `.env.example`
 
 **Interfaces:**
+
 - Consumes: all runtime roles and external-service ports from Tasks 1–7.
 - Produces: secret-free manifests, role-specific probes/resources, OTel propagation, and reproducible `make dev`, `make build`, `make loadtest` capacity evidence.
 
@@ -559,6 +580,7 @@ git commit -m "ops: add phase 1 deployment gates"
 ### Task 9: Full Acceptance, Documentation Synchronization, and Lifecycle Closure
 
 **Files:**
+
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `docs/architecture/2026-08-20-overview.md`
@@ -570,6 +592,7 @@ git commit -m "ops: add phase 1 deployment gates"
 - Modify: `docs/plans/2026-08-23-phase-1-application-implementation.md`
 
 **Interfaces:**
+
 - Consumes: verified implementation and evidence from Tasks 1–8.
 - Produces: synchronized normative documentation, real developer commands, RFC `implemented`, and plan `completed` only after every Phase 1 acceptance condition passes.
 

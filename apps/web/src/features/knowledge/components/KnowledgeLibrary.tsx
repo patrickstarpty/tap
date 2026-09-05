@@ -120,10 +120,10 @@ export function KnowledgeLibrary({
 
   return (
     <section
-      className="athena-library"
+      className="tapper-library"
       aria-labelledby="knowledge-library-heading"
     >
-      <div className="athena-library-toolbar">
+      <div className="tapper-library-toolbar">
         <div>
           <Typography.Title level={2} id="knowledge-library-heading">
             {COPY.libraryTitle}
@@ -149,7 +149,7 @@ export function KnowledgeLibrary({
 
       {receiptNotice !== null ? (
         <Alert
-          className="athena-library-alert"
+          className="tapper-library-alert"
           type="success"
           showIcon
           closable={{ onClose: () => setReceiptNotice(null) }}
@@ -158,7 +158,7 @@ export function KnowledgeLibrary({
       ) : null}
       {operationError !== null ? (
         <Alert
-          className="athena-library-alert"
+          className="tapper-library-alert"
           type="error"
           showIcon
           closable={{ onClose: () => setOperationError(null) }}
@@ -167,13 +167,13 @@ export function KnowledgeLibrary({
       ) : null}
 
       {documentsQuery.isPending ? (
-        <div className="athena-library-loading" aria-label="正在加载知识库">
+        <div className="tapper-library-loading" aria-label="正在加载知识库">
           <Skeleton active paragraph={{ rows: 5 }} />
         </div>
       ) : null}
       {documentsQuery.isError ? (
         <Alert
-          className="athena-library-alert"
+          className="tapper-library-alert"
           type="error"
           showIcon
           title={safeProblemCopy(documentsQuery.error, "list")}
@@ -185,7 +185,7 @@ export function KnowledgeLibrary({
         />
       ) : null}
       {documentsQuery.isSuccess && documents.length === 0 ? (
-        <div className="athena-empty-state">
+        <div className="tapper-empty-state">
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={

@@ -36,10 +36,10 @@ async function assertCurrentDocument(
   expect(detail.sourceContentHash).toBe(expected.sourceContentHash);
 }
 
-test("Athena durable state survives the selected restart boundary", async ({
+test("Tapper durable state survives the selected restart boundary", async ({
   page,
 }) => {
-  const phase = process.env.ATHENA_E2E_PHASE;
+  const phase = process.env.TAPPER_E2E_PHASE;
   expect(["app-restart", "compose-restart"]).toContain(phase);
   const state = await readState();
   const survivors = [
@@ -110,7 +110,7 @@ test("Athena durable state survives the selected restart boundary", async ({
       externalRequests.push("outside-allowlist");
   });
 
-  await page.goto("/");
+  await page.goto("/tests/e2e/tapper-harness.html");
   await page.getByRole("tab", { name: "知识库" }).click();
   for (const survivor of survivors) {
     const listed = list.items.find(
@@ -153,7 +153,7 @@ test("Athena durable state survives the selected restart boundary", async ({
       (citation) => citation.source.sourceId === state.deleted.documentId,
     ),
   ).toBe(false);
-  const renderedClaims = page.locator(".athena-grounded-claim");
+  const renderedClaims = page.locator(".tapper-grounded-claim");
   await expect(renderedClaims).toHaveCount(answer.claims.length);
   for (const [index, claim] of answer.claims.entries()) {
     const rendered = renderedClaims.nth(index);
@@ -165,7 +165,7 @@ test("Athena durable state survives the selected restart boundary", async ({
   }
   const persistedFactClaims = renderedClaims.filter({
     hasText: new RegExp(
-      `Athena ${escapeRegExp(state.runId)} refund requests`,
+      `Tapper ${escapeRegExp(state.runId)} refund requests`,
       "u",
     ),
   });

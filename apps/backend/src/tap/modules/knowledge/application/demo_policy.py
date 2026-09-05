@@ -20,12 +20,12 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
 DEMO_TENANT_ID = "local"
-DEMO_PROJECT_ID = "athena-demo"
-DEMO_USER_ID = "athena-local-user"
-DEMO_GROUP_ID = "athena-local"
+DEMO_PROJECT_ID = "tapper-demo"
+DEMO_USER_ID = "tapper-local-user"
+DEMO_GROUP_ID = "tapper-local"
 DEMO_ENVIRONMENT = "global"
-DEMO_CORPUS_VERSION = "athena-demo-v1"
-DEMO_POLICY_VERSION = "athena-demo-policy-v1"
+DEMO_CORPUS_VERSION = "tapper-demo-v1"
+DEMO_POLICY_VERSION = "tapper-demo-policy-v1"
 
 DEMO_SUBJECT = VerifiedSubjectFacts(
     tenant_id=DEMO_TENANT_ID,
@@ -69,14 +69,14 @@ def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectP
         }
         for grant in grants
     ]
-    acl_digest = _digest({"grants": grant_payload, "schema": "athena-demo-acl-v1"})
+    acl_digest = _digest({"grants": grant_payload, "schema": "tapper-demo-acl-v1"})
     decision_id = _digest(
         {
             "aclDigest": acl_digest,
             "corpusVersion": DEMO_CORPUS_VERSION,
             "policyVersion": DEMO_POLICY_VERSION,
             "projectId": DEMO_PROJECT_ID,
-            "schema": "athena-demo-decision-v1",
+            "schema": "tapper-demo-decision-v1",
             "tenantId": DEMO_TENANT_ID,
         }
     )

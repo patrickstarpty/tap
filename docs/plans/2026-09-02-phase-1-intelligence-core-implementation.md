@@ -1,15 +1,19 @@
 ---
-status: planned
+status: cancelled
 date: 2026-09-02
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # Phase 1 Intelligence Core Implementation Plan
+
+> **取消说明（2026-09-04）**：本计划在实施前取消，只保留为 RFC-007/ADR-019 的历史技术参考。RFC-009/ADR-021 已把交付顺序改为 V0–VG 的 Knowledge-first Web Automation；实现不得从本计划选择任务跳过新的 Scope、Knowledge、Test Plan、LCA、Recorder 与 Jenkins 里程碑。当前执行入口是 [Tapper 知识与 Web 自动化平台实施计划](2026-09-04-tapper-knowledge-web-automation-platform.md)。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 交付 RFC-007 的 P1.0–P1.2：用户只提供一个目标，也能得到有依据、可恢复、可审查的 Intelligence Report 与 Automation Blueprint，并用固定评测证明系统没有伪造来源、检查或执行状态。
 
-**Architecture:** 在现有 Athena 旁新增独立 `intelligence` bounded context。MySQL 保存 Brief、Context Snapshot、Runtime Context Packet/Invocation/root Schema 的私有 canonical bytes、Task、Attempt、Runtime Launch、事件、Artifact seal journal 与 Review；Redis 只承担可重建唤醒；Blob 保存按内容寻址的大产物。Context Builder 只通过 Knowledge 公共 API 解析用户选定来源。Task Control 通过 `prepare -> register -> reauthorize -> activation_intent -> activate` 两阶段协议把 Attempt-scoped 精确输入交给 Agent Runtime；Runtime 只返回结构化 proposal，可信 Broker/Validator 再完成 fencing、Artifact 封存和追加式确定性验证。Web 在现有单一 App Shell 中增加 `Intelligence Lab`，通过 REST snapshot + 有界事件分页恢复任务，不复用 Chat Turn 或 Knowledge Ingestion Job。
+**Architecture:** 在现有 Tapper 旁新增独立 `intelligence` bounded context。MySQL 保存 Brief、Context Snapshot、Runtime Context Packet/Invocation/root Schema 的私有 canonical bytes、Task、Attempt、Runtime Launch、事件、Artifact seal journal 与 Review；Redis 只承担可重建唤醒；Blob 保存按内容寻址的大产物。Context Builder 只通过 Knowledge 公共 API 解析用户选定来源。Task Control 通过 `prepare -> register -> reauthorize -> activation_intent -> activate` 两阶段协议把 Attempt-scoped 精确输入交给 Agent Runtime；Runtime 只返回结构化 proposal，可信 Broker/Validator 再完成 fencing、Artifact 封存和追加式确定性验证。Web 在现有单一 App Shell 中增加 `Intelligence Lab`，通过 REST snapshot + 有界事件分页恢复任务，不复用 Chat Turn 或 Knowledge Ingestion Job。
 
 **Tech Stack:** Python 3.13、FastAPI、Pydantic v2、SQLAlchemy 2、Alembic、MySQL、Redis、Azurite/Blob、pytest；React 19、TypeScript、Vite、TanStack Query、Ant Design、Vitest、Testing Library、Playwright；Codex native CLI 只作为 P1.2 本地只读实验 Adapter，并位于 provider-neutral `AgentRuntime` 端口后。
 
@@ -22,7 +26,7 @@ date: 2026-09-02
 本计划只实现 P1.0、P1.1 和 P1.2。完成后，用户可以：
 
 1. 只用 `goal` 创建 Brief；
-2. 可选附加已经 `ready` 的 Athena 资料；
+2. 可选附加已经 `ready` 的 Tapper 资料；
 3. 查看不可变 Context Snapshot、事实/推断/假设/未知、Report、Blueprint 与逐项 Citation；
 4. 关闭或刷新页面后恢复 Task、Attempt、事件和 Artifact revision；
 5. 取消、重试或刷新 Context，并接受、要求修订、拒绝或导出 Review Package；
@@ -47,7 +51,7 @@ date: 2026-09-02
 - `make intelligence-eval` 必须确定性、离线、零真实模型调用；`make intelligence-integration` 和 `make intelligence-e2e` 各自独占隔离资源并默认使用 deterministic Runtime；`make intelligence-real-smoke` 必须独立显式 opt-in。三者都永远不被 `make test`、`make demo-e2e` 或默认 CI 间接调用；普通 `make test` 必须主动清除 Intelligence integration/enable/harness/real-smoke 环境，而不能依赖调用者没有预先 export。
 - `TAP_INTELLIGENCE_ENABLED` 默认关闭。关闭时 create/dispatch/retry 不创建 Attempt、不发 Outbox、不解析 Runtime target 或读取 Runtime 凭据，并返回稳定 unavailable；已经存在的 Artifact 只允许按当前授权读取。所有新 Intelligence integration test 都有统一的 collection guard，普通 `make test` 只能得到预期 skip；`make intelligence-integration` 显式启用 deterministic Runtime、隔离中间件并运行默认完整套件。
 - 新增真实 Runtime 依赖前先做兼容性门禁。当前计划不把 `openai-codex` Python SDK 加入主 Backend 环境；P1.2 以已固定的 native `codex exec` 做本地只读 Adapter，避免未经评审地升级当前 Pydantic/FastAPI 依赖图。SDK 化需要后续独立依赖决策和契约测试。
-- 现有 Athena 的 loopback、no-auth、no-OCR、`doc`-only 边界不变。Intelligence Runtime 被关闭或不可用时，Athena 文档、摄取、检索、回答和 Citation 回归必须继续通过。
+- 现有 Tapper 的 loopback、no-auth、no-OCR、`doc`-only 边界不变。Intelligence Runtime 被关闭或不可用时，Tapper 文档、摄取、检索、回答和 Citation 回归必须继续通过。
 - 每个任务提交前至少运行该任务列出的窄测试与 `git diff --check`；跨契约或边界的任务再运行 `make check`。最终任务运行完整 `make check`、`make test` 和隔离 E2E。
 
 ## Delivery Map
@@ -695,7 +699,7 @@ Pre-seal validation must parse the exact `ProposedIntelligenceReportV1`, `Propos
 
 Run the 12 assumption-first/source-grounded fixtures through the real Context Builder and pre-seal Proposal Validator with deterministic proposed bodies. Keep repository/evidence lanes on the P1.0 expected-rejection runner. The report must state which runner handled each lane; durable Task/Broker/post-seal validation is not claimed until Task 8A.
 
-- [ ] **Step 6: Verify P1.1 without regressing Athena**
+- [ ] **Step 6: Verify P1.1 without regressing Tapper**
 
 ```sh
 uv run --project apps/backend pytest \
@@ -706,14 +710,14 @@ uv run --project apps/backend pytest \
   apps/backend/tests/unit/intelligence/test_proposal_validation.py \
   apps/backend/tests/unit/knowledge \
   apps/backend/tests/contract/test_knowledge_api.py \
-  apps/backend/tests/contract/test_athena_http_contract.py -v
+  apps/backend/tests/contract/test_tapper_http_contract.py -v
 make intelligence-integration INTELLIGENCE_TESTS="apps/backend/tests/integration/test_intelligence_knowledge_context.py"
 make intelligence-eval
 make check
 git diff --check
 ```
 
-Expected: 12 P1.1 fixtures use real Context/Proposal validation, 12 future-lane fixtures remain expected rejections, and all Athena regressions stay green.
+Expected: 12 P1.1 fixtures use real Context/Proposal validation, 12 future-lane fixtures remain expected rejections, and all Tapper regressions stay green.
 
 - [ ] **Step 7: Commit the grounded-intelligence slice**
 
@@ -1003,7 +1007,7 @@ Decode exactly one `RuntimeProposalsRootV1` object under the hash-matched per-in
 
 - [ ] **Step 4: Extend architecture guards and verify**
 
-Permit native process creation nowhere in Intelligence yet. Assert the Tool Gateway cannot import HTTP routes or concrete MySQL/Redis/Blob implementations. Continue to allow the existing Athena Answer Adapter as its separate historical exception.
+Permit native process creation nowhere in Intelligence yet. Assert the Tool Gateway cannot import HTTP routes or concrete MySQL/Redis/Blob implementations. Continue to allow the existing Tapper Answer Adapter as its separate historical exception.
 
 ```sh
 uv run --project apps/backend pytest \
@@ -1222,7 +1226,7 @@ Expected: the offline composition satisfies the same application-port contracts 
 - Create: `apps/backend/tests/integration/test_intelligence_worker.py`
 - Create: `apps/backend/tests/integration/test_intelligence_runtime_authorization.py`
 - Create: `apps/backend/tests/unit/intelligence/test_task_control.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/operations/intelligence_eval/runners.py`
 - Modify: `apps/backend/tests/unit/operations/test_intelligence_eval_reports.py`
 
@@ -1270,7 +1274,7 @@ uv run --project apps/backend pytest \
 make intelligence-integration INTELLIGENCE_TESTS="apps/backend/tests/integration/test_intelligence_worker.py apps/backend/tests/integration/test_intelligence_runtime_authorization.py"
 make intelligence-eval
 git diff --check
-git add apps/backend/src/tap/modules/intelligence/application/task_control.py apps/backend/src/tap/entrypoints/intelligence_worker.py apps/backend/src/tap/entrypoints/athena_runtime.py apps/backend/src/tap/operations/intelligence_eval/runners.py apps/backend/tests/unit/intelligence/test_task_control.py apps/backend/tests/integration/test_intelligence_worker.py apps/backend/tests/integration/test_intelligence_runtime_authorization.py apps/backend/tests/unit/operations/test_intelligence_eval_reports.py
+git add apps/backend/src/tap/modules/intelligence/application/task_control.py apps/backend/src/tap/entrypoints/intelligence_worker.py apps/backend/src/tap/entrypoints/tapper_runtime.py apps/backend/src/tap/operations/intelligence_eval/runners.py apps/backend/tests/unit/intelligence/test_task_control.py apps/backend/tests/integration/test_intelligence_worker.py apps/backend/tests/integration/test_intelligence_runtime_authorization.py apps/backend/tests/unit/operations/test_intelligence_eval_reports.py
 git commit -m "feat: orchestrate intelligence tasks"
 ```
 
@@ -1285,9 +1289,9 @@ Expected: every deterministic success produces the four required reviewable Arti
 - Create: `apps/backend/tests/integration/test_intelligence_cancel_retry.py`
 - Modify: `apps/backend/src/tap/modules/intelligence/application/task_control.py`
 - Modify: `apps/backend/src/tap/entrypoints/intelligence_worker.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_relay_entrypoint.py`
-- Modify: `scripts/run-athena-dev.sh`
+- Modify: `scripts/run-tapper-dev.sh`
 - Modify: `.env.example`
 
 **Interfaces:**
@@ -1331,11 +1335,11 @@ uv run --project apps/backend pytest \
   apps/backend/tests/integration/test_relay_entrypoint.py -v
 make intelligence-integration INTELLIGENCE_TESTS="apps/backend/tests/integration/test_intelligence_worker_recovery.py apps/backend/tests/integration/test_intelligence_cancel_retry.py"
 git diff --check
-git add .env.example scripts/run-athena-dev.sh apps/backend/src/tap/modules/intelligence/application/task_control.py apps/backend/src/tap/entrypoints/intelligence_worker.py apps/backend/src/tap/entrypoints/intelligence_reconciler.py apps/backend/src/tap/entrypoints/athena_runtime.py apps/backend/tests/integration/test_intelligence_worker_recovery.py apps/backend/tests/integration/test_intelligence_cancel_retry.py apps/backend/tests/integration/test_relay_entrypoint.py
+git add .env.example scripts/run-tapper-dev.sh apps/backend/src/tap/modules/intelligence/application/task_control.py apps/backend/src/tap/entrypoints/intelligence_worker.py apps/backend/src/tap/entrypoints/intelligence_reconciler.py apps/backend/src/tap/entrypoints/tapper_runtime.py apps/backend/tests/integration/test_intelligence_worker_recovery.py apps/backend/tests/integration/test_intelligence_cancel_retry.py apps/backend/tests/integration/test_relay_entrypoint.py
 git commit -m "feat: recover intelligence tasks"
 ```
 
-Expected: all injected crash points converge to a fenced terminal/recoverable state and Athena remains startable with Intelligence disabled.
+Expected: all injected crash points converge to a fenced terminal/recoverable state and Tapper remains startable with Intelligence disabled.
 
 ### Task 8C: Add Review, Resource APIs, and Safe Export
 
@@ -1349,7 +1353,7 @@ Expected: all injected crash points converge to a fenced terminal/recoverable st
 - Create: `apps/backend/tests/integration/test_intelligence_export.py`
 - Modify: `apps/backend/src/tap/interfaces/http/dependencies.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/intelligence.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_api.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_api.py`
 
 **Interfaces:**
 
@@ -1399,7 +1403,7 @@ Expected: P1.2 exposes only honest, task-scoped resources and all Review decisio
 - [ ] **Step 5: Commit the service slice**
 
 ```sh
-git add apps/backend/src/tap/modules/intelligence/application/reviews.py apps/backend/src/tap/modules/intelligence/application/service.py apps/backend/src/tap/interfaces/http/dependencies.py apps/backend/src/tap/interfaces/http/routes/intelligence.py apps/backend/src/tap/entrypoints/athena_api.py apps/backend/tests/unit/intelligence/test_reviews.py apps/backend/tests/integration/test_intelligence_http.py apps/backend/tests/integration/test_intelligence_citation_authorization.py apps/backend/tests/integration/test_intelligence_export.py
+git add apps/backend/src/tap/modules/intelligence/application/reviews.py apps/backend/src/tap/modules/intelligence/application/service.py apps/backend/src/tap/interfaces/http/dependencies.py apps/backend/src/tap/interfaces/http/routes/intelligence.py apps/backend/src/tap/entrypoints/tapper_api.py apps/backend/tests/unit/intelligence/test_reviews.py apps/backend/tests/integration/test_intelligence_http.py apps/backend/tests/integration/test_intelligence_citation_authorization.py apps/backend/tests/integration/test_intelligence_export.py
 git commit -m "feat: expose intelligence review workflow"
 ```
 
@@ -1422,12 +1426,12 @@ git commit -m "feat: expose intelligence review workflow"
 **Interfaces:**
 
 - Shared platform files contain only characterized native target verification, bounded owned-process lifecycle and a one-shot gated launcher. Prepare may start only the trusted launcher with no model egress or invocation bytes; an activation grant over the owner-only control pipe is required before it spawns the verified child. Worker/control-pipe death terminates the exact process group; a non-secret identity receipt supports fenced Reconciler cleanup.
-- Athena keeps its existing Answer semantics, argv, event audit, cleanup and readiness behavior. No Intelligence imports are introduced in Knowledge.
+- Tapper keeps its existing Answer semantics, argv, event audit, cleanup and readiness behavior. No Intelligence imports are introduced in Knowledge.
 - No generic arbitrary-command runner, shell string API or provider-neutral “execute anything” abstraction is created.
 
 - [ ] **Step 1: Freeze characterization before extraction**
 
-Extend strict tests to cover executable identity/version revalidation immediately before child spawn, non-shell argv, process-group ownership, bounded pipe reads, timeout/cancellation race, child reap, Worker/control-pipe death, verified orphan cleanup, private directory ownership and cleanup failure. Gated-launcher tests prove no child/model egress before one valid bound grant; wrong/expired/replayed grants, close-before-activation and parent death only reap. A receipt binds PID/process-group, start token and executable identity so PID reuse cannot terminate another process. Record current Athena argv/outcomes as characterization fixtures.
+Extend strict tests to cover executable identity/version revalidation immediately before child spawn, non-shell argv, process-group ownership, bounded pipe reads, timeout/cancellation race, child reap, Worker/control-pipe death, verified orphan cleanup, private directory ownership and cleanup failure. Gated-launcher tests prove no child/model egress before one valid bound grant; wrong/expired/replayed grants, close-before-activation and parent death only reap. A receipt binds PID/process-group, start token and executable identity so PID reuse cannot terminate another process. Record current Tapper argv/outcomes as characterization fixtures.
 
 Run before implementation:
 
@@ -1445,7 +1449,7 @@ Expected: existing target/exec characterization is green; only the new shared ow
 
 Move shared code with history-preserving edits; leave Answer catalog, Prompt, schema, JSONL event policy, audits and configuration in Knowledge. Keep the Knowledge `codex_target.py` as a narrow compatibility import only if existing imports require it. Callers provide an already-validated executable, fixed argv tuple and exact grant binding; primitives never accept shell text, choose a command or mint authorization. If the host cannot provide the parent-death/supervisor/gated-activation guarantee, the Intelligence Codex Adapter is unavailable.
 
-- [ ] **Step 3: Prove Athena behavior did not change**
+- [ ] **Step 3: Prove Tapper behavior did not change**
 
 Run the full target and Answer strict suites before adding the Intelligence Adapter. Compare exact argv, target identity, event rejection, normalized errors, timeout/cancel and cleanup behavior. Architecture guards allow both bounded contexts to depend on `platform.runtime`, never on each other.
 
@@ -1459,7 +1463,7 @@ uv run --project apps/backend pytest \
 git diff --check
 ```
 
-Expected: every Athena characterization remains identical and the shared primitive has no arbitrary command surface.
+Expected: every Tapper characterization remains identical and the shared primitive has no arbitrary command surface.
 
 - [ ] **Step 4: Commit the mechanical extraction**
 
@@ -1476,10 +1480,10 @@ git commit -m "refactor: share verified codex process primitives"
 - Create: `apps/backend/tests/contract/test_codex_runtime_strict.py`
 - Create: `apps/backend/tests/integration/test_codex_runtime_task.py`
 - Modify: `apps/backend/tests/smoke/test_intelligence_real_model.py`
-- Modify: `apps/backend/src/tap/entrypoints/athena_runtime.py`
-- Modify: `apps/backend/tests/unit/entrypoints/test_athena_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
+- Modify: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`
 - Modify: `apps/backend/tests/architecture/test_module_boundaries.py`
-- Modify: `scripts/run-athena-dev.sh`
+- Modify: `scripts/run-tapper-dev.sh`
 - Modify: `.env.example`
 
 **Interfaces:**
@@ -1519,14 +1523,14 @@ Map accepted progress to fixed message codes and only the `--output-last-message
 
 The server-owned selection defaults to `deterministic`; `codex` requires `TAP_INTELLIGENCE_ENABLED=1`. Pass `TAP_INTELLIGENCE_CODEX_HOME` and authentication only to the worker; remove them from API, Relay, Reconciler, ingestion and Web. Track launcher/child process group, executable identity, start token and activation ID in `RuntimeLaunch` so Reconciler can terminate a verified orphan. Same-OS-user exposure remains a POC residual risk. The dedicated smoke runs one assumption-first and one source-grounded case in one test through real Task Control. Its first enabled case is a minimal goal-only Schema acceptance probe using the exact committed registry and per-invocation `openai-structured-outputs-subset-v1` root; a provider Schema rejection fails immediately before the grounded case. Without opt-in it has exactly one skip and never resolves target; when enabled, missing auth, unsupported probe, unfrozen policy, bad output/cleanup/Citation fails rather than skips.
 
-- [ ] **Step 5: Verify fake, real-off, and Athena independence**
+- [ ] **Step 5: Verify fake, real-off, and Tapper independence**
 
 ```sh
 uv run --project apps/backend pytest \
   apps/backend/tests/contract/test_codex_runtime_strict.py \
   apps/backend/tests/contract/test_codex_target_strict.py \
   apps/backend/tests/contract/test_codex_exec_strict.py \
-  apps/backend/tests/unit/entrypoints/test_athena_runtime.py \
+  apps/backend/tests/unit/entrypoints/test_tapper_runtime.py \
   apps/backend/tests/architecture/test_module_boundaries.py -v
 make intelligence-integration INTELLIGENCE_TESTS="apps/backend/tests/integration/test_codex_runtime_task.py"
 make intelligence-eval
@@ -1536,12 +1540,12 @@ make check
 git diff --check
 ```
 
-Expected: fake suite stays offline and deterministic; real-off has exactly one skip; Athena behavior is unchanged. Run the enabled paid/credentialed smoke only when the owner explicitly opts in.
+Expected: fake suite stays offline and deterministic; real-off has exactly one skip; Tapper behavior is unchanged. Run the enabled paid/credentialed smoke only when the owner explicitly opts in.
 
 - [ ] **Step 6: Commit the read-only Runtime Adapter**
 
 ```sh
-git add .env.example scripts/run-athena-dev.sh apps/backend/src/tap/modules/intelligence/adapters/codex_runtime.py apps/backend/src/tap/entrypoints/athena_runtime.py apps/backend/tests/contract/test_codex_runtime_strict.py apps/backend/tests/integration/test_codex_runtime_task.py apps/backend/tests/smoke/test_intelligence_real_model.py apps/backend/tests/unit/entrypoints/test_athena_runtime.py apps/backend/tests/architecture/test_module_boundaries.py
+git add .env.example scripts/run-tapper-dev.sh apps/backend/src/tap/modules/intelligence/adapters/codex_runtime.py apps/backend/src/tap/entrypoints/tapper_runtime.py apps/backend/tests/contract/test_codex_runtime_strict.py apps/backend/tests/integration/test_codex_runtime_task.py apps/backend/tests/smoke/test_intelligence_real_model.py apps/backend/tests/unit/entrypoints/test_tapper_runtime.py apps/backend/tests/architecture/test_module_boundaries.py
 git commit -m "feat: add read-only intelligence runtime"
 ```
 
@@ -1704,7 +1708,7 @@ Expected: FAIL because Artifact views do not exist.
 
 - [ ] **Step 2: Extract SafeMarkdown and implement generated-schema views**
 
-Preserve Athena's closed-link sanitizer tests. Render Report claims/sections, explicit assumption/unknown/conflict arrays, and Blueprint objective/preconditions/data/steps/exceptions/cleanup/unresolved refs. No raw HTML, remote image, executable link, code Diff or target-execution claim is accepted.
+Preserve Tapper's closed-link sanitizer tests. Render Report claims/sections, explicit assumption/unknown/conflict arrays, and Blueprint objective/preconditions/data/steps/exceptions/cleanup/unresolved refs. No raw HTML, remote image, executable link, code Diff or target-execution claim is accepted.
 
 - [ ] **Step 3: Implement fail-closed Citation preview**
 
@@ -1792,10 +1796,10 @@ git commit -m "feat: review intelligence artifacts"
 
 - Create: `apps/web/src/widgets/intelligence/IntelligenceLabWorkspace.tsx`
 - Create: `apps/web/src/widgets/intelligence/IntelligenceLabWorkspace.test.tsx`
-- Create: `apps/web/src/pages/athenaLocation.ts`
-- Create: `apps/web/src/pages/athenaLocation.test.ts`
-- Modify: `apps/web/src/pages/AthenaPage.tsx`
-- Modify: `apps/web/src/pages/AthenaPage.test.tsx`
+- Create: `apps/web/src/pages/tapperLocation.ts`
+- Create: `apps/web/src/pages/tapperLocation.test.ts`
+- Modify: `apps/web/src/pages/TapperPage.tsx`
+- Modify: `apps/web/src/pages/TapperPage.test.tsx`
 - Modify: `apps/web/src/app/styles.css`
 
 **Interfaces:** Add one `Intelligence Lab` tab while preserving Ask/Library state. Deep links use `?surface=intelligence&task=<opaque-id>&artifact=<opaque-id>` without a new router. The widget is the only layer composing Knowledge options with Intelligence features.
@@ -1811,11 +1815,11 @@ Creating a Task pushes its opaque ID; selecting a revision updates the Artifact 
 - [ ] **Step 3: Verify and commit the complete Lab shell**
 
 ```sh
-corepack pnpm --filter @tap/web exec vitest run src/features/intelligence src/widgets/intelligence src/pages/athenaLocation.test.ts src/pages/AthenaPage.test.tsx
+corepack pnpm --filter @tap/web exec vitest run src/features/intelligence src/widgets/intelligence src/pages/tapperLocation.test.ts src/pages/TapperPage.test.tsx
 corepack pnpm --filter @tap/web run architecture
 corepack pnpm --filter @tap/web run check
 git diff --check
-git add apps/web/src/widgets/intelligence/IntelligenceLabWorkspace.tsx apps/web/src/widgets/intelligence/IntelligenceLabWorkspace.test.tsx apps/web/src/pages/athenaLocation.ts apps/web/src/pages/athenaLocation.test.ts apps/web/src/pages/AthenaPage.tsx apps/web/src/pages/AthenaPage.test.tsx apps/web/src/app/styles.css
+git add apps/web/src/widgets/intelligence/IntelligenceLabWorkspace.tsx apps/web/src/widgets/intelligence/IntelligenceLabWorkspace.test.tsx apps/web/src/pages/tapperLocation.ts apps/web/src/pages/tapperLocation.test.ts apps/web/src/pages/TapperPage.tsx apps/web/src/pages/TapperPage.test.tsx apps/web/src/app/styles.css
 git commit -m "feat: compose intelligence lab"
 ```
 
@@ -1845,7 +1849,7 @@ git commit -m "feat: compose intelligence lab"
 The E2E test must cover:
 
 - create with only `goal`, while intercepting the POST and asserting exact allowed keys;
-- optional selection of a `ready` Athena source;
+- optional selection of a `ready` Tapper source;
 - `queued -> leased -> running -> sealing -> validating -> succeeded` Timeline;
 - Report, Assumption Register, Blueprint and Review Package revisions, Claim basis and task-scoped Citation;
 - reload recovery of the same Task and selected older Artifact revision;
@@ -1890,8 +1894,8 @@ make intelligence-integration
 corepack pnpm --filter @tap/web exec vitest run \
   src/features/intelligence \
   src/widgets/intelligence \
-  src/pages/athenaLocation.test.ts \
-  src/pages/AthenaPage.test.tsx
+  src/pages/tapperLocation.test.ts \
+  src/pages/TapperPage.test.tsx
 make intelligence-eval
 env -u TAP_RUN_INTELLIGENCE_REAL_MODEL_SMOKE make intelligence-real-smoke
 ```
@@ -1906,12 +1910,12 @@ git diff --exit-code -- contracts/
 make check
 make test
 make intelligence-integration
-env TAP_ATHENA_COMPOSE_PROJECT=tap-athena-e2e make demo-e2e
+env TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-e2e make demo-e2e
 make intelligence-e2e
 git diff --check
 ```
 
-Expected: every command exits `0`; ordinary `make test` collects the Intelligence integration modules as intentional skips and makes no Runtime/model request; the existing Athena E2E remains unchanged; the dedicated Intelligence journey survives page reload and the exact post-result/pre-seal worker restart without losing or duplicating Task/Artifact facts.
+Expected: every command exits `0`; ordinary `make test` collects the Intelligence integration modules as intentional skips and makes no Runtime/model request; the existing Tapper E2E remains unchanged; the dedicated Intelligence journey survives page reload and the exact post-result/pre-seal worker restart without losing or duplicating Task/Artifact facts.
 
 - [ ] **Step 5: Run the real-model smoke only with explicit authorization**
 

@@ -110,7 +110,7 @@ class MysqlProjectionCoordinator:
             )
             await _settled_database(connection.commit(), "commit mutation lease acquisition")
             if value != 1:
-                raise IndexUnavailable("Athena projection mutation lease is unavailable")
+                raise IndexUnavailable("Tapper projection mutation lease is unavailable")
             acquired = True
             yield _MysqlProjectionLease(connection, authority_key)
         finally:
@@ -124,7 +124,7 @@ class MysqlProjectionCoordinator:
                         "release mutation lease",
                     )
                     if released != 1:
-                        raise IndexUnavailable("Athena projection mutation lease release failed")
+                        raise IndexUnavailable("Tapper projection mutation lease release failed")
                     await _settled_database(
                         connection.commit(),
                         "commit mutation lease release",
@@ -159,7 +159,7 @@ class _MysqlProjectionLease:
                 return 0, None
             generation, physical = row
             if type(generation) is not int or not isinstance(physical, str):
-                raise IndexUnavailable("Athena projection generation row is malformed")
+                raise IndexUnavailable("Tapper projection generation row is malformed")
             return generation, physical
 
         return await _settled_database(operation(), "read projection generation")
@@ -179,7 +179,7 @@ class _MysqlProjectionLease:
         await _settled_database(operation(), "initialize projection generation")
         generation, recorded = await self.state()
         if recorded is None:
-            raise IndexUnavailable("Athena projection generation initialization was lost")
+            raise IndexUnavailable("Tapper projection generation initialization was lost")
         return generation, recorded
 
     async def is_fenced(self, revision_id: str) -> bool:
@@ -218,7 +218,7 @@ class _MysqlProjectionLease:
 
         recorded = await _settled_database(operation(), "record projection fence")
         if recorded != document_id:
-            raise IndexUnavailable("Athena projection fence identity conflicts")
+            raise IndexUnavailable("Tapper projection fence identity conflicts")
 
     async def fences(self, limit: int) -> tuple[tuple[str, str], ...]:
         if type(limit) is not int or not 1 <= limit <= 10_001:
@@ -236,7 +236,7 @@ class _MysqlProjectionLease:
             )
             rows = tuple((row[0], row[1]) for row in result)
             if any(not isinstance(a, str) or not isinstance(b, str) for a, b in rows):
-                raise IndexUnavailable("Athena projection fence inventory is malformed")
+                raise IndexUnavailable("Tapper projection fence inventory is malformed")
             return rows
 
         return await _settled_database(operation(), "list projection fences")
@@ -258,7 +258,7 @@ class _MysqlProjectionLease:
         _validate_receipt(requested, expected_status="building")
         generation, recorded = await self.state()
         if recorded != predecessor:
-            raise IndexUnavailable("Athena projection build predecessor changed")
+            raise IndexUnavailable("Tapper projection build predecessor changed")
 
         async def operation() -> None:
             await self._connection.execute(
@@ -277,7 +277,7 @@ class _MysqlProjectionLease:
         await _settled_database(operation(), "reserve projection build ownership")
         receipt = await self.ownership(physical)
         if receipt is None:
-            raise IndexUnavailable("Athena projection build ownership was lost")
+            raise IndexUnavailable("Tapper projection build ownership was lost")
         return receipt
 
     async def ownership(self, physical: str) -> ProjectionOwnershipReceipt | None:
@@ -308,7 +308,7 @@ class _MysqlProjectionLease:
         _validate_receipt(receipt, expected_status="building")
         generation, recorded = await self.state()
         if recorded != receipt.predecessor_collection:
-            raise IndexUnavailable("Athena projection build predecessor changed")
+            raise IndexUnavailable("Tapper projection build predecessor changed")
 
         async def operation() -> None:
             lineage = (
@@ -331,7 +331,7 @@ class _MysqlProjectionLease:
                 generation,
                 "building",
             ):
-                raise IndexUnavailable("Athena projection build lineage conflicts")
+                raise IndexUnavailable("Tapper projection build lineage conflicts")
             state_update = await self._connection.execute(
                 update(knowledge_projection_state)
                 .where(
@@ -346,7 +346,7 @@ class _MysqlProjectionLease:
                 )
             )
             if state_update.rowcount != 1:
-                raise IndexUnavailable("Athena projection generation changed unexpectedly")
+                raise IndexUnavailable("Tapper projection generation changed unexpectedly")
             await self._connection.execute(
                 update(knowledge_projection_lineage)
                 .where(
@@ -373,7 +373,7 @@ class _MysqlProjectionLease:
                 )
             )
             if owned_update.rowcount != 1:
-                raise IndexUnavailable("Athena projection activation ownership changed")
+                raise IndexUnavailable("Tapper projection activation ownership changed")
             await self._connection.commit()
 
         await _settled_database(operation(), "activate owned projection generation")
@@ -397,7 +397,7 @@ class _MysqlProjectionLease:
                 .values(status="cleanup", updated_at=text("CURRENT_TIMESTAMP(6)"))
             )
             if result.rowcount != 1:
-                raise IndexUnavailable("Athena projection build ownership changed")
+                raise IndexUnavailable("Tapper projection build ownership changed")
             await self._connection.commit()
 
         await _settled_database(operation(), "abandon projection build")
@@ -436,7 +436,7 @@ class _MysqlProjectionLease:
 
     async def complete_owned_cleanup(self, receipt: ProjectionOwnershipReceipt) -> None:
         if not await self.verify_cleanup(receipt):
-            raise IndexUnavailable("Athena projection cleanup ownership changed")
+            raise IndexUnavailable("Tapper projection cleanup ownership changed")
 
         async def operation() -> None:
             result = await self._connection.execute(
@@ -451,7 +451,7 @@ class _MysqlProjectionLease:
                 )
             )
             if result.rowcount != 1:
-                raise IndexUnavailable("Athena projection cleanup ownership changed")
+                raise IndexUnavailable("Tapper projection cleanup ownership changed")
             await self._connection.commit()
 
         await _settled_database(operation(), "complete owned projection cleanup")
@@ -459,7 +459,7 @@ class _MysqlProjectionLease:
 
 def _ownership_receipt(row: Sequence[object]) -> ProjectionOwnershipReceipt:
     if len(row) != 4:
-        raise IndexUnavailable("Athena projection ownership row is malformed")
+        raise IndexUnavailable("Tapper projection ownership row is malformed")
     physical, operation_id, predecessor, status = row
     receipt = ProjectionOwnershipReceipt(
         physical_collection=_bounded_text(physical, "physical collection", 255),
@@ -486,9 +486,9 @@ def _validate_receipt(
     ):
         raise ValueError("projection operation id must be 32 lowercase hex characters")
     if receipt.status not in {"building", "active", "cleanup"}:
-        raise IndexUnavailable("Athena projection ownership status is malformed")
+        raise IndexUnavailable("Tapper projection ownership status is malformed")
     if receipt.status != expected_status:
-        raise IndexUnavailable("Athena projection ownership status changed")
+        raise IndexUnavailable("Tapper projection ownership status changed")
 
 
 async def _settled_database(
@@ -505,11 +505,11 @@ async def _settled_database(
     except TimeoutError as error:
         task.cancel()
         await await_task_terminal(task)
-        raise IndexUnavailable(f"Athena projection database {operation} timed out") from error
+        raise IndexUnavailable(f"Tapper projection database {operation} timed out") from error
     except IndexUnavailable:
         raise
     except DBAPIError as error:
-        raise IndexUnavailable(f"Athena projection database {operation} failed") from error
+        raise IndexUnavailable(f"Tapper projection database {operation} failed") from error
 
 
 async def _acquire_database_connection(engine: AsyncEngine) -> AsyncConnection:
@@ -527,9 +527,9 @@ async def _acquire_database_connection(engine: AsyncEngine) -> AsyncConnection:
         outcome = await await_task_terminal(task)
         if isinstance(outcome.value, AsyncConnection):
             await _close_connection_terminal(outcome.value)
-        raise IndexUnavailable("Athena projection database connect timed out") from error
+        raise IndexUnavailable("Tapper projection database connect timed out") from error
     except DBAPIError as error:
-        raise IndexUnavailable("Athena projection database connect failed") from error
+        raise IndexUnavailable("Tapper projection database connect failed") from error
 
 
 async def _close_connection_terminal(connection: AsyncConnection) -> None:
@@ -542,7 +542,7 @@ async def _close_connection_terminal(connection: AsyncConnection) -> None:
         raise outcome.error
     if isinstance(outcome.error, DBAPIError):
         raise IndexUnavailable(
-            "Athena projection database connection close failed"
+            "Tapper projection database connection close failed"
         ) from outcome.error
     raise outcome.error
 

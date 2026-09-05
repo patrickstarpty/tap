@@ -90,14 +90,14 @@ class Answers:
             trace_id="trace-a",
             query_plan_id="plan-a",
             context_snapshot_id="context-a",
-            corpus_version="athena-demo-v1",
+            corpus_version="tapper-demo-v1",
             retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
             answer="",
             abstained=True,
             abstention_reason=AbstentionReason.INSUFFICIENT_EVIDENCE,
             claims=(),
             citations=(),
-            embedding_provenance=ModelCallProvenance("athena-embedding", "embed-a"),
+            embedding_provenance=ModelCallProvenance("tapper-embedding", "embed-a"),
             answer_provenance=None,
         )
 

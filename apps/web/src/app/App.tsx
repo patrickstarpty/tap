@@ -1,10 +1,10 @@
-import { AthenaPage } from "../pages/AthenaPage";
+import { TapperPage } from "../pages/TapperPage";
 import { AppProviders } from "./providers";
 
 export function App() {
   return (
     <AppProviders>
-      <AthenaPage />
+      <TapperPage />
     </AppProviders>
   );
 }

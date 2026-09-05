@@ -357,7 +357,7 @@ describe("KnowledgeLibrary", () => {
       .withDetail(
         documentDetail({
           ...summary,
-          normalizedPreview: "Athena 只依据已选择的来源回答问题。",
+          normalizedPreview: "Tapper 只依据已选择的来源回答问题。",
         }),
       );
     renderKnowledgeApp(<KnowledgeLibrary />, { api });
@@ -372,7 +372,7 @@ describe("KnowledgeLibrary", () => {
     expect(within(detail).getByText("rev_01JABCDEF")).toBeVisible();
     expect(within(detail).getByText(/749d926c8783/)).toBeVisible();
     expect(
-      within(detail).getByText("Athena 只依据已选择的来源回答问题。"),
+      within(detail).getByText("Tapper 只依据已选择的来源回答问题。"),
     ).toBeVisible();
     for (const stage of [
       "保存源文件",

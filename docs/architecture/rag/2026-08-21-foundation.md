@@ -1,15 +1,17 @@
-# 后置 Knowledge Plane：RAG Foundation
+# RAG Foundation：当前 Milvus 基线与历史 Azure 参考
 
-| 字段 | 值 |
-| --- | --- |
-| 状态 | 后置 Knowledge Plane 设计；已由 ADR-019 重排 |
-| 目标 | 构建可评测、权限安全、可追溯、可增量更新，并能通过聊天完成知识问答的企业 RAG 垂直切片 |
-| 核心技术 | React/TypeScript、Python + FastAPI/ASGI、Git、Entra ID、AKS、Azure AI Search、MySQL、Redis、Blob、Key Vault、LiteLLM |
-| 主要用户面 | TAP Knowledge Chat、Retrieval API、Citation/Trace Inspector |
+| 字段       | 值                                                                                                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 状态       | 历史/provider-specific 设计；当前规范性基线只取本页明确标为“当前”的摘要与可复用原则                                                                                               |
+| 目标       | 按 V0–VG 验证可评测、可追溯、可增量更新的可信知识问答，再进入 P0 身份/RBAC/多 Project 与 P1 生产加固                                                                              |
+| 核心技术   | 当前：React/TypeScript、Python + FastAPI/ASGI、MySQL、Redis、Milvus、MinIO、LiteLLM、Docker Compose；历史 provider-specific 方案：AKS、Azure AI Search、Blob、Entra ID、Key Vault |
+| 主要用户面 | TAP Knowledge Chat、Retrieval API、Citation/Trace Inspector                                                                                                                       |
 
-> **阶段说明（2026-09-02）**：[ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 已将当前 Phase 1 改为 Intelligence Layer Exploration。本文的 RAG 能力作为后续 Knowledge Plane 设计保留，Athena 已实现的 `doc` revision/hash/anchor 和 Citation 继续为 Intelligence Context 提供基础；完整四索引和 Knowledge Chat 不再是当前 Phase 1 出口。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已替代 ADR-019 的交付优先级。当前路线 Knowledge-first，方案验证使用 TAP 管理的来源/revision、MinIO 原件与 artifact、Milvus 单一 `doc` family、MySQL Knowledge Graph 和 LiteLLM，并在 V0–VG 后依次进入 P0、P1。本文有关 Git/Blob/MySQL 四类来源、Azure AI Search 四索引、Entra 与 AKS 的内容，是 2026-08-21 接受范围的历史/provider-specific 设计，不是当前实现要求；其中稳定 revision/hash/anchor、引用、删除传播、可重建与评测原则继续适用。
 
-## 1. 阶段目标
+> **阅读规则**：除 [3.4 节](#34-tapper-本地-doc-切片的当前已交付事实) 外，下面第 1–10 节原文记录 2026-08-21 的 Azure Knowledge Plane 方案；标题已统一标为“历史”。当前要实施的 API、Scope、Milvus/MySQL Graph、质量门禁与交付顺序只以 [RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)、[当前架构](../2026-09-04-tapper-knowledge-web-automation-overview.md)和[当前核心契约](../../reference/2026-09-04-tapper-platform-contracts.md)为准。历史正文中的“必须”“出口”“正式”只对当时方案成立。
+
+## 1. 历史阶段目标（2026-08-21）
 
 后置 Knowledge Plane 阶段不追求完整 Test Automation 闭环，而是证明后续 Agent、Test IR 生成、失败 RCA 都能共享一套可靠检索底座：
 
@@ -21,7 +23,7 @@
 - 检索质量、权限、时延、成本和数据新鲜度都有可重复评测。
 - 用户能在 Project/Conversation 中流式提问、中断或排队追问，并从逐条引用打开精确证据。
 
-## 2. 非目标
+## 2. 历史非目标（2026-08-21）
 
 该 Knowledge Plane 不以以下能力作为出口条件：
 
@@ -34,7 +36,7 @@
 
 完整 Knowledge Chat 是该后置阶段的可持续 RAG 用户面和出口条件；它聚焦知识问答，不扩展为通用 Agent 或 Test Automation 工作台。
 
-## 3. 后置 Knowledge Plane 架构
+## 3. 历史 Azure Knowledge Plane 架构（2026-08-21）
 
 ```mermaid
 flowchart LR
@@ -121,36 +123,36 @@ Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP
 
 ### 3.1 在线问答的两种 AnswerMode
 
-| AnswerMode | 用途 | 约束 |
-| --- | --- | --- |
-| `quick` | 普通知识问答、精确 ID/symbol/fingerprint 查询 | 单个有界 QueryPlan；exact/filter fast path 后执行必要的 hybrid，不启动 Agent |
-| `deep` | 跨文档、跨索引、跨章节比较与解释 | 有界子问题、并行索引检索、跨索引融合、parent/依赖扩展与冲突检查；仍是确定性检索流程 |
+| AnswerMode | 用途                                          | 约束                                                                                |
+| ---------- | --------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `quick`    | 普通知识问答、精确 ID/symbol/fingerprint 查询 | 单个有界 QueryPlan；exact/filter fast path 后执行必要的 hybrid，不启动 Agent        |
+| `deep`     | 跨文档、跨索引、跨章节比较与解释              | 有界子问题、并行索引检索、跨索引融合、parent/依赖扩展与冲突检查；仍是确定性检索流程 |
 
 每轮先由 Context Builder 组装 `Policy Context → Project Context → recent turns → versioned conversation summary → current message/@resource`，再生成不可变、可审计的 QueryPlan。`quick/deep` 是用户 AnswerMode，服务端把它映射到版本化 RetrievalProfile。历史答案和 conversation summary 只用于指代消解与连续性，不能成为事实证据；最终 claim 只能引用本轮重新授权并检索到的 source revision。
 
 QueryPlan 至少固定：原始问题与 raw request hash、standalone query、intent/置信度、effective source families、exact identifiers、已授权并解析到 immutable revision/hash 的 `@resource`、effective environment/corpus、server-capped candidate limit、Retrieval Profile、Policy/ACL digest、子问题上限和 planner version。Context Snapshot 绑定 retrieval operation/current Policy；Chat 路径额外绑定 chat/turn，记录每层输入的 ID/hash/token 数与摘要 lineage；每轮重新授权摘要来源，不复制秘密或未经授权原文。
 
-### 3.2 与当前 Intelligence Layer 的关系
+### 3.2 与历史 Intelligence Layer 探索的关系
 
-Knowledge、Chat、ACL、Citation 和 Ingestion 在不启动 Intelligence Runtime 时仍必须独立工作。当前 Intelligence Task 通过 provider-neutral `AgentRuntime` 产生候选 Report/Blueprint，只能经 TAP Knowledge/Citation 边界读取当前快照；它不进入在线回答 fast path，不直接查询/写入 AI Search，也不决定 ACL、chunk identity、删除或 active corpus。后置 Knowledge Enrichment 若恢复，仍只能产生经 Validator 和审批的 staging derivation。当前边界见 [RFC-007](../../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-014](../../decisions/2026-08-21-adr-014-codex-specialist-runtime.md)。
+Knowledge、Chat、Policy、Citation 和 Ingestion 在不启动 Intelligence Runtime 时仍必须独立工作。RFC-007 的 Intelligence Task/Artifact/Validator 是可复用的历史探索成果，但其独立 Lab 不再是当前交付出口。当前 Tapper 生成能力只能经 TAP Knowledge/Citation 边界读取快照，不能直接查询/写入 Milvus、决定 Policy、chunk identity、删除或 active corpus；派生内容仍必须经过确定性 Validator 与人工发布。历史边界见 [RFC-007](../../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-014](../../decisions/2026-08-21-adr-014-codex-specialist-runtime.md)，当前顺序见 RFC-009/ADR-021。
 
-### 3.3 前后端与运行角色边界
+### 3.3 历史前后端与运行角色边界
 
-| 角色 | 后置 Knowledge Plane 职责 |
-| --- | --- |
+| 角色                 | 历史 Azure Knowledge Plane 职责                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
 | React/TypeScript Web | Project/Conversation、composer/queue、SSE 增量投影、Sources/Claims/Trace；不保存权威状态或构造 ACL |
-| FastAPI `api-sse` | Entra/Policy、公共 DTO、幂等、Turn/Queue API、REST snapshot + SSE tail、Citation/Trace 重授权 |
-| `turn-worker` | Context Snapshot、QueryPlan、Retrieval、Answer、Citation validation；与浏览器连接解耦 |
-| `ingestion-worker` | fetch、typed parser/chunker、ACL/lineage、redaction；CPU/内存池与 API 分离 |
-| `embedding-worker` | content-hash 去重、batch/cache、受治理模型调用 |
-| `index-writer` | AI Search batch/upsert/tombstone、ACK 后 checkpoint、alias/corpus 发布 |
-| `relay-reconciler` | MySQL Outbox、Redis distribution/lease、至少一次投递、幂等和故障对账 |
+| FastAPI `api-sse`    | Entra/Policy、公共 DTO、幂等、Turn/Queue API、REST snapshot + SSE tail、Citation/Trace 重授权      |
+| `turn-worker`        | Context Snapshot、QueryPlan、Retrieval、Answer、Citation validation；与浏览器连接解耦              |
+| `ingestion-worker`   | fetch、typed parser/chunker、ACL/lineage、redaction；CPU/内存池与 API 分离                         |
+| `embedding-worker`   | content-hash 去重、batch/cache、受治理模型调用                                                     |
+| `index-writer`       | AI Search batch/upsert/tombstone、ACK 后 checkpoint、alias/corpus 发布                             |
+| `relay-reconciler`   | MySQL Outbox、Redis distribution/lease、至少一次投递、幂等和故障对账                               |
 
 首版可以共享一个 Python package 和数据库迁移，但使用独立 entrypoint/Deployment。FastAPI 在线 handler 只做异步 I/O；parser/OCR/AST、本地模型和大对象处理不在 event loop 或进程内 Background Task 运行。完整性能、容量与 AKS 边界见 [总体技术架构](../2026-08-20-overview.md#11-可靠性性能与容量)。
 
-### 3.4 Athena 本地 `doc` 切片的已交付能力
+### 3.4 Tapper 本地 `doc` 切片的当前已交付事实
 
-Athena 本地 Demo 已经交付一组可被当前 Intelligence 和后置 Knowledge Plane 复用、但范围严格受限的 RAG 能力：
+Tapper 本地 Demo 已经交付一组可被当前 Knowledge-first 路线和历史 Intelligence 探索复用、但范围严格受限的 RAG 能力：
 
 - provider-neutral Knowledge HTTP/API、Search/Model/Citation ports 与公共 OpenAPI/TypeScript 生成链；
 - PDF/DOCX/MD/TXT 文档的有界上传、稳定 revision/chunk 身份、typed parse/chunk、可恢复 job/lease/retry/delete 和 MySQL Outbox/Redis 唤醒；
@@ -158,27 +160,27 @@ Athena 本地 Demo 已经交付一组可被当前 Intelligence 和后置 Knowled
 - fixed demo policy 下的来源限定检索、grounded answer、whole-paragraph claim spans、citation snapshot 与 revision/hash/anchor 原文解析；
 - 浏览器刷新、应用进程重启和普通 Compose `down/up` 后恢复文档目录与来源可用状态、ingestion/index 状态和 citation resolver 所需的持久事实。当前渲染回答只在页面内存中，刷新会清空；本版不提供历史回答恢复，但可基于持久的 `ready` 来源重新提问。
 
-该切片不包含 `code`、`bdd`、`failure` family，也没有 Azure AI Search 四索引、Entra/Project ACL、classification/environment security trimming、Conversation/SSE/Trace/Feedback、OCR 或 AKS 生产治理。它证明同一领域与端口边界可以承载本地来源优先路径；本文件其余章节是后置 Knowledge Plane 的规范性目标，不能用本地 deterministic E2E 或 Milvus `doc` GREEN 替代其未来出口标准。
+该切片不包含 `code`、`bdd`、`failure` family，也没有 Azure AI Search 四索引、用户认证/Project Membership、Conversation/SSE/Trace/Feedback、OCR 或生产治理。它证明同一领域与端口边界可以承载本地来源优先路径；本文件其余章节是历史 Azure 设计，不是当前规范性目标，也不能用本地 deterministic E2E 或 Milvus `doc` GREEN 替代 RFC-009 的 V1/P1 出口标准。
 
-## 4. 四索引设计
+## 4. 历史 Azure 四索引设计（2026-08-21）
 
 ### 4.1 公共字段
 
 每个索引至少包含：
 
-| 字段 | 用途 |
-| --- | --- |
-| `chunkId` / `logicalChunkId` | 不可变 snapshot 主键 / 跨 revision 的逻辑切片身份 |
-| `tenantId` / `projectId` | 强制租户与项目过滤 |
-| `allowedGroupIds` | Entra/group security trimming |
-| `classification` / `environment` / `aclVersion` | 数据分级、环境边界与权限版本 |
-| `sourceType` / `sourceUri` / `sourceId` / `anchor` | 权威来源和可解析引用 |
-| `sourceRevision` / `sourceContentHash` / `chunkContentHash` | 原始 snapshot 版本、切片完整性、去重和审计 |
-| `rootId` / `parentId` / `chunkLevel` / `corpusVersion` | Parent/Child、多粒度上下文与原子语料快照 |
-| `title` / `content` / `language` / `tags` | 全文检索与展示 |
-| `contentVector` / `embeddingModelVersion` | 向量检索与模型迁移 |
-| `parserVersion` / `chunkerVersion` / `schemaVersion` / `pipelineVersion` | 可重复重建与蓝绿升级 |
-| `indexedAt` / `deleted` / `parserStatus` / `redactionStatus` | 新鲜度、删除、对账与安全审计 |
+| 字段                                                                     | 用途                                              |
+| ------------------------------------------------------------------------ | ------------------------------------------------- |
+| `chunkId` / `logicalChunkId`                                             | 不可变 snapshot 主键 / 跨 revision 的逻辑切片身份 |
+| `tenantId` / `projectId`                                                 | 强制租户与项目过滤                                |
+| `allowedGroupIds`                                                        | Entra/group security trimming                     |
+| `classification` / `environment` / `aclVersion`                          | 数据分级、环境边界与权限版本                      |
+| `sourceType` / `sourceUri` / `sourceId` / `anchor`                       | 权威来源和可解析引用                              |
+| `sourceRevision` / `sourceContentHash` / `chunkContentHash`              | 原始 snapshot 版本、切片完整性、去重和审计        |
+| `rootId` / `parentId` / `chunkLevel` / `corpusVersion`                   | Parent/Child、多粒度上下文与原子语料快照          |
+| `title` / `content` / `language` / `tags`                                | 全文检索与展示                                    |
+| `contentVector` / `embeddingModelVersion`                                | 向量检索与模型迁移                                |
+| `parserVersion` / `chunkerVersion` / `schemaVersion` / `pipelineVersion` | 可重复重建与蓝绿升级                              |
+| `indexedAt` / `deleted` / `parserStatus` / `redactionStatus`             | 新鲜度、删除、对账与安全审计                      |
 
 逻辑身份与 snapshot 身份分开计算：
 
@@ -192,16 +194,16 @@ chunkId = hashId(logicalChunkId | sourceRevision | chunkContentHash | chunkerVer
 
 ### 4.2 类型专用字段与切片
 
-| 索引 | 切片单元 | 专用字段 |
-| --- | --- | --- |
-| `kb-doc-v1` | Document Summary → Section Summary → Leaf Chunk；固定 token 仅兜底 | docType、sectionPath、page/offset、effectiveDate |
-| `kb-code-v1` | Repository/File → Class/Function/Method/Symbol；代码保持原语言 | repo、commit、path、language、symbol、kind、signature、line range、imports/calls |
-| `kb-bdd-v1` | Feature → Scenario → Step | featureId、scenarioId、stableTestId、stepKeyword、tags、automationRefs |
-| `kb-failure-v1` | 一个 Incident/失败指纹一个逻辑单元，证据大文件只保留引用 | incidentId、fingerprint、testId、runId、errorType、status、evidenceRefs、resolution |
+| 索引            | 切片单元                                                           | 专用字段                                                                            |
+| --------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `kb-doc-v1`     | Document Summary → Section Summary → Leaf Chunk；固定 token 仅兜底 | docType、sectionPath、page/offset、effectiveDate                                    |
+| `kb-code-v1`    | Repository/File → Class/Function/Method/Symbol；代码保持原语言     | repo、commit、path、language、symbol、kind、signature、line range、imports/calls    |
+| `kb-bdd-v1`     | Feature → Scenario → Step                                          | featureId、scenarioId、stableTestId、stepKeyword、tags、automationRefs              |
+| `kb-failure-v1` | 一个 Incident/失败指纹一个逻辑单元，证据大文件只保留引用           | incidentId、fingerprint、testId、runId、errorType、status、evidenceRefs、resolution |
 
 OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必须按 Endpoint/Operation 切片，不能按固定页长切分。
 
-## 5. Ingestion Pipeline
+## 5. 历史 Azure Ingestion Pipeline（2026-08-21）
 
 ### 5.1 标准流程
 
@@ -227,7 +229,7 @@ OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必�
 - 四个 reader alias 逐个更新并等待传播确认，不宣称跨 alias 原子性；传播期间 turn 继续固定旧 `corpusVersion`，新索引只会产生可见 degraded/零结果，禁止放宽 filter 混合新旧数据。全部 alias 收敛后再原子发布 TAP `activeCorpusVersion` 应用层指针，并保留快速回滚窗口。
 - 旧索引只在新索引质量、ACL 和数据对账通过后清理。
 
-## 6. Retrieval Pipeline
+## 6. 历史 Azure Retrieval Pipeline（2026-08-21）
 
 1. API 从可信身份上下文注入 tenant、project、groups、classification ceiling 和 environment；模型不能传入或放宽这些字段。Policy 将 classification ceiling 转换为明确的允许集合，不进行字符串大小比较；environment 只允许 `global OR requested environment`。
 2. Context Builder 使用 Project 配置、近期 turns、带 lineage 的 conversation summary 和结构化 `@resource` 做指代消解；服务端生成版本化 QueryPlan，记录 standalone query、intent/confidence、目标索引、exact identifiers、resource mode、profile、子问题与 planner version。
@@ -241,7 +243,7 @@ OpenAPI/AsyncAPI 内容进入 `kb-doc-v1` 或独立逻辑 source type，但必�
 
 Knowledge Plane 初始实现默认不缓存检索结果；若评测后启用，cache key 必须包含 tenant、project、ACL digest、classification、environment、corpus/index/model version，撤权与删除必须同步失效。
 
-## 7. Retrieval 与 Knowledge Chat API
+## 7. 历史 Retrieval 与 Knowledge Chat API（2026-08-21）
 
 后置 Knowledge Plane 至少交付：
 
@@ -266,7 +268,7 @@ Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL dige
 
 `traceId` 只是关联标识，不能作为访问凭证。`GET /traces/{id}` 和 Inspector 每次读取都必须从当前 Entra 身份重新校验 tenant/project/actor 或受限诊断角色，并按当前 ACL fail closed；默认脱敏 query、group/filter 细节、候选内容和秘密。撤权后不得通过旧 trace、引用或 Inspector 继续读取原文，所有读取都进入审计日志。
 
-## 8. 评测体系
+## 8. 历史四索引评测体系（2026-08-21）
 
 ### 8.1 Golden Dataset
 
@@ -286,14 +288,14 @@ Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL dige
 
 ### 8.2 指标
 
-| 维度 | 指标 |
-| --- | --- |
-| Retrieval | Recall@K、MRR、nDCG、per-index/source coverage、zero-result rate |
-| Answer | citation precision/recall、faithfulness、unsupported claim rate、版本正确性 |
-| Security | unauthorized hit/answer count、filter bypass、trace 中敏感信息泄漏 |
-| Freshness | change/delete/ACL update 到生效的 P50/P95 |
-| Reliability | ingestion success、重复 chunk、checkpoint recovery、rebuild parity |
-| Performance | retrieval/rerank/answer latency、tokens、embedding/query cost |
+| 维度        | 指标                                                                        |
+| ----------- | --------------------------------------------------------------------------- |
+| Retrieval   | Recall@K、MRR、nDCG、per-index/source coverage、zero-result rate            |
+| Answer      | citation precision/recall、faithfulness、unsupported claim rate、版本正确性 |
+| Security    | unauthorized hit/answer count、filter bypass、trace 中敏感信息泄漏          |
+| Freshness   | change/delete/ACL update 到生效的 P50/P95                                   |
+| Reliability | ingestion success、重复 chunk、checkpoint recovery、rebuild parity          |
+| Performance | retrieval/rerank/answer latency、tokens、embedding/query cost               |
 
 所有结果必须分别报告四类索引，不能只用总体平均掩盖代码或失败知识的弱项。
 
@@ -319,7 +321,9 @@ Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL dige
 - Hybrid + rerank 在主要指标上稳定优于 BM25-only baseline。
 - 时延、新鲜度与成本先建立基线，再由产品/平台负责人批准 SLO；不以实验数据直接承诺生产值。
 
-## 9. 实施顺序
+## 9. 历史 Azure 四索引实施顺序（2026-08-21）
+
+以下 `P1.0`–`P1.3` 名称仅记录 2026-08-21 的历史拆分，不对应 RFC-009 当前 V0–VG、P0、P1 路线，也不构成当前 Azure AI Search 实施承诺。
 
 ### P1.0：数据契约与评测先行
 
@@ -347,7 +351,7 @@ Retrieval Inspector 需要展示：原始 query、分解 query、脱敏 ACL dige
 - OTel trace、dashboard、告警、Runbook、成本与配额。
 - 通过出口标准后冻结 Retrieval Contract，供 Phase 2 使用。
 
-## 10. 第一批待确认输入
+## 10. 历史 Azure 方案待确认输入（2026-08-21）
 
 1. 四类语料各自的真实样例、规模、语言、Owner 和更新频率。
 2. Entra group 与 tenant/project/classification/environment 的权威映射来源。

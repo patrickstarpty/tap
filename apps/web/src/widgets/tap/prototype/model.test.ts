@@ -8,7 +8,7 @@ import {
   type AssistantTurn,
 } from "./model";
 
-describe("Athena prototype model", () => {
+describe("Tapper prototype model", () => {
   it.each([
     ["Generate a Playwright automation", "web"],
     ["Create a browser workflow", "web"],

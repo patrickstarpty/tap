@@ -934,7 +934,7 @@ class PyMilvusDocReader:
 
 
 @dataclass(frozen=True, slots=True)
-class AthenaDocumentMilvusClients:
+class TapperDocumentMilvusClients:
     """Three role-isolated clients owned transitively by one document index."""
 
     provisioner: PyMilvusDocProvisioner
@@ -942,7 +942,7 @@ class AthenaDocumentMilvusClients:
     reader: PyMilvusDocReader
 
 
-async def create_athena_document_clients(
+async def create_tapper_document_clients(
     *,
     uri: str,
     database: str,
@@ -953,7 +953,7 @@ async def create_athena_document_clients(
     reader_username: str,
     reader_password: SecretStr,
     sdk: MilvusSdk | None = None,
-) -> AthenaDocumentMilvusClients:
+) -> TapperDocumentMilvusClients:
     """Connect exact role clients and settle every partial construction failure."""
 
     for name, value in {
@@ -1013,7 +1013,7 @@ async def create_athena_document_clients(
         provisioner_client = await connect(provisioner_username, provisioner_password)
         writer_client = await connect(writer_username, writer_password)
         reader_client = await connect(reader_username, reader_password)
-        return AthenaDocumentMilvusClients(
+        return TapperDocumentMilvusClients(
             provisioner=PyMilvusDocProvisioner(
                 provisioner_client,
                 sdk,

@@ -64,7 +64,7 @@ def normalized_artifact() -> NormalizedArtifact:
             NormalizedBlock(
                 block_id="block-1",
                 kind=BlockKind.PARAGRAPH,
-                text="Athena policy.",
+                text="Tapper policy.",
                 heading_path=("Policy",),
                 page=None,
                 paragraph_index=0,
@@ -76,7 +76,7 @@ def normalized_artifact() -> NormalizedArtifact:
 
 
 def chunk_artifact() -> tuple[ChunkDraft, ...]:
-    content = "Athena policy."
+    content = "Tapper policy."
     anchor = '{"blockId":"block-1"}'
     content_hash = canonical_sha256(content.encode())
     return (
@@ -100,7 +100,7 @@ class Upload:
     @property
     def content(self):  # type: ignore[no-untyped-def]
         async def parts():  # type: ignore[no-untyped-def]
-            yield b"Athena policy."
+            yield b"Tapper policy."
 
         return parts()
 
@@ -149,7 +149,7 @@ async def test_real_azurite_round_trips_all_artifact_kinds_and_keeps_containers_
     embeddings = await store.write_embeddings(
         REVISION,
         EmbeddingArtifact(
-            "athena-embedding",
+            "tapper-embedding",
             3,
             ((0.1, 0.2, 0.3),),
             tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
@@ -157,11 +157,11 @@ async def test_real_azurite_round_trips_all_artifact_kinds_and_keeps_containers_
         source_content_hash=SOURCE_HASH,
     )
 
-    assert await store.read_original(original) == b"Athena policy."
+    assert await store.read_original(original) == b"Tapper policy."
     assert await store.read_normalized(normalized) == normalized_artifact()
     assert await store.read_chunks(chunks) == chunk_artifact()
     assert await store.read_embeddings(embeddings) == EmbeddingArtifact(
-        "athena-embedding",
+        "tapper-embedding",
         3,
         ((0.1, 0.2, 0.3),),
         tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
@@ -293,7 +293,7 @@ async def test_real_azurite_recovers_copy_after_success_response_is_lost(
 
     locator = await store.commit_original(staged, REVISION)
 
-    assert await store.read_original(locator) == b"Athena policy."
+    assert await store.read_original(locator) == b"Tapper policy."
     service = await service_client()
     try:
         assert not await service.get_blob_client(ORIGINALS_CONTAINER, staged.staging_key).exists()

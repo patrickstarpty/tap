@@ -3,6 +3,8 @@ status: completed
 date: 2026-09-03
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # Low Code Automation 交互原型实施计划
 
 > **执行方式：** 按用户要求在当前任务内联完成，只做纯前端原型，不使用 Subagent-Driven Development，也不把原型扩展为真实执行平台。
@@ -16,7 +18,7 @@ date: 2026-09-03
 3. Test Plan 与 Automation 可选、严格双向 `1:1`。
 4. Web Run 选择 Azure DevOps Pipeline Agent；Mobile Run 选择平台和设备。
 5. 已关联 Run 以同一个 Run ID 投影到 Automation 与 Test Plan 两侧历史。
-6. Athena 识别自动化意图后先询问是否创建 Test Plan，再交付相应资产入口。
+6. Tapper 识别自动化意图后先询问是否创建 Test Plan，再交付相应资产入口。
 7. Conversation 首轮后进入历史，同一会话多轮合并，跨模块与刷新后恢复。
 
 产品事实源为 [RFC-008](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。
@@ -26,7 +28,7 @@ date: 2026-09-03
 - 只修改 React/TypeScript/CSS、前端 fixture、测试与文档。
 - 使用版本化 `localStorage` 模拟 Conversation、Automation、Test Plan 和 Run 的刷新恢复；不声称服务端持久化。
 - 所有 Run 固定为 `simulated`，`evidenceKind` 为 `none`；不连接 Azure DevOps、浏览器、真机或设备云。
-- Athena 的 `AI Agent` 与 Web 的 `Execution Agent / Azure DevOps Pipeline Agent` 分开建模和呈现。
+- Tapper 的 `AI Agent` 与 Web 的 `Execution Agent / Azure DevOps Pipeline Agent` 分开建模和呈现。
 - 不新增依赖，不修改 backend 或 contracts。
 - 真实 URL 深链、浏览器前进后退、权限、凭据、调度、Evidence、重试与并发不属于本原型。
 
@@ -85,7 +87,7 @@ ArtifactState
 - [x] Detail AI Agent：建议先展示，用户 Apply 或 Reject。
 - [x] Web/Mobile 目标选择与模拟运行历史。
 - [x] Test Plan 详情：双向关联、场景覆盖、运行入口与执行记录。
-- [x] Athena Yes/Skip 编排与 Test Plan/Automation 资产卡片。
+- [x] Tapper Yes/Skip 编排与 Test Plan/Automation 资产卡片。
 - [x] Conversation 当前项显示、模块切换和刷新恢复。
 
 ### 4. 视觉与验证
@@ -119,7 +121,7 @@ apps/web/src/widgets/tap/
 
 ```sh
 corepack pnpm --dir apps/web exec vitest run \
-  src/pages/AthenaPage.test.tsx \
+  src/pages/TapperPage.test.tsx \
   src/widgets/tap/TapProductPrototype.interactions.test.tsx \
   src/widgets/tap/prototype/model.test.ts \
   src/widgets/tap/prototype/artifacts/state.test.ts \

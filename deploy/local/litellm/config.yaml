@@ -1,12 +1,12 @@
 model_list:
-  - model_name: athena-chat
+  - model_name: tapper-chat
     litellm_params:
       model: os.environ/LITELLM_MODEL
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
-  - model_name: athena-embedding
+  - model_name: tapper-embedding
     litellm_params:
-      model: os.environ/LITELLM_ATHENA_EMBEDDING_MODEL
+      model: os.environ/LITELLM_TAPPER_EMBEDDING_MODEL
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
 general_settings:

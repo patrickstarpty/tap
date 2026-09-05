@@ -1,8 +1,8 @@
 # 后置 Knowledge Plane：数据切片与端到端溯源
 
-本文定义 TAP 如何把 Git、Blob 和 MySQL 中的文档、代码、BDD 与失败记录转换为 Azure AI Search 中可检索、可重建、可解释的 chunk，并保证知识问答中的每条引用能够回到不可变原始版本。
+本文同时记录当前文档知识的切片/provenance 原则，以及 2026-08-21 将 Git、Blob 和 MySQL 中四类语料转换为 Azure AI Search chunk 的历史/provider-specific 设计。
 
-> **阶段说明（2026-09-02）**：本文正文中的 “Phase 1” 指 2026-08-21 形成的旧企业 RAG 阶段。该能力现由 [ADR-019](../../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 后置；当前 P1.0–P1.2 只复用 Athena 已实现的 `doc` revision/hash/anchor 与 Citation，不交付四类语料摄取。
+> **当前范围（2026-09-04）**：[RFC-009](../../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 将 Knowledge 放回当前主线。V0–VG 延续文档稳定 revision/chunk identity、content hash、structured anchor、Citation、manifest、删除/重建和 derived fact 证据绑定，当前存储/检索为 MinIO + Milvus `doc`，关系图事实进入 MySQL Knowledge Graph。正文中的四类语料、Git/Blob 权威输入、Azure AI Search/AKS 和 “Phase 1” 是历史设计；Git 对 Automation 也只是可选同步，不是当前强制事实源。
 
 ## 1. 设计结论
 
@@ -103,14 +103,14 @@ chunkId = hashId(
 
 下面数值是首轮实验起点，不是生产常量。每次修改都升级 `chunkerVersion`，使用冻结 Golden Dataset 做 A/B 与回归。
 
-| 类型 | 结构边界 | 首轮参数 | 必须保留的上下文 | 禁止做法 |
-| --- | --- | --- | --- | --- |
-| 文档 | Document → Section → Leaf；标题、段落、列表、表格 | Leaf 目标 350–700 tokens，硬上限约 900；仅同一 section 内 10–15% overlap | 文档标题、完整 heading path、页码/offset、发布日期、owner | 跨章节机械 overlap；把整份大文档作为一个 chunk |
-| 文档摘要 | Document Summary、Section Summary | Section 120–250 tokens；Document 150–300 tokens | 被摘要 child IDs、生成模型/提示版本、ACL | 混合不同 ACL child；摘要没有回链 |
-| 代码 | Repository/File → Class/Function/Method/Symbol | 一个 symbol 优先一个 chunk；超长 symbol 按语义块拆到 600–1,000 tokens，80–120 tokens overlap | repo、commit、path、FQN、signature、docstring、line range、imports/calls | 把源码转 Markdown；按固定字符长度切；索引 vendor/generated/binary/secret |
-| BDD | Feature → Scenario → Step/Examples | 一个 Scenario 优先一个 leaf；通常 200–600 tokens | Feature 背景、tags、Examples、stable Test ID、Test IR ref | 把一个 Scenario 的 Steps 拆散后失去顺序 |
-| 失败记录 | Incident/fingerprint → 摘要与处置 | 300–800 tokens；同一 fingerprint 的单次 Incident 保持完整 | run/attempt、test/revision、环境矩阵、错误类型、resolution、evidence refs | 索引完整 HAR、视频或未脱敏日志；把多个无关失败拼成一个 chunk |
-| OpenAPI/AsyncAPI | Service → Endpoint/Operation | 每个 operation 一个 leaf；超长 Schema 独立 child | method/path、operationId、request/response schema refs、版本 | 按 PDF 页或固定窗口打散 Endpoint |
+| 类型             | 结构边界                                          | 首轮参数                                                                                     | 必须保留的上下文                                                          | 禁止做法                                                                 |
+| ---------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 文档             | Document → Section → Leaf；标题、段落、列表、表格 | Leaf 目标 350–700 tokens，硬上限约 900；仅同一 section 内 10–15% overlap                     | 文档标题、完整 heading path、页码/offset、发布日期、owner                 | 跨章节机械 overlap；把整份大文档作为一个 chunk                           |
+| 文档摘要         | Document Summary、Section Summary                 | Section 120–250 tokens；Document 150–300 tokens                                              | 被摘要 child IDs、生成模型/提示版本、ACL                                  | 混合不同 ACL child；摘要没有回链                                         |
+| 代码             | Repository/File → Class/Function/Method/Symbol    | 一个 symbol 优先一个 chunk；超长 symbol 按语义块拆到 600–1,000 tokens，80–120 tokens overlap | repo、commit、path、FQN、signature、docstring、line range、imports/calls  | 把源码转 Markdown；按固定字符长度切；索引 vendor/generated/binary/secret |
+| BDD              | Feature → Scenario → Step/Examples                | 一个 Scenario 优先一个 leaf；通常 200–600 tokens                                             | Feature 背景、tags、Examples、stable Test ID、Test IR ref                 | 把一个 Scenario 的 Steps 拆散后失去顺序                                  |
+| 失败记录         | Incident/fingerprint → 摘要与处置                 | 300–800 tokens；同一 fingerprint 的单次 Incident 保持完整                                    | run/attempt、test/revision、环境矩阵、错误类型、resolution、evidence refs | 索引完整 HAR、视频或未脱敏日志；把多个无关失败拼成一个 chunk             |
+| OpenAPI/AsyncAPI | Service → Endpoint/Operation                      | 每个 operation 一个 leaf；超长 Schema 独立 child                                             | method/path、operationId、request/response schema refs、版本              | 按 PDF 页或固定窗口打散 Endpoint                                         |
 
 ### 4.1 文档切片
 
@@ -206,15 +206,15 @@ AI Search 没有查询期 join。Parent/Child 通过重复 parent 元数据和 `
 
 MySQL 至少保存以下逻辑记录：
 
-| 记录 | 关键内容 |
-| --- | --- |
-| `knowledge_source_revision` | sourceId、URI、revision、hash、owner、ACL/version、删除状态 |
-| `ingestion_run` | 输入 snapshot、pipeline/parser/chunker/embedding/schema 版本、状态、计数、错误 |
-| `chunk_manifest` | logical/chunk/root/parent ID、anchor、hash、token 数、redaction 状态 |
-| `index_publication` | physical index、corpusVersion、批次 ACK、manifest hash、切换与回滚时间 |
-| `retrieval_trace` | actor/ACL digest、query plan、filter、候选、subscores、最终 context、配置版本 |
-| `answer_trace` | conversation/message、模型/提示版本、context hash、claims、拒答原因 |
-| `citation_edge` | claimId → chunkId → sourceRevision + anchor + sourceContentHash + chunkContentHash |
+| 记录                        | 关键内容                                                                           |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `knowledge_source_revision` | sourceId、URI、revision、hash、owner、ACL/version、删除状态                        |
+| `ingestion_run`             | 输入 snapshot、pipeline/parser/chunker/embedding/schema 版本、状态、计数、错误     |
+| `chunk_manifest`            | logical/chunk/root/parent ID、anchor、hash、token 数、redaction 状态               |
+| `index_publication`         | physical index、corpusVersion、批次 ACK、manifest hash、切换与回滚时间             |
+| `retrieval_trace`           | actor/ACL digest、query plan、filter、候选、subscores、最终 context、配置版本      |
+| `answer_trace`              | conversation/message、模型/提示版本、context hash、claims、拒答原因                |
+| `citation_edge`             | claimId → chunkId → sourceRevision + anchor + sourceContentHash + chunkContentHash |
 
 完整正向链路：
 

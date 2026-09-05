@@ -1,4 +1,4 @@
-"""Provider-neutral HTTP mapping for the Athena knowledge application."""
+"""Provider-neutral HTTP mapping for the Tapper knowledge application."""
 
 from __future__ import annotations
 

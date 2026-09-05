@@ -1,20 +1,25 @@
 ---
 id: ADR-019
-status: accepted
+status: superseded
 date: 2026-09-02
 supersedes:
   - ADR-011
   - ADR-013
-superseded-by: []
+superseded-by:
+  - ADR-021
 related-rfcs:
   - RFC-007
 ---
 
+> **命名归一化说明（2026-09-05）：** 本文只对产品和仓库标识做 Tapper 命名归一化，原日期、状态、决策、范围与评审结论未改变。命名归一化前的字节级原文以 Git commit `0eab801` 为准；下列命令或证据文本属于 identifier-normalized transcription，不再声明与该提交逐字节相同。
+
 # ADR-019：Phase 1 优先探索 Intelligence Layer
+
+> **生命周期**：本决策已由 [ADR-021](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 替代；以下正文保留 2026-09-02 的原始决策语义，durable task、artifact、validator 与 Review 模式继续作为实现参考。
 
 ## 背景
 
-TAP 的长期主体是 BrowserStack-like Test Automation Platform：管理测试资产、自动化、运行、浏览器与设备、执行证据和分析。当前 Athena 只实现了一条 loopback、无认证、`doc`-only 的资料摄取、限定来源回答和引用核验切片。它验证了不可变来源和引用基础，却还没有回答 AI 能否真正改善测试工程工作。
+TAP 的长期主体是 BrowserStack-like Test Automation Platform：管理测试资产、自动化、运行、浏览器与设备、执行证据和分析。当前 Tapper 只实现了一条 loopback、无认证、`doc`-only 的资料摄取、限定来源回答和引用核验切片。它验证了不可变来源和引用基础，却还没有回答 AI 能否真正改善测试工程工作。
 
 用户也不一定拥有正式需求、Release、产品源码或测试仓库。如果将这些对象设成开始 AI 工作的强制父级，会把零散目标、无源码调查和 UiPath-like 流程自动化等有效场景错误排除。反之，若直接投入完整测试管理、设备矩阵和执行调度，又会在 AI 差异化价值尚未证明时提前扩大平台工程。
 
@@ -27,7 +32,7 @@ TAP 的长期主体是 BrowserStack-like Test Automation Platform：管理测试
 5. 交付顺序为 P1.0 契约与评测、P1.1 Grounded Intelligence、P1.2 Durable Agent Task、P1.3 条件开启的失败分析与候选工程实验、P1.4 retain/revise/stop 阶段决策。P1.3 不得成为 P1.0–P1.2 的出口条件。
 6. Codex 是首个实验 `AgentRuntime` Adapter，但必须位于 provider-neutral port 之后，可被关闭或替换，不作为用户可见的“模式”。P1.2 只允许 read-only Profile；P1.3 的 workspace-write 必须先通过独立安全门禁。
 7. Phase 1 不交付 Test Management、真实 Browser/Device 执行、Execution Provider、Release Management、正式 Test Asset、远程 Git/PR、缺陷写入或多租户生产治理。它的 `execution_status` 固定为 `not_run`；没有真实 Provider Attempt 和 Evidence Manifest 就不得宣称测试已运行、通过或验证。
-8. Athena 已实现的文档 revision/hash/anchor、引用、Outbox、lease 和可恢复 worker 模式作为可复用基础保留；它的固定 demo policy、Knowledge Ingestion Job、Chat Turn 和 tool-free Answer Adapter 不得泛化成 Intelligence 控制面。
+8. Tapper 已实现的文档 revision/hash/anchor、引用、Outbox、lease 和可恢复 worker 模式作为可复用基础保留；它的固定 demo policy、Knowledge Ingestion Job、Chat Turn 和 tool-free Answer Adapter 不得泛化成 Intelligence 控制面。
 9. 本决策替代 ADR-011 和 ADR-013 对“Phase 1 产品验收优先级”的选择。两份旧 ADR 保留为历史记录；RAG Foundation 和 Knowledge Chat 仍是后续平台的 Knowledge Plane 设计，但不再是当前 Phase 1 的出口条件。
 10. Runtime 必须使用 `prepare -> register -> reauthorize -> activation_intent -> activate` 两阶段启动。在 `prepare` 前和 launcher 登记后、发送 invocation bytes 前，都必须按当前 actor/scope 和输入中的精确 source revision/hash/anchor 即时重授权；未激活 launcher 不得获得 Context 正文或发起模型请求。撤权或来源替换后不得把旧 Context 文本发给模型，只能要求创建新的 Context Snapshot。
 

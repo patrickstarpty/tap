@@ -7,9 +7,19 @@ import {
   RobotOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
+
 import type { PrototypeCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
+
+const tapperMark = new URL(
+  "../../../../assets/brand/tapper/svg/tapper-mark-ink.svg?no-inline",
+  import.meta.url,
+).href;
+const tapperWordmark = new URL(
+  "../../../../assets/brand/tapper/svg/tapper-wordmark-ink.svg?no-inline",
+  import.meta.url,
+).href;
 
 interface PrototypeSidebarProps {
   activeConversationId: string;
@@ -38,26 +48,22 @@ export function PrototypeSidebar({
   onSelectConversation,
   onToggleCollapsed,
 }: PrototypeSidebarProps) {
-  const athenaWorkspaceActive = [
-    "athena",
+  const tapperWorkspaceActive = [
+    "tapper",
     "agents",
     "skills",
     "library",
   ].includes(activeModule);
-  const athenaSidebarVisible = athenaWorkspaceActive && !collapsed;
+  const tapperSidebarVisible = tapperWorkspaceActive && !collapsed;
   const productModules: readonly {
     icon: React.ReactNode;
     key: ProductModule;
     label: string;
   }[] = [
     {
-      key: "athena",
-      label: copy.navigation.athena,
-      icon: (
-        <span className="tap-athena-rail-mark" aria-hidden="true">
-          A
-        </span>
-      ),
+      key: "tapper",
+      label: copy.navigation.tapper,
+      icon: <img className="tap-tapper-rail-mark" src={tapperMark} alt="" />,
     },
     {
       key: "test-management",
@@ -70,7 +76,7 @@ export function PrototypeSidebar({
       icon: <CodeOutlined aria-hidden="true" />,
     },
   ];
-  const athenaModules: typeof productModules = [
+  const tapperModules: typeof productModules = [
     {
       key: "agents",
       label: copy.navigation.agents,
@@ -116,11 +122,11 @@ export function PrototypeSidebar({
 
   const moduleButton = (
     module: (typeof productModules)[number],
-    location: "product" | "athena",
+    location: "product" | "tapper",
   ) => {
     const isActive =
-      module.key === "athena"
-        ? athenaWorkspaceActive
+      module.key === "tapper"
+        ? tapperWorkspaceActive
         : activeModule === module.key;
 
     return (
@@ -131,10 +137,10 @@ export function PrototypeSidebar({
         aria-label={module.label}
         aria-current={isActive ? "page" : undefined}
         aria-controls={
-          module.key === "athena" ? "tap-athena-sidebar" : undefined
+          module.key === "tapper" ? "tap-tapper-sidebar" : undefined
         }
         aria-expanded={
-          module.key === "athena" ? athenaSidebarVisible : undefined
+          module.key === "tapper" ? tapperSidebarVisible : undefined
         }
         title={location === "product" ? module.label : undefined}
         onClick={() => onModuleChange(module.key)}
@@ -152,9 +158,8 @@ export function PrototypeSidebar({
         className="tap-product-rail"
         aria-label={copy.navigation.product}
       >
-        <div className="tap-brand" aria-label="TAP">
-          <span>T</span>
-          <strong>TAP</strong>
+        <div className="tap-brand" role="img" aria-label="TAP platform">
+          <span aria-hidden="true">TAP</span>
         </div>
 
         <nav
@@ -196,19 +201,21 @@ export function PrototypeSidebar({
       </aside>
 
       <aside
-        id="tap-athena-sidebar"
-        className="tap-athena-sidebar"
-        aria-hidden={athenaSidebarVisible ? undefined : true}
-        aria-label={copy.navigation.athenaTools}
-        data-collapsed={!athenaSidebarVisible}
-        inert={athenaSidebarVisible ? undefined : true}
+        id="tap-tapper-sidebar"
+        className="tap-tapper-sidebar"
+        aria-hidden={tapperSidebarVisible ? undefined : true}
+        aria-label={copy.navigation.tapperTools}
+        data-collapsed={!tapperSidebarVisible}
+        inert={tapperSidebarVisible ? undefined : true}
       >
-        <div className="tap-athena-sidebar-header">
-          <h2>{copy.navigation.athena}</h2>
+        <div className="tap-tapper-sidebar-header">
+          <h2 aria-label={copy.navigation.tapper}>
+            <img className="tap-tapper-wordmark" src={tapperWordmark} alt="" />
+          </h2>
           <button
             type="button"
             className="tap-panel-toggle tap-panel-toggle--left-collapse"
-            aria-controls="tap-athena-sidebar"
+            aria-controls="tap-tapper-sidebar"
             aria-expanded="true"
             aria-label={copy.navigation.collapseSidebar}
             onClick={onToggleCollapsed}
@@ -218,20 +225,21 @@ export function PrototypeSidebar({
         </div>
 
         <nav
-          id="tap-athena-navigation"
-          aria-label={copy.navigation.athenaTools}
-          className="tap-athena-navigation"
+          id="tap-tapper-navigation"
+          aria-label={copy.navigation.tapperTools}
+          className="tap-tapper-navigation"
         >
           <button
             type="button"
-            className="tap-navigation-item tap-navigation-item--athena"
+            className="tap-navigation-item tap-navigation-item--tapper"
             aria-label={copy.navigation.newChat}
+            aria-current={activeModule === "tapper" ? "page" : undefined}
             onClick={onNewChat}
           >
             <FormOutlined aria-hidden="true" />
             <span className="tap-sidebar-label">{copy.navigation.newChat}</span>
           </button>
-          {athenaModules.map((module) => moduleButton(module, "athena"))}
+          {tapperModules.map((module) => moduleButton(module, "tapper"))}
         </nav>
 
         {conversationHistory.length > 0 ? (

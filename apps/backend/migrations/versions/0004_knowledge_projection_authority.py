@@ -9,7 +9,7 @@ from alembic import op
 from sqlalchemy.dialects import mysql
 
 revision: str = "0004_projection_authority"
-down_revision: str | None = "0003_athena_documents"
+down_revision: str | None = "0003_tapper_documents"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

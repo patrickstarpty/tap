@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { useDocumentListQuery } from "../../features/knowledge/api/queries";
-import { AthenaChat } from "./prototype/AthenaChat";
+import { TapperChat } from "./prototype/TapperChat";
 import {
   createBlankAutomation,
   createGeneratedAutomation,
@@ -221,8 +221,8 @@ function AssistantResponse({
                 : "Define the business test intent before generating executable automation"
               : workflow.stage === "choose-automation-type"
                 ? isChinese
-                  ? "Athena 无法可靠判断执行渠道，请确认自动化类型"
-                  : "Athena could not reliably infer the execution channel"
+                  ? "Tapper 无法可靠判断执行渠道，请确认自动化类型"
+                  : "Tapper could not reliably infer the execution channel"
                 : contentCopy.artifacts.automationSummary}
           </span>
         </div>
@@ -390,7 +390,7 @@ function toggleSelection(values: readonly string[], id: string): string[] {
     : [...values, id];
 }
 
-const ATHENA_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
+const TAPPER_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
   agents: "#agent-heading",
   library: "#library-heading",
   skills: "#skill-heading",
@@ -419,8 +419,8 @@ export function TapProductPrototype() {
       : loadPrototypeSnapshot(window.localStorage),
   );
   const [locale, setLocale] = useState<Locale>("en");
-  const [activeModule, setActiveModule] = useState<ProductModule>("athena");
-  const lastAthenaModule = useRef<ProductModule>("athena");
+  const [activeModule, setActiveModule] = useState<ProductModule>("tapper");
+  const lastTapperModule = useRef<ProductModule>("tapper");
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -497,24 +497,24 @@ export function TapProductPrototype() {
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
   const copy = PROTOTYPE_COPY[locale];
-  const athenaWorkspaceActive = [
-    "athena",
+  const tapperWorkspaceActive = [
+    "tapper",
     "agents",
     "skills",
     "library",
   ].includes(activeModule);
-  const athenaSidebarOpen = athenaWorkspaceActive && !sidebarCollapsed;
-  const mobileAthenaDrawerOpen = isNarrowViewport && athenaSidebarOpen;
-  const knowledgeSourcesOpen = activeModule === "athena" && !sourcesCollapsed;
+  const tapperSidebarOpen = tapperWorkspaceActive && !sidebarCollapsed;
+  const mobileTapperDrawerOpen = isNarrowViewport && tapperSidebarOpen;
+  const knowledgeSourcesOpen = activeModule === "tapper" && !sourcesCollapsed;
   const compactSourcesDrawerOpen = isCompactViewport && knowledgeSourcesOpen;
-  const dismissAthenaSidebar = useCallback(() => {
+  const dismissTapperSidebar = useCallback(() => {
     pendingFocusTarget.current = {
       kind: "selector",
       selector: ".tap-panel-toggle--left-expand",
     };
     setSidebarCollapsed(true);
   }, []);
-  const expandAthenaSidebar = useCallback(() => {
+  const expandTapperSidebar = useCallback(() => {
     pendingFocusTarget.current = {
       kind: "selector",
       selector: ".tap-panel-toggle--left-collapse",
@@ -591,14 +591,14 @@ export function TapProductPrototype() {
   }, []);
 
   useEffect(() => {
-    if (!mobileAthenaDrawerOpen && !compactSourcesDrawerOpen) return;
+    if (!mobileTapperDrawerOpen && !compactSourcesDrawerOpen) return;
     const previousBodyOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (compactSourcesDrawerOpen) {
         dismissKnowledgeSources();
       } else {
-        dismissAthenaSidebar();
+        dismissTapperSidebar();
       }
     };
     document.body.style.overflow = "hidden";
@@ -609,9 +609,9 @@ export function TapProductPrototype() {
     };
   }, [
     compactSourcesDrawerOpen,
-    dismissAthenaSidebar,
+    dismissTapperSidebar,
     dismissKnowledgeSources,
-    mobileAthenaDrawerOpen,
+    mobileTapperDrawerOpen,
   ]);
 
   const documentSources = useMemo<readonly LibrarySource[]>(
@@ -680,8 +680,8 @@ export function TapProductPrototype() {
     };
     setConversations((current) => [...current, createConversation(id)]);
     setActiveConversationId(id);
-    lastAthenaModule.current = "athena";
-    setActiveModule("athena");
+    lastTapperModule.current = "tapper";
+    setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
 
@@ -691,27 +691,27 @@ export function TapProductPrototype() {
       selector: ".tap-composer textarea",
     };
     setActiveConversationId(conversationId);
-    lastAthenaModule.current = "athena";
-    setActiveModule("athena");
+    lastTapperModule.current = "tapper";
+    setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
 
   const selectModule = (module: ProductModule) => {
-    if (module === "athena") {
+    if (module === "tapper") {
       if (isCompactViewport) setSourcesCollapsed(true);
-      setActiveModule(lastAthenaModule.current);
+      setActiveModule(lastTapperModule.current);
       setSidebarCollapsed(false);
       return;
     }
     if (["agents", "skills", "library"].includes(module)) {
-      const focusTarget = ATHENA_MODULE_FOCUS_TARGETS[module];
+      const focusTarget = TAPPER_MODULE_FOCUS_TARGETS[module];
       if (isNarrowViewport && focusTarget !== undefined) {
         pendingFocusTarget.current = {
           kind: "selector",
           selector: focusTarget,
         };
       }
-      lastAthenaModule.current = module;
+      lastTapperModule.current = module;
       setActiveModule(module);
       setSidebarCollapsed(isNarrowViewport);
       return;
@@ -766,7 +766,7 @@ export function TapProductPrototype() {
     const planId = `TP-${nextPlanId.current++}`;
     dispatchArtifact({
       type: "test-plan/create",
-      testPlan: createLifeTestPlan(planId, null, "Athena"),
+      testPlan: createLifeTestPlan(planId, null, "Tapper"),
     });
     updateAutomationTurn(turn.id, {
       stage: "review-test-plan",
@@ -776,7 +776,7 @@ export function TapProductPrototype() {
     });
   };
 
-  const createAthenaAutomation = (
+  const createTapperAutomation = (
     turn: AssistantTurn,
     automationType: AutomationType,
   ) => {
@@ -787,7 +787,7 @@ export function TapProductPrototype() {
       automation: createLifeAutomation(
         automationId,
         planId,
-        "Athena",
+        "Tapper",
         automationType,
       ),
     });
@@ -819,7 +819,7 @@ export function TapProductPrototype() {
       });
       return;
     }
-    createAthenaAutomation(turn, automationType);
+    createTapperAutomation(turn, automationType);
   };
 
   const skipTestPlan = (turn: AssistantTurn) => {
@@ -833,7 +833,7 @@ export function TapProductPrototype() {
       });
       return;
     }
-    createAthenaAutomation(
+    createTapperAutomation(
       {
         ...turn,
         automationWorkflow: {
@@ -849,7 +849,7 @@ export function TapProductPrototype() {
     turn: AssistantTurn,
     automationType: AutomationType,
   ) => {
-    createAthenaAutomation(
+    createTapperAutomation(
       {
         ...turn,
         automationWorkflow: {
@@ -887,13 +887,13 @@ export function TapProductPrototype() {
 
   const importPlan = () => {
     const existing = artifactState.testPlans.find(
-      (plan) => plan.source === "Athena",
+      (plan) => plan.source === "Tapper",
     );
     const planId = existing?.id ?? `TP-${nextPlanId.current++}`;
     if (existing === undefined) {
       dispatchArtifact({
         type: "test-plan/create",
-        testPlan: createLifeTestPlan(planId, null, "Athena"),
+        testPlan: createLifeTestPlan(planId, null, "Tapper"),
       });
     }
     setSelectedPlanId(null);
@@ -986,8 +986,8 @@ export function TapProductPrototype() {
         ? conversation
         : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
     });
-    lastAthenaModule.current = "athena";
-    setActiveModule("athena");
+    lastTapperModule.current = "tapper";
+    setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
 
@@ -1003,7 +1003,7 @@ export function TapProductPrototype() {
 
   return (
     <div
-      className={`tap-product-shell${athenaSidebarOpen ? " tap-product-shell--athena-open" : ""}`}
+      className={`tap-product-shell${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
     >
       <PrototypeSidebar
         activeConversationId={activeConversationId}
@@ -1016,37 +1016,37 @@ export function TapProductPrototype() {
         onModuleChange={selectModule}
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
-        onToggleCollapsed={dismissAthenaSidebar}
+        onToggleCollapsed={dismissTapperSidebar}
       />
-      {mobileAthenaDrawerOpen ? (
+      {mobileTapperDrawerOpen ? (
         <button
           type="button"
           className="tap-sidebar-scrim"
           aria-label={copy.navigation.closeSidebar}
           tabIndex={-1}
-          onClick={dismissAthenaSidebar}
+          onClick={dismissTapperSidebar}
         />
       ) : null}
       <main
         className="tap-product-main"
-        aria-hidden={mobileAthenaDrawerOpen ? true : undefined}
-        inert={mobileAthenaDrawerOpen ? true : undefined}
+        aria-hidden={mobileTapperDrawerOpen ? true : undefined}
+        inert={mobileTapperDrawerOpen ? true : undefined}
       >
-        {athenaWorkspaceActive && sidebarCollapsed ? (
+        {tapperWorkspaceActive && sidebarCollapsed ? (
           <button
             type="button"
             className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--left-expand"
-            aria-controls="tap-athena-sidebar"
+            aria-controls="tap-tapper-sidebar"
             aria-expanded="false"
             aria-label={copy.navigation.expandSidebar}
-            onClick={expandAthenaSidebar}
+            onClick={expandTapperSidebar}
           >
             <PanelToggleIcon side="left" state="collapsed" />
           </button>
         ) : null}
-        <div hidden={activeModule !== "athena"}>
+        <div hidden={activeModule !== "tapper"}>
           <div
-            className={`tap-athena-layout${sourcesCollapsed ? " tap-athena-layout--sources-collapsed" : ""}`}
+            className={`tap-tapper-layout${sourcesCollapsed ? " tap-tapper-layout--sources-collapsed" : ""}`}
           >
             {sourcesCollapsed ? (
               <button
@@ -1060,7 +1060,7 @@ export function TapProductPrototype() {
                 <PanelToggleIcon side="right" state="collapsed" />
               </button>
             ) : null}
-            <AthenaChat
+            <TapperChat
               agents={agents}
               conversation={activeConversation}
               copy={copy}

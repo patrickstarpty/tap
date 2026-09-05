@@ -4,11 +4,11 @@
 
 三条会话属于同一个 ChatGPT 项目，正文已通过只读 thread 接口恢复并用于本次整理：
 
-| 会话 | Thread ID | 对架构的有效输入 |
-| --- | --- | --- |
-| 锐评 DeepSeek Harness | `6a801f03-c340-83ec-825b-f9c55beb821a` | 插件生命周期、append-only Session Log、恢复/Fork/Replay、工具 Guard；Developer Preview、安全与企业成熟度风险 |
-| BrowserStack 测试平台分析 | `6a802306-6220-83ec-b351-fc9f33a81830` | 产品定位、内网约束、Test IR、Git、执行网格、RAG、Azure 最终栈、数据 SoR、自愈/RCA |
-| 架构优化建议 | `6a802f65-b08c-83ec-8c9a-059362fe3f0c` | 主 Agent + 专业子 Agent、固定 DAG + Agentic Loop、十大治理能力 |
+| 会话                      | Thread ID                              | 对架构的有效输入                                                                                             |
+| ------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 锐评 DeepSeek Harness     | `6a801f03-c340-83ec-825b-f9c55beb821a` | 插件生命周期、append-only Session Log、恢复/Fork/Replay、工具 Guard；Developer Preview、安全与企业成熟度风险 |
+| BrowserStack 测试平台分析 | `6a802306-6220-83ec-b351-fc9f33a81830` | 产品定位、内网约束、Test IR、Git、执行网格、RAG、Azure 最终栈、数据 SoR、自愈/RCA                            |
+| 架构优化建议              | `6a802f65-b08c-83ec-8c9a-059362fe3f0c` | 主 Agent + 专业子 Agent、固定 DAG + Agentic Loop、十大治理能力                                               |
 
 ### 恢复限制
 
@@ -21,7 +21,7 @@
 
 项目正式名称为 **TAP（Test Automation Platform）**。
 
-2026-08-20 的后续决策确认：**第一交付阶段优先构建 RAG Foundation**，Agent 编排、Test IR 编译和测试执行闭环顺延到后续阶段。
+2026-08-20 的后续决策曾确认：**第一交付阶段优先构建 RAG Foundation**，Agent 编排、Test IR 编译和测试执行闭环顺延到后续阶段。该句记录当时事实，不是现行阶段定义。
 
 2026-08-21 的进一步要求确认：Phase 1 基于 **Azure AI Search**，必须写清分型数据切片、端到端溯源和可重复检索调优，并交付一个参考 Codex/Claude Code 交互模式的 Knowledge Chat。这里参考的是 Project/Conversation、流式状态、中断、排队追问、资源引用和证据侧栏，不复制品牌或隐藏推理展示。
 
@@ -29,9 +29,12 @@
 
 2026-08-21 的应用技术栈进一步确认为：前端 React + TypeScript，后端 Python + FastAPI/ASGI。整体架构要求同时覆盖最初的 Test Automation Platform 能力与当前 RAG 前后端，并明确 RAG 是未来平台共享的 Knowledge Plane，而非独立 Demo。工程决策是保持一个代码库/共享契约，按 API/SSE、Turn、Ingestion、Embedding、Index Writer、Agent 与 Execution 角色隔离部署。
 
-2026-09-02 的产品讨论进一步确认：TAP 的长期主体参考 BrowserStack 的测试自动化、运行和证据体验，当前先探索 Intelligence Layer。用户可以只提供一个 `goal`；长期 Context 模型允许 Requirement、Release、Project、产品源码、测试仓库和失败材料成为可选关系，但 P1.0–P1.2 wire 只接 goal、可选人工步骤和用户选择的 `ready` Knowledge Source。第一步交付的是 Brief、事实/推断/假设/未知分析、Automation Blueprint、可恢复任务和 Review Package，而不是完整 Test Management、Release Management 或真实 Browser/Device 执行。该变化已由 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 正式记录；2026-08-20/21 的 RAG/Knowledge Chat 决策作为历史和后续 Knowledge Plane 设计保留。
+2026-09-02 的产品讨论曾确认：TAP 的长期主体参考 BrowserStack 的测试自动化、运行和证据体验，先探索 Intelligence Layer。用户可以只提供一个 `goal`；长期 Context 模型允许 Requirement、Release、Project、产品源码、测试仓库和失败材料成为可选关系，但 P1.0–P1.2 wire 只接 goal、可选人工步骤和用户选择的 `ready` Knowledge Source。第一步交付的是 Brief、事实/推断/假设/未知分析、Automation Blueprint、可恢复任务和 Review Package，而不是完整 Test Management、Release Management 或真实 Browser/Device 执行。该变化由 [RFC-007](../proposals/2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md) 和 [ADR-019](../decisions/2026-09-02-adr-019-phase-1-intelligence-layer-exploration.md) 记录；其交付优先级已于 2026-09-04 被替代，但技术探索事实保留。
+
+2026-09-04 的正式决策确认：以 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 和 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 作为当前基线。交付先在固定 Validation Scope 中按 V0–VG 完成可信知识问答、MySQL Knowledge Graph、测试资产、Web Low Code/Recorder 和 Jenkins 结果闭环；通过 VG 后才进入 P0 用户/认证/RBAC/多 Project，再由 P1 完成生产加固。部署基线是自托管 Docker Compose、MySQL、Redis、Milvus、MinIO、LiteLLM 与外置 Jenkins；Automation Revision 由 TAP/MySQL 管理、Bundle 存 MinIO，Git 仅为可选同步。Mobile 与 Azure DevOps Provider 均在 P1 之后另行设计。
 
 ```text
+历史 Azure 目标栈（2026-08-20/21，已被当前 Compose 基线替代）：
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search
 + Blob Storage + Key Vault + LiteLLM
 
@@ -40,7 +43,7 @@ Core = Test IR + Git versioning + unified execution evidence
 
 原始会话确认、并由 2026-08-21 交互决策继续演进的产品形态：
 
-- 原讨论以 Manus 为自然语言交互标杆；2026-08-21 的阶段曾参考 Codex/Claude Code 的 Project/Conversation、流式状态、中断、队列和证据交互。2026-09-02 的当前 Phase 1 改为 Intelligence Lab，综合 Rovo、Gemini Notebook、Manus、Codex 与 Claude Code 的上下文、研究、任务和工程体验，但不强制 Project/Conversation，也不暴露供应商模式。
+- 原讨论以 Manus 为自然语言交互标杆；2026-08-21 的阶段曾参考 Codex/Claude Code 的 Project/Conversation、流式状态、中断、队列和证据交互。2026-09-02 的阶段曾改为 Intelligence Lab，综合 Rovo、Gemini Notebook、Manus、Codex 与 Claude Code 的上下文、研究、任务和工程体验，但不强制 Project/Conversation，也不暴露供应商模式；该 Lab-first 优先级已于 2026-09-04 被 RFC-009/ADR-021 替代。
 - BrowserStack 式测试执行/低代码资产体验。
 - Git 式可审查、可编辑、可版本化测试资产。
 - 内网环境不能把 BrowserStack 或 Manus 当必需运行依赖。
@@ -48,28 +51,28 @@ Core = Test IR + Git versioning + unified execution evidence
 
 确认的数据职责：
 
-| 组件 | 职责 |
-| --- | --- |
-| MySQL | 项目、权限、Test IR 目录/投影与版本映射、运行、自愈、RCA、审批、审计的 operational SoR |
-| Git | BDD、IR、生成代码、Locator、Fixture、Hook、测试数据模板版本源 |
-| Azure AI Search | 文档、代码、BDD、历史失败的可重建全文/向量混合索引 |
-| Redis | Session、任务流/队列、锁、限流、短期/语义/Embedding 缓存、Worker heartbeat |
-| Blob | 原始文档、App 包、trace、视频、截图、HAR、日志 |
-| Key Vault | 模型、Git、数据库与执行 Provider 凭证 |
-| LiteLLM | Chat/Coder/Embedding/Reranker/Vision 的统一入口与任务路由 |
+| 组件            | 职责                                                                                   |
+| --------------- | -------------------------------------------------------------------------------------- |
+| MySQL           | 项目、权限、Test IR 目录/投影与版本映射、运行、自愈、RCA、审批、审计的 operational SoR |
+| Git             | BDD、IR、生成代码、Locator、Fixture、Hook、测试数据模板版本源                          |
+| Azure AI Search | 文档、代码、BDD、历史失败的可重建全文/向量混合索引                                     |
+| Redis           | Session、任务流/队列、锁、限流、短期/语义/Embedding 缓存、Worker heartbeat             |
+| Blob            | 原始文档、App 包、trace、视频、截图、HAR、日志                                         |
+| Key Vault       | 模型、Git、数据库与执行 Provider 凭证                                                  |
+| LiteLLM         | Chat/Coder/Embedding/Reranker/Vision 的统一入口与任务路由                              |
 
 ## 选型演进记录
 
-| 讨论阶段 | 当时方案 | 后续结论 |
-| --- | --- | --- |
-| 个人实验早期 | BrowserStack/Manus 能力组合 | 内网不能依赖外部服务，转为自建 Grid/Agent；保留能力标杆 |
-| 轻量知识库 | Markdown + Git + FTS | 随文档与代码规模增长升级为 hybrid retrieval；BM25 仍保留 |
-| 个人数据栈 | PostgreSQL + pgvector | 被企业现有 PaaS MySQL/Redis 覆盖 |
-| Azure 候选一 | Azure PostgreSQL + pgvector | 因不新增 PostgreSQL PaaS 被覆盖 |
-| Azure 候选二 | Redis/RediSearch/HNSW | Azure AI Search 可用后，Redis 回归运行态与缓存 |
+| 讨论阶段       | 当时方案                               | 后续结论                                                                                  |
+| -------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 个人实验早期   | BrowserStack/Manus 能力组合            | 内网不能依赖外部服务，转为自建 Grid/Agent；保留能力标杆                                   |
+| 轻量知识库     | Markdown + Git + FTS                   | 随文档与代码规模增长升级为 hybrid retrieval；BM25 仍保留                                  |
+| 个人数据栈     | PostgreSQL + pgvector                  | 被企业现有 PaaS MySQL/Redis 覆盖                                                          |
+| Azure 候选一   | Azure PostgreSQL + pgvector            | 因不新增 PostgreSQL PaaS 被覆盖                                                           |
+| Azure 候选二   | Redis/RediSearch/HNSW                  | Azure AI Search 可用后，Redis 回归运行态与缓存                                            |
 | 企业最终数据层 | MySQL + Redis + AI Search + Blob + Git | 与 AKS、Key Vault、LiteLLM 共同构成最终企业栈；数据组件按 SoR、缓存、索引、对象、版本拆分 |
-| 生成路径早期 | Prompt 直接生成 Framework Code | Test IR 成为中间层；生成前先检索、判断新建/复用/更新 |
-| Agent 架构早期 | 主 Agent + 子 Agent | 第二张图补充 DAG/Agentic Loop 双模式和十大治理能力 |
+| 生成路径早期   | Prompt 直接生成 Framework Code         | Test IR 成为中间层；生成前先检索、判断新建/复用/更新                                      |
+| Agent 架构早期 | 主 Agent + 子 Agent                    | 第二张图补充 DAG/Agentic Loop 双模式和十大治理能力                                        |
 
 ## 官方资料校正
 
@@ -191,9 +194,9 @@ TAP 设计：百炼 raw provider model 固定为 `text-embedding-v4`，runner �
 
 ## 事实、决策与补充的标识
 
-| 类型 | 示例 | 文档处理 |
-| --- | --- | --- |
-| 会话确认事实 | Azure 最终栈、四索引名、DAG + Loop、十大能力 | 写入架构主线与“已确认” ADR |
-| 官方产品事实 | AI Search hybrid/RRF；Harness Developer Preview | 附官方链接，避免扩大解释 |
-| 本次工程补充 | MySQL Outbox、Redis 至少一次分发、Evidence Manifest 细化 | 标为“拟议”或“建议” |
-| 尚缺业务输入 | Test IR v1 范围、设备数量、SLO、数据区域 | 进入待确认项，不凭空定值 |
+| 类型         | 示例                                                     | 文档处理                   |
+| ------------ | -------------------------------------------------------- | -------------------------- |
+| 会话确认事实 | Azure 最终栈、四索引名、DAG + Loop、十大能力             | 写入架构主线与“已确认” ADR |
+| 官方产品事实 | AI Search hybrid/RRF；Harness Developer Preview          | 附官方链接，避免扩大解释   |
+| 本次工程补充 | MySQL Outbox、Redis 至少一次分发、Evidence Manifest 细化 | 标为“拟议”或“建议”         |
+| 尚缺业务输入 | Test IR v1 范围、设备数量、SLO、数据区域                 | 进入待确认项，不凭空定值   |

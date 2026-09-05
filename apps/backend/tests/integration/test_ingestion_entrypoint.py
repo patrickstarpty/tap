@@ -18,8 +18,8 @@ from pymilvus.decorators import _log_rpc_error
 from redis.asyncio import Redis
 from sqlalchemy import text
 
-from tap.entrypoints import athena_ingestion_worker
-from tap.entrypoints.athena_runtime import AthenaSettings, create_worker_runtime
+from tap.entrypoints import tapper_ingestion_worker
+from tap.entrypoints.tapper_runtime import TapperSettings, create_worker_runtime
 from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application.ingestion import WorkerRun
@@ -48,31 +48,31 @@ def _emit_provider_rpc_error(details: str) -> None:
         _log_rpc_error("synthetic_call", "RPC error", details, time.monotonic())
 
 
-def _athena_environment(**overrides: str) -> dict[str, str]:
+def _tapper_environment(**overrides: str) -> dict[str, str]:
     values = {
-        "ATHENA_API_HOST": "127.0.0.1",
-        "ATHENA_WEB_HOST": "127.0.0.1",
-        "ATHENA_POLL_SECONDS": "0.01",
-        "ATHENA_JOB_BATCH_SIZE": "10",
-        "ATHENA_WORKER_ID": "entrypoint-worker",
-        "TAP_ATHENA_COMPOSE_PROJECT": "tap-athena-e2e",
+        "TAPPER_API_HOST": "127.0.0.1",
+        "TAPPER_WEB_HOST": "127.0.0.1",
+        "TAPPER_POLL_SECONDS": "0.01",
+        "TAPPER_JOB_BATCH_SIZE": "10",
+        "TAPPER_WORKER_ID": "entrypoint-worker",
+        "TAP_TAPPER_COMPOSE_PROJECT": "tap-tapper-e2e",
         "TAP_DATABASE_URL": ("mysql+asyncmy://tap:test@127.0.0.1:13306/tap?charset=utf8mb4"),
         "TAP_ALEMBIC_DATABASE_URL": (
             "mysql+pymysql://tap:test@127.0.0.1:13306/tap?charset=utf8mb4"
         ),
         "TAP_REDIS_URL": "redis://127.0.0.1:16379/0",
-        "TAP_REDIS_COMMAND_STREAM": "tap-athena-e2e:commands",
+        "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "LITELLM_MODEL": "openai/test-chat",
-        "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "MILVUS_URI": "http://127.0.0.1:29530",
     }
     values.update(overrides)
     return values
 
 
-def _worker_settings() -> athena_ingestion_worker.WorkerSettings:
-    return athena_ingestion_worker.load_settings(_athena_environment())
+def _worker_settings() -> tapper_ingestion_worker.WorkerSettings:
+    return tapper_ingestion_worker.load_settings(_tapper_environment())
 
 
 async def _clean_knowledge(engine) -> None:  # type: ignore[no-untyped-def]
@@ -111,7 +111,7 @@ class EmbeddingEntrypointWorker:
 def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
     body = {
         "object": "list",
-        "model": "athena-embedding",
+        "model": "tapper-embedding",
         "data": [{"embedding": [0.25, 0.5], "index": 0}],
         "usage": {"prompt_tokens": 1, "total_tokens": 1},
     }
@@ -124,12 +124,12 @@ def worker_entrypoint() -> tuple[EmbeddingEntrypointWorker, httpx.AsyncClient]:
         LiteLLMConfig(
             base_url="https://litellm.example",
             api_key="not-a-real-key",
-            embedding_model_id="athena-embedding",
-            answer_model_id="athena-chat",
+            embedding_model_id="tapper-embedding",
+            answer_model_id="tapper-chat",
             answer_profile_id="quick-hybrid-v1",
             embedding_dimension=2,
-            allowed_embedding_model_labels=frozenset({"athena-embedding", "provider-embed-v1"}),
-            allowed_answer_model_labels=frozenset({"athena-chat", "provider-answer-v1"}),
+            allowed_embedding_model_labels=frozenset({"tapper-embedding", "provider-embed-v1"}),
+            allowed_answer_model_labels=frozenset({"tapper-chat", "provider-answer-v1"}),
             allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
             max_retries=0,
         ),
@@ -144,7 +144,7 @@ async def test_worker_entrypoint_reaches_ready_without_optional_top_level_id(
 ) -> None:
     worker, client = worker_entrypoint
     try:
-        await athena_ingestion_worker.run_worker_loop(
+        await tapper_ingestion_worker.run_worker_loop(
             worker=worker,
             wakeups=LostWakeups(),
             settings=replace(_worker_settings(), job_batch_size=1),
@@ -282,7 +282,7 @@ async def test_worker_scans_mysql_when_redis_wakeup_is_lost() -> None:
         wakeup_seconds=0.01,
     )
 
-    await athena_ingestion_worker.run_worker_loop(
+    await tapper_ingestion_worker.run_worker_loop(
         worker=worker,
         wakeups=wakeups,
         settings=settings,
@@ -304,7 +304,7 @@ async def test_worker_keeps_scanning_when_redis_is_unavailable() -> None:
         wakeup_seconds=0.01,
     )
 
-    await athena_ingestion_worker.run_worker_loop(
+    await tapper_ingestion_worker.run_worker_loop(
         worker=worker,
         wakeups=wakeups,
         settings=settings,
@@ -321,7 +321,7 @@ async def test_relevant_wakeup_is_followed_by_db_scan_before_ack() -> None:
     """Moving the scan before wait can ACK a job hint before its first DB claim attempt."""
 
     events: list[str] = []
-    await athena_ingestion_worker.run_worker_loop(
+    await tapper_ingestion_worker.run_worker_loop(
         worker=OrderedWorker(events),
         wakeups=OrderedWakeups(events),  # type: ignore[arg-type]
         settings=replace(
@@ -346,12 +346,12 @@ async def test_run_builds_signal_driven_runtime_and_closes_every_resource() -> N
     installed: list[asyncio.Event] = []
 
     async def factory(settings):  # type: ignore[no-untyped-def]
-        assert settings.compose_project == "tap-athena-e2e"
-        return athena_ingestion_worker.WorkerRuntime(worker, wakeups, (resource,))
+        assert settings.compose_project == "tap-tapper-e2e"
+        return tapper_ingestion_worker.WorkerRuntime(worker, wakeups, (resource,))
 
-    await athena_ingestion_worker.run(
+    await tapper_ingestion_worker.run(
         runtime_factory=factory,
-        settings=AthenaSettings.from_mapping(_athena_environment()),
+        settings=TapperSettings.from_mapping(_tapper_environment()),
         signal_installer=installed.append,
         max_iterations=1,
     )
@@ -374,7 +374,7 @@ async def test_signal_install_failure_closes_runtime_before_preserving_error() -
 
     async def factory(settings):  # type: ignore[no-untyped-def]
         del settings
-        return athena_ingestion_worker.WorkerRuntime(
+        return tapper_ingestion_worker.WorkerRuntime(
             OrderedWorker(events),
             LostWakeups(),
             resources,
@@ -386,9 +386,9 @@ async def test_signal_install_failure_closes_runtime_before_preserving_error() -
         raise install_error
 
     with pytest.raises(RuntimeError) as captured:
-        await athena_ingestion_worker.run(
+        await tapper_ingestion_worker.run(
             runtime_factory=factory,
-            settings=AthenaSettings.from_mapping(_athena_environment()),
+            settings=TapperSettings.from_mapping(_tapper_environment()),
             signal_installer=install,
             max_iterations=1,
         )
@@ -410,7 +410,7 @@ async def test_signal_install_and_close_failures_do_not_skip_other_resources() -
 
     async def factory(settings):  # type: ignore[no-untyped-def]
         del settings
-        return athena_ingestion_worker.WorkerRuntime(
+        return tapper_ingestion_worker.WorkerRuntime(
             OrderedWorker(events),
             LostWakeups(),
             resources,
@@ -422,9 +422,9 @@ async def test_signal_install_and_close_failures_do_not_skip_other_resources() -
         raise RuntimeError("signal-install-failed")
 
     with pytest.raises(BaseExceptionGroup) as captured:
-        await athena_ingestion_worker.run(
+        await tapper_ingestion_worker.run(
             runtime_factory=factory,
-            settings=AthenaSettings.from_mapping(_athena_environment()),
+            settings=TapperSettings.from_mapping(_tapper_environment()),
             signal_installer=install,
             max_iterations=1,
         )
@@ -456,13 +456,13 @@ def test_signal_install_rolls_back_handlers_after_partial_failure(monkeypatch) -
             return True
 
     monkeypatch.setattr(
-        athena_ingestion_worker.asyncio,
+        tapper_ingestion_worker.asyncio,
         "get_running_loop",
         lambda: PartiallyFailingLoop(),
     )
 
     with pytest.raises(RuntimeError, match="signal-install-failed"):
-        athena_ingestion_worker.install_signal_handlers(asyncio.Event())
+        tapper_ingestion_worker.install_signal_handlers(asyncio.Event())
 
     assert events == ["add:SIGINT", "add:SIGTERM", "remove:SIGINT"]
 
@@ -482,11 +482,11 @@ def test_signal_removal_attempts_both_handlers_in_reverse_and_aggregates(
             raise RuntimeError(f"remove-failed:{signum.name}")
 
     monkeypatch.setattr(
-        athena_ingestion_worker.asyncio,
+        tapper_ingestion_worker.asyncio,
         "get_running_loop",
         lambda: FailingRemovalLoop(),
     )
-    remove = athena_ingestion_worker.install_signal_handlers(asyncio.Event())
+    remove = tapper_ingestion_worker.install_signal_handlers(asyncio.Event())
 
     with pytest.raises(ExceptionGroup) as captured:
         remove()
@@ -516,7 +516,7 @@ async def test_lifecycle_attempts_every_cleanup_and_preserves_all_errors() -> No
 
     async def factory(settings):  # type: ignore[no-untyped-def]
         del settings
-        return athena_ingestion_worker.WorkerRuntime(
+        return tapper_ingestion_worker.WorkerRuntime(
             OrderedWorker(events, fail=True),
             LostWakeups(),
             resources,
@@ -532,9 +532,9 @@ async def test_lifecycle_attempts_every_cleanup_and_preserves_all_errors() -> No
         return remove
 
     with pytest.raises(BaseExceptionGroup) as captured:
-        await athena_ingestion_worker.run(
+        await tapper_ingestion_worker.run(
             runtime_factory=factory,
-            settings=AthenaSettings.from_mapping(_athena_environment()),
+            settings=TapperSettings.from_mapping(_tapper_environment()),
             signal_installer=install,
             max_iterations=1,
         )
@@ -556,7 +556,7 @@ async def test_lifecycle_preserves_worker_cancellation_while_finishing_cleanup()
 
     async def factory(settings):  # type: ignore[no-untyped-def]
         del settings
-        return athena_ingestion_worker.WorkerRuntime(
+        return tapper_ingestion_worker.WorkerRuntime(
             CancelledWorker(events),
             LostWakeups(),
             (
@@ -566,9 +566,9 @@ async def test_lifecycle_preserves_worker_cancellation_while_finishing_cleanup()
         )
 
     with pytest.raises(BaseExceptionGroup) as captured:
-        await athena_ingestion_worker.run(
+        await tapper_ingestion_worker.run(
             runtime_factory=factory,
-            settings=AthenaSettings.from_mapping(_athena_environment()),
+            settings=TapperSettings.from_mapping(_tapper_environment()),
             max_iterations=1,
         )
 
@@ -580,18 +580,18 @@ async def test_lifecycle_preserves_worker_cancellation_while_finishing_cleanup()
 def test_main_uses_only_the_fixed_runtime_factory_and_one_settings_snapshot(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    seen: list[AthenaSettings] = []
+    seen: list[TapperSettings] = []
 
     async def fixed_run(*, runtime_factory, settings, **_kwargs):  # type: ignore[no-untyped-def]
         assert runtime_factory is create_worker_runtime
         seen.append(settings)
 
     runner = asyncio.Runner()
-    monkeypatch.setattr(athena_ingestion_worker, "run", fixed_run)
-    monkeypatch.setattr(athena_ingestion_worker.asyncio, "run", runner.run)
+    monkeypatch.setattr(tapper_ingestion_worker, "run", fixed_run)
+    monkeypatch.setattr(tapper_ingestion_worker.asyncio, "run", runner.run)
     try:
-        athena_ingestion_worker.main(
-            _athena_environment(TAP_ATHENA_RUNTIME_FACTORY="malicious.module:arbitrary_callable")
+        tapper_ingestion_worker.main(
+            _tapper_environment(TAP_TAPPER_RUNTIME_FACTORY="malicious.module:arbitrary_callable")
         )
     finally:
         runner.close()
@@ -604,7 +604,7 @@ def test_main_uses_only_the_fixed_runtime_factory_and_one_settings_snapshot(
 def test_worker_entrypoint_parses_codex_selection_without_discovery(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    seen: list[AthenaSettings] = []
+    seen: list[TapperSettings] = []
 
     async def fixed_run(*, runtime_factory, settings, **_kwargs):  # type: ignore[no-untyped-def]
         assert runtime_factory is create_worker_runtime
@@ -615,10 +615,10 @@ def test_worker_entrypoint_parses_codex_selection_without_discovery(
 
     runner = asyncio.Runner()
     monkeypatch.setattr(shutil, "which", forbidden_discovery)
-    monkeypatch.setattr(athena_ingestion_worker, "run", fixed_run)
-    monkeypatch.setattr(athena_ingestion_worker.asyncio, "run", runner.run)
+    monkeypatch.setattr(tapper_ingestion_worker, "run", fixed_run)
+    monkeypatch.setattr(tapper_ingestion_worker.asyncio, "run", runner.run)
     try:
-        athena_ingestion_worker.main(_athena_environment(ATHENA_ANSWER_BACKEND="codex"))
+        tapper_ingestion_worker.main(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
     finally:
         runner.close()
 
@@ -630,7 +630,7 @@ def test_worker_main_suppresses_worker_thread_rpc_details_for_the_full_process_l
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
     provider_logger = logging.getLogger("pymilvus.decorators")
-    tap_logger = logging.getLogger("tap.entrypoints.athena_ingestion_worker.test")
+    tap_logger = logging.getLogger("tap.entrypoints.tapper_ingestion_worker.test")
     output = io.StringIO()
     handler = logging.StreamHandler(output)
     provider_level = provider_logger.level
@@ -651,9 +651,9 @@ def test_worker_main_suppresses_worker_thread_rpc_details_for_the_full_process_l
         )
         tap_logger.error("WORKER_FIXED_LOG_VISIBLE")
 
-    monkeypatch.setattr(athena_ingestion_worker, "run", noisy_run)
+    monkeypatch.setattr(tapper_ingestion_worker, "run", noisy_run)
     try:
-        athena_ingestion_worker.main(_athena_environment())
+        tapper_ingestion_worker.main(_tapper_environment())
         _emit_provider_rpc_error("worker-filter-removed-after-main")
     finally:
         provider_logger.removeHandler(handler)
@@ -679,15 +679,15 @@ def test_worker_cli_redacts_runtime_primary_after_internal_cleanup(
         events.extend(["close:index", "close:blob", "close:engine"])
         raise RuntimeError("worker-provider-secret-primary")
 
-    monkeypatch.setattr(athena_ingestion_worker, "run", fail_after_cleanup)
+    monkeypatch.setattr(tapper_ingestion_worker, "run", fail_after_cleanup)
 
-    result = athena_ingestion_worker.cli(_athena_environment())
+    result = tapper_ingestion_worker.cli(_tapper_environment())
     output = capsys.readouterr()
 
     assert result == 1
     assert events == ["close:index", "close:blob", "close:engine"]
     assert output.out == ""
-    assert output.err == ("Athena ingestion worker failed; check local provider configuration.\n")
+    assert output.err == ("Tapper ingestion worker failed; check local provider configuration.\n")
     assert "provider-secret" not in output.err
     assert "Traceback" not in output.err
 
@@ -699,10 +699,10 @@ def test_main_invalid_settings_construct_no_runtime(monkeypatch) -> None:  # typ
         nonlocal called
         called = True
 
-    monkeypatch.setattr(athena_ingestion_worker, "run", forbidden_run)
+    monkeypatch.setattr(tapper_ingestion_worker, "run", forbidden_run)
 
-    with pytest.raises(ValueError, match="ATHENA_API_HOST"):
-        athena_ingestion_worker.main(_athena_environment(ATHENA_API_HOST="0.0.0.0"))
+    with pytest.raises(ValueError, match="TAPPER_API_HOST"):
+        tapper_ingestion_worker.main(_tapper_environment(TAPPER_API_HOST="0.0.0.0"))
 
     assert called is False
 
@@ -710,27 +710,27 @@ def test_main_invalid_settings_construct_no_runtime(monkeypatch) -> None:  # typ
 @pytest.mark.parametrize(
     "environment",
     [
-        {"ATHENA_JOB_BATCH_SIZE": "0"},
-        {"ATHENA_JOB_BATCH_SIZE": "51"},
-        {"ATHENA_POLL_SECONDS": "0"},
-        {"ATHENA_POLL_SECONDS": "nan"},
-        {"ATHENA_WORKER_ID": "   "},
+        {"TAPPER_JOB_BATCH_SIZE": "0"},
+        {"TAPPER_JOB_BATCH_SIZE": "51"},
+        {"TAPPER_POLL_SECONDS": "0"},
+        {"TAPPER_POLL_SECONDS": "nan"},
+        {"TAPPER_WORKER_ID": "   "},
     ],
 )
 def test_worker_settings_reject_unbounded_or_non_positive_values(
     environment: dict[str, str],
 ) -> None:
     with pytest.raises(ValueError):
-        athena_ingestion_worker.load_settings(_athena_environment(**environment))
+        tapper_ingestion_worker.load_settings(_tapper_environment(**environment))
 
 
 def test_obsolete_tap_worker_values_are_not_a_second_authority() -> None:
-    settings = athena_ingestion_worker.load_settings(
-        _athena_environment(
-            TAP_ATHENA_JOB_BATCH_SIZE="51",
-            TAP_ATHENA_POLL_SECONDS="nan",
-            TAP_ATHENA_WAKEUP_SECONDS="61",
-            TAP_ATHENA_WORKER_ID="obsolete-worker",
+    settings = tapper_ingestion_worker.load_settings(
+        _tapper_environment(
+            TAP_TAPPER_JOB_BATCH_SIZE="51",
+            TAP_TAPPER_POLL_SECONDS="nan",
+            TAP_TAPPER_WAKEUP_SECONDS="61",
+            TAP_TAPPER_WORKER_ID="obsolete-worker",
         )
     )
 
@@ -751,11 +751,11 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
             os.getenv("TAP_REDIS_URL", "redis://127.0.0.1:6379/0"),
             decode_responses=True,
         )
-        stream = f"tap:test:athena-wakeup:{uuid4().hex}"
+        stream = f"tap:test:tapper-wakeup:{uuid4().hex}"
         consumer = RedisWakeupConsumer(
             redis=redis,
             stream_name=stream,
-            group_name="athena-ingestion",
+            group_name="tapper-ingestion",
             consumer_name="integration-worker",
             aggregate_type="knowledge_document",
         )
@@ -790,7 +790,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
 
             events: list[str] = []
             worker = MysqlClaimWorker(repository, events)
-            await athena_ingestion_worker.run_worker_loop(
+            await tapper_ingestion_worker.run_worker_loop(
                 worker=worker,
                 wakeups=RecordingWakeups(consumer, events),  # type: ignore[arg-type]
                 settings=replace(
@@ -804,7 +804,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
 
             assert len(worker.claimed) == 1
             assert events == ["wakeup", "db-scan", "ack"]
-            pending_after_claim = await redis.xpending(stream, "athena-ingestion")
+            pending_after_claim = await redis.xpending(stream, "tapper-ingestion")
             assert pending_after_claim["pending"] == 0
             assert unrelated_id != relevant_id
 
@@ -812,7 +812,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
             reset_consumer = RedisWakeupConsumer(
                 redis=redis,
                 stream_name=stream,
-                group_name="athena-ingestion",
+                group_name="tapper-ingestion",
                 consumer_name="integration-worker-reset",
                 aggregate_type="knowledge_document",
             )
@@ -829,7 +829,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
             await repository.activate_upload(second, ArtifactLocator("artifact:redis-reset"))
             reset_events: list[str] = []
             reset_worker = MysqlClaimWorker(repository, reset_events)
-            await athena_ingestion_worker.run_worker_loop(
+            await tapper_ingestion_worker.run_worker_loop(
                 worker=reset_worker,
                 wakeups=RecordingWakeups(reset_consumer, reset_events),  # type: ignore[arg-type]
                 settings=replace(

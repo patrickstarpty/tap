@@ -523,9 +523,9 @@ def build_worker(
         "index": index,
         "clock": clock,
         "worker_id": "worker-a",
-        "embedding_model_alias": "athena-embedding",
+        "embedding_model_alias": "tapper-embedding",
         "embedding_dimension": 3,
-        "index_version": "athena-doc-v1",
+        "index_version": "tapper-index-v1",
     }
     if stage_hook is not None:
         values["stage_hook"] = stage_hook
@@ -687,7 +687,7 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
             200,
             json={
                 "id": "embedding-worker-1",
-                "model": "athena-embedding",
+                "model": "tapper-embedding",
                 "object": "list",
                 "data": [
                     {
@@ -713,11 +713,11 @@ async def test_worker_composes_directly_with_litellm_document_embedding_port() -
     config = LiteLLMConfig(
         base_url="https://litellm.example",
         api_key="not-a-real-key",
-        embedding_model_id="athena-embedding",
+        embedding_model_id="tapper-embedding",
         answer_model_id="tap-answer-fixed-v1",
         answer_profile_id="grounded-answer-v2",
         embedding_dimension=3,
-        allowed_embedding_model_labels=frozenset({"athena-embedding", "provider-embed-v1"}),
+        allowed_embedding_model_labels=frozenset({"tapper-embedding", "provider-embed-v1"}),
         allowed_answer_model_labels=frozenset({"tap-answer-fixed-v1"}),
         allowed_retrieval_profile_ids=frozenset({"quick-hybrid-v1"}),
         deadline_seconds=1,
@@ -819,8 +819,8 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
             parent_id=None,
             anchor_json=chunks[0].anchor_json,
             chunk_content_hash=chunks[0].chunk_content_hash,
-            embedding_model_version=("old-model-alias" if drift == "model" else "athena-embedding"),
-            index_version="old-index-version" if drift == "index" else "athena-doc-v1",
+            embedding_model_version=("old-model-alias" if drift == "model" else "tapper-embedding"),
+            index_version="old-index-version" if drift == "index" else "tapper-index-v1",
         ),
     )
     repository.job = replace(repository.job, stage=stage)
@@ -836,7 +836,7 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
             embeddings_locator=await artifacts.write_embeddings(
                 REVISION_ID,
                 EmbeddingArtifact(
-                    "athena-embedding",
+                    "tapper-embedding",
                     3,
                     ((0.0, 1.0, 2.0),),
                     (manifest[0].chunk_id,),
@@ -896,8 +896,8 @@ async def test_worker_rejects_full_chunk_manifest_rebinding_before_embedding(
             parent_id=chunks[0].parent_id,
             anchor_json=chunks[0].anchor_json,
             chunk_content_hash=chunks[0].chunk_content_hash,
-            embedding_model_version="athena-embedding",
-            index_version="athena-doc-v1",
+            embedding_model_version="tapper-embedding",
+            index_version="tapper-index-v1",
         ),
     )
     repository.job = replace(repository.job, stage=JobStage.EMBEDDING)
@@ -941,7 +941,7 @@ async def test_cancellation_waits_for_resistant_provider_terminal_state() -> Non
             child
             for child in asyncio.all_tasks()
             if child is not asyncio.current_task()
-            and child.get_name().startswith(("athena-provider:", "athena-heartbeat:"))
+            and child.get_name().startswith(("tapper-provider:", "tapper-heartbeat:"))
         ]
     finally:
         embeddings.finish_after_cancel.set()
@@ -1092,7 +1092,7 @@ async def test_stage_failure_logs_one_redacted_event_after_durable_failure(caplo
     with caplog.at_level(logging.ERROR, logger="tap.modules.knowledge.application.ingestion"):
         result = await worker.run_once(limit=1)
 
-    records = [record for record in caplog.records if record.msg == "athena.ingestion.stage_failed"]
+    records = [record for record in caplog.records if record.msg == "tapper.ingestion.stage_failed"]
     assert result.failed == 1
     assert repository.failed is not None
     assert len(records) == 1
@@ -1131,7 +1131,7 @@ async def test_stage_failure_log_is_absent_when_failure_persistence_loses_lease(
 
     assert result.lease_lost == 1
     assert not [
-        record for record in caplog.records if record.msg == "athena.ingestion.stage_failed"
+        record for record in caplog.records if record.msg == "tapper.ingestion.stage_failed"
     ]
 
 
@@ -1151,8 +1151,8 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
                 parent_id=None,
                 anchor_json='{"blockId":"block-1"}',
                 chunk_content_hash="sha256:" + "4" * 64,
-                embedding_model_version="athena-embedding",
-                index_version="athena-doc-v1",
+                embedding_model_version="tapper-embedding",
+                index_version="tapper-index-v1",
             ),
         ),
         normalized_locator=ArtifactLocator("artifact:normalized"),
@@ -1178,7 +1178,7 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
     assert repository.retry.expected_stage is JobStage.PARSING
     assert index.rows == {}
     assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
-    records = [record for record in caplog.records if record.msg == "athena.ingestion.stage_failed"]
+    records = [record for record in caplog.records if record.msg == "tapper.ingestion.stage_failed"]
     assert len(records) == 1
     assert records[0].document_id == DOCUMENT_ID
     assert records[0].revision_id == REVISION_ID

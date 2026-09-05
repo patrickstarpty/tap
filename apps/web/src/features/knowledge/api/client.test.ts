@@ -186,7 +186,7 @@ describe("KnowledgeClient", () => {
           traceId: "trace-a",
           queryPlanId: "plan-a",
           contextSnapshotId: "snapshot-a",
-          corpusVersion: "athena-demo-v1",
+          corpusVersion: "tapper-demo-v1",
           retrievalProfileId: "quick-hybrid-v1",
           degradedMode: false,
           degradationReasons: null,

@@ -1,8 +1,8 @@
-# TAP 核心契约
+# TAP 核心契约（历史 Intelligence-first 版本）
 
-本页定义架构级契约，而不是最终 API。字段在实现前可以扩展，但不能破坏不可变性、幂等、租户隔离和可追溯性。框架代码、BrowserStack capability 和 Agent Runtime 对象都不能成为领域契约。
+本页保留 2026-08-20 至 2026-09-02 的 Intelligence-first 契约演进，不再是当前实施入口。当前架构级契约见 [Tapper 知识与 Web 自动化平台契约](2026-09-04-tapper-platform-contracts.md)；历史内容仍可作为 durable task、artifact、validator 与通用幂等模式的参考。
 
-> **当前阶段入口（2026-09-02）**：当前 Phase 1 实施入口是[第 5 节的 Intelligence Contract](#phase-1-intelligence-contract)。第 1–4 节的 Test IR、Run、执行 Task/Event，以及 `ExecutionProvider` 等内容是 Phase 2+ 长期平台契约，不是 P1.0–P1.2 的数据模型或交付范围。
+> **历史阶段入口（2026-09-02）**：当时的 Phase 1 实施入口是[第 5 节的 Intelligence Contract](#phase-1-intelligence-contract)。该优先级已经被 RFC-009/ADR-021 替代；本文中的 Git 强制事实源、Project 非必需和 Test IR/Run 后置不适用于当前基线。
 
 ## 1. Test IR 与稳定身份（Phase 2+）
 
@@ -161,7 +161,11 @@ interface CreateIntelligenceTaskRequest {
   requestedOutcomes?: RequestedOutcome[];
   successCriteria?: string[];
   constraints?: string[];
-  manualSteps?: Array<{ ordinal: number; instruction: string; expectedOutcome?: string }>;
+  manualSteps?: Array<{
+    ordinal: number;
+    instruction: string;
+    expectedOutcome?: string;
+  }>;
   optionalContextRefs?: Array<{ kind: "knowledge_source"; sourceId: string }>;
 }
 
@@ -185,7 +189,11 @@ interface AutomationBrief {
   requestedOutcomes: RequestedOutcome[];
   successCriteria: string[];
   constraints: string[];
-  manualSteps: Array<{ ordinal: number; instruction: string; expectedOutcome?: string }>;
+  manualSteps: Array<{
+    ordinal: number;
+    instruction: string;
+    expectedOutcome?: string;
+  }>;
   optionalContextRefs: Array<{ kind: string; id: string }>;
   createdBy: string;
   createdAt: string;
@@ -199,15 +207,30 @@ interface ContextSnapshot {
   actorRef: string;
   workspaceScopeId: string;
   classification: string;
-  sourceRefs: Array<{ sourceId: string; revision: string; contentHash: string; anchor: unknown }>;
-  repositoryRefs: Array<{ repositoryId: string; role: "product_source" | "test_repository"; commit: string; treeHash: string; accessMode: "read_only"; pathGrants: string[] }>;
+  sourceRefs: Array<{
+    sourceId: string;
+    revision: string;
+    contentHash: string;
+    anchor: unknown;
+  }>;
+  repositoryRefs: Array<{
+    repositoryId: string;
+    role: "product_source" | "test_repository";
+    commit: string;
+    treeHash: string;
+    accessMode: "read_only";
+    pathGrants: string[];
+  }>;
   failureBundleRefs: Array<{ artifactId: string; contentHash: string }>;
   declaredAbsences: string[];
   policyDecisionId: string;
   policyVersion: string;
   aclDigest: string;
   runtimePolicyRef: string;
-  grantedRuntimeProfile: "intelligence-readonly-v1" | "automation-design-v1" | "automation-engineering-lab-v1";
+  grantedRuntimeProfile:
+    | "intelligence-readonly-v1"
+    | "automation-design-v1"
+    | "automation-engineering-lab-v1";
   featureGateVersion: string;
   redactionVersion: string;
   createdAt: string;
@@ -238,19 +261,30 @@ interface RuntimeContextPacket {
   selectionPlan: {
     strategyVersion: "brief-relevance-v1";
     normalizedQuery: string;
-    sourceRefs: Array<{ sourceId: string; revision: string; contentHash: string }>;
+    sourceRefs: Array<{
+      sourceId: string;
+      revision: string;
+      contentHash: string;
+    }>;
     maxExcerpts: number;
     maxBytes: number;
   };
   excerpts: RuntimeContextExcerpt[];
-  truncation: { wasTruncated: boolean; omittedExcerptCount: number; omittedByteCount: number };
+  truncation: {
+    wasTruncated: boolean;
+    omittedExcerptCount: number;
+    omittedByteCount: number;
+  };
   contentHash: string;
 }
 
 interface RuntimeProposalSchemaBinding {
   schemaId: string;
   kind: "intelligence_report" | "assumption_register" | "automation_blueprint";
-  schemaVersion: "intelligence-report-v1" | "assumption-register-v1" | "automation-blueprint-v1";
+  schemaVersion:
+    | "intelligence-report-v1"
+    | "assumption-register-v1"
+    | "automation-blueprint-v1";
   jsonSchemaDraft: "2020-12";
   schemaDialectProfile: "openai-structured-outputs-subset-v1";
   schemaBytesHash: string;
@@ -267,13 +301,16 @@ interface ProposalSchemaRegistryEntryV1 extends RuntimeProposalSchemaBinding {
 
 interface ProposalSchemaRegistryV1 {
   registryVersion: "runtime-proposal-schema-registry-v1";
-  entries: [ProposalSchemaRegistryEntryV1, ProposalSchemaRegistryEntryV1, ProposalSchemaRegistryEntryV1];
+  entries: [
+    ProposalSchemaRegistryEntryV1,
+    ProposalSchemaRegistryEntryV1,
+    ProposalSchemaRegistryEntryV1,
+  ];
   contentHash: string;
 }
 
 type ModelLineageV1 =
-  | { mode: "none" }
-  | { mode: "service_profile"; modelProfileRef: string };
+  { mode: "none" } | { mode: "service_profile"; modelProfileRef: string };
 
 interface RuntimeLineageV1 {
   schemaVersion: "runtime-lineage-v1";
@@ -303,7 +340,10 @@ interface EffectiveRuntimeBudgetV1 {
 interface InputManifest {
   briefRef: { briefId: string; revision: number; contentHash: string };
   contextSnapshotRef: { contextSnapshotId: string; contentHash: string };
-  runtimeContextPacketRef: { runtimeContextPacketId: string; contentHash: string };
+  runtimeContextPacketRef: {
+    runtimeContextPacketId: string;
+    contentHash: string;
+  };
   runtimePolicyRef: string;
   featureGateVersion: string;
   redactionVersion: string;
@@ -320,8 +360,14 @@ interface RuntimeBriefProjection {
   targetDescription?: string;
   successCriteria: string[];
   constraints: string[];
-  manualSteps: Array<{ ordinal: number; instruction: string; expectedOutcome?: string }>;
-  requestedProposalKinds: Array<"intelligence_report" | "assumption_register" | "automation_blueprint">;
+  manualSteps: Array<{
+    ordinal: number;
+    instruction: string;
+    expectedOutcome?: string;
+  }>;
+  requestedProposalKinds: Array<
+    "intelligence_report" | "assumption_register" | "automation_blueprint"
+  >;
 }
 
 interface RuntimeInvocationEnvelopeV1 {
@@ -395,7 +441,11 @@ interface ProposedUnknownClaim {
   confidence: "not_applicable";
 }
 
-type ProposedClaim = ProposedEvidenceClaim | ProposedInferenceClaim | ProposedAssumptionClaim | ProposedUnknownClaim;
+type ProposedClaim =
+  | ProposedEvidenceClaim
+  | ProposedInferenceClaim
+  | ProposedAssumptionClaim
+  | ProposedUnknownClaim;
 
 interface EvidenceClaim {
   claimId: string;
@@ -478,9 +528,16 @@ interface IntelligenceArtifactEnvelope {
   attemptId: string;
   contextSnapshotId: string;
   inputManifestHash: string;
-  inputRefs: Array<{ kind: string; id: string; revision: string; contentHash: string }>;
+  inputRefs: Array<{
+    kind: string;
+    id: string;
+    revision: string;
+    contentHash: string;
+  }>;
   producerLineage: ArtifactProducerLineageV1;
-  validationPlan: { mode: "not_applicable" } | { mode: "required"; binding: ValidationBindingV1 };
+  validationPlan:
+    | { mode: "not_applicable" }
+    | { mode: "required"; binding: ValidationBindingV1 };
   executionStatus: "not_run";
   createdAt: string;
   supersedesArtifactId?: string;
@@ -520,20 +577,41 @@ interface IntelligenceReportV1 {
   summary: { text: string; claimRefs: string[] };
   claims: Claim[];
   sections: Array<{
-    sectionKind: "scope" | "findings" | "risks" | "limitations" | "recommendations";
+    sectionKind:
+      "scope" | "findings" | "risks" | "limitations" | "recommendations";
     title: string;
     claimRefs: string[];
   }>;
-  nextSteps: Array<{ stepId: string; instruction: string; basisClaimRefs: string[] }>;
+  nextSteps: Array<{
+    stepId: string;
+    instruction: string;
+    basisClaimRefs: string[];
+  }>;
 }
 
 interface AssumptionRegisterV1 {
   kind: "assumption_register";
   schemaVersion: "assumption-register-v1";
   claims: Claim[];
-  assumptions: Array<{ entryId: string; claimRef: string; impact: string; state: "open" }>;
-  unknowns: Array<{ entryId: string; claimRef: string; impact: string; state: "open" }>;
-  conflicts: Array<{ conflictId: string; claimRefs: string[]; impact: string; resolutionQuestion: string; state: "open" }>;
+  assumptions: Array<{
+    entryId: string;
+    claimRef: string;
+    impact: string;
+    state: "open";
+  }>;
+  unknowns: Array<{
+    entryId: string;
+    claimRef: string;
+    impact: string;
+    state: "open";
+  }>;
+  conflicts: Array<{
+    conflictId: string;
+    claimRefs: string[];
+    impact: string;
+    resolutionQuestion: string;
+    state: "open";
+  }>;
 }
 
 interface AutomationBlueprintV1 {
@@ -543,18 +621,45 @@ interface AutomationBlueprintV1 {
   automationKind: "test" | "business_process" | "mixed";
   objective: { text: string; claimRefs: string[] };
   claims: Claim[];
-  preconditions: Array<{ itemId: string; text: string; basisClaimRefs: string[] }>;
-  dataRequirements: Array<{ itemId: string; text: string; basisClaimRefs: string[]; sensitive: boolean }>;
+  preconditions: Array<{
+    itemId: string;
+    text: string;
+    basisClaimRefs: string[];
+  }>;
+  dataRequirements: Array<{
+    itemId: string;
+    text: string;
+    basisClaimRefs: string[];
+    sensitive: boolean;
+  }>;
   steps: Array<{
     stepId: string;
     ordinal: number;
-    stepKind: "navigate" | "interact" | "observe" | "assert" | "wait" | "branch" | "cleanup" | "manual_checkpoint";
+    stepKind:
+      | "navigate"
+      | "interact"
+      | "observe"
+      | "assert"
+      | "wait"
+      | "branch"
+      | "cleanup"
+      | "manual_checkpoint";
     instruction: string;
     expectedOutcome?: string;
     basisClaimRefs: string[];
   }>;
-  exceptionPaths: Array<{ pathId: string; trigger: string; handling: string; expectedOutcome?: string; basisClaimRefs: string[] }>;
-  cleanupRequirements: Array<{ itemId: string; text: string; basisClaimRefs: string[] }>;
+  exceptionPaths: Array<{
+    pathId: string;
+    trigger: string;
+    handling: string;
+    expectedOutcome?: string;
+    basisClaimRefs: string[];
+  }>;
+  cleanupRequirements: Array<{
+    itemId: string;
+    text: string;
+    basisClaimRefs: string[];
+  }>;
   unresolvedClaimRefs: string[];
 }
 
@@ -592,14 +697,21 @@ interface AttemptUsageV1 {
   outputTokens?: number;
   toolCalls: number;
   durationMs: number;
-  estimatedCost?: { amountDecimal: string; currency: string; pricingProfileVersion: string };
+  estimatedCost?: {
+    amountDecimal: string;
+    currency: string;
+    pricingProfileVersion: string;
+  };
   measurementStatus: "measured" | "partially_measured" | "not_measured";
 }
 
 interface ReviewPackageV1 {
   kind: "review_package";
   schemaVersion: "review-package-v1";
-  overview: { text: string; claimRefs: Array<{ artifactId: string; claimId: string }> };
+  overview: {
+    text: string;
+    claimRefs: Array<{ artifactId: string; claimId: string }>;
+  };
   inputScope: {
     selectedSourceCount: number;
     excerptCount: number;
@@ -614,10 +726,17 @@ interface ReviewPackageV1 {
   keyClaimRefs: Array<{ artifactId: string; claimId: string }>;
   remainingRiskClaimRefs: Array<{ artifactId: string; claimId: string }>;
   unresolvedClaimRefs: Array<{ artifactId: string; claimId: string }>;
-  nextSteps: Array<{ stepId: string; instruction: string; basisClaimRefs: Array<{ artifactId: string; claimId: string }> }>;
+  nextSteps: Array<{
+    stepId: string;
+    instruction: string;
+    basisClaimRefs: Array<{ artifactId: string; claimId: string }>;
+  }>;
   generationSummary: ReviewPackageGenerationSummaryV1;
   usageSummary: AttemptUsageV1;
-  executionDisclosure: { code: "target_execution_not_performed"; unexecutedItems: string[] };
+  executionDisclosure: {
+    code: "target_execution_not_performed";
+    unexecutedItems: string[];
+  };
 }
 
 type Phase1CoreArtifactBodyV1 =
@@ -638,20 +757,41 @@ interface ProposedIntelligenceReportV1 {
   summary: { text: string; claimKeys: string[] };
   claims: ProposedClaim[];
   sections: Array<{
-    sectionKind: "scope" | "findings" | "risks" | "limitations" | "recommendations";
+    sectionKind:
+      "scope" | "findings" | "risks" | "limitations" | "recommendations";
     title: string;
     claimKeys: string[];
   }>;
-  nextSteps: Array<{ stepId: string; instruction: string; basisClaimKeys: string[] }>;
+  nextSteps: Array<{
+    stepId: string;
+    instruction: string;
+    basisClaimKeys: string[];
+  }>;
 }
 
 interface ProposedAssumptionRegisterV1 {
   kind: "assumption_register";
   schemaVersion: "assumption-register-v1";
   claims: ProposedClaim[];
-  assumptions: Array<{ entryId: string; claimKey: string; impact: string; state: "open" }>;
-  unknowns: Array<{ entryId: string; claimKey: string; impact: string; state: "open" }>;
-  conflicts: Array<{ conflictId: string; claimKeys: string[]; impact: string; resolutionQuestion: string; state: "open" }>;
+  assumptions: Array<{
+    entryId: string;
+    claimKey: string;
+    impact: string;
+    state: "open";
+  }>;
+  unknowns: Array<{
+    entryId: string;
+    claimKey: string;
+    impact: string;
+    state: "open";
+  }>;
+  conflicts: Array<{
+    conflictId: string;
+    claimKeys: string[];
+    impact: string;
+    resolutionQuestion: string;
+    state: "open";
+  }>;
 }
 
 interface ProposedAutomationBlueprintV1 {
@@ -661,18 +801,45 @@ interface ProposedAutomationBlueprintV1 {
   automationKind: "test" | "business_process" | "mixed";
   objective: { text: string; claimKeys: string[] };
   claims: ProposedClaim[];
-  preconditions: Array<{ itemId: string; text: string; basisClaimKeys: string[] }>;
-  dataRequirements: Array<{ itemId: string; text: string; basisClaimKeys: string[]; sensitive: boolean }>;
+  preconditions: Array<{
+    itemId: string;
+    text: string;
+    basisClaimKeys: string[];
+  }>;
+  dataRequirements: Array<{
+    itemId: string;
+    text: string;
+    basisClaimKeys: string[];
+    sensitive: boolean;
+  }>;
   steps: Array<{
     stepId: string;
     ordinal: number;
-    stepKind: "navigate" | "interact" | "observe" | "assert" | "wait" | "branch" | "cleanup" | "manual_checkpoint";
+    stepKind:
+      | "navigate"
+      | "interact"
+      | "observe"
+      | "assert"
+      | "wait"
+      | "branch"
+      | "cleanup"
+      | "manual_checkpoint";
     instruction: string;
     expectedOutcome: string | null;
     basisClaimKeys: string[];
   }>;
-  exceptionPaths: Array<{ pathId: string; trigger: string; handling: string; expectedOutcome: string | null; basisClaimKeys: string[] }>;
-  cleanupRequirements: Array<{ itemId: string; text: string; basisClaimKeys: string[] }>;
+  exceptionPaths: Array<{
+    pathId: string;
+    trigger: string;
+    handling: string;
+    expectedOutcome: string | null;
+    basisClaimKeys: string[];
+  }>;
+  cleanupRequirements: Array<{
+    itemId: string;
+    text: string;
+    basisClaimKeys: string[];
+  }>;
   unresolvedClaimKeys: string[];
 }
 
@@ -839,15 +1006,24 @@ interface RuntimeReportedUsageV1 {
 
 interface AgentRuntime {
   capabilities(): Promise<RuntimeCapabilitySet>;
-  prepare(preparation: RuntimePreparation, policy: RuntimePolicy): Promise<PreparedRuntimeHandle>;
+  prepare(
+    preparation: RuntimePreparation,
+    policy: RuntimePolicy,
+  ): Promise<PreparedRuntimeHandle>;
   activate(
     prepared: PreparedRuntimeHandle,
     grant: RuntimeActivationGrant,
     invocation: RuntimeInvocationEnvelopeV1,
     outputSchema: RuntimeOutputSchemaRecordV1,
   ): Promise<RuntimeHandle>;
-  abort(handle: PreparedRuntimeHandle | RuntimeHandle, reason: "canceled" | "expired" | "authorization_stale" | "reconciler"): Promise<void>;
-  events(handle: RuntimeHandle, afterSequence?: number): AsyncIterable<RuntimeEvent>;
+  abort(
+    handle: PreparedRuntimeHandle | RuntimeHandle,
+    reason: "canceled" | "expired" | "authorization_stale" | "reconciler",
+  ): Promise<void>;
+  events(
+    handle: RuntimeHandle,
+    afterSequence?: number,
+  ): AsyncIterable<RuntimeEvent>;
   cancel(handle: RuntimeHandle, reason: string): Promise<void>;
   result(handle: RuntimeHandle): Promise<RuntimeResult>;
   close(): Promise<void>;
@@ -855,13 +1031,29 @@ interface AgentRuntime {
 
 type RuntimeResult =
   | {
-      binding: { launchId: string; activationId: string; attemptId: string; ownershipGeneration: number; fencingToken: string; invocationContentHash: string; rootOutputSchemaHash: string };
+      binding: {
+        launchId: string;
+        activationId: string;
+        attemptId: string;
+        ownershipGeneration: number;
+        fencingToken: string;
+        invocationContentHash: string;
+        rootOutputSchemaHash: string;
+      };
       status: "succeeded";
       output: RuntimeProposalsRootV1;
       reportedUsage: RuntimeReportedUsageV1;
     }
   | {
-      binding: { launchId: string; activationId: string; attemptId: string; ownershipGeneration: number; fencingToken: string; invocationContentHash: string; rootOutputSchemaHash: string };
+      binding: {
+        launchId: string;
+        activationId: string;
+        attemptId: string;
+        ownershipGeneration: number;
+        fencingToken: string;
+        invocationContentHash: string;
+        rootOutputSchemaHash: string;
+      };
       status: "failed" | "canceled" | "timed_out" | "unavailable";
       reasonCode: string;
       reportedUsage: RuntimeReportedUsageV1;
@@ -891,7 +1083,7 @@ type ExecutionKind = "browser" | "device" | "api_contract";
 
 interface ArtifactRef {
   artifactId: string;
-  uri: string;                      // internal URI; never exposed directly to browser
+  uri: string; // internal URI; never exposed directly to browser
   contentHash: string;
   mediaType: string;
   classification: string;
@@ -899,7 +1091,7 @@ interface ArtifactRef {
 
 interface SecretRef {
   provider: "key_vault" | "workload_identity";
-  reference: string;                // secret value is never present in the plan
+  reference: string; // secret value is never present in the plan
   audience: string;
   version?: string;
 }
@@ -956,7 +1148,7 @@ interface ProviderArtifact {
   mediaType: string;
   sizeBytes?: number;
   contentHash?: string;
-  downloadHandle: string;            // consumed only by trusted Result Collector
+  downloadHandle: string; // consumed only by trusted Result Collector
   occurredAt: string;
 }
 
@@ -1035,7 +1227,7 @@ type AnswerMode = "quick" | "deep";
 interface ResourceRef {
   family: SourceFamily;
   sourceId: string;
-  mode?: ResourceMode;             // defaults to preferred
+  mode?: ResourceMode; // defaults to preferred
   requestedRevision?: string;
   anchor?: StructuralAnchor;
 }
@@ -1069,21 +1261,31 @@ interface QueryPlan {
   plannerVersion: string;
   originalQuery: string;
   standaloneQuery: string;
-  intent: "exact_lookup" | "qa" | "compare" | "explain" | "cross_source" | "follow_up";
+  intent:
+    | "exact_lookup"
+    | "qa"
+    | "compare"
+    | "explain"
+    | "cross_source"
+    | "follow_up";
   confidence: number;
   answerMode: AnswerMode;
-  retrievalProfileId: string;       // server-selected versioned profile for this AnswerMode
+  retrievalProfileId: string; // server-selected versioned profile for this AnswerMode
   effectiveSourceFamilies: SourceFamily[];
   exactIdentifiers: Array<{ kind: string; value: string }>;
   effectiveResourceRefs: ResolvedResourceRef[];
   effectiveEnvironment?: string;
   effectiveCorpusVersion: string;
-  candidateLimit: number;           // server-capped effective topK
+  candidateLimit: number; // server-capped effective topK
   policyDecisionId: string;
   policyVersion: string;
   aclDigest: string;
   rawRequestHash: string;
-  subqueries: Array<{ id: string; query: string; sourceFamilies: SourceFamily[] }>;
+  subqueries: Array<{
+    id: string;
+    query: string;
+    sourceFamilies: SourceFamily[];
+  }>;
   createdAt: string;
 }
 
@@ -1098,12 +1300,23 @@ interface ContextSnapshot {
   policyVersion: string;
   aclDigest: string;
   layers: Array<{
-    kind: "project_policy" | "project_context" | "recent_turns" | "conversation_summary" | "current_turn";
+    kind:
+      | "project_policy"
+      | "project_context"
+      | "recent_turns"
+      | "conversation_summary"
+      | "current_turn";
     refIds: string[];
     contentHash: string;
     tokenCount: number;
   }>;
-  summaryLineage?: { summaryId: string; sourceTurnIds: string[]; sourceContentHashes: string[]; summarizerVersion: string; authorizedAt: string };
+  summaryLineage?: {
+    summaryId: string;
+    sourceTurnIds: string[];
+    sourceContentHashes: string[];
+    summarizerVersion: string;
+    authorizedAt: string;
+  };
   createdAt: string;
 }
 
@@ -1127,11 +1340,31 @@ interface InternalRetrievalRequest {
 }
 
 type StructuralAnchor =
-  | { type: "document"; headingPath?: string[]; page?: number; bbox?: number[]; startOffset?: number; endOffset?: number }
-  | { type: "code"; repo: string; path: string; symbol?: string; lineStart: number; lineEnd: number }
+  | {
+      type: "document";
+      headingPath?: string[];
+      page?: number;
+      bbox?: number[];
+      startOffset?: number;
+      endOffset?: number;
+    }
+  | {
+      type: "code";
+      repo: string;
+      path: string;
+      symbol?: string;
+      lineStart: number;
+      lineEnd: number;
+    }
   | { type: "bdd"; featureId: string; scenarioId?: string; stepId?: string }
   | { type: "openapi"; method: string; path: string; jsonPointer: string }
-  | { type: "failure"; incidentId: string; runId?: string; timeStart?: string; timeEnd?: string };
+  | {
+      type: "failure";
+      incidentId: string;
+      runId?: string;
+      timeStart?: string;
+      timeEnd?: string;
+    };
 
 interface SourceRevisionRef {
   sourceId: string;
@@ -1143,8 +1376,8 @@ interface SourceRevisionRef {
 }
 
 interface ChunkRecord {
-  chunkId: string;                 // immutable snapshot identity
-  logicalChunkId: string;          // stable identity across revisions
+  chunkId: string; // immutable snapshot identity
+  logicalChunkId: string; // stable identity across revisions
   rootId: string;
   parentId?: string;
   adjacentChunkIds?: string[];
@@ -1172,8 +1405,8 @@ interface ChunkRecord {
 }
 
 interface Citation {
-  citationId: string;              // opaque resolver ID, not a source URL
-  evidenceLabel: string;           // for example S1
+  citationId: string; // opaque resolver ID, not a source URL
+  evidenceLabel: string; // for example S1
   chunkId: string;
   logicalChunkId: string;
   source: SourceRevisionRef;
@@ -1201,7 +1434,13 @@ interface RetrievalResponse {
     source: SourceRevisionRef;
     chunkContentHash: string;
     citationId: string;
-    scores: { exact?: number; bm25?: number; vector?: number; rrf?: number; rerank?: number };
+    scores: {
+      exact?: number;
+      bm25?: number;
+      vector?: number;
+      rrf?: number;
+      rerank?: number;
+    };
     aclDecisionId: string;
     schemaVersion: string;
     embeddingModelVersion: string;
@@ -1219,7 +1458,8 @@ interface RetrievalAnswerResponse {
   degradationReasons?: string[];
   answer: string;
   abstained: boolean;
-  abstentionReason?: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
+  abstentionReason?:
+    "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
   claims: Array<{
     claimId: string;
     text: string;
@@ -1252,7 +1492,7 @@ interface RetrievalAnswerResponse {
 ```typescript
 interface ChatSession {
   chatId: string;
-  projectId: string;               // route + current authorization decide visibility
+  projectId: string; // route + current authorization decide visibility
   parentChatId?: string;
   branchedFromTurnId?: string;
   title: string;
@@ -1266,7 +1506,7 @@ interface ChatSession {
 interface ChatTurnRequest {
   clientRequestId: string;
   message: string;
-  answerMode?: AnswerMode;          // defaults to quick
+  answerMode?: AnswerMode; // defaults to quick
   sourceScope?: SourceFamily[];
   resourceRefs?: ResourceRef[];
   requestedEnvironment?: string;
@@ -1285,7 +1525,7 @@ interface QueuedChatMessage {
   requestedEnvironment?: string;
   requestedCorpusVersion?: string;
   createdAt: string;
-  version: number;                  // optimistic concurrency for edit/reorder
+  version: number; // optimistic concurrency for edit/reorder
 }
 
 interface ChatTurnSummary {
@@ -1327,23 +1567,42 @@ type ChatTurnState =
 
 type ChatStreamEvent =
   | { type: "turn.started"; payload: { state: "running" } }
-  | { type: "context.assembled"; payload: { contextSnapshotId: string; tokenCount: number } }
-  | { type: "query.plan_ready"; payload: { queryPlanId: string; answerMode: AnswerMode; sourceFamilies: SourceFamily[] } }
+  | {
+      type: "context.assembled";
+      payload: { contextSnapshotId: string; tokenCount: number };
+    }
+  | {
+      type: "query.plan_ready";
+      payload: {
+        queryPlanId: string;
+        answerMode: AnswerMode;
+        sourceFamilies: SourceFamily[];
+      };
+    }
   | { type: "stage.started"; payload: { stage: string } }
   | { type: "stage.completed"; payload: { stage: string; durationMs: number } }
-  | { type: "retrieval.hits_ready"; payload: { traceId: string; authorizedHitCount: number } }
-  | { type: "rerank.completed"; payload: { candidateCount: number; durationMs: number } }
+  | {
+      type: "retrieval.hits_ready";
+      payload: { traceId: string; authorizedHitCount: number };
+    }
+  | {
+      type: "rerank.completed";
+      payload: { candidateCount: number; durationMs: number };
+    }
   | { type: "answer.delta"; payload: { text: string } }
   | { type: "citation.resolved"; payload: { citation: Citation } }
   | { type: "turn.completed"; payload: { answer: RetrievalAnswerResponse } }
   | { type: "turn.abstained"; payload: { answer: RetrievalAnswerResponse } }
-  | { type: "turn.degraded"; payload: { reason: string; availableStages: string[] } } // nonterminal advisory
+  | {
+      type: "turn.degraded";
+      payload: { reason: string; availableStages: string[] };
+    } // nonterminal advisory
   | { type: "turn.canceled"; payload: { partialAnswerRetained: boolean } }
   | { type: "turn.failed"; payload: { code: string; retryable: boolean } };
 
 interface ChatEventEnvelope {
-  eventId: string;                 // opaque identity; never used for lexical ordering
-  sequence: number;                // monotonic within a turn; ordering/resume key
+  eventId: string; // opaque identity; never used for lexical ordering
+  sequence: number; // monotonic within a turn; ordering/resume key
   chatId: string;
   turnId: string;
   occurredAt: string;
@@ -1394,21 +1653,16 @@ GET    /v1/retrieval/traces/{traceId}?cursor=&limit=
 
 页面行为与验收标准见 [TAP Knowledge Chat](../architecture/2026-08-21-knowledge-chat-ui.md)。
 
-## 10. Athena 本地 Document/Answer/Citation HTTP Contract
+## 10. Tapper 本地 Document/Answer/Citation HTTP Contract
 
-Athena 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为后置 Knowledge Chat stub，当前只返回 `501 turn-not-implemented`，不计入 Athena 九个已实现操作。
+Tapper 本地工作区实现的是本节九个 loopback HTTP 操作；它复用第 8 节 Retrieval DTO，但不实现第 9 节的 durable Conversation/SSE。`POST /v1/chats/{chat_id}/turns` 仍保留在生成的公共契约中作为后置 Knowledge Chat stub，当前只返回 `501 turn-not-implemented`，不计入 Tapper 九个已实现操作。
 
 ### 10.1 文档与 ingestion 状态
 
 ```typescript
 type DocumentStatus = "queued" | "processing" | "ready" | "failed" | "deleting";
 type IngestionStage =
-  | "stored"
-  | "parsing"
-  | "chunking"
-  | "embedding"
-  | "publishing"
-  | "ready";
+  "stored" | "parsing" | "chunking" | "embedding" | "publishing" | "ready";
 type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 ```
 
@@ -1418,17 +1672,17 @@ type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 
 ### 10.2 九个已实现操作与响应状态
 
-| 操作 | 成功 | 公开错误状态 |
-| --- | --- | --- |
-| `GET /health/live` | `200 LiveHealth` | 无业务错误 |
-| `GET /health/ready` | `200 ReadyHealth`（依赖失败仍以 body `unready` 表示） | 无业务错误 |
-| `POST /v1/knowledge/documents` | `202 DocumentAccepted` | `400`, `413`, `422`, `429`, `503` |
-| `GET /v1/knowledge/documents?cursor=&limit=` | `200 DocumentPage` | `422`, `503` |
-| `GET /v1/knowledge/documents/{document_id}` | `200 DocumentDetail` | `404`, `422`, `503` |
-| `POST /v1/knowledge/documents/{document_id}/retry` | `202 DocumentAccepted` | `404`, `409`, `422`, `503` |
-| `DELETE /v1/knowledge/documents/{document_id}` | `204`，无 body | `404`, `409`, `422`, `503` |
-| `POST /v1/knowledge/answers` | `200 RetrievalAnswerResponse` | `400`, `409`, `422`, `503` |
-| `GET /v1/citations/{citation_id}` | `200 CitationPreview` | `404`, `422`, `503` |
+| 操作                                               | 成功                                                  | 公开错误状态                      |
+| -------------------------------------------------- | ----------------------------------------------------- | --------------------------------- |
+| `GET /health/live`                                 | `200 LiveHealth`                                      | 无业务错误                        |
+| `GET /health/ready`                                | `200 ReadyHealth`（依赖失败仍以 body `unready` 表示） | 无业务错误                        |
+| `POST /v1/knowledge/documents`                     | `202 DocumentAccepted`                                | `400`, `413`, `422`, `429`, `503` |
+| `GET /v1/knowledge/documents?cursor=&limit=`       | `200 DocumentPage`                                    | `422`, `503`                      |
+| `GET /v1/knowledge/documents/{document_id}`        | `200 DocumentDetail`                                  | `404`, `422`, `503`               |
+| `POST /v1/knowledge/documents/{document_id}/retry` | `202 DocumentAccepted`                                | `404`, `409`, `422`, `503`        |
+| `DELETE /v1/knowledge/documents/{document_id}`     | `204`，无 body                                        | `404`, `409`, `422`, `503`        |
+| `POST /v1/knowledge/answers`                       | `200 RetrievalAnswerResponse`                         | `400`, `409`, `422`, `503`        |
+| `GET /v1/citations/{citation_id}`                  | `200 CitationPreview`                                 | `404`, `422`, `503`               |
 
 除 `204` 外，错误统一使用 RFC 9457 `application/problem+json`，闭合字段为 HTTPS `type`、非空 `title`、HTTP `status`、非空 `detail` 与可选 `instance`；未知字段被拒绝。九个已实现操作的稳定问题类型（`type` URL 的末段 slug）闭合为 `request-validation`、`knowledge-runtime-unavailable`、`search-unavailable`、`search-execution-rejected`、`unsupported-document`、`empty-document`、`document-too-large`、`document-not-found`、`document-not-retryable`、`document-state-changed`、`document-limit-reached`、`source-selection-required`、`unsupported-answer-control`、`embedding-unavailable`、`answer-unavailable`、`answer-snapshot-unavailable`、`citation-stale`、`citation-unavailable`；保留的后置 Knowledge Chat stub 另使用 `turn-not-implemented`。公共 problem 不包含堆栈、provider 原始错误、credential、endpoint、Blob locator、Milvus target 或内部 filter。
 
@@ -1443,15 +1697,15 @@ type DocumentStageState = "pending" | "processing" | "completed" | "failed";
 
 `GET /health/ready` 总是覆盖以下五个组件且各出现一次；全为 `ok` 时 body 为 `ready`，任一失败则为 `unready`。失败项必须返回与组件精确匹配的 remediation code，成功项不返回 remediation：
 
-| 组件 | 实际检查 | 失败 remediation |
-| --- | --- | --- |
-| `mysql` | `SELECT 1` 与 Alembic head | `start-mysql` |
-| `redis` | `PING` | `start-redis` |
-| `blob` | originals/artifacts 两个 private container | `start-blob` |
-| `milvus` | alias/schema/model/dimension 绑定及有界读探针 | `start-milvus` |
-| `models` | 始终要求 LiteLLM `/v1/models` 包含 `athena-embedding`；`ATHENA_ANSWER_BACKEND=litellm` 另要求 `athena-chat`，`codex` 则要求精确原生 CLI `0.149.0`、ChatGPT 登录、固定 feature/catalog/tool-free contract | `configure-models` |
+| 组件     | 实际检查                                                                                                                                                                                                 | 失败 remediation   |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `mysql`  | `SELECT 1` 与 Alembic head                                                                                                                                                                               | `start-mysql`      |
+| `redis`  | `PING`                                                                                                                                                                                                   | `start-redis`      |
+| `blob`   | originals/artifacts 两个 private container                                                                                                                                                               | `start-blob`       |
+| `milvus` | alias/schema/model/dimension 绑定及有界读探针                                                                                                                                                            | `start-milvus`     |
+| `models` | 始终要求 LiteLLM `/v1/models` 包含 `tapper-embedding`；`TAPPER_ANSWER_BACKEND=litellm` 另要求 `tapper-chat`，`codex` 则要求精确原生 CLI `0.149.0`、ChatGPT 登录、固定 feature/catalog/tool-free contract | `configure-models` |
 
-Athena 的文档/query Embedding 在两种真实回答模式下都经 LiteLLM `athena-embedding` 调用百炼 `text-embedding-v4`，固定 1536 维。回答后端由服务端 `.env` 在进程启动时独占选择且没有相互 fallback；Codex 只实现 API answer port，版本、登录、feature、与 `0.149.0` entry schema 耦合的 request-owned catalog、事件或输出任一漂移都返回 `503 https://tap.example/problems/answer-unavailable`。公共 `detail` 保持固定安全英文，Web 按 `503:answer-unavailable` 映射为“回答模型暂时不可用，请稍后重试。”，两者都不暴露 CLI/provider 细节。
+Tapper 的文档/query Embedding 在两种真实回答模式下都经 LiteLLM `tapper-embedding` 调用百炼 `text-embedding-v4`，固定 1536 维。回答后端由服务端 `.env` 在进程启动时独占选择且没有相互 fallback；Codex 只实现 API answer port，版本、登录、feature、与 `0.149.0` entry schema 耦合的 request-owned catalog、事件或输出任一漂移都返回 `503 https://tap.example/problems/answer-unavailable`。公共 `detail` 保持固定安全英文，Web 按 `503:answer-unavailable` 映射为“回答模型暂时不可用，请稍后重试。”，两者都不暴露 CLI/provider 细节。
 
 该实现没有修改任何公共 document/answer/citation request 或 success response DTO，也没有增加 browser-selectable backend/model/reasoning 字段；生成的 OpenAPI/Web client 中唯一新增的 HTTP 语义是上述 `answer-unavailable` Problem type。Codex query/所选 Evidence 发往 OpenAI，Embedding 内容发往阿里云百炼；这个数据边界和无认证 API 只适用于精确 loopback 本地 Demo。
 

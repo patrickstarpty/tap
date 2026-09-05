@@ -145,7 +145,7 @@ def _log_stage_failure(job: ClaimedIngestionJob, error: _SafeStageError, started
     if error.document_id is None or error.revision_id is None:
         raise RuntimeError("stage failure is missing durable work identity")
     logger.error(
-        "athena.ingestion.stage_failed",
+        "tapper.ingestion.stage_failed",
         extra={
             "document_id": error.document_id,
             "revision_id": error.revision_id,
@@ -659,7 +659,7 @@ class IngestionWorker:
                 stage,
                 self._clock.now(),
             ),
-            name=f"athena-settlement:{job.job_id}:{stage.value}",
+            name=f"tapper-settlement:{job.job_id}:{stage.value}",
         )
         await _wait_to_terminal(settlement)
         try:
@@ -681,11 +681,11 @@ class IngestionWorker:
             LEASE_DURATION,
         )
         provider = asyncio.create_task(
-            operation(), name=f"athena-provider:{job.job_id}:{stage.value}"
+            operation(), name=f"tapper-provider:{job.job_id}:{stage.value}"
         )
         heartbeat = asyncio.create_task(
             self._heartbeat(job, stage, provider),
-            name=f"athena-heartbeat:{job.job_id}:{stage.value}",
+            name=f"tapper-heartbeat:{job.job_id}:{stage.value}",
         )
         try:
             done, _ = await asyncio.wait((provider, heartbeat), return_when=asyncio.FIRST_COMPLETED)
