@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Five independent, bounded, and redacted local Athena dependency checks."""
+"""Five independent, bounded, and redacted local Tapper dependency checks."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from pydantic import SecretStr
 from sqlalchemy import text
 
-from tap.entrypoints.athena_runtime import (
-    AthenaSettings,
+from tap.entrypoints.tapper_runtime import (
+    TapperSettings,
     OwnedResources,
     _create_answer_backend,
     _create_blob,
@@ -53,10 +53,10 @@ _REMEDIATION = {
 }
 _PROVIDER_SETTINGS: tuple[str, ...] = ("DASHSCOPE_API_KEY",)
 
-Probe = Callable[[AthenaSettings, Mapping[str, str]], Awaitable[bool]]
+Probe = Callable[[TapperSettings, Mapping[str, str]], Awaitable[bool]]
 
 
-async def _check_mysql(settings: AthenaSettings, _values: Mapping[str, str]) -> bool:
+async def _check_mysql(settings: TapperSettings, _values: Mapping[str, str]) -> bool:
     engine, _repository = await _create_database(settings)
     try:
         async with engine.connect() as connection:
@@ -71,7 +71,7 @@ async def _check_mysql(settings: AthenaSettings, _values: Mapping[str, str]) -> 
         await engine.dispose()
 
 
-async def _check_redis(settings: AthenaSettings, _values: Mapping[str, str]) -> bool:
+async def _check_redis(settings: TapperSettings, _values: Mapping[str, str]) -> bool:
     client = _create_redis(settings)
     try:
         return await client.ping() is True
@@ -79,7 +79,7 @@ async def _check_redis(settings: AthenaSettings, _values: Mapping[str, str]) -> 
         await client.aclose()
 
 
-async def _blob_canary(settings: AthenaSettings) -> bool:
+async def _blob_canary(settings: TapperSettings) -> bool:
     artifacts = _create_blob(settings)
     try:
         for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
@@ -102,12 +102,12 @@ async def _blob_canary(settings: AthenaSettings) -> bool:
         await artifacts.aclose()
 
 
-async def _check_blob(settings: AthenaSettings, _values: Mapping[str, str]) -> bool:
+async def _check_blob(settings: TapperSettings, _values: Mapping[str, str]) -> bool:
     return await _blob_canary(settings)
 
 
 def _milvus_reader(
-    settings: AthenaSettings,
+    settings: TapperSettings,
 ) -> tuple[PyMilvusReader, MilvusIndexTarget]:
     target = MilvusIndexTarget(
         family=SourceFamily.DOC,
@@ -130,7 +130,7 @@ def _milvus_reader(
     return PyMilvusReader(config), target
 
 
-async def _check_milvus(settings: AthenaSettings, _values: Mapping[str, str]) -> bool:
+async def _check_milvus(settings: TapperSettings, _values: Mapping[str, str]) -> bool:
     reader, target = _milvus_reader(settings)
     try:
         bound = await bind_target(reader, target)
@@ -138,7 +138,7 @@ async def _check_milvus(settings: AthenaSettings, _values: Mapping[str, str]) ->
             MilvusQueryRequest(
                 collection_name=bound.physical_collection,
                 filter_expression=(
-                    'chunk_id == "__athena_readiness_reserved_never_persisted__"'
+                    'chunk_id == "__tapper_readiness_reserved_never_persisted__"'
                 ),
                 output_fields=("chunk_id",),
                 limit=1,
@@ -149,12 +149,12 @@ async def _check_milvus(settings: AthenaSettings, _values: Mapping[str, str]) ->
         await reader.close()
 
 
-async def _check_models(settings: AthenaSettings, values: Mapping[str, str]) -> bool:
+async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> bool:
     if settings.e2e_mode:
-        from tap.testing.deterministic_model import DeterministicAthenaModel
+        from tap.testing.deterministic_model import DeterministicTapperModel
 
-        model = DeterministicAthenaModel(dimension=settings.embedding_dimension)
-        embedding = await model.embed("Athena deterministic readiness")
+        model = DeterministicTapperModel(dimension=settings.embedding_dimension)
+        embedding = await model.embed("Tapper deterministic readiness")
         vector = embedding.vector
         return (
             embedding.model_id == settings.embedding_alias
@@ -196,7 +196,7 @@ async def _check_models(settings: AthenaSettings, values: Mapping[str, str]) -> 
 
 async def _safe_probe(
     probe: Probe,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     values: Mapping[str, str],
 ) -> bool:
     try:
@@ -209,7 +209,7 @@ async def _safe_probe(
 
 
 async def checks(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     values: Mapping[str, str],
 ) -> dict[str, bool]:
     """Run all real probes concurrently so one broken constructor cannot hide the others."""
@@ -231,7 +231,7 @@ def main(environment: Mapping[str, str] | None = None) -> int:
     values = dict(os.environ) if environment is None else dict(environment)
     states = {name: False for name in _ORDER}
     try:
-        settings = AthenaSettings.from_mapping(values)
+        settings = TapperSettings.from_mapping(values)
         with suppress_pymilvus_rpc_logging():
             states = asyncio.run(checks(settings, values))
     except Exception:

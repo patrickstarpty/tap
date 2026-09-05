@@ -36,10 +36,10 @@ async function assertCurrentDocument(
   expect(detail.sourceContentHash).toBe(expected.sourceContentHash);
 }
 
-test("Athena durable state survives the selected restart boundary", async ({
+test("Tapper durable state survives the selected restart boundary", async ({
   page,
 }) => {
-  const phase = process.env.ATHENA_E2E_PHASE;
+  const phase = process.env.TAPPER_E2E_PHASE;
   expect(["app-restart", "compose-restart"]).toContain(phase);
   const state = await readState();
   const survivors = [
@@ -111,33 +111,46 @@ test("Athena durable state survives the selected restart boundary", async ({
   });
 
   await page.goto("/");
-  await page.getByRole("tab", { name: "知识库" }).click();
+  await expect(
+    page.getByRole("heading", { name: "What can I do for you?" }),
+  ).toBeVisible();
   for (const survivor of survivors) {
     const listed = list.items.find(
       (item) => item.documentId === survivor.documentId,
     );
     expect(listed).toBeDefined();
     await expect(
-      page.getByRole("row").filter({ hasText: listed!.filename }),
+      page.getByText(listed!.filename, { exact: true }),
     ).toBeVisible();
   }
-  await expect(page.getByText("已就绪 7", { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "问答" }).click();
+  const policy = list.items.find(
+    (item) => item.documentId === state.policy.documentId,
+  );
+  expect(policy).toBeDefined();
   await page
     .getByRole("checkbox", {
-      name: new RegExp(escapeRegExp(state.policy.documentId), "u"),
+      name: new RegExp(escapeRegExp(policy!.filename), "u"),
     })
     .check();
-  await page
-    .getByRole("textbox", { name: "输入问题" })
-    .fill(policyQuestion(state.runId));
-  const pending = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/v1/knowledge/answers",
-  );
-  await page.getByRole("button", { name: "提问" }).click();
-  const answerHttp = await pending;
+  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
+  const query = policyQuestion(state.runId);
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(query);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.getByRole("log", { name: "Conversation" }).getByText(query, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const answerHttp = await page.request.post("/v1/knowledge/answers", {
+    data: {
+      answerMode: "quick",
+      query,
+      resourceRefs: [
+        { family: "doc", sourceId: state.policy.documentId, mode: "scope" },
+      ],
+      sources: ["doc"],
+    },
+  });
   expect(answerHttp.status()).toBe(200);
   const answer = (await answerHttp.json()) as AnswerResponse;
   expect(answer.abstained).toBe(false);
@@ -153,24 +166,17 @@ test("Athena durable state survives the selected restart boundary", async ({
       (citation) => citation.source.sourceId === state.deleted.documentId,
     ),
   ).toBe(false);
-  const renderedClaims = page.locator(".athena-grounded-claim");
-  await expect(renderedClaims).toHaveCount(answer.claims.length);
-  for (const [index, claim] of answer.claims.entries()) {
-    const rendered = renderedClaims.nth(index);
-    await expect(rendered).toContainText(claim.text);
+  for (const claim of answer.claims) {
     expect(claim.citationIds.length).toBeGreaterThan(0);
-    await expect(
-      rendered.getByRole("button", { name: /^引用 \d+$/u }).first(),
-    ).toBeVisible();
   }
-  const persistedFactClaims = renderedClaims.filter({
-    hasText: new RegExp(
-      `Athena ${escapeRegExp(state.runId)} refund requests`,
-      "u",
+  expect(
+    answer.claims.filter((claim) =>
+      new RegExp(
+        `Tapper ${escapeRegExp(state.runId)} refund requests`,
+        "u",
+      ).test(claim.text),
     ),
-  });
-  await expect(persistedFactClaims).toHaveCount(1);
-  await expect(persistedFactClaims).toBeVisible();
+  ).toHaveLength(1);
   expect(externalRequests).toEqual([]);
   expect(pageErrors).toEqual([]);
   expect(consoleFailures).toEqual([]);

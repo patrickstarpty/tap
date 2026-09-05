@@ -61,10 +61,10 @@ function port(name: string, fallback: number): number {
   return value;
 }
 
-const apiHost = loopback("ATHENA_API_HOST", "127.0.0.1");
-const apiPort = port("ATHENA_API_PORT", 8000);
-const webHost = loopback("ATHENA_WEB_HOST", "127.0.0.1");
-const webPort = port("ATHENA_WEB_PORT", 5173);
+const apiHost = loopback("TAPPER_API_HOST", "127.0.0.1");
+const apiPort = port("TAPPER_API_PORT", 8000);
+const webHost = loopback("TAPPER_WEB_HOST", "127.0.0.1");
+const webPort = port("TAPPER_WEB_PORT", 5173);
 const apiProxy = {
   target: `http://${apiHost}:${String(apiPort)}`,
   changeOrigin: false,

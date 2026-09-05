@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure only Athena's two Blob containers and exact Milvus target."""
+"""Ensure only Tapper's two Blob containers and exact Milvus target."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 
-from tap.entrypoints.athena_runtime import (
-    AthenaSettings,
+from tap.entrypoints.tapper_runtime import (
+    TapperSettings,
     OwnedResources,
     _create_blob,
     _create_database,
@@ -71,22 +71,22 @@ class _EnsureStage:
 
     def set(self, value: str) -> None:
         if value not in _ENSURE_STAGES:
-            raise ValueError("Athena ensure stage is outside the closed set")
+            raise ValueError("Tapper ensure stage is outside the closed set")
         self._value = value
 
 
 async def ensure(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     *,
     stage: _EnsureStage | None = None,
 ) -> None:
-    """Create and verify only resources whose fixed identities Athena owns."""
+    """Create and verify only resources whose fixed identities Tapper owns."""
 
-    if not isinstance(settings, AthenaSettings):
-        raise TypeError("Athena ensure requires validated settings")
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper ensure requires validated settings")
     tracker = _EnsureStage() if stage is None else stage
     if not isinstance(tracker, _EnsureStage):
-        raise TypeError("Athena ensure requires a closed stage tracker")
+        raise TypeError("Tapper ensure requires a closed stage tracker")
     resources = OwnedResources()
     try:
         tracker.set("database")
@@ -99,7 +99,7 @@ async def ensure(
         for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
             properties = await artifacts.container_properties(container)
             if not _is_private_blob_container(properties):
-                raise RuntimeError("Athena Blob container is not private")
+                raise RuntimeError("Tapper Blob container is not private")
         tracker.set("milvus-client")
         index = await _create_document_index(settings, engine)
         resources.push(index)
@@ -109,10 +109,10 @@ async def ensure(
             receipt.physical_collection != settings.collection
             or receipt.alias != settings.alias
         ):
-            raise RuntimeError("Athena Milvus target identity mismatch")
+            raise RuntimeError("Tapper Milvus target identity mismatch")
     except BaseException as error:
         await resources.aclose(error)
-        raise AssertionError("Athena ensure settlement unexpectedly returned")
+        raise AssertionError("Tapper ensure settlement unexpectedly returned")
     await resources.aclose()
 
 
@@ -128,13 +128,13 @@ def main(
     values = dict(os.environ) if environment is None else dict(environment)
     stage = _EnsureStage()
     try:
-        settings = AthenaSettings.from_mapping(values)
+        settings = TapperSettings.from_mapping(values)
         with suppress_pymilvus_rpc_logging():
             asyncio.run(ensure(settings, stage=stage))
     except IndexTargetProvisioningFailed as error:
         stage.set(f"milvus-target-{error.stage.value}")
         print(
-            f"Athena resource ensure failed at {stage.value}; "
+            f"Tapper resource ensure failed at {stage.value}; "
             "check local middleware configuration.",
             file=sys.stderr,
         )
@@ -143,12 +143,12 @@ def main(
         return 130
     except BaseException:
         print(
-            f"Athena resource ensure failed at {stage.value}; "
+            f"Tapper resource ensure failed at {stage.value}; "
             "check local middleware configuration.",
             file=sys.stderr,
         )
         return 1
-    print("Athena resources ready.")
+    print("Tapper resources ready.")
     return 0
 
 
