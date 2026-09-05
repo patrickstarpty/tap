@@ -61,9 +61,15 @@ from tap.operations.milvus.contracts import validate_milvus_role_usernames
 if TYPE_CHECKING:
     import httpx
     from redis.asyncio import Redis
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import (
+        AsyncConnection,
+        AsyncEngine,
+        AsyncSession,
+        async_sessionmaker,
+    )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.blob_artifacts import AzureBlobArtifactStore
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
@@ -583,6 +589,15 @@ class ReadinessService:
             raise
         except Exception:
             return False
+
+
+def create_project_audit(
+    connection: AsyncConnection, *, scope: ProjectScopeContext
+) -> ProjectAuditPort:
+    """Bind Audit to an existing application transaction and explicit trusted scope."""
+    from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
+
+    return MysqlProjectAudit(connection, scope=scope)
 
 
 @dataclass(slots=True)

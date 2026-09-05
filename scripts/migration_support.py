@@ -31,6 +31,7 @@ from sqlalchemy.engine import Connection, make_url
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "0005_projection_lineage"
 PROJECT_SCOPE_REVISION = "0007_project_scope_backfill"
+AUDIT_REVISION = "0008_project_audit"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -556,7 +557,12 @@ def assert_preserved(
     connection: Connection, before: dict[str, list[dict[str, Any]]], revision: str
 ) -> dict[str, int]:
     """Fail closed until a new revision explicitly registers its data assertions."""
-    if revision not in {BASELINE, "0006_validation_identity", PROJECT_SCOPE_REVISION}:
+    if revision not in {
+        BASELINE,
+        "0006_validation_identity",
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+    }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
         )
@@ -586,9 +592,9 @@ def assert_preserved(
         if actual != expected:
             raise ValueError(f"baseline data changed in {name}")
         counts[name] = len(actual)
-    if revision in {"0006_validation_identity", PROJECT_SCOPE_REVISION}:
+    if revision in {"0006_validation_identity", PROJECT_SCOPE_REVISION, AUDIT_REVISION}:
         assert_identity_seed(connection)
-    if revision == PROJECT_SCOPE_REVISION:
+    if revision in {PROJECT_SCOPE_REVISION, AUDIT_REVISION}:
         assert_scope_backfill(connection)
     return counts
 
@@ -858,6 +864,96 @@ def assert_scope_rejection_paths(database: IsolatedMysql, engine: Any) -> None:
         assert_scope_backfill(connection)
 
 
+# New revision evidence is separate from the frozen fourteen-table 0005 fixture.
+AUDIT_PROBE_ROW: dict[str, Any] = {
+    "audit_id": "migration-audit",
+    "enterprise_id": "local",
+    "project_id": "tapper-demo",
+    "actor_id": "tapper-local-user",
+    "identity_mode": "validation",
+    "identity_origin": "VALIDATION",
+    "action": "recover-uploads",
+    "resource": "project-maintenance",
+    "outcome": "completed",
+    "correlation_id": "migration-correlation",
+    "idempotency_key": "migration-replay",
+    "content_digest": "d" * 64,
+    "safe_metadata": {},
+    "occurred_at": LEGACY_TIME,
+}
+
+
+def assert_audit_constraints(connection: Connection) -> None:
+    """Exercise non-null scope, relational provenance and binary replay keys."""
+    from sqlalchemy.exc import IntegrityError
+
+    metadata = MetaData()
+    metadata.reflect(connection, only=["project_audit", "project", "actor_principal"])
+    audit = metadata.tables["project_audit"]
+    if connection.execute(select(audit)).first() is not None:
+        raise ValueError("new audit table must start empty after upgrade or replay")
+    connection.rollback()
+    transaction = connection.begin()
+    try:
+        connection.execute(audit.insert(), AUDIT_PROBE_ROW)
+        stored = dict(connection.execute(select(audit)).mappings().one())
+        if stored != AUDIT_PROBE_ROW:
+            raise ValueError("audit fact or microsecond timestamp changed")
+        connection.execute(
+            metadata.tables["project"].insert(),
+            {"enterprise_id": "local", "project_id": "audit-other-project"},
+        )
+        for overrides in (
+            {"audit_id": "MIGRATION-AUDIT", "idempotency_key": "MIGRATION-REPLAY"},
+            {"audit_id": "audit-other", "project_id": "audit-other-project"},
+        ):
+            connection.execute(audit.insert(), {**AUDIT_PROBE_ROW, **overrides})
+        bad_rows: list[tuple[dict[str, Any], int]] = [
+            ({"audit_id": "audit-duplicate"}, 1062),
+            ({"audit_id": "audit-no-project", "project_id": "missing-project"}, 1452),
+            ({"audit_id": "audit-no-actor", "actor_id": "missing-actor"}, 1452),
+            (
+                {
+                    "audit_id": "audit-wrong-enterprise",
+                    "enterprise_id": "missing-enterprise",
+                },
+                1452,
+            ),
+        ]
+        bad_rows.extend(
+            ({"audit_id": "audit-null-" + field, field: None}, 1048)
+            for field in (
+                "enterprise_id",
+                "project_id",
+                "actor_id",
+                "identity_mode",
+                "identity_origin",
+                "action",
+                "resource",
+                "outcome",
+                "correlation_id",
+                "idempotency_key",
+                "content_digest",
+                "occurred_at",
+            )
+        )
+        for overrides, expected_code in bad_rows:
+            if expected_code != 1062 and "idempotency_key" not in overrides:
+                overrides = {**overrides, "idempotency_key": overrides["audit_id"]}
+            savepoint = connection.begin_nested()
+            try:
+                connection.execute(audit.insert(), {**AUDIT_PROBE_ROW, **overrides})
+            except IntegrityError as error:
+                savepoint.rollback()
+                if error.orig is None or error.orig.args[0] != expected_code:
+                    raise
+            else:
+                savepoint.rollback()
+                raise ValueError("missing audit relational or replay constraint")
+    finally:
+        transaction.rollback()
+
+
 def run_schema_gate() -> dict[str, Any]:
     from tap.platform.db.registry import load_authoritative_metadata
 
@@ -881,7 +977,12 @@ def run_schema_gate() -> dict[str, Any]:
 
 def run_migration_gate(revision: str) -> dict[str, Any]:
     validate_revision(revision)
-    if revision not in {BASELINE, "0006_validation_identity", PROJECT_SCOPE_REVISION}:
+    if revision not in {
+        BASELINE,
+        "0006_validation_identity",
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+    }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
         )
@@ -895,15 +996,49 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
-            if revision in {"0006_validation_identity", PROJECT_SCOPE_REVISION}:
+            if revision == AUDIT_REVISION:
+                with engine.connect() as connection:
+                    assert_audit_constraints(connection)
+                    assert_scope_constraints(connection)
+                # Persist one new fact, then prove only the 0008-owned table is removed.
+                with engine.begin() as connection:
+                    audit_metadata = MetaData()
+                    audit_metadata.reflect(connection, only=["project_audit"])
+                    connection.execute(
+                        audit_metadata.tables["project_audit"].insert(), AUDIT_PROBE_ROW
+                    )
+                database.downgrade(PROJECT_SCOPE_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, PROJECT_SCOPE_REVISION)
+                    if "project_audit" in inspect(connection).get_table_names():
+                        raise ValueError(
+                            "audit downgrade did not remove its owned table"
+                        )
+                database.upgrade(AUDIT_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, AUDIT_REVISION)
+                    assert_audit_constraints(connection)
+                identity_result.update(
+                    scope_backfill="passed",
+                    audit_constraints="passed",
+                    audit_downgrade_replay="passed",
+                )
+            if revision in {
+                "0006_validation_identity",
+                PROJECT_SCOPE_REVISION,
+                AUDIT_REVISION,
+            }:
                 with engine.connect() as connection:
                     identity_result["identity_seed"] = assert_identity_seed(connection)
                 database.downgrade(BASELINE)
                 with engine.connect() as connection:
                     assert_preserved(connection, before, BASELINE)
-                    if {"enterprise", "project", "actor_principal"} & set(
-                        inspect(connection).get_table_names()
-                    ):
+                    if {
+                        "enterprise",
+                        "project",
+                        "actor_principal",
+                        "project_audit",
+                    } & set(inspect(connection).get_table_names()):
                         raise ValueError(
                             "identity downgrade did not remove owned tables"
                         )

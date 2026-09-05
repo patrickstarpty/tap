@@ -92,3 +92,22 @@ def test_0006_identity_nonempty_upgrade_and_replay(monkeypatch: pytest.MonkeyPat
         "principal_type": "VALIDATION",
     }
     assert result["downgrade_replay"] == "passed"
+
+
+def test_0008_audit_nonempty_upgrade_constraints_and_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
+    from scripts.migration_support import run_migration_gate
+
+    monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+    result = run_migration_gate("0008_project_audit")
+    assert result["status"] == "passed"
+    assert len(result["preserved_rows"]) == 14
+    assert all(result["preserved_rows"].values())
+    assert result["scope_backfill"] == "passed"
+    assert result["audit_constraints"] == "passed"
+    assert result["audit_downgrade_replay"] == "passed"
+    assert result["downgrade_replay"] == "passed"
