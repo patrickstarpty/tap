@@ -6,14 +6,14 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from tap.contracts.events import ProjectEventEnvelope, event_content_digest
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
-from tap.platform.db.schema import outbox
+from tap.platform.db.schema import outbox, outbox_archive
 
 
 def scoped_outbox_id(scope: ProjectScopeContext, *, kind: str, identity: str) -> str:
@@ -145,28 +145,77 @@ async def write_project_event(
         "attempt_count": 0,
         "next_attempt_at": created_at,
     }
-    # Let the unique key serialize concurrent writers without an absent-row
-    # SELECT/gap lock. The duplicate branch preserves every original event fact.
-    await transaction.execute(
-        insert(outbox).values(**values).on_duplicate_key_update(outbox_id=outbox.c.outbox_id)
-    )
-    row = (
-        (
-            await transaction.execute(
-                select(outbox)
-                .where(
-                    *scope_predicates(outbox, scope),
-                    outbox.c.command_id == envelope.idempotency_key,
+    # A savepoint prevents a caught archived-key conflict from committing the
+    # temporary live insertion. The caller still owns the surrounding transaction.
+    async with transaction.begin_nested():
+        # Let the unique key serialize concurrent writers without an absent-row
+        # SELECT/gap lock. The duplicate branch preserves every original event fact.
+        await transaction.execute(
+            insert(outbox).values(**values).on_duplicate_key_update(outbox_id=outbox.c.outbox_id)
+        )
+        row = (
+            (
+                await transaction.execute(
+                    select(outbox)
+                    .where(
+                        *scope_predicates(outbox, scope),
+                        outbox.c.command_id == envelope.idempotency_key,
+                    )
+                    .with_for_update()
                 )
-                .with_for_update()
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise OutboxIdempotencyConflict("idempotency-conflict")
+        persisted = validate_outbox_row(cast(Mapping[str, Any], row))
+        if row["event_content_digest"] != values["event_content_digest"]:
+            raise OutboxIdempotencyConflict("idempotency-conflict")
+        # Current reads are necessary here: an archive may have completed while
+        # our INSERT waited for the live unique key. A precheck/snapshot would
+        # miss that move and could recreate a new fact under the archived key.
+        archived = (
+            (
+                await transaction.execute(
+                    select(outbox_archive)
+                    .where(
+                        or_(
+                            and_(
+                                *scope_predicates(outbox_archive, scope),
+                                outbox_archive.c.command_id == envelope.idempotency_key,
+                            ),
+                            outbox_archive.c.outbox_id == envelope.event_id,
+                        )
+                    )
+                    .limit(2)
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if not archived:
+            return persisted
+        if len(archived) != 1:
+            raise OutboxIdempotencyConflict("idempotency-conflict")
+        evidence = archived[0]
+        original = validate_outbox_row(dict(evidence))
+        if (
+            original.idempotency_key != envelope.idempotency_key
+            or original.enterprise_id != scope.enterprise_id
+            or original.project_id != scope.project_id
+            or evidence["event_content_digest"] != values["event_content_digest"]
+        ):
+            raise OutboxIdempotencyConflict("idempotency-conflict")
+        result = await transaction.execute(
+            delete(outbox).where(
+                *scope_predicates(outbox, scope),
+                outbox.c.outbox_id == row["outbox_id"],
+                outbox.c.command_id == envelope.idempotency_key,
+                outbox.c.event_content_digest == evidence["event_content_digest"],
             )
         )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        raise OutboxIdempotencyConflict("idempotency-conflict")
-    persisted = validate_outbox_row(cast(Mapping[str, Any], row))
-    if row["event_content_digest"] != values["event_content_digest"]:
-        raise OutboxIdempotencyConflict("idempotency-conflict")
-    return persisted
+        if result.rowcount != 1:
+            raise OutboxIdempotencyConflict("idempotency-conflict")
+        return original

@@ -144,3 +144,71 @@ def augment_project_table(table: Table) -> None:
 
 
 augment_project_table(outbox)
+
+
+def _outbox_evidence_table(name: str, *extra_columns: Column) -> Table:
+    """Retain every original relational/event fact without live-row uniqueness."""
+    from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
+
+    table = Table(
+        name,
+        metadata,
+        *(
+            Column(
+                column.name,
+                column.type.copy(),
+                primary_key=column.primary_key,
+                nullable=column.nullable,
+                server_default=column.server_default,
+            )
+            for column in outbox.c
+        ),
+        *extra_columns,
+        UniqueConstraint("project_id", "outbox_id", name=f"uq_{name}_project_pk"),
+        ForeignKeyConstraint(
+            ["enterprise_id", "project_id"],
+            ["project.enterprise_id", "project.project_id"],
+            name=f"fk_{name}_scope_project",
+        ),
+        ForeignKeyConstraint(
+            ["enterprise_id", "actor_id"],
+            ["actor_principal.enterprise_id", "actor_principal.actor_id"],
+            name=f"fk_{name}_scope_actor",
+        ),
+        CheckConstraint("json_type(envelope) = 'OBJECT'", name=f"ck_{name}_envelope_object"),
+    )
+    return table
+
+
+outbox_archive = _outbox_evidence_table(
+    "outbox_archive",
+    Column("archived_at", DATETIME(fsp=6), nullable=False),
+)
+Index(
+    "ix_outbox_archive_retention",
+    outbox_archive.c.project_id,
+    outbox_archive.c.archived_at,
+    outbox_archive.c.outbox_id,
+)
+
+Index(
+    "ix_outbox_archive_command",
+    outbox_archive.c.enterprise_id,
+    outbox_archive.c.project_id,
+    outbox_archive.c.command_id,
+)
+
+
+outbox_dead_letter = _outbox_evidence_table(
+    "outbox_dead_letter",
+    Column("failed_at", DATETIME(fsp=6), nullable=False),
+    Column("reason", String(32), nullable=False),
+    Column("redriven_at", DATETIME(fsp=6)),
+)
+Index(
+    "ix_outbox_dead_letter_redrive",
+    outbox_dead_letter.c.project_id,
+    outbox_dead_letter.c.redriven_at,
+    outbox_dead_letter.c.failed_at,
+    outbox_dead_letter.c.outbox_id,
+)

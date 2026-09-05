@@ -87,6 +87,9 @@ class RedisLuaEmulator:
         self.dedup_keys: set[str] = set()
 
     async def eval(self, script: str, number_of_keys: int, *values: object) -> int:
+        if number_of_keys == 1:
+            # This emulator has no consumer groups: recovery must retain every hint.
+            return 0
         assert number_of_keys == 2
         dedup_key = str(values[0])
         capacity = int(values[-2]) if len(values) == 5 else 100_000
@@ -218,7 +221,7 @@ def test_publish_failure_records_attempt_and_waits_until_injected_retry_time() -
             )
         assert row["attempt_count"] == 1
         assert row["next_attempt_at"] == datetime(2026, 8, 23, 11, 30, 5)
-        assert row["last_error"] == "redis unavailable"
+        assert row["last_error"] == "dispatch_unavailable"
 
         clock.advance(timedelta(seconds=5))
         succeeding = AtomicMemoryPublisher()
@@ -374,7 +377,7 @@ def test_full_redis_stream_keeps_outbox_pending_for_retry() -> None:
         assert row["status"] == "pending"
         assert row["attempt_count"] == 1
         assert row["next_attempt_at"] == datetime(2026, 8, 23, 12, 30, 5)
-        assert row["last_error"] == "Redis command stream reached capacity 1"
+        assert row["last_error"] == "stream_capacity"
 
     _run_with_clean_database(scenario)
 
@@ -418,7 +421,7 @@ def test_maximum_attempt_failure_becomes_a_durable_terminal_fact() -> None:
         assert dict(row) == {
             "status": "delivery_failed",
             "attempt_count": 10,
-            "last_error": "permanent outage",
+            "last_error": "dispatch_unavailable",
         }
 
     _run_with_clean_database(scenario)

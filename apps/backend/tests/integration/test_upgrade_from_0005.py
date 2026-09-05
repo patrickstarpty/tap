@@ -111,3 +111,17 @@ def test_0008_audit_nonempty_upgrade_constraints_and_replay(
     assert result["audit_constraints"] == "passed"
     assert result["audit_downgrade_replay"] == "passed"
     assert result["downgrade_replay"] == "passed"
+
+
+def test_0009_operations_nonempty_upgrade_constraints_and_replay(monkeypatch):
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
+    from scripts.migration_support import run_migration_gate
+
+    monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+    result = run_migration_gate("0009_outbox_operations")
+    assert result["status"] == "passed"
+    assert len(result["preserved_rows"]) == 14
+    assert result["operations_constraints"] == "passed"
+    assert result["operations_downgrade_replay"] == "passed"

@@ -67,6 +67,17 @@ class AuthorizationPolicyConformance:
         assert not denied.allowed
         assert denied.reason == "principal-disabled"
 
+    @pytest.mark.asyncio
+    async def test_operator_explicit_grant_rechecks_live_identity(self) -> None:
+        registry = IdentityRegistry()
+        policy = self.make_policy(registry)
+        assert (await policy.authorize(SCOPE, "knowledge.operate", RESOURCE)).allowed
+        assert not (
+            await policy.authorize(SCOPE, "knowledge.operate", replace(RESOURCE, kind="actor"))
+        ).allowed
+        registry.enabled = False
+        assert not (await policy.authorize(SCOPE, "knowledge.operate", RESOURCE)).allowed
+
     @pytest.mark.parametrize(
         "scope,action,resource",
         [

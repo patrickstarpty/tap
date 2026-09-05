@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from datetime import timedelta
 from time import monotonic
 from typing import Protocol, cast
 
@@ -13,6 +14,7 @@ from redis.exceptions import RedisError, ResponseError
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.platform.db.project_scope import require_project_scope
 from tap.platform.messaging.redis_dispatch import AsyncRedisStream, DispatchWakeup
+from tap.platform.messaging.redis_recovery import RecoveryRedis, RedisStreamRecovery
 
 
 class WakeupConsumer(Protocol):
@@ -49,6 +51,12 @@ class RedisWakeupConsumer:
         self._consumer_name = consumer_name
         self._aggregate_type = aggregate_type
         self._group_ready = False
+        self._recovery = RedisStreamRecovery(
+            redis=cast(RecoveryRedis, redis),
+            scope=self._scope,
+            stream_name=stream_name,
+            aggregate_type=aggregate_type,
+        )
 
     async def wait(self, *, max_wait_seconds: float) -> DispatchWakeup | None:
         if (
@@ -61,6 +69,11 @@ class RedisWakeupConsumer:
         started = monotonic()
         try:
             await self._ensure_group()
+            reclaimed = await self._recovery.reclaim_pending(
+                self._group_name, self._consumer_name, timedelta(seconds=30), 1
+            )
+            if reclaimed:
+                return reclaimed[0]
             while True:
                 remaining = max_wait_seconds - (monotonic() - started)
                 if remaining <= 0:
@@ -99,6 +112,7 @@ class RedisWakeupConsumer:
     async def ack(self, wakeup: DispatchWakeup) -> None:
         try:
             await self._redis.xack(self._stream_name, self._group_name, wakeup.stream_id)
+            await self._recovery.trim_acknowledged(10_000)
         except asyncio.CancelledError:
             raise
         except RedisError:

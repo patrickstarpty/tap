@@ -72,6 +72,44 @@ EXPECTED_INDEXES = frozenset(
 )
 
 
+@pytest.mark.asyncio
+async def test_operator_rebuild_loads_snapshot_inside_global_alias_lock():
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+
+    async def snapshot():
+        assert memory.coordinator.lock.locked()
+        return (ready_record(),)
+
+    receipt = await index.rebuild_from_snapshot(snapshot)
+    assert receipt.row_count == 1
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
+
+
+@pytest.mark.asyncio
+async def test_operator_rebuild_publication_gap_deferral_never_changes_alias():
+    from tap.modules.knowledge.domain.operations import OperationBusy
+
+    memory = MemoryMilvus()
+    index = index_for(memory)
+    await index.ensure_target()
+    record = ready_record()
+    # Existing publishing primitive has finished while SQL is not ready yet.
+    await index.upsert_revision(
+        record.work, record.chunks, record.embeddings, index_version=record.index_version
+    )
+    before = dict(memory.aliases)
+
+    async def unresolved_publishing():
+        assert memory.coordinator.lock.locked()
+        raise OperationBusy("publication-in-progress")
+
+    with pytest.raises(RebuildRejected):
+        await index.rebuild_from_snapshot(unresolved_publishing)
+    assert memory.aliases == before
+
+
 def _source_hash(revision_key: str) -> str:
     return (
         "sha256:" + "a" * 64 if revision_key == "rev_a" else canonical_sha256(revision_key.encode())

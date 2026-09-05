@@ -26,7 +26,7 @@ from tap.contracts.http import (
     ReadyHealth,
 )
 from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
-from tap.modules.access.adapters.validation import ValidationScopeProvider
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -783,10 +783,11 @@ def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore:
     )
 
     return AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(
             connection_string=SecretStr(settings.blob_connection_string),
             operation_timeout_seconds=settings.blob_timeout_seconds,
-        )
+        ),
     )
 
 

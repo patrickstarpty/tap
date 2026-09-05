@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "0005_projection_lineage"
 PROJECT_SCOPE_REVISION = "0007_project_scope_backfill"
 AUDIT_REVISION = "0008_project_audit"
+OPERATIONS_REVISION = "0009_outbox_operations"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -562,6 +563,7 @@ def assert_preserved(
         "0006_validation_identity",
         PROJECT_SCOPE_REVISION,
         AUDIT_REVISION,
+        OPERATIONS_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -592,9 +594,14 @@ def assert_preserved(
         if actual != expected:
             raise ValueError(f"baseline data changed in {name}")
         counts[name] = len(actual)
-    if revision in {"0006_validation_identity", PROJECT_SCOPE_REVISION, AUDIT_REVISION}:
+    if revision in {
+        "0006_validation_identity",
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+        OPERATIONS_REVISION,
+    }:
         assert_identity_seed(connection)
-    if revision in {PROJECT_SCOPE_REVISION, AUDIT_REVISION}:
+    if revision in {PROJECT_SCOPE_REVISION, AUDIT_REVISION, OPERATIONS_REVISION}:
         assert_scope_backfill(connection)
     return counts
 
@@ -954,6 +961,111 @@ def assert_audit_constraints(connection: Connection) -> None:
         transaction.rollback()
 
 
+def assert_operations_constraints(connection: Connection) -> None:
+    """Probe Project ownership, binary receipt keys and atomic completion shape."""
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    metadata = MetaData()
+    names = [
+        "outbox_archive",
+        "outbox_dead_letter",
+        "knowledge_operator_operation",
+        "outbox",
+    ]
+    metadata.reflect(connection, only=names)
+    for name in names[:-1]:
+        if connection.execute(select(metadata.tables[name])).first() is not None:
+            raise ValueError("new operation evidence must start empty")
+    connection.rollback()
+    transaction = connection.begin()
+    try:
+        original = dict(
+            connection.execute(select(metadata.tables["outbox"])).mappings().one()
+        )
+        evidence_tables: list[tuple[str, dict[str, Any]]] = [
+            ("outbox_archive", {"archived_at": LEGACY_TIME}),
+            (
+                "outbox_dead_letter",
+                {
+                    "failed_at": LEGACY_TIME,
+                    "reason": "delivery-failed",
+                    "redriven_at": None,
+                },
+            ),
+        ]
+        for name, extra in evidence_tables:
+            table = metadata.tables[name]
+            connection.execute(table.insert(), {**original, **extra})
+            stored = dict(connection.execute(select(table)).mappings().one())
+            if any(stored[key] != value for key, value in original.items()):
+                raise ValueError("archive changed original evidence")
+            for field in ("enterprise_id", "project_id", "actor_id"):
+                savepoint = connection.begin_nested()
+                try:
+                    connection.execute(
+                        table.insert(),
+                        {
+                            **original,
+                            **extra,
+                            "outbox_id": "invalid-" + field,
+                            field: "missing",
+                        },
+                    )
+                except IntegrityError:
+                    savepoint.rollback()
+                else:
+                    savepoint.rollback()
+                    raise ValueError("missing operations ownership constraint")
+        table = metadata.tables["knowledge_operator_operation"]
+        row = {
+            "operation_id": "operation",
+            "enterprise_id": "local",
+            "project_id": "tapper-demo",
+            "actor_id": "tapper-local-user",
+            "identity_mode": "validation",
+            "identity_origin": "VALIDATION",
+            "idempotency_key": "operation",
+            "command": "recover-uploads",
+            "parameters": {"limit": 1},
+            "parameters_digest": "a" * 64,
+            "correlation_id": "original",
+            "fence": 1,
+            "claim_token": "claim",
+            "lease_until": LEGACY_TIME,
+            "created_at": LEGACY_TIME,
+        }
+        connection.execute(table.insert(), row)
+        connection.execute(
+            table.insert(),
+            {**row, "operation_id": "OPERATION", "idempotency_key": "OPERATION"},
+        )
+        for override in (
+            {"operation_id": "duplicate"},
+            {"operation_id": "invalid-fence", "idempotency_key": "other", "fence": 0},
+            {
+                "operation_id": "invalid-result",
+                "idempotency_key": "other",
+                "result": {"outcome": "completed"},
+            },
+            {"operation_id": "invalid-project", "project_id": "missing"},
+            {
+                "operation_id": "invalid-actor",
+                "idempotency_key": "other",
+                "actor_id": "missing",
+            },
+        ):
+            savepoint = connection.begin_nested()
+            try:
+                connection.execute(table.insert(), {**row, **override})
+            except (IntegrityError, OperationalError):
+                savepoint.rollback()
+            else:
+                savepoint.rollback()
+                raise ValueError("missing operation receipt constraint")
+    finally:
+        transaction.rollback()
+
+
 def run_schema_gate() -> dict[str, Any]:
     from tap.platform.db.registry import load_authoritative_metadata
 
@@ -982,6 +1094,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         "0006_validation_identity",
         PROJECT_SCOPE_REVISION,
         AUDIT_REVISION,
+        OPERATIONS_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -996,6 +1109,26 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
+            if revision == OPERATIONS_REVISION:
+                with engine.connect() as connection:
+                    assert_operations_constraints(connection)
+                database.downgrade(AUDIT_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, AUDIT_REVISION)
+                    if {
+                        "outbox_archive",
+                        "outbox_dead_letter",
+                        "knowledge_operator_operation",
+                    } & set(inspect(connection).get_table_names()):
+                        raise ValueError("operations downgrade retained owned tables")
+                database.upgrade(OPERATIONS_REVISION)
+                with engine.connect() as connection:
+                    assert_operations_constraints(connection)
+                    assert_preserved(connection, before, OPERATIONS_REVISION)
+                identity_result.update(
+                    operations_constraints="passed",
+                    operations_downgrade_replay="passed",
+                )
             if revision == AUDIT_REVISION:
                 with engine.connect() as connection:
                     assert_audit_constraints(connection)
@@ -1027,6 +1160,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                 "0006_validation_identity",
                 PROJECT_SCOPE_REVISION,
                 AUDIT_REVISION,
+                OPERATIONS_REVISION,
             }:
                 with engine.connect() as connection:
                     identity_result["identity_seed"] = assert_identity_seed(connection)

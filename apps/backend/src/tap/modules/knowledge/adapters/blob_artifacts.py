@@ -28,6 +28,7 @@ from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blo
 from azure.storage.blob.aio import BlobClient, BlobServiceClient
 from pydantic import SecretStr
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     PARSER_VERSION,
     BlockKind,
@@ -46,12 +47,14 @@ from tap.modules.knowledge.domain.documents import (
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
+    ArtifactScavengeReceipt,
     DeletionTarget,
     EmbeddingArtifact,
     StagedOriginal,
     UploadStream,
 )
 from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, ArtifactUnavailable
+from tap.platform.db.project_scope import require_project_scope
 
 ORIGINALS_CONTAINER = "tapper-originals"
 ARTIFACTS_CONTAINER = "tapper-artifacts"
@@ -154,12 +157,6 @@ class AzureBlobArtifactConfig:
             raise ValueError("Azure Blob copy SAS lifetime must be at most five minutes")
         if self.api_version != "2023-11-03":
             raise ValueError("Azure Blob API version must match the pinned Azurite contract")
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactScavengeReceipt:
-    scanned: int
-    removed: tuple[str, ...]
 
 
 def artifact_locator(container: str, blob_name: str) -> ArtifactLocator:
@@ -478,12 +475,20 @@ def decode_embeddings_artifact(data: bytes, *, expected_revision: str) -> Embedd
         raise ArtifactIntegrityError("embedding artifact integrity check failed") from error
 
 
+def staging_prefix(scope: ProjectScopeContext) -> str:
+    scope = require_project_scope(scope)
+    identity = json.dumps([scope.enterprise_id, scope.project_id], separators=(",", ":"))
+    return "staging/project-" + sha256(identity.encode()).hexdigest() + "/"
+
+
 class AzureBlobArtifactStore:
     """Bounded async Blob adapter; locator values never carry credentials or SAS authority."""
 
-    def __init__(self, config: AzureBlobArtifactConfig) -> None:
+    def __init__(self, config: AzureBlobArtifactConfig, *, scope: ProjectScopeContext) -> None:
         if not isinstance(config, AzureBlobArtifactConfig):
             raise TypeError("Azure Blob artifact store requires validated configuration")
+        self._scope = require_project_scope(scope)
+        self._staging_prefix = staging_prefix(self._scope)
         self._config = config
         service: BlobServiceClient | None = None
         try:
@@ -498,6 +503,15 @@ class AzureBlobArtifactStore:
         self._service = service
         self._closed = False
         self._close_lock = asyncio.Lock()
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
+
+    def _require_staging_scope(self, key: str) -> None:
+        _staging_name(key)
+        if key.count("/") > 1 and not key.startswith(self._staging_prefix):
+            raise _ArtifactArgumentValueError("staging scope differs from bound Project")
 
     @_artifact_boundary
     async def ensure_containers(self) -> None:
@@ -525,7 +539,7 @@ class AzureBlobArtifactStore:
             if size == 0:
                 raise ArtifactIntegrityError("original upload is empty")
             digest = "sha256:" + digest_builder.hexdigest()
-            blob_name = f"staging/{uuid4().hex}"
+            blob_name = f"{self._staging_prefix}{uuid4().hex}"
             blob = self._blob(ORIGINALS_CONTAINER, blob_name)
             spool.seek(0)
             try:
@@ -580,6 +594,7 @@ class AzureBlobArtifactStore:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.operation_timeout_seconds
         staging_key = _persisted_staging_name(staging_key)
+        self._require_staging_scope(staging_key)
         revision_id = _persisted_identity("revision identity", revision_id)
         try:
             properties = await self._promotion_call(
@@ -618,6 +633,7 @@ class AzureBlobArtifactStore:
     @_artifact_boundary
     async def discard_staging(self, staging_key: str) -> None:
         staging_key = _persisted_staging_name(staging_key)
+        self._require_staging_scope(staging_key)
         await self._delete_if_exists(self._blob(ORIGINALS_CONTAINER, staging_key))
 
     @_artifact_boundary
@@ -734,7 +750,7 @@ class AzureBlobArtifactStore:
         loop = asyncio.get_running_loop()
         deadline_at = loop.time() + self._config.operation_timeout_seconds
         pages = container.list_blobs(
-            name_starts_with="staging/",
+            name_starts_with=self._staging_prefix,
             include=["metadata"],
         ).__aiter__()
         while scanned < limit:
@@ -752,17 +768,29 @@ class AzureBlobArtifactStore:
                 age = now - _metadata_staged_at(item.metadata)
             except (AttributeError, KeyError, TypeError, ValueError) as error:
                 raise ArtifactIntegrityError("staging listing metadata is malformed") from error
+            if not item_name.startswith(self._staging_prefix):
+                continue
             invisible = item_name not in visible_staging_keys
-            if age >= timedelta(hours=24) or (invisible and age >= timedelta(hours=1)):
+            if invisible and age >= timedelta(hours=1):
                 remaining = deadline_at - loop.time()
                 if remaining <= 0:
                     raise ArtifactProviderUnavailable(
                         "Azure Blob provider operation exceeded deadline"
                     )
-                await self._delete_if_exists(
-                    container.get_blob_client(item_name),
-                    timeout_seconds=remaining,
-                )
+                etag = getattr(item, "etag", None)
+                if not isinstance(etag, str) or not etag:
+                    raise ArtifactIntegrityError("staging listing ETag is missing")
+                try:
+                    await self._bounded(
+                        container.get_blob_client(item_name).delete_blob(
+                            delete_snapshots="include",
+                            etag=etag,
+                            match_condition=MatchConditions.IfNotModified,
+                        ),
+                        timeout_seconds=remaining,
+                    )
+                except (ResourceModifiedError, ResourceNotFoundError):
+                    continue
                 if loop.time() >= deadline_at:
                     raise ArtifactProviderUnavailable(
                         "Azure Blob provider operation exceeded deadline"
@@ -809,7 +837,7 @@ class AzureBlobArtifactStore:
         source_properties: object | None = None,
     ) -> ArtifactLocator:
         try:
-            _staging_name(staging_key)
+            self._require_staging_scope(staging_key)
             _identity("revision_id", revision_id)
             digest = _digest(expected_hash)
         except (TypeError, ValueError) as error:
@@ -1253,7 +1281,7 @@ class AzureBlobArtifactStore:
         return data
 
     async def _staging_properties(self, staging_key: str):  # type: ignore[no-untyped-def]
-        _staging_name(staging_key)
+        self._require_staging_scope(staging_key)
         return await self._bounded(
             self._blob(ORIGINALS_CONTAINER, staging_key).get_blob_properties()
         )
@@ -1587,7 +1615,7 @@ def _blob_name(value: str) -> None:
 
 def _staging_name(value: str) -> None:
     _blob_name(value)
-    if not value.startswith("staging/") or value.count("/") != 1:
+    if not value.startswith("staging/") or value.count("/") not in {1, 2}:
         raise ValueError("staging Blob name is outside the closed prefix")
 
 

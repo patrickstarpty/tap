@@ -542,6 +542,23 @@ class JobRetry:
             raise ValueError("job retry must use a safe closed error code")
 
 
+@dataclass(frozen=True, slots=True)
+class ArtifactScavengeReceipt:
+    scanned: int
+    removed: tuple[str, ...]
+
+
+class StagingScavenger(Protocol):
+    """Scan only the trusted Project namespace; retain pins and legacy orphans."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def scavenge_staging(
+        self, *, now: datetime, visible_staging_keys: frozenset[str], limit: int = 100
+    ) -> ArtifactScavengeReceipt: ...
+
+
 class ArtifactStore(Protocol):
     async def stage_original(self, upload: UploadStream, *, max_bytes: int) -> StagedOriginal: ...
 

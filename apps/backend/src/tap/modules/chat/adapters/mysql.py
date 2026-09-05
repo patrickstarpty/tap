@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.chat_stream import ChatEventEnvelope
+from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.application.ports import (
     ClaimedOutbox,
@@ -42,7 +43,9 @@ from tap.platform.messaging.mysql_outbox import (
     compatibility_outbox_values,
     scoped_outbox_id,
     validate_outbox_row,
+    write_project_event,
 )
+from tap.platform.messaging.outbox_archive import record_dead_letter, safe_dispatch_reason
 
 chat_turn = Table(
     "chat_turn",
@@ -152,24 +155,32 @@ class MysqlTurnRepository:
                         created_at=created_at,
                     )
                 )
+                event_values = compatibility_outbox_values(
+                    self._scope,
+                    outbox_id=scoped_outbox_id(
+                        self._scope, kind="turn-command", identity=command.command_id
+                    ),
+                    command_id=command.command_id,
+                    aggregate_type="chat_turn",
+                    aggregate_id=command.turn_id,
+                    sequence=None,
+                    message_type="turn.process_requested",
+                    created_at=created_at,
+                )
+                # Preserve the existing live uniqueness error contract; the
+                # common writer also fences keys whose original row was archived.
                 await session.execute(
                     insert(outbox).values(
-                        **compatibility_outbox_values(
-                            self._scope,
-                            outbox_id=scoped_outbox_id(
-                                self._scope, kind="turn-command", identity=command.command_id
-                            ),
-                            command_id=command.command_id,
-                            aggregate_type="chat_turn",
-                            aggregate_id=command.turn_id,
-                            sequence=None,
-                            message_type="turn.process_requested",
-                            created_at=created_at,
-                        ),
+                        **event_values,
                         status="pending",
                         attempt_count=0,
                         next_attempt_at=created_at,
                     )
+                )
+                await write_project_event(
+                    session,
+                    scope=self._scope,
+                    envelope=ProjectEventEnvelope.from_dict(event_values["envelope"]),
                 )
         except IntegrityError as error:
             existing = await self._find_by_client_request(
@@ -409,6 +420,7 @@ class OutboxStore:
                             last_error="invalid_persisted_event",
                         )
                     )
+                    await record_dead_letter(session, dict(row), reason="invalid_persisted_event")
                     continue
                 valid_rows.append(row)
             return [
@@ -479,7 +491,7 @@ class OutboxStore:
                     claimed_by=None,
                     claim_token=None,
                     lease_until=None,
-                    last_error=error[:2048],
+                    last_error=safe_dispatch_reason(error),
                 )
             )
             if result.rowcount != 1:
@@ -506,11 +518,26 @@ class OutboxStore:
                     claimed_by=None,
                     claim_token=None,
                     lease_until=None,
-                    last_error=error[:2048],
+                    last_error=safe_dispatch_reason(error),
                 )
             )
             if result.rowcount != 1:
                 self._raise_lease_lost(outbox_id)
+            row = (
+                (
+                    await session.execute(
+                        select(outbox)
+                        .where(
+                            *scope_predicates(outbox, self._scope),
+                            outbox.c.outbox_id == outbox_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            await record_dead_letter(session, dict(row), reason=safe_dispatch_reason(error))
 
     @staticmethod
     def _raise_lease_lost(outbox_id: str) -> NoReturn:

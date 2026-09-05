@@ -128,6 +128,24 @@ class RedisDispatchPublisher:
             payload,
         )
         if result == -1:
+            from tap.platform.messaging.redis_recovery import trim_acknowledged
+
+            removed = await trim_acknowledged(
+                self._redis,
+                self._stream_name,
+                self._max_stream_length - 1,
+            )
+            if removed:
+                result = await self._redis.eval(
+                    _PUBLISH_ONCE_SCRIPT,
+                    2,
+                    dedup_key,
+                    self._stream_name,
+                    self._dedup_ttl_seconds,
+                    self._max_stream_length,
+                    payload,
+                )
+        if result == -1:
             raise StreamCapacityExceeded(
                 f"Redis command stream reached capacity {self._max_stream_length}"
             )
@@ -183,14 +201,22 @@ class Relay:
                     await self._outbox.mark_terminal(
                         outbox_id=item.message.outbox_id,
                         claim_token=item.claim_token,
-                        error=str(error),
+                        error=(
+                            "stream_capacity"
+                            if isinstance(error, StreamCapacityExceeded)
+                            else "dispatch_unavailable"
+                        ),
                     )
                     continue
                 await self._outbox.mark_failed(
                     outbox_id=item.message.outbox_id,
                     claim_token=item.claim_token,
                     next_attempt_at=self._clock.now() + self._retry_delay,
-                    error=str(error),
+                    error=(
+                        "stream_capacity"
+                        if isinstance(error, StreamCapacityExceeded)
+                        else "dispatch_unavailable"
+                    ),
                 )
                 continue
             await self._outbox.mark_published(

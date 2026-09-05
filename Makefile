@@ -157,3 +157,7 @@ export MIGRATION
 
 migration-check: ## preserve frozen 0005 data through an exact migration revision
 	uv run --project apps/backend python scripts/check-migration.py "$${MIGRATION:-}"
+
+.PHONY: knowledge-recover
+knowledge-recover: ## bounded Knowledge operator; pass ARGS with command and explicit --project
+	uv run --project apps/backend python scripts/knowledge-operator.py $(ARGS)

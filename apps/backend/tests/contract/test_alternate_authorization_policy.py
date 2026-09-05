@@ -20,6 +20,16 @@ class InMemoryAuthorizationPolicy:
                 "knowledge",
             )
         }
+        self.grants.add(
+            (
+                "local",
+                "tapper-demo",
+                "tapper-local-user",
+                IdentityMode.VALIDATION,
+                "knowledge.operate",
+                "knowledge",
+            )
+        )
 
     async def authorize(self, scope, action, resource):
         if not isinstance(scope, ProjectScopeContext) or not isinstance(resource, ResourceRef):

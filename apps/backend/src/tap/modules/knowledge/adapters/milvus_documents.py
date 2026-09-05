@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -335,9 +335,22 @@ class MilvusDocumentIndex:
     ) -> RebuildReceipt:
         if not isinstance(records, tuple):
             raise ValueError("Tapper rebuild requires a closed ready-revision snapshot")
+
+        async def snapshot() -> tuple[ReadyRevisionArtifacts, ...]:
+            return records
+
+        return await self.rebuild_from_snapshot(snapshot)
+
+    async def rebuild_from_snapshot(
+        self, snapshot: Callable[[], Awaitable[tuple[ReadyRevisionArtifacts, ...]]]
+    ) -> RebuildReceipt:
+        """Load a fresh complete snapshot under the existing global alias fence."""
         committed_receipt: RebuildReceipt | None = None
         try:
             async with self._coordinator.mutation(self._config.alias) as authority:
+                records = await snapshot()
+                if not isinstance(records, tuple):
+                    raise ValueError("rebuild snapshot must be closed")
                 committed_receipt = await self._rebuild_locked(authority, records)
         except asyncio.CancelledError:
             if committed_receipt is not None:

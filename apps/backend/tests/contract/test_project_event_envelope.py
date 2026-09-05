@@ -280,7 +280,7 @@ def test_private_schema_uses_registered_payloads_and_bounds() -> None:
 
     schema = project_event_schema()
     variants = {item["properties"]["event_type"]["const"]: item for item in schema["oneOf"]}
-    assert len(variants) == 22
+    assert len(variants) == 23
     requested = variants["conversation.turn.requested"]
     assert set(requested["properties"]["payload"]["required"]) == {
         "conversationId",

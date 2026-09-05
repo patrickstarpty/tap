@@ -851,6 +851,159 @@
         },
         "aggregate_type": {
           "enum": [
+            "KnowledgeOperation"
+          ]
+        },
+        "aggregate_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "causation_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correlation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "enterprise_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowledge.operator.completed"
+        },
+        "idempotency_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "identity_mode": {
+          "enum": [
+            "validation",
+            "product"
+          ]
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "recover-uploads",
+                "scavenge-staging",
+                "rebuild-milvus",
+                "reconcile-all"
+              ],
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            "outcome": {
+              "enum": [
+                "completed",
+                "partial",
+                "failed"
+              ],
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            "resultDigest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operationId",
+            "command",
+            "outcome",
+            "resultDigest"
+          ],
+          "type": "object"
+        },
+        "project_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "scope_kind": {
+          "const": "PROJECT"
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "scope_kind",
+        "enterprise_id",
+        "project_id",
+        "actor_id",
+        "identity_mode",
+        "aggregate_type",
+        "aggregate_id",
+        "aggregate_version",
+        "correlation_id",
+        "causation_id",
+        "idempotency_key",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "actor_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "aggregate_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "aggregate_type": {
+          "enum": [
             "GraphSnapshot"
           ]
         },

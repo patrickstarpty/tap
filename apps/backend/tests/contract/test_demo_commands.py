@@ -2751,18 +2751,39 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
     _assert_processes_are_gone(_started_child_pids(log))
 
 
+@pytest.mark.parametrize("startup_delay", [0, 3])
 def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     tmp_path: Path,
+    startup_delay: int,
 ) -> None:
     supervisor, environment, log = _supervisor_fixture(
         tmp_path,
         ready_status="unready",
     )
+    child = supervisor.parents[1] / "fake-bin/tapper-child"
+    child.write_text(
+        child.read_text(encoding="utf-8")
+        .replace('role="$1"', f'sleep {startup_delay}\nrole="$1"', 1)
+        .replace(
+            "' TERM INT\n",
+            '\' TERM INT\nprintf \'trap-ready %s\\n\' "$role" >> "$TAPPER_CHILD_LOG"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    # Start the shortened readiness window only after the stubs can record TERM.
+    # This barrier is bounded separately and remains inside the 10-second cap.
+    stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 4 ]; do
+  [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
+  sleep 0.05
+done
+ready_deadline=$(( SECONDS + 2 ))"""
     code = supervisor.read_text(encoding="utf-8")
     supervisor.write_text(
         code.replace(
             "ready_deadline=$(( SECONDS + 90 ))",
-            "ready_deadline=$(( SECONDS + 2 ))",
+            stub_barrier,
         ),
         encoding="utf-8",
     )
@@ -2779,7 +2800,9 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
 
     assert completed.returncode == 1
     assert "Tapper local applications ready." not in completed.stdout
+    assert "Tapper applications did not become ready." in completed.stderr
     events = log.read_text(encoding="utf-8").splitlines()
+    assert any(line.startswith("env readiness ") for line in events)
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
         "api",
         "relay",

@@ -13,18 +13,22 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document_revision,
     knowledge_ingestion_job,
 )
+from tap.modules.knowledge.adapters.mysql_operations import knowledge_operator_operation
 from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_cleanup,
     knowledge_projection_fence,
     knowledge_projection_lineage,
     knowledge_projection_state,
 )
-from tap.platform.db.schema import outbox
+from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 
 # Explicit Project business inventory, separate from identity-registry ownership.
 # Adapter-local declarations carry the scope contract before they are copied.
 BUSINESS_TABLES = (
     project_audit,
+    outbox_archive,
+    outbox_dead_letter,
+    knowledge_operator_operation,
     outbox,
     chat_turn,
     chat_event,

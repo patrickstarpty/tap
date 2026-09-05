@@ -53,6 +53,13 @@ EVENT_REGISTRY: Mapping[str, EventDefinition] = MappingProxyType(
         "knowledge.document-revision.ready": _definition(
             "DocumentRevision", "revisionId", "revisionId chunkManifestDigest projectionDigest"
         ),
+        "knowledge.operator.completed": _definition(
+            "KnowledgeOperation",
+            "operationId",
+            "operationId command outcome resultDigest",
+            command=("recover-uploads", "scavenge-staging", "rebuild-milvus", "reconcile-all"),
+            outcome=("completed", "partial", "failed"),
+        ),
         "knowledge.graph-snapshot.requested": _definition(
             "GraphSnapshot", "snapshotId", "snapshotId sourceRevisionIds extractionProfileDigest"
         ),
@@ -218,6 +225,11 @@ class ProjectEventEnvelope:
             or not (0 if definition.compatibility else 1) <= self.aggregate_version <= 2**63 - 1
         ):
             raise ValueError("invalid aggregate version")
+        if self.event_type == "knowledge.operator.completed":
+            if self.aggregate_version != 1:
+                raise ValueError("operator completion version must be one")
+            if re.fullmatch(r"sha256:[0-9a-f]{64}", str(self.payload["resultDigest"])) is None:
+                raise ValueError("operator result digest must be SHA-256")
         sequence = self.payload.get("sequence")
         if definition.compatibility or "sequence" in self.payload:
             if self.aggregate_version != (sequence if sequence is not None else 0):
@@ -310,6 +322,8 @@ def project_event_schema() -> dict[str, Any]:
                 "causation_id": {"anyOf": [identifier, {"type": "null"}]},
             }
         )
+        if event_type == "knowledge.operator.completed":
+            properties["aggregate_version"] = {"const": 1, "type": "integer"}
         payload: dict[str, Any] = {}
         for name, choices in definition.fields.items():
             if name == "sequence":
@@ -322,6 +336,8 @@ def project_event_schema() -> dict[str, Any]:
                 payload[name] = {"type": "array", "minItems": 1, "items": identifier}
             else:
                 payload[name] = {**identifier, **({"enum": list(choices)} if choices else {})}
+        if event_type == "knowledge.operator.completed":
+            payload["resultDigest"] = {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         payload[definition.aggregate_field]["maxLength"] = 64
         properties["payload"] = {
             "type": "object",

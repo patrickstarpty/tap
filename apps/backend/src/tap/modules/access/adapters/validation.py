@@ -22,6 +22,7 @@ _VALIDATION_ACTIONS = frozenset(
         ("knowledge.delete", "knowledge"),
         ("knowledge.search", "knowledge"),
         ("knowledge.answer", "knowledge"),
+        ("knowledge.operate", "knowledge"),
     }
 )
 
