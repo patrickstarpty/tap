@@ -1095,7 +1095,7 @@ def evidence(
             schema_version="search-schema-v1",
             corpus_version="corpus-17",
         ),
-        embedding_model_version="athena-embedding",
+        embedding_model_version="tapper-embedding",
         acl_decision_id="decision-17",
         score=1 / 61,
     )

@@ -1,4 +1,4 @@
-"""Redis-backed one-shot stage control for the exact Athena E2E profile."""
+"""Redis-backed one-shot stage control for the exact Tapper E2E profile."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ class RedisStageFailureController:
         raise IngestionStageFailure(stage)
 
     def _key(self, stage: FailureStage) -> str:
-        return f"tap:athena:e2e:{self._project}:fail-next:{stage}"
+        return f"tap:tapper:e2e:{self._project}:fail-next:{stage}"
 
 
 def _stage(value: str) -> FailureStage:

@@ -225,7 +225,7 @@ def _validate_gateway_response(response: AnswerResponse) -> None:
     _bounded("answer query plan ID", response.query_plan_id, maximum=256)
     _bounded("answer context snapshot ID", response.context_snapshot_id, maximum=256)
     if (
-        response.corpus_version != "athena-demo-v1"
+        response.corpus_version != "tapper-demo-v1"
         or response.retrieval_profile_id is not RetrievalProfileId.QUICK_HYBRID_V1
         or not isinstance(response.answer, str)
         or type(response.abstained) is not bool

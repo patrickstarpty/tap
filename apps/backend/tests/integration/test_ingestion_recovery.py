@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import text
 
-from tap.entrypoints import athena_ingestion_worker
+from tap.entrypoints import tapper_ingestion_worker
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application import ingestion
@@ -253,8 +253,8 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                     parent_id=None,
                     anchor_json=anchor_json,
                     chunk_content_hash=chunk_hash,
-                    embedding_model_version="athena-embedding",
-                    index_version="athena-doc-v1",
+                    embedding_model_version="tapper-embedding",
+                    index_version="tapper-index-v1",
                 ),
             )
             await repository.commit_stage(
@@ -281,7 +281,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
             await asyncio.sleep(1.05)
 
             embeddings = EmbeddingArtifact(
-                model_alias="athena-embedding",
+                model_alias="tapper-embedding",
                 dimension=3,
                 vectors=((0.0, 1.0, 2.0),),
                 chunk_ids=(manifest[0].chunk_id,),
@@ -313,22 +313,22 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                 embeddings=completed_stage,
                 index=index,  # type: ignore[arg-type]
                 worker_id="worker-after-crash",
-                embedding_model_alias="athena-embedding",
+                embedding_model_alias="tapper-embedding",
                 embedding_dimension=3,
-                index_version="athena-doc-v1",
+                index_version="tapper-index-v1",
             )
 
-            await athena_ingestion_worker.run_worker_loop(
+            await tapper_ingestion_worker.run_worker_loop(
                 worker=restarted,
                 wakeups=UnavailableWakeups(),  # type: ignore[arg-type]
-                settings=athena_ingestion_worker.WorkerSettings(
+                settings=tapper_ingestion_worker.WorkerSettings(
                     database_url=DATABASE_URL,
                     redis_url="redis://127.0.0.1:16379/0",
                     job_batch_size=10,
                     poll_seconds=0.01,
                     wakeup_seconds=0.01,
-                    stream_name="tap-athena-e2e:commands",
-                    group_name="athena-ingestion",
+                    stream_name="tap-tapper-e2e:commands",
+                    group_name="tapper-ingestion",
                     worker_id="recovery-worker",
                 ),
                 stop=asyncio.Event(),
@@ -673,8 +673,8 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                     parent_id=None,
                     anchor_json=anchor_json,
                     chunk_content_hash=chunk_hash,
-                    embedding_model_version="athena-embedding",
-                    index_version="athena-doc-v1",
+                    embedding_model_version="tapper-embedding",
+                    index_version="tapper-index-v1",
                 ),
             )
             await repository.commit_stage(
@@ -709,7 +709,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
 
             artifacts = DurableArtifacts(
                 EmbeddingArtifact(
-                    "athena-embedding",
+                    "tapper-embedding",
                     3,
                     ((0.0, 1.0, 2.0),),
                     (manifest[0].chunk_id,),
@@ -726,9 +726,9 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                 embeddings=completed_stage,
                 index=index,  # type: ignore[arg-type]
                 worker_id="blocked-publisher",
-                embedding_model_alias="athena-embedding",
+                embedding_model_alias="tapper-embedding",
                 embedding_dimension=3,
-                index_version="athena-doc-v1",
+                index_version="tapper-index-v1",
             )
             deleting_worker = IngestionWorker(
                 repository=MysqlDocumentRepository(sessions),
@@ -738,9 +738,9 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                 embeddings=completed_stage,
                 index=index,  # type: ignore[arg-type]
                 worker_id="deleting-worker",
-                embedding_model_alias="athena-embedding",
+                embedding_model_alias="tapper-embedding",
                 embedding_dimension=3,
-                index_version="athena-doc-v1",
+                index_version="tapper-index-v1",
             )
 
             publish_task = asyncio.create_task(publisher.run_once(limit=1))
@@ -872,9 +872,9 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                 embeddings=completed,
                 index=index,  # type: ignore[arg-type]
                 worker_id="blocked-artifact-owner",
-                embedding_model_alias="athena-embedding",
+                embedding_model_alias="tapper-embedding",
                 embedding_dimension=3,
-                index_version="athena-doc-v1",
+                index_version="tapper-index-v1",
             )
             deletion_owner = IngestionWorker(
                 repository=MysqlDocumentRepository(sessions),
@@ -884,9 +884,9 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                 embeddings=completed,
                 index=index,  # type: ignore[arg-type]
                 worker_id="artifact-deletion-owner",
-                embedding_model_alias="athena-embedding",
+                embedding_model_alias="tapper-embedding",
                 embedding_dimension=3,
-                index_version="athena-doc-v1",
+                index_version="tapper-index-v1",
             )
 
             old_task = asyncio.create_task(old_owner.run_once(limit=1))

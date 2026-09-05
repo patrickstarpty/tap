@@ -40,7 +40,7 @@ from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, Artifac
 
 DOCUMENT_ID = DocumentId("doc_" + "1" * 32)
 SOURCE_HASH = "sha256:" + "a" * 64
-REVISION_ID = revision_id_for(DOCUMENT_ID, SOURCE_HASH, "athena-parser-v1")
+REVISION_ID = revision_id_for(DOCUMENT_ID, SOURCE_HASH, "tapper-parser-v1")
 
 
 def fixtures() -> tuple[
@@ -106,8 +106,8 @@ def fixtures() -> tuple[
         parent_id="b_000000",
         anchor_json=anchor_json,
         chunk_content_hash=chunk_hash,
-        embedding_model_version="athena-embedding",
-        index_version="athena-doc-v1",
+        embedding_model_version="tapper-embedding",
+        index_version="tapper-index-v1",
     )
     citation = CitationSnapshot(
         trace_id="trace-a",
@@ -133,10 +133,10 @@ def fixtures() -> tuple[
             current_source_content_hash=SOURCE_HASH,
             revision_source_content_hash=SOURCE_HASH,
             normalized_locator=ArtifactLocator(
-                f"athena-artifacts/revisions/{REVISION_ID}/normalized-v1.json"
+                f"tapper-artifacts/revisions/{REVISION_ID}/normalized-v1.json"
             ),
             chunks_locator=ArtifactLocator(
-                f"athena-artifacts/revisions/{REVISION_ID}/chunks-v1.jsonl.gz"
+                f"tapper-artifacts/revisions/{REVISION_ID}/chunks-v1.jsonl.gz"
             ),
         ),
         manifest=manifest,

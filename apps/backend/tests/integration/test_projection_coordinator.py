@@ -17,7 +17,7 @@ DATABASE_URL = os.getenv(
     "TAP_DATABASE_URL",
     "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
 )
-ALIAS = "kb_doc_athena_demo_active"
+ALIAS = "kb_doc_tapper_demo_active"
 NAMESPACE = "task5-coordinator-contract"
 AUTHORITY_KEY = f"{NAMESPACE}:{ALIAS}"
 
@@ -67,40 +67,40 @@ def test_mysql_projection_authority_is_shared_across_engines_and_reconstruction(
 
         try:
             async with first.mutation(ALIAS) as lease:
-                assert await lease.initialize("kb_doc_v1_athena_demo") == (
+                assert await lease.initialize("kb_doc_v1_tapper_demo") == (
                     1,
-                    "kb_doc_v1_athena_demo",
+                    "kb_doc_v1_tapper_demo",
                 )
                 await lease.record_fence("rev_deleted", "doc_a")
                 task = asyncio.create_task(contender())
                 await asyncio.sleep(0.05)
                 assert not entered_second.is_set()
                 first_build = await lease.reserve_build(
-                    "kb_doc_v1_athena_demo_000000000001",
-                    "kb_doc_v1_athena_demo",
+                    "kb_doc_v1_tapper_demo_000000000001",
+                    "kb_doc_v1_tapper_demo",
                     "a" * 32,
                 )
                 assert await lease.activate_build(first_build) == (
                     2,
-                    "kb_doc_v1_athena_demo_000000000001",
+                    "kb_doc_v1_tapper_demo_000000000001",
                 )
 
             assert await task == (
                 2,
-                "kb_doc_v1_athena_demo_000000000001",
+                "kb_doc_v1_tapper_demo_000000000001",
                 True,
             )
             async with second.mutation(ALIAS) as lease:
                 assert await lease.fences(10) == (("rev_deleted", "doc_a"),)
                 assert await lease.owned_cleanup(10) == ()
                 second_build = await lease.reserve_build(
-                    "kb_doc_v1_athena_demo_000000000002",
-                    "kb_doc_v1_athena_demo_000000000001",
+                    "kb_doc_v1_tapper_demo_000000000002",
+                    "kb_doc_v1_tapper_demo_000000000001",
                     "b" * 32,
                 )
                 assert await lease.activate_build(second_build) == (
                     3,
-                    "kb_doc_v1_athena_demo_000000000002",
+                    "kb_doc_v1_tapper_demo_000000000002",
                 )
                 cleanup = await lease.owned_cleanup(10)
                 assert cleanup == (

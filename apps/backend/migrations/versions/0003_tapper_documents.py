@@ -1,4 +1,4 @@
-"""Create Athena's durable document, ingestion, manifest, answer, and citation ledger."""
+"""Create Tapper's durable document, ingestion, manifest, answer, and citation ledger."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
-revision: str = "0003_athena_documents"
+revision: str = "0003_tapper_documents"
 down_revision: str | None = "0002_outbox_claim_token"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

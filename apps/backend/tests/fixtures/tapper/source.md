@@ -1,6 +1,6 @@
-# Refund policy
+# Tapper refund policy
 
-Two approvals are required for refunds over the team limit.
+Tapper requires two approvals for refunds over the team limit.
 
 ```text
 Finance approval is recorded before payment.

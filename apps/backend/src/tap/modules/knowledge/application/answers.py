@@ -1,4 +1,4 @@
-"""Selected-source answer orchestration for the local Athena knowledge space."""
+"""Selected-source answer orchestration for the local Tapper knowledge space."""
 
 from __future__ import annotations
 

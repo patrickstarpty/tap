@@ -1,4 +1,4 @@
-"""Strict settings, lifecycle ownership, and composition roots for Athena local runtime."""
+"""Strict settings, lifecycle ownership, and composition roots for Tapper local runtime."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-    from tap.entrypoints.athena_ingestion_worker import WorkerRuntime
+    from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.knowledge.adapters.blob_artifacts import AzureBlobArtifactStore
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
     from tap.modules.knowledge.ports.documents import JobStage
-    from tap.operations.milvus.client import AthenaDocumentMilvusClients
+    from tap.operations.milvus.client import TapperDocumentMilvusClients
 
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -81,22 +81,22 @@ _MODEL_ROUTE = re.compile(
 )
 _CODEX_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _CODEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
-_FIXED_COLLECTION = "kb_doc_v1_athena_demo"
-_FIXED_ALIAS = "kb_doc_athena_demo_active"
-_FIXED_CORPUS = "athena-demo-v1"
-_FIXED_CHAT_ALIAS = "athena-chat"
-_FIXED_EMBEDDING_ALIAS = "athena-embedding"
+_FIXED_COLLECTION = "kb_doc_v1_tapper_demo"
+_FIXED_ALIAS = "kb_doc_tapper_demo_active"
+_FIXED_CORPUS = "tapper-demo-v1"
+_FIXED_CHAT_ALIAS = "tapper-chat"
+_FIXED_EMBEDDING_ALIAS = "tapper-embedding"
 _FIXED_LITELLM_EMBEDDING_ROUTE = "dashscope/text-embedding-v4"
 _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
 _FIXED_SCHEMA_VERSION = "doc-schema-v1"
 _FIXED_TENANT = "local"
-_FIXED_PROJECT = "athena-demo"
-_FIXED_GROUP = "athena-local"
+_FIXED_PROJECT = "tapper-demo"
+_FIXED_GROUP = "tapper-local"
 _FIXED_ENVIRONMENT = "global"
 
 
 @dataclass(frozen=True, slots=True)
-class AthenaSettings:
+class TapperSettings:
     """One validated authority for every API, worker, and provider setting."""
 
     api_host: str
@@ -152,50 +152,50 @@ class AthenaSettings:
     environment: str = _FIXED_ENVIRONMENT
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, str]) -> AthenaSettings:
+    def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
         if not isinstance(values, Mapping):
-            raise TypeError("Athena settings require a string mapping")
+            raise TypeError("Tapper settings require a string mapping")
         backend = _fixed_choice(
             values,
-            "ATHENA_MODEL_BACKEND",
+            "TAPPER_MODEL_BACKEND",
             default="litellm",
             choices=frozenset({"litellm", "fake"}),
         )
         demo_mode = _value(values, "TAP_DEMO_MODE", "")
         if demo_mode not in {"", "e2e"} or ((demo_mode == "e2e") != (backend == "fake")):
             raise ValueError(
-                "ATHENA_MODEL_BACKEND=fake requires exact TAP_DEMO_MODE=e2e and vice versa"
+                "TAPPER_MODEL_BACKEND=fake requires exact TAP_DEMO_MODE=e2e and vice versa"
             )
         answer_backend = _fixed_choice(
             values,
-            "ATHENA_ANSWER_BACKEND",
+            "TAPPER_ANSWER_BACKEND",
             default="litellm",
             choices=frozenset({"litellm", "codex"}),
         )
         if backend == "fake" and answer_backend == "codex":
             raise ValueError(
-                "ATHENA_ANSWER_BACKEND=codex is unavailable with the fake model backend"
+                "TAPPER_ANSWER_BACKEND=codex is unavailable with the fake model backend"
             )
-        codex_model = _value(values, "ATHENA_CODEX_MODEL", "gpt-5.6-sol")
+        codex_model = _value(values, "TAPPER_CODEX_MODEL", "gpt-5.6-sol")
         if _CODEX_MODEL.fullmatch(codex_model) is None:
-            raise ValueError("ATHENA_CODEX_MODEL is outside the closed syntax")
+            raise ValueError("TAPPER_CODEX_MODEL is outside the closed syntax")
         codex_reasoning_effort = _fixed_choice(
             values,
-            "ATHENA_CODEX_REASONING_EFFORT",
+            "TAPPER_CODEX_REASONING_EFFORT",
             default="ultra",
             choices=_CODEX_REASONING_EFFORTS,
         )
         codex_timeout_seconds = _duration(
             values,
-            "ATHENA_CODEX_TIMEOUT_SECONDS",
+            "TAPPER_CODEX_TIMEOUT_SECONDS",
             300.0,
             maximum=900,
         )
         if codex_timeout_seconds < 30:
-            raise ValueError("ATHENA_CODEX_TIMEOUT_SECONDS is outside the closed bound")
+            raise ValueError("TAPPER_CODEX_TIMEOUT_SECONDS is outside the closed bound")
 
-        api_host = _loopback_host(values, "ATHENA_API_HOST", "127.0.0.1")
-        web_host = _loopback_host(values, "ATHENA_WEB_HOST", "127.0.0.1")
+        api_host = _loopback_host(values, "TAPPER_API_HOST", "127.0.0.1")
+        web_host = _loopback_host(values, "TAPPER_WEB_HOST", "127.0.0.1")
         database_url = _loopback_url(
             values,
             "TAP_DATABASE_URL",
@@ -241,7 +241,7 @@ class AthenaSettings:
             litellm_model = _model_route(values, "LITELLM_MODEL")
             litellm_embedding_model = _fixed_value(
                 values,
-                "LITELLM_ATHENA_EMBEDDING_MODEL",
+                "LITELLM_TAPPER_EMBEDDING_MODEL",
                 _FIXED_LITELLM_EMBEDDING_ROUTE,
             )
             allowed_answer_labels = _model_labels(_FIXED_CHAT_ALIAS, litellm_model)
@@ -251,7 +251,7 @@ class AthenaSettings:
             )
             if allowed_answer_labels & allowed_embedding_labels:
                 raise ValueError(
-                    "LITELLM_ATHENA_EMBEDDING_MODEL must not overlap LITELLM_MODEL response labels"
+                    "LITELLM_TAPPER_EMBEDDING_MODEL must not overlap LITELLM_MODEL response labels"
                 )
         else:
             litellm_model = _FIXED_CHAT_ALIAS
@@ -259,25 +259,25 @@ class AthenaSettings:
             allowed_answer_labels = frozenset({_FIXED_CHAT_ALIAS})
             allowed_embedding_labels = frozenset({_FIXED_EMBEDDING_ALIAS})
 
-        collection = _fixed_value(values, "ATHENA_COLLECTION", _FIXED_COLLECTION)
-        alias = _fixed_value(values, "ATHENA_ALIAS", _FIXED_ALIAS)
-        corpus = _fixed_value(values, "ATHENA_CORPUS_VERSION", _FIXED_CORPUS)
-        chat_alias = _fixed_value(values, "ATHENA_CHAT_ALIAS", _FIXED_CHAT_ALIAS)
-        embedding_alias = _fixed_value(values, "ATHENA_EMBEDDING_ALIAS", _FIXED_EMBEDDING_ALIAS)
+        collection = _fixed_value(values, "TAPPER_COLLECTION", _FIXED_COLLECTION)
+        alias = _fixed_value(values, "TAPPER_ALIAS", _FIXED_ALIAS)
+        corpus = _fixed_value(values, "TAPPER_CORPUS_VERSION", _FIXED_CORPUS)
+        chat_alias = _fixed_value(values, "TAPPER_CHAT_ALIAS", _FIXED_CHAT_ALIAS)
+        embedding_alias = _fixed_value(values, "TAPPER_EMBEDDING_ALIAS", _FIXED_EMBEDDING_ALIAS)
         retrieval_profile = _fixed_value(
             values,
-            "ATHENA_RETRIEVAL_PROFILE",
+            "TAPPER_RETRIEVAL_PROFILE",
             _FIXED_RETRIEVAL_PROFILE,
         )
         dimension = _integer(
             values,
-            "ATHENA_EMBEDDING_DIMENSION",
+            "TAPPER_EMBEDDING_DIMENSION",
             1536,
             minimum=1,
             maximum=4096,
         )
         if dimension != 1536:
-            raise ValueError("ATHENA_EMBEDDING_DIMENSION must equal 1536")
+            raise ValueError("TAPPER_EMBEDDING_DIMENSION must equal 1536")
 
         milvus_reader_username = _identity(
             values,
@@ -302,19 +302,19 @@ class AthenaSettings:
 
         return cls(
             api_host=api_host,
-            api_port=_integer(values, "ATHENA_API_PORT", 8000, minimum=1, maximum=65535),
+            api_port=_integer(values, "TAPPER_API_PORT", 8000, minimum=1, maximum=65535),
             web_host=web_host,
-            web_port=_integer(values, "ATHENA_WEB_PORT", 5173, minimum=1, maximum=65535),
+            web_port=_integer(values, "TAPPER_WEB_PORT", 5173, minimum=1, maximum=65535),
             model_backend=backend,
             answer_backend=answer_backend,
             codex_model=codex_model,
             codex_reasoning_effort=codex_reasoning_effort,
             codex_timeout_seconds=codex_timeout_seconds,
             embedding_dimension=dimension,
-            poll_seconds=_duration(values, "ATHENA_POLL_SECONDS", 1.0, maximum=60),
+            poll_seconds=_duration(values, "TAPPER_POLL_SECONDS", 1.0, maximum=60),
             job_batch_size=_integer(
                 values,
-                "ATHENA_JOB_BATCH_SIZE",
+                "TAPPER_JOB_BATCH_SIZE",
                 10,
                 minimum=1,
                 maximum=50,
@@ -326,19 +326,19 @@ class AthenaSettings:
             embedding_alias=embedding_alias,
             retrieval_profile=retrieval_profile,
             schema_version=_FIXED_SCHEMA_VERSION,
-            index_version=_fixed_value(values, "ATHENA_INDEX_VERSION", "athena-index-v1"),
-            pipeline_version=_fixed_value(values, "ATHENA_PIPELINE_VERSION", "athena-ingestion-v1"),
-            worker_id=_identity(values, "ATHENA_WORKER_ID", "athena-local-worker"),
+            index_version=_fixed_value(values, "TAPPER_INDEX_VERSION", "tapper-index-v1"),
+            pipeline_version=_fixed_value(values, "TAPPER_PIPELINE_VERSION", "tapper-ingestion-v1"),
+            worker_id=_identity(values, "TAPPER_WORKER_ID", "tapper-local-worker"),
             compose_project=_project(values),
             ready_timeout_seconds=_duration(
-                values, "ATHENA_READY_TIMEOUT_SECONDS", 2.0, maximum=30
+                values, "TAPPER_READY_TIMEOUT_SECONDS", 2.0, maximum=30
             ),
             model_timeout_seconds=_duration(
-                values, "ATHENA_MODEL_TIMEOUT_SECONDS", 15.0, maximum=60
+                values, "TAPPER_MODEL_TIMEOUT_SECONDS", 15.0, maximum=60
             ),
-            blob_timeout_seconds=_duration(values, "ATHENA_BLOB_TIMEOUT_SECONDS", 15.0, maximum=60),
+            blob_timeout_seconds=_duration(values, "TAPPER_BLOB_TIMEOUT_SECONDS", 15.0, maximum=60),
             milvus_timeout_seconds=_duration(
-                values, "ATHENA_MILVUS_TIMEOUT_SECONDS", 10.0, maximum=60
+                values, "TAPPER_MILVUS_TIMEOUT_SECONDS", 10.0, maximum=60
             ),
             database_url=database_url,
             alembic_database_url=alembic_database_url,
@@ -374,12 +374,12 @@ class _AsyncCloseable(Protocol):
 CloseCallback = Callable[[], Awaitable[object] | object]
 
 
-class AthenaEmbeddingPort(QueryEmbeddingPort, DocumentEmbeddingPort, Protocol):
+class TapperEmbeddingPort(QueryEmbeddingPort, DocumentEmbeddingPort, Protocol):
     """The one real or fake adapter shared by query and document Embedding."""
 
 
 @dataclass(frozen=True, slots=True)
-class AthenaAnswerBackend:
+class TapperAnswerBackend:
     """Selected generator plus its optional readiness and ownership boundaries."""
 
     generator: AnswerGenerationPort
@@ -409,7 +409,7 @@ class _CodexConfigurationUnavailable(RuntimeError):
     """Expected local login-location failure without sensitive detail retention."""
 
 
-class AthenaFailureController(Protocol):
+class TapperFailureController(Protocol):
     """Closed E2E-only controller shared by the API arm route and worker hook."""
 
     async def arm(self, stage: str) -> str: ...
@@ -484,7 +484,7 @@ class OwnedResources:
                         # awaited past this hard containment deadline.
                         task.cancel()
                         task.add_done_callback(_consume_background_task)
-                        raise TimeoutError("Athena runtime resource close timed out")
+                        raise TimeoutError("Tapper runtime resource close timed out")
                     task.result()
             except BaseException as error:
                 errors.append(error)
@@ -493,10 +493,10 @@ class OwnedResources:
         if errors:
             if all(isinstance(error, Exception) for error in errors):
                 raise ExceptionGroup(
-                    "Athena runtime lifecycle failed",
+                    "Tapper runtime lifecycle failed",
                     cast(list[Exception], errors),
                 )
-            raise BaseExceptionGroup("Athena runtime lifecycle failed", errors)
+            raise BaseExceptionGroup("Tapper runtime lifecycle failed", errors)
 
 
 def _consume_background_task(task: asyncio.Future[object]) -> None:
@@ -554,7 +554,7 @@ class ReadinessService:
 
     async def check(self) -> ReadyHealth:
         tasks = tuple(
-            asyncio.create_task(self._bounded(check), name=f"athena-ready-{name.value}")
+            asyncio.create_task(self._bounded(check), name=f"tapper-ready-{name.value}")
             for name, check in zip(self._ORDER, self._checks, strict=True)
         )
         results = await asyncio.gather(*tasks)
@@ -582,22 +582,22 @@ class ReadinessService:
 
 
 @dataclass(slots=True)
-class AthenaApiRuntime:
+class TapperApiRuntime:
     """One API process graph with a single outer ownership boundary."""
 
     http_services: HttpServices
     _resources: OwnedResources
-    failure_controller: AthenaFailureController | None = None
+    failure_controller: TapperFailureController | None = None
 
     async def aclose(self) -> None:
         await self._resources.aclose()
 
 
-async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
+async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
     """Construct the API graph only after one complete settings snapshot validates."""
 
-    if not isinstance(settings, AthenaSettings):
-        raise TypeError("Athena API runtime requires validated settings")
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper API runtime requires validated settings")
     resources = OwnedResources()
     try:
         engine, repository = await _create_database(settings)
@@ -635,7 +635,7 @@ async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
             readiness=readiness,
             redactor=LocalEgressRedactor(),
         )
-        return AthenaApiRuntime(
+        return TapperApiRuntime(
             http_services=services,
             _resources=resources,
             failure_controller=failure_controller,
@@ -645,11 +645,11 @@ async def create_api_runtime(settings: AthenaSettings) -> AthenaApiRuntime:
         raise AssertionError("resource settlement unexpectedly returned")
 
 
-async def create_worker_runtime(settings: AthenaSettings) -> WorkerRuntime:
+async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
     """Construct one ingestion worker graph behind a single outer owner."""
 
-    if not isinstance(settings, AthenaSettings):
-        raise TypeError("Athena worker runtime requires validated settings")
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper worker runtime requires validated settings")
     resources = OwnedResources()
     try:
         engine, repository = await _create_database(settings)
@@ -681,15 +681,15 @@ async def create_worker_runtime(settings: AthenaSettings) -> WorkerRuntime:
 
 
 def _create_stage_controller(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     redis: Redis,
-) -> AthenaFailureController | None:
+) -> TapperFailureController | None:
     if not settings.e2e_mode:
         return None
     from tap.testing.failure_injection import RedisStageFailureController
 
     return cast(
-        AthenaFailureController,
+        TapperFailureController,
         RedisStageFailureController(redis=redis, project=settings.compose_project),
     )
 
@@ -707,7 +707,7 @@ class LocalEgressRedactor:
     async def redact(self, text: str) -> RedactionResult:
         return RedactionResult(
             sanitized_text=text,
-            redaction_version="athena-local-egress-v1",
+            redaction_version="tapper-local-egress-v1",
         )
 
 
@@ -716,11 +716,11 @@ class LocalSearchAuditSink(SearchAuditSink):
 
     async def emit(self, event: MilvusSearchAuditEvent) -> None:
         if not isinstance(event, MilvusSearchAuditEvent):
-            raise TypeError("Athena search audit requires the fixed Milvus event")
+            raise TypeError("Tapper search audit requires the fixed Milvus event")
 
 
 async def _create_database(
-    settings: AthenaSettings,
+    settings: TapperSettings,
 ) -> tuple[AsyncEngine, MysqlDocumentRepository]:
     engine, sessions = _open_database(settings)
     try:
@@ -734,7 +734,7 @@ async def _create_database(
 
 
 def _open_database(
-    settings: AthenaSettings,
+    settings: TapperSettings,
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
     from tap.platform.db.session import create_engine_and_session_factory
 
@@ -749,7 +749,7 @@ def _build_document_repository(
     return MysqlDocumentRepository(sessions)
 
 
-def _create_blob(settings: AthenaSettings) -> AzureBlobArtifactStore:
+def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore:
     from pydantic import SecretStr
 
     from tap.modules.knowledge.adapters.blob_artifacts import (
@@ -765,7 +765,7 @@ def _create_blob(settings: AthenaSettings) -> AzureBlobArtifactStore:
     )
 
 
-def _create_redis(settings: AthenaSettings) -> Redis:
+def _create_redis(settings: TapperSettings) -> Redis:
     from redis.asyncio import Redis
 
     return Redis.from_url(
@@ -779,7 +779,7 @@ def _create_redis(settings: AthenaSettings) -> Redis:
     )
 
 
-def _create_litellm_adapter(settings: AthenaSettings) -> LiteLLMAdapter:
+def _create_litellm_adapter(settings: TapperSettings) -> LiteLLMAdapter:
     return LiteLLMAdapter(
         LiteLLMConfig(
             base_url=settings.litellm_base_url,
@@ -797,17 +797,17 @@ def _create_litellm_adapter(settings: AthenaSettings) -> LiteLLMAdapter:
     )
 
 
-def _create_embeddings(settings: AthenaSettings) -> AthenaEmbeddingPort:
+def _create_embeddings(settings: TapperSettings) -> TapperEmbeddingPort:
     if settings.e2e_mode:
-        from tap.testing.deterministic_model import DeterministicAthenaModel
+        from tap.testing.deterministic_model import DeterministicTapperModel
 
-        return cast(AthenaEmbeddingPort, DeterministicAthenaModel())
+        return cast(TapperEmbeddingPort, DeterministicTapperModel())
 
-    return cast(AthenaEmbeddingPort, _create_litellm_adapter(settings))
+    return cast(TapperEmbeddingPort, _create_litellm_adapter(settings))
 
 
 def _codex_config(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     target: NativeCodexTarget,
 ) -> CodexExecConfig:
     codex_home = _resolve_codex_home()
@@ -839,12 +839,12 @@ def _resolve_codex_home() -> Path:
 
 
 def _create_answer_backend(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     *,
-    embeddings: AthenaEmbeddingPort,
-) -> AthenaAnswerBackend:
+    embeddings: TapperEmbeddingPort,
+) -> TapperAnswerBackend:
     if settings.e2e_mode or settings.answer_backend == "litellm":
-        return AthenaAnswerBackend(
+        return TapperAnswerBackend(
             generator=cast(AnswerGenerationPort, embeddings),
             readiness=None,
             owner=None,
@@ -869,16 +869,16 @@ def _create_answer_backend(
         return _unavailable_codex_backend()
     adapter = CodexExecAnswerAdapter(config)
 
-    return AthenaAnswerBackend(
+    return TapperAnswerBackend(
         generator=adapter,
         readiness=adapter.check_ready,
         owner=adapter,
     )
 
 
-def _unavailable_codex_backend() -> AthenaAnswerBackend:
+def _unavailable_codex_backend() -> TapperAnswerBackend:
     unavailable = _UnavailableCodexAnswers()
-    return AthenaAnswerBackend(
+    return TapperAnswerBackend(
         generator=unavailable,
         readiness=unavailable.check_ready,
         owner=None,
@@ -886,7 +886,7 @@ def _unavailable_codex_backend() -> AthenaAnswerBackend:
 
 
 async def _create_document_index(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     engine: AsyncEngine,
 ) -> MilvusDocumentIndex:
     """Build the role-isolated index and settle every untransferred child."""
@@ -910,13 +910,13 @@ async def _create_document_index(
 
 
 async def _open_document_clients(
-    settings: AthenaSettings,
-) -> AthenaDocumentMilvusClients:
+    settings: TapperSettings,
+) -> TapperDocumentMilvusClients:
     from pydantic import SecretStr
 
-    from tap.operations.milvus.client import create_athena_document_clients
+    from tap.operations.milvus.client import create_tapper_document_clients
 
-    return await create_athena_document_clients(
+    return await create_tapper_document_clients(
         uri=settings.milvus_uri,
         database=settings.milvus_database,
         provisioner_username=settings.milvus_provisioner_username,
@@ -929,7 +929,7 @@ async def _open_document_clients(
 
 
 def _create_projection_coordinator(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     engine: AsyncEngine,
 ) -> MysqlProjectionCoordinator:
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
@@ -941,16 +941,16 @@ def _create_projection_coordinator(
 
 
 def _build_document_index(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     coordinator: MysqlProjectionCoordinator,
-    parts: AthenaDocumentMilvusClients,
+    parts: TapperDocumentMilvusClients,
 ) -> MilvusDocumentIndex:
     from tap.modules.knowledge.adapters.milvus_documents import (
-        AthenaMilvusConfig,
         MilvusDocumentIndex,
+        TapperMilvusConfig,
     )
 
-    config = AthenaMilvusConfig(
+    config = TapperMilvusConfig(
         physical_collection=settings.collection,
         alias=settings.alias,
         schema_version=settings.schema_version,
@@ -972,7 +972,7 @@ def _build_document_index(
 
 
 async def _create_search(
-    settings: AthenaSettings,
+    settings: TapperSettings,
 ) -> tuple[MilvusSearchAdapter, PyMilvusReader, MilvusIndexTarget]:
     from pydantic import SecretStr
 
@@ -1032,7 +1032,7 @@ def _build_search_adapter(
     )
 
 
-def _create_models_probe_client(settings: AthenaSettings) -> httpx.AsyncClient | None:
+def _create_models_probe_client(settings: TapperSettings) -> httpx.AsyncClient | None:
     if settings.e2e_mode:
         return None
     import httpx
@@ -1056,12 +1056,12 @@ def _is_private_blob_container(properties: object) -> bool:
 
 def _create_readiness(
     *,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     engine: AsyncEngine,
     redis: Redis,
     artifacts: AzureBlobArtifactStore,
     embeddings: QueryEmbeddingPort,
-    answer_backend: AthenaAnswerBackend,
+    answer_backend: TapperAnswerBackend,
     milvus_reader: MilvusReader,
     milvus_target: MilvusIndexTarget,
     models_probe_client: httpx.AsyncClient | None,
@@ -1100,7 +1100,7 @@ def _create_readiness(
         rows = await milvus_reader.query(
             MilvusQueryRequest(
                 collection_name=bound.physical_collection,
-                filter_expression=('chunk_id == "__athena_readiness_reserved_never_persisted__"'),
+                filter_expression=('chunk_id == "__tapper_readiness_reserved_never_persisted__"'),
                 output_fields=("chunk_id",),
                 limit=1,
             )
@@ -1109,7 +1109,7 @@ def _create_readiness(
 
     async def models_ready() -> bool:
         if settings.e2e_mode:
-            embedding = await embeddings.embed("Athena deterministic readiness")
+            embedding = await embeddings.embed("Tapper deterministic readiness")
             vector = embedding.vector
             return (
                 embedding.model_id == settings.embedding_alias
@@ -1208,7 +1208,7 @@ def _discover_alembic_head() -> str:
     scripts = ScriptDirectory.from_config(config)
     heads = scripts.get_heads()
     if len(heads) != 1 or not heads[0]:
-        raise RuntimeError("Athena requires one current Alembic head")
+        raise RuntimeError("Tapper requires one current Alembic head")
     return heads[0]
 
 
@@ -1222,7 +1222,7 @@ def _assemble_http_services(
     readiness: ReadinessHttpService,
     redactor: EgressRedactionPort,
 ) -> HttpServices:
-    """Assemble the one approved Athena application graph from existing services."""
+    """Assemble the one approved Tapper application graph from existing services."""
 
     from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.knowledge.api import KnowledgeAPI
@@ -1270,10 +1270,10 @@ def _assemble_http_services(
 
 def _assemble_worker_runtime(
     *,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     repository: MysqlDocumentRepository,
     artifacts: AzureBlobArtifactStore,
-    embeddings: AthenaEmbeddingPort,
+    embeddings: TapperEmbeddingPort,
     index: MilvusDocumentIndex,
     redis: Redis,
     resources: OwnedResources,
@@ -1281,7 +1281,7 @@ def _assemble_worker_runtime(
 ) -> WorkerRuntime:
     """Assemble only the existing ingestion service and durable wake-up path."""
 
-    from tap.entrypoints.athena_ingestion_worker import WorkerRuntime
+    from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
     from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
     from tap.modules.knowledge.application.ingestion import IngestionWorker
@@ -1310,7 +1310,7 @@ def _assemble_worker_runtime(
     wakeups = RedisWakeupConsumer(
         redis=cast(AsyncRedisStream, redis),
         stream_name=settings.redis_stream,
-        group_name="athena-ingestion",
+        group_name="tapper-ingestion",
         consumer_name=settings.worker_id,
         aggregate_type="knowledge_document",
     )
@@ -1331,7 +1331,7 @@ def _value(values: Mapping[str, str], name: str, default: str) -> str:
 def _fixed_value(values: Mapping[str, str], name: str, expected: str) -> str:
     value = _value(values, name, expected)
     if value != expected:
-        raise ValueError(f"{name} must use the fixed Athena value")
+        raise ValueError(f"{name} must use the fixed Tapper value")
     return value
 
 
@@ -1445,7 +1445,7 @@ def _identity(values: Mapping[str, str], name: str, default: str) -> str:
 
 
 def _model_route(values: Mapping[str, str], name: str) -> str:
-    value = _value(values, name, "")
+    value = _value(values, name, "dashscope/qwen-plus")
     if len(value) > 256 or _MODEL_ROUTE.fullmatch(value) is None:
         raise ValueError(f"{name} must be one bounded exact provider model route")
     return value
@@ -1456,8 +1456,8 @@ def _model_labels(alias: str, raw_route: str) -> frozenset[str]:
 
 
 def _project(values: Mapping[str, str]) -> str:
-    name = "TAP_ATHENA_COMPOSE_PROJECT"
-    value = _value(values, name, "tap-athena-demo")
+    name = "TAP_TAPPER_COMPOSE_PROJECT"
+    value = _value(values, name, "tap-tapper-demo")
     if _PROJECT.fullmatch(value) is None:
         raise ValueError(f"{name} must be a safe Compose project")
     return value

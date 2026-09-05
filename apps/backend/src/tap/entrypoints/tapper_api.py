@@ -1,4 +1,4 @@
-"""Loopback-only Uvicorn entrypoint with lazy Athena runtime lifespan ownership."""
+"""Loopback-only Uvicorn entrypoint with lazy Tapper runtime lifespan ownership."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Protocol
 
 from fastapi import FastAPI, HTTPException, Request
 
-from tap.entrypoints.athena_runtime import AthenaSettings
+from tap.entrypoints.tapper_runtime import TapperSettings
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
 
@@ -23,7 +23,7 @@ class ApiRuntime(Protocol):
     async def aclose(self) -> None: ...
 
 
-RuntimeFactory = Callable[[AthenaSettings], Awaitable[ApiRuntime]]
+RuntimeFactory = Callable[[TapperSettings], Awaitable[ApiRuntime]]
 
 
 class _ApiLifecycleFailure(Enum):
@@ -31,24 +31,24 @@ class _ApiLifecycleFailure(Enum):
 
 
 def build_runtime_app(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     *,
     runtime_factory: RuntimeFactory | None = None,
 ) -> FastAPI:
-    if not isinstance(settings, AthenaSettings):
-        raise TypeError("Athena API requires validated settings")
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper API requires validated settings")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         factory = runtime_factory
         if factory is None:
-            from tap.entrypoints.athena_runtime import create_api_runtime
+            from tap.entrypoints.tapper_runtime import create_api_runtime
 
             factory = create_api_runtime
         try:
             runtime = await factory(settings)
         except Exception:
-            raise RuntimeError("Athena API runtime startup failed.") from None
+            raise RuntimeError("Tapper API runtime startup failed.") from None
         app.state.http_services = runtime.http_services
         app.state.failure_controller = getattr(runtime, "failure_controller", None)
         try:
@@ -58,11 +58,11 @@ def build_runtime_app(
             try:
                 await runtime.aclose()
             except BaseException:
-                app.state._athena_lifecycle_failure = _ApiLifecycleFailure.SHUTDOWN
-                raise RuntimeError("Athena API runtime shutdown failed.") from None
+                app.state._tapper_lifecycle_failure = _ApiLifecycleFailure.SHUTDOWN
+                raise RuntimeError("Tapper API runtime shutdown failed.") from None
 
     runtime_app = create_app(lifespan=lifespan)
-    runtime_app.state._athena_lifecycle_failure = None
+    runtime_app.state._tapper_lifecycle_failure = None
     if settings.e2e_mode:
         _register_e2e_failure_route(runtime_app)
     return runtime_app
@@ -97,7 +97,7 @@ def main(environment: Mapping[str, str] | None = None) -> None:
     from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
 
     values = os.environ if environment is None else environment
-    settings = AthenaSettings.from_mapping(values)
+    settings = TapperSettings.from_mapping(values)
     with suppress_pymilvus_rpc_logging():
         runtime_app = build_runtime_app(settings)
         uvicorn.run(
@@ -108,16 +108,16 @@ def main(environment: Mapping[str, str] | None = None) -> None:
             access_log=False,
         )
         if (
-            getattr(runtime_app.state, "_athena_lifecycle_failure", None)
+            getattr(runtime_app.state, "_tapper_lifecycle_failure", None)
             is _ApiLifecycleFailure.SHUTDOWN
         ):
-            raise RuntimeError("Athena API runtime shutdown failed.") from None
+            raise RuntimeError("Tapper API runtime shutdown failed.") from None
 
 
 class _UvicornFailureFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno >= logging.ERROR:
-            record.msg = "Athena API server error suppressed."
+            record.msg = "Tapper API server error suppressed."
             record.args = ()
             record.exc_info = None
             record.exc_text = None
@@ -144,7 +144,7 @@ def cli(environment: Mapping[str, str] | None = None) -> int:
         return 130
     except BaseException:
         print(
-            "Athena API failed; check local provider configuration.",
+            "Tapper API failed; check local provider configuration.",
             file=sys.stderr,
         )
         return 1

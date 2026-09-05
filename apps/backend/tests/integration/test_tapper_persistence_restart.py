@@ -28,9 +28,9 @@ from tap.contracts.http import (
     RetrievalAnswerResponse,
     RetrievalSearchRequest,
 )
-from tap.entrypoints.athena_runtime import (
-    AthenaSettings,
+from tap.entrypoints.tapper_runtime import (
     OwnedResources,
+    TapperSettings,
     _create_blob,
     _create_database,
     _create_search,
@@ -64,7 +64,7 @@ from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
 
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
-_RUN_ID = re.compile(r"athena-[a-f0-9]{16}\Z")
+_RUN_ID = re.compile(r"tapper-[a-f0-9]{16}\Z")
 _DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
 _MAX_STATE_BYTES = 64 * 1024
 _OUTPUT_FIELDS = (
@@ -283,7 +283,7 @@ async def _one(connection: AsyncConnection, statement: Any, code: str) -> RowMap
 
 
 def _expected_locators(
-    document: DocumentState, settings: AthenaSettings
+    document: DocumentState, settings: TapperSettings
 ) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
     revision = document.revision_id
     return (
@@ -328,7 +328,7 @@ def _require_revision_binding(
 
 async def _verify_database(
     engine: AsyncEngine,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     state: JourneyState,
 ) -> Mapping[str, RevisionEvidence]:
     evidence: dict[str, RevisionEvidence] = {}
@@ -540,7 +540,7 @@ async def _blob_missing(artifacts: AzureBlobArtifactStore, locator: ArtifactLoca
 
 async def _verify_blobs(
     artifacts: AzureBlobArtifactStore,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     state: JourneyState,
     evidence: Mapping[str, RevisionEvidence],
 ) -> None:
@@ -613,7 +613,7 @@ def _require_milvus_survivor_row(
     row: Mapping[str, object],
     document: DocumentState,
     manifest: Mapping[str, ManifestEvidence],
-    settings: AthenaSettings,
+    settings: TapperSettings,
 ) -> None:
     chunk_id = row.get("chunk_id")
     _require(isinstance(chunk_id, str) and chunk_id in manifest, "milvus-survivor-binding")
@@ -644,7 +644,7 @@ def _require_milvus_survivor_row(
 async def _verify_milvus(
     reader: MilvusReader,
     collection: str,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     state: JourneyState,
     evidence: Mapping[str, RevisionEvidence],
 ) -> None:
@@ -716,7 +716,7 @@ async def _verify_milvus(
         )
     )
     fence_id = "h_" + sha256(state.deleted.revision_id.encode()).hexdigest()
-    fence_hash = canonical_sha256(b"athena deletion fence")
+    fence_hash = canonical_sha256(b"tapper deletion fence")
     _require(
         len(deleted_source_rows) == 1
         and len(deleted_true_rows) == 1
@@ -735,7 +735,7 @@ async def _verify_milvus(
         and fence.get("derived_from_chunk_ids") == []
         and fence.get("source_id") == state.deleted.document_id
         and fence.get("source_revision") == f"fence:{state.deleted.revision_id}"
-        and fence.get("source_type") == "athena_fence"
+        and fence.get("source_type") == "tapper_fence"
         and fence.get("revision_kind") == "deletion_fence"
         and fence.get("source_content_hash") == fence_hash
         and fence.get("chunk_content_hash") == fence_hash
@@ -752,7 +752,7 @@ def _scope_request(state: JourneyState, document_ids: tuple[str, ...]) -> Retrie
         {
             "query": (
                 "What approval and finance review rules apply to "
-                f"Athena {state.run_id} refund requests?"
+                f"Tapper {state.run_id} refund requests?"
             ),
             "answerMode": "quick",
             "sources": ["doc"],
@@ -942,11 +942,11 @@ def _text_hash(value: str) -> str:
     return "sha256:" + sha256(value.encode()).hexdigest()
 
 
-def _exact_e2e_settings() -> AthenaSettings:
-    settings = AthenaSettings.from_mapping(os.environ)
+def _exact_e2e_settings() -> TapperSettings:
+    settings = TapperSettings.from_mapping(os.environ)
     _require(
         settings.e2e_mode
-        and settings.compose_project == "tap-athena-e2e"
+        and settings.compose_project == "tap-tapper-e2e"
         and settings.api_port == 18000
         and settings.web_port == 15173
         and ":13306/" in settings.database_url
@@ -959,7 +959,7 @@ def _exact_e2e_settings() -> AthenaSettings:
     return settings
 
 
-async def _run_verifier(settings: AthenaSettings, state: JourneyState) -> None:
+async def _run_verifier(settings: TapperSettings, state: JourneyState) -> None:
     resources = OwnedResources()
     try:
         engine, _repository = await _create_database(settings)
@@ -987,7 +987,7 @@ async def _run_verifier(settings: AthenaSettings, state: JourneyState) -> None:
 
 
 async def _verify_reconstructed_runtime(
-    settings: AthenaSettings,
+    settings: TapperSettings,
     state: JourneyState,
     evidence: Mapping[str, RevisionEvidence],
 ) -> None:
@@ -1014,7 +1014,7 @@ def _closed_state_payload() -> dict[str, object]:
     policy = document(1)
     return {
         "schemaVersion": 1,
-        "runId": "athena-0123456789abcdef",
+        "runId": "tapper-0123456789abcdef",
         "policy": policy,
         "reference": document(2),
         "other": document(3),
@@ -1045,7 +1045,7 @@ def test_verifier_state_loader_accepts_only_sanitized_ids_and_hashes(tmp_path: P
 
     state = _load_state(str(path))
 
-    assert state.run_id == "athena-0123456789abcdef"
+    assert state.run_id == "tapper-0123456789abcdef"
     assert len(state.survivors) == 7
 
 
@@ -1071,9 +1071,9 @@ def test_verifier_rejects_revision_version_drift(drifted_field: str) -> None:
     row = {
         "document_id": "doc-1",
         "source_content_hash": "sha256:" + "1" * 64,
-        "parser_version": "athena-parser-v1",
-        "chunker_version": "athena-structure-512-v1",
-        "pipeline_version": "athena-ingestion-v1",
+        "parser_version": "tapper-parser-v1",
+        "chunker_version": "tapper-structure-512-v1",
+        "pipeline_version": "tapper-ingestion-v1",
         "original_blob_locator": "original",
         "normalized_blob_locator": "normalized",
         "chunks_blob_locator": "chunks",
@@ -1097,7 +1097,7 @@ def test_verifier_rejects_revision_version_drift(drifted_field: str) -> None:
                 ArtifactLocator("chunks"),
                 ArtifactLocator("embeddings"),
             ),
-            "athena-ingestion-v1",
+            "tapper-ingestion-v1",
         )
 
 
@@ -1163,16 +1163,16 @@ def test_verifier_rejects_unlinked_answer_citations() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exact_athena_state_survives_application_and_compose_restarts() -> None:
-    if os.environ.get("ATHENA_E2E_PHASE") != "verify":
-        pytest.skip("requires the isolated Athena E2E verification phase")
-    if os.environ.get("TAP_RUN_ATHENA_E2E") != "1":
-        pytest.fail("Athena E2E verification gate is missing.", pytrace=False)
+async def test_exact_tapper_state_survives_application_and_compose_restarts() -> None:
+    if os.environ.get("TAPPER_E2E_PHASE") != "verify":
+        pytest.skip("requires the isolated Tapper E2E verification phase")
+    if os.environ.get("TAP_RUN_TAPPER_E2E") != "1":
+        pytest.fail("Tapper E2E verification gate is missing.", pytrace=False)
 
     failure_code: str | None = None
     try:
         settings = _exact_e2e_settings()
-        state = _load_state(os.environ.get("ATHENA_E2E_STATE_FILE"))
+        state = _load_state(os.environ.get("TAPPER_E2E_STATE_FILE"))
         with suppress_pymilvus_rpc_logging():
             await _run_verifier(settings, state)
     except asyncio.CancelledError:
@@ -1182,7 +1182,7 @@ async def test_exact_athena_state_survives_application_and_compose_restarts() ->
     except Exception:
         failure_code = "provider-or-integrity"
     if failure_code is not None:
-        pytest.fail(f"Athena persistence verification failed: {failure_code}.", pytrace=False)
+        pytest.fail(f"Tapper persistence verification failed: {failure_code}.", pytrace=False)
 
 
 @pytest.mark.asyncio
@@ -1210,16 +1210,16 @@ async def test_selected_verifier_suppresses_worker_thread_rpc_details_and_restor
         )
         raise RuntimeError("verifier-provider-secret-exception-detail")
 
-    monkeypatch.setenv("ATHENA_E2E_PHASE", "verify")
-    monkeypatch.setenv("TAP_RUN_ATHENA_E2E", "1")
+    monkeypatch.setenv("TAPPER_E2E_PHASE", "verify")
+    monkeypatch.setenv("TAP_RUN_TAPPER_E2E", "1")
     monkeypatch.setattr(module, "_exact_e2e_settings", lambda: settings)
     monkeypatch.setattr(module, "_load_state", lambda _path: state)
     monkeypatch.setattr(module, "_run_verifier", noisy_verifier)
     try:
         with pytest.raises(pytest.fail.Exception) as captured:
-            await test_exact_athena_state_survives_application_and_compose_restarts()
+            await test_exact_tapper_state_survives_application_and_compose_restarts()
         assert str(captured.value) == (
-            "Athena persistence verification failed: provider-or-integrity."
+            "Tapper persistence verification failed: provider-or-integrity."
         )
         assert "verifier-provider-secret-exception-detail" not in str(captured.value)
         _emit_provider_rpc_error("verifier-filter-removed-after-operation")

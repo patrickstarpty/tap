@@ -1,4 +1,4 @@
-"""Mutable Athena document-index contract against deterministic provider doubles."""
+"""Mutable Tapper document-index contract against deterministic provider doubles."""
 
 from __future__ import annotations
 
@@ -17,18 +17,18 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     _CollectionBaseSchemaComponent,
 )
 from tap.modules.knowledge.adapters.milvus_documents import (
-    ATHENA_ALIAS,
-    ATHENA_CORPUS_VERSION,
-    ATHENA_EMBEDDING_MODEL,
-    ATHENA_PHYSICAL_COLLECTION,
-    ATHENA_SCHEMA_VERSION,
-    AthenaMilvusConfig,
+    TAPPER_ALIAS,
+    TAPPER_CORPUS_VERSION,
+    TAPPER_EMBEDDING_MODEL,
+    TAPPER_PHYSICAL_COLLECTION,
+    TAPPER_SCHEMA_VERSION,
     IndexFenced,
     IndexTargetProvisioningFailed,
     IndexUnavailable,
     MilvusDocumentIndex,
     ReadyRevisionArtifacts,
     RebuildRejected,
+    TapperMilvusConfig,
 )
 from tap.modules.knowledge.domain.documents import (
     PARSER_VERSION,
@@ -91,19 +91,19 @@ def work(revision_key: str = "rev_a") -> IngestionWork:
         filename="policy.md",
         media_type="text/markdown",
         source_content_hash=source_hash,
-        original_locator=ArtifactLocator(f"athena-originals/revisions/{revision_id}/a"),
+        original_locator=ArtifactLocator(f"tapper-originals/revisions/{revision_id}/a"),
         normalized_locator=None,
         chunks_locator=None,
         embeddings_locator=None,
-        parser_version="athena-parser-v1",
-        chunker_version="athena-structure-512-v1",
-        pipeline_version="athena-ingestion-v1",
+        parser_version="tapper-parser-v1",
+        chunker_version="tapper-structure-512-v1",
+        pipeline_version="tapper-ingestion-v1",
         manifest=(),
     )
 
 
 def chunk(index: int = 1, revision_key: str = "rev_a") -> ChunkDraft:
-    content = f"Athena policy {index}."
+    content = f"Tapper policy {index}."
     anchor = json.dumps(
         {"headingPath": [], "type": "document"},
         separators=(",", ":"),
@@ -141,7 +141,7 @@ class MemoryProjectionCoordinator:
 
     @asynccontextmanager
     async def mutation(self, alias: str):  # type: ignore[no-untyped-def]
-        assert alias == ATHENA_ALIAS
+        assert alias == TAPPER_ALIAS
         async with self.lock:
             try:
                 yield self
@@ -270,7 +270,7 @@ class MemoryMilvus:
         self.grants: dict[tuple[str, str], set[str]] = {}
         self.upsert_batches: list[int] = []
         self.delete_batches: list[int] = []
-        self.descriptor_model = ATHENA_EMBEDDING_MODEL
+        self.descriptor_model = TAPPER_EMBEDDING_MODEL
         self.retirement_outcome: str | None = None
         self.fail_index_creations = 0
         self.fail_after_index_creations: int | None = None
@@ -292,7 +292,7 @@ class MemoryMilvus:
     async def create_collection(self, name: str, schema: Mapping[str, object]) -> None:
         if (
             self.require_fresh_receipt_before_create
-            and name != ATHENA_PHYSICAL_COLLECTION
+            and name != TAPPER_PHYSICAL_COLLECTION
             and name not in self.coordinator.owned
         ):
             raise AssertionError("fresh collection create preceded its ownership receipt")
@@ -335,9 +335,9 @@ class MemoryMilvus:
         return MilvusCollectionDescriptor(
             collection_name=name,
             family=SourceFamily.DOC,
-            schema_version=ATHENA_SCHEMA_VERSION,
+            schema_version=TAPPER_SCHEMA_VERSION,
             schema_sha256=doc_schema_sha256(),
-            corpus_version=ATHENA_CORPUS_VERSION,
+            corpus_version=TAPPER_CORPUS_VERSION,
             embedding_model_version=self.descriptor_model,
             vector_dimension=1536,
             dynamic_fields_enabled=False,
@@ -370,14 +370,14 @@ class MemoryMilvus:
 
     async def revoke_collection(self, name: str, role_name: str) -> None:
         self.events.append(f"revoke:{role_name}:{name}")
-        if self.retirement_outcome == "error_before" and name == ATHENA_PHYSICAL_COLLECTION:
+        if self.retirement_outcome == "error_before" and name == TAPPER_PHYSICAL_COLLECTION:
             self.retirement_outcome = None
             raise RuntimeError("injected retirement interruption")
         self.grants[(name, role_name)] = set()
-        if self.retirement_outcome == "error_after" and name == ATHENA_PHYSICAL_COLLECTION:
+        if self.retirement_outcome == "error_after" and name == TAPPER_PHYSICAL_COLLECTION:
             self.retirement_outcome = None
             raise RuntimeError("injected lost retirement response")
-        if self.retirement_outcome == "cancel_after" and name == ATHENA_PHYSICAL_COLLECTION:
+        if self.retirement_outcome == "cancel_after" and name == TAPPER_PHYSICAL_COLLECTION:
             self.retirement_outcome = None
             raise asyncio.CancelledError
 
@@ -446,8 +446,8 @@ class MemoryMilvus:
         elif filter_expression.startswith("chunk_id == "):
             chunk_id = json.loads(filter_expression.split(" == ", 1)[1])
             rows = (row for row in rows if row.get("chunk_id") == chunk_id)
-        elif filter_expression == 'source_type == "athena_fence"':
-            rows = (row for row in rows if row.get("source_type") == "athena_fence")
+        elif filter_expression == 'source_type == "tapper_fence"':
+            rows = (row for row in rows if row.get("source_type") == "tapper_fence")
         elif filter_expression.startswith("corpus_version == "):
             corpus = json.loads(filter_expression.split(" == ", 1)[1])
             rows = (row for row in rows if row.get("corpus_version") == corpus)
@@ -518,7 +518,7 @@ class ReaderObserver:
 
 def index_for(memory: MemoryMilvus) -> MilvusDocumentIndex:
     return MilvusDocumentIndex(
-        config=AthenaMilvusConfig(),
+        config=TapperMilvusConfig(),
         provisioner=MutationOnlyProvisioner(memory),  # type: ignore[arg-type]
         writer=memory,
         reader=ReaderObserver(memory),
@@ -635,7 +635,7 @@ async def test_ensure_target_reports_only_its_closed_current_stage(stage: str) -
         await index_for(_StageFailureMilvus(stage)).ensure_target()
 
     assert captured.value.stage.value == stage
-    assert str(captured.value) == "Athena Milvus target provisioning failed"
+    assert str(captured.value) == "Tapper Milvus target provisioning failed"
     assert captured.value.__cause__ is None
     assert captured.value.__suppress_context__ is True
     rendered = "".join(traceback.format_exception(captured.value))
@@ -677,23 +677,25 @@ async def test_ensure_upsert_read_back_delete_and_negative_probe_are_exact() -> 
     target = await index.ensure_target()
     chunks = tuple(chunk(i) for i in range(1, 66))
     embeddings = EmbeddingArtifact(
-        ATHENA_EMBEDDING_MODEL,
+        TAPPER_EMBEDDING_MODEL,
         1536,
         tuple((float(i),) + (0.0,) * 1535 for i in range(1, 66)),
         tuple(str(item.chunk_id) for item in chunks),
     )
-    receipt = await index.upsert_revision(work(), chunks, embeddings, index_version="athena-v1")
+    receipt = await index.upsert_revision(
+        work(), chunks, embeddings, index_version="tapper-index-v1"
+    )
 
-    assert target.physical_collection == ATHENA_PHYSICAL_COLLECTION
-    assert target.alias == ATHENA_ALIAS
+    assert target.physical_collection == TAPPER_PHYSICAL_COLLECTION
+    assert target.alias == TAPPER_ALIAS
     assert receipt.indexed_count == 65
     assert memory.upsert_batches[-2:] == [64, 1]
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set(
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set(
         READER_TARGET_PRIVILEGES
     )
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
-    first_row = memory.collections[ATHENA_PHYSICAL_COLLECTION][str(chunks[0].chunk_id)]
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    first_row = memory.collections[TAPPER_PHYSICAL_COLLECTION][str(chunks[0].chunk_id)]
     assert first_row["logical_chunk_id"] == "h_" + str(chunks[0].logical_chunk_id)[3:]
     assert str(first_row["root_id"]).startswith("h_")
     assert str(first_row["parent_id"]).startswith("h_")
@@ -723,12 +725,12 @@ async def test_durable_fence_blocks_late_upsert_and_survives_index_reconstructio
             work(),
             (chunk(),),
             EmbeddingArtifact(
-                ATHENA_EMBEDDING_MODEL,
+                TAPPER_EMBEDDING_MODEL,
                 1536,
                 ((0.1,) * 1536,),
                 (str(chunk().chunk_id),),
             ),
-            index_version="athena-v1",
+            index_version="tapper-index-v1",
         )
 
     assert await restarted.count_revision(target) == 0
@@ -751,43 +753,43 @@ async def test_rebuild_uses_fresh_physical_and_switches_alias_only_after_exact_p
         work=work(),
         chunks=(chunk(),),
         embeddings=EmbeddingArtifact(
-            ATHENA_EMBEDDING_MODEL,
+            TAPPER_EMBEDDING_MODEL,
             1536,
             ((0.1,) * 1536,),
             (str(chunk().chunk_id),),
         ),
-        index_version="athena-v1",
+        index_version="tapper-index-v1",
     )
 
     receipt = await index.rebuild((record,))
 
-    assert receipt.physical_collection.startswith(ATHENA_PHYSICAL_COLLECTION + "_")
-    assert len(receipt.physical_collection.removeprefix(ATHENA_PHYSICAL_COLLECTION + "_")) == 12
+    assert receipt.physical_collection.startswith(TAPPER_PHYSICAL_COLLECTION + "_")
+    assert len(receipt.physical_collection.removeprefix(TAPPER_PHYSICAL_COLLECTION + "_")) == 12
     assert receipt.row_count == 1
-    assert receipt.cleanup_facts == (f"retained_legacy_physical:{ATHENA_PHYSICAL_COLLECTION}",)
-    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert receipt.cleanup_facts == (f"retained_legacy_physical:{TAPPER_PHYSICAL_COLLECTION}",)
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
     assert memory.grants[(receipt.physical_collection, "tap_reader")] == set(
         READER_TARGET_PRIVILEGES
     )
     assert memory.grants[(receipt.physical_collection, "tap_writer")] == set(WRITER_PRIVILEGES)
-    assert await memory.collection_aliases(ATHENA_PHYSICAL_COLLECTION) == ()
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set()
+    assert await memory.collection_aliases(TAPPER_PHYSICAL_COLLECTION) == ()
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set()
 
     restarted = index_for(memory)
     assert (await restarted.ensure_target()).physical_collection == receipt.physical_collection
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
     with pytest.raises(IndexFenced):
         await restarted.upsert_revision(
             work("rev_deleted"),
             (chunk(9, "rev_deleted"),),
             EmbeddingArtifact(
-                ATHENA_EMBEDDING_MODEL,
+                TAPPER_EMBEDDING_MODEL,
                 1536,
                 ((0.1,) * 1536,),
                 (str(chunk(9, "rev_deleted").chunk_id),),
             ),
-            index_version="athena-v1",
+            index_version="tapper-index-v1",
         )
 
 
@@ -813,11 +815,11 @@ async def test_rebuild_retirement_interruption_restores_old_alias_and_exact_gran
     with pytest.raises(expected_error):
         await index.rebuild((ready_record(),))
 
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set(
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set(
         READER_TARGET_PRIVILEGES
     )
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
 
 
 def ready_record(revision_id: str = "rev_a", index: int = 1) -> ReadyRevisionArtifacts:
@@ -826,12 +828,12 @@ def ready_record(revision_id: str = "rev_a", index: int = 1) -> ReadyRevisionArt
         work=work(revision_id),
         chunks=(item,),
         embeddings=EmbeddingArtifact(
-            ATHENA_EMBEDDING_MODEL,
+            TAPPER_EMBEDDING_MODEL,
             1536,
             ((0.1,) * 1536,),
             (str(item.chunk_id),),
         ),
-        index_version="athena-v1",
+        index_version="tapper-index-v1",
     )
 
 
@@ -853,7 +855,7 @@ async def test_rebuild_excludes_stale_ready_record_with_existing_durable_fence()
             work(),
             (chunk(),),
             ready_record().embeddings,
-            index_version="athena-v1",
+            index_version="tapper-index-v1",
         )
 
 
@@ -886,9 +888,9 @@ async def test_concurrent_fence_after_snapshot_applies_to_activated_generation(
     await fence_task
 
     assert await deleting.count_revision(target) == 0
-    active = memory.aliases[ATHENA_ALIAS]
+    active = memory.aliases[TAPPER_ALIAS]
     assert any(
-        row.get("source_type") == "athena_fence" for row in memory.collections[active].values()
+        row.get("source_type") == "tapper_fence" for row in memory.collections[active].values()
     )
 
 
@@ -957,18 +959,18 @@ async def test_empty_rebuild_preserves_fences_and_switches_complete_empty_projec
     receipt = await index.rebuild(())
 
     assert receipt.row_count == 0
-    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
     with pytest.raises(IndexFenced):
         await index.upsert_revision(
             work("rev_deleted"),
             (chunk(9, "rev_deleted"),),
             EmbeddingArtifact(
-                ATHENA_EMBEDDING_MODEL,
+                TAPPER_EMBEDDING_MODEL,
                 1536,
                 ((0.1,) * 1536,),
                 (str(chunk(9, "rev_deleted").chunk_id),),
             ),
-            index_version="athena-v1",
+            index_version="tapper-index-v1",
         )
 
 
@@ -982,7 +984,7 @@ async def test_rebuild_resolves_success_then_error_alias_outcome_from_provider_t
 
     receipt = await index.rebuild((ready_record(),))
 
-    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
     assert receipt.row_count == 1
 
 
@@ -997,17 +999,17 @@ async def test_repeated_rebuilds_bound_owned_unaliased_cleanup_queue() -> None:
         await index.rebuild((ready_record(),))
 
     assert len(memory.collections) <= 3
-    assert len([name for name in memory.collections if name != ATHENA_PHYSICAL_COLLECTION]) <= 2
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert len([name for name in memory.collections if name != TAPPER_PHYSICAL_COLLECTION]) <= 2
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
     assert len([item for item in memory.coordinator.owned.values() if item.status == "active"]) == 1
     assert (
         len([item for item in memory.coordinator.owned.values() if item.status == "cleanup"]) <= 1
     )
 
 
-def test_exact_athena_defaults_are_closed() -> None:
+def test_exact_tapper_defaults_are_closed() -> None:
     """Default drift would publish rows unreadable by the fixed local reader."""
-    config = AthenaMilvusConfig()
+    config = TapperMilvusConfig()
     assert (
         config.physical_collection,
         config.alias,
@@ -1016,11 +1018,11 @@ def test_exact_athena_defaults_are_closed() -> None:
         config.embedding_model,
         config.vector_dimension,
     ) == (
-        ATHENA_PHYSICAL_COLLECTION,
-        ATHENA_ALIAS,
-        ATHENA_SCHEMA_VERSION,
-        ATHENA_CORPUS_VERSION,
-        ATHENA_EMBEDDING_MODEL,
+        TAPPER_PHYSICAL_COLLECTION,
+        TAPPER_ALIAS,
+        TAPPER_SCHEMA_VERSION,
+        TAPPER_CORPUS_VERSION,
+        TAPPER_EMBEDDING_MODEL,
         1536,
     )
     with pytest.raises(ValueError):
@@ -1030,7 +1032,7 @@ def test_exact_athena_defaults_are_closed() -> None:
 @pytest.mark.asyncio
 async def test_wrong_alias_and_stale_collection_metadata_fail_closed() -> None:
     wrong_alias = MemoryMilvus()
-    wrong_alias.aliases[ATHENA_ALIAS] = "kb_doc_v1_untrusted"
+    wrong_alias.aliases[TAPPER_ALIAS] = "kb_doc_v1_untrusted"
     with pytest.raises(IndexUnavailable):
         await index_for(wrong_alias).ensure_target()
 
@@ -1038,7 +1040,7 @@ async def test_wrong_alias_and_stale_collection_metadata_fail_closed() -> None:
     stale.descriptor_model = "stale-embedding"
     with pytest.raises(IndexUnavailable):
         await index_for(stale).ensure_target()
-    assert ATHENA_ALIAS not in stale.aliases
+    assert TAPPER_ALIAS not in stale.aliases
     assert not stale.grants
 
 
@@ -1049,12 +1051,12 @@ async def test_ensure_validates_full_descriptor_before_any_grant_or_alias_publis
 
     await index_for(memory).ensure_target()
 
-    base = memory.events.index(f"reader-schema:{ATHENA_PHYSICAL_COLLECTION}")
-    indexes = memory.events.index(f"describe-indexes:{ATHENA_PHYSICAL_COLLECTION}")
-    loaded = memory.events.index(f"load-state:{ATHENA_PHYSICAL_COLLECTION}")
-    reader_grant = memory.events.index(f"grant:tap_reader:{ATHENA_PHYSICAL_COLLECTION}")
-    writer_grant = memory.events.index(f"grant:tap_writer:{ATHENA_PHYSICAL_COLLECTION}")
-    alias = memory.events.index(f"create-alias:{ATHENA_PHYSICAL_COLLECTION}")
+    base = memory.events.index(f"reader-schema:{TAPPER_PHYSICAL_COLLECTION}")
+    indexes = memory.events.index(f"describe-indexes:{TAPPER_PHYSICAL_COLLECTION}")
+    loaded = memory.events.index(f"load-state:{TAPPER_PHYSICAL_COLLECTION}")
+    reader_grant = memory.events.index(f"grant:tap_reader:{TAPPER_PHYSICAL_COLLECTION}")
+    writer_grant = memory.events.index(f"grant:tap_writer:{TAPPER_PHYSICAL_COLLECTION}")
+    alias = memory.events.index(f"create-alias:{TAPPER_PHYSICAL_COLLECTION}")
     assert base < indexes < loaded < reader_grant < alias
     assert base < indexes < loaded < writer_grant < alias
 
@@ -1066,23 +1068,23 @@ async def test_ensure_loads_complete_but_released_target_before_any_publication(
 ) -> None:
     """A complete but released target must not be granted or published before load-ready."""
     memory = MemoryMilvus()
-    await memory.create_collection(ATHENA_PHYSICAL_COLLECTION, index_for(memory)._schema())
-    memory.indexes[ATHENA_PHYSICAL_COLLECTION] = set(EXPECTED_INDEXES)
+    await memory.create_collection(TAPPER_PHYSICAL_COLLECTION, index_for(memory)._schema())
+    memory.indexes[TAPPER_PHYSICAL_COLLECTION] = set(EXPECTED_INDEXES)
     if alias_exists:
-        memory.aliases[ATHENA_ALIAS] = ATHENA_PHYSICAL_COLLECTION
+        memory.aliases[TAPPER_ALIAS] = TAPPER_PHYSICAL_COLLECTION
     memory.events.clear()
 
     receipt = await index_for(memory).ensure_target()
 
-    assert receipt.physical_collection == ATHENA_PHYSICAL_COLLECTION
-    load = memory.events.index(f"load:{ATHENA_PHYSICAL_COLLECTION}")
-    loaded = memory.events.index(f"load-state:{ATHENA_PHYSICAL_COLLECTION}")
-    reader_grant = memory.events.index(f"grant:tap_reader:{ATHENA_PHYSICAL_COLLECTION}")
-    writer_grant = memory.events.index(f"grant:tap_writer:{ATHENA_PHYSICAL_COLLECTION}")
+    assert receipt.physical_collection == TAPPER_PHYSICAL_COLLECTION
+    load = memory.events.index(f"load:{TAPPER_PHYSICAL_COLLECTION}")
+    loaded = memory.events.index(f"load-state:{TAPPER_PHYSICAL_COLLECTION}")
+    reader_grant = memory.events.index(f"grant:tap_reader:{TAPPER_PHYSICAL_COLLECTION}")
+    writer_grant = memory.events.index(f"grant:tap_writer:{TAPPER_PHYSICAL_COLLECTION}")
     assert load < loaded < reader_grant
     assert load < loaded < writer_grant
     if not alias_exists:
-        assert loaded < memory.events.index(f"create-alias:{ATHENA_PHYSICAL_COLLECTION}")
+        assert loaded < memory.events.index(f"create-alias:{TAPPER_PHYSICAL_COLLECTION}")
 
 
 @pytest.mark.asyncio
@@ -1093,16 +1095,16 @@ async def test_ensure_reconciles_owned_partial_indexes_after_restart_before_publ
 
     with pytest.raises(IndexUnavailable):
         await index_for(memory).ensure_target()
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
-    assert ATHENA_PHYSICAL_COLLECTION not in memory.indexes
-    assert ATHENA_ALIAS not in memory.aliases
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
+    assert TAPPER_PHYSICAL_COLLECTION not in memory.indexes
+    assert TAPPER_ALIAS not in memory.aliases
     assert not memory.grants
 
     receipt = await index_for(memory).ensure_target()
 
-    assert receipt.physical_collection == ATHENA_PHYSICAL_COLLECTION
-    assert ATHENA_PHYSICAL_COLLECTION in memory.indexes
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
+    assert receipt.physical_collection == TAPPER_PHYSICAL_COLLECTION
+    assert TAPPER_PHYSICAL_COLLECTION in memory.indexes
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
 
 
 @pytest.mark.asyncio
@@ -1113,14 +1115,14 @@ async def test_ensure_reconciles_one_created_index_then_interruption_after_resta
 
     with pytest.raises(IndexUnavailable):
         await index_for(memory).ensure_target()
-    assert len(memory.indexes[ATHENA_PHYSICAL_COLLECTION]) == 1
-    assert ATHENA_ALIAS not in memory.aliases
+    assert len(memory.indexes[TAPPER_PHYSICAL_COLLECTION]) == 1
+    assert TAPPER_ALIAS not in memory.aliases
     assert not memory.grants
 
     await index_for(memory).ensure_target()
 
-    assert memory.indexes[ATHENA_PHYSICAL_COLLECTION] == EXPECTED_INDEXES
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
+    assert memory.indexes[TAPPER_PHYSICAL_COLLECTION] == EXPECTED_INDEXES
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
 
 
 @pytest.mark.asyncio
@@ -1131,8 +1133,8 @@ async def test_ensure_queries_alias_after_success_then_error_outcome() -> None:
 
     receipt = await index_for(memory).ensure_target()
 
-    assert receipt.physical_collection == ATHENA_PHYSICAL_COLLECTION
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
+    assert receipt.physical_collection == TAPPER_PHYSICAL_COLLECTION
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
 
 
 @pytest.mark.asyncio
@@ -1141,11 +1143,11 @@ async def test_external_legal_alias_drift_never_manufactures_cleanup_ownership()
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
-    external = ATHENA_PHYSICAL_COLLECTION + "_" + "e" * 12
+    external = TAPPER_PHYSICAL_COLLECTION + "_" + "e" * 12
     await memory.create_collection(external, index._schema())
     memory.indexes[external] = set(EXPECTED_INDEXES)
     memory.loaded.add(external)
-    memory.aliases[ATHENA_ALIAS] = external
+    memory.aliases[TAPPER_ALIAS] = external
 
     with pytest.raises(IndexTargetProvisioningFailed) as captured:
         await index.ensure_target()
@@ -1153,8 +1155,8 @@ async def test_external_legal_alias_drift_never_manufactures_cleanup_ownership()
     assert captured.value.stage.value == "authority-sync"
     assert captured.value.__cause__ is None
 
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
-    assert f"drop-collection:{ATHENA_PHYSICAL_COLLECTION}" not in memory.events
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
+    assert f"drop-collection:{TAPPER_PHYSICAL_COLLECTION}" not in memory.events
     assert memory.coordinator.cleanup == {}
 
 
@@ -1187,16 +1189,16 @@ def test_direct_milvus_publication_rejects_coordinated_revision_rebinding() -> N
 
     with pytest.raises(ValueError, match="provenance"):
         index._revision_rows(
-            ATHENA_PHYSICAL_COLLECTION,
+            TAPPER_PHYSICAL_COLLECTION,
             rebound_work,
             (rebound,),
             EmbeddingArtifact(
-                ATHENA_EMBEDDING_MODEL,
+                TAPPER_EMBEDDING_MODEL,
                 1536,
                 ((0.1,) * 1536,),
                 (str(rebound.chunk_id),),
             ),
-            "athena-v1",
+            "tapper-index-v1",
         )
 
 
@@ -1212,7 +1214,7 @@ async def test_rebuild_persists_exact_ownership_receipt_before_provider_create()
 
     ownership = memory.coordinator.owned[receipt.physical_collection]
     assert ownership.status == "active"
-    assert ownership.predecessor_collection == ATHENA_PHYSICAL_COLLECTION
+    assert ownership.predecessor_collection == TAPPER_PHYSICAL_COLLECTION
     assert len(ownership.operation_id) == 32
 
 
@@ -1222,17 +1224,17 @@ async def test_owned_alias_switch_after_crash_repairs_lineage_without_dropping_l
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
-    fresh = ATHENA_PHYSICAL_COLLECTION + "_" + "c" * 12
+    fresh = TAPPER_PHYSICAL_COLLECTION + "_" + "c" * 12
     operation_id = "d" * 32
     build = await memory.coordinator.reserve_build(
         fresh,
-        ATHENA_PHYSICAL_COLLECTION,
+        TAPPER_PHYSICAL_COLLECTION,
         operation_id,
     )
     await memory.create_collection(fresh, index._schema())
     memory.indexes[fresh] = set(EXPECTED_INDEXES)
     memory.loaded.add(fresh)
-    memory.aliases[ATHENA_ALIAS] = fresh
+    memory.aliases[TAPPER_ALIAS] = fresh
     memory.coordinator.activate_error_after_success = True
 
     receipt = await index_for(memory).ensure_target()
@@ -1240,11 +1242,11 @@ async def test_owned_alias_switch_after_crash_repairs_lineage_without_dropping_l
     assert receipt.physical_collection == fresh
     assert memory.coordinator.physical == fresh
     assert memory.coordinator.owned[fresh] == replace(build, status="active")
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
-    assert ATHENA_PHYSICAL_COLLECTION not in memory.coordinator.cleanup
-    assert await memory.collection_aliases(ATHENA_PHYSICAL_COLLECTION) == ()
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set()
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
+    assert TAPPER_PHYSICAL_COLLECTION not in memory.coordinator.cleanup
+    assert await memory.collection_aliases(TAPPER_PHYSICAL_COLLECTION) == ()
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set()
 
 
 @pytest.mark.asyncio
@@ -1253,29 +1255,29 @@ async def test_crash_repair_retries_after_partial_legacy_grant_retirement() -> N
     memory = MemoryMilvus()
     index = index_for(memory)
     await index.ensure_target()
-    fresh = ATHENA_PHYSICAL_COLLECTION + "_" + "c" * 12
+    fresh = TAPPER_PHYSICAL_COLLECTION + "_" + "c" * 12
     build = await memory.coordinator.reserve_build(
         fresh,
-        ATHENA_PHYSICAL_COLLECTION,
+        TAPPER_PHYSICAL_COLLECTION,
         "d" * 32,
     )
     await memory.create_collection(fresh, index._schema())
     memory.indexes[fresh] = set(EXPECTED_INDEXES)
     memory.loaded.add(fresh)
-    memory.aliases[ATHENA_ALIAS] = fresh
+    memory.aliases[TAPPER_ALIAS] = fresh
     memory.retirement_outcome = "error_after"
 
     with pytest.raises(IndexUnavailable):
         await index_for(memory).ensure_target()
 
-    assert memory.coordinator.physical == ATHENA_PHYSICAL_COLLECTION
+    assert memory.coordinator.physical == TAPPER_PHYSICAL_COLLECTION
     assert memory.coordinator.owned[fresh] == build
     assert set(memory.coordinator.owned) == {fresh}
     assert memory.coordinator.cleanup == {}
-    assert memory.aliases[ATHENA_ALIAS] == fresh
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert memory.aliases[TAPPER_ALIAS] == fresh
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
     assert fresh in memory.collections
 
     receipt = await index_for(memory).ensure_target()
@@ -1283,9 +1285,9 @@ async def test_crash_repair_retries_after_partial_legacy_grant_retirement() -> N
     assert receipt.physical_collection == fresh
     assert memory.coordinator.physical == fresh
     assert memory.coordinator.owned[fresh] == replace(build, status="active")
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set()
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set()
-    assert ATHENA_PHYSICAL_COLLECTION in memory.collections
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set()
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set()
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
 
 
 @pytest.mark.asyncio
@@ -1299,12 +1301,12 @@ async def test_rebuild_failure_and_post_switch_cancellation_restore_old_alias(
         work=work(),
         chunks=(chunk(),),
         embeddings=EmbeddingArtifact(
-            ATHENA_EMBEDDING_MODEL,
+            TAPPER_EMBEDDING_MODEL,
             1536,
             ((0.1,) * 1536,),
             (str(chunk().chunk_id),),
         ),
-        index_version="athena-v1",
+        index_version="tapper-index-v1",
     )
 
     async def fail_parity(*args: object) -> None:
@@ -1313,18 +1315,18 @@ async def test_rebuild_failure_and_post_switch_cancellation_restore_old_alias(
     monkeypatch.setattr(index, "_require_revision_parity", fail_parity)
     with pytest.raises(RebuildRejected) as rejected:
         await index.rebuild((record,))
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
     assert rejected.value.cleanup_facts[0].startswith("dropped_owned_physical:")
 
     monkeypatch.undo()
     memory.coordinator.cancel_activation = True
     with pytest.raises(asyncio.CancelledError):
         await index.rebuild((record,))
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set(
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set(
         READER_TARGET_PRIVILEGES
     )
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
 
 
 @pytest.mark.asyncio
@@ -1337,7 +1339,7 @@ async def test_rebuild_returns_receipt_on_postcommit_lease_exit_cancellation() -
 
     receipt = await index.rebuild((ready_record(),))
 
-    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
     assert memory.coordinator.physical == receipt.physical_collection
     assert memory.coordinator.owned[receipt.physical_collection].status == "active"
 
@@ -1353,13 +1355,13 @@ async def test_rebuild_activation_failure_restores_old_alias_and_exact_grants() 
     with pytest.raises(RebuildRejected):
         await index.rebuild((ready_record(),))
 
-    assert memory.aliases[ATHENA_ALIAS] == ATHENA_PHYSICAL_COLLECTION
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_reader")] == set(
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_reader")] == set(
         READER_TARGET_PRIVILEGES
     )
-    assert memory.grants[(ATHENA_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
-    assert f"revoke:tap_reader:{ATHENA_PHYSICAL_COLLECTION}" in memory.events
-    assert f"revoke:tap_writer:{ATHENA_PHYSICAL_COLLECTION}" in memory.events
+    assert memory.grants[(TAPPER_PHYSICAL_COLLECTION, "tap_writer")] == set(WRITER_PRIVILEGES)
+    assert f"revoke:tap_reader:{TAPPER_PHYSICAL_COLLECTION}" in memory.events
+    assert f"revoke:tap_writer:{TAPPER_PHYSICAL_COLLECTION}" in memory.events
 
 
 @pytest.mark.asyncio
@@ -1372,7 +1374,7 @@ async def test_rebuild_resolves_activation_success_then_error_from_durable_linea
 
     receipt = await index.rebuild((ready_record(),))
 
-    assert memory.aliases[ATHENA_ALIAS] == receipt.physical_collection
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
     assert memory.coordinator.physical == receipt.physical_collection
     assert memory.coordinator.owned[receipt.physical_collection].status == "active"
 
@@ -1417,7 +1419,7 @@ async def test_close_attempts_every_distinct_client_after_one_fails() -> None:
                 raise RuntimeError("injected close failure")
 
     index = MilvusDocumentIndex(
-        config=AthenaMilvusConfig(),
+        config=TapperMilvusConfig(),
         provisioner=CloseOnly("provisioner"),  # type: ignore[arg-type]
         writer=CloseOnly("writer"),  # type: ignore[arg-type]
         reader=CloseOnly("reader", fails=True),  # type: ignore[arg-type]

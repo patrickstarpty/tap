@@ -1,4 +1,4 @@
-"""Explicitly opted-in smoke for Athena's production LiteLLM route."""
+"""Explicitly opted-in smoke for Tapper's production LiteLLM route."""
 
 from __future__ import annotations
 
@@ -19,15 +19,15 @@ from tap.contracts.http import (
     RetrievalAnswerRequest,
     SourceFamily,
 )
-from tap.entrypoints.athena_runtime import (
-    AthenaSettings,
+from tap.entrypoints.tapper_runtime import (
+    TapperSettings,
     _create_embeddings,
     create_api_runtime,
 )
 from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
 
-_CHAT_ALIAS = "athena-chat"
-_EMBEDDING_ALIAS = "athena-embedding"
+_CHAT_ALIAS = "tapper-chat"
+_EMBEDDING_ALIAS = "tapper-embedding"
 _EMBEDDING_DIMENSION = 1_536
 _SMOKE_QUERY = "请仅依据所选来源概括其主要内容，并给出可核验引用。"
 _CROSS_LANGUAGE_INPUTS = (
@@ -69,8 +69,8 @@ def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
     return numerator / (left_norm * right_norm)
 
 
-async def _embed_through_production_route() -> AthenaSettings:
-    settings = AthenaSettings.from_mapping(os.environ)
+async def _embed_through_production_route() -> TapperSettings:
+    settings = TapperSettings.from_mapping(os.environ)
     if (
         settings.model_backend != "litellm"
         or settings.answer_backend != "litellm"
@@ -79,7 +79,7 @@ async def _embed_through_production_route() -> AthenaSettings:
         or settings.embedding_alias != _EMBEDDING_ALIAS
         or settings.embedding_dimension != _EMBEDDING_DIMENSION
     ):
-        raise AssertionError("the fixed Athena model route is not configured")
+        raise AssertionError("the fixed Tapper model route is not configured")
 
     model = _create_embeddings(settings)
     if not isinstance(model, LiteLLMAdapter):
@@ -126,13 +126,13 @@ async def _embed_through_production_route() -> AthenaSettings:
     return settings
 
 
-async def _answer_through_production_graph(settings: AthenaSettings) -> None:
+async def _answer_through_production_graph(settings: TapperSettings) -> None:
     runtime = await create_api_runtime(settings)
     try:
         readiness = runtime.http_services.readiness
         knowledge = runtime.http_services.knowledge
         if readiness is None or knowledge is None or (await readiness.check()).status != "ready":
-            raise AssertionError("the Athena production graph is not ready")
+            raise AssertionError("the Tapper production graph is not ready")
 
         page = await knowledge.list_documents(cursor=None, limit=50)
         ready_document = next(
@@ -140,7 +140,7 @@ async def _answer_through_production_graph(settings: AthenaSettings) -> None:
             None,
         )
         if ready_document is None:
-            raise AssertionError("the Athena production graph has no ready source")
+            raise AssertionError("the Tapper production graph has no ready source")
 
         response = await knowledge.answer(
             RetrievalAnswerRequest(
@@ -180,9 +180,9 @@ async def _answer_through_production_graph(settings: AthenaSettings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_real_athena_aliases_produce_grounded_cited_answer() -> None:
-    if os.environ.get("TAP_RUN_ATHENA_REAL_MODEL_SMOKE") != "1":
-        pytest.skip("real Athena model smoke requires explicit opt-in")
+async def test_real_tapper_aliases_produce_grounded_cited_answer() -> None:
+    if os.environ.get("TAP_RUN_TAPPER_REAL_MODEL_SMOKE") != "1":
+        pytest.skip("real Tapper model smoke requires explicit opt-in")
 
     previous_log_disable = logging.root.manager.disable
     logging.disable(logging.CRITICAL)

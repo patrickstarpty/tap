@@ -172,7 +172,7 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "reservation_pipeline_version,status,stage,chunk_count,activated_at,"
                 "created_at,updated_at) VALUES "
                 "(:document_id,:filename,'text/markdown',NULL,:source_hash,:dedupe_key,"
-                "'athena-parser-v1','athena-structure-512-v1','athena-ingestion-v1',"
+                "'tapper-parser-v1','tapper-structure-512-v1','tapper-ingestion-v1',"
                 "'ready','ready',1,:now,:now,:now)"
             ),
             {
@@ -190,14 +190,14 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "normalized_blob_locator,chunks_blob_locator,parser_version,chunker_version,"
                 "pipeline_version,created_at) VALUES "
                 "(:revision_id,:document_id,:source_hash,'original',:normalized,:chunks,"
-                "'athena-parser-v1','athena-structure-512-v1','athena-ingestion-v1',:now)"
+                "'tapper-parser-v1','tapper-structure-512-v1','tapper-ingestion-v1',:now)"
             ),
             {
                 "revision_id": revision_id,
                 "document_id": document_id,
                 "source_hash": SOURCE_HASH,
-                "normalized": f"athena-artifacts/revisions/{revision_id}/normalized-v1.json",
-                "chunks": f"athena-artifacts/revisions/{revision_id}/chunks-v1.jsonl.gz",
+                "normalized": f"tapper-artifacts/revisions/{revision_id}/normalized-v1.json",
+                "chunks": f"tapper-artifacts/revisions/{revision_id}/chunks-v1.jsonl.gz",
                 "now": now,
             },
         )
@@ -214,7 +214,7 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "(chunk_id,logical_chunk_id,revision_id,ordinal,root_id,parent_id,anchor_json,"
                 "chunk_content_hash,embedding_model_version,index_version,created_at) VALUES "
                 "(:chunk_id,:logical_id,:revision_id,0,:document_id,'b_000000',:anchor_json,"
-                ":chunk_hash,'athena-embedding','athena-doc-v1',:now)"
+                ":chunk_hash,'tapper-embedding','tapper-index-v1',:now)"
             ),
             {
                 "chunk_id": f"h_{suffix}",
@@ -583,7 +583,7 @@ def test_cancellation_after_server_grants_named_lock_cannot_leak_pool_ownership(
                 assert (
                     await connection.scalar(
                         text("SELECT IS_FREE_LOCK(:lock_name)"),
-                        {"lock_name": "tap:athena:answer-snapshot-retention:v1"},
+                        {"lock_name": "tap:tapper:answer-snapshot-retention:v1"},
                     )
                     == 1
                 )
@@ -611,7 +611,7 @@ def test_cancellation_while_waiting_for_named_lock_settles_connection() -> None:
                 assert (
                     await holder.scalar(
                         text("SELECT GET_LOCK(:lock_name, 5)"),
-                        {"lock_name": "tap:athena:answer-snapshot-retention:v1"},
+                        {"lock_name": "tap:tapper:answer-snapshot-retention:v1"},
                     )
                     == 1
                 )
@@ -633,7 +633,7 @@ def test_cancellation_while_waiting_for_named_lock_settles_connection() -> None:
                 assert (
                     await holder.scalar(
                         text("SELECT RELEASE_LOCK(:lock_name)"),
-                        {"lock_name": "tap:athena:answer-snapshot-retention:v1"},
+                        {"lock_name": "tap:tapper:answer-snapshot-retention:v1"},
                     )
                     == 1
                 )

@@ -1,4 +1,4 @@
-"""Bounded process loop for the provider-neutral Athena ingestion worker."""
+"""Bounded process loop for the provider-neutral Tapper ingestion worker."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.platform.messaging.redis_wakeup import WakeupConsumer
 
 if TYPE_CHECKING:
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
 
 class BoundedWorker(Protocol):
@@ -44,24 +44,24 @@ class WorkerRuntime:
     resources: tuple[AsyncCloseable, ...] = ()
 
 
-RuntimeFactory = Callable[["AthenaSettings"], Awaitable[WorkerRuntime]]
+RuntimeFactory = Callable[["TapperSettings"], Awaitable[WorkerRuntime]]
 SignalInstaller = Callable[[asyncio.Event], Callable[[], None] | None]
 
 
 def load_settings(environment: Mapping[str, str] | None = None) -> WorkerSettings:
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     values = dict(os.environ) if environment is None else dict(environment)
-    return worker_settings_from_athena(AthenaSettings.from_mapping(values))
+    return worker_settings_from_tapper(TapperSettings.from_mapping(values))
 
 
-def worker_settings_from_athena(settings: AthenaSettings) -> WorkerSettings:
+def worker_settings_from_tapper(settings: TapperSettings) -> WorkerSettings:
     """Derive loop controls from the one fully validated process snapshot."""
 
-    from tap.entrypoints.athena_runtime import AthenaSettings
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
-    if not isinstance(settings, AthenaSettings):
-        raise TypeError("worker settings require validated Athena settings")
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("worker settings require validated Tapper settings")
     return WorkerSettings(
         database_url=settings.database_url,
         redis_url=settings.redis_url,
@@ -69,7 +69,7 @@ def worker_settings_from_athena(settings: AthenaSettings) -> WorkerSettings:
         poll_seconds=settings.poll_seconds,
         wakeup_seconds=settings.poll_seconds,
         stream_name=settings.redis_stream,
-        group_name="athena-ingestion",
+        group_name="tapper-ingestion",
         worker_id=settings.worker_id,
     )
 
@@ -128,7 +128,7 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
                     loop.remove_signal_handler(installed_signum)
                 except BaseException as rollback_error:
                     errors.append(rollback_error)
-            _raise_collected_errors("Athena signal installation failed", errors)
+            _raise_collected_errors("Tapper signal installation failed", errors)
 
     def remove_handlers() -> None:
         errors: list[BaseException] = []
@@ -137,7 +137,7 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
                 loop.remove_signal_handler(signum)
             except BaseException as error:
                 errors.append(error)
-        _raise_collected_errors("Athena signal removal failed", errors)
+        _raise_collected_errors("Tapper signal removal failed", errors)
 
     return remove_handlers
 
@@ -145,13 +145,13 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
 async def run(
     *,
     runtime_factory: RuntimeFactory,
-    settings: AthenaSettings,
+    settings: TapperSettings,
     signal_installer: SignalInstaller = install_signal_handlers,
     max_iterations: int | None = None,
 ) -> None:
     """Own one complete worker process lifecycle around an injected composition root."""
 
-    worker_settings = worker_settings_from_athena(settings)
+    worker_settings = worker_settings_from_tapper(settings)
     runtime = await runtime_factory(settings)
     stop = asyncio.Event()
     errors: list[BaseException] = []
@@ -177,7 +177,7 @@ async def run(
             await resource.aclose()
         except BaseException as error:
             errors.append(error)
-    _raise_collected_errors("Athena worker lifecycle failed", errors)
+    _raise_collected_errors("Tapper worker lifecycle failed", errors)
 
 
 def _raise_collected_errors(message: str, errors: list[BaseException]) -> None:
@@ -190,11 +190,11 @@ def _raise_collected_errors(message: str, errors: list[BaseException]) -> None:
 
 
 def main(environment: Mapping[str, str] | None = None) -> None:
-    from tap.entrypoints.athena_runtime import AthenaSettings, create_worker_runtime
+    from tap.entrypoints.tapper_runtime import TapperSettings, create_worker_runtime
     from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
 
     values = dict(os.environ) if environment is None else dict(environment)
-    settings = AthenaSettings.from_mapping(values)
+    settings = TapperSettings.from_mapping(values)
     with suppress_pymilvus_rpc_logging():
         asyncio.run(run(runtime_factory=create_worker_runtime, settings=settings))
 
@@ -206,7 +206,7 @@ def cli(environment: Mapping[str, str] | None = None) -> int:
         return 130
     except BaseException:
         print(
-            "Athena ingestion worker failed; check local provider configuration.",
+            "Tapper ingestion worker failed; check local provider configuration.",
             file=sys.stderr,
         )
         return 1

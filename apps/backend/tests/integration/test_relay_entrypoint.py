@@ -9,23 +9,23 @@ import pytest
 from tap.entrypoints import relay_reconciler
 
 
-def _athena_environment(**overrides: str) -> dict[str, str]:
+def _tapper_environment(**overrides: str) -> dict[str, str]:
     values = {
-        "ATHENA_API_HOST": "127.0.0.1",
-        "ATHENA_WEB_HOST": "127.0.0.1",
-        "ATHENA_POLL_SECONDS": "0.01",
-        "ATHENA_JOB_BATCH_SIZE": "10",
-        "ATHENA_WORKER_ID": "relay-e2e-worker",
-        "TAP_ATHENA_COMPOSE_PROJECT": "tap-athena-e2e",
+        "TAPPER_API_HOST": "127.0.0.1",
+        "TAPPER_WEB_HOST": "127.0.0.1",
+        "TAPPER_POLL_SECONDS": "0.01",
+        "TAPPER_JOB_BATCH_SIZE": "10",
+        "TAPPER_WORKER_ID": "relay-e2e-worker",
+        "TAP_TAPPER_COMPOSE_PROJECT": "tap-tapper-e2e",
         "TAP_DATABASE_URL": ("mysql+asyncmy://tap:test@127.0.0.1:13306/tap?charset=utf8mb4"),
         "TAP_ALEMBIC_DATABASE_URL": (
             "mysql+pymysql://tap:test@127.0.0.1:13306/tap?charset=utf8mb4"
         ),
         "TAP_REDIS_URL": "redis://127.0.0.1:16379/0",
-        "TAP_REDIS_COMMAND_STREAM": "tap-athena-e2e:commands",
+        "TAP_REDIS_COMMAND_STREAM": "tap-tapper-e2e:commands",
         "LITELLM_BASE_URL": "http://127.0.0.1:14000",
         "LITELLM_MODEL": "openai/test-chat",
-        "LITELLM_ATHENA_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
         "MILVUS_URI": "http://127.0.0.1:29530",
     }
     values.update(overrides)
@@ -48,12 +48,12 @@ def test_relay_settings_reject_unbounded_or_non_positive_values(
     environment: dict[str, str],
 ) -> None:
     with pytest.raises(ValueError):
-        relay_reconciler.load_settings(_athena_environment(**environment))
+        relay_reconciler.load_settings(_tapper_environment(**environment))
 
 
-def test_relay_settings_derive_provider_and_identity_values_from_athena_snapshot() -> None:
+def test_relay_settings_derive_provider_and_identity_values_from_tapper_snapshot() -> None:
     settings = relay_reconciler.load_settings(
-        _athena_environment(
+        _tapper_environment(
             TAP_RELAY_BATCH_SIZE="37",
             TAP_RELAY_POLL_SECONDS="0.25",
             TAP_RELAY_WORKER_ID="obsolete-second-authority",
@@ -62,7 +62,7 @@ def test_relay_settings_derive_provider_and_identity_values_from_athena_snapshot
 
     assert settings.database_url.endswith("127.0.0.1:13306/tap?charset=utf8mb4")
     assert settings.redis_url == "redis://127.0.0.1:16379/0"
-    assert settings.stream_name == "tap-athena-e2e:commands"
+    assert settings.stream_name == "tap-tapper-e2e:commands"
     assert settings.worker_id == "relay-e2e-worker"
     assert settings.batch_size == 37
     assert settings.poll_seconds == 0.25
@@ -77,7 +77,7 @@ def test_relay_parses_codex_selection_without_discovery(monkeypatch) -> None:  #
 
     monkeypatch.setattr(shutil, "which", forbidden_discovery)
 
-    settings = relay_reconciler.load_settings(_athena_environment(ATHENA_ANSWER_BACKEND="codex"))
+    settings = relay_reconciler.load_settings(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
 
     assert settings.worker_id == "relay-e2e-worker"
 
@@ -93,7 +93,7 @@ def test_relay_invalid_provider_settings_fail_before_any_constructor(monkeypatch
 
     with pytest.raises(ValueError, match="TAP_DATABASE_URL"):
         relay_reconciler.main(
-            _athena_environment(
+            _tapper_environment(
                 TAP_DATABASE_URL=(
                     "mysql+asyncmy://tap:test@remote.example:3306/tap?charset=utf8mb4"
                 )
@@ -115,13 +115,13 @@ def test_relay_cli_redacts_runtime_primary_after_internal_cleanup(
 
     monkeypatch.setattr(relay_reconciler, "run", fail_after_cleanup)
 
-    result = relay_reconciler.cli(_athena_environment())
+    result = relay_reconciler.cli(_tapper_environment())
     output = capsys.readouterr()
 
     assert result == 1
     assert events == ["close:redis", "close:engine"]
     assert output.out == ""
-    assert output.err == "Athena relay failed; check local provider configuration.\n"
+    assert output.err == "Tapper relay failed; check local provider configuration.\n"
     assert "provider-secret" not in output.err
     assert "Traceback" not in output.err
 
@@ -179,7 +179,7 @@ async def test_relay_partial_construction_closes_every_prior_owner(
         )
 
     with pytest.raises(RuntimeError) as captured:
-        await relay_reconciler.run(settings=relay_reconciler.load_settings(_athena_environment()))
+        await relay_reconciler.run(settings=relay_reconciler.load_settings(_tapper_environment()))
 
     assert captured.value is primary
     assert events == (["engine"] if failure_point == "redis" else ["redis", "engine"])
@@ -222,7 +222,7 @@ async def test_relay_cancellation_and_close_failures_settle_all_without_masking(
 
     with pytest.raises(BaseExceptionGroup) as captured:
         await relay_reconciler.run(
-            settings=relay_reconciler.load_settings(_athena_environment()),
+            settings=relay_reconciler.load_settings(_tapper_environment()),
             signal_installer=lambda _stop: None,
         )
 
@@ -259,7 +259,7 @@ async def test_relay_signal_install_failure_closes_complete_runtime(
 
     with pytest.raises(RuntimeError) as captured:
         await relay_reconciler.run(
-            settings=relay_reconciler.load_settings(_athena_environment()),
+            settings=relay_reconciler.load_settings(_tapper_environment()),
             signal_installer=fail_install,
         )
 
@@ -306,7 +306,7 @@ async def test_relay_remove_failure_still_closes_every_runtime_owner(
 
     with pytest.raises(ExceptionGroup) as captured:
         await relay_reconciler.run(
-            settings=relay_reconciler.load_settings(_athena_environment()),
+            settings=relay_reconciler.load_settings(_tapper_environment()),
             signal_installer=install,
             max_iterations=1,
         )
@@ -408,7 +408,7 @@ async def test_relay_signal_stop_removes_handlers_and_closes_reverse(
     )
 
     await relay_reconciler.run(
-        settings=relay_reconciler.load_settings(_athena_environment()),
+        settings=relay_reconciler.load_settings(_tapper_environment()),
         signal_installer=install,
     )
 

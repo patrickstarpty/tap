@@ -1,4 +1,4 @@
-"""Public HTTP contracts for the Athena local knowledge-demo slice."""
+"""Public HTTP contracts for the Tapper local knowledge-demo slice."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def test_answer_request_has_no_authoritative_policy_field() -> None:
     } & set(fields)
 
 
-def test_athena_routes_have_stable_provider_neutral_operation_ids() -> None:
+def test_tapper_routes_have_stable_provider_neutral_operation_ids() -> None:
     """Renaming a public operation would break generated clients and integrations."""
     paths = create_app().openapi()["paths"]
 

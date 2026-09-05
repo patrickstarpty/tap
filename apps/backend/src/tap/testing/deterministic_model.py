@@ -1,4 +1,4 @@
-"""Network-free deterministic model used only by Athena's exact E2E runtime profile."""
+"""Network-free deterministic model used only by Tapper's exact E2E runtime profile."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from tap.modules.knowledge.ports.models import (
 )
 
 _DIMENSION = 1536
-_EMBEDDING_ALIAS = "athena-embedding"
-_ANSWER_ALIAS = "athena-chat"
+_EMBEDDING_ALIAS = "tapper-embedding"
+_ANSWER_ALIAS = "tapper-chat"
 _PROFILE = "quick-hybrid-v1"
 
 
@@ -43,7 +43,7 @@ def deterministic_vector(text: str, dimension: int = _DIMENSION) -> tuple[float,
     return tuple(float(value / norm) for value in values)
 
 
-class DeterministicAthenaModel:
+class DeterministicTapperModel:
     """Implement query, document, and answer model ports without any network path."""
 
     def __init__(self, *, dimension: int = _DIMENSION) -> None:

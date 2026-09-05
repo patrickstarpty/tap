@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 
 from redis.asyncio import Redis
 
-from tap.entrypoints.athena_runtime import AthenaSettings, OwnedResources
+from tap.entrypoints.tapper_runtime import OwnedResources, TapperSettings
 from tap.modules.chat.adapters.mysql import OutboxStore
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_dispatch import (
@@ -44,7 +44,7 @@ class RelaySettings:
 
 def load_settings(environment: Mapping[str, str] | None = None) -> RelaySettings:
     values = dict(os.environ) if environment is None else dict(environment)
-    athena = AthenaSettings.from_mapping(values)
+    tapper = TapperSettings.from_mapping(values)
     batch_size = int(values.get("TAP_RELAY_BATCH_SIZE", "100"))
     if not MIN_RELAY_BATCH_SIZE <= batch_size <= MAX_RELAY_BATCH_SIZE:
         raise ValueError("TAP_RELAY_BATCH_SIZE must be between 1 and 500")
@@ -52,12 +52,12 @@ def load_settings(environment: Mapping[str, str] | None = None) -> RelaySettings
     if not math.isfinite(poll_seconds) or not 0 < poll_seconds <= 60:
         raise ValueError("TAP_RELAY_POLL_SECONDS must be between 0 and 60")
     return RelaySettings(
-        database_url=athena.database_url,
-        redis_url=athena.redis_url,
+        database_url=tapper.database_url,
+        redis_url=tapper.redis_url,
         batch_size=batch_size,
         poll_seconds=poll_seconds,
-        stream_name=athena.redis_stream,
-        worker_id=athena.worker_id,
+        stream_name=tapper.redis_stream,
+        worker_id=tapper.worker_id,
     )
 
 
@@ -118,7 +118,7 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
                     loop.remove_signal_handler(installed_signum)
                 except BaseException as rollback_error:
                     errors.append(rollback_error)
-            _raise_collected_errors("Athena relay signal installation failed", errors)
+            _raise_collected_errors("Tapper relay signal installation failed", errors)
 
     def remove_handlers() -> None:
         errors: list[BaseException] = []
@@ -127,7 +127,7 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
                 loop.remove_signal_handler(signum)
             except BaseException as error:
                 errors.append(error)
-        _raise_collected_errors("Athena relay signal removal failed", errors)
+        _raise_collected_errors("Tapper relay signal removal failed", errors)
 
     return remove_handlers
 
@@ -176,7 +176,7 @@ async def run(
         await resources.aclose()
     except BaseException as error:
         _extend_errors(errors, error)
-    _raise_collected_errors("Athena relay lifecycle failed", errors)
+    _raise_collected_errors("Tapper relay lifecycle failed", errors)
 
 
 def _extend_errors(errors: list[BaseException], error: BaseException) -> None:
@@ -208,7 +208,7 @@ def cli(environment: Mapping[str, str] | None = None) -> int:
         return 130
     except BaseException:
         print(
-            "Athena relay failed; check local provider configuration.",
+            "Tapper relay failed; check local provider configuration.",
             file=sys.stderr,
         )
         return 1

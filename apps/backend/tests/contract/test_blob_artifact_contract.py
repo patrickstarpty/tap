@@ -1,4 +1,4 @@
-"""Provider-neutral Athena artifact integrity contract."""
+"""Provider-neutral Tapper artifact integrity contract."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def normalized_artifact() -> NormalizedArtifact:
             NormalizedBlock(
                 block_id="block-1",
                 kind=BlockKind.PARAGRAPH,
-                text="Athena policy.",
+                text="Tapper policy.",
                 heading_path=("Policy",),
                 page=None,
                 paragraph_index=0,
@@ -86,7 +86,7 @@ def normalized_artifact() -> NormalizedArtifact:
 
 
 def chunk_artifact() -> tuple[ChunkDraft, ...]:
-    content = "Athena policy."
+    content = "Tapper policy."
     anchor = '{"blockId":"block-1"}'
     content_hash = canonical_sha256(content.encode())
     return (
@@ -108,7 +108,7 @@ def test_canonical_artifact_envelopes_are_deterministic_and_round_trip_exactly()
     normalized = normalized_artifact()
     chunks = chunk_artifact()
     embeddings = EmbeddingArtifact(
-        "athena-embedding",
+        "tapper-embedding",
         3,
         ((0.1, 0.2, 0.3),),
         tuple(str(chunk.chunk_id) for chunk in chunks),
@@ -151,7 +151,7 @@ def test_artifact_reads_reject_payload_hash_or_envelope_widening(kind: str) -> N
         decoder = decode_chunks_artifact
     else:
         artifact = EmbeddingArtifact(
-            "athena-embedding",
+            "tapper-embedding",
             3,
             ((0.1, 0.2, 0.3),),
             tuple(str(chunk.chunk_id) for chunk in chunk_artifact()),
@@ -183,13 +183,13 @@ def test_artifact_locators_are_closed_identity_only_values() -> None:
         f"revisions/{REVISION}/normalized-v1.json",
     )
 
-    assert str(original).startswith("athena-originals/")
-    assert str(artifact).startswith("athena-artifacts/")
+    assert str(original).startswith("tapper-originals/")
+    assert str(artifact).startswith("tapper-artifacts/")
     for invalid in (
-        "athena-originals/blob?sig=secret",
+        "tapper-originals/blob?sig=secret",
         "https://127.0.0.1/blob",
         "other/blob",
-        "athena-artifacts/../escape",
+        "tapper-artifacts/../escape",
     ):
         with pytest.raises(ValueError):
             artifact_locator(*invalid.split("/", 1))
@@ -231,7 +231,7 @@ def test_chunk_artifact_rejects_coordinated_document_source_revision_rebinding()
     """Recomputing every row ID must not detach a revision from its root/source/parser facts."""
     document_b = DocumentId("doc_b")
     source_b = "sha256:" + "b" * 64
-    content = "Athena policy rebound."
+    content = "Tapper policy rebound."
     anchor = '{"blockId":"block-b"}'
     content_hash = canonical_sha256(content.encode())
     rebound = ChunkDraft(
@@ -285,7 +285,7 @@ def test_embedding_rows_bind_exact_chunk_identity_and_order() -> None:
     """Ordinal-only vectors would permit a manifest reorder without changing the envelope."""
     chunks = chunk_artifact()
     artifact = EmbeddingArtifact(
-        "athena-embedding",
+        "tapper-embedding",
         3,
         ((0.1, 0.2, 0.3),),
         (str(chunks[0].chunk_id),),
@@ -1101,7 +1101,7 @@ async def test_artifact_reads_translate_missing_blob_to_neutral_integrity_failur
 
     store = _store_with_double(monkeypatch, MissingBlob())
     locator = ArtifactLocator(
-        f"athena-artifacts/revisions/{REVISION}/"
+        f"tapper-artifacts/revisions/{REVISION}/"
         + ("normalized-v1.json" if read_kind == "normalized" else "chunks-v1.jsonl.gz")
     )
 
@@ -1124,7 +1124,7 @@ async def test_artifact_reads_translate_provider_failure_to_neutral_unavailable(
             raise RuntimeError("azure endpoint credential=secret")
 
     store = _store_with_double(monkeypatch, FailedBlob())
-    locator = ArtifactLocator(f"athena-artifacts/revisions/{REVISION}/normalized-v1.json")
+    locator = ArtifactLocator(f"tapper-artifacts/revisions/{REVISION}/normalized-v1.json")
 
     with pytest.raises(ArtifactUnavailable) as caught:
         await store.read_normalized(locator)
@@ -1212,7 +1212,7 @@ async def test_closed_artifact_store_is_unavailable_not_stale_integrity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _store_with_double(monkeypatch, _BlobDouble())
-    locator = ArtifactLocator(f"athena-artifacts/revisions/{REVISION}/normalized-v1.json")
+    locator = ArtifactLocator(f"tapper-artifacts/revisions/{REVISION}/normalized-v1.json")
     await store.close()
 
     with pytest.raises(ArtifactUnavailable) as caught:
@@ -1474,7 +1474,7 @@ async def test_original_promotion_race_reuses_exact_existing_blob_without_deleti
 
     locator = await store.commit_original(staged, "rev_task5_race")
 
-    assert str(locator).startswith("athena-originals/revisions/rev_task5_race/")
+    assert str(locator).startswith("tapper-originals/revisions/rev_task5_race/")
     assert deleted == [source]
     assert "etag" not in copy_conditions
     assert getattr(copy_conditions["match_condition"], "name", None) == "IfMissing"
@@ -1563,7 +1563,7 @@ async def test_uncertain_copy_response_recovers_owned_success_from_destination_m
 
     locator = await store.commit_original(staged, "rev_uncertain_success")
 
-    assert str(locator).startswith("athena-originals/revisions/rev_uncertain_success/")
+    assert str(locator).startswith("tapper-originals/revisions/rev_uncertain_success/")
     assert destination.metadata["copyowner"]
     assert destination.metadata["blobsha256"] == staged.source_content_hash.removeprefix("sha256:")
     assert deleted == [source]
@@ -1875,7 +1875,7 @@ async def test_delete_rejects_cross_revision_locator_before_provider_mutation(
         "doc_a",
         "rev_expected",
         (),
-        (ArtifactLocator("athena-artifacts/revisions/rev_other/normalized-v1.json"),),
+        (ArtifactLocator("tapper-artifacts/revisions/rev_other/normalized-v1.json"),),
     )
 
     with pytest.raises(ArtifactIntegrityError):
