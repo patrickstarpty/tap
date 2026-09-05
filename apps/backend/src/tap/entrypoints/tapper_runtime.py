@@ -26,6 +26,7 @@ from tap.contracts.http import (
     ReadyHealth,
 )
 from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
+from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.knowledge.adapters.codex_exec import (
     CodexExecAnswerAdapter,
     CodexExecConfig,
@@ -626,6 +627,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             milvus_target=target,
             models_probe_client=models_probe_client,
         )
+        scope_provider, authorization_policy = _create_validation_authority(engine)
         services = _assemble_http_services(
             repository=repository,
             artifacts=artifacts,
@@ -634,6 +636,8 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             answers=answer_backend.generator,
             readiness=readiness,
             redactor=LocalEgressRedactor(),
+            scope_provider=scope_provider,
+            authorization_policy=authorization_policy,
         )
         return TapperApiRuntime(
             http_services=services,
@@ -1212,6 +1216,19 @@ def _discover_alembic_head() -> str:
     return heads[0]
 
 
+def _create_validation_authority(engine: AsyncEngine) -> tuple[ScopeProvider, AuthorizationPolicy]:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.access.adapters.mysql import MysqlIdentityRegistry
+    from tap.modules.access.adapters.validation import (
+        ValidationAuthorizationPolicy,
+        ValidationScopeProvider,
+    )
+
+    registry = MysqlIdentityRegistry(async_sessionmaker(engine, expire_on_commit=False))
+    return ValidationScopeProvider(), ValidationAuthorizationPolicy(registry)
+
+
 def _assemble_http_services(
     *,
     repository: MysqlDocumentRepository,
@@ -1221,6 +1238,8 @@ def _assemble_http_services(
     answers: AnswerGenerationPort,
     readiness: ReadinessHttpService,
     redactor: EgressRedactionPort,
+    scope_provider: ScopeProvider,
+    authorization_policy: AuthorizationPolicy,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1245,7 +1264,9 @@ def _assemble_http_services(
         search=search,
         embeddings=embeddings,
         answers=answers,
-        policy_verifier=DemoCurrentPolicyVerifier(repository),
+        policy_verifier=DemoCurrentPolicyVerifier(
+            repository, scope_provider=scope_provider, authorization_policy=authorization_policy
+        ),
         redactor=redactor,
     )
     answer_service = AnswerService(

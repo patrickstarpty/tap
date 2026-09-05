@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "enterprise",
+    "project",
+    "actor_principal",
     "outbox",
     "chat_turn",
     "chat_event",

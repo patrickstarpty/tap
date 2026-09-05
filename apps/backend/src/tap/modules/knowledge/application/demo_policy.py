@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from tap.modules.access.application.authorize import build_retrieval_policy_context
+from tap.modules.access.application.policy import require_authorized
+from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
+from tap.modules.access.application.scope import RequestFacts
+from tap.modules.access.domain.authorization import ResourceRef
 from tap.modules.access.domain.policy import (
     AuthorizationDenied,
     Classification,
@@ -110,12 +114,29 @@ def build_demo_policy_context(
 class DemoCurrentPolicyVerifier:
     """Reload the document ledger before each provider action and fail closed."""
 
-    def __init__(self, repository: ReadyRevisionRepository) -> None:
+    def __init__(
+        self,
+        repository: ReadyRevisionRepository,
+        *,
+        authorization_policy: AuthorizationPolicy,
+        scope_provider: ScopeProvider,
+    ) -> None:
         self._repository = repository
+        self._authorization_policy = authorization_policy
+        self._scope_provider = scope_provider
 
     async def verify_current(self, expected: RetrievalPolicyContext) -> RetrievalPolicyContext:
         if not _is_demo_context(expected):
             raise AuthorizationDenied("expected policy is outside the fixed demo authority")
+        scope = await self._scope_provider.current(RequestFacts(project_id=expected.project_id))
+        await require_authorized(
+            self._authorization_policy,
+            scope,
+            "knowledge.read",
+            ResourceRef(
+                enterprise_id=expected.tenant_id, project_id=expected.project_id, kind="knowledge"
+            ),
+        )
         document_ids = tuple(grant.source_id for grant in expected.resource_grants)
         try:
             current_rows = await self._repository.load_ready_revisions(document_ids)

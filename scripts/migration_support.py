@@ -338,6 +338,12 @@ class IsolatedMysql:
     project: str
 
     def upgrade(self, revision: str) -> None:
+        self._migrate("upgrade", revision)
+
+    def downgrade(self, revision: str) -> None:
+        self._migrate("downgrade", revision)
+
+    def _migrate(self, direction: str, revision: str) -> None:
         validate_isolated_database(self.url, self.project)
         env = _local_environment()
         env["TAP_ALEMBIC_DATABASE_URL"] = self.url
@@ -350,7 +356,7 @@ class IsolatedMysql:
                 "alembic",
                 "-c",
                 "apps/backend/alembic.ini",
-                "upgrade",
+                direction,
                 revision,
             ],
             env=env,
@@ -484,7 +490,7 @@ def assert_preserved(
     connection: Connection, before: dict[str, list[dict[str, Any]]], revision: str
 ) -> dict[str, int]:
     """Fail closed until a new revision explicitly registers its data assertions."""
-    if revision != BASELINE:
+    if revision not in {BASELINE, "0006_validation_identity"}:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
         )
@@ -501,7 +507,41 @@ def assert_preserved(
         if actual != expected:
             raise ValueError(f"baseline data changed in {name}")
         counts[name] = len(actual)
+    if revision == "0006_validation_identity":
+        assert_identity_seed(connection)
     return counts
+
+
+def assert_identity_seed(connection: Connection) -> dict[str, str]:
+    identity = MetaData()
+    identity.reflect(connection, only=["enterprise", "project", "actor_principal"])
+    expected = {
+        "enterprise": {"enterprise_id": "local", "enabled": True},
+        "project": {
+            "project_id": "tapper-demo",
+            "enterprise_id": "local",
+            "enabled": True,
+        },
+        "actor_principal": {
+            "actor_id": "tapper-local-user",
+            "enterprise_id": "local",
+            "principal_type": "VALIDATION",
+            "enabled": True,
+        },
+    }
+    for name, row in expected.items():
+        actual = [
+            dict(value)
+            for value in connection.execute(select(identity.tables[name])).mappings()
+        ]
+        if actual != [row]:
+            raise ValueError(f"invalid identity seed in {name}")
+    return {
+        "enterprise": "local",
+        "project": "tapper-demo",
+        "actor": "tapper-local-user",
+        "principal_type": "VALIDATION",
+    }
 
 
 def run_schema_gate() -> dict[str, Any]:
@@ -527,7 +567,7 @@ def run_schema_gate() -> dict[str, Any]:
 
 def run_migration_gate(revision: str) -> dict[str, Any]:
     validate_revision(revision)
-    if revision != BASELINE:
+    if revision not in {BASELINE, "0006_validation_identity"}:
         raise ValueError(
             "register data preservation assertions before checking this revision"
         )
@@ -540,7 +580,25 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             database.upgrade(revision)
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
+            identity_result: dict[str, Any] = {}
+            if revision == "0006_validation_identity":
+                with engine.connect() as connection:
+                    identity_result["identity_seed"] = assert_identity_seed(connection)
+                database.downgrade(BASELINE)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, BASELINE)
+                    if {"enterprise", "project", "actor_principal"} & set(
+                        inspect(connection).get_table_names()
+                    ):
+                        raise ValueError(
+                            "identity downgrade did not remove owned tables"
+                        )
+                database.upgrade(revision)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, revision)
+                identity_result["downgrade_replay"] = "passed"
             return {
+                **identity_result,
                 "status": "passed",
                 "gate": "migration-check",
                 "revision": revision,

@@ -1062,6 +1062,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
     model = object()
     readiness = object()
     redactor = object()
+    scope_provider = object()
+    authorization_policy = object()
 
     services = _runtime()._assemble_http_services(
         repository=repository,
@@ -1071,6 +1073,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
         answers=model,
         readiness=readiness,
         redactor=redactor,
+        scope_provider=scope_provider,
+        authorization_policy=authorization_policy,
     )
 
     assert services.readiness is readiness
@@ -1088,6 +1092,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
     assert retrieval._search is search
     assert retrieval._embeddings is model
     assert retrieval._answers is model
+    assert retrieval._policy_verifier._scope_provider is scope_provider
+    assert retrieval._policy_verifier._authorization_policy is authorization_policy
     assert retrieval._policy_verifier._repository is repository
     assert retrieval._redactor is redactor
 

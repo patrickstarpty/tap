@@ -4,6 +4,11 @@ import asyncio
 
 import pytest
 
+from tap.modules.access.adapters.validation import (
+    ValidationAuthorizationPolicy,
+    ValidationScopeProvider,
+)
+from tap.modules.access.domain.authorization import ActorPrincipal
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.knowledge.application import demo_policy
 from tap.modules.knowledge.application.answers import ReadyDocumentRevision
@@ -23,6 +28,18 @@ def ready(document_id: str, revision_id: str, source_hash: str) -> ReadyDocument
         revision_id=revision_id,
         source_content_hash=source_hash,
     )
+
+
+class IdentityRegistry:
+    async def get_principal(
+        self, enterprise_id: str, project_id: str, actor_id: str
+    ) -> ActorPrincipal:
+        return ActorPrincipal(
+            enterprise_id=enterprise_id,
+            actor_id=actor_id,
+            principal_type="VALIDATION",
+            enabled=True,
+        )
 
 
 class ReadyRevisionRepository:
@@ -97,7 +114,11 @@ def test_current_policy_verifier_reloads_mysql_and_fails_closed_on_changed_sourc
     async def scenario() -> None:
         initial = ready("doc_a", "rev_a", HASH_A)
         repository = ReadyRevisionRepository((initial,))
-        verifier = DemoCurrentPolicyVerifier(repository)
+        verifier = DemoCurrentPolicyVerifier(
+            repository,
+            authorization_policy=ValidationAuthorizationPolicy(IdentityRegistry()),
+            scope_provider=ValidationScopeProvider(),
+        )
         expected = build_demo_policy_context((initial,))
 
         assert await verifier.verify_current(expected) == expected
@@ -115,7 +136,11 @@ def test_current_policy_verifier_maps_ledger_outage_to_policy_unavailable() -> N
         initial = ready("doc_a", "rev_a", HASH_A)
         repository = ReadyRevisionRepository((initial,))
         repository.fail = True
-        verifier = DemoCurrentPolicyVerifier(repository)
+        verifier = DemoCurrentPolicyVerifier(
+            repository,
+            authorization_policy=ValidationAuthorizationPolicy(IdentityRegistry()),
+            scope_provider=ValidationScopeProvider(),
+        )
 
         with pytest.raises(PolicyUnavailable, match="current document policy"):
             await verifier.verify_current(build_demo_policy_context((initial,)))

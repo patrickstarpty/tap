@@ -2,6 +2,7 @@
 
 from sqlalchemy import MetaData
 
+from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_answer_snapshot,
@@ -24,6 +25,9 @@ def load_authoritative_metadata() -> MetaData:
     """Return only explicitly owned tables, copied into a fresh migration registry."""
     authoritative = MetaData()
     for table in (
+        enterprise,
+        project,
+        actor_principal,
         outbox,
         chat_turn,
         chat_event,

@@ -64,3 +64,30 @@ def test_preservation_rejects_empty_evidence_and_changed_historical_values() -> 
         connection.execute(metadata.tables["knowledge_projection_lineage"].update().values(id=2))
         with pytest.raises(ValueError, match="knowledge_projection_lineage"):
             assert_preserved(connection, before, "0005_projection_lineage")
+
+
+def test_0006_identity_revision_is_literal_and_registered() -> None:
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0006_validation_identity") == "0006_validation_identity"
+
+
+def test_0006_identity_nonempty_upgrade_and_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
+    from scripts.migration_support import run_migration_gate
+
+    # This gate owns a different fresh database; never inherit the suite database.
+    monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+    result = run_migration_gate("0006_validation_identity")
+    assert result["status"] == "passed"
+    assert len(result["preserved_rows"]) == 14
+    assert all(result["preserved_rows"].values())
+    assert result["identity_seed"] == {
+        "enterprise": "local",
+        "project": "tapper-demo",
+        "actor": "tapper-local-user",
+        "principal_type": "VALIDATION",
+    }
+    assert result["downgrade_replay"] == "passed"
