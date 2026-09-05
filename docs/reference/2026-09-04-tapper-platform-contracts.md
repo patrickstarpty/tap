@@ -82,6 +82,7 @@ class ProjectEventEnvelope:
 | ------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------- |
 | `knowledge.document-revision.accepted`      | DocumentRevision   | `sourceId, documentId, revisionId, contentHash` / `revisionId:ingest`                     |
 | `knowledge.document-revision.ready`         | DocumentRevision   | `revisionId, chunkManifestDigest, projectionDigest` / `revisionId`                        |
+| `knowledge.operator.completed`             | KnowledgeOperation | `operationId, command, outcome, resultDigest` / operation                              |
 | `knowledge.graph-snapshot.requested`        | GraphSnapshot      | `snapshotId, sourceRevisionIds[], extractionProfileDigest` / snapshot                     |
 | `knowledge.graph-snapshot.ready`            | GraphSnapshot      | `snapshotId, graphDigest, evidenceDigest` / snapshot                                      |
 | `conversation.turn.requested`               | Turn               | `conversationId, turnId, inputSnapshotDigest` / turn                                      |
@@ -102,6 +103,8 @@ class ProjectEventEnvelope:
 每个消费者声明接受的 `schema_version`、业务幂等键和 retry/dead-letter 策略；未知 major、缺字段或跨 Project payload 进入可审计 dead-letter，不能 ack 后静默丢弃。状态改变事件必须与对应状态、Audit 和 Outbox 同事务；完成事件不能在必需 Manifest 尚未持久化时发出。SSE Schema 是这些内部事件的授权闭集投影，单独生成版本化 JSON Schema。
 
 完成事件的 `outcome` 使用以下闭集：Conversation 沿用 Turn 终态 `completed | abstained | canceled | failed`，均须引用已持久化的 Answer/Evidence Snapshot，失败或空结果也不能省略该事实；Debug Execution 和 Execution Run 使用 §7 的 `TestOutcome`；Recorder Session 使用 `OperationStatus` 的终态 `SUCCEEDED | FAILED | CANCELLED | TIMED_OUT`。状态改变事件的 `from/to` 使用 §7 的 `OperationStatus`，合法转换由对应领域状态机验证。Provider 原始状态不得直接代替这些值。事件类型已登记不代表对应生产流程已经实现。
+
+V0 Task 4 的 Operator 完成事件只在 `knowledge_operator_operation` 的结果、Audit 与 Outbox 同事务持久化后产生；`operationId` 等于 aggregate ID，`aggregate_version=1`。`command` 为 `recover-uploads | scavenge-staging | rebuild-milvus | reconcile-all`，`outcome` 为 `completed | partial | failed`；`resultDigest` 是已保存的封闭结果/计数的 canonical SHA-256（沿用 `sha256:` 前缀）。不含 Blob locator 或 Provider 原文。claim/lease 是运行协调，不是完成事件；重放原 operation 返回原结果和事件，不产生第二次完成。该项为 Task 4 待实现契约，不代表当前运行时已登记。
 
 `aggregate_id` 与 payload 中的资源 ID 上限为 64 字符，与现有 Outbox 存储一致；scope、event、correlation 与 idempotency ID 上限为 128 字符。时间戳必须带时区且可表示为 canonical UTC，不能只检查语法后让转换溢出阻塞持久事件处理。
 

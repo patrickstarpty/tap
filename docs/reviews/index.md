@@ -14,3 +14,4 @@
 - [Tapper V0 Project 数据隔离验收](2026-09-05-tapper-v0-project-scope-review.md)：Task 2B 实现与定向验收通过；记录 0007 多批次迁移、仓储隔离、两项审查修正及完整回归中一项待复核失败。
 - [Tapper V0 事件与错误契约验收](2026-09-06-tapper-v0-contracts-review.md)：Task 2C 通过；记录统一事件/Problem、同事务 Outbox、异常时间戳隔离与完整回归旧断言的修正证据。
 - [Tapper V0 Project 接口与验证模式验收](2026-09-06-tapper-v0-http-review.md)：Task 3 通过；记录可信 HTTP/Origin、Project 缓存、原型验证提示、40 张截图与完整回归旧代理断言的修正。
+- [Tapper V0 Project Audit 账本验收](2026-09-06-tapper-v0-audit-review.md)：Task 3A 通过；记录闭集审计、同事务三写、0008 迁移、并发重放与冻结后的完整隔离回归。

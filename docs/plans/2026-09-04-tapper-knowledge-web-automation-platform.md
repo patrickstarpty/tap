@@ -304,10 +304,13 @@ HTTP 装配必须核对实际 application / repository 绑定的 Scope；不能�
 - Create: `apps/backend/src/tap/modules/governance/domain/audit.py`
 - Create: `apps/backend/src/tap/modules/governance/ports/audit.py`
 - Create: `apps/backend/src/tap/modules/governance/adapters/mysql_audit.py`
+- Create: `apps/backend/src/tap/modules/governance/adapters/schema.py`
 - Create: `apps/backend/migrations/versions/0008_project_audit.py`
 - Create: `apps/backend/tests/contract/test_project_audit_port.py`
 - Create: `apps/backend/tests/integration/test_project_audit_transaction.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
+- Modify: `apps/backend/tests/architecture/test_migration_metadata.py`
+- Modify: `scripts/migration_support.py`（加入 `0008` 专属保留/约束/降级验证）
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
@@ -315,11 +318,13 @@ HTTP 装配必须核对实际 application / repository 绑定的 Scope；不能�
 
 Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/origin、action/resource/outcome、correlation、idempotency key、内容 digest 和安全 metadata。Action/resource/outcome 与 metadata 使用封闭契约；metadata 仅接受已登记的有界计数、枚举或 digest，不接受任意字符串。正文、query、Prompt、Secret、对象存储定位符和 Provider payload 均拒绝。幂等范围为 Enterprise + Project + key；相同业务内容返回原 Audit（包括原时间和 correlation），内容变化冲突，不把重试生成的 ID/时间当作新事实。资源存在性与状态转换仍由同事务的领域应用校验。V0 先覆盖后续 Task 4 的有界 Operator 结果；其他领域在其任务接入，不能把基础表完成等同于 RFC 全量 Audit 覆盖。
 
-- [ ] 写 scope/actor 非空、metadata 闭集与大小、敏感值拒绝、事务三写/回滚、重复 idempotency 和 `0005 → 0008` 数据保持测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 FAIL，原因为 Audit port/table/revision 不存在。
-- [ ] 实现 Audit domain/Adapter 与 `0008_project_audit`，加入 authoritative registry；只保存稳定 action/resource/outcome、correlation、actor/project、identity mode 和安全 metadata。
-- [ ] 运行 `make migration-check MIGRATION=0008_project_audit && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(audit): persist project audit facts`
+- [x] 写 scope/actor 非空、metadata 闭集与大小、敏感值拒绝、事务三写/回滚、重复 idempotency 和 `0005 → 0008` 数据保持测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 FAIL，原因为 Audit port/table/revision 不存在。
+- [x] 实现 Audit domain/Adapter 与 `0008_project_audit`，加入 authoritative registry；只保存稳定 action/resource/outcome、correlation、actor/project、identity mode 和安全 metadata。
+- [x] 运行 `make migration-check MIGRATION=0008_project_audit && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(audit): persist project audit facts`
+
+**验收：** `a7cb719`；[Task 3A 验收记录](../reviews/2026-09-06-tapper-v0-audit-review.md)。冻结后的完整隔离回归通过。
 
 ### Task 4: Recover Redis/Outbox and expose bounded Knowledge operations
 
@@ -328,6 +333,10 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Create: `apps/backend/src/tap/platform/messaging/redis_recovery.py`
 - Create: `apps/backend/src/tap/platform/messaging/outbox_archive.py`
 - Create: `apps/backend/src/tap/entrypoints/knowledge_operator.py`
+- Create: `apps/backend/src/tap/modules/knowledge/domain/operations.py`
+- Create: `apps/backend/src/tap/modules/knowledge/ports/operations.py`
+- Create: `apps/backend/src/tap/modules/knowledge/application/operations.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/mysql_operations.py`
 - Create: `apps/backend/migrations/versions/0009_outbox_operations.py`
 - Create: `scripts/knowledge-operator.py`
 - Create: `apps/backend/tests/unit/operations/test_redis_stream_recovery.py`
@@ -344,10 +353,27 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `apps/backend/src/tap/modules/chat/adapters/mysql.py`
 - Modify: `apps/backend/src/tap/entrypoints/relay_reconciler.py`
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
+- Modify: `apps/backend/src/tap/modules/access/adapters/validation.py`
+- Modify: `apps/backend/tests/contract/authorization_policy_conformance.py`
+- Modify: `apps/backend/tests/contract/test_alternate_authorization_policy.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
+- Modify: `apps/backend/tests/contract/test_blob_artifact_contract.py`
+- Modify: `apps/backend/tests/integration/test_azurite_artifacts.py`
+- Modify: `apps/backend/tests/architecture/test_migration_metadata.py`
+- Modify: `scripts/migration_support.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 - Modify: `Makefile`
 
 **Operations:** 实现 `reclaim_pending(group, consumer, idle_for, limit)`、`trim_acknowledged(max_length)`、`redrive_dead_letters(limit)`、`archive_published(older_than, limit)`；Operator 固定支持 `recover-uploads`、`scavenge-staging --limit`、`rebuild-milvus`、`reconcile-all`，每次只作用当前 Validation Project，并通过 Task 3A 的 `ProjectAuditPort` 记录结果。`0009` 的 archive/dead-letter metadata 加入 authoritative registry；未知事件主版本只进入 dead-letter，不能被 redrive 成已知事件。
+
+**实施前置收口：**
+
+- Operator 通过共同 Policy 的显式 `knowledge.operate` / `knowledge` pair 重新核对有效 Validation identity；ScopeProvider 输出不能代替授权。未授权、Project 不匹配与参数非法均在 Provider I/O 前拒绝。
+- `0009` 增加 Project-scoped `knowledge_operator_operation`，保存调用身份、参数摘要、幂等键、原 correlation、lease/fencing 与完成结果。初始 claim/续租属于运行协调；只有完成结果持久化才构成完成事实。完成结果、Task 3A Audit 与 `knowledge.operator.completed` Outbox 在同一 connection 提交或回滚，不把 Provider 效果描述成 SQL 事务的一部分。重试先读已有 receipt，相同 key/参数返回原结果，不同参数冲突；活跃 lease 不重复执行，过期 takeover 保留原关联并依靠既有 primitive 的幂等和 fencing 恢复。
+- 完成事件的 `KnowledgeOperation` aggregate ID 是稳定 operation ID，version 固定为首个完成事实的 `1`；payload 与 [Core Contracts §2](../reference/2026-09-04-tapper-platform-contracts.md#2-project-事件信封) 一致，不借用 ingestion compatibility event。CLI 可生成一次性的调用幂等键，并提供显式重试键；它不是身份或范围输入。Audit 只记录 `completed | partial | failed` 的实际结果，不制造已成功的启动事件。
+- 新 staging 写入使用从可信 Enterprise/Project 派生的物理 namespace，scavenger 仅扫描该 namespace 并尊重本 Project 的可见引用、时间与 ETag/claim 条件。不能凭调用者字段或对象自述扩大范围。已有旧 staging locator 只可由有范围约束的持久 reservation 恢复；无法确定归属的 legacy orphan 保留，不因不在当前 Project 的 pins 内而删除。
+- Redis trim 必须保留所有相关 consumer group 的 pending/未读消息。对共享 stream 不能只按当前 Project 的 ACK 或 MAXLEN 截断其他 Project 的工作；scope 隔离与旧 hint 的可重建迁移必须显式验证。归档/dead-letter 保存原 envelope、identity 与 digest；历史 raw provider error 不进入公开 CLI/Audit 输出。
 
 - [ ] 写 pending message、过期 lease、重复 redrive、archive batch、上传恢复、staging scavenger、Milvus rebuild、Audit 三写和 `0005 → 0009` 数据保持测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009'`；预期 FAIL，原因为 recovery/operator/revision 不存在。
