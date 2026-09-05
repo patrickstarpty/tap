@@ -128,17 +128,17 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 当前状态
 
 - 架构状态：`v0.4 accepted — validation-first knowledge and web automation`
-- 实现状态：`Tapper local doc Q&A slice + frontend prototype implemented; v0.4 platform not implemented`
+- 实现状态：`Tapper local doc Q&A slice + frontend prototype implemented; v0.4 platform in progress, V0 gate pending`
 - 当前交付重点：`V0 Validation Scope and reliability baseline`
 - 后续顺序：`V1 Knowledge → V2 Graph → V3 Test Design → V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)、[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)和[Project 接口验收](docs/reviews/2026-09-06-tapper-v0-http-review.md)；Project API、精确 Origin 与 Validation Mode 已接入当前产品原型，[Project Audit 基础](docs/reviews/2026-09-06-tapper-v0-audit-review.md)也已完成，继续接入有界恢复操作，V0 完整出口尚未通过。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
+V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)、[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)和[Project 接口验收](docs/reviews/2026-09-06-tapper-v0-http-review.md)；Project API、精确 Origin 与 Validation Mode 已接入当前产品原型，[Project Audit 基础](docs/reviews/2026-09-06-tapper-v0-audit-review.md)也已完成，[有界恢复与运维](docs/reviews/2026-09-06-tapper-v0-recovery-review.md)已接入，继续实施 MinIO 与隔离 Parser；V0 完整出口尚未通过。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
 
 ## Tapper 本地知识工作区
 
-Tapper 当前实现仍是来源优先的本地 Demo，不是 v0.4 完整平台。现有真实知识页面可上传、查看六阶段 ingestion、选择 ready 来源、发起单次非流式问答并打开逐条引用；没有登录、服务端 Conversation/history、SSE、停止/队列、真实 Graph 或 OCR。默认产品壳仍挂载纯前端 prototype。API、Web 和所有中间件只绑定精确 loopback；无身份验证仅适用于单机开发，不能开放到局域网或生产环境。Milvus 已被接受为目标 `doc` 检索后端，但当前本地门禁不等于生产认证、TLS、备份、容量或多 Project 隔离已经完成。
+Tapper 当前产品入口是已确认的 TAP 原型，已读取固定 Project 与文档列表；Library 的真实上传接入在 Task 5 实施。后端 Knowledge API 已支持上传、六阶段 ingestion、基于 ready 来源的单次非流式问答和逐条引用。尚未交付登录、服务端 Conversation/history、SSE、停止/队列、真实 Graph 或 OCR，v0.4 完整平台继续按计划实施。API、Web 和所有中间件只绑定精确 loopback；无身份验证仅适用于单机开发，不能开放到局域网或生产环境。Milvus 已被接受为目标 `doc` 检索后端，但当前本地门禁不等于生产认证、TLS、备份、容量或多 Project 隔离已经完成。
 
 支持文本可提取的 PDF、DOCX、Markdown（MD）和 TXT。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
 

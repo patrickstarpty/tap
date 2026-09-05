@@ -104,7 +104,7 @@ class ProjectEventEnvelope:
 
 完成事件的 `outcome` 使用以下闭集：Conversation 沿用 Turn 终态 `completed | abstained | canceled | failed`，均须引用已持久化的 Answer/Evidence Snapshot，失败或空结果也不能省略该事实；Debug Execution 和 Execution Run 使用 §7 的 `TestOutcome`；Recorder Session 使用 `OperationStatus` 的终态 `SUCCEEDED | FAILED | CANCELLED | TIMED_OUT`。状态改变事件的 `from/to` 使用 §7 的 `OperationStatus`，合法转换由对应领域状态机验证。Provider 原始状态不得直接代替这些值。事件类型已登记不代表对应生产流程已经实现。
 
-V0 Task 4 的 Operator 完成事件只在 `knowledge_operator_operation` 的结果、Audit 与 Outbox 同事务持久化后产生；`operationId` 等于 aggregate ID，`aggregate_version=1`。`command` 为 `recover-uploads | scavenge-staging | rebuild-milvus | reconcile-all`，`outcome` 为 `completed | partial | failed`；`resultDigest` 是已保存的封闭结果/计数的 canonical SHA-256（沿用 `sha256:` 前缀）。不含 Blob locator 或 Provider 原文。claim/lease 是运行协调，不是完成事件；重放原 operation 返回原结果和事件，不产生第二次完成。该项为 Task 4 待实现契约，不代表当前运行时已登记。
+V0 Task 4 的 Operator 完成事件只在 `knowledge_operator_operation` 的结果、Audit 与 Outbox 同事务持久化后产生；`operationId` 等于 aggregate ID，`aggregate_version=1`。`command` 为 `recover-uploads | scavenge-staging | rebuild-milvus | reconcile-all`，`outcome` 为 `completed | partial | failed`；`resultDigest` 是已保存的封闭结果/计数的 canonical SHA-256（沿用 `sha256:` 前缀）。不含 Blob locator 或 Provider 原文。claim/lease 是运行协调，不是完成事件；重放原 operation 返回原结果和事件，不产生第二次完成。该项已由 Task 4 登记并接入实际完成事务，范围与验证限制见[恢复验收](../reviews/2026-09-06-tapper-v0-recovery-review.md)。
 
 `aggregate_id` 与 payload 中的资源 ID 上限为 64 字符，与现有 Outbox 存储一致；scope、event、correlation 与 idempotency ID 上限为 128 字符。时间戳必须带时区且可表示为 canonical UTC，不能只检查语法后让转换溢出阻塞持久事件处理。
 

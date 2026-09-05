@@ -344,17 +344,20 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Create: `apps/backend/tests/unit/operations/test_knowledge_operator.py`
 - Create: `apps/backend/tests/integration/test_outbox_archive.py`
 - Create: `apps/backend/tests/integration/test_knowledge_operations_recovery.py`
+- Modify: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`（归档后仍核对原完成事实的幂等键与内容）
 - Modify: `apps/backend/src/tap/platform/messaging/redis_dispatch.py`
 - Modify: `apps/backend/src/tap/platform/messaging/redis_wakeup.py`
 - Modify: `apps/backend/src/tap/platform/db/schema.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
 - Modify: `apps/backend/src/tap/contracts/events.py`
 - Modify: `contracts/events/project-event.schema.json`
-- Modify: `apps/backend/src/tap/modules/chat/application/ports.py`
+- Inspect: `apps/backend/src/tap/modules/chat/application/ports.py`（保留既有 claim/settlement Port；维护动作由独立有界 recovery adapter 提供）
 - Modify: `apps/backend/src/tap/modules/chat/adapters/mysql.py`
-- Modify: `apps/backend/src/tap/entrypoints/relay_reconciler.py`
+- Inspect: `apps/backend/src/tap/entrypoints/relay_reconciler.py`（复用其已有 scoped Relay 组合，恢复接入 publisher/wakeup/Outbox adapter 与 Operator）
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/src/tap/modules/access/adapters/validation.py`
+- Modify: `apps/backend/tests/contract/test_generated_contracts.py`
+- Modify: `apps/backend/tests/contract/test_project_event_envelope.py`
 - Modify: `apps/backend/tests/contract/authorization_policy_conformance.py`
 - Modify: `apps/backend/tests/contract/test_alternate_authorization_policy.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
@@ -366,6 +369,8 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `apps/backend/tests/architecture/test_migration_metadata.py`
 - Modify: `scripts/migration_support.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
+- Modify: `apps/backend/tests/contract/test_demo_commands.py`（目标测试副本在 trap-ready 后开始原就绪窗口，覆盖受控慢启动）
+- Modify: `apps/web/src/features/knowledge/components/KnowledgeLibrary.test.tsx`（使用已有上传完成控制消除中间进度断言的计时竞争）
 - Modify: `Makefile`
 
 **Operations:** 实现 `reclaim_pending(group, consumer, idle_for, limit)`、`trim_acknowledged(max_length)`、`redrive_dead_letters(limit)`、`archive_published(older_than, limit)`；Operator 固定支持 `recover-uploads`、`scavenge-staging --limit`、`rebuild-milvus`、`reconcile-all`，每次只作用当前 Validation Project，并通过 Task 3A 的 `ProjectAuditPort` 记录结果。`0009` 的 archive/dead-letter metadata 加入 authoritative registry；未知事件主版本只进入 dead-letter，不能被 redrive 成已知事件。
@@ -379,12 +384,14 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - rebuild 的 SQL/artifact snapshot 必须在已有全局 alias mutation lock 内取得，SQL 读事务也在取得锁后开始。还要覆盖 Provider upsert 已释放锁、SQL ready 尚未提交的 PUBLISHING 空档：存在无法确认的活跃发布时拒绝/延后 cutover，或以等价协调证明不会漏掉该版本。超过快照上限必须中止，不能以截断结果重建完整索引。
 - Redis trim 必须保留所有相关 consumer group 的 pending/未读消息。对共享 stream 不能只按当前 Project 的 ACK 或 MAXLEN 截断其他 Project 的工作；scope 隔离与旧 hint 的可重建迁移必须显式验证。归档/dead-letter 保存原 envelope、identity 与 digest；历史 raw provider error 不进入公开 CLI/Audit 输出。
 
-- [ ] 写 pending message、过期 lease、重复 redrive、archive batch、上传恢复、staging scavenger、Milvus rebuild、Audit 三写和 `0005 → 0009` 数据保持测试。
+- [x] 写 pending message、过期 lease、重复 redrive、archive batch、上传恢复、staging scavenger、Milvus rebuild、Audit 三写和 `0005 → 0009` 数据保持测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009'`；预期 FAIL，原因为 recovery/operator/revision 不存在。
-- [ ] 实现有界 batch、claim token、ack 后 trim 与归档；Redis 操作失败只影响唤醒延迟，Relay 仍从 MySQL 未发布 Outbox 恢复。
-- [ ] 增加 `make knowledge-recover` 的显式参数校验，拒绝空 Project、负 limit 和默认生产地址。
-- [ ] 运行 `make migration-check MIGRATION=0009_outbox_operations && make schema-drift && make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009' && uv run --project apps/backend pytest apps/backend/tests/integration/test_relay_recovery.py -v -k relay`；预期 PASS，字面量 RED 命令已转绿且 Relay 扩展场景通过。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(ops): recover durable knowledge dispatch`
+- [x] 实现有界 batch、claim token、ack 后 trim 与归档；Redis 操作失败只影响唤醒延迟，Relay 仍从 MySQL 未发布 Outbox 恢复。
+- [x] 增加 `make knowledge-recover` 的显式参数校验，拒绝空 Project、负 limit 和默认生产地址。
+- [x] 运行 `make migration-check MIGRATION=0009_outbox_operations && make schema-drift && make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009' && uv run --project apps/backend pytest apps/backend/tests/integration/test_relay_recovery.py -v -k relay`；预期 PASS，字面量 RED 命令已转绿且 Relay 扩展场景通过。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(ops): recover durable knowledge dispatch`
+
+**验收：** `a0f892f`；[Task 4 验收记录](../reviews/2026-09-06-tapper-v0-recovery-review.md)。定向 27 passed、Web 289 passed、迁移/21 表 drift/check 与审查通过。完整 Backend 为 2592 passed、9 skipped、1 failed；唯一既有启动测试经受控 RED、有界同步修正、完整文件 89 passed 和复审关闭，未重复完整 Backend。组件 RED 已执行，但原计划的单次全文件字面量 RED 未捕获，保留该执行偏差，不回填未运行命令。
 
 ### Task 5: Introduce provider-neutral MinIO object storage
 
@@ -392,6 +399,12 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 
 - Create: `apps/backend/src/tap/platform/storage/objects.py`
 - Create: `apps/backend/src/tap/platform/storage/s3.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/object_artifacts.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/artifact_codecs.py`（抽取两个实现确需共用的 codec，保留 Azure copy 状态机）
+- Create: `apps/backend/tests/contract/artifact_store_conformance.py`
+- Create: `deploy/minio/Dockerfile`
+- Create: `deploy/minio/build-inputs.json`
+- Create: `scripts/build-tapper-object-store.sh`
 - Create: `apps/backend/tests/contract/object_store_conformance.py`
 - Create: `apps/backend/tests/contract/test_s3_object_store.py`
 - Create: `apps/backend/tests/integration/test_minio_artifacts.py`
@@ -401,6 +414,10 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `uv.lock`
 - Modify: `compose.yaml`
+- Modify: `Makefile`
+- Modify: `.gitignore`（排除工作区本地构建 receipt）
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `.env.example`
 - Modify: `scripts/check-tapper-demo.py`
 - Modify: `scripts/tapper_collection.py`
@@ -416,6 +433,15 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Inspect: `apps/web/src/features/knowledge/api/queries.tsx`（复用已具备 Project 绑定的 upload mutation）
 
 **Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
+
+**预检裁定（实施前置，尚未实现）：**
+
+- Knowledge 继续使用 ArtifactStore；新增 KnowledgeArtifactStore 组合平台 ObjectStorePort。平台层不导入 Knowledge domain/application。共同验证分为平台对象契约与两种 Knowledge artifact 实现的共享 conformance；保留 Azure 既有 copy/cancellation 状态机及测试，不把旧 Azure Adapter 称为已经实现新平台 Port。
+- 新 ObjectRef 只含封闭 opaque store identity、可信 Project namespace 与 manifest digest，不含 endpoint/bucket/key。manifest 绑定内容摘要、大小、类型和封闭逻辑属性；promote 可显式接收 revision/artifact slot 的逻辑身份以避免跨 Revision 删除共用内容，物理 key 仍由 Adapter 生成。旧 SQL locator 原字节保留，无新增对象目录表或隐式数据迁移。
+- 配置明确选择 minio 或 azure；MinIO 模式可显式开启 legacy Azure，仅路由已识别旧 locator 的读/删和持久 reservation 恢复，新上传仍写 MinIO。未启用 legacy 时旧引用安全失败，不能误发往 S3；Azure 模式也不能把新对象 ref 当 Blob 路径。新旧混合制品先全部校验，再按 Provider 分别清理，不宣称跨 Provider 原子删除。
+- SDK 候选固定为官方 aiobotocore 3.9.1 源码 commit `c92e345814ad97e5ec0633dbd34be5d26ee90dd3` 与 botocore 1.43.75；[官方修正](https://github.com/aio-libs/aiobotocore/releases/tag/3.9.1)包含 HTTPSession 并发保护。预检已解析源码声明依赖，但实际源包构建与完整 lock 仍须在工作区独占环境通过；PyPI 3.9.1 尚不可用，不能填入不存在的 wheel 或静默降级。先替换本工作区 `.venv` 符号链接本身，保留原目标和其他工作区环境。
+- [MinIO 社区版现为源码发布](https://github.com/minio/minio/blob/master/README.md)。固定官方 release commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`、已核对的 Go 1.24.8 与 nonroot runtime image digest，以只读 go.sum/明确平台构建；不得沿用上游 Dockerfile 的 mutable latest。构建 receipt 区分源码/基础镜像/实际产物 identity，启动使用实际 `sha256` image ID、`pull_policy: never` 并核对 container.Image。最终 image digest 是构建后的验收事实；固定输入不等于已证明逐位一致的重建，也不涉及发布 registry。
+- S3 endpoint、region、credentials、store identity 与代理行为显式配置；缺配置在网络前拒绝，无 ambient AWS profile/IMDS 回退。网络调用保持原生 async，有绝对 deadline、流关闭和取消收敛测试；SDK 本地 TLS 初始化仍可能使用线程，不把它称为全无线程，也不能通过关闭 HTTPS 校验规避。
 
 **V0 E2E 接入前置：** 当前产品原型的 Library 已读取真实文档，但文件选择仅生成本地名称；旧 `tapper.spec.ts` / `persistence.spec.ts` 则依赖已不作为产品入口的独立知识页。先把已确认 Library 的现有文件选择动作接到 Project-bound Document upload mutation，保留原布局；未取得 runtime Project 时禁用上传，不制造本地成功。这个最小接入用于当前摄取/存储和下一项恶意上传门禁，不提前实现 Source ledger 或持久 Conversation。
 
