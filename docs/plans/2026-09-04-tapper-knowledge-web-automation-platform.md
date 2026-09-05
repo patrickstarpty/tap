@@ -27,6 +27,8 @@ date: 2026-09-04
 
 本次启动交付包含两个独立验收项：下述 UI 浅色视觉统一，以及 V0 Task 1 的 authoritative metadata / migration harness。55 个平台任务与 V0–P1 顺序保留；本次启动不把其余任务标为已实现，后续仍按逐里程碑门禁推进。
 
+用户已要求在启动交付后继续实施；从 V0 Task 2A 起按本计划顺序执行，每项以实际测试和 Review 更新进度。
+
 本次实际证据：[原型浅色改造与 V0 启动验收](../reviews/2026-09-05-tap-fwd-and-v0-start-review.md)。
 
 ### UI：全平台 FWD 浅色视觉统一
@@ -170,6 +172,9 @@ class AuthorizationPolicy(Protocol):
 
 **Files:**
 
+- Create: `apps/backend/src/tap/contracts/events.py`
+- Create: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`
+- Create: `apps/backend/tests/contract/test_legacy_event_envelope.py`
 - Create: `apps/backend/migrations/versions/0007_project_scope_backfill.py`
 - Create: `apps/backend/tests/integration/test_project_scope_backfill.py`
 - Modify: `apps/backend/src/tap/modules/chat/domain/models.py`
@@ -186,17 +191,21 @@ class AuthorizationPolicy(Protocol):
 
 **Migration contract:** `0007` 以 nullable columns → bounded batch backfill → orphan/duplicate validation → Project/Actor FK 与 Project-prefixed index/unique constraint → non-null 的顺序处理当前 14 张业务表。现有 `knowledge_document.dedupe_key` 改为 `(project_id, dedupe_key)` 唯一；所有 Chat/Knowledge/Projection/Outbox repository 强制绑定 `ProjectScopeContext`。Migration 保留原主键、revision、sequence、digest、时间戳和对象 locator。
 
+**执行期接口补全（2026-09-05）：** 本 Task 同时建立 `contracts/events.py` 中四种现有 transport compatibility event 的最小封闭注册表、`platform/messaging/mysql_outbox.py` 的同事务 value builder，以及 `0007` 的非空 canonical envelope JSON / `event_content_digest`。映射与版本规则见核心契约 §2；不得继续写入无信封的旧唤醒记录。Task 2C 在此基础上扩展领域事件、生成制品、Problem 与 dead-letter，不另改已完成的迁移。旧记录先检查 type/shape，再执行 MySQL DDL；历史 Envelope 只使用已知事实。内容摘要不替代业务请求幂等比较，Turn 的同 key/不同 message 必须拒绝。
+
+需要同步的调用点还包括 `scripts/migration_support.py`、`entrypoints/relay_reconciler.py`、`platform/messaging/redis_dispatch.py` / `redis_wakeup.py` 及现有 repository integration fixtures。Redis 去重和提示带 Project，可信 scope 仍由服务端提供。Projection 保留物理 alias 的全局所有权和原锁名，同一 alias 的另一 Project 必须在 Provider I/O 前拒绝；不能仅添加 Project 锁便共享物理 alias。Cursor 和问答保留锁按 Project 绑定。
+
 - [ ] 扩展旧数据 fixture，使每张当前表至少有一行，并写 ID/digest/sequence 保留、nullable 中间态、global dedupe constraint 被替换、跨 Project 同 digest 可共存、未知/孤儿 Actor 拒绝和 repository 无 scope 不可调用测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k '0007 or project_scope'`；预期 FAIL，原因为 `0007` 与 Project-bound repository 尚不存在。
+- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 FAIL，原因为 `0007` 与 Project-bound repository 尚不存在。
 - [ ] 实现 `0007` 与 repository 签名；所有 read/write/filter/idempotency key 均包含 Project，Outbox 增加非空 Project/Actor/identity mode 并保留 aggregate sequence。
-- [ ] 运行 `make migration-check MIGRATION=0007_project_scope_backfill && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k '0007 or project_scope'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [ ] 运行 `make migration-check MIGRATION=0007_project_scope_backfill && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 PASS。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(access): backfill project scoped records`
 
 ### Task 2C: Freeze Project event and Problem Details contracts
 
 **Files:**
 
-- Create: `apps/backend/src/tap/contracts/events.py`
+- Extend: `apps/backend/src/tap/contracts/events.py`（Task 2B 的兼容事件基础）
 - Create: `apps/backend/src/tap/contracts/problems.py`
 - Create: `apps/backend/tests/contract/test_project_event_envelope.py`
 - Create: `apps/backend/tests/contract/test_problem_registry.py`
@@ -207,7 +216,7 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/contracts/http.py`
 - Modify: `apps/backend/src/tap/contracts/chat_stream.py`
 - Modify: `apps/backend/src/tap/interfaces/http/problems.py`
-- Create: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`
+- Extend: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`（Task 2B 的同事务基础）
 - Modify: `scripts/export_contracts.py`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 
@@ -248,6 +257,8 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/web/src/app/styles.css`
 - Modify: `apps/web/src/pages/TapperPage.test.tsx`
 - Modify: `scripts/export_contracts.py`
+
+**UI 基线：** Banner 接入 `TapperPage` 展示的 `TapProductPrototype` / App 外壳，沿用已确认的浅色原型。旧 `TapperWorkspace` 只因 API 调用签名变化更新兼容测试，不作为本次实施的产品页面；同步原型中 `useDocumentListQuery` 的 Project 参数。
 
 **API:** Project Knowledge 路径统一为 `GET/POST /api/v1/projects/{project_id}/knowledge/documents`、`GET/DELETE /api/v1/projects/{project_id}/knowledge/documents/{document_id}`、`POST /api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry`、`POST /api/v1/projects/{project_id}/knowledge/answers` 与 `GET /api/v1/projects/{project_id}/knowledge/citations/{citation_id}`，另加 `GET /api/v1/runtime-mode`。`project_id != scope.project_id` 返回 `scope-mismatch`；请求 Header/Cookie/DTO 出现身份、角色或企业覆盖字段直接拒绝。所有浏览器状态变更校验精确 Origin，不开启宽泛 CORS。
 
