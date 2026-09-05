@@ -138,11 +138,13 @@ function renderPrototypeWithLibraryStatuses() {
   return renderKnowledgeApp(<TapProductPrototype />, { api });
 }
 
-function mockNarrowViewport() {
+function mockNarrowViewport(width = 390) {
   return vi
     .spyOn(window, "matchMedia")
     .mockImplementation((query): MediaQueryList => ({
-      matches: query === "(max-width: 640px)" || query === "(max-width: 820px)",
+      matches:
+        /^\(max-width: (\d+)px\)$/.test(query) &&
+        width <= Number(query.match(/\d+/)?.[0]),
       media: query,
       onchange: null,
       addEventListener: () => undefined,
@@ -344,6 +346,40 @@ describe("Tap product prototype interactions", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("keeps the composer usable at tablet width by opening sources in a drawer", async () => {
+    const matchMedia = mockNarrowViewport(1024);
+    try {
+      const user = userEvent.setup();
+      renderPrototype();
+      expect(
+        screen.getByRole("complementary", { name: "Tapper tools" }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("complementary", { name: "Knowledge sources" }),
+      ).not.toBeInTheDocument();
+      const expand = screen.getByRole("button", {
+        name: "Expand Knowledge sources",
+      });
+      const conversation = screen.getByRole("region", {
+        name: "Start a conversation",
+      });
+      await user.click(expand);
+      expect(
+        screen.getByRole("complementary", { name: "Knowledge sources" }),
+      ).toBeVisible();
+      expect(conversation).toHaveAttribute("inert");
+      await user.keyboard("{Escape}");
+      expect(
+        screen.queryByRole("complementary", { name: "Knowledge sources" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Expand Knowledge sources" }),
+      ).toHaveFocus();
+    } finally {
+      matchMedia.mockRestore();
+    }
   });
 
   it("opens Tapper tools as an inert mobile drawer and restores focus when dismissed", async () => {

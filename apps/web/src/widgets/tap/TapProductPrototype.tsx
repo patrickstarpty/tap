@@ -425,13 +425,13 @@ export function TapProductPrototype() {
     () => window.matchMedia("(max-width: 640px)").matches,
   );
   const [isCompactViewport, setIsCompactViewport] = useState(
-    () => window.matchMedia("(max-width: 820px)").matches,
+    () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
   const [sourcesCollapsed, setSourcesCollapsed] = useState(
-    () => window.matchMedia("(max-width: 820px)").matches,
+    () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [conversations, setConversations] = useState<readonly Conversation[]>(
     () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
@@ -573,7 +573,7 @@ export function TapProductPrototype() {
 
   useEffect(() => {
     const narrowMedia = window.matchMedia("(max-width: 640px)");
-    const compactMedia = window.matchMedia("(max-width: 820px)");
+    const compactMedia = window.matchMedia("(max-width: 1100px)");
     const handleNarrowChange = (event: MediaQueryListEvent) => {
       setIsNarrowViewport(event.matches);
       if (event.matches) setSidebarCollapsed(true);

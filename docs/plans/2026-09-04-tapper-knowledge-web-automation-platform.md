@@ -23,21 +23,23 @@ date: 2026-09-04
 
 ## 2026-09-05 执行增量
 
-更名已由 RFC-010 完成。本计划从今天开始执行；保持 TAP 平台 / Tapper 智能工作区的层级，所有新代码、命令与 fixtures 以当前 `tapper` 命名空间为基线，不再执行旧名称兼容迁移。Alembic 起点仍为 `0005_projection_lineage`，历史 `0003` 使用现行 `0003_tapper_knowledge`。
+更名已由 RFC-010 完成。本计划从今天开始执行；保持 TAP 平台 / Tapper 智能工作区的层级，所有新代码、命令与 fixtures 以当前 `tapper` 命名空间为基线，不再执行旧名称兼容迁移。Alembic 起点仍为 `0005_projection_lineage`，历史 `0003` 使用现行 `0003_tapper_documents`。
 
 本次启动交付包含两个独立验收项：下述 UI 浅色视觉统一，以及 V0 Task 1 的 authoritative metadata / migration harness。55 个平台任务与 V0–P1 顺序保留；本次启动不把其余任务标为已实现，后续仍按逐里程碑门禁推进。
+
+本次实际证据：[原型浅色改造与 V0 启动验收](../reviews/2026-09-05-tap-fwd-and-v0-start-review.md)。
 
 ### UI：全平台 FWD 浅色视觉统一
 
 **Spec:** [浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)。
 
-**Files:** `apps/web/src/app/theme.ts`、`apps/web/src/app/styles.css`、`apps/web/src/widgets/tap/TapProductPrototype.css`、`apps/web/src/widgets/tap/prototype/PrototypeSidebar.tsx`（如需品牌强调）、`apps/web/PRODUCT.md`、`apps/web/DESIGN.md`、`docs/assets/prototype-demo/` 与客户演示指南。
+**Files:** `apps/web/src/app/theme.ts`、`apps/web/src/app/styles.css`、`apps/web/src/widgets/tap/TapProductPrototype.css`、`apps/web/src/widgets/tap/TapProductPrototype.tsx`、`apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`、`apps/web/PRODUCT.md`、`apps/web/DESIGN.md`、`docs/assets/prototype-demo/` 与客户演示指南。
 
-- [ ] 用统一 CSS 语义色与 Ant Design tokens 替换紫色强调和深色代码/执行面；共享暖白、白色、墨色、橙色与独立状态色。
-- [ ] 覆盖对话/上下文/抽屉、Library/Graph、Agent/Skill、Test Management、Automation/BDD/Run，以及真实 Knowledge 页面；统一无衬线标题、边框、密度、hover/focus/disabled/loading/error 和 reduced-motion。
-- [ ] 运行 `corepack pnpm --filter @tap/web run check` 与 `corepack pnpm --filter @tap/web exec vitest run`；纯样式不新增复制 CSS 实现的测试，现有交互必须全绿。
-- [ ] 运行 `corepack pnpm --filter @tap/web run prototype:capture`，刷新 40 张实际页面截图；检查桌面、窄屏、键盘和 reduced-motion，并记录真实 Knowledge 页面检查。
-- [ ] 运行文档链接/格式、品牌守卫与 `git diff --check`；在执行 Review 中分别记录 UI 和 V0 Task 1 的证据，未运行项明确标注。
+- [x] 用统一 CSS 语义色与 Ant Design tokens 替换紫色强调和深色代码/执行面；共享暖白、白色、墨色、橙色与独立状态色。
+- [x] 覆盖对话/上下文/抽屉、Library/Graph、Agent/Skill、Test Management、Automation/BDD/Run，不改变旧独立知识页；统一无衬线标题、边框、密度、hover/focus/disabled/loading/error 和 reduced-motion。
+- [x] 运行 `corepack pnpm --filter @tap/web run check` 与 `corepack pnpm --filter @tap/web exec vitest run`；纯样式不新增复制 CSS 实现的测试，现有交互必须全绿。
+- [x] 运行 `corepack pnpm --filter @tap/web run prototype:capture`，刷新 40 张实际页面截图；检查桌面、窄屏、键盘和 reduced-motion，并记录原型界面检查。
+- [x] 运行文档链接/格式、品牌守卫与 `git diff --check`；在执行 Review 中分别记录 UI 和 V0 Task 1 的证据，未运行项明确标注。
 
 ## Global Constraints
 
@@ -111,12 +113,12 @@ flowchart LR
 
 **Contract:** `load_authoritative_metadata() -> MetaData` 显式导入并合并 platform Outbox、chat、knowledge document/answer/citation 与 projection table metadata；任何运行时偶然 import 都不能决定 Alembic 可见表。`make schema-drift` 在隔离 MySQL 上执行 upgrade head，再比较 ORM metadata 与数据库；除 Alembic 自己的 `alembic_version` 外，额外表、缺表、缺 column/index/constraint 均失败。`make migration-check MIGRATION=revision_id` 校验传入的字面量 revision 位于唯一线性 ancestry，创建一次性 MySQL，从 `0005_projection_lineage` 装载包含 Turn、Outbox、Document/Revision/Job/Manifest/Answer/Citation 与 projection lineage 的旧数据，再升级到指定 revision 并运行该 revision 的数据保持断言。
 
-- [ ] 写 `test_migration_metadata.py`，断言当前 14 张 Outbox/chat/knowledge/projection 表都在 authoritative metadata；写 schema-drift 与 upgrade harness 测试，分别证明缺 projection lineage 会失败、`alembic_version` 被唯一豁免、共享/default URL 被拒绝、旧数据 fixture 非空且 revision 非法时非零退出。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/architecture/test_migration_metadata.py apps/backend/tests/integration/test_schema_drift.py apps/backend/tests/integration/test_upgrade_from_0005.py -v`；预期 FAIL，原因为 registry/harness 不存在或 projection tables 未注册，而不是数据库不可用。
-- [ ] 实现 `registry.py`，让 `migrations/env.py` 只从 `load_authoritative_metadata()` 取得 `target_metadata`；两个 checker 输出结构化 diff/report 且不修改共享 schema。Makefile target 内所有 Alembic 调用固定为 `uv run --project apps/backend alembic -c apps/backend/alembic.ini ...`。
-- [ ] 在 `Makefile` 增加 `schema-drift` 与 `migration-check`；两者生成唯一 Compose project/database，退出时只删除自身资源，并拒绝默认 demo/production project 名或非 loopback 数据库地址。
-- [ ] 运行 `make migration-check MIGRATION=0005_projection_lineage && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/architecture/test_migration_metadata.py apps/backend/tests/integration/test_schema_drift.py apps/backend/tests/integration/test_upgrade_from_0005.py -v`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `test(db): enforce authoritative migration metadata`
+- [x] 写 `test_migration_metadata.py`，断言当前 14 张 Outbox/chat/knowledge/projection 表都在 authoritative metadata；写 schema-drift 与 upgrade harness 测试，分别证明缺 projection lineage 会失败、`alembic_version` 被唯一豁免、共享/default URL 被拒绝、旧数据 fixture 非空且 revision 非法时非零退出。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/architecture/test_migration_metadata.py apps/backend/tests/integration/test_schema_drift.py apps/backend/tests/integration/test_upgrade_from_0005.py -v`；预期 FAIL，原因为 registry/harness 不存在或 projection tables 未注册，而不是数据库不可用。
+- [x] 实现 `registry.py`，让 `migrations/env.py` 只从 `load_authoritative_metadata()` 取得 `target_metadata`；两个 checker 输出结构化 diff/report 且不修改共享 schema。Makefile target 内所有 Alembic 调用固定为 `uv run --project apps/backend alembic -c apps/backend/alembic.ini ...`。
+- [x] 在 `Makefile` 增加 `schema-drift` 与 `migration-check`；两者生成唯一 Compose project/database，退出时只删除自身资源，并拒绝默认 demo/production project 名或非 loopback 数据库地址。
+- [x] 运行 `make migration-check MIGRATION=0005_projection_lineage && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/architecture/test_migration_metadata.py apps/backend/tests/integration/test_schema_drift.py apps/backend/tests/integration/test_upgrade_from_0005.py -v`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `test(db): enforce authoritative migration metadata`
 
 ### Task 2A: Register Enterprise, Project and Actor; freeze the scope seam
 

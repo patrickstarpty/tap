@@ -1,12 +1,5 @@
 .tap-product-shell {
   --tap-tapper-sidebar-width: 236px;
-  --tap-canvas: #f7f7f5;
-  --tap-ink: #1f2328;
-  --tap-muted: #626871;
-  --tap-line: #e2e2df;
-  --tap-soft: #efefec;
-  --tap-accent: #4f46e5;
-  --tap-accent-dark: #3730a3;
   --tap-panel-motion-duration: 200ms;
   --tap-panel-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
   display: grid;
@@ -31,8 +24,8 @@
 }
 
 .tap-product-shell ::selection {
-  background: #dcd9ff;
-  color: #211b6b;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent);
 }
 
 .tap-product-rail,
@@ -43,13 +36,14 @@
   flex-direction: column;
   height: 100dvh;
   overflow: clip;
-  color: #202328;
+  color: var(--tap-ink);
+  background: var(--tap-canvas);
 }
 
 .tap-product-rail {
   z-index: 20;
-  border-right: 1px solid #dededb;
-  background: #ececea;
+  border-right: 1px solid var(--tap-line);
+  background: var(--tap-soft);
   padding: 14px 10px 12px;
 }
 
@@ -57,8 +51,8 @@
   z-index: 10;
   width: var(--tap-tapper-sidebar-width);
   min-width: 0;
-  border-right: 1px solid #e0e0dc;
-  background: #f5f5f2;
+  border-right: 1px solid var(--tap-line);
+  background: var(--tap-canvas);
   padding: 16px 14px 14px;
   backface-visibility: hidden;
   contain: paint;
@@ -93,8 +87,8 @@
   align-items: center;
   gap: 9px;
   margin: 0;
-  color: #202328;
-  font-family: Georgia, "Times New Roman", serif;
+  color: var(--tap-ink);
+  font-family: var(--tap-font);
   font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.025em;
@@ -128,7 +122,7 @@
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: #555b63;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   place-items: center;
@@ -139,8 +133,8 @@
 
 .tap-panel-toggle:hover,
 .tap-panel-toggle:focus-visible {
-  background: #e2e2df;
-  color: #1f2328;
+  background: var(--tap-line);
+  color: var(--tap-ink);
 }
 
 .tap-panel-toggle svg {
@@ -174,10 +168,10 @@
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: #27272a;
-  color: #fff;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.625rem;
+  background: var(--tap-brand);
+  color: var(--tap-ink);
+  font-family: var(--tap-font);
+  font-size: 0.7rem;
   font-weight: 750;
   letter-spacing: -0.035em;
   place-items: center;
@@ -212,7 +206,7 @@
   border-radius: 9px;
   background: transparent;
   padding: 0 11px;
-  color: #555b63;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
@@ -224,13 +218,13 @@
 
 .tap-navigation-item:hover,
 .tap-navigation-item:focus-visible {
-  background: #e5e5e1;
-  color: #1f2328;
+  background: var(--tap-line);
+  color: var(--tap-ink);
 }
 
 .tap-navigation-item[aria-current="page"] {
-  background: #e4e4e0;
-  color: #17191c;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
   font-weight: 700;
 }
 
@@ -244,14 +238,14 @@
 }
 
 .tap-navigation-item--product[aria-current="page"] {
-  background: #dad8ee;
-  color: #4338a6;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent);
 }
 
 .tap-navigation-item--tapper[aria-current="page"] {
   border-radius: 12px;
-  background: #e7e7e5;
-  color: #202328;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
   font-weight: 600;
 }
 
@@ -278,7 +272,7 @@
   gap: 4px;
   min-height: 0;
   margin-top: 20px;
-  border-top: 1px solid #deded9;
+  border-top: 1px solid var(--tap-line);
   overflow-y: auto;
   padding-top: 16px;
   overscroll-behavior: contain;
@@ -286,7 +280,7 @@
 
 .tap-sidebar-section-title {
   padding: 0 10px 7px;
-  color: #555b63;
+  color: var(--tap-muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -303,7 +297,7 @@
   border-radius: 8px;
   background: transparent;
   padding: 0 10px;
-  color: #555b63;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -312,8 +306,8 @@
 
 .tap-chat-history button:hover,
 .tap-chat-history button[aria-current="page"] {
-  background: #e2e2de;
-  color: #1f2328;
+  background: var(--tap-line);
+  color: var(--tap-ink);
 }
 
 .tap-chat-history button span {
@@ -328,7 +322,7 @@
   align-items: center;
   gap: 12px;
   margin-top: auto;
-  border-top: 1px solid #d9d9d5;
+  border-top: 1px solid var(--tap-line);
   padding-top: 12px;
 }
 
@@ -344,15 +338,15 @@
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: #555b63;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
 }
 
 .tap-language-switcher button[aria-pressed="true"] {
-  background: #deded9;
-  color: #202328;
+  background: var(--tap-line);
+  color: var(--tap-ink);
 }
 
 .tap-sidebar-footer > span:last-child {
@@ -369,12 +363,12 @@
 }
 
 .tap-sidebar-footer strong {
-  color: #30343a;
+  color: var(--tap-ink);
   font-size: 12px;
 }
 
 .tap-sidebar-footer small {
-  color: #555b63;
+  color: var(--tap-muted);
   font-size: 11px;
 }
 
@@ -384,8 +378,8 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #deded9;
-  color: #3f444b;
+  background: var(--tap-line);
+  color: var(--tap-ink);
   font-size: 11px;
   font-weight: 700;
   place-items: center;
@@ -416,7 +410,7 @@
   position: relative;
   min-width: 0;
   min-height: 100dvh;
-  background: #fdfdfc;
+  background: var(--tap-surface);
 }
 
 .tap-chat--idle {
@@ -439,6 +433,8 @@
   position: sticky;
   z-index: 5;
   bottom: 0;
+  box-shadow: 0 8px 28px -12px rgb(35 43 43 / 16%);
+  border-color: var(--tap-line-strong);
 }
 
 .tap-chat-transcript {
@@ -462,19 +458,20 @@
 .tap-chat-welcome h1 {
   margin: 0;
   color: var(--tap-ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(36px, 5vw, 54px);
-  font-weight: 500;
+  font-family: var(--tap-font);
+  font-size: clamp(30px, 3.3vw, 44px);
+  font-weight: 600;
   letter-spacing: -0.035em;
-  line-height: 1.05;
+  line-height: 1.16;
   text-wrap: balance;
 }
 
 .tap-chat-welcome > p {
-  margin: 18px auto 0;
+  margin: 16px auto 0;
   color: var(--tap-muted);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.6;
+  max-width: 56ch;
 }
 
 .tap-quick-prompts {
@@ -493,20 +490,21 @@
   min-height: 44px;
   border: 1px solid var(--tap-line);
   border-radius: 10px;
-  background: #fff;
+  background: transparent;
   padding: 0 14px;
-  color: #4e586b;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
   transition:
     border-color 150ms ease-out,
     background-color 150ms ease-out;
+  border-color: var(--tap-line);
 }
 
 .tap-quick-prompts button:hover {
-  border-color: #c4bffd;
-  background: #f8f7ff;
+  border-color: var(--tap-accent-line);
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
 }
 
@@ -514,11 +512,12 @@
   position: relative;
   width: min(760px, calc(100% - 48px));
   margin: 0 auto 28px;
-  border: 1px solid #d9dde5;
+  border: 1px solid var(--tap-line);
   border-radius: 16px;
   background: #fff;
-  box-shadow: 0 10px 30px 4px rgb(29 38 56 / 9%);
+  box-shadow: 0 8px 28px -12px rgb(35 43 43 / 16%);
   padding: 12px 13px 10px;
+  border-color: var(--tap-line-strong);
 }
 
 .tap-context-chips {
@@ -534,9 +533,9 @@
   gap: 6px;
   max-width: 220px;
   border-radius: 999px;
-  background: #eeecff;
+  background: var(--tap-accent-soft);
   padding: 3px 4px 3px 8px;
-  color: #4137a1;
+  color: var(--tap-accent);
   font-size: 10px;
   font-weight: 700;
 }
@@ -592,6 +591,8 @@
 .tap-chat--idle > .tap-composer {
   width: min(760px, 100%);
   margin: 0;
+  box-shadow: 0 8px 28px -12px rgb(35 43 43 / 16%);
+  border-color: var(--tap-line-strong);
 }
 
 .tap-composer textarea.ant-input {
@@ -610,8 +611,8 @@
 }
 
 .tap-composer:focus-within {
-  border-color: #a7a0f4;
-  outline: 3px solid rgb(79 70 229 / 13%);
+  border-color: var(--tap-accent);
+  outline: 2px solid var(--tap-accent-soft);
 }
 
 .tap-composer-footer {
@@ -635,7 +636,7 @@
   place-items: center;
   color: inherit;
   background: transparent;
-  border: 1px solid #d9dde5;
+  border: 1px solid var(--tap-line);
   border-radius: 50%;
   cursor: pointer;
 }
@@ -664,7 +665,7 @@
   border-radius: 8px;
   background: transparent;
   padding: 0 11px;
-  color: #303949;
+  color: var(--tap-ink);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -673,13 +674,13 @@
 
 .tap-composer-menu button:hover,
 .tap-composer-menu button:focus-visible {
-  background: #f2f1ff;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
 }
 
 .tap-composer-footer > span {
   flex: 1;
-  color: #596579;
+  color: var(--tap-muted);
   font-size: 11px;
 }
 
@@ -698,7 +699,7 @@
   border-radius: 10px;
   background: transparent;
   padding: 0 9px;
-  color: #242933;
+  color: var(--tap-ink);
   cursor: pointer;
   font: inherit;
   font-size: 14px;
@@ -708,11 +709,11 @@
 
 .tap-model-trigger:hover,
 .tap-model-trigger[aria-expanded="true"] {
-  background: #f1f2f4;
+  background: var(--tap-soft);
 }
 
 .tap-model-trigger .anticon-down {
-  color: #7a8494;
+  color: var(--tap-muted);
   font-size: 10px;
 }
 
@@ -741,7 +742,7 @@
   border-radius: 8px;
   background: transparent;
   padding: 0 11px;
-  color: #303949;
+  color: var(--tap-ink);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
@@ -750,7 +751,7 @@
 
 .tap-model-menu button:hover,
 .tap-model-menu button[aria-checked="true"] {
-  background: #f2f1ff;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
 }
 
@@ -760,10 +761,6 @@
 }
 
 .tap-picker-backdrop {
-  --tap-ink: #172032;
-  --tap-muted: #5f697a;
-  --tap-accent: #4f46e5;
-  --tap-accent-dark: #3730a3;
   position: fixed;
   z-index: 1000;
   inset: 0;
@@ -807,9 +804,9 @@
   min-height: 44px;
   border: 0;
   border-radius: 9px;
-  background: #f4f5f8;
+  background: var(--tap-surface);
   padding: 8px 12px;
-  color: #303949;
+  color: var(--tap-ink);
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -817,7 +814,7 @@
 
 .tap-picker-options button:hover,
 .tap-picker-options button:focus-visible {
-  background: #eceafe;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
 }
 
@@ -867,7 +864,7 @@
   min-height: 100dvh;
   box-sizing: border-box;
   border-left: 1px solid var(--tap-line);
-  background: #fafbfc;
+  background: var(--tap-canvas);
   padding: 30px 22px;
 }
 
@@ -907,9 +904,9 @@
   justify-self: start;
   flex: 0 0 auto;
   border-radius: 999px;
-  background: #eceafe;
+  background: var(--tap-accent-soft);
   padding: 4px 8px;
-  color: #4b43ad;
+  color: var(--tap-accent);
   font-size: 10px;
   font-weight: 700;
 }
@@ -942,7 +939,7 @@
 }
 
 .tap-source-list .ant-checkbox-wrapper:hover {
-  background: #f0f2f6;
+  background: var(--tap-soft);
 }
 
 .tap-source-name {
@@ -960,18 +957,18 @@
 }
 
 .tap-source-name strong {
-  color: #303949;
+  color: var(--tap-ink);
   font-size: 12px;
 }
 
 .tap-source-name small {
-  color: #5f6a7b;
+  color: var(--tap-muted);
   font-size: 10px;
 }
 
 .tap-source-footnote {
   margin: auto 2px 0;
-  color: #5f6a7b;
+  color: var(--tap-muted);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -1092,12 +1089,12 @@
   width: max-content;
   max-width: min(320px, calc(100vw - 160px));
   overflow: hidden;
-  border: 1px solid #dededb;
+  border: 1px solid var(--tap-line);
   border-radius: 9px;
   background: #fff;
   box-shadow: 0 10px 28px 2px rgb(31 35 40 / 13%);
   padding: 8px 10px;
-  color: #34383e;
+  color: var(--tap-ink);
   font-size: 11px;
   line-height: 1.45;
   pointer-events: none;
@@ -1124,9 +1121,9 @@
   max-width: 78%;
   margin-left: auto;
   border-radius: 14px 14px 4px;
-  background: #f0f1f4;
+  background: var(--tap-soft);
   padding: 11px 15px;
-  color: #2c3442;
+  color: var(--tap-ink);
   line-height: 1.55;
 }
 
@@ -1135,7 +1132,7 @@
 }
 
 .tap-answer-copy {
-  color: #343d4b;
+  color: var(--tap-ink);
   line-height: 1.7;
 }
 
@@ -1144,7 +1141,7 @@
 }
 
 .tap-context-notice {
-  color: #5f6a7b;
+  color: var(--tap-muted);
   font-size: 11px;
   line-height: 1.55;
 }
@@ -1185,12 +1182,12 @@
 }
 
 .tap-citation-list strong {
-  color: #303949;
+  color: var(--tap-ink);
   font-size: 12px;
 }
 
 .tap-citation-list small {
-  color: #5f6a7b;
+  color: var(--tap-muted);
   font-size: 10px;
 }
 
@@ -1215,7 +1212,7 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: #eeecff;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent);
   place-items: center;
 }
@@ -1226,7 +1223,7 @@
 }
 
 .tap-artifact-heading strong {
-  color: #252e3c;
+  color: var(--tap-ink);
 }
 
 .tap-artifact-heading span:last-child {
@@ -1238,9 +1235,9 @@
   margin: 0;
   overflow-x: auto;
   border-block: 1px solid var(--tap-line);
-  background: #f8f9fb;
+  background: var(--tap-surface);
   padding: 18px;
-  color: #394356;
+  color: var(--tap-muted);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.75;
@@ -1248,7 +1245,7 @@
 }
 
 .tap-bdd-preview span {
-  color: #4a3fb4;
+  color: var(--tap-accent);
   font-weight: 700;
 }
 
@@ -1261,9 +1258,9 @@
 
 .tap-automation-summary span {
   border-radius: 6px;
-  background: #f0f2f5;
+  background: var(--tap-soft);
   padding: 4px 8px;
-  color: #596375;
+  color: var(--tap-muted);
   font-size: 10px;
   font-weight: 700;
 }
@@ -1327,7 +1324,7 @@
 .tap-catalog-list,
 .tap-library-list {
   margin: 0;
-  border: 1px solid #dfe3e9;
+  border: 1px solid var(--tap-line);
   border-radius: 14px;
   background: #fff;
   padding: 0;
@@ -1341,7 +1338,7 @@
   align-items: start;
   gap: 16px;
   min-height: 150px;
-  border-top: 1px solid #edf0f4;
+  border-top: 1px solid var(--tap-soft);
   padding: 22px;
 }
 
@@ -1355,7 +1352,7 @@
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #eeecff;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
   font-size: 18px;
   place-items: center;
@@ -1381,9 +1378,9 @@
 
 .tap-catalog-title span {
   border-radius: 999px;
-  background: #edf0f4;
+  background: var(--tap-soft);
   padding: 3px 8px;
-  color: #536071;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 750;
   letter-spacing: 0.04em;
@@ -1391,14 +1388,14 @@
 }
 
 .tap-catalog-title span[data-origin="custom"] {
-  background: #eceafe;
-  color: #453ca8;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent);
 }
 
 .tap-catalog-list article > p {
   max-width: 68ch;
   margin: 7px 0 0;
-  color: #566173;
+  color: var(--tap-muted);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -1407,12 +1404,12 @@
   max-width: 72ch;
   margin-top: 15px;
   border-radius: 9px;
-  background: #f6f7f9;
+  background: var(--tap-surface);
   padding: 10px 12px;
 }
 
 .tap-catalog-instructions strong {
-  color: #4f5969;
+  color: var(--tap-muted);
   font-size: 9px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1420,7 +1417,7 @@
 
 .tap-catalog-instructions p {
   margin: 4px 0 0;
-  color: #333d4c;
+  color: var(--tap-ink);
   font-size: 11px;
   line-height: 1.55;
 }
@@ -1434,7 +1431,7 @@
 .tap-catalog-empty {
   display: grid;
   min-height: 260px;
-  border: 1px dashed #ccd2dc;
+  border: 1px dashed var(--tap-line);
   border-radius: 14px;
   color: var(--tap-muted);
   place-items: center;
@@ -1465,7 +1462,7 @@
 .tap-catalog-dialog label {
   display: grid;
   gap: 7px;
-  color: #4b5565;
+  color: var(--tap-muted);
   font-size: 11px;
   font-weight: 700;
 }
@@ -1486,7 +1483,7 @@
   grid-template-columns: minmax(220px, 1fr) 138px 150px auto auto;
   align-items: end;
   gap: 10px;
-  border: 1px solid #dfe3e9;
+  border: 1px solid var(--tap-line);
   border-radius: 12px;
   background: #fff;
   padding: 10px;
@@ -1506,10 +1503,10 @@
 .tap-library-filters select {
   width: 100%;
   min-height: 40px;
-  border: 1px solid #d9dde5;
+  border: 1px solid var(--tap-line);
   border-radius: 9px;
   background: #fff;
-  color: #394356;
+  color: var(--tap-muted);
   font: inherit;
 }
 
@@ -1526,12 +1523,12 @@
 
 .tap-library-filters select:hover,
 .tap-library-filters .tap-library-search.ant-input:hover {
-  border-color: #b9b4ed;
+  border-color: var(--tap-accent-line);
 }
 
 .tap-library-filters select:focus-visible {
   border-color: var(--tap-accent);
-  outline: 3px solid rgb(79 70 229 / 13%);
+  outline: 3px solid rgb(169 71 11 / 12%);
   outline-offset: 0;
 }
 
@@ -1551,7 +1548,7 @@
   align-items: center;
   gap: 18px;
   min-height: 104px;
-  border-top: 1px solid #edf0f4;
+  border-top: 1px solid var(--tap-soft);
   padding: 14px 18px;
 }
 
@@ -1561,8 +1558,8 @@
   width: 82px;
   height: 72px;
   border-radius: 10px;
-  background: #f0f1f7;
-  color: #4d45ae;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent);
   font-size: 25px;
   place-items: center;
 }
@@ -1571,7 +1568,7 @@
   position: absolute;
   right: 7px;
   bottom: 6px;
-  color: #626c7c;
+  color: var(--tap-muted);
   font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -1591,7 +1588,7 @@
 }
 
 .tap-library-source-copy strong {
-  color: #293343;
+  color: var(--tap-ink);
   font-size: 13px;
 }
 
@@ -1629,7 +1626,7 @@
 .tap-graph-communities,
 .tap-graph-inspector {
   min-width: 0;
-  border: 1px solid #dfe3e9;
+  border: 1px solid var(--tap-line);
   border-radius: 14px;
   background: #fff;
   padding: 16px;
@@ -1638,7 +1635,7 @@
 .tap-graph-communities h2,
 .tap-graph-inspector > h2 {
   margin: 0 0 14px;
-  color: #293343;
+  color: var(--tap-ink);
   font-size: 12px;
   font-weight: 750;
 }
@@ -1656,13 +1653,13 @@
   min-height: 36px;
   border-radius: 8px;
   padding: 0 7px;
-  color: #414c5d;
+  color: var(--tap-muted);
   cursor: pointer;
   font-size: 11px;
 }
 
 .tap-graph-community-list label:hover {
-  background: #f3f3f8;
+  background: var(--tap-accent-soft);
 }
 
 .tap-graph-community-list input {
@@ -1686,14 +1683,14 @@
 }
 
 .tap-graph-community-list small {
-  color: #858d9a;
+  color: var(--tap-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
 .tap-graph-communities > p {
   margin: 18px 0 0;
-  color: #737d8d;
+  color: var(--tap-muted);
   font-size: 10px;
   line-height: 1.55;
 }
@@ -1704,8 +1701,9 @@
   margin: 0;
   overflow: hidden;
   border-radius: 16px;
-  background: #111722;
-  box-shadow: 0 16px 38px 5px rgb(23 30 43 / 18%);
+  background: var(--tap-surface);
+  box-shadow: none;
+  border: 1px solid var(--tap-line);
 }
 
 .tap-graph-toolbar {
@@ -1719,10 +1717,10 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  border: 1px solid rgb(151 162 181 / 28%);
+  border: 1px solid var(--tap-line);
   border-radius: 10px;
-  background: rgb(20 27 40 / 92%);
-  box-shadow: 0 8px 22px 2px rgb(0 0 0 / 22%);
+  background: var(--tap-surface);
+  box-shadow: 0 4px 12px -4px rgb(35 43 43 / 12%);
   padding: 3px;
 }
 
@@ -1733,18 +1731,18 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #d7deea;
+  color: var(--tap-ink);
   cursor: pointer;
   place-items: center;
 }
 
 .tap-graph-zoom-controls button:hover:not(:disabled) {
-  background: #2b3547;
-  color: #fff;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
 }
 
 .tap-graph-zoom-controls button:focus-visible {
-  outline: 2px solid #a7a0ff;
+  outline: 2px solid var(--tap-focus);
   outline-offset: 1px;
 }
 
@@ -1755,7 +1753,7 @@
 
 .tap-graph-zoom-controls [role="status"] {
   min-width: 48px;
-  color: #aeb9ca;
+  color: var(--tap-muted);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   text-align: center;
@@ -1765,10 +1763,8 @@
   width: 100%;
   height: clamp(340px, 35vw, 460px);
   overflow: hidden;
-  background-color: #111722;
-  background-image:
-    linear-gradient(rgb(118 135 164 / 8%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(118 135 164 / 8%) 1px, transparent 1px);
+  background-color: var(--tap-surface);
+  background-image: none;
   background-size: 28px 28px;
   cursor: grab;
   touch-action: none;
@@ -1788,7 +1784,7 @@
 
 .tap-graph-edge path {
   fill: none;
-  stroke: #526078;
+  stroke: #a5b1aa;
   stroke-width: 1.15;
   marker-end: url("#tap-network-arrow");
   transition:
@@ -1803,23 +1799,23 @@
 }
 
 .tap-graph-edge[data-active="true"] path {
-  stroke: #c3bfff;
+  stroke: var(--tap-accent);
   stroke-width: 2;
   opacity: 1;
 }
 
 #tap-network-arrow path {
-  fill: #71809a;
+  fill: var(--tap-muted);
 }
 
 .tap-graph-edge-label rect {
-  fill: rgb(22 29 43 / 90%);
-  stroke: #465269;
+  fill: var(--tap-surface);
+  stroke: var(--tap-line-strong);
   stroke-width: 0.75;
 }
 
 .tap-graph-edge-label text {
-  fill: #aeb9ca;
+  fill: var(--tap-muted);
   font-size: 8px;
   font-weight: 650;
 }
@@ -1843,15 +1839,15 @@
 .tap-graph-node[data-selected="true"] .tap-graph-node-ring,
 .tap-graph-node[data-highlighted="true"] .tap-graph-node-ring,
 .tap-graph-node:focus-visible .tap-graph-node-ring {
-  fill: rgb(255 255 255 / 5%);
-  stroke: #d8d5ff;
+  fill: var(--tap-accent-soft);
+  stroke: var(--tap-accent);
 }
 
 .tap-graph-node-core {
   fill: var(--tap-community-color);
-  stroke: rgb(255 255 255 / 68%);
+  stroke: var(--tap-surface);
   stroke-width: 1.2;
-  filter: drop-shadow(0 5px 8px rgb(0 0 0 / 30%));
+  filter: none;
   transition:
     filter 180ms ease-out,
     stroke-width 180ms ease-out;
@@ -1860,31 +1856,32 @@
 .tap-graph-node:hover .tap-graph-node-core,
 .tap-graph-node:focus-visible .tap-graph-node-core,
 .tap-graph-node[data-selected="true"] .tap-graph-node-core {
-  filter: drop-shadow(0 7px 12px rgb(0 0 0 / 38%));
+  filter: none;
   stroke-width: 2.2;
+  stroke: var(--tap-surface);
 }
 
 .tap-graph-node-label {
-  fill: #f4f6fa;
+  fill: var(--tap-ink);
   font-size: 13px;
   font-weight: 700;
   paint-order: stroke;
-  stroke: #111722;
+  stroke: var(--tap-surface);
   stroke-width: 3px;
   stroke-linejoin: round;
 }
 
 .tap-graph-node-secondary {
-  fill: #9eabc0;
+  fill: var(--tap-muted);
   font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.06em;
 }
 
 .tap-knowledge-graph figcaption {
-  border-top: 1px solid #2c3648;
+  border-top: 1px solid var(--tap-line);
   padding: 13px 16px;
-  color: #aeb9ca;
+  color: var(--tap-muted);
   font-size: 10px;
   line-height: 1.45;
 }
@@ -1894,7 +1891,7 @@
   grid-template-columns: 10px minmax(0, 1fr);
   align-items: start;
   gap: 9px;
-  border-bottom: 1px solid #e7e9ed;
+  border-bottom: 1px solid var(--tap-soft);
   padding-bottom: 14px;
 }
 
@@ -1903,7 +1900,7 @@
 }
 
 .tap-graph-inspector-title small {
-  color: #7b8492;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 750;
   letter-spacing: 0.05em;
@@ -1913,7 +1910,7 @@
 .tap-graph-inspector-title h3 {
   margin: 3px 0 0;
   overflow-wrap: anywhere;
-  color: #293343;
+  color: var(--tap-ink);
   font-size: 14px;
   line-height: 1.35;
 }
@@ -1932,13 +1929,13 @@
 }
 
 .tap-graph-inspector dt {
-  color: #7b8492;
+  color: var(--tap-muted);
   font-size: 9px;
 }
 
 .tap-graph-inspector dd {
   margin: 0;
-  color: #3d4757;
+  color: var(--tap-muted);
   font-size: 10px;
   font-weight: 700;
   text-align: right;
@@ -1956,7 +1953,7 @@
   display: grid;
   gap: 2px;
   border-radius: 8px;
-  background: #f4f5f7;
+  background: var(--tap-surface);
   padding: 8px 9px;
 }
 
@@ -1969,7 +1966,7 @@
 
 .tap-graph-inspector-relations strong {
   overflow-wrap: anywhere;
-  color: #414b5b;
+  color: var(--tap-muted);
   font-size: 10px;
 }
 
@@ -1979,13 +1976,13 @@
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 14px;
-  border-top: 1px solid #e7e9ed;
+  border-top: 1px solid var(--tap-soft);
   padding-top: 12px;
 }
 
 .tap-graph-provenance > span {
   width: 100%;
-  color: #7b8492;
+  color: var(--tap-muted);
   font-size: 9px;
 }
 
@@ -2006,20 +2003,20 @@
 .tap-graph-inspector-empty {
   margin: 0;
   border-radius: 10px;
-  background: #f4f5f7;
+  background: var(--tap-surface);
   padding: 12px;
-  color: #717b8a;
+  color: var(--tap-muted);
   font-size: 10px;
   line-height: 1.55;
 }
 
 .tap-source-dialog input[type="file"] {
   width: 100%;
-  border: 1px solid #d9dde5;
+  border: 1px solid var(--tap-line);
   border-radius: 9px;
-  background: #f8f9fb;
+  background: var(--tap-surface);
   padding: 11px;
-  color: #394356;
+  color: var(--tap-muted);
   font: inherit;
 }
 
@@ -2028,9 +2025,9 @@
   margin-right: 12px;
   border: 0;
   border-radius: 7px;
-  background: #e8e6ff;
+  background: var(--tap-accent-soft);
   padding: 0 11px;
-  color: #4038a1;
+  color: var(--tap-accent);
   cursor: pointer;
   font: inherit;
   font-weight: 700;
@@ -2047,8 +2044,8 @@
 .tap-module-heading h1 {
   margin: 0;
   color: var(--tap-ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(30px, 4vw, 40px);
+  font-family: var(--tap-font);
+  font-size: clamp(26px, 3vw, 32px);
   font-weight: 500;
   letter-spacing: -0.03em;
 }
@@ -2073,7 +2070,7 @@
 .tap-section-tabs {
   display: flex;
   gap: 30px;
-  border-bottom: 1px solid #dfe3e9;
+  border-bottom: 1px solid var(--tap-line);
 }
 
 .tap-section-tabs button {
@@ -2122,7 +2119,7 @@
 
 .tap-plan-table {
   overflow: hidden;
-  border: 1px solid #dfe3e9;
+  border: 1px solid var(--tap-line);
   border-radius: 12px;
   background: #fff;
 }
@@ -2132,9 +2129,9 @@
   grid-template-columns: minmax(260px, 1.5fr) 120px minmax(180px, 1fr) 120px;
   align-items: center;
   min-height: 62px;
-  border-top: 1px solid #edf0f4;
+  border-top: 1px solid var(--tap-soft);
   padding: 0 18px;
-  color: #5b6575;
+  color: var(--tap-muted);
   font-size: 12px;
 }
 
@@ -2144,8 +2141,8 @@
 
 .tap-plan-row-header {
   min-height: 44px;
-  background: #f8f9fb;
-  color: #5e6878;
+  background: var(--tap-surface);
+  color: var(--tap-muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -2157,7 +2154,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  color: #303949;
+  color: var(--tap-ink);
 }
 
 .tap-plan-row [role="cell"]:first-child strong {
@@ -2185,7 +2182,7 @@
 
 .tap-data-workspace > .anticon {
   margin: 0 auto 18px;
-  color: #9ca5b3;
+  color: var(--tap-muted);
   font-size: 32px;
 }
 
@@ -2214,7 +2211,7 @@
 
 .tap-low-code-empty > .anticon {
   margin-bottom: 18px;
-  color: #8077d9;
+  color: var(--tap-accent);
   font-size: 32px;
 }
 
@@ -2239,10 +2236,11 @@
 .tap-step-editor,
 .tap-code-preview {
   min-width: 0;
-  border: 1px solid #dfe3e9;
+  border: 1px solid var(--tap-line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--tap-soft);
   overflow: hidden;
+  color: var(--tap-ink);
 }
 
 .tap-step-editor-heading,
@@ -2252,8 +2250,9 @@
   justify-content: space-between;
   gap: 18px;
   min-height: 68px;
-  border-bottom: 1px solid #e8ebef;
+  border-bottom: 1px solid var(--tap-soft);
   padding: 12px 16px;
+  border-bottom-color: var(--tap-line);
 }
 
 .tap-step-editor-heading > div,
@@ -2280,7 +2279,7 @@
   grid-template-columns: 28px minmax(0, 1fr) 44px;
   align-items: start;
   gap: 10px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--tap-soft);
   padding: 14px 12px 14px 16px;
 }
 
@@ -2294,7 +2293,7 @@
   height: 26px;
   margin-top: 20px;
   border-radius: 8px;
-  background: #eeecff;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
   font-size: 11px;
   font-weight: 800;
@@ -2315,7 +2314,7 @@
 }
 
 .tap-step-fields label > span {
-  color: #5e6878;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -2336,20 +2335,20 @@
 
 .tap-code-preview {
   align-self: start;
-  background: #151b27;
-  color: #e4e9f1;
+  background: var(--tap-soft);
+  color: var(--tap-ink);
 }
 
 .tap-code-preview > header {
-  border-bottom-color: #2c3441;
+  border-bottom-color: var(--tap-line);
 }
 
 .tap-code-preview h2 {
-  color: #f5f7fa;
+  color: var(--tap-ink);
 }
 
 .tap-file-name {
-  color: #aab4c3 !important;
+  color: var(--tap-muted) !important;
 }
 
 .tap-code-preview pre {
@@ -2357,7 +2356,7 @@
   margin: 0;
   overflow: auto;
   padding: 20px;
-  color: #cfd8e6;
+  color: var(--tap-ink);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.75;
@@ -2378,7 +2377,7 @@
   align-items: center;
   gap: 11px;
   min-height: 58px;
-  border: 1px solid #dfe3e9;
+  border: 1px solid var(--tap-line);
   border-radius: 10px;
   background: #fff;
   padding: 9px 10px 9px 12px;
@@ -2389,7 +2388,7 @@
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: #eeecff;
+  background: var(--tap-accent-soft);
   color: var(--tap-accent-dark);
   place-items: center;
 }
@@ -2401,7 +2400,7 @@
 }
 
 .tap-workflow-asset-card strong {
-  color: #2c3440;
+  color: var(--tap-ink);
   font-size: 12px;
 }
 
@@ -2421,9 +2420,9 @@
   --tap-workbench-ink: var(--tap-ink);
   --tap-workbench-muted: var(--tap-muted);
   --tap-workbench-line: var(--tap-line);
-  --tap-workbench-soft: #f3f3f0;
+  --tap-workbench-soft: var(--tap-soft);
   --tap-workbench-teal: var(--tap-accent);
-  --tap-workbench-teal-soft: #eeecff;
+  --tap-workbench-teal-soft: var(--tap-accent-soft);
   --tap-workbench-coral: var(--tap-accent);
   max-width: 1600px;
   margin-inline: auto;
@@ -2446,7 +2445,7 @@
 
 .tap-library-summary > strong {
   color: var(--tap-workbench-ink);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--tap-font);
   font-size: 30px;
   font-weight: 500;
   line-height: 1;
@@ -2490,8 +2489,8 @@
 
 .tap-automation-row--header {
   min-height: 44px;
-  background: #f3f3f0;
-  color: #59636d;
+  background: var(--tap-soft);
+  color: var(--tap-muted);
   font-size: 10px;
   font-weight: 760;
   letter-spacing: 0.06em;
@@ -2532,7 +2531,7 @@
 
 .tap-automation-row small,
 .tap-plan-row--automation small {
-  color: #818991;
+  color: var(--tap-muted);
   font-size: 10px;
   letter-spacing: 0.025em;
 }
@@ -2578,8 +2577,8 @@
 .tap-new-automation > header h1 {
   margin: 5px 0 0;
   color: var(--tap-workbench-ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(28px, 3.3vw, 42px);
+  font-family: var(--tap-font);
+  font-size: clamp(26px, 3vw, 32px);
   font-weight: 500;
   letter-spacing: -0.035em;
   line-height: 1.08;
@@ -2609,11 +2608,11 @@
   gap: 10px;
   min-height: 48px;
   margin-top: 18px;
-  border: 1px solid #ddd9ff;
+  border: 1px solid var(--tap-accent-soft);
   border-radius: 10px;
   background: var(--tap-workbench-teal-soft);
   padding: 7px 10px;
-  color: #49428f;
+  color: var(--tap-accent);
   font-size: 11px;
 }
 
@@ -2649,13 +2648,13 @@
   flex-direction: column;
   min-width: 0;
   border-right: 1px solid var(--tap-workbench-line);
-  background: #f3f3f0;
+  background: var(--tap-soft);
   padding: 16px 10px;
 }
 
 .tap-scenario-navigation > span {
   padding: 0 9px 10px;
-  color: #717a82;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.09em;
@@ -2672,7 +2671,7 @@
   border-left: 0;
   background: transparent;
   padding: 9px 8px;
-  color: #566169;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   line-height: 1.4;
@@ -2680,7 +2679,7 @@
 }
 
 .tap-scenario-navigation button:hover {
-  background: #e5e7e2;
+  background: var(--tap-line);
 }
 
 .tap-scenario-navigation button[aria-current="page"] {
@@ -2701,7 +2700,7 @@
 }
 
 .tap-scenario-navigation button small {
-  color: #8a918f;
+  color: var(--tap-muted);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
 }
@@ -2713,7 +2712,7 @@
 
 .tap-bdd-canvas {
   min-width: 0;
-  background: #f8f8f7;
+  background: var(--tap-surface);
 }
 
 .tap-bdd-heading {
@@ -2738,7 +2737,7 @@
 .tap-bdd-heading h2 {
   margin: 5px 0 0;
   color: var(--tap-workbench-ink);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--tap-font);
   font-size: 21px;
   font-weight: 500;
   line-height: 1.25;
@@ -2807,20 +2806,20 @@
 
 .tap-bdd-step-copy .ant-input:hover,
 .tap-bdd-step-copy .ant-input:focus {
-  border-color: #c9cdc9;
-  background: #f8f9f7;
+  border-color: var(--tap-line-strong);
+  background: var(--tap-surface);
   padding-inline: 8px;
 }
 
 .tap-bdd-step-copy small {
   padding-left: 74px;
-  color: #8a9298;
+  color: var(--tap-muted);
   font-size: 9px;
 }
 
 .tap-action-binding {
-  border-top: 1px solid #e4e2f4;
-  background: #f3f2ff;
+  border-top: 1px solid var(--tap-accent-soft);
+  background: var(--tap-accent-soft);
   padding: 10px 12px 12px;
 }
 
@@ -2843,7 +2842,7 @@
 }
 
 .tap-action-binding-heading span {
-  color: #74827f;
+  color: var(--tap-muted);
   font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -2869,7 +2868,7 @@
   align-items: center;
   gap: 8px;
   min-height: 34px;
-  border: 1px solid #dedbf4;
+  border: 1px solid var(--tap-accent-soft);
   border-radius: 8px;
   background: #fff;
   padding: 5px 8px;
@@ -2886,7 +2885,7 @@
 .tap-action-chain code {
   min-width: 0;
   overflow: hidden;
-  color: #56645f;
+  color: var(--tap-muted);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 9px;
   text-overflow: ellipsis;
@@ -2896,7 +2895,7 @@
 .tap-action-chain code {
   max-width: 128px;
   border-radius: 4px;
-  background: #e4e8e5;
+  background: var(--tap-line);
   padding: 3px 5px;
 }
 
@@ -2905,7 +2904,7 @@
   display: grid;
   grid-template-columns: 120px minmax(150px, 1fr) minmax(110px, 0.7fr);
   gap: 7px;
-  border-top: 1px solid #d9e3df;
+  border-top: 1px solid var(--tap-line);
   padding-top: 8px;
 }
 
@@ -2916,7 +2915,7 @@
   display: grid;
   gap: 5px;
   min-width: 0;
-  color: #59656a;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 760;
   letter-spacing: 0.04em;
@@ -2929,11 +2928,11 @@
 .tap-new-automation-form select {
   width: 100%;
   min-height: 34px;
-  border: 1px solid #cfd5d2;
+  border: 1px solid var(--tap-line-strong);
   border-radius: 6px;
   background: #fff;
   padding: 5px 9px;
-  color: #34423f;
+  color: var(--tap-ink);
   font: inherit;
 }
 
@@ -2959,7 +2958,7 @@
   border: 0;
   border-bottom: 2px solid transparent;
   background: var(--tap-workbench-soft);
-  color: #697279;
+  color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -2990,7 +2989,7 @@
 }
 
 .tap-run-target label small {
-  color: #868e94;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0;
@@ -3011,7 +3010,7 @@
 .tap-panel-heading h3 {
   margin: 0;
   color: var(--tap-workbench-ink);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--tap-font);
   font-size: 16px;
   font-weight: 500;
 }
@@ -3021,9 +3020,9 @@
   min-width: 24px;
   height: 24px;
   border-radius: 999px;
-  background: #eceeea;
+  background: var(--tap-soft);
   padding-inline: 6px;
-  color: #687178;
+  color: var(--tap-muted);
   font-size: 9px;
   font-weight: 800;
   place-items: center;
@@ -3065,7 +3064,7 @@
 }
 
 .tap-run-history summary small {
-  color: #858d93;
+  color: var(--tap-muted);
   font-size: 9px;
 }
 
@@ -3076,15 +3075,15 @@
 }
 
 .tap-run-detail {
-  border: 1px solid #dedbf4;
+  border: 1px solid var(--tap-accent-soft);
   border-radius: 9px;
-  background: #f6f5ff;
+  background: var(--tap-accent-soft);
   padding: 10px;
 }
 
 .tap-run-detail > p:first-child {
   margin: 0 0 9px;
-  color: #65716d;
+  color: var(--tap-muted);
   font-size: 9px;
 }
 
@@ -3095,16 +3094,16 @@
 }
 
 .tap-run-scenario > strong {
-  color: #34433f;
+  color: var(--tap-ink);
   font-size: 10px;
 }
 
 .tap-run-step {
   display: grid;
   gap: 2px;
-  border-top: 1px solid #dde5e1;
+  border-top: 1px solid var(--tap-line);
   padding-top: 5px;
-  color: #53615d;
+  color: var(--tap-muted);
   font-size: 9px;
   line-height: 1.45;
 }
@@ -3117,7 +3116,7 @@
 
 .tap-empty-note {
   margin: 14px 0 0;
-  color: #848c92;
+  color: var(--tap-muted);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -3135,21 +3134,21 @@
 
 .tap-agent-panel > p {
   margin: 0;
-  color: #667078;
+  color: var(--tap-muted);
   font-size: 11px;
   line-height: 1.55;
 }
 
 .tap-agent-proposal {
-  border: 1px solid #ddd9ff;
+  border: 1px solid var(--tap-accent-soft);
   border-radius: 10px;
-  background: #f5f4ff;
+  background: var(--tap-accent-soft);
   padding: 10px;
 }
 
 .tap-agent-proposal p {
   margin: 0 0 10px;
-  color: #49428f;
+  color: var(--tap-accent);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -3170,7 +3169,7 @@
 
 .tap-script-disclosure summary {
   padding: 14px 16px;
-  color: #414b53;
+  color: var(--tap-muted);
   cursor: pointer;
   font-size: 11px;
   font-weight: 720;
@@ -3180,9 +3179,9 @@
   max-height: 360px;
   margin: 0;
   overflow: auto;
-  background: #19211f;
+  background: var(--tap-soft);
   padding: 18px;
-  color: #d7e2de;
+  color: var(--tap-ink);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   line-height: 1.7;
@@ -3291,7 +3290,7 @@
 }
 
 .tap-linked-asset-row small {
-  color: #7c858b;
+  color: var(--tap-muted);
   font-size: 9px;
 }
 
@@ -3308,7 +3307,7 @@
 .tap-link-empty p {
   width: 100%;
   margin: 0;
-  color: #7c858b;
+  color: var(--tap-muted);
   font-size: 11px;
 }
 
@@ -3338,7 +3337,7 @@
 
 .tap-plan-scenarios > ol > li > div strong {
   color: var(--tap-workbench-ink);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--tap-font);
   font-size: 15px;
   font-weight: 500;
 }
@@ -3365,14 +3364,14 @@
   align-items: baseline;
   gap: 8px;
   min-height: 28px;
-  border-left: 1px solid #dce2de;
+  border-left: 1px solid var(--tap-line);
   padding: 5px 7px;
-  color: #58635f;
+  color: var(--tap-muted);
   font-size: 10px;
 }
 
 .tap-plan-scenarios > ol > li > ol > li small {
-  color: #929997;
+  color: var(--tap-muted);
   font-size: 8px;
 }
 
@@ -3386,7 +3385,7 @@
   gap: 9px;
   border-bottom: 1px solid var(--tap-workbench-line);
   padding: 18px 16px;
-  color: #68736f;
+  color: var(--tap-muted);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -3451,7 +3450,7 @@
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1100px) {
   .tap-tapper-layout,
   .tap-tapper-layout--sources-collapsed {
     grid-template-columns: minmax(0, 1fr);
@@ -3477,6 +3476,7 @@
     height: 100dvh;
     overflow-y: auto;
     overscroll-behavior: contain;
+    background: var(--tap-canvas);
   }
 
   .tap-sources-scrim {
@@ -3488,7 +3488,9 @@
     background: rgb(31 35 40 / 24%);
     padding: 0;
   }
+}
 
+@media (max-width: 820px) {
   .tap-plan-table {
     overflow-x: auto;
   }
@@ -3570,6 +3572,8 @@
     height: 100dvh;
     padding: max(12px, env(safe-area-inset-top)) 8px
       max(12px, env(safe-area-inset-bottom));
+    background: var(--tap-soft);
+    border-right: 1px solid var(--tap-line);
   }
 
   .tap-tapper-sidebar {
@@ -3579,11 +3583,12 @@
     left: 64px;
     width: min(244px, calc(100vw - 80px));
     height: 100dvh;
-    border-right: 1px solid #d8d8d4;
+    border-right: 1px solid var(--tap-line);
     box-shadow: 14px 0 36px 2px rgb(31 35 40 / 16%);
     padding: max(14px, env(safe-area-inset-top)) 14px
       max(14px, env(safe-area-inset-bottom));
     overscroll-behavior: contain;
+    background: var(--tap-canvas);
   }
 
   .tap-sidebar-scrim {
@@ -3638,6 +3643,7 @@
 
   .tap-chat {
     min-height: 100dvh;
+    background: var(--tap-surface);
   }
 
   .tap-chat--active {
@@ -3651,12 +3657,16 @@
   }
 
   .tap-chat-welcome h1 {
-    font-size: clamp(29px, 9vw, 36px);
+    font-size: clamp(28px, 7vw, 32px);
+    font-weight: 600;
+    line-height: 1.16;
+    letter-spacing: -0.035em;
   }
 
   .tap-chat-welcome > p {
-    margin-top: 12px;
+    margin: 12px auto 0;
     font-size: 14px;
+    max-width: 56ch;
   }
 
   .tap-quick-prompts {
@@ -3669,16 +3679,22 @@
     padding: 10px 12px;
     line-height: 1.45;
     text-align: left;
+    background: transparent;
+    border-color: var(--tap-line);
   }
 
   .tap-composer {
     width: calc(100% - 20px);
     margin-bottom: max(10px, env(safe-area-inset-bottom));
     padding-inline: 10px;
+    box-shadow: 0 8px 28px -12px rgb(35 43 43 / 16%);
+    border-color: var(--tap-line-strong);
   }
 
   .tap-chat--idle > .tap-composer {
     width: 100%;
+    box-shadow: 0 8px 28px -12px rgb(35 43 43 / 16%);
+    border-color: var(--tap-line-strong);
   }
 
   .tap-composer textarea.ant-input,
@@ -3808,6 +3824,8 @@
 
   .tap-graph-canvas {
     height: 300px;
+    background-color: var(--tap-surface);
+    background-image: none;
   }
 
   .tap-knowledge-graph svg {
@@ -3823,11 +3841,13 @@
   .tap-code-preview > header {
     align-items: flex-start;
     flex-direction: column;
+    border-bottom-color: var(--tap-line);
   }
 
   .tap-code-preview pre {
     overflow-x: auto;
     white-space: pre;
+    color: var(--tap-ink);
   }
 
   .tap-library-summary {
@@ -3880,7 +3900,7 @@
   .tap-test-management .tap-plan-row--automation [role="cell"]:nth-child(3) {
     grid-column: 1 / -1;
     grid-row: 2;
-    color: #6e777e;
+    color: var(--tap-muted);
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 9px;
   }

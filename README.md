@@ -134,6 +134,8 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
+2026-09-05 已启动 V0：完成 authoritative migration metadata 与隔离 MySQL migration/schema-drift 门禁；其余平台能力仍按计划逐阶段实施。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
+
 ## Tapper 本地知识工作区
 
 Tapper 当前实现仍是来源优先的本地 Demo，不是 v0.4 完整平台。现有真实知识页面可上传、查看六阶段 ingestion、选择 ready 来源、发起单次非流式问答并打开逐条引用；没有登录、服务端 Conversation/history、SSE、停止/队列、真实 Graph 或 OCR。默认产品壳仍挂载纯前端 prototype。API、Web 和所有中间件只绑定精确 loopback；无身份验证仅适用于单机开发，不能开放到局域网或生产环境。Milvus 已被接受为目标 `doc` 检索后端，但当前本地门禁不等于生产认证、TLS、备份、容量或多 Project 隔离已经完成。
