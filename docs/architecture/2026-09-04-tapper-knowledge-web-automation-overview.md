@@ -329,4 +329,4 @@ RFC-009 是完整数据模型、API、事件、质量阈值和风险说明的规
 
 平台品牌为 TAP，智能工作区与 AI Agent 入口为 Tapper；Execution Agent 仍为 Jenkins Pipeline Agent。所有 Web 工作区共用[浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)，由 app theme / CSS 语义色统一浅色画布、FWD 橙色强调与组件状态。该规范不改变模块依赖、API、Validation Mode 或 V0–P1 验收边界。
 
-V0 实施已从 authoritative migration metadata 开始：Alembic 显式装载全部 14 张现有表，隔离 checker 验证结构差异和非空旧数据保持。该基础设施交付不代表 Validation Scope、Audit、可靠性恢复或 V0 出口已经完成。
+V0 已完成 authoritative migration metadata 和 Task 2A 固定验证身份：Alembic 显式装载原 14 张业务表及 `0006` 新增的 3 张身份表，共同授权在既有检索 gate 前核对有效 Enterprise/Project/Actor；[隔离迁移与回归验收](../reviews/2026-09-05-tapper-v0-identity-review.md)已通过。所有业务表的 Project 回填、HTTP 范围接入、Audit、可靠性恢复与 V0 出口仍在后续任务中。

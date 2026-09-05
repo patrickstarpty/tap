@@ -10,3 +10,4 @@
 - [Tapper 品牌与运行命名空间迁移评审](2026-09-05-tapper-brand-migration-review.md)：`pass`；记录零残留守卫、全量构建测试、隔离 Demo E2E、桌面/移动及真实 reduced-motion 浏览器验收、40 张截图与旧资源非删除证据。
 
 - [TAP 原型浅色改造与 V0 启动验收](2026-09-05-tap-fwd-and-v0-start-review.md)：记录原型 FWD 浅色改造、40 张截图、V0 Task 1、隔离数据库门禁与回归环境修正。
+- [Tapper V0 固定验证身份验收](2026-09-05-tapper-v0-identity-review.md)：Task 2A 通过；记录固定 Scope、共同授权、0006 迁移、隔离全量回归及测试隔离复审。

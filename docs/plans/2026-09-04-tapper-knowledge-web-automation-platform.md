@@ -161,12 +161,14 @@ class AuthorizationPolicy(Protocol):
 
 `0006` 创建 `enterprise`、`project`、`actor_principal`，并 seed `local` / `tapper-demo` / `tapper-local-user`，principal type 为 `VALIDATION`。`AnonymousContext` 包含服务端确定的 `enterprise_id`；Validation composition 只产生一个固定 `ProjectScopeContext`，不开放 Anonymous/Platform 业务能力。
 
-- [ ] 先写 scope/value-object、Validation policy、第二个 in-memory policy Adapter、identity registry 与 `0005 → 0006` 非空升级测试；共同 conformance 覆盖未知 action、非法 scope/resource、跨 Project、Platform scope 读 Project 内容、禁用 Actor 与 Provider I/O 前拒绝。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 FAIL，原因为新 context/Adapter/table/revision 不存在。
-- [ ] 实现固定服务端 `ValidationScopeProvider`，把现有 `DemoCurrentPolicyVerifier` 的可信边界迁到共同 `AuthorizationPolicy`；核心 service 不出现 `if validation_mode`。
-- [ ] 将 identity metadata 加入 authoritative registry；`0006` downgrade 只删除自身对象，seed 使用稳定自然键且可重放。
-- [ ] 运行 `make migration-check MIGRATION=0006_validation_identity && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(access): register validation identity scope`
+- [x] 先写 scope/value-object、Validation policy、第二个 in-memory policy Adapter、identity registry 与 `0005 → 0006` 非空升级测试；共同 conformance 覆盖未知 action、非法 scope/resource、跨 Project、Platform scope 读 Project 内容、禁用 Actor 与 Provider I/O 前拒绝。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 FAIL，原因为新 context/Adapter/table/revision 不存在。
+- [x] 实现固定服务端 `ValidationScopeProvider`，把现有 `DemoCurrentPolicyVerifier` 的可信边界迁到共同 `AuthorizationPolicy`；核心 service 不出现 `if validation_mode`。
+- [x] 将 identity metadata 加入 authoritative registry；`0006` downgrade 只删除自身对象，seed 使用稳定自然键且可重放。
+- [x] 运行 `make migration-check MIGRATION=0006_validation_identity && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(access): register validation identity scope`
+
+**验收：** `e206538`；[Task 2A 验收记录](../reviews/2026-09-05-tapper-v0-identity-review.md)。
 
 ### Task 2B: Backfill every existing business row into the Validation Project
 

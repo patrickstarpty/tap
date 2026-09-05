@@ -134,7 +134,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-2026-09-05 已启动 V0：完成 authoritative migration metadata 与隔离 MySQL migration/schema-drift 门禁；其余平台能力仍按计划逐阶段实施。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
+2026-09-05 已启动 V0：完成 authoritative migration metadata、固定 Validation Scope/共同授权与 `0006` identity registry，隔离迁移和全量回归通过；[身份验收记录](docs/reviews/2026-09-05-tapper-v0-identity-review.md)说明当前范围。Project 数据回填与其余平台能力继续按计划逐阶段实施。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
 
 ## Tapper 本地知识工作区
 
