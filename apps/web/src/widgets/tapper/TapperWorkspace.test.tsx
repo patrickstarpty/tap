@@ -376,33 +376,39 @@ describe("TapperWorkspace answer lifecycle", () => {
     expect(await screen.findByText("原文依据")).toBeVisible();
 
     act(() => {
-      queryClient.setQueryData<DocumentPage>(knowledgeKeys.documents(), {
-        items: [
-          readyDocument("doc-a"),
-          document({
-            documentId: "doc-b",
-            filename: "doc-b.md",
-            status: "failed",
-            stage: "embedding",
-          }),
-        ],
-        nextCursor: null,
-      });
+      queryClient.setQueryData<DocumentPage>(
+        knowledgeKeys.documents("project-test"),
+        {
+          items: [
+            readyDocument("doc-a"),
+            document({
+              documentId: "doc-b",
+              filename: "doc-b.md",
+              status: "failed",
+              stage: "embedding",
+            }),
+          ],
+          nextCursor: null,
+        },
+      );
     });
     expect(screen.getByText("😀退款需要两人审批。")).toBeVisible();
 
     act(() => {
-      queryClient.setQueryData<DocumentPage>(knowledgeKeys.documents(), {
-        items: [
-          document({
-            documentId: "doc-a",
-            filename: "doc-a.md",
-            status: "deleting",
-            stage: "ready",
-          }),
-        ],
-        nextCursor: null,
-      });
+      queryClient.setQueryData<DocumentPage>(
+        knowledgeKeys.documents("project-test"),
+        {
+          items: [
+            document({
+              documentId: "doc-a",
+              filename: "doc-a.md",
+              status: "deleting",
+              stage: "ready",
+            }),
+          ],
+          nextCursor: null,
+        },
+      );
     });
     await waitFor(() => {
       expect(
@@ -711,7 +717,7 @@ describe("TapperWorkspace claim and citation integrity", () => {
       .deferCitation("citation-a", { ignoreAbort: true });
     const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
     queryClient.setQueryData(
-      knowledgeKeys.citation("citation-a", 3),
+      knowledgeKeys.citation("project-test", "citation-a", 3),
       citationPreview({ quote: "不应显示的缓存" }),
     );
     await selectSource(user, /doc-a/u);
@@ -760,7 +766,7 @@ describe("TapperWorkspace claim and citation integrity", () => {
     );
     await act(async () => {
       await queryClient.refetchQueries({
-        queryKey: knowledgeKeys.citations(),
+        queryKey: knowledgeKeys.citations("project-test"),
         type: "active",
       });
     });

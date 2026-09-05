@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import PolicyUnavailable, RetrievalPolicyContext
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.domain.models import (
@@ -71,6 +72,11 @@ class AnswerService:
     ) -> None:
         self._repository = repository
         self._knowledge = knowledge
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        """Expose the binding held by the actual repository, without a second label."""
+        return self._repository.scope
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         """Run internal E2E evidence verification through the answer authority graph."""

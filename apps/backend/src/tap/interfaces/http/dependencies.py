@@ -21,6 +21,8 @@ from tap.contracts.http import (
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
 )
+from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 
@@ -34,6 +36,9 @@ class UploadInput:
 
 
 class KnowledgeHttpService(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def upload(self, upload: UploadInput) -> DocumentAccepted: ...
 
     async def list_documents(self, cursor: str | None, limit: int) -> DocumentPage: ...
@@ -79,6 +84,9 @@ class HttpServices:
 
     knowledge: KnowledgeHttpService | None = None
     readiness: ReadinessHttpService | None = None
+    scope_provider: ScopeProvider | None = None
+    authorization_policy: AuthorizationPolicy | None = None
+    scope: ProjectScopeContext | None = None
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:

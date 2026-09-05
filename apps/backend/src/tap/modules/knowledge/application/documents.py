@@ -17,6 +17,7 @@ from tap.contracts.http import (
     DocumentSummary,
     IngestionStage,
 )
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     MAX_UPLOAD_BYTES,
     DocumentId,
@@ -62,6 +63,11 @@ class DocumentService:
         self._repository = repository
         self._artifacts = artifacts
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        """Expose the binding held by the actual repository, without a second label."""
+        return self._repository.scope
 
     async def upload(self, upload: UploadStream) -> DocumentAccepted:
         return await _document_runtime_boundary(self._upload(upload))

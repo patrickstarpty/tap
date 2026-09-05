@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import {
   knowledgeKeys,
+  useKnowledgeClient,
   useCreateAnswerMutation,
   useDocumentListQuery,
 } from "../../features/knowledge/api/queries";
@@ -59,8 +60,9 @@ export function TapperWorkspace({
   pollIntervalMs,
 }: { pollIntervalMs?: number } = {}) {
   const queryClient = useQueryClient();
-  const documentsQuery = useDocumentListQuery({ pollIntervalMs });
-  const answerMutation = useCreateAnswerMutation();
+  const { projectId } = useKnowledgeClient();
+  const documentsQuery = useDocumentListQuery(projectId, { pollIntervalMs });
+  const answerMutation = useCreateAnswerMutation(projectId);
   const [selection, dispatchSelection] = useReducer(
     sourceSelectionReducer,
     INITIAL_SOURCE_SELECTION,
@@ -97,9 +99,11 @@ export function TapperWorkspace({
   const clearCitation = useCallback(
     (restoreFocus: boolean) => {
       void queryClient.cancelQueries({
-        queryKey: knowledgeKeys.citations(),
+        queryKey: knowledgeKeys.citations(projectId),
       });
-      queryClient.removeQueries({ queryKey: knowledgeKeys.citations() });
+      queryClient.removeQueries({
+        queryKey: knowledgeKeys.citations(projectId),
+      });
       citationGenerationRef.current += 1;
       setActiveCitation(null);
       const trigger = citationTriggerRef.current;
@@ -108,7 +112,7 @@ export function TapperWorkspace({
         queueMicrotask(() => trigger.focus());
       }
     },
-    [queryClient],
+    [projectId, queryClient],
   );
 
   const cancelCurrentAnswer = useCallback(() => {
@@ -142,10 +146,14 @@ export function TapperWorkspace({
     () => () => {
       answerGenerationRef.current += 1;
       answerAbortRef.current?.abort();
-      void queryClient.cancelQueries({ queryKey: knowledgeKeys.citations() });
-      queryClient.removeQueries({ queryKey: knowledgeKeys.citations() });
+      void queryClient.cancelQueries({
+        queryKey: knowledgeKeys.citations(projectId),
+      });
+      queryClient.removeQueries({
+        queryKey: knowledgeKeys.citations(projectId),
+      });
     },
-    [queryClient],
+    [projectId, queryClient],
   );
 
   const changeSelection = (

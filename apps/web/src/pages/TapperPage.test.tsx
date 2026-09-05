@@ -42,6 +42,21 @@ describe("Tapper product prototype", () => {
     window.localStorage.clear();
   });
 
+  it("keeps Validation Mode visible across product navigation", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const banner = await screen.findByRole("status", {
+      name: "Validation Mode",
+    });
+    expect(banner).toHaveTextContent(
+      "操作统一记录到固定 Validation Actor，不代表个人身份",
+    );
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(banner).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    expect(banner).toBeVisible();
+  });
+
   it("shows TAP platform and Tapper workspace identities", () => {
     renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
 

@@ -26,6 +26,15 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
+class RuntimeMode(ContractModel):
+    """Server-owned validation context; never a personal authentication claim."""
+
+    mode: Literal["validation"]
+    project_id: str = Field(min_length=1, max_length=128)
+    actor_id: str = Field(min_length=1, max_length=128)
+    identity_mode: Literal["validation"]
+
+
 class SourceFamily(str, Enum):
     DOC = "doc"
     CODE = "code"

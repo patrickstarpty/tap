@@ -121,6 +121,7 @@ export default defineConfig({
     proxy: {
       "/health": apiProxy,
       "/v1": apiProxy,
+      "/api": apiProxy,
     },
   },
 });

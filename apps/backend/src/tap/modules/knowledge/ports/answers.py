@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     RevisionId,
@@ -200,6 +201,9 @@ class AnswerSnapshot:
 
 class AnswerSnapshotRepository(Protocol):
     """Durable operations run in the server-bound Project, independent of creator Actor."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
 
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]

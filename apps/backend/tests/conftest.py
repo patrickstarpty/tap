@@ -32,3 +32,36 @@ def owned_project_mysql(monkeypatch: pytest.MonkeyPatch) -> Iterator[IsolatedMys
             database = resources.enter_context(isolated_mysql())
             database.upgrade("head")
         yield database
+
+
+def validation_http_services(knowledge=None, readiness=None):
+    """Explicit in-memory trusted authority for HTTP tests; never install it globally."""
+    from tap.interfaces.http.dependencies import HttpServices
+    from tap.modules.access.adapters.validation import (
+        VALIDATION_SCOPE,
+        ValidationAuthorizationPolicy,
+        ValidationScopeProvider,
+    )
+    from tap.modules.access.domain.authorization import ActorPrincipal
+
+    class Registry:
+        async def get_principal(self, enterprise_id, project_id, actor_id):
+            assert (enterprise_id, project_id, actor_id) == (
+                "local",
+                "tapper-demo",
+                "tapper-local-user",
+            )
+            return ActorPrincipal(
+                enterprise_id=enterprise_id,
+                actor_id=actor_id,
+                principal_type="VALIDATION",
+                enabled=True,
+            )
+
+    return HttpServices(
+        knowledge=knowledge,
+        readiness=readiness,
+        scope=VALIDATION_SCOPE,
+        scope_provider=ValidationScopeProvider(),
+        authorization_policy=ValidationAuthorizationPolicy(Registry()),
+    )

@@ -219,7 +219,9 @@ export interface FakeKnowledgeClient extends KnowledgeClient {
   finishCitation(citationId: string, preview?: CitationPreview): void;
 }
 
-export function fakeKnowledgeClient(): FakeKnowledgeClient {
+export function fakeKnowledgeClient(
+  projectId = "project-test",
+): FakeKnowledgeClient {
   let documents: DocumentSummary[] = [];
   const detailById = new Map<string, DocumentDetail>();
   const listQueue: DocumentSummary[][] = [];
@@ -241,6 +243,7 @@ export function fakeKnowledgeClient(): FakeKnowledgeClient {
   let pendingUpload: PendingOperation | undefined;
 
   const api: FakeKnowledgeClient = {
+    projectId,
     listCalls: 0,
     listInputs: [],
     listSignals: [],

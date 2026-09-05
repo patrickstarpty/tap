@@ -287,63 +287,87 @@ async function installKnowledgeRoutes(
   page: Page,
   documents: readonly DocumentSummary[],
 ) {
-  await page.route("**/v1/knowledge/**", async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    const method = request.method();
+  await page.route(
+    "**/api/v1/projects/project-capture/knowledge/**",
+    async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      const method = request.method();
 
-    if (path === "/v1/knowledge/documents" && method === "GET") {
-      await fulfillJson(route, { items: documents, nextCursor: null });
-      return;
-    }
-    if (path === "/v1/knowledge/documents" && method === "POST") {
-      const receipt: DocumentAccepted = {
-        document: MOCK_UPLOAD,
-        duplicate: false,
-        jobId: "job_prototype_capture",
-      };
-      await fulfillJson(route, receipt, 202);
-      return;
-    }
-    if (path === "/v1/knowledge/answers" && method === "POST") {
-      await fulfillJson(route, MOCK_ANSWER);
-      return;
-    }
-    if (path.endsWith("/retry") && method === "POST") {
-      const documentId = path.split("/").at(-2);
-      const document =
-        documents.find((item) => item.documentId === documentId) ?? MOCK_UPLOAD;
-      const receipt: DocumentAccepted = {
-        document,
-        duplicate: false,
-        jobId: "job_prototype_retry",
-      };
-      await fulfillJson(route, receipt, 202);
-      return;
-    }
-    if (path.startsWith("/v1/knowledge/documents/") && method === "GET") {
-      const documentId = path.split("/").at(-1);
-      const document =
-        documents.find((item) => item.documentId === documentId) ?? MOCK_UPLOAD;
-      await fulfillJson(route, documentDetail(document));
-      return;
-    }
-    if (path.startsWith("/v1/knowledge/documents/") && method === "DELETE") {
-      await route.fulfill({ status: 204 });
-      return;
-    }
+      if (
+        path === "/api/v1/projects/project-capture/knowledge/documents" &&
+        method === "GET"
+      ) {
+        await fulfillJson(route, { items: documents, nextCursor: null });
+        return;
+      }
+      if (
+        path === "/api/v1/projects/project-capture/knowledge/documents" &&
+        method === "POST"
+      ) {
+        const receipt: DocumentAccepted = {
+          document: MOCK_UPLOAD,
+          duplicate: false,
+          jobId: "job_prototype_capture",
+        };
+        await fulfillJson(route, receipt, 202);
+        return;
+      }
+      if (
+        path === "/api/v1/projects/project-capture/knowledge/answers" &&
+        method === "POST"
+      ) {
+        await fulfillJson(route, MOCK_ANSWER);
+        return;
+      }
+      if (path.endsWith("/retry") && method === "POST") {
+        const documentId = path.split("/").at(-2);
+        const document =
+          documents.find((item) => item.documentId === documentId) ??
+          MOCK_UPLOAD;
+        const receipt: DocumentAccepted = {
+          document,
+          duplicate: false,
+          jobId: "job_prototype_retry",
+        };
+        await fulfillJson(route, receipt, 202);
+        return;
+      }
+      if (
+        path.startsWith(
+          "/api/v1/projects/project-capture/knowledge/documents/",
+        ) &&
+        method === "GET"
+      ) {
+        const documentId = path.split("/").at(-1);
+        const document =
+          documents.find((item) => item.documentId === documentId) ??
+          MOCK_UPLOAD;
+        await fulfillJson(route, documentDetail(document));
+        return;
+      }
+      if (
+        path.startsWith(
+          "/api/v1/projects/project-capture/knowledge/documents/",
+        ) &&
+        method === "DELETE"
+      ) {
+        await route.fulfill({ status: 204 });
+        return;
+      }
 
-    await fulfillJson(
-      route,
-      {
-        detail: "Unexpected Knowledge route in prototype capture.",
-        status: 404,
-        title: "Not found",
-        type: "about:blank",
-      },
-      404,
-    );
-  });
+      await fulfillJson(
+        route,
+        {
+          detail: "Unexpected Knowledge route in prototype capture.",
+          status: 404,
+          title: "Not found",
+          type: "about:blank",
+        },
+        404,
+      );
+    },
+  );
 }
 
 async function startFlow(
@@ -352,6 +376,14 @@ async function startFlow(
 ) {
   await page.clock.install({ time: new Date("2026-09-05T10:00:00+08:00") });
   await page.addInitScript(() => window.localStorage.clear());
+  await page.route("**/api/v1/runtime-mode", (route) =>
+    fulfillJson(route, {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: "project-capture",
+      actorId: "actor-capture",
+    }),
+  );
   await installKnowledgeRoutes(page, documents);
   await page.goto("/");
   await expect(
@@ -360,6 +392,9 @@ async function startFlow(
 }
 
 async function capture(page: Page, name: (typeof OUTPUTS)[number]) {
+  await expect(
+    page.getByRole("status", { name: "Validation Mode", includeHidden: true }),
+  ).toContainText("操作统一记录到固定 Validation Actor，不代表个人身份");
   await expect(page.getByLabel("TAP platform")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Tapper", includeHidden: true }),
@@ -447,6 +482,24 @@ test.describe("reduced motion", () => {
       ).toBe(true);
       await startFlow(page);
       expect(page.viewportSize()).toEqual(viewport);
+      const banner = page.getByRole("status", { name: "Validation Mode" });
+      await expect(banner).toContainText(
+        "操作统一记录到固定 Validation Actor，不代表个人身份",
+      );
+      const bannerBox = await banner.boundingBox();
+      expect(bannerBox).not.toBeNull();
+      expect(bannerBox!.x).toBe(0);
+      expect(bannerBox!.width).toBe(viewport.width);
+      const railBox = await page.locator(".tap-product-rail").boundingBox();
+      expect(railBox!.y).toBeGreaterThanOrEqual(
+        bannerBox!.y + bannerBox!.height,
+      );
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(viewport.width);
+      await page.screenshot({
+        path: test.info().outputPath(`runtime-${viewport.width}.png`),
+      });
       await expect
         .poll(() =>
           page.evaluate(
@@ -512,6 +565,41 @@ test.describe("reduced motion", () => {
     });
   }
 });
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 390, height: 844 },
+]) {
+  test(`runtime unavailable preserves navigation at ${viewport.width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => window.localStorage.clear());
+    let knowledgeRequests = 0;
+    await page.route("**/api/v1/projects/**", (route) => {
+      knowledgeRequests += 1;
+      return route.abort();
+    });
+    await page.route("**/api/v1/runtime-mode", (route) =>
+      route.fulfill({ status: 503, body: "unavailable" }),
+    );
+    await page.goto("/");
+    await expect(
+      page.getByRole("status", { name: "Validation Mode" }),
+    ).toContainText("运行环境连接失败 · 服务器操作暂不可用");
+    await expect(
+      page.getByRole("navigation", { name: "Product" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Test Management" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Test Management" }),
+    ).toBeVisible();
+    expect(knowledgeRequests).toBe(0);
+    await page.screenshot({
+      path: test.info().outputPath(`runtime-unavailable-${viewport.width}.png`),
+    });
+  });
+}
 
 test("checked-in screenshot inventory is canonical", () => {
   expect(OUTPUTS).toHaveLength(40);

@@ -1296,6 +1296,9 @@ def _assemble_http_services(
             searches=search_service,
         ),
         readiness=readiness,
+        scope_provider=scope_provider,
+        authorization_policy=authorization_policy,
+        scope=repository.scope,
     )
 
 

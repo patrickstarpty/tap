@@ -1,4 +1,7 @@
 .tap-product-shell {
+  --tap-banner-height: 56px;
+  --tap-workspace-height: calc(100dvh - var(--tap-banner-height));
+  grid-template-rows: var(--tap-banner-height) minmax(0, 1fr);
   --tap-tapper-sidebar-width: 236px;
   --tap-panel-motion-duration: 200ms;
   --tap-panel-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
@@ -31,10 +34,10 @@
 .tap-product-rail,
 .tap-tapper-sidebar {
   position: sticky;
-  top: 0;
+  top: var(--tap-banner-height);
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  height: var(--tap-workspace-height);
   overflow: clip;
   color: var(--tap-ink);
   background: var(--tap-canvas);
@@ -397,7 +400,7 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--tap-sources-width);
-  min-height: 100dvh;
+  min-height: var(--tap-workspace-height);
   transition: grid-template-columns var(--tap-panel-motion-duration)
     var(--tap-panel-motion-easing);
 }
@@ -409,7 +412,7 @@
 .tap-chat {
   position: relative;
   min-width: 0;
-  min-height: 100dvh;
+  min-height: var(--tap-workspace-height);
   background: var(--tap-surface);
 }
 
@@ -425,7 +428,7 @@
 .tap-chat--active {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  height: 100dvh;
+  height: var(--tap-workspace-height);
   overflow: hidden;
 }
 
@@ -774,7 +777,7 @@
   display: grid;
   gap: 14px;
   width: min(440px, 100%);
-  max-height: min(560px, calc(100dvh - 40px));
+  max-height: min(560px, calc(var(--tap-workspace-height) - 40px));
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 22px 64px 8px rgb(17 24 39 / 24%);
@@ -861,7 +864,7 @@
   flex-direction: column;
   width: var(--tap-sources-width);
   min-width: var(--tap-sources-width);
-  min-height: 100dvh;
+  min-height: var(--tap-workspace-height);
   box-sizing: border-box;
   border-left: 1px solid var(--tap-line);
   background: var(--tap-canvas);
@@ -1289,7 +1292,7 @@
 }
 
 .tap-module {
-  min-height: 100dvh;
+  min-height: var(--tap-workspace-height);
   padding: 34px clamp(26px, 4vw, 62px) 54px;
 }
 
@@ -1439,7 +1442,7 @@
 
 .tap-catalog-dialog {
   width: min(540px, 100%);
-  max-height: calc(100dvh - 40px);
+  max-height: calc(var(--tap-workspace-height) - 40px);
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 22px 64px 8px rgb(17 24 39 / 24%);
@@ -3459,10 +3462,10 @@
   .tap-sources-shell {
     position: fixed;
     z-index: 45;
-    inset-block: 0;
+    inset-block: var(--tap-banner-height) 0;
     right: 0;
     width: min(320px, calc(100vw - 68px));
-    height: 100dvh;
+    height: var(--tap-workspace-height);
     box-shadow: -14px 0 36px 2px rgb(31 35 40 / 16%);
   }
 
@@ -3473,7 +3476,7 @@
   .tap-sources {
     width: 100%;
     min-width: 0;
-    height: 100dvh;
+    height: var(--tap-workspace-height);
     overflow-y: auto;
     overscroll-behavior: contain;
     background: var(--tap-canvas);
@@ -3482,7 +3485,7 @@
   .tap-sources-scrim {
     position: fixed;
     z-index: 40;
-    inset: 0 0 0 68px;
+    inset: var(--tap-banner-height) 0 0 68px;
     display: block;
     border: 0;
     background: rgb(31 35 40 / 24%);
@@ -3565,11 +3568,11 @@
   .tap-product-rail {
     position: fixed;
     z-index: 50;
-    top: 0;
+    top: var(--tap-banner-height);
     bottom: 0;
     left: 0;
     width: 64px;
-    height: 100dvh;
+    height: var(--tap-workspace-height);
     padding: max(12px, env(safe-area-inset-top)) 8px
       max(12px, env(safe-area-inset-bottom));
     background: var(--tap-soft);
@@ -3579,10 +3582,10 @@
   .tap-tapper-sidebar {
     position: fixed;
     z-index: 45;
-    inset-block: 0;
+    inset-block: var(--tap-banner-height) 0;
     left: 64px;
     width: min(244px, calc(100vw - 80px));
-    height: 100dvh;
+    height: var(--tap-workspace-height);
     border-right: 1px solid var(--tap-line);
     box-shadow: 14px 0 36px 2px rgb(31 35 40 / 16%);
     padding: max(14px, env(safe-area-inset-top)) 14px
@@ -3594,7 +3597,7 @@
   .tap-sidebar-scrim {
     position: fixed;
     z-index: 40;
-    inset: 0 0 0 64px;
+    inset: var(--tap-banner-height) 0 0 64px;
     display: block;
     border: 0;
     background: rgb(31 35 40 / 24%);
@@ -3642,12 +3645,12 @@
   }
 
   .tap-chat {
-    min-height: 100dvh;
+    min-height: var(--tap-workspace-height);
     background: var(--tap-surface);
   }
 
   .tap-chat--active {
-    height: 100dvh;
+    height: var(--tap-workspace-height);
   }
 
   .tap-chat--idle {
@@ -4026,5 +4029,11 @@
   .tap-question-marker {
     animation: none;
     transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .tap-product-shell {
+    --tap-banner-height: 88px;
   }
 }

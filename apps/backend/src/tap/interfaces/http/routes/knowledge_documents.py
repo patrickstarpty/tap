@@ -5,14 +5,15 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, File, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from tap.contracts.http import DocumentAccepted, DocumentDetail, DocumentPage
 from tap.interfaces.http.dependencies import UploadInput, knowledge_service
 from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response_metadata
+from tap.interfaces.http.scope import project_authorization
 
-router = APIRouter(prefix="/v1/knowledge/documents", tags=["knowledge"])
+router = APIRouter(prefix="/knowledge/documents", tags=["knowledge"])
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 READ_CHUNK_BYTES = 1_048_576
 _MEDIA_TYPES_BY_EXTENSION = {
@@ -57,6 +58,7 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
 @router.post(
     "",
     operation_id="knowledge_upload_document",
+    dependencies=[Depends(project_authorization("knowledge.write"))],
     response_model=DocumentAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
@@ -87,6 +89,7 @@ async def upload_document(
 @router.get(
     "",
     operation_id="knowledge_list_documents",
+    dependencies=[Depends(project_authorization("knowledge.read"))],
     response_model=DocumentPage,
     responses={
         status.HTTP_422_UNPROCESSABLE_ENTITY: problem_response_metadata("Invalid list request"),
@@ -106,6 +109,7 @@ async def list_documents(
 @router.get(
     "/{document_id}",
     operation_id="knowledge_get_document",
+    dependencies=[Depends(project_authorization("knowledge.read"))],
     response_model=DocumentDetail,
     responses={
         status.HTTP_404_NOT_FOUND: problem_response_metadata("Document not found"),
@@ -122,6 +126,7 @@ async def get_document(request: Request, document_id: str) -> DocumentDetail:
 @router.post(
     "/{document_id}/retry",
     operation_id="knowledge_retry_document",
+    dependencies=[Depends(project_authorization("knowledge.write"))],
     response_model=DocumentAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
@@ -140,6 +145,7 @@ async def retry_document(request: Request, document_id: str) -> DocumentAccepted
 @router.delete(
     "/{document_id}",
     operation_id="knowledge_delete_document",
+    dependencies=[Depends(project_authorization("knowledge.delete"))],
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         status.HTTP_404_NOT_FOUND: problem_response_metadata("Document not found"),

@@ -2249,7 +2249,8 @@ console.log(JSON.stringify(value.server));
     assert server["host"] == "127.0.0.1"
     assert server["port"] == 5173
     assert server["strictPort"] is True
-    assert set(server["proxy"]) == {"/health", "/v1"}
+    assert set(server["proxy"]) == {"/health", "/v1", "/api"}
+    assert all(value["changeOrigin"] is False for value in server["proxy"].values())
     assert {value["target"] for value in server["proxy"].values()} == {"http://127.0.0.1:8000"}
 
 

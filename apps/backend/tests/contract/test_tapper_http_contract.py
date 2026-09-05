@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import validation_http_services
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -20,8 +21,9 @@ from tap.contracts.http import (
     RetrievalAnswerResponse,
 )
 from tap.interfaces.http.app import create_app
-from tap.interfaces.http.dependencies import HttpServices, UploadInput
+from tap.interfaces.http.dependencies import UploadInput
 from tap.interfaces.http.routes.knowledge_documents import MAX_DOCUMENT_BYTES
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 
 
 def test_document_contract_is_closed_and_bounded() -> None:
@@ -75,31 +77,51 @@ def test_tapper_routes_have_stable_provider_neutral_operation_ids() -> None:
     """Renaming a public operation would break generated clients and integrations."""
     paths = create_app().openapi()["paths"]
 
-    assert paths["/v1/knowledge/documents"]["post"]["operationId"] == "knowledge_upload_document"
-    assert paths["/v1/knowledge/documents"]["get"]["operationId"] == "knowledge_list_documents"
     assert (
-        paths["/v1/knowledge/documents/{document_id}"]["get"]["operationId"]
+        paths["/api/v1/projects/{project_id}/knowledge/documents"]["post"]["operationId"]
+        == "knowledge_upload_document"
+    )
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/documents"]["get"]["operationId"]
+        == "knowledge_list_documents"
+    )
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/documents/{document_id}"]["get"][
+            "operationId"
+        ]
         == "knowledge_get_document"
     )
     assert (
-        paths["/v1/knowledge/documents/{document_id}/retry"]["post"]["operationId"]
+        paths["/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry"]["post"][
+            "operationId"
+        ]
         == "knowledge_retry_document"
     )
     assert (
-        paths["/v1/knowledge/documents/{document_id}"]["delete"]["operationId"]
+        paths["/api/v1/projects/{project_id}/knowledge/documents/{document_id}"]["delete"][
+            "operationId"
+        ]
         == "knowledge_delete_document"
     )
-    assert paths["/v1/knowledge/answers"]["post"]["operationId"] == "knowledge_create_answer"
-    assert paths["/v1/citations/{citation_id}"]["get"]["operationId"] == "citation_get_preview"
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/answers"]["post"]["operationId"]
+        == "knowledge_create_answer"
+    )
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/citations/{citation_id}"]["get"][
+            "operationId"
+        ]
+        == "citation_get_preview"
+    )
     assert paths["/health/live"]["get"]["operationId"] == "health_get_live"
     assert paths["/health/ready"]["get"]["operationId"] == "health_get_ready"
-    assert paths["/v1/knowledge/documents"]["post"]["responses"]["202"]
+    assert paths["/api/v1/projects/{project_id}/knowledge/documents"]["post"]["responses"]["202"]
 
 
 def test_public_routes_publish_problem_details_media_type() -> None:
     """Default FastAPI JSON errors would violate the public error contract."""
     app = create_app()
-    response = TestClient(app).get("/v1/knowledge/documents")
+    response = TestClient(app).get("/api/v1/projects/tapper-demo/knowledge/documents")
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
@@ -110,13 +132,13 @@ def test_knowledge_route_error_schemas_are_all_problem_details() -> None:
     """A default JSON error schema would make generated clients mishandle public failures."""
     paths = create_app().openapi()["paths"]
     for path, method in (
-        ("/v1/knowledge/documents", "get"),
-        ("/v1/knowledge/documents", "post"),
-        ("/v1/knowledge/documents/{document_id}", "get"),
-        ("/v1/knowledge/documents/{document_id}", "delete"),
-        ("/v1/knowledge/documents/{document_id}/retry", "post"),
-        ("/v1/knowledge/answers", "post"),
-        ("/v1/citations/{citation_id}", "get"),
+        ("/api/v1/projects/{project_id}/knowledge/documents", "get"),
+        ("/api/v1/projects/{project_id}/knowledge/documents", "post"),
+        ("/api/v1/projects/{project_id}/knowledge/documents/{document_id}", "get"),
+        ("/api/v1/projects/{project_id}/knowledge/documents/{document_id}", "delete"),
+        ("/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry", "post"),
+        ("/api/v1/projects/{project_id}/knowledge/answers", "post"),
+        ("/api/v1/projects/{project_id}/knowledge/citations/{citation_id}", "get"),
     ):
         for status_code, response in paths[path][method]["responses"].items():
             if status_code.startswith("4") or status_code.startswith("5"):
@@ -126,44 +148,63 @@ def test_knowledge_route_error_schemas_are_all_problem_details() -> None:
 def test_knowledge_routes_publish_the_closed_task_six_error_statuses() -> None:
     paths = create_app().openapi()["paths"]
     expected = {
-        ("/v1/knowledge/documents", "post"): {"400", "413", "422", "429", "503"},
-        ("/v1/knowledge/documents", "get"): {"422", "503"},
-        ("/v1/knowledge/documents/{document_id}", "get"): {"404", "422", "503"},
-        ("/v1/knowledge/documents/{document_id}", "delete"): {
+        ("/api/v1/projects/{project_id}/knowledge/documents", "post"): {
+            "400",
+            "413",
+            "422",
+            "429",
+            "503",
+        },
+        ("/api/v1/projects/{project_id}/knowledge/documents", "get"): {"422", "503"},
+        ("/api/v1/projects/{project_id}/knowledge/documents/{document_id}", "get"): {
+            "404",
+            "422",
+            "503",
+        },
+        ("/api/v1/projects/{project_id}/knowledge/documents/{document_id}", "delete"): {
             "404",
             "409",
             "422",
             "503",
         },
-        ("/v1/knowledge/documents/{document_id}/retry", "post"): {
+        ("/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry", "post"): {
             "404",
             "409",
             "422",
             "503",
         },
-        ("/v1/knowledge/answers", "post"): {"400", "409", "422", "503"},
-        ("/v1/citations/{citation_id}", "get"): {"404", "422", "503"},
+        ("/api/v1/projects/{project_id}/knowledge/answers", "post"): {"400", "409", "422", "503"},
+        ("/api/v1/projects/{project_id}/knowledge/citations/{citation_id}", "get"): {
+            "404",
+            "422",
+            "503",
+        },
     }
 
     for (path, method), statuses in expected.items():
         actual = {code for code in paths[path][method]["responses"] if code.startswith(("4", "5"))}
-        assert actual == statuses
+        assert actual == statuses | {"403"}
 
 
 def test_document_list_limit_is_validated_at_the_route_boundary() -> None:
     """A route accepting zero or fifty-one items would exceed fixed server bounds."""
-    client = TestClient(create_app())
+    client = TestClient(create_app(validation_http_services()))
 
     for limit in ("0", "51"):
-        response = client.get(f"/v1/knowledge/documents?limit={limit}")
+        response = client.get(f"/api/v1/projects/tapper-demo/knowledge/documents?limit={limit}")
         assert response.status_code == 422
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
 def test_invalid_upload_metadata_is_a_public_problem_not_a_server_error() -> None:
     """Unsafe display filenames must not escape as a framework error or be accepted."""
-    response = TestClient(create_app()).post(
-        "/v1/knowledge/documents",
+    response = TestClient(
+        create_app(
+            validation_http_services(), allowed_origins=frozenset({"http://127.0.0.1:15175"})
+        ),
+        headers={"Origin": "http://127.0.0.1:15175"},
+    ).post(
+        "/api/v1/projects/tapper-demo/knowledge/documents",
         files={"upload": ("../secret.txt", b"untrusted", "text/plain")},
     )
 
@@ -332,17 +373,23 @@ def test_claim_text_must_be_exactly_one_unique_answer_paragraph() -> None:
 def test_multipart_upload_uses_streamed_file_bytes_not_total_body_length() -> None:
     """Multipart framing must not reject a file exactly at the 25 MiB file limit."""
     service = _CountingUploadService()
-    client = TestClient(create_app(HttpServices(knowledge=service)))
+    client = TestClient(
+        create_app(
+            validation_http_services(knowledge=service),
+            allowed_origins=frozenset({"http://127.0.0.1:15175"}),
+        ),
+        headers={"Origin": "http://127.0.0.1:15175"},
+    )
 
     exact = client.post(
-        "/v1/knowledge/documents",
+        "/api/v1/projects/tapper-demo/knowledge/documents",
         files={"upload": ("exact.txt", b"x" * MAX_DOCUMENT_BYTES, "text/plain")},
     )
     assert exact.status_code == 202
     assert service.byte_count == MAX_DOCUMENT_BYTES
 
     extra_part = client.post(
-        "/v1/knowledge/documents",
+        "/api/v1/projects/tapper-demo/knowledge/documents",
         data={"ignored": "x" * (20 * 1024)},
         files={"upload": ("exact.txt", b"x" * MAX_DOCUMENT_BYTES, "text/plain")},
     )
@@ -350,15 +397,15 @@ def test_multipart_upload_uses_streamed_file_bytes_not_total_body_length() -> No
     assert extra_part.headers["content-type"].startswith("application/problem+json")
 
     oversized = client.post(
-        "/v1/knowledge/documents",
+        "/api/v1/projects/tapper-demo/knowledge/documents",
         files={"upload": ("oversized.txt", b"x" * (MAX_DOCUMENT_BYTES + 1), "text/plain")},
     )
     assert oversized.status_code == 413
     assert oversized.headers["content-type"].startswith("application/problem+json")
 
-    response = create_app().openapi()["paths"]["/v1/knowledge/documents"]["post"]["responses"][
-        "413"
-    ]
+    response = create_app().openapi()["paths"]["/api/v1/projects/{project_id}/knowledge/documents"][
+        "post"
+    ]["responses"]["413"]
     assert set(response["content"]) == {"application/problem+json"}
 
 
@@ -388,6 +435,8 @@ def _retrieval_citation(citation_id: str) -> dict[str, object]:
 
 
 class _CountingUploadService:
+    scope = VALIDATION_SCOPE
+
     def __init__(self) -> None:
         self.byte_count = 0
 

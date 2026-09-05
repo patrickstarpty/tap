@@ -10,6 +10,8 @@ import {
 } from "react";
 
 import { useDocumentListQuery } from "../../features/knowledge/api/queries";
+import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
+import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat } from "./prototype/TapperChat";
 import {
   createBlankAutomation,
@@ -412,7 +414,9 @@ function nextNumericId(
 }
 
 export function TapProductPrototype() {
-  const documentsQuery = useDocumentListQuery();
+  const runtime = useRuntimeModeQuery();
+  const projectId = runtime.isSuccess ? runtime.data.projectId : null;
+  const documentsQuery = useDocumentListQuery(projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
       ? null
@@ -1005,6 +1009,15 @@ export function TapProductPrototype() {
     <div
       className={`tap-product-shell${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
     >
+      <ValidationModeBanner
+        state={
+          runtime.isSuccess
+            ? "ready"
+            : runtime.isError
+              ? "unavailable"
+              : "connecting"
+        }
+      />
       <PrototypeSidebar
         activeConversationId={activeConversationId}
         activeModule={activeModule}
@@ -1142,7 +1155,7 @@ export function TapProductPrototype() {
             >
               <KnowledgeSourcesPanel
                 copy={copy}
-                isLoading={documentsQuery.isPending}
+                isLoading={projectId !== null && documentsQuery.isPending}
                 onCollapse={dismissKnowledgeSources}
                 onToggleSource={(sourceId) =>
                   updateActiveConversation((conversation) => ({

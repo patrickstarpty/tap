@@ -11,7 +11,10 @@ from tap.modules.knowledge.ports.errors import SearchBoundsExceeded, SearchUnava
 
 def test_turn_endpoint_returns_rfc_9457_problem_details_for_validation_and_placeholder() -> None:
     """Replacing problem responses with FastAPI's default JSON errors must fail this test."""
-    client = TestClient(create_app())
+    client = TestClient(
+        create_app(allowed_origins=frozenset({"http://127.0.0.1:15175"})),
+        headers={"Origin": "http://127.0.0.1:15175"},
+    )
 
     validation = client.post("/v1/chats/chat-1/turns", json={})
     assert validation.status_code == 422

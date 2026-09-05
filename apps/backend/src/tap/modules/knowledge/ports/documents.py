@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
     PARSER_VERSION,
@@ -583,6 +584,9 @@ class ArtifactStore(Protocol):
 
 class DocumentRepository(Protocol):
     """Durable operations run in the server-bound Project, independent of creator Actor."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
 
     async def reserve_upload(self, command: ReserveUpload) -> UploadReservation: ...
 

@@ -17,6 +17,8 @@ from tap.contracts.http import (
     StructuralAnchor,
 )
 from tap.interfaces.http.dependencies import UploadInput
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.knowledge.api import (
     answer_request_from_http,
     answer_response_to_http,
@@ -34,6 +36,9 @@ from tap.modules.knowledge.domain.models import (
 
 
 class DocumentOperations(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def upload(self, upload: UploadInput) -> DocumentAccepted: ...
 
     async def list_documents(self, cursor: str | None, limit: int) -> DocumentPage: ...
@@ -46,14 +51,23 @@ class DocumentOperations(Protocol):
 
 
 class AnswerOperations(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def answer(self, request: AnswerRequest) -> AnswerResponse: ...
 
 
 class CitationOperations(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def resolve(self, citation_id: str) -> CitationPreviewResult: ...
 
 
 class SearchOperations(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def search(self, request: SearchRequest) -> SearchResponse: ...
 
 
@@ -72,6 +86,17 @@ class KnowledgeHttpService:
         self._answers = answers
         self._citations = citations
         self._searches = searches
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        """All operations must be bound to the same concrete repository scope."""
+        scope = getattr(self._documents, "scope", None)
+        if not isinstance(scope, ProjectScopeContext):
+            raise AuthorizationDenied("scope-mismatch")
+        for operation in (self._answers, self._citations, self._searches):
+            if operation is not None and getattr(operation, "scope", None) != scope:
+                raise AuthorizationDenied("scope-mismatch")
+        return scope
 
     async def upload(self, upload: UploadInput) -> DocumentAccepted:
         return await self._documents.upload(upload)

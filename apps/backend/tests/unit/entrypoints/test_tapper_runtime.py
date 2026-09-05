@@ -20,6 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import validation_http_services
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from pymilvus.decorators import _log_rpc_error
@@ -1346,6 +1347,8 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
             events.append(self.name)
 
     class UnavailableKnowledge:
+        scope = VALIDATION_SCOPE
+
         def __init__(self, answers) -> None:  # type: ignore[no-untyped-def]
             self._answers = answers
 
@@ -1359,7 +1362,7 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
         return Resource("search"), object(), object()
 
     def assemble(**kwargs):  # type: ignore[no-untyped-def]
-        return HttpServices(
+        return validation_http_services(
             knowledge=UnavailableKnowledge(kwargs["answers"]),
             readiness=kwargs["readiness"],
         )
@@ -1404,11 +1407,17 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
 
     runtime = await module.create_api_runtime(settings)
     try:
-        client = TestClient(create_app(runtime.http_services), raise_server_exceptions=False)
+        client = TestClient(
+            create_app(
+                runtime.http_services, allowed_origins=frozenset({"http://127.0.0.1:15175"})
+            ),
+            raise_server_exceptions=False,
+            headers={"Origin": "http://127.0.0.1:15175"},
+        )
 
         liveness = client.get("/health/live")
         response = client.post(
-            "/v1/knowledge/answers",
+            "/api/v1/projects/tapper-demo/knowledge/answers",
             json={
                 "query": "What is the rule?",
                 "resourceRefs": [{"family": "doc", "sourceId": "doc-a", "mode": "scope"}],
@@ -2012,7 +2021,15 @@ def test_failure_route_is_absent_from_ordinary_runtime_and_openapi() -> None:
     paths = app.openapi()["paths"]
 
     assert "/__e2e/fail-next/{stage}" not in paths
-    assert TestClient(app).post("/__e2e/fail-next/embedding").status_code == 404
+    assert (
+        TestClient(app)
+        .post(
+            "/__e2e/fail-next/embedding",
+            headers={"Origin": f"http://{settings.web_host}:{settings.web_port}"},
+        )
+        .status_code
+        == 404
+    )
 
 
 def test_exact_e2e_failure_route_accepts_only_closed_stage_and_empty_body() -> None:
@@ -2040,7 +2057,9 @@ def test_exact_e2e_failure_route_accepts_only_closed_stage_and_empty_body() -> N
 
     app = build_runtime_app(settings, runtime_factory=factory)
     assert "/__e2e/fail-next/{stage}" not in app.openapi()["paths"]
-    with TestClient(app) as client:
+    with TestClient(
+        app, headers={"Origin": f"http://{settings.web_host}:{settings.web_port}"}
+    ) as client:
         accepted = client.post("/__e2e/fail-next/embedding")
         invalid = client.post("/__e2e/fail-next/ready")
         body = client.post("/__e2e/fail-next/parsing", json={"message": "arbitrary"})

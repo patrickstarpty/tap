@@ -54,7 +54,11 @@ describe("KnowledgeClient", () => {
       requests.push(request);
       return Response.json({ items: [], nextCursor: null });
     };
-    const client = createKnowledgeClient({ baseUrl: "/api", fetch });
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      baseUrl: "/gateway",
+      fetch,
+    });
 
     await expect(client.listDocuments({ limit: 25 })).resolves.toEqual({
       items: [],
@@ -63,8 +67,48 @@ describe("KnowledgeClient", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe("GET");
     expect(
-      requests[0]?.url.endsWith("/api/v1/knowledge/documents?limit=25"),
+      requests[0]?.url.endsWith(
+        "/gateway/api/v1/projects/project-test/knowledge/documents?limit=25",
+      ),
     ).toBe(true);
+  });
+
+  it("scopes and encodes every fetch operation to the bound project", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({});
+      },
+    });
+    await client.getDocument("doc-a");
+    await client.retryDocument("doc-a");
+    await client.deleteDocument("doc-a");
+    await client.createAnswer({
+      query: "Question",
+      answerMode: "quick",
+      sources: ["doc"],
+      resourceRefs: [],
+    });
+    await client.getCitation("citation-a");
+    expect(
+      requests.map((request) => [
+        request.method,
+        new URL(request.url).pathname,
+      ]),
+    ).toEqual([
+      ["GET", "/api/v1/projects/project%2Fa/knowledge/documents/doc-a"],
+      ["POST", "/api/v1/projects/project%2Fa/knowledge/documents/doc-a/retry"],
+      ["DELETE", "/api/v1/projects/project%2Fa/knowledge/documents/doc-a"],
+      ["POST", "/api/v1/projects/project%2Fa/knowledge/answers"],
+      ["GET", "/api/v1/projects/project%2Fa/knowledge/citations/citation-a"],
+    ]);
+  });
+
+  it("rejects a missing or blank project before transport starts", () => {
+    expect(() => createKnowledgeClient({ projectId: "" })).toThrow();
+    expect(() => createKnowledgeClient({ projectId: "  " })).toThrow();
   });
 
   it("maps Problem Details to a safe client error without exposing detail", async () => {
@@ -83,7 +127,7 @@ describe("KnowledgeClient", () => {
           headers: { "content-type": "application/problem+json" },
         },
       );
-    const client = createKnowledgeClient({ fetch });
+    const client = createKnowledgeClient({ projectId: "project-test", fetch });
 
     const error = await client
       .listDocuments({ limit: 25 })
@@ -98,7 +142,8 @@ describe("KnowledgeClient", () => {
   it("reports XHR progress and resolves the typed 202 upload receipt", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
-      baseUrl: "/api",
+      projectId: "project-test",
+      baseUrl: "/gateway",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const progress: number[] = [];
@@ -136,7 +181,11 @@ describe("KnowledgeClient", () => {
     });
     expect(progress).toEqual([0.5]);
     expect(request.method).toBe("POST");
-    expect(request.url.endsWith("/api/v1/knowledge/documents")).toBe(true);
+    expect(
+      request.url.endsWith(
+        "/gateway/api/v1/projects/project-test/knowledge/documents",
+      ),
+    ).toBe(true);
     expect(request.body).toBeInstanceOf(FormData);
     expect((request.body as FormData).get("upload")).toMatchObject({
       name: "notes.md",
@@ -147,6 +196,7 @@ describe("KnowledgeClient", () => {
   it("maps a non-202 XHR Problem Details response without exposing provider text", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
+      projectId: "project-test",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const upload = client.uploadDocument(
@@ -175,6 +225,7 @@ describe("KnowledgeClient", () => {
   it("aborts the active XHR when its signal is aborted", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
+      projectId: "project-test",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const controller = new AbortController();
@@ -194,7 +245,7 @@ describe("KnowledgeClient", () => {
     const requests: Request[] = [];
     const fetch = async (request: Request): Promise<Response> => {
       requests.push(request);
-      if (request.url.includes("/v1/knowledge/answers")) {
+      if (request.url.includes("/knowledge/answers")) {
         return Response.json({
           traceId: "trace-a",
           queryPlanId: "plan-a",
@@ -230,7 +281,7 @@ describe("KnowledgeClient", () => {
         suffix: "",
       });
     };
-    const client = createKnowledgeClient({ fetch });
+    const client = createKnowledgeClient({ projectId: "project-test", fetch });
     const controller = new AbortController();
     const answerRequest: RetrievalAnswerRequest = {
       query: "退款需要几人审批？",
@@ -262,7 +313,7 @@ describe("KnowledgeClient", () => {
           headers: { "content-type": "application/problem+json" },
         },
       );
-    const client = createKnowledgeClient({ fetch });
+    const client = createKnowledgeClient({ projectId: "project-test", fetch });
 
     const error = await client
       .getCitation("citation-a")
@@ -297,6 +348,7 @@ describe("strict failure boundary", () => {
     { ...problem, secret: "provider-secret" },
   ])("rejects unregistered or malformed server Problems", async (body) => {
     const client = createKnowledgeClient({
+      projectId: "project-test",
       fetch: async () =>
         Response.json(body, {
           status: 503,
@@ -317,6 +369,7 @@ describe("strict failure boundary", () => {
     "rejects non-Problem media %s",
     async (media) => {
       const client = createKnowledgeClient({
+        projectId: "project-test",
         fetch: async () =>
           new Response("provider-secret", {
             status: 503,
@@ -333,6 +386,7 @@ describe("strict failure boundary", () => {
 
   it("keeps fetch network failures separate without a forged status or correlation", async () => {
     const client = createKnowledgeClient({
+      projectId: "project-test",
       fetch: async () => {
         throw new TypeError("provider-secret");
       },
@@ -352,6 +406,7 @@ describe("strict failure boundary", () => {
   it("keeps XHR network failure separate", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
+      projectId: "project-test",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const upload = client.uploadDocument(
@@ -369,6 +424,7 @@ describe("strict failure boundary", () => {
 describe("failure stream boundaries", () => {
   it("accepts explicit null stage on a non-workflow registered Problem", async () => {
     const client = createKnowledgeClient({
+      projectId: "project-test",
       fetch: async () =>
         Response.json(
           {
@@ -395,6 +451,7 @@ describe("failure stream boundaries", () => {
 
   it("redacts failures reading an error response body", async () => {
     const client = createKnowledgeClient({
+      projectId: "project-test",
       fetch: async () =>
         new Response(
           new ReadableStream({
@@ -420,6 +477,7 @@ describe("failure stream boundaries", () => {
 
   it("preserves fetch cancellation as AbortError", async () => {
     const client = createKnowledgeClient({
+      projectId: "project-test",
       fetch: async () => {
         throw new DOMException("Aborted", "AbortError");
       },
@@ -435,6 +493,7 @@ describe("failure stream boundaries", () => {
       const request = new TestUploadRequest();
       request.contentType = media;
       const client = createKnowledgeClient({
+        projectId: "project-test",
         xhrFactory: () => request as unknown as XMLHttpRequest,
       });
       const upload = client.uploadDocument(

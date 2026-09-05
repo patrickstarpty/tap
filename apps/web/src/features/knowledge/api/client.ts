@@ -9,7 +9,7 @@ import type {
   ProblemDetails,
 } from "./types";
 
-const DOCUMENT_PATH = "/v1/knowledge/documents";
+const DOCUMENT_PATH = "/api/v1/projects/{project_id}/knowledge/documents";
 
 const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
   ".docx":
@@ -21,6 +21,7 @@ const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 interface KnowledgeClientOptions {
+  projectId: string;
   baseUrl?: string;
   fetch?: (input: Request) => Promise<Response>;
   xhrFactory?: () => XMLHttpRequest;
@@ -150,8 +151,12 @@ function parseJson(text: string): unknown {
 }
 
 export function createKnowledgeClient(
-  options: KnowledgeClientOptions = {},
+  options: KnowledgeClientOptions,
 ): KnowledgeClient {
+  const projectId = options.projectId;
+  if (typeof projectId !== "string" || projectId.trim().length === 0) {
+    throw new Error("A project ID is required for Knowledge requests.");
+  }
   const baseUrl = resolveApiBaseUrl(options.baseUrl);
   const http = createOpenApiClient<paths>({
     baseUrl,
@@ -190,9 +195,10 @@ export function createKnowledgeClient(
   const xhrFactory = options.xhrFactory ?? (() => new XMLHttpRequest());
 
   return {
+    projectId,
     async listDocuments({ cursor, limit, signal }) {
       const result = await http.GET(DOCUMENT_PATH, {
-        params: { query: { cursor, limit } },
+        params: { path: { project_id: projectId }, query: { cursor, limit } },
         signal,
       });
       if (result.error !== undefined) {
@@ -206,10 +212,13 @@ export function createKnowledgeClient(
     },
 
     async getDocument(documentId, signal) {
-      const result = await http.GET("/v1/knowledge/documents/{document_id}", {
-        params: { path: { document_id: documentId } },
-        signal,
-      });
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}",
+        {
+          params: { path: { project_id: projectId, document_id: documentId } },
+          signal,
+        },
+      );
       if (result.error !== undefined) {
         throw responseError(
           result.error,
@@ -233,7 +242,16 @@ export function createKnowledgeClient(
         };
         const abort = () => request.abort();
 
-        request.open("POST", requestUrl(baseUrl, DOCUMENT_PATH));
+        request.open(
+          "POST",
+          requestUrl(
+            baseUrl,
+            DOCUMENT_PATH.replace(
+              "{project_id}",
+              encodeURIComponent(projectId),
+            ),
+          ),
+        );
         request.upload.onprogress = (event) => {
           if (event.lengthComputable && event.total > 0) {
             onProgress(Math.min(1, Math.max(0, event.loaded / event.total)));
@@ -278,8 +296,10 @@ export function createKnowledgeClient(
 
     async retryDocument(documentId) {
       const result = await http.POST(
-        "/v1/knowledge/documents/{document_id}/retry",
-        { params: { path: { document_id: documentId } } },
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry",
+        {
+          params: { path: { project_id: projectId, document_id: documentId } },
+        },
       );
       if (result.error !== undefined) {
         throw responseError(
@@ -293,8 +313,10 @@ export function createKnowledgeClient(
 
     async deleteDocument(documentId) {
       const result = await http.DELETE(
-        "/v1/knowledge/documents/{document_id}",
-        { params: { path: { document_id: documentId } } },
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}",
+        {
+          params: { path: { project_id: projectId, document_id: documentId } },
+        },
       );
       if (result.error !== undefined) {
         throw responseError(
@@ -306,10 +328,14 @@ export function createKnowledgeClient(
     },
 
     async createAnswer(request, signal) {
-      const result = await http.POST("/v1/knowledge/answers", {
-        body: request,
-        signal,
-      });
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/answers",
+        {
+          params: { path: { project_id: projectId } },
+          body: request,
+          signal,
+        },
+      );
       if (result.error !== undefined) {
         throw responseError(
           result.error,
@@ -321,10 +347,13 @@ export function createKnowledgeClient(
     },
 
     async getCitation(citationId, signal) {
-      const result = await http.GET("/v1/citations/{citation_id}", {
-        params: { path: { citation_id: citationId } },
-        signal,
-      });
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/citations/{citation_id}",
+        {
+          params: { path: { project_id: projectId, citation_id: citationId } },
+          signal,
+        },
+      );
       if (result.error !== undefined) {
         throw responseError(
           result.error,

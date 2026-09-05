@@ -16,7 +16,7 @@ export type RetrievalAnswerResponse =
   components["schemas"]["RetrievalAnswerResponse"];
 
 export type ProblemDetails =
-  paths["/v1/knowledge/documents"]["get"]["responses"][422]["content"]["application/problem+json"];
+  paths["/api/v1/projects/{project_id}/knowledge/documents"]["get"]["responses"][422]["content"]["application/problem+json"];
 
 export interface ListDocumentsInput {
   cursor?: string;
@@ -25,6 +25,7 @@ export interface ListDocumentsInput {
 }
 
 export interface KnowledgeClient {
+  readonly projectId: string;
   listDocuments(input: ListDocumentsInput): Promise<DocumentPage>;
   getDocument(
     documentId: string,
