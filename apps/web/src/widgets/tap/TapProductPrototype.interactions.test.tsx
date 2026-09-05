@@ -290,6 +290,20 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
+  it("marks New chat as current only while the chat destination is active", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    const newChatButton = screen.getByRole("button", { name: "New chat" });
+    expect(newChatButton).toHaveAttribute("aria-current", "page");
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    expect(newChatButton).not.toHaveAttribute("aria-current");
+
+    await user.click(newChatButton);
+    expect(newChatButton).toHaveAttribute("aria-current", "page");
+  });
+
   it("shows Tapper tools only while the Tapper workspace is active", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -2255,6 +2269,13 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("status", { name: "Zoom level" }),
     ).toHaveTextContent("100%");
+    const zoomOut = screen.getByRole("button", { name: "Zoom out" });
+    await user.click(zoomOut);
+    await user.click(zoomOut);
+    expect(
+      screen.getByRole("status", { name: "Zoom level" }),
+    ).toHaveTextContent("50%");
+    expect(zoomOut).toBeDisabled();
   });
 
   it("summarizes every visible graph document, concept, and labeled relationship", async () => {

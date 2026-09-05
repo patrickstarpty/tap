@@ -233,6 +233,7 @@ export function PrototypeSidebar({
             type="button"
             className="tap-navigation-item tap-navigation-item--tapper"
             aria-label={copy.navigation.newChat}
+            aria-current={activeModule === "tapper" ? "page" : undefined}
             onClick={onNewChat}
           >
             <FormOutlined aria-hidden="true" />

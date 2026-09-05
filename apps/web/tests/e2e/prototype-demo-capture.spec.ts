@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -49,6 +50,65 @@ const OUTPUTS = [
   "38-tapper-sources-collapsed.jpg",
   "39-tapper-sidebar-collapsed.jpg",
 ] as const;
+
+class CaptureManifest<Name extends string> {
+  private readonly captures = new Map<Name, string | null>();
+  private readonly expected: ReadonlySet<Name>;
+
+  constructor(private readonly expectedOrder: readonly Name[]) {
+    this.expected = new Set(expectedOrder);
+  }
+
+  start(name: Name) {
+    if (!this.expected.has(name)) {
+      throw new Error(`Unexpected capture: ${name}`);
+    }
+    if (this.captures.has(name)) {
+      throw new Error(`Capture produced more than once: ${name}`);
+    }
+    this.captures.set(name, null);
+  }
+
+  finish(name: Name, digest: string) {
+    if (!this.captures.has(name)) {
+      throw new Error(`Capture was not started: ${name}`);
+    }
+    this.captures.set(name, digest);
+  }
+
+  verifyComplete() {
+    const missing = this.expectedOrder.filter(
+      (name) => !this.captures.has(name),
+    );
+    if (missing.length > 0) {
+      throw new Error(`Missing captures: ${missing.join(", ")}`);
+    }
+
+    const unfinished = this.expectedOrder.filter(
+      (name) => this.captures.get(name) === null,
+    );
+    if (unfinished.length > 0) {
+      throw new Error(`Unfinished captures: ${unfinished.join(", ")}`);
+    }
+
+    const outputsByDigest = new Map<string, Name[]>();
+    for (const name of this.expectedOrder) {
+      const digest = this.captures.get(name)!;
+      const names = outputsByDigest.get(digest) ?? [];
+      outputsByDigest.set(digest, [...names, name]);
+    }
+    const identicalOutputs = [...outputsByDigest.values()].find(
+      (names) => names.length > 1,
+    );
+    if (identicalOutputs !== undefined) {
+      throw new Error(
+        `Byte-identical captures: ${identicalOutputs.join(", ")}`,
+      );
+    }
+  }
+}
+
+const captureManifest = new CaptureManifest(OUTPUTS);
 
 type DocumentAccepted = components["schemas"]["DocumentAccepted"];
 type DocumentDetail = components["schemas"]["DocumentDetail"];
@@ -296,6 +356,7 @@ async function capture(page: Page, name: (typeof OUTPUTS)[number]) {
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+  captureManifest.start(name);
   const imagePath = resolve(OUTPUT_DIR, name);
   await page.screenshot({
     animations: "disabled",
@@ -305,7 +366,12 @@ async function capture(page: Page, name: (typeof OUTPUTS)[number]) {
     quality: 90,
     fullPage: false,
   });
-  const source = `data:image/jpeg;base64,${readFileSync(imagePath).toString("base64")}`;
+  const imageBytes = readFileSync(imagePath);
+  captureManifest.finish(
+    name,
+    createHash("sha256").update(imageBytes).digest("hex"),
+  );
+  const source = `data:image/jpeg;base64,${imageBytes.toString("base64")}`;
   const dimensions = await page.evaluate(
     (url) =>
       new Promise<[number, number]>((resolveImage, rejectImage) => {
@@ -343,12 +409,45 @@ test("checked-in screenshot inventory is canonical", () => {
   expect(actual).toEqual([...OUTPUTS].sort());
 });
 
+test("capture manifest rejects a duplicate output name", () => {
+  const manifest = new CaptureManifest(["one.jpg"] as const);
+  manifest.start("one.jpg");
+
+  expect(() => manifest.start("one.jpg")).toThrow(
+    "Capture produced more than once: one.jpg",
+  );
+});
+
+test("capture manifest rejects a missing output", () => {
+  const manifest = new CaptureManifest(["one.jpg", "two.jpg"] as const);
+  manifest.start("one.jpg");
+  manifest.finish("one.jpg", "digest-one");
+
+  expect(() => manifest.verifyComplete()).toThrow("Missing captures: two.jpg");
+});
+
+test("capture manifest rejects identical bytes for distinct outputs", () => {
+  const manifest = new CaptureManifest(["one.jpg", "two.jpg"] as const);
+  manifest.start("one.jpg");
+  manifest.finish("one.jpg", "same-digest");
+  manifest.start("two.jpg");
+  manifest.finish("two.jpg", "same-digest");
+
+  expect(() => manifest.verifyComplete()).toThrow(
+    "Byte-identical captures: one.jpg, two.jpg",
+  );
+});
+
 test("01 captures the fresh Tapper conversation", async ({ page }) => {
   await startFlow(page);
   await expect(
     page.getByRole("heading", { name: "What can I do for you?" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Tapper" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByRole("button", { name: "New chat" })).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -536,16 +635,40 @@ test("14 through 18 capture Library list and graph states", async ({
   await page.keyboard.press("Escape");
 
   await page.getByRole("tab", { name: "Knowledge Graph" }).click();
-  await expect(
-    page.getByRole("group", { name: "Life insurance knowledge graph" }),
-  ).toBeVisible();
+  const graph = page.getByRole("group", {
+    name: "Life insurance knowledge graph",
+  });
+  await expect(graph).toBeVisible();
+  await page.getByRole("button", { name: "Zoom out" }).click();
   await page.getByRole("button", { name: "Zoom out" }).click();
   await expect(page.getByRole("status", { name: "Zoom level" })).toHaveText(
-    "75%",
+    "50%",
   );
   await expect(
     page.getByRole("region", { name: "Node details" }),
   ).toContainText("Select a node to inspect its relationships.");
+  const graphBox = await graph.boundingBox();
+  expect(graphBox).not.toBeNull();
+  if (graphBox === null) throw new Error("Graph capture geometry is missing");
+  for (const label of [
+    "Life underwriting guide.pdf",
+    "Beneficiary workflow.docx",
+  ]) {
+    const labelBox = await graph
+      .getByText(label, { exact: true })
+      .boundingBox();
+    expect(labelBox).not.toBeNull();
+    if (labelBox === null)
+      throw new Error(`Graph label geometry is missing: ${label}`);
+    expect(labelBox.x).toBeGreaterThanOrEqual(graphBox.x);
+    expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(
+      graphBox.x + graphBox.width,
+    );
+    expect(labelBox.y).toBeGreaterThanOrEqual(graphBox.y);
+    expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(
+      Math.min(graphBox.y + graphBox.height, page.viewportSize()?.height ?? 0),
+    );
+  }
   await capture(page, "17-tapper-knowledge-graph.jpg");
 
   await page
@@ -755,19 +878,54 @@ test("33, 34, 34b, and 36 capture the linked generation journey", async ({
   ).toBeVisible();
   await capture(page, "34-tapper-test-plan-review.jpg");
 
-  await artifact
-    .getByText("Feature: Life insurance application underwriting", {
+  const generateButton = artifact.getByRole("button", {
+    name: "Generate linked automation",
+  });
+  await generateButton.scrollIntoViewIfNeeded();
+  await generateButton.focus();
+  await expect(generateButton).toBeVisible();
+  await expect(generateButton).toBeFocused();
+  const bddHeadings = [
+    artifact.getByText("Feature: Life insurance application underwriting", {
       exact: true,
-    })
-    .scrollIntoViewIfNeeded();
-  await expect(
-    artifact.getByRole("button", { name: "Generate linked automation" }),
-  ).toBeVisible();
+    }),
+    artifact.getByText("Scenario: Complete application enters underwriting", {
+      exact: true,
+    }),
+    artifact.getByText("Scenario: Missing health disclosure is blocked", {
+      exact: true,
+    }),
+    artifact.getByText("Scenario: High coverage requires manual review", {
+      exact: true,
+    }),
+  ];
+  const composer = page.getByRole("form", { name: "Message composer" });
+  const viewport = page.viewportSize();
+  const composerBox = await composer.boundingBox();
+  const generateBox = await generateButton.boundingBox();
+  expect(viewport).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(generateBox).not.toBeNull();
+  if (viewport === null || composerBox === null || generateBox === null) {
+    throw new Error("Required capture geometry is unavailable");
+  }
+  expect(generateBox.x).toBeGreaterThanOrEqual(0);
+  expect(generateBox.y).toBeGreaterThanOrEqual(0);
+  expect(generateBox.x + generateBox.width).toBeLessThanOrEqual(viewport.width);
+  expect(generateBox.y + generateBox.height).toBeLessThanOrEqual(
+    viewport.height,
+  );
+  expect(generateBox.y + generateBox.height).toBeLessThanOrEqual(composerBox.y);
+  for (const heading of bddHeadings) {
+    const headingBox = await heading.boundingBox();
+    expect(headingBox).not.toBeNull();
+    if (headingBox === null) throw new Error("BDD heading geometry is missing");
+    expect(headingBox.y).toBeGreaterThanOrEqual(0);
+    expect(headingBox.y + headingBox.height).toBeLessThanOrEqual(composerBox.y);
+  }
   await capture(page, "34b-tapper-generate-linked-automation.jpg");
 
-  await artifact
-    .getByRole("button", { name: "Generate linked automation" })
-    .click();
+  await generateButton.click();
   await expect(
     artifact.getByText("Automation draft ready", { exact: true }),
   ).toBeVisible();
@@ -830,4 +988,8 @@ test("39 captures collapsed Tapper sidebar", async ({ page }) => {
     page.getByRole("heading", { name: "What can I do for you?" }),
   ).toBeVisible();
   await capture(page, "39-tapper-sidebar-collapsed.jpg");
+});
+
+test("full capture manifest is complete and byte-distinct", () => {
+  captureManifest.verifyComplete();
 });

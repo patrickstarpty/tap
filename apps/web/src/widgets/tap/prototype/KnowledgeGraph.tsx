@@ -39,7 +39,8 @@ interface GraphData {
 
 const GRAPH_WIDTH = 680;
 const GRAPH_HEIGHT = 460;
-const MIN_ZOOM = 0.75;
+const GRAPH_HORIZONTAL_MARGIN = 24;
+const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.75;
 const ZOOM_STEP = 0.25;
 
@@ -458,7 +459,7 @@ export function KnowledgeGraph({
             role="group"
             aria-label={copy.library.knowledgeGraphImage}
             aria-describedby="tap-library-graph-caption tap-library-graph-summary"
-            viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`}
+            viewBox={`${-GRAPH_HORIZONTAL_MARGIN} 0 ${GRAPH_WIDTH + GRAPH_HORIZONTAL_MARGIN * 2} ${GRAPH_HEIGHT}`}
             preserveAspectRatio="xMidYMid meet"
             onPointerDown={startPan}
             onPointerMove={movePan}
