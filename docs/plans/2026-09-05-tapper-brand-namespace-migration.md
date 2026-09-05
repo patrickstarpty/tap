@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 date: 2026-09-05
 ---
 
@@ -23,7 +23,7 @@ date: 2026-09-05
 - 不增加依赖，不改变 `/v1/knowledge/*`、OpenAPI operation ID、`tap` package 或 `knowledge_*` 表名。
 - 当前本地验证数据可重建；不实现 alias、dual-read、backfill 或旧进程入口 shim。
 - 不执行 volume/container/collection 删除；旧外部状态只会因新命名空间而不再被读取。
-- 命名归一化前的字节级事实固定为 commit `0eab801`；不改写 Git 历史。
+- 命名归一化前的字节级事实固定为 commit `0eab801`；用户已单独授权整理最后三次未推送的收口提交，以纠正生命周期顺序。整理前历史保留在 `codex/tapper-before-history-fix`，更早提交保持不变。
 - 只提交实际使用的两个 `ink` SVG；PNG 导出和 `.DS_Store` 不提交。
 - 已退役名称不得以任意大小写出现在受版本控制的内容或路径中。守卫使用 ASCII byte tuple `(65, 116, 104, 101, 110, 97)` 构造检测词，避免守卫自身重新引入该文本。
 - 每个行为改动先运行对应的失败测试，再实现最小变更并验证转绿。

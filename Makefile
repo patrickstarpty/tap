@@ -4,7 +4,7 @@ TAP_TAPPER_COMPOSE_PROJECT ?= tap-tapper-demo
 export TAP_TAPPER_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: bootstrap check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
+.PHONY: bootstrap check brand-check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -18,6 +18,10 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/web run contracts:check
 	corepack pnpm --filter @tap/web run check
+	$(MAKE) brand-check
+
+brand-check:
+	uv run --project apps/backend python scripts/check_brand_namespace.py
 
 test: ## unit, integration, and contract tests
 	uv run --project apps/backend pytest apps/backend/tests -v

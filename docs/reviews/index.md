@@ -7,3 +7,4 @@
 - [Tapper 本地知识 Demo 验收评审](2026-08-27-tapper-local-knowledge-demo.md)：汇总本地中间件、四格式浏览器路径、故障恢复、持久化、视觉/键盘与可选真实模型证据；mandatory local gate 与实际手工验收结论为 `approved / GREEN`。
 - [Low Code Automation 交互原型评审](2026-09-03-low-code-automation-prototype-review.md)：记录调整前的结构性问题，以及同日完成的 Automation 资产、BDD/动作映射、执行配置、Test Plan 关联、Tapper 编排与 Conversation 恢复复核。
 - [Tapper 知识与 Web 自动化平台设计基线评审](2026-09-05-tapper-platform-design-baseline-review.md)：确认 RFC-009、当前架构、核心契约与 55 项实施计划已经收口，可从 V0 开始方案验证；该结论不代表功能已实现或已达到生产就绪。
+- [Tapper 品牌与运行命名空间迁移评审](2026-09-05-tapper-brand-migration-review.md)：`pass`；记录零残留守卫、全量构建测试、隔离 Demo E2E、桌面/移动及真实 reduced-motion 浏览器验收、40 张截图与旧资源非删除证据。

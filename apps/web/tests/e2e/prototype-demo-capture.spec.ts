@@ -2,9 +2,19 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test as base, type Page, type Route } from "@playwright/test";
 
 import type { components } from "../../src/shared/api/generated/schema";
+
+type ReducedMotionPreference = "no-preference" | "reduce";
+
+const test = base.extend<{ reducedMotion: ReducedMotionPreference }>({
+  reducedMotion: ["no-preference", { option: true }],
+  page: async ({ page, reducedMotion }, use) => {
+    await page.emulateMedia({ reducedMotion });
+    await use(page);
+  },
+});
 
 const OUTPUT_DIR = resolve(process.cwd(), "../../docs/assets/prototype-demo");
 const MIN_GRAPH_CAPTURE_LABEL_HEIGHT = 12;
@@ -401,6 +411,107 @@ async function openComposerMenu(page: Page) {
 }
 
 test.use({ viewport: { width: 1280, height: 720 } });
+
+test.describe("reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`disables motion and uses an instant minimap jump at ${viewport.width}x${viewport.height}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.addInitScript(() => {
+        const calls: ScrollIntoViewOptions[] = [];
+        Object.defineProperty(window, "__tapperScrollIntoViewCalls", {
+          configurable: true,
+          value: calls,
+        });
+        Object.defineProperty(Element.prototype, "scrollIntoView", {
+          configurable: true,
+          value(options?: boolean | ScrollIntoViewOptions) {
+            calls.push(
+              typeof options === "object" && options !== null ? options : {},
+            );
+          },
+          writable: true,
+        });
+      });
+
+      expect(
+        await page.evaluate(
+          () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        ),
+      ).toBe(true);
+      await startFlow(page);
+      expect(page.viewportSize()).toEqual(viewport);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+          ),
+        )
+        .toBe(true);
+
+      const firstQuestion = "What evidence is required for life underwriting?";
+      const secondQuestion = "How is a missing health disclosure handled?";
+      await sendMessage(page, firstQuestion);
+      await sendMessage(page, secondQuestion);
+
+      for (const selector of [
+        ".tap-product-shell",
+        ".tap-navigation-item",
+        ".tap-question-marker",
+      ]) {
+        const element = page.locator(selector).first();
+        await expect(element).toBeAttached();
+        const style = await element.evaluate((node) => {
+          const computed = window.getComputedStyle(node);
+          return {
+            animationDuration: computed.animationDuration,
+            animationName: computed.animationName,
+            transitionDuration: computed.transitionDuration,
+            transitionProperty: computed.transitionProperty,
+          };
+        });
+        expect(style, selector).toEqual({
+          animationDuration: "0s",
+          animationName: "none",
+          transitionDuration: "0s",
+          transitionProperty: "none",
+        });
+      }
+
+      const firstQuestionTick = page.getByRole("button", {
+        name: `Jump to question 1: ${firstQuestion}`,
+      });
+      const secondQuestionTick = page.getByRole("button", {
+        name: `Jump to question 2: ${secondQuestion}`,
+      });
+      await expect(secondQuestionTick).toHaveAttribute("aria-current", "true");
+      await expect(firstQuestionTick).not.toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      await firstQuestionTick.click();
+      await expect(firstQuestionTick).toHaveAttribute("aria-current", "true");
+
+      const scrollIntoViewCalls = await page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __tapperScrollIntoViewCalls?: ScrollIntoViewOptions[];
+            }
+          ).__tapperScrollIntoViewCalls ?? [],
+      );
+      expect(scrollIntoViewCalls).toEqual([
+        { behavior: "auto", block: "start" },
+      ]);
+    });
+  }
+});
 
 test("checked-in screenshot inventory is canonical", () => {
   expect(OUTPUTS).toHaveLength(40);

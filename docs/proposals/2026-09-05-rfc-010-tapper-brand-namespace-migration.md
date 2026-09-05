@@ -1,6 +1,6 @@
 ---
 id: RFC-010
-status: accepted
+status: implemented
 date: 2026-09-05
 related-adrs:
   - ADR-026

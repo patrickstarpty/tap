@@ -13,4 +13,4 @@
 - [Tapper 交互原型实施计划](2026-09-02-tapper-interaction-prototype.md)（`completed`）：已用页面内状态验证一级产品 Rail、Tapper 上下文 Sidebar、统一聊天入口、会话历史、Agent/Skills/Library 引用、知识图谱与双语交互；产品事实源为 RFC-008，后续正式实现由当前平台计划接管。
 - [Low Code Automation 交互原型实施计划](2026-09-03-low-code-automation-interaction-prototype.md)（`completed`）：以内联实施方式交付稳定资产、BDD Step/动作映射、严格 Test Plan `1:1`、共享 Run 历史、可恢复 Conversation、Web/Mobile 模拟执行和 Tapper Test Plan-first 编排。
 - [Tapper Library、知识图谱与视觉统一实施计划](2026-09-03-tapper-library-graph-visual-unification.md)（`completed`）：以内联 TDD 完成可删除消息上下文、双层 Tapper `A` 标识、Codex 式 Conversation 模型选择、Library 组合筛选、Graphify 式交互图谱，以及 LCA/Test Management 视觉统一。
-- [Tapper 品牌与运行命名空间迁移实施计划](2026-09-05-tapper-brand-namespace-migration.md)（`active`）：按 clean cut 迁移 TAP/Tapper 品牌、Web/Backend/运行标识、治理文档、图表及 40 张客户截图，并以零残留与完整回归门禁收口。
+- [Tapper 品牌与运行命名空间迁移实施计划](2026-09-05-tapper-brand-namespace-migration.md)（`completed`）：按 `planned → active → completed` 收口；真实 reduced-motion 执行、全量回归、隔离 E2E 和证据验收均完成。
