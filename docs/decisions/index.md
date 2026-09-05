@@ -10,6 +10,7 @@
 - [ADR-023：知识后端采用 Milvus 文档投影与 MySQL Knowledge Graph](2026-09-04-adr-023-milvus-mysql-knowledge-backend.md)（`accepted`）：TAP 管 parsing/chunking/provenance，Milvus 管可重建 `doc` 投影，MySQL 管 Graph 事实与证据。
 - [ADR-024：Automation Revision 由 TAP 管理](2026-09-04-adr-024-tap-managed-automation-revisions.md)（`accepted`）：替代 ADR-001/004/008；MySQL 管权威资产/Revision，MinIO 管 Bundle/Evidence，Git 是可选同步 Adapter；Test IR、统一 Evidence 与确定性门禁保留。
 - [ADR-025：Jenkins 作为首个 Execution Provider](2026-09-04-adr-025-jenkins-first-execution-provider.md)（`accepted`）：provider-neutral 核心之后先接 Jenkins/Playwright Web，Mobile、Azure DevOps 与 BrowserStack 后置。
+- [ADR-026：Tapper 是智能工作区的规范名称](2026-09-05-adr-026-tapper-canonical-product-name.md)（`accepted`）：TAP 保持平台品牌；智能工作区、活动运行命名空间和客户材料采用 Tapper clean cut，本地验证状态重新建立。
 
 ## 仍有效的早期方向
 

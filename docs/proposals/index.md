@@ -12,4 +12,5 @@
 - [RFC-007：Phase 1 Intelligence Layer 探索](2026-09-02-rfc-007-phase-1-intelligence-layer-exploration.md)（`withdrawn`）：独立 Intelligence Lab 路线在实施前由 RFC-009/ADR-021 取代；仅保留可恢复 Task、Artifact、Validator 与 Review Package 的历史设计参考。
 - [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)（`accepted`，范围已重排）：继续作为产品壳与交互事实源；正式实施按 RFC-009 收窄为 Web-only/Jenkins-first，Mobile 与跨类型推断后移到 P1 之后。
 - [RFC-009：Athena 知识与 Web 测试自动化平台设计](2026-09-04-rfc-009-athena-knowledge-web-automation-platform.md)（`accepted`）：采用 validation-first 顺序，以固定可信 Scope 先验证知识问答、Graph、Web LCA/Recorder、Playwright/Jenkins 与结果闭环，验证通过后再产品化多用户认证、RBAC 和多 Project；该状态代表设计获批，不代表目标能力已经实现。
+- [RFC-010：Tapper 品牌与运行命名空间迁移](2026-09-05-rfc-010-tapper-brand-namespace-migration.md)（`accepted`）：TAP 保持平台品牌，智能工作区一次性切换到 Tapper；本地验证状态可重建，不保留旧命名兼容层。
 - [RFC 模板](rfc-template.md)：提供新 RFC 的必填元数据与正文结构。
