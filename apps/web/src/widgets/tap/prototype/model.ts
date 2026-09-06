@@ -58,6 +58,7 @@ export interface AssistantTurn {
   modelId: CodexModelId;
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
+  catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
   pageContext?: {
     label: string;
     summary: string;
@@ -101,6 +102,9 @@ export interface CatalogItem {
 }
 
 export interface LibrarySource {
+  isExample?: boolean;
+  downloadUrl?: string;
+  preview?: { imageUrl?: string; text?: string };
   id: string;
   name: string;
   origin: LibrarySourceOrigin;
@@ -325,5 +329,8 @@ export function appendTurn(
         ? turn.prompt
         : conversation.title,
     turns: [...conversation.turns, turn],
+    selectedSourceIds: [],
+    selectedAgentIds: [],
+    selectedSkillIds: [],
   };
 }

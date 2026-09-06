@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TAP fictional response example -->
+<response>
+  <requestId>sample-request-042</requestId>
+  <status>pending_review</status>
+  <allocationTotal>100</allocationTotal>
+  <auditEventCount>1</auditEventCount>
+</response>
