@@ -28,7 +28,7 @@ from tap.modules.knowledge.ports.documents import (
     DocumentChunker,
     DocumentEmbeddingPort,
     DocumentIndexPort,
-    DocumentParser,
+    DocumentParserPort,
     DocumentRepository,
     IngestionWork,
     JobFailure,
@@ -174,7 +174,7 @@ class IngestionWorker:
         *,
         repository: DocumentRepository,
         artifacts: ArtifactStore,
-        parser: DocumentParser,
+        parser: DocumentParserPort,
         chunker: DocumentChunker,
         embeddings: DocumentEmbeddingPort,
         index: DocumentIndexPort,
@@ -315,14 +315,18 @@ class IngestionWorker:
                 stage, self._artifacts.read_original(work.original_locator)
             )
             try:
-                normalized = self._parser.parse(
-                    DocumentSource(
-                        filename=work.filename,
-                        media_type=MediaType(work.media_type),
-                        content=source_bytes,
-                        document_id=DocumentId(work.document_id),
-                        revision_id=RevisionId(work.revision_id),
-                    )
+                normalized = await self._provider_call(
+                    job,
+                    stage,
+                    lambda: self._parser.parse(
+                        DocumentSource(
+                            filename=work.filename,
+                            media_type=MediaType(work.media_type),
+                            content=source_bytes,
+                            document_id=DocumentId(work.document_id),
+                            revision_id=RevisionId(work.revision_id),
+                        )
+                    ),
                 )
             except DocumentParseRejected as error:
                 raise _SafeStageError(

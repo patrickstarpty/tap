@@ -1,4 +1,27 @@
 services:
+  tap-parser:
+    profiles: [tapper-parser]
+    image: ${TAPPER_PARSER_IMAGE:-tap-parser-unbuilt}
+    pull_policy: never
+    restart: "no"
+    network_mode: none
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 1.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 16
+    stdin_open: true
+    tty: false
+    tmpfs: ["/tmp:size=32m,noexec,nosuid,nodev,mode=1777"]
+    ulimits:
+      nofile: {soft: 64, hard: 64}
+      core: {soft: 0, hard: 0}
+    logging: {driver: none}
+    labels:
+      io.tap.parser.owner: ${TAPPER_PARSER_OWNER:-unowned}
   mysql:
     image: ${MYSQL_IMAGE:-mysql:8.4.6}
     restart: unless-stopped

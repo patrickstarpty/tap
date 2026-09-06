@@ -282,6 +282,12 @@ cleanup() {
   if [ "$tapper_e2e_compose_mutated" -eq 1 ]; then
     compose down --volumes --remove-orphans >/dev/null 2>&1 || cleanup_failed=1
   fi
+  if [ -n "$tapper_e2e_state_dir" ] && [ -n "${TAPPER_E2E_EVIDENCE_DIR:-}" ]; then
+    evidence_cleanup=failed
+    [ "$cleanup_failed" -eq 0 ] || evidence_cleanup=failed
+    python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" export "$tapper_e2e_state_dir" \
+      "$TAPPER_E2E_EVIDENCE_DIR" "$evidence_cleanup" || cleanup_failed=1
+  fi
   if [ -n "$tapper_e2e_state_dir" ]; then
     case "$tapper_e2e_state_dir" in
       "$tapper_e2e_state_root"/tap-tapper-e2e.*) \
@@ -292,6 +298,12 @@ cleanup() {
   if [ "$tapper_e2e_lock_owned" -eq 1 ]; then
     rmdir "$tapper_e2e_lock_dir" 2>/dev/null || cleanup_failed=1
     tapper_e2e_lock_owned=0
+  fi
+  if [ -n "${TAPPER_E2E_EVIDENCE_DIR:-}" ]; then
+    evidence_cleanup=complete
+    [ "$cleanup_failed" -eq 0 ] || evidence_cleanup=failed
+    python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" finish \
+      "$TAPPER_E2E_EVIDENCE_DIR" "$evidence_cleanup" || cleanup_failed=1
   fi
   if [ "$cleanup_failed" -ne 0 ]; then
     echo "Tapper E2E cleanup failed." >&2
@@ -317,6 +329,8 @@ tapper_e2e_state_dir="$(mktemp -d "$tapper_e2e_state_root/tap-tapper-e2e.XXXXXX"
 }
 chmod 700 "$tapper_e2e_state_dir"
 export TAPPER_E2E_STATE_FILE="$tapper_e2e_state_dir/state.json"
+export TAPPER_E2E_HOSTILE_DIR="$tapper_e2e_state_dir/hostile"
+uv run --project apps/backend python "$tapper_e2e_script_dir/build-hostile-document-fixtures.py" "$TAPPER_E2E_HOSTILE_DIR"
 TAPPER_OBJECT_STORE_IMAGE="$("$tapper_e2e_script_dir/build-tapper-object-store.sh" verify)"
 export TAPPER_OBJECT_STORE_IMAGE
 readonly TAPPER_OBJECT_STORE_IMAGE
@@ -411,12 +425,16 @@ start_apps() {
 }
 
 run_playwright() {
-  spec_file="$1"
   phase="$2"
   report_file="$tapper_e2e_state_dir/playwright-$phase.json"
   error_file="$tapper_e2e_state_dir/playwright-$phase.err"
+  specs=()
+  while IFS= read -r spec; do specs+=("$spec"); done < <(
+    python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" specs "$phase"
+  )
+  [ "${#specs[@]}" -gt 0 ] || return 1
   if TAPPER_E2E_PHASE="$phase" \
-    corepack pnpm --filter @tap/web exec playwright test "$spec_file" \
+    corepack pnpm --filter @tap/web exec playwright test "${specs[@]}" \
       --config=playwright.config.ts --reporter=json >"$report_file" 2>"$error_file"; then
     :
   else
@@ -424,28 +442,8 @@ run_playwright() {
     echo "Tapper E2E phase $phase failed." >&2
     return "$phase_status"
   fi
-  if uv run --project apps/backend python - "$report_file" >/dev/null 2>&1 <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    report = json.load(handle)
-stats = report.get("stats") if isinstance(report, dict) else None
-if not isinstance(stats, dict):
-    raise SystemExit(1)
-if (
-    stats.get("expected") != 1
-    or stats.get("unexpected") != 0
-    or stats.get("flaky") != 0
-    or stats.get("skipped") != 0
-):
-    raise SystemExit(1)
-PY
-  then
-    return 0
-  fi
-  echo "Tapper E2E phase $phase returned an invalid result." >&2
-  return 1
+  python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" validate "$phase" "$report_file" \
+    "$tapper_e2e_state_dir/phase-$phase.json"
 }
 
 run_journey() {
@@ -467,7 +465,8 @@ run_journey() {
 
   TAPPER_E2E_PHASE=verify TAP_RUN_TAPPER_E2E=1 \
     uv run --project apps/backend pytest -q \
-      apps/backend/tests/integration/test_tapper_persistence_restart.py
+      apps/backend/tests/integration/test_tapper_persistence_restart.py \
+      --junitxml="$tapper_e2e_state_dir/pytest-verify.xml"
 }
 
 run_journey

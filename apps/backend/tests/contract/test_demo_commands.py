@@ -235,6 +235,34 @@ def _supervisor_fixture(
     supervisor.chmod(supervisor.stat().st_mode | stat.S_IXUSR)
     log = root / "children.log"
     log.touch()
+    parser_stub = root / ".venv/bin/python"
+    parser_stub.parent.mkdir(parents=True)
+    parser_stub.write_text(f"""#!{sys.executable}
+import os, signal, socket, sys, time
+from pathlib import Path
+state=Path(sys.argv[sys.argv.index('--state-dir')+1])
+socket_path=Path('/tmp')/('tap-stub-'+__import__('hashlib').sha256(str(state).encode()).hexdigest()[:20]+'.sock')
+if len(str(state/'parser.sock').encode()) < 100: socket_path=state/'parser.sock'
+if '--socket-path' in sys.argv:
+    print(socket_path); sys.exit(0)
+state.mkdir(parents=True,exist_ok=True,mode=0o700)
+if '--cleanup-only' in sys.argv:
+    (state/'cleanup.json').write_text('verified'); sys.exit(0)
+log=Path({str(log)!r})
+def record(event):
+    with log.open('a') as output: output.write(event+' parser '+str(os.getpid())+'\\n')
+record('start')
+with log.open('a') as output: output.write('env parser PATH,HOME\\n')
+socket_path.unlink(missing_ok=True)
+server=socket.socket(socket.AF_UNIX); server.bind(str(socket_path))
+(state/'ready-pid').write_text(str(os.getpid()))
+def stop(*_):
+    record('term'); server.close(); socket_path.unlink(missing_ok=True)
+    (state/'ready-pid').unlink(missing_ok=True); sys.exit(0)
+signal.signal(signal.SIGTERM,stop)
+while True: time.sleep(0.05)
+""")
+    parser_stub.chmod(0o700)
     temp_directory = root / "tmp"
     temp_directory.mkdir()
     child = """#!/bin/sh
@@ -402,6 +430,12 @@ def _e2e_runner_fixture(
             "ready_deadline=$(( SECONDS + 1 ))",
             1,
         )
+    for filename in (
+        "tapper_e2e_report.py",
+        "tapper-e2e-specs.json",
+        "build-hostile-document-fixtures.py",
+    ):
+        (scripts / filename).write_bytes((ROOT / "scripts" / filename).read_bytes())
     runner.write_text(runner_source, encoding="utf-8")
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
     helper = scripts / "build-tapper-object-store.sh"
@@ -487,7 +521,17 @@ case " $* " in
       printf '%s\n' '{"stats":{"expected":1,"unexpected":0,"flaky":0,"skipped":1}}'
       exit 0
     fi
-    printf '%s\n' '{"stats":{"expected":1,"unexpected":0,"flaky":0,"skipped":0}}'
+    "$TAPPER_TEST_PYTHON" - <<'NATIVE'
+import json, os
+names=['persistence.spec.ts']
+if os.environ['TAPPER_E2E_PHASE']=='journey':
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts']
+print(json.dumps({
+    'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
+    'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{
+        'projectName':'chromium','expectedStatus':'passed','status':'expected',
+        'results':[{'status':'passed','retry':0}]}]}]} for name in names]}))
+NATIVE
     ;;
   *) exit 98 ;;
 esac
@@ -521,6 +565,10 @@ case " $* " in
     ;;
   *" python - "*)
     printf 'uv|probe\n' >> "$TAPPER_E2E_STUB_LOG"
+    shift 4
+    exec "$TAPPER_TEST_PYTHON" "$@"
+    ;;
+  *" build-hostile-document-fixtures.py "*|*"/build-hostile-document-fixtures.py "*)
     shift 4
     exec "$TAPPER_TEST_PYTHON" "$@"
     ;;
@@ -2548,12 +2596,14 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
     assert completed.returncode == 17, completed.stderr
     events = log.read_text(encoding="utf-8").splitlines()
     assert {line.split()[1] for line in events if line.startswith("start ")} == {
+        "parser",
         "api",
         "relay",
         "worker",
         "web",
     }
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
+        "parser",
         "relay",
         "worker",
         "web",
@@ -2600,7 +2650,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 4
+    assert len(_started_child_pids(log)) == 5
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2621,14 +2671,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 4 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 5 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all four children")
+        raise AssertionError("supervisor did not start all five children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2646,6 +2696,7 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         f"config {supervisor.parents[1] / 'apps/web/vite.config.ts'}"
     ) in events
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
+        "parser",
         "api",
         "relay",
         "worker",
@@ -2820,6 +2871,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
     events = log.read_text(encoding="utf-8").splitlines()
     assert any(line.startswith("env readiness ") for line in events)
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
+        "parser",
         "api",
         "relay",
         "worker",
@@ -3234,7 +3286,7 @@ def test_e2e_preflight_is_read_only_and_skipped_results_fail_closed(
     calls = log.read_text(encoding="utf-8").splitlines()
     compose_calls = [line for line in calls if line.startswith("docker|")]
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
-    assert "returned an invalid result" in rejected.stderr
+    assert "native evidence validation failed" in rejected.stderr
 
 
 def test_e2e_runner_rejects_malformed_playwright_report_and_cleans_owned_state(
@@ -3259,7 +3311,7 @@ def test_e2e_runner_rejects_malformed_playwright_report_and_cleans_owned_state(
     calls = log.read_text(encoding="utf-8").splitlines()
     compose_calls = [line for line in calls if line.startswith("docker|")]
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
-    assert "returned an invalid result" in rejected.stderr
+    assert "native evidence validation failed" in rejected.stderr
     assert list((runner.parents[1] / "tmp").glob("tap-tapper-e2e.*")) == []
 
 
@@ -3343,3 +3395,18 @@ def test_compose_minio_is_a_separate_nonroot_store_with_no_image_pull() -> None:
     assert service["user"] == "65532:65532"
     assert service["environment"]["MINIO_ROOT_USER"] == "${TAPPER_S3_ACCESS_KEY:-tap-object-user}"
     assert "MILVUS" not in json.dumps(service)
+
+
+def test_dev_launcher_keeps_stable_parser_state_after_child_exit(tmp_path):
+    supervisor, environment, _log = _supervisor_fixture(tmp_path, api_exit="17")
+    result = subprocess.run(
+        ["bash", str(supervisor)],
+        cwd=supervisor.parents[1],
+        env=environment,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 17
+    state = supervisor.parents[1] / ".tapper/parser-runtime/tap-tapper-demo"
+    assert state.is_dir(), "deployment ownership state was discarded"
+    assert (state / "cleanup.json").read_text() == "verified"

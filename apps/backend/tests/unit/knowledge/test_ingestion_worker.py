@@ -320,7 +320,7 @@ class BlockingWriteArtifacts(StatefulArtifacts):
 
 
 class Parser:
-    def parse(self, source):  # type: ignore[no-untyped-def]
+    async def parse(self, source):  # type: ignore[no-untyped-def]
         text = source.content.decode()
         return NormalizedArtifact(
             filename=source.filename,
@@ -344,7 +344,7 @@ class Parser:
 
 
 class RejectedParser(Parser):
-    def parse(self, source):  # type: ignore[no-untyped-def]
+    async def parse(self, source):  # type: ignore[no-untyped-def]
         del source
         raise DocumentParseRejected("ocr-required")
 
@@ -799,7 +799,7 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
 
     worker, repository, artifacts, embeddings, index, _ = worker_parts()
     chunks = Chunker().chunk(
-        Parser().parse(
+        await Parser().parse(
             DocumentSource(
                 content=SOURCE_BYTES,
                 filename="source.md",
@@ -873,7 +873,7 @@ async def test_worker_rejects_full_chunk_manifest_rebinding_before_embedding(
     """An ID-only readback check would accept changed provenance under a stable chunk ID."""
     worker, repository, artifacts, embeddings, index, _ = worker_parts()
     chunks = Chunker().chunk(
-        Parser().parse(
+        await Parser().parse(
             DocumentSource(
                 content=SOURCE_BYTES,
                 filename="source.md",
@@ -1012,9 +1012,9 @@ async def test_lease_lost_during_embedding_settles_provider_and_writes_no_result
     """An old owner must stop before artifact/checkpoint/index writes after takeover."""
 
     worker, repository, _, embeddings, index, _ = worker_parts()
-    # Normalized/chunks writes now consume two fenced renewals each; the sixth
-    # renewal is the embedding heartbeat after the provider has started.
-    repository.lose_on_renewal = 6
+    # Parsing and normalized/chunks writes each consume two fenced renewals;
+    # the eighth renewal is the embedding heartbeat after it starts.
+    repository.lose_on_renewal = 8
     embeddings.release = asyncio.Event()
 
     task = asyncio.create_task(worker.run_once(limit=1))
@@ -1031,9 +1031,9 @@ async def test_lease_lost_during_embedding_settles_provider_and_writes_no_result
 @pytest.mark.parametrize(
     ("blocked_write", "lost_renewal", "locator_name"),
     [
-        ("normalized", 2, "normalized_locator"),
-        ("chunks", 4, "chunks_locator"),
-        ("embeddings", 8, "embeddings_locator"),
+        ("normalized", 4, "normalized_locator"),
+        ("chunks", 6, "chunks_locator"),
+        ("embeddings", 10, "embeddings_locator"),
     ],
 )
 @pytest.mark.asyncio

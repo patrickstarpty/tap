@@ -10,10 +10,13 @@ from fastapi.responses import Response
 
 from tap.contracts.http import DocumentAccepted, DocumentDetail, DocumentPage
 from tap.interfaces.http.dependencies import UploadInput, knowledge_service
+from tap.interfaces.http.multipart import BoundedUploadRoute
 from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 
-router = APIRouter(prefix="/knowledge/documents", tags=["knowledge"])
+router = APIRouter(
+    prefix="/knowledge/documents", tags=["knowledge"], route_class=BoundedUploadRoute
+)
 MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 READ_CHUNK_BYTES = 1_048_576
 _MEDIA_TYPES_BY_EXTENSION = {

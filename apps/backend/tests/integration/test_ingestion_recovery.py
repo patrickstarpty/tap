@@ -78,7 +78,7 @@ class NeverCalled:
     def __init__(self) -> None:
         self.calls = 0
 
-    def parse(self, source):  # type: ignore[no-untyped-def]
+    async def parse(self, source):  # type: ignore[no-untyped-def]
         self.calls += 1
         raise AssertionError("completed parse stage was repeated")
 

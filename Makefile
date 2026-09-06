@@ -173,3 +173,10 @@ knowledge-recover: ## bounded Knowledge operator; pass ARGS with command and exp
 .PHONY: object-store-build
 object-store-build: ## build the pinned local MinIO image for an explicit platform
 	bash scripts/build-tapper-object-store.sh build --platform "$(PLATFORM)"
+
+.PHONY: parser-build parser-security
+parser-build: ## build the pinned local parser image for an explicit platform
+	bash scripts/build-tapper-parser.sh build --platform "$${TAPPER_PARSER_PLATFORM:-linux/arm64}"
+
+parser-security: ## run real security checks in owned isolated parser containers
+	TAP_RUN_PARSER_SECURITY=1 uv run --project apps/backend pytest apps/backend/tests/security/test_owned_parser.py -v

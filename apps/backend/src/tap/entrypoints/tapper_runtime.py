@@ -111,6 +111,7 @@ class TapperSettings:
     """One validated authority for every API, worker, and provider setting."""
 
     api_host: str
+    parser_socket: str
     api_port: int
     web_host: str
     web_port: int
@@ -366,6 +367,9 @@ class TapperSettings:
 
         return cls(
             api_host=api_host,
+            parser_socket=_value(
+                values, "TAPPER_PARSER_SOCKET", "/tmp/tapper-parser-unavailable.sock"
+            ),
             api_port=_integer(values, "TAPPER_API_PORT", 8000, minimum=1, maximum=65535),
             web_host=web_host,
             web_port=_integer(values, "TAPPER_WEB_PORT", 5173, minimum=1, maximum=65535),
@@ -1432,7 +1436,7 @@ def _assemble_worker_runtime(
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
-    from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
+    from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
     from tap.modules.knowledge.application.ingestion import IngestionWorker
     from tap.modules.knowledge.ports.documents import (
         ArtifactStore,
@@ -1446,7 +1450,7 @@ def _assemble_worker_runtime(
     worker = IngestionWorker(
         repository=cast(DocumentRepository, repository),
         artifacts=cast(ArtifactStore, artifacts),
-        parser=ParserRegistry(),
+        parser=IsolatedParser(settings.parser_socket),
         chunker=StructuralChunker(),
         embeddings=cast(DocumentEmbeddingPort, embeddings),
         index=cast(DocumentIndexPort, index),

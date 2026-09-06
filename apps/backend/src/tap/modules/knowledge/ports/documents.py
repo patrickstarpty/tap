@@ -696,6 +696,12 @@ class DocumentParser(Protocol):
     def parse(self, source: DocumentSource) -> NormalizedArtifact: ...
 
 
+class DocumentParserPort(Protocol):
+    """Cancellable isolated parsing; terminal return includes remote cleanup."""
+
+    async def parse(self, source: DocumentSource) -> NormalizedArtifact: ...
+
+
 class DocumentChunker(Protocol):
     """Converts normalized, addressable text into vector-free manifest drafts."""
 
