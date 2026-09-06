@@ -35,6 +35,7 @@ def client():
         + b"x" * 8193
         + b"\r\n\r\nx\r\n--x--\r\n",
     ],
+    ids=["truncated-boundary", "oversized-part-headers"],
 )
 def test_upload_rejects_truncated_boundary_and_oversized_part_headers(body):
     response = client().post(

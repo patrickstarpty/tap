@@ -163,6 +163,9 @@ def isolated_probe():
         probe = (root / "apps/backend/tests/fixtures/parser_probe.py").read_bytes()
         digest = hashlib.sha256(probe).hexdigest()
         (build / "child.py").write_bytes(probe)
+        # This non-secret test source must be readable by the image's fixed UID.
+        # Its host build context remains private, including under caller umask 077.
+        (build / "child.py").chmod(0o644)
         recipe = f"FROM {production}\nCOPY child.py /opt/parser/child.py\n"
         recipe_digest = hashlib.sha256(recipe.encode()).hexdigest()
         labels = {

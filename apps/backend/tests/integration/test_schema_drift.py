@@ -198,3 +198,40 @@ def test_check_normalization_preserves_quoted_text_and_escapes(expression: str) 
     from scripts.migration_support import _normalize_check_sql
 
     assert _normalize_check_sql(expression) == expression
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_owned_mysql_native_evidence_waits_for_checked_cleanup(monkeypatch, capsys, cleanup_fails):
+    import json
+
+    from scripts import migration_support as support
+
+    monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+
+    def docker_boundary(args, **kwargs):
+        if args[1:3] == ["context", "show"]:
+            return "desktop-linux"
+        if args[1:3] == ["context", "inspect"]:
+            return "unix:///local/docker.sock"
+        if "down" in args and cleanup_fails:
+            raise RuntimeError("simulated owned cleanup failure")
+        if "port" in args:
+            return "127.0.0.1:23306"
+        return ""
+
+    monkeypatch.setattr(support, "_run", docker_boundary)
+    if cleanup_fails:
+        with pytest.raises(RuntimeError, match="simulated owned cleanup"):
+            with support.isolated_mysql():
+                pass
+    else:
+        with support.isolated_mysql():
+            pass
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [event["state"] for event in events] == [
+        "started",
+        "failed" if cleanup_fails else "complete",
+    ]
+    assert events[0]["identity"] == events[1]["identity"]
+    assert set(events[0]) == {"event", "identity", "state"}

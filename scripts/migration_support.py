@@ -11,11 +11,12 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import FrameType
@@ -404,6 +405,7 @@ def _local_environment() -> dict[str, str]:
 class IsolatedMysql:
     url: str
     project: str
+    ownership: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     def upgrade(self, revision: str) -> None:
         self._migrate("upgrade", revision)
@@ -515,6 +517,8 @@ def isolated_mysql() -> Iterator[IsolatedMysql]:
             number: signal.signal(number, _interrupt_gate)
             for number in (signal.SIGINT, signal.SIGTERM)
         }
+        ownership = {"event": "owned-mysql", "identity": project, "state": "started"}
+        print(json.dumps(ownership), file=sys.stderr, flush=True)
         try:
             _run([*command, "up", "-d", "--wait", "--wait-timeout", "180"], env=env)
             address = _run([*command, "port", "mysql", "3306"], env=env)
@@ -522,13 +526,18 @@ def isolated_mysql() -> Iterator[IsolatedMysql]:
                 raise ValueError("MySQL must be published only on loopback")
             url = f"mysql+pymysql://tap_gate:{password}@{address}/{database}?charset=utf8mb4"
             validate_isolated_database(url, project)
-            yield IsolatedMysql(url=url, project=project)
+            yield IsolatedMysql(url=url, project=project, ownership=ownership)
         finally:
             for number in previous_handlers:
                 signal.signal(number, signal.SIG_IGN)
             try:
                 _run([*command, "down", "--volumes", "--remove-orphans"], env=env)
+                ownership["state"] = "complete"
+            except BaseException:
+                ownership["state"] = "failed"
+                raise
             finally:
+                print(json.dumps(ownership), file=sys.stderr, flush=True)
                 for number, previous in previous_handlers.items():
                     signal.signal(number, previous)
 
@@ -1080,6 +1089,7 @@ def run_schema_gate() -> dict[str, Any]:
             return {
                 "status": "failed" if differences else "passed",
                 "gate": "schema-drift",
+                "ownership": database.ownership,
                 "tables": len(load_authoritative_metadata().tables),
                 "differences": differences,
             }
@@ -1193,6 +1203,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                 **identity_result,
                 "status": "passed",
                 "gate": "migration-check",
+                "ownership": database.ownership,
                 "revision": revision,
                 "preserved_rows": counts,
             }

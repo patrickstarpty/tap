@@ -4,17 +4,18 @@ TAP_TAPPER_COMPOSE_PROJECT ?= tap-tapper-demo
 export TAP_TAPPER_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: schema-drift migration-check bootstrap check brand-check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
+.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
 	corepack pnpm install --frozen-lockfile
 
 check: ## lint, format-check, typecheck, architecture checks
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
-	bash -n scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
+	uv run --project apps/backend mypy --explicit-package-bases --follow-imports=silent scripts/tapper_v0_gate.py
+	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/web run contracts:check
 	corepack pnpm --filter @tap/web run check
@@ -180,3 +181,6 @@ parser-build: ## build the pinned local parser image for an explicit platform
 
 parser-security: ## run real security checks in owned isolated parser containers
 	TAP_RUN_PARSER_SECURITY=1 uv run --project apps/backend pytest apps/backend/tests/security/test_owned_parser.py -v
+
+gate-v0: ## require complete owned V0 native evidence with zero skips
+	bash scripts/run-tapper-v0-gate.sh

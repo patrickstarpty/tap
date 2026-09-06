@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import time
 from datetime import timedelta
 from uuid import uuid4
@@ -125,6 +126,14 @@ def test_recovery_wait_reclaims_before_waiting_for_new_hints():
     asyncio.run(run())
 
 
+def _remove_owned_redis(docker, name, env):
+    result = subprocess.run(
+        [*docker, "rm", "--force", name], capture_output=True, env=env, timeout=20
+    )
+    if result.returncode:
+        raise RuntimeError("owned Redis cleanup failed")
+
+
 @pytest.fixture
 def owned_redis_url():
     if os.getenv("TAP_RUN_REDIS_INTEGRATION") != "1":
@@ -148,6 +157,8 @@ def owned_redis_url():
         raise ValueError("recovery tests require a local Docker socket")
     docker = ["docker", "--context", context]
     name = "tap-recovery-test-" + uuid4().hex[:12]
+    event = {"event": "owned-redis", "identity": name, "state": "started"}
+    print(json.dumps(event), file=sys.stderr, flush=True)
     try:
         subprocess.run(
             [
@@ -188,7 +199,14 @@ def owned_redis_url():
             client.close()
         yield url
     finally:
-        subprocess.run([*docker, "rm", "--force", name], capture_output=True, env=env, timeout=20)
+        try:
+            _remove_owned_redis(docker, name, env)
+            event["state"] = "complete"
+        except BaseException:
+            event["state"] = "failed"
+            raise
+        finally:
+            print(json.dumps(event), file=sys.stderr, flush=True)
 
 
 def test_recovery_trim_preserves_pending_and_unread_across_all_groups(owned_redis_url):
@@ -287,3 +305,16 @@ def test_recovery_publisher_frees_acknowledged_capacity_without_dropping_pending
             await client.aclose()
 
     asyncio.run(run())
+
+
+def test_owned_redis_cleanup_failure_is_not_silently_successful(monkeypatch):
+    from apps.backend.tests.unit.operations import test_redis_stream_recovery as current
+
+    def failed_remove(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 1, b"", b"private daemon details")
+
+    monkeypatch.setattr(subprocess, "run", failed_remove)
+    with pytest.raises(RuntimeError, match="owned Redis cleanup failed"):
+        current._remove_owned_redis(
+            ["docker", "--context", "local"], "tap-recovery-test-0123456789ab", {}
+        )

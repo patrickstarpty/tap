@@ -291,3 +291,97 @@ def test_operator_recovery_effect_replay_lease_loss_and_publication_gap(owned_pr
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_operator_ready_snapshot_returns_populated_work_and_rejects_limit_plus_one(
+    owned_project_mysql,
+):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import insert
+
+    from tap.modules.knowledge.adapters import mysql_documents as ledger
+    from tap.modules.knowledge.adapters.mysql_operations import MysqlOperationRepository
+    from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload, StagedOriginal
+    from tap.platform.db.project_scope import scope_values
+
+    async def run():
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        documents = ledger.MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlOperationRepository(engine, scope=VALIDATION_SCOPE)
+        expected = {}
+        try:
+            for index in range(2):
+                now = datetime.now(timezone.utc)
+                reservation = await documents.reserve_upload(
+                    ReserveUpload.from_staged(
+                        StagedOriginal(
+                            staging_key=f"staging/snapshot-{index}",
+                            filename=f"ready-{index}.md",
+                            media_type="text/markdown",
+                            size=1,
+                            source_content_hash="sha256:" + str(index) * 64,
+                        ),
+                        now=now,
+                    )
+                )
+                record = await documents.activate_upload(
+                    reservation, ArtifactLocator(f"original:{index}")
+                )
+                expected[record.document_id] = (
+                    record.revision_id,
+                    f"chunk-{index}",
+                    f"chunks:{index}",
+                )
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        update(ledger.knowledge_document)
+                        .where(ledger.knowledge_document.c.document_id == record.document_id)
+                        .values(status="ready", stage="ready")
+                    )
+                    await connection.execute(
+                        update(ledger.knowledge_document_revision)
+                        .where(
+                            ledger.knowledge_document_revision.c.revision_id == record.revision_id
+                        )
+                        .values(
+                            chunks_blob_locator=f"chunks:{index}",
+                            embeddings_blob_locator=f"embeddings:{index}",
+                        )
+                    )
+                    await connection.execute(
+                        update(ledger.knowledge_ingestion_job)
+                        .where(ledger.knowledge_ingestion_job.c.revision_id == record.revision_id)
+                        .values(stage="ready", status="completed")
+                    )
+                    await connection.execute(
+                        insert(ledger.knowledge_chunk_manifest).values(
+                            **scope_values(VALIDATION_SCOPE),
+                            chunk_id=f"chunk-{index}",
+                            logical_chunk_id=f"logical-{index}",
+                            revision_id=record.revision_id,
+                            ordinal=0,
+                            root_id=record.document_id,
+                            parent_id=None,
+                            anchor_json={"type": "document"},
+                            chunk_content_hash="sha256:" + "a" * 64,
+                            embedding_model_version="test",
+                            index_version="test",
+                            created_at=now,
+                        )
+                    )
+            work = await repository.ready_work(2)
+            assert len(work) == 2
+            assert {
+                item.document_id: (item.revision_id, item.manifest[0].chunk_id, item.chunks_locator)
+                for item in work
+            } == expected
+            assert all(item.stage.value == "ready" and len(item.manifest) == 1 for item in work)
+            with pytest.raises(ValueError, match="ready corpus exceeds rebuild bound"):
+                await repository.ready_work(1)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
