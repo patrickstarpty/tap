@@ -48,9 +48,12 @@ describe("Tapper product prototype", () => {
     expect(screen.getByLabelText("TAP platform")).toHaveTextContent(/^TAP$/);
     const entry = screen.getByRole("button", { name: "Tapper" });
     expect(
-      entry.querySelector('img[src*="tapper-mark-ink.svg"]'),
+      entry.querySelector('img[src*="tapper-listening-avatar-color.svg"]'),
     ).not.toBeNull();
     const heading = screen.getByRole("heading", { name: "Tapper" });
+    expect(
+      heading.querySelector('img[src*="tapper-listening-avatar-color.svg"]'),
+    ).toBeNull();
     expect(
       heading.querySelector('img[src*="tapper-wordmark-ink.svg"]'),
     ).not.toBeNull();

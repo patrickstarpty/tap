@@ -834,7 +834,7 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
   });
 
-  it("uses the Tapper ink mark and wordmark in the product shell", async () => {
+  it("uses the Listening avatar with the Tapper wordmark in the product shell", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -843,13 +843,18 @@ describe("Tap product prototype interactions", () => {
       name: "Tapper",
     });
     const railMark = tapperButton.querySelector(
-      'img[src*="tapper-mark-ink.svg"]',
+      'img[src*="tapper-listening-avatar-color.svg"]',
     );
     expect(railMark).toBeVisible();
     expect(prototypeStyles).toMatch(
-      /^\.tap-tapper-rail-mark\s*\{[^}]*width:\s*24px;[^}]*height:\s*24px;/m,
+      /^\.tap-tapper-rail-mark\s*\{[^}]*width:\s*28px;[^}]*height:\s*28px;/m,
     );
     const tapperHeading = screen.getByRole("heading", { name: "Tapper" });
+    expect(
+      tapperHeading.querySelector(
+        'img[src*="tapper-listening-avatar-color.svg"]',
+      ),
+    ).toBeNull();
     expect(
       tapperHeading.querySelector('img[src*="tapper-wordmark-ink.svg"]'),
     ).not.toBeNull();

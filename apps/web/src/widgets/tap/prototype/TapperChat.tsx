@@ -1,11 +1,11 @@
 import {
+  ArrowUpOutlined,
   BookOutlined,
   CheckOutlined,
   CloseOutlined,
   DownOutlined,
   PlusOutlined,
   RobotOutlined,
-  SendOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
@@ -39,6 +39,10 @@ interface TapperChatProps {
   conversation: Conversation;
   copy: PrototypeCopy;
   isInert?: boolean;
+  message: string;
+  onMessageChange: (message: string) => void;
+  pageContext?: AssistantTurn["pageContext"];
+  onClearPageContext: () => void;
   onModelChange: (modelId: CodexModelId) => void;
   onSend: (prompt: string) => void;
   onToggleAgent: (agentId: string) => void;
@@ -100,6 +104,10 @@ export function TapperChat({
   conversation,
   copy,
   isInert = false,
+  message,
+  onMessageChange: setMessage,
+  pageContext,
+  onClearPageContext,
   onModelChange,
   onSend,
   onToggleAgent,
@@ -109,7 +117,6 @@ export function TapperChat({
   skills,
   sources,
 }: TapperChatProps) {
-  const [message, setMessage] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [picker, setPicker] = useState<PickerKind | null>(null);
@@ -145,7 +152,6 @@ export function TapperChat({
   const hasTurns = conversation.turns.length > 0;
 
   useEffect(() => {
-    setMessage("");
     setMenuOpen(false);
     setModelMenuOpen(false);
     setPicker(null);
@@ -564,6 +570,22 @@ export function TapperChat({
         onKeyDown={handleComposerKeyDown}
       />
 
+      {pageContext ? (
+        <div className="tap-context-chips">
+          <span className="tap-context-chip" title={pageContext.summary}>
+            <BookOutlined aria-hidden="true" />
+            <span>{pageContext.label}</span>
+            <button
+              type="button"
+              aria-label={`${copy.composer.remove} ${pageContext.label}`}
+              onClick={onClearPageContext}
+            >
+              <CloseOutlined aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+      ) : null}
+
       {selectedSources.length + selectedAgents.length + selectedSkills.length >
       0 ? (
         <div
@@ -722,14 +744,16 @@ export function TapperChat({
             </div>
           ) : null}
         </div>
-        <Button
-          type="primary"
-          shape="circle"
-          htmlType="submit"
+        <button
+          className="tap-composer-send-button"
+          type="submit"
           aria-label={copy.chat.send}
           disabled={message.trim().length === 0}
-          icon={<SendOutlined aria-hidden="true" />}
-        />
+        >
+          <span className="tap-composer-send-face">
+            <ArrowUpOutlined aria-hidden="true" />
+          </span>
+        </button>
       </div>
     </form>
   );

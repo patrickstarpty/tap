@@ -11,6 +11,13 @@ import {
 
 import { useDocumentListQuery } from "../../features/knowledge/api/queries";
 import { TapperChat } from "./prototype/TapperChat";
+import { TapperFloatingAssistant } from "./prototype/TapperFloatingAssistant";
+import { ContextualAssistantResponse } from "./prototype/ContextualAssistantResponse";
+import {
+  createFloatingAssistantReply,
+  getFloatingAssistantContext,
+  type FloatingAssistantContext,
+} from "./prototype/floatingAssistantModel";
 import {
   createBlankAutomation,
   createGeneratedAutomation,
@@ -150,6 +157,9 @@ function AssistantResponse({
   onOpenTestPlan: () => void;
   onOpenAutomation: () => void;
 }) {
+  if (turn.prototypeReply) {
+    return <ContextualAssistantResponse turn={turn} />;
+  }
   if (turn.intent === "answer") {
     return (
       <div className="tap-answer-copy">
@@ -447,6 +457,9 @@ export function TapProductPrototype() {
     { kind: "library" },
   );
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [messageDraft, setMessageDraft] = useState("");
+  const [composerContext, setComposerContext] =
+    useState<FloatingAssistantContext | null>(null);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
   const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
   const [localSources, setLocalSources] = useState<
@@ -659,6 +672,13 @@ export function TapProductPrototype() {
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const floatingContext = getFloatingAssistantContext({
+    activeModule,
+    selectedPlanId,
+    automationView,
+    artifacts: artifactState,
+    locale,
+  });
 
   const updateActiveConversation = (
     update: (conversation: Conversation) => Conversation,
@@ -673,6 +693,8 @@ export function TapProductPrototype() {
   };
 
   const createNewChat = () => {
+    setMessageDraft("");
+    setComposerContext(null);
     const id = `chat-${nextConversationId.current++}`;
     pendingFocusTarget.current = {
       kind: "selector",
@@ -686,6 +708,10 @@ export function TapProductPrototype() {
   };
 
   const selectConversation = (conversationId: string) => {
+    if (conversationId !== activeConversationId) {
+      setMessageDraft("");
+      setComposerContext(null);
+    }
     pendingFocusTarget.current = {
       kind: "selector",
       selector: ".tap-composer textarea",
@@ -723,6 +749,15 @@ export function TapProductPrototype() {
   };
 
   const sendMessage = (prompt: string) => {
+    if (composerContext) {
+      sendFloatingMessage(
+        prompt,
+        composerContext,
+        activeConversationId,
+        locale,
+      );
+      return;
+    }
     const intent = detectIntent(prompt);
     const sourceReferences = sources
       .filter((source) =>
@@ -748,6 +783,52 @@ export function TapProductPrototype() {
             : undefined,
       }),
     );
+  };
+
+  const sendFloatingMessage = (
+    prompt: string,
+    context: FloatingAssistantContext,
+    conversationId: string,
+    turnLocale: Locale,
+  ) => {
+    const turnId = `turn-${nextTurnId.current++}`;
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? appendTurn(conversation, {
+              id: turnId,
+              intent: "answer",
+              locale: turnLocale,
+              modelId: conversation.modelId,
+              prompt,
+              sourceReferences: [],
+              pageContext: {
+                label: context.label,
+                summary: context.summary,
+                facts: context.facts,
+              },
+              prototypeReply: createFloatingAssistantReply(
+                prompt,
+                context,
+                turnLocale,
+              ),
+            })
+          : conversation,
+      ),
+    );
+    return turnId;
+  };
+
+  const continueFloatingConversation = (context: FloatingAssistantContext) => {
+    setComposerContext(context);
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-composer textarea",
+    };
+    lastTapperModule.current = "tapper";
+    setActiveModule("tapper");
+    setSidebarCollapsed(isNarrowViewport);
+    if (isCompactViewport) setSourcesCollapsed(true);
   };
 
   const updateAutomationTurn = (
@@ -1065,6 +1146,10 @@ export function TapProductPrototype() {
               conversation={activeConversation}
               copy={copy}
               isInert={compactSourcesDrawerOpen}
+              message={messageDraft}
+              onMessageChange={setMessageDraft}
+              pageContext={composerContext ?? undefined}
+              onClearPageContext={() => setComposerContext(null)}
               onModelChange={(modelId: CodexModelId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -1248,6 +1333,16 @@ export function TapProductPrototype() {
           </span>
         ) : null}
       </main>
+      <TapperFloatingAssistant
+        visible={!tapperWorkspaceActive}
+        context={floatingContext}
+        conversation={activeConversation}
+        draft={messageDraft}
+        locale={locale}
+        onDraftChange={setMessageDraft}
+        onSend={sendFloatingMessage}
+        onContinue={continueFloatingConversation}
+      />
     </div>
   );
 }

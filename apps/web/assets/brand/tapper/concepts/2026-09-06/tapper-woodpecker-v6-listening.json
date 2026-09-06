@@ -1,0 +1,41 @@
+{
+  "created": "2026-09-06",
+  "status": "listening-refinement-candidate-awaiting-user-review",
+  "generator": "built-in image_gen",
+  "image": "tapper-woodpecker-v6-listening.png",
+  "sourceConcept": "tapper-woodpecker-v6-listening-reference.png",
+  "userFeedback": "不要正脸看过来的，看起来不聪明。Listening的这个不错。",
+  "confirmedKeywords": [
+    "聪明",
+    "敏锐",
+    "好奇"
+  ],
+  "direction": "以用户附件Listening姿态为准；侧身右向单眼、微抬头、自然倾听；不再以正面双眼对视为目标。",
+  "changes": [
+    "去除Listening标题，输出独立全身形象",
+    "清理低分辨率边缘并重绘平滑轮廓",
+    "保持参考的头部方向、单眼、白颊、橙冠、收拢双翼与站姿"
+  ],
+  "preservedPreviousVersions": [
+    "tapper-woodpecker-v4-polished.png",
+    "tapper-woodpecker-v5-eye-contact.png"
+  ],
+  "file": {
+    "width": 1254,
+    "height": 1254,
+    "hasAlpha": false,
+    "background": "opaque warm white",
+    "sha256": "7fdaeea33f18d63f3ecf07ccd1d1a0828564f62b789c4ddcaeb72a44b1a3832e"
+  },
+  "validation": {
+    "method": "目视比较用户附件与生成图，另做独立视觉复核；归档图与源图SHA256一致。",
+    "observation": "保留右向单眼侧脸、微抬头与Listening站姿。额头远侧白色眉眼痕迹在参考中已有，精修后更明显，保留待用户判断。",
+    "scope": "PNG概念精修候选；尚未进行本版小尺寸入口测试、用户测试或SVG生产化。"
+  },
+  "generationHistory": [
+    {
+      "operation": "refine user-selected Listening full-body mascot",
+      "prompt": "Use case: identity-preserve.\nAsset: Tapper AI testing assistant mascot, standalone full-body Listening pose.\nThe attached reference is the USER'S EXPLICITLY SELECTED design. Precisely redraw and clean this exact little woodpecker in high resolution, remove the \"Listening\" title and keep the same entire standing bird. Do not redesign the character.\nHIGHEST PRIORITY: preserve the exact angled SIDE VIEW of the head, beak pointing RIGHT, ONE prominent visible eye with its original C-shaped ivory sclera and pupil position, and the tiny sliver of the far brow at the forehead edge if present. Preserve the image's attentive, slightly tilted head, alert but friendly expression, and slender tapered beak. The user rejected front-facing two-eye portraits as looking unintelligent. DO NOT rotate toward a frontal face, DO NOT reveal a second round eye, DO NOT enlarge the eye, DO NOT move the pupil to manufacture direct eye contact. Capture this existing LISTENING gesture faithfully.\nKeep the same compact pear-shaped body, slight forward lean, short neck, folded wing, lowered long tail extending bottom-left, short legs and two planted little feet. Keep the same asymmetrical swept orange crest with the same tuft silhouette; keep the white curved cheek stripe and clean wing/chest arcs. No waving, no Aha spark, no extra expressions.\nRefinements are ONLY drawing-quality refinements: smooth the pixelated contours, use clean confident curves, unify the narrow wing line and remove raster fuzz; preserve all proportions, head-to-body ratio, asymmetry and pose. Moderately rounded forms, not babyish, not plush, not stern, not a crane, penguin, duck or dinosaur.\nFlat 2D graphic mascot, ink #14201D body, orange #E87722 crest, warm ivory #FAF9F6 accents. Uniform solid fills, no gradient, no paper grain, texture, shadow or 3D. Uniform OPAQUE warm-white #FAF9F6 background. A single full-body character comfortably filling about 80% of a square canvas, preserve feet and tail with clear padding, no title, words, wordmark, badge, border, mockup or alternatives. Match the attached Listening character faithfully."
+    }
+  ]
+}

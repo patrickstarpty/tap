@@ -1,0 +1,415 @@
+.tap-floating-assistant {
+  position: fixed;
+  z-index: 55;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.tap-floating-launcher {
+  position: relative;
+  display: grid;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--tap-canvas);
+  box-shadow: 0 4px 18px rgb(20 32 29 / 18%);
+  cursor: pointer;
+  transition: transform 180ms var(--tap-panel-motion-easing);
+}
+
+.tap-floating-launcher:hover {
+  transform: translateY(-2px);
+}
+
+.tap-floating-launcher img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tap-floating-unread {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--tap-canvas);
+  border-radius: 50%;
+  background: var(--tap-accent);
+}
+
+.tap-floating-panel {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  height: min(580px, calc(100dvh - 118px));
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--tap-surface);
+  box-shadow: 0 12px 48px rgb(20 32 29 / 18%);
+  font-size: 14px;
+  line-height: 1.55;
+  animation: tap-floating-reveal 200ms var(--tap-panel-motion-easing);
+}
+
+.tap-floating-header,
+.tap-floating-identity,
+.tap-floating-tools,
+.tap-floating-composer-footer {
+  display: flex;
+  align-items: center;
+}
+
+.tap-floating-header {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: 12px 12px 12px 20px;
+}
+
+.tap-floating-identity {
+  gap: 8px;
+}
+
+.tap-floating-avatar {
+  width: 32px;
+  height: 32px;
+}
+
+.tap-floating-identity h2 {
+  margin: 0;
+  line-height: 1;
+}
+
+.tap-floating-wordmark {
+  display: block;
+  width: 84px;
+  height: auto;
+}
+
+.tap-floating-tools button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tap-muted);
+  cursor: pointer;
+}
+
+.tap-floating-tools button:hover {
+  background: var(--tap-soft);
+  color: var(--tap-ink);
+}
+
+.tap-floating-context {
+  flex: 0 0 auto;
+  max-height: 34%;
+  overflow-y: auto;
+  margin: 0 20px;
+  border-block: 1px solid var(--tap-line);
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-floating-context summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tap-floating-context summary::-webkit-details-marker {
+  display: none;
+}
+
+.tap-floating-context summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 4px auto;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.tap-floating-context[open] summary::after {
+  transform: rotate(225deg);
+}
+
+.tap-floating-context summary > span:nth-child(2) {
+  min-width: 0;
+}
+
+.tap-floating-context small,
+.tap-floating-context strong {
+  display: block;
+}
+
+.tap-floating-context small {
+  font-size: 11px;
+}
+
+.tap-floating-context strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 13px;
+  font-weight: 500;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.tap-floating-context p {
+  margin: 0 0 8px;
+}
+
+.tap-floating-context ul,
+.tap-contextual-response ul {
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.tap-floating-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px;
+  overflow-wrap: anywhere;
+}
+
+.tap-floating-welcome h3 {
+  margin: 4px 0 8px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.tap-floating-welcome p {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 13px;
+}
+
+.tap-floating-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 24px;
+}
+
+.tap-floating-prompts button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--tap-canvas);
+  color: var(--tap-ink);
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tap-floating-prompts button:hover {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent);
+}
+
+.tap-floating-prompts .anticon {
+  flex: 0 0 auto;
+}
+
+.tap-floating-turn + .tap-floating-turn {
+  margin-top: 24px;
+}
+
+.tap-floating-question {
+  width: fit-content;
+  max-width: 92%;
+  margin: 0 0 16px auto;
+  padding: 10px 12px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--tap-soft);
+  white-space: pre-wrap;
+}
+
+.tap-contextual-response p {
+  margin: 0 0 10px;
+  white-space: pre-line;
+}
+
+.tap-contextual-response li + li {
+  margin-top: 6px;
+}
+
+.tap-contextual-response-origin,
+.tap-floating-preparing {
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-contextual-evidence {
+  margin-top: 14px;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-contextual-evidence summary {
+  cursor: pointer;
+}
+
+.tap-contextual-evidence strong {
+  display: block;
+  margin: 8px 0;
+}
+
+.tap-floating-history {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-accent);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tap-floating-history:hover {
+  text-decoration: underline;
+}
+
+.tap-floating-body > [role="log"] > .tap-floating-history {
+  margin-bottom: 20px;
+}
+
+.tap-floating-composer {
+  flex: 0 0 auto;
+  margin: 0 12px 12px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--tap-line-strong);
+  border-radius: 12px;
+}
+
+.tap-floating-composer:focus-within {
+  border-color: var(--tap-accent);
+}
+
+.tap-floating-composer textarea {
+  display: block;
+  width: 100%;
+  resize: none;
+  padding: 2px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--tap-ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.tap-floating-composer textarea::placeholder {
+  color: var(--tap-muted);
+}
+
+.tap-floating-composer-footer {
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.tap-floating-composer-footer small {
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-floating-composer-footer button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--tap-brand);
+  color: var(--tap-ink);
+  cursor: pointer;
+}
+
+.tap-floating-composer-footer button:hover:enabled {
+  background: #db6b18;
+}
+
+.tap-floating-composer-footer button:disabled {
+  background: var(--tap-soft);
+  color: var(--tap-muted);
+  cursor: default;
+}
+
+.tap-floating-panel summary:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: -2px;
+}
+
+@keyframes tap-floating-reveal {
+  from {
+    transform: translateY(8px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .tap-floating-assistant {
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    gap: 10px;
+  }
+
+  .tap-floating-panel {
+    width: calc(100vw - 24px);
+    height: min(580px, calc(100dvh - 94px));
+  }
+
+  .tap-floating-tools button,
+  .tap-floating-composer-footer button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tap-floating-composer textarea {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tap-floating-panel {
+    animation: none;
+  }
+  .tap-floating-launcher {
+    transition: none;
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "created": "2026-09-06",
+  "status": "exploration",
+  "generator": "built-in image_gen",
+  "image": "tapper-character-concepts.png",
+  "concepts": [
+    {
+      "id": "01",
+      "name": "Companion",
+      "label": "拟人小搭档"
+    },
+    {
+      "id": "02",
+      "name": "Tap",
+      "label": "按键伙伴"
+    },
+    {
+      "id": "03",
+      "name": "Scout",
+      "label": "啄木鸟"
+    }
+  ],
+  "note": "角色方向概念稿，包含状态与入口示意，尚未验证实际小尺寸效果。",
+  "prompt": "Use case: logo-brand. Create ONE compelling character-logo exploration board for Tapper, a professional but approachable AI work assistant. The user explicitly welcomes anthropomorphic people, objects, or animals. They rejected a previous board of abstract folded paper, joinery and bridges as meaningless. This time DESIGN ACTUAL DISTINCTIVE CHARACTERS with immediate personality and ownable clean silhouettes, not abstract geometric metaphors. Brand role: an attentive capable little colleague you can call on in the corner of any work page. Style reference attached: approved heavy geometric Tapper wordmark, broad strokes and rounded swept terminals. Use its confident shape weight, but do not reproduce the wordmark. Landscape 1536x1024 or greater, three equally strong columns on uniformly flat warm white #FAF9F6. Only solid dark ink #14201D, warm orange #E87722, and warm white. NO gradients, textures, lighting, soft modeling, shine, shadows, 3D, fur texture, stickers, scenic backgrounds or toy rendering. Refined original 2D identity design. Quiet professional personality with charm, not children's entertainment, not corporate clipart. Every character must simplify naturally into a distinctive small launcher icon. Title 'Tapper / Character studies'. Column 1 '01 / COMPANION': a highly simplified androgynous HUMAN-like colleague face, expressive but minimal, rounded slightly squarish face, a bold asymmetrically swept dark hair/cap silhouette echoing the distinctive wide top and curved right end of the Tapper T without spelling T. Warm orange face area, two small dark attentive eyes, one tiny restrained mouth or no mouth, no rendered nose or realistic skin. One subtly lifted eyebrow or slight inquisitive head tilt gives a smart listening expression. Aim for the recognition of a unique friendly avatar in 4 bold graphic shapes, not an emoji, corporate profile placeholder, child, superhero, or humanoid robot. No visor, antenna, earphones, glasses, suit or tie. Column 2 '02 / TAP': an ANTHROPOMORPHIC SINGLE KEY / TOUCH BUTTON creature, compact rounded square body with a distinctive asymmetric swept top-right shoulder and softly recessed face plane implied by one flat contour, two small alert vertical eyes. One short understated foot or hand may peek out in the LARGE character, but the icon version keeps its signature silhouette and eyes only. It should feel like a little tactile object that wakes up when you tap it: calm, responsive, quietly helpful. Flat graphic ink silhouette with orange face or an orange upper edge, no 3D keycap, no keyboard letter, no generic robot helmet, no antenna, no sci-fi glow, no big cartoon smile. Give it real character, not just a face placed on an ordinary app square. Column 3 '03 / SCOUT': a minimal WOODPECKER character bust in profile or three-quarter view, inquisitive alert posture, strong short horizontal pointed beak, one expressive clear eye and a unique swept crown patch in orange that quietly echoes Tapper's curved terminal. Dark compact head and shoulder, white cheek negative space, no fine feather details. It is a purposeful little investigator who taps at the problem until it finds a useful clue. Recognizable bird personality, reduced elegant graphic masses, not a spread-wing flying bird, owl, penguin, cartoon duck, existing mascot or stock social media bird. No tree or props. For each column show: a large beautifully designed character portrait occupying the upper half; below, two SMALL pose/expression variations labeled 'Ready' and 'Thinking' preserving the exact character identity and silhouette; then the very same primary face at a small icon scale and inside a dark ink rounded-square floating launcher with orange/white face as appropriate. No numeric pixel size labels or unverified test claims. Label bottom row 'Launcher concept'. Make all three directions materially different: human face / living touch-key object / curious woodpecker. Keep the proportions mature, economical and tasteful. No descriptive paragraphs or marketing slogans. This is a real brand character proposal, with sharp silhouette and deliberate eyes, polished enough to discuss with leadership."
+}

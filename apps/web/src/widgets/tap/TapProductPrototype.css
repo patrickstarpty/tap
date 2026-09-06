@@ -85,7 +85,7 @@
 .tap-tapper-sidebar-header h2 {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   margin: 0;
   color: var(--tap-ink);
   font-family: var(--tap-font);
@@ -95,14 +95,14 @@
 }
 
 .tap-tapper-rail-mark {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   object-fit: contain;
 }
 
 .tap-tapper-wordmark {
   display: block;
-  width: 96px;
+  width: 84px;
   height: auto;
 }
 
@@ -636,9 +636,13 @@
   place-items: center;
   color: inherit;
   background: transparent;
-  border: 1px solid var(--tap-line);
+  border: 1px solid transparent;
   border-radius: 50%;
   cursor: pointer;
+}
+
+.tap-composer-add-button:hover {
+  border-color: var(--tap-line);
 }
 
 .tap-composer-menu {
@@ -832,6 +836,43 @@
   height: 44px;
 }
 
+.tap-composer-send-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-surface);
+  border-radius: 50%;
+  cursor: pointer;
+  place-items: center;
+}
+
+.tap-composer-send-face {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tap-ink);
+  font-size: 18px;
+  place-items: center;
+}
+
+.tap-composer-send-button:hover:enabled .tap-composer-send-face {
+  background: #3e4845;
+}
+
+.tap-composer-send-button:disabled {
+  color: var(--tap-muted);
+  cursor: default;
+}
+
+.tap-composer-send-button:disabled .tap-composer-send-face {
+  background: var(--tap-line);
+}
+
 .tap-sources-shell {
   z-index: 15;
   width: var(--tap-sources-width);
@@ -877,7 +918,7 @@
 }
 
 .tap-sources > header > .tap-panel-toggle {
-  margin: -11px 0 0 -11px;
+  margin: -14px 0 0 -11px;
 }
 
 .tap-source-search {
