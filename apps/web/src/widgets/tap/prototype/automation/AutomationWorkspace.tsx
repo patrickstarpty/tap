@@ -47,7 +47,7 @@ const TEXT = {
     lastRun: "Last run",
     never: "Never",
     open: "Open",
-    back: "Back to Automation Library",
+    back: "Back to Low Code Automation",
     draft: "Draft",
     ready: "Ready",
     linked: "Linked",
@@ -118,7 +118,7 @@ const TEXT = {
     lastRun: "最近运行",
     never: "从未运行",
     open: "打开",
-    back: "返回自动化列表",
+    back: "返回低代码自动化",
     draft: "草稿",
     ready: "就绪",
     linked: "已关联",
@@ -1005,12 +1005,24 @@ function AutomationLibrary({
           <span role="columnheader">{text.testPlan}</span>
           <span role="columnheader">{text.scenarios}</span>
           <span role="columnheader">{text.lastRun}</span>
-          <span role="columnheader" aria-label={text.open} />
         </div>
         {automations.map((automation) => {
           const runs = selectAutomationRuns(state, automation.id);
           return (
-            <div className="tap-automation-row" role="row" key={automation.id}>
+            <div
+              className="tap-automation-row"
+              role="row"
+              tabIndex={0}
+              onClick={() => onOpen(automation.id)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpen(automation.id);
+                }
+              }}
+              key={automation.id}
+            >
               <span role="cell">
                 <CodeOutlined aria-hidden="true" />
                 <span>
@@ -1019,7 +1031,7 @@ function AutomationLibrary({
                 </span>
               </span>
               <span role="cell">
-                <span className="tap-type-badge">
+                <span className="tap-type-badge" data-type={automation.type}>
                   {automation.type === "web" ? "Web" : "Mobile"}
                 </span>
               </span>
@@ -1029,11 +1041,6 @@ function AutomationLibrary({
                 {runs[0] === undefined
                   ? text.never
                   : formatRunTime(runs[0].startedAt, locale)}
-              </span>
-              <span role="cell">
-                <Button onClick={() => onOpen(automation.id)}>
-                  {text.open} {automation.id}
-                </Button>
               </span>
             </div>
           );

@@ -22,6 +22,21 @@ function renderPrototype() {
 describe("Tapper floating assistant", () => {
   beforeEach(() => window.localStorage.clear());
 
+  it.each([
+    ["Test Management", "TP-101", "{Enter}"],
+    ["Low Code Automation", "AUTO-101", " "],
+  ])("opens %s records with the keyboard", async (module, id, key) => {
+    const user = userEvent.setup();
+    renderPrototype();
+    await user.click(screen.getByRole("button", { name: module }));
+    const row = screen.getByRole("row", { name: new RegExp(id) });
+    const title = row.querySelector("strong")!.textContent!;
+    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    row.focus();
+    await user.keyboard(key);
+    expect(screen.getByRole("heading", { name: title })).toBeVisible();
+  });
+
   it("appears only outside the Tapper workspace", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -83,7 +98,7 @@ describe("Tapper floating assistant", () => {
       within(panel).getByRole("textbox", { name: "Message Tapper" }),
       "Check this",
     );
-    await user.click(screen.getByRole("button", { name: "Open TP-101" }));
+    await user.click(screen.getByRole("row", { name: /TP-101/ }));
     panel = screen.getByRole("dialog", { name: "Tapper assistant" });
     expect(within(panel).getByText(/^TP-101 ·/)).toBeVisible();
     expect(
@@ -117,7 +132,7 @@ describe("Tapper floating assistant", () => {
     const user = userEvent.setup();
     const app = renderPrototype();
     await user.click(screen.getByRole("button", { name: "Test Management" }));
-    await user.click(screen.getByRole("button", { name: "Open TP-101" }));
+    await user.click(screen.getByRole("row", { name: /TP-101/ }));
     await user.click(screen.getByRole("button", { name: "Ask Tapper" }));
     const panel = screen.getByRole("dialog", { name: "Tapper assistant" });
     const composer = within(panel).getByRole("textbox", {
@@ -197,7 +212,7 @@ describe("Tapper floating assistant", () => {
     const user = userEvent.setup();
     renderPrototype();
     await user.click(screen.getByRole("button", { name: "Test Management" }));
-    await user.click(screen.getByRole("button", { name: "Open TP-101" }));
+    await user.click(screen.getByRole("row", { name: /TP-101/ }));
     await user.click(screen.getByRole("button", { name: "Ask Tapper" }));
     const panel = screen.getByRole("dialog", { name: "Tapper assistant" });
     await user.click(

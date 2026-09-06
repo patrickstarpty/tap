@@ -831,7 +831,7 @@ test("19 through 24 capture Test Management journeys", async ({ page }) => {
   ).toBeVisible();
   await capture(page, "19-test-management-plans.png");
 
-  await page.getByRole("button", { name: "Open TP-101" }).click();
+  await page.getByRole("row", { name: /TP-101/ }).click();
   await expect(
     page.getByRole("heading", {
       name: "Life insurance application underwriting",
@@ -860,8 +860,8 @@ test("19 through 24 capture Test Management journeys", async ({ page }) => {
   ).toBeVisible();
   await capture(page, "22-test-plan-run-result.png");
 
-  await page.getByRole("button", { name: "Back to Test Plans" }).click();
-  await page.getByRole("button", { name: "Open TP-102" }).click();
+  await page.getByRole("button", { name: "Back to Test Plan" }).click();
+  await page.getByRole("row", { name: /TP-102/ }).click();
   await expect(
     page.getByRole("region", { name: "Linked Automation" }),
   ).toContainText("No Automation linked");
@@ -870,7 +870,7 @@ test("19 through 24 capture Test Management journeys", async ({ page }) => {
   ).toBeVisible();
   await capture(page, "23-test-plan-detail-unlinked.png");
 
-  await page.getByRole("button", { name: "Back to Test Plans" }).click();
+  await page.getByRole("button", { name: "Back to Test Plan" }).click();
   await page.getByRole("tab", { name: "Test Data" }).click();
   await expect(page.getByRole("tabpanel", { name: "Test Data" })).toBeVisible();
   await expect(
@@ -911,9 +911,9 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   ).toBeVisible();
 
   await page
-    .getByRole("button", { name: "Back to Automation Library" })
+    .getByRole("button", { name: "Back to Low Code Automation" })
     .click();
-  await page.getByRole("button", { name: "Open AUTO-101" }).click();
+  await page.getByRole("row", { name: /AUTO-101/ }).click();
   await expect(
     page.getByRole("heading", {
       name: "Life insurance application automation",
@@ -957,9 +957,9 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await capture(page, "30-web-automation-run-history.png");
 
   await page
-    .getByRole("button", { name: "Back to Automation Library" })
+    .getByRole("button", { name: "Back to Low Code Automation" })
     .click();
-  await page.getByRole("button", { name: "Open AUTO-102" }).click();
+  await page.getByRole("row", { name: /AUTO-102/ }).click();
   await expect(
     page.getByRole("heading", { name: "Claims photo upload" }),
   ).toBeVisible();
@@ -1154,7 +1154,7 @@ test("41 through 43 capture floating context, unread reply and handoff", async (
 }) => {
   await startFlow(page);
   await page.getByRole("button", { name: "Test Management" }).click();
-  await page.getByRole("button", { name: "Open TP-101" }).click();
+  await page.getByRole("row", { name: /TP-101/ }).click();
   await page.getByRole("button", { name: "Ask Tapper", exact: true }).click();
   const panel = page.getByRole("dialog", { name: "Tapper assistant" });
   await panel.locator("summary").click();
