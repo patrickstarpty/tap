@@ -13,6 +13,7 @@ from sqlalchemy import (
     Column,
     String,
     Table,
+    UniqueConstraint,
     delete,
     select,
     text,
@@ -40,7 +41,9 @@ knowledge_projection_state = Table(
     Column("alias_name", String(255), primary_key=True),
     Column("generation", BigInteger, nullable=False),
     Column("physical_collection", String(255), nullable=False),
-    Column("updated_at", DATETIME(fsp=6), nullable=False),
+    Column(
+        "updated_at", DATETIME(fsp=6), nullable=False, server_default=text("CURRENT_TIMESTAMP(6)")
+    ),
 )
 knowledge_projection_fence = Table(
     "knowledge_projection_fence",
@@ -48,7 +51,9 @@ knowledge_projection_fence = Table(
     Column("alias_name", String(255), primary_key=True),
     Column("revision_id", String(128), primary_key=True),
     Column("document_id", String(64), nullable=False),
-    Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column(
+        "created_at", DATETIME(fsp=6), nullable=False, server_default=text("CURRENT_TIMESTAMP(6)")
+    ),
 )
 knowledge_projection_cleanup = Table(
     "knowledge_projection_cleanup",
@@ -56,7 +61,9 @@ knowledge_projection_cleanup = Table(
     Column("alias_name", String(255), primary_key=True),
     Column("physical_collection", String(255), primary_key=True),
     Column("generation", BigInteger, nullable=False),
-    Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column(
+        "created_at", DATETIME(fsp=6), nullable=False, server_default=text("CURRENT_TIMESTAMP(6)")
+    ),
 )
 knowledge_projection_lineage = Table(
     "knowledge_projection_lineage",
@@ -68,8 +75,15 @@ knowledge_projection_lineage = Table(
     Column("predecessor_generation", BigInteger, nullable=False),
     Column("generation", BigInteger, nullable=True),
     Column("status", String(16), nullable=False),
-    Column("created_at", DATETIME(fsp=6), nullable=False),
-    Column("updated_at", DATETIME(fsp=6), nullable=False),
+    Column(
+        "created_at", DATETIME(fsp=6), nullable=False, server_default=text("CURRENT_TIMESTAMP(6)")
+    ),
+    Column(
+        "updated_at", DATETIME(fsp=6), nullable=False, server_default=text("CURRENT_TIMESTAMP(6)")
+    ),
+)
+knowledge_projection_lineage.append_constraint(
+    UniqueConstraint("alias_name", "operation_id", name="uq_projection_lineage_operation")
 )
 
 

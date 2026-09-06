@@ -63,6 +63,8 @@ Tapper 不是通用聊天机器人，也不只是测试用例生成器或测试�
 - 语气应专业、清晰、可信，避免把不确定的模型输出包装成确定事实。
 - `TAP` 保持平台品牌；`Tapper` 是智能工作区、知识问答和 AI Agent 入口的规范名称。
 
+- 2026-09-05 用户确认全平台采用富卫 FWD 启发的浅色视觉：暖白、白色、深灰与克制橙色；以 Codex / Manus 式简约操作体验为参考。
+
 ## Evidence on Hand
 
 - 平台目标、原则和当前实现边界：[`../../README.md`](../../README.md)
@@ -72,7 +74,7 @@ Tapper 不是通用聊天机器人，也不只是测试用例生成器或测试�
 - 总体平台边界：[`../../docs/architecture/2026-08-20-overview.md`](../../docs/architecture/2026-08-20-overview.md)
 - 当前 Tapper Web 实现与测试：[`src/pages/TapperPage.tsx`](src/pages/TapperPage.tsx)、[`src/widgets/tapper/TapperWorkspace.tsx`](src/widgets/tapper/TapperWorkspace.tsx)、[`tests/e2e/tapper.spec.ts`](tests/e2e/tapper.spec.ts)
 - 本轮 A/B/C 概念原型保存在仓库忽略的 `.superpowers/brainstorm/` 目录，仅作为设计探索证据。
-- 当前没有已确认的正式 Logo、完整品牌资产、用户研究样本、客户背书或可公开产品指标；后续设计不得虚构这些内容。
+- 当前已有 Tapper ink mark/wordmark SVG 品牌资产；没有用户研究样本、客户背书或可公开产品指标，后续设计不得虚构这些内容。
 
 ## Product Principles
 

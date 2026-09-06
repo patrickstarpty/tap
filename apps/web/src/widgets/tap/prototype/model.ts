@@ -58,6 +58,15 @@ export interface AssistantTurn {
   modelId: CodexModelId;
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
+  pageContext?: {
+    label: string;
+    summary: string;
+    facts: readonly string[];
+  };
+  prototypeReply?: {
+    text: string;
+    suggestions: readonly string[];
+  };
   automationSteps?: readonly AutomationStepSnapshot[];
   automationWorkflow?: {
     stage:

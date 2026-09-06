@@ -6,6 +6,10 @@
 
 > **现行目标与原型边界**：[RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已确定 Web-only/Jenkins-first。本文截图中的 Mobile/iOS/Android 与 Azure DevOps Pipeline Agent 是遗留的模拟原型探索，只能用于解释曾验证的交互，不属于当前 V0–VG、P0 或 P1 目标；Mobile 与 Azure DevOps 均在 P1 之后另行设计。演示现行路线时，应把 Web 执行口径改为外置 Jenkins Pipeline Agent，且不得把截图中的 ADO 文案解释为计划中的 Provider。
 
+## 2026-09-05 视觉更新
+
+本指南 40 张截图已按[浅色视觉规范](2026-09-05-tap-fwd-light-design.md)从实际界面重新采集。TAP 采用富卫 FWD 启发的暖白、深灰与克制橙色，Tapper 沿用现有品牌标识；对话、Library/Graph、Agent/Skills、测试管理与自动化使用同一套视觉层级。该更新只改变视觉与响应式呈现，不改变下述原型能力和模拟执行边界。
+
 ## 演示前须知
 
 ### 启动方式
@@ -179,7 +183,7 @@ corepack pnpm --dir apps/web dev --port 4175
 
 ![Tapper Knowledge Graph](../assets/prototype-demo/17-tapper-knowledge-graph.jpg)
 
-- **视觉模型**：深色图画布、高密度圆形节点、按度数区分节点大小、按社区区分颜色，并显示关系连线和标签。
+- **视觉模型**：浅色图画布、高密度圆形节点、按度数区分节点大小、按社区区分颜色，并显示关系连线和标签。
 - **探索工具**：左侧社区筛选，中间支持缩放、平移和重置，右侧显示节点详情。
 - **示例领域**：来源文档与 `Life insurance application`、`Underwriting`、`Health disclosure`、`Applicant`、`Beneficiary` 等实体形成关系。
 - **边界**：图数据、关系和布局是确定性 fixture，不表示已运行 Graphify、Neo4j、图抽取模型或生产图数据库。

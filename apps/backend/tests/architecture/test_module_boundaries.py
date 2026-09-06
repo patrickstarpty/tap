@@ -539,13 +539,14 @@ def test_knowledge_adapters_never_import_chat_and_chat_uses_only_knowledge_api()
 def test_chat_and_knowledge_register_tables_in_the_shared_platform_metadata() -> None:
     """Extracting Outbox must leave both adapters importable in one metadata registry."""
     from tap.modules.chat.adapters import mysql as chat_mysql
-    from tap.modules.knowledge.adapters import mysql_documents
+    from tap.modules.knowledge.adapters import mysql_documents, mysql_projection
     from tap.platform.db.schema import metadata, outbox
 
     assert chat_mysql.metadata is metadata
     assert chat_mysql.outbox is outbox
     assert mysql_documents.knowledge_document.metadata is metadata
     assert metadata.tables["outbox"] is outbox
+    assert mysql_projection.knowledge_projection_lineage.metadata is metadata
 
 
 def test_only_access_authorization_imports_the_private_policy_factory() -> None:

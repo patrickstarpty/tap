@@ -12,8 +12,8 @@ import type { PrototypeCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 
-const tapperMark = new URL(
-  "../../../../assets/brand/tapper/svg/tapper-mark-ink.svg?no-inline",
+const tapperListeningAvatar = new URL(
+  "../../../../assets/brand/tapper/listening/svg/avatar/tapper-listening-avatar-color.svg?no-inline",
   import.meta.url,
 ).href;
 const tapperWordmark = new URL(
@@ -63,7 +63,13 @@ export function PrototypeSidebar({
     {
       key: "tapper",
       label: copy.navigation.tapper,
-      icon: <img className="tap-tapper-rail-mark" src={tapperMark} alt="" />,
+      icon: (
+        <img
+          className="tap-tapper-rail-mark"
+          src={tapperListeningAvatar}
+          alt=""
+        />
+      ),
     },
     {
       key: "test-management",

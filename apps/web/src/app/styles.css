@@ -1,16 +1,30 @@
 @import "tailwindcss";
 
 :root {
-  color: #252525;
-  background: #f7f6f3;
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  color-scheme: light;
+  --tap-canvas: #faf9f6;
+  --tap-surface: #ffffff;
+  --tap-soft: #f3f2ee;
+  --tap-ink: #232b2b;
+  --tap-muted: #626b68;
+  --tap-line: #e4e6e1;
+  --tap-line-strong: #c4cbc5;
+  --tap-brand: #e87722;
+  --tap-accent: #a9470b;
+  --tap-accent-dark: #893807;
+  --tap-accent-soft: #fff1e5;
+  --tap-accent-line: #efc7a7;
+  --tap-focus: #a9470b;
+  --tap-font:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  accent-color: var(--tap-accent);
+  caret-color: var(--tap-accent);
+  scrollbar-color: var(--tap-line-strong) transparent;
+  text-underline-offset: 0.2em;
+  color: var(--tap-ink);
+  background: var(--tap-canvas);
+  font-family: var(--tap-font);
   font-size: 14px;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -23,7 +37,7 @@
 body {
   min-width: 320px;
   margin: 0;
-  background: #f7f6f3;
+  background: var(--tap-canvas);
 }
 
 button,
@@ -35,7 +49,7 @@ button,
 button:focus-visible,
 [role="button"]:focus-visible,
 [tabindex="0"]:focus-visible {
-  outline: 3px solid rgb(79 70 229 / 30%);
+  outline: 3px solid var(--tap-focus);
   outline-offset: 2px;
 }
 
@@ -624,4 +638,14 @@ button:focus-visible,
   .tapper-answer-surface {
     min-height: 180px;
   }
+}
+
+::selection {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+/* Brand orange always carries dark ink; links use the darker accent token. */
+.ant-btn-primary:not(:disabled):not(.ant-btn-dangerous) {
+  color: var(--tap-ink);
 }
