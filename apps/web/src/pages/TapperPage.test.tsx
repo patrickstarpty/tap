@@ -300,7 +300,7 @@ describe("Tapper product prototype", () => {
       screen.getByRole("button", { name: /New automation/ }),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Open AUTO-101" }));
+    await user.click(screen.getByRole("row", { name: /AUTO-101/ }));
     expect(
       screen.getByRole("heading", {
         name: "Life insurance application automation",
@@ -531,7 +531,7 @@ describe("Tapper product prototype", () => {
     await user.click(
       screen.getByRole("button", { name: "Low Code Automation" }),
     );
-    await user.click(screen.getByRole("button", { name: "Open AUTO-102" }));
+    await user.click(screen.getByRole("row", { name: /AUTO-102/ }));
     const run = screen.getByRole("button", { name: "Run automation" });
     expect(run).toBeDisabled();
     await user.selectOptions(
