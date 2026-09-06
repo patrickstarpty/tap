@@ -531,7 +531,7 @@ dev 在工作树 `.tapper/parser-runtime/<validated-project>/` 保留稳定的 o
 初始固定预算如下；必须以普通既有 fixture 和真实独占容器验证，不按上传内容放宽：
 
 | 边界 | 限制 |
-| --- | --- |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | HTTP multipart | 文件 25 MiB + envelope 64 KiB；一个 upload、零其他字段；boundary 70 bytes；part headers 总计 8 KiB/16 项；接收 30 秒；每 API 进程最多两个并发解析上传表单 |
 | 解析协议 | 控制头 4 KiB、内容 25 MiB、规范化回复 32 MiB、stderr 最多 16 KiB 且不输出其内容；一个活动解析、无无界队列 |
 | 容器 | 1 CPU、memory 与 memory+swap 均 512 MiB、16 PIDs、32 MiB tmpfs、64 fds、无 core dump |
@@ -565,21 +565,29 @@ dev 在工作树 `.tapper/parser-runtime/<validated-project>/` 保留稳定的 o
 - Modify: `docs/reviews/index.md`
 - Modify: `Makefile`
 - Modify: `scripts/migration_support.py`
+- Modify: `scripts/parser_test_support.py`
+- Modify: `apps/backend/tests/security/test_document_upload_security.py`
 - Modify: `apps/backend/tests/integration/test_schema_drift.py`
 - Modify: `apps/backend/tests/unit/operations/test_redis_stream_recovery.py`
 - Modify: `apps/backend/tests/integration/test_knowledge_operations_recovery.py`
 
 **Gate:** `make gate-v0` runs schema drift, every `0006`–`0009` migration check, both authorization adapters' conformance, Project/Origin negative tests, Redis/Outbox recovery, bounded operator Audit, MinIO restart and parser security E2E. The report records planning baseline SHA, command, exit code, artifact digest and zero-skip count; missing evidence makes the gate fail.
 
-**预检裁定（尚未实施）：** shell 仅启动固定 Python gate runner；后者维护闭合命令表、五组显式 pytest 文件清单、原生 JUnit/Playwright 证据和源码摘要。只为 legacy relay 创建外层独占 MySQL，并组合已有 MinIO 与严格 receipt 验证的 Azurite；Project/MySQL、真实 Redis、Parser 和 E2E 保留各自独占 fixture。所有层级必须传播清理失败，schema/migration 与 nested fixture 的证据只包含封闭的非敏感拥有权/清理字段。补一项真实 SQL populated-ready/limit+1 snapshot 测试，关闭 Task 4 已记录的窄覆盖缺口，不把它称为真实 Milvus rebuild。
+**实施裁定：** shell 仅启动固定 Python gate runner；后者维护闭合命令表、五组显式 pytest 文件清单、原生 JUnit/Playwright 证据和源码摘要。只为 legacy relay 创建外层独占 MySQL，并组合已有 MinIO 与严格 receipt 验证的 Azurite；Project/MySQL、真实 Redis、Parser 和 E2E 保留各自独占 fixture。所有层级必须传播清理失败，schema/migration 与 nested fixture 的证据只包含封闭的非敏感拥有权/清理字段。补一项真实 SQL populated-ready/limit+1 snapshot 测试，关闭 Task 4 已记录的窄覆盖缺口，不把它称为真实 Milvus rebuild。
 
 完整 planning SHA 固定为 `a54ab433eae52500683a5ff6ff9d79466a30e1ca`，另记录实际测试 HEAD、未提交源码路径/模式/字节摘要，并在命令与清理后比较。报告目录必须新建且归本次运行所有；缺阶段、skip/flaky、原生计数不一致、非零退出、清理失败或源码变化均为 fail。Task 5A 的最终 E2E/exporter/Parser 接口在其验收后重读；失败命令缺少投影时记录明确的 absent/fail，不复制 private state 或伪造原生摘要。
 
-- [ ] 写 gate report parser，并用缺 planning SHA、缺命令、skipped test 与失败 migration 的 fixtures 验证非零退出。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 FAIL，原因为 V0 gate runner/report schema 不存在。
-- [ ] 实现 `scripts/run-tapper-v0-gate.sh` 和 `make gate-v0`；脚本只调用明确命令，任何 skip、缺日志或非零子命令都使总 gate 失败。
-- [ ] 运行 `make gate-v0 && uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 PASS。用实际日期替换 `<review-date>`，写入证据与唯一结论 `pass | fail`；只有 `pass` 才进入 V1。再运行 `git diff --check`。
-- [ ] Commit: `test(platform): record v0 validation gate`
+- [x] 写 gate report parser，并用缺 planning SHA、缺命令、skipped test 与失败 migration 的 fixtures 验证非零退出。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 FAIL，原因为 V0 gate runner/report schema 不存在。
+- [x] 实现 `scripts/run-tapper-v0-gate.sh` 和 `make gate-v0`；脚本只调用明确命令，任何 skip、缺日志或非零子命令都使总 gate 失败。
+- [x] 运行 `make gate-v0 && uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 PASS。用实际日期替换 `<review-date>`，写入证据与唯一结论 `pass | fail`；只有 `pass` 才进入 V1。再运行 `git diff --check`。
+- [x] Commit: `test(platform): record v0 validation gate`
+
+**门禁首轮修正边界：** 子命令退出与 pass-only 原生报告校验不能替代清理证明；清理失败或无法确认时，在创建后续资源前停止并汇总 unresolved/failed，仍记录完整的 not-run 命令。门禁固定 `umask 077`；独占测试探针构建目录中的非敏感 `child.py` 明确为容器可读的 `0644`，不依赖调用者 umask，不放宽生产 UID、capability 或资源预算。以惰性编排/文件权限回归和真实独占探针验证，保留首轮实际失败，最终重新运行完整门禁。
+
+**原生用例名称修正：** 第二轮全部 11 个命令退出 0、所有 296 项必需用例通过，但一个恶意上传参数被 pytest 自动展开为 8,367 字符的名称，超出报告 1,024 字符上限，汇总仍 fail。仅为该既有参数化测试设置稳定短 IDs，不改输入、断言、用例数量或报告上限；先以新原生 XML 验证身份识别，再复审并重跑固定门禁。两轮原始 fail 均保留。
+
+**验收：** 源码 `f71f06c`；[V0 完整门禁](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md)通过。首轮失败与两项修正保留，最终固定命令集 296 passed、零跳过，清理和源码一致性验证通过；可进入 Task 6。
 
 ## V1 — Trusted Knowledge and Durable Conversation
 

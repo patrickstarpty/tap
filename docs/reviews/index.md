@@ -21,3 +21,5 @@
 - [Tapper V0 对象存储与真实上传验收](2026-09-06-tapper-v0-object-storage-review.md)：Task 5 通过；记录独立 MinIO、旧 Azure 兼容、当前原型真实上传、重启验证、取消修正与回归限制。
 
 - [Tapper V0 文档解析隔离验收](2026-09-06-tapper-v0-parser-isolation-review.md)：Task 5A 通过；记录真实容器隔离、上传边界、冷恢复与原子记录修正、两轮复审及回归时序限制。
+
+- [V0 Validation Scope 与可靠性门禁](2026-09-06-v0-validation-scope-reliability-gate.md)：Task 5B 与 V0 通过；保留首轮失败、清理/权限修正与复审，记录最终 296 项必需验证、原生证据和源码一致性。
