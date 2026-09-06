@@ -14,7 +14,7 @@ check: ## lint, format-check, typecheck, architecture checks
 	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
-	bash -n scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh
+	bash -n scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/web run contracts:check
 	corepack pnpm --filter @tap/web run check
@@ -101,7 +101,15 @@ demo-up: ## start durable Tapper middleware and initialize exact owned resources
 	unset OPENAI_API_KEY BAILIAN_API_KEY BAILIAN_API_BASE; \
 	unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE; \
 	export TAP_TAPPER_COMPOSE_PROJECT="$$tapper_demo_project"; \
-	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
+	if [ "$${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then \
+		TAPPER_OBJECT_STORE_IMAGE="$$(bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify)"; \
+		export TAPPER_OBJECT_STORE_IMAGE; \
+		docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus --profile tapper-objects up -d --wait --wait-timeout 180; \
+		tapper_object_container="$$(docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile tapper-objects ps -q tap-minio)"; \
+		bash "$(TAP_REPO_ROOT)/scripts/build-tapper-object-store.sh" verify-container "$$tapper_object_container" >/dev/null; \
+	else \
+		docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile milvus up -d --wait --wait-timeout 180; \
+	fi; \
 	unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE; \
 	uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head; \
 	TAP_ALLOW_INITIAL_MILVUS_ROOT=1 uv run --project apps/backend python scripts/milvus_bootstrap.py; \
@@ -161,3 +169,7 @@ migration-check: ## preserve frozen 0005 data through an exact migration revisio
 .PHONY: knowledge-recover
 knowledge-recover: ## bounded Knowledge operator; pass ARGS with command and explicit --project
 	uv run --project apps/backend python scripts/knowledge-operator.py $(ARGS)
+
+.PHONY: object-store-build
+object-store-build: ## build the pinned local MinIO image for an explicit platform
+	bash scripts/build-tapper-object-store.sh build --platform "$(PLATFORM)"

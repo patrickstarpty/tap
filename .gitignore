@@ -19,3 +19,5 @@ apps/web/tsconfig.tsbuildinfo
 __pycache__/
 *.py[cod]
 .DS_Store
+
+.tapper/

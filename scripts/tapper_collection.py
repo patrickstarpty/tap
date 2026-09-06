@@ -15,11 +15,7 @@ from tap.entrypoints.tapper_runtime import (
     _create_blob,
     _create_database,
     _create_document_index,
-    _is_private_blob_container,
-)
-from tap.modules.knowledge.adapters.blob_artifacts import (
-    ARTIFACTS_CONTAINER,
-    ORIGINALS_CONTAINER,
+    _artifacts_private,
 )
 from tap.modules.knowledge.adapters.milvus_documents import (
     IndexTargetProvisioningFailed,
@@ -96,10 +92,8 @@ async def ensure(
         artifacts = _create_blob(settings)
         resources.push(artifacts)
         await artifacts.ensure_containers()
-        for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
-            properties = await artifacts.container_properties(container)
-            if not _is_private_blob_container(properties):
-                raise RuntimeError("Tapper Blob container is not private")
+        if not await _artifacts_private(artifacts):
+            raise RuntimeError("Tapper artifact storage is not private")
         tracker.set("milvus-client")
         index = await _create_document_index(settings, engine)
         resources.push(index)

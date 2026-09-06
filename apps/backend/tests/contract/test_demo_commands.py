@@ -18,7 +18,7 @@ import yaml
 from pymilvus.decorators import _log_rpc_error
 
 ROOT = Path(__file__).resolve().parents[4]
-E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173)
+E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173, 29000)
 EXPECTED_ENV = {
     "TAP_TAPPER_COMPOSE_PROJECT",
     "TAPPER_API_HOST",
@@ -404,6 +404,14 @@ def _e2e_runner_fixture(
         )
     runner.write_text(runner_source, encoding="utf-8")
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
+    helper = scripts / "build-tapper-object-store.sh"
+    helper.write_text(
+        '#!/bin/sh\nif [ "$1" = verify ]; then printf \'sha256:'
+        + "a" * 64
+        + '\\n\'; else [ "$1" = verify-container ] && [ "$2" = owned-object-container ]; fi\n',
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
     (root / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     (root / ".env").write_text(
         """TAP_TAPPER_COMPOSE_PROJECT=shared-project
@@ -497,6 +505,11 @@ case " $* " in
     environment_names="$(tapper-env-names)"
     printf 'env|settings|%s\n' "$environment_names" >> "$TAPPER_E2E_STUB_LOG"
     [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    [ "${TAPPER_OBJECT_STORE_PROVIDER:-}" = minio ] || exit 79
+    [ "${TAPPER_S3_ENDPOINT:-}" = http://127.0.0.1:29000 ] || exit 79
+    [ "${TAPPER_S3_BUCKET:-}" = tapper-e2e-objects ] || exit 79
+    [ "${TAPPER_S3_SECRET_KEY:-}" = tap-e2e-object-password ] || exit 79
+    [ "${TAPPER_LEGACY_AZURE_ENABLED:-}" = 0 ] || exit 79
     [ "$LITELLM_MODEL" = dashscope/e2e-chat-unused ] || exit 72
     [ "$LITELLM_TAPPER_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
     [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
@@ -540,6 +553,7 @@ case " $* " in
     printf 'context|inspect\n' >> "$TAPPER_E2E_STUB_LOG"
     printf 'unix:///tmp/docker.sock\n'
     ;;
+  *" ps --filter "*) printf 'owned-object-container\n' ;;
   *" compose "*)
     [ "$TAP_TAPPER_COMPOSE_PROJECT" = tap-tapper-e2e ] || exit 81
     middleware_ports="$MYSQL_PORT:$REDIS_PORT:$AZURITE_BLOB_PORT:$LITELLM_PORT"
@@ -2168,6 +2182,7 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
         assert all(str(item).startswith("127.0.0.1:") for item in service.get("ports", []))
     assert set(config["volumes"]) == {
         "azurite-data",
+        "tapper-object-data",
         "milvus-data",
         "milvus-etcd-data",
         "milvus-minio-data",
@@ -2469,7 +2484,8 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
                 "uv run --project apps/backend python -c 'import os; "
                 "from tap.entrypoints.tapper_runtime import TapperSettings; "
                 "settings=TapperSettings.from_mapping(dict(os.environ)); "
-                'assert settings.blob_connection_string.count(";") == 4\''
+                'assert settings.object_store_provider == "minio" '
+                'and settings.s3_bucket == "tapper-objects"\''
             ),
         ],
         cwd=ROOT,
@@ -3245,3 +3261,85 @@ def test_e2e_runner_rejects_malformed_playwright_report_and_cleans_owned_state(
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
     assert "returned an invalid result" in rejected.stderr
     assert list((runner.parents[1] / "tmp").glob("tap-tapper-e2e.*")) == []
+
+
+def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "scripts").mkdir(parents=True)
+    (root / "Makefile").write_text((ROOT / "Makefile").read_text())
+    (root / "compose.yaml").write_text("services: {}\n")
+    log = root / "order.log"
+    image = "sha256:" + "a" * 64
+    container = "b" * 64
+    helper = root / "scripts/build-tapper-object-store.sh"
+    helper.write_text(
+        "#!/bin/bash\nset -eu\n"
+        f'printf "helper %s\\n" "$*" >> "{log}"\n'
+        f'if [ "$1" = verify ]; then printf "%s\\n" "{image}"; '
+        f'else [ "$1:$2" = "verify-container:{container}" ]; fi\n'
+    )
+    stubs = root / "bin"
+    stubs.mkdir()
+    for command in ("docker", "uv"):
+        script = stubs / command
+        script.write_text(
+            "#!/bin/sh\nset -eu\n"
+            f'printf "{command} %s\\n" "$*" >> "{log}"\n'
+            + (
+                f'[ "$TAPPER_OBJECT_STORE_IMAGE" = "{image}" ]\n'
+                f'case " $* " in *" ps -q tap-minio "*) printf "%s\\n" "{container}";; esac\n'
+                if command == "docker"
+                else ""
+            )
+        )
+        script.chmod(0o755)
+    result = subprocess.run(
+        ["make", "--no-print-directory", "demo-up"],
+        cwd=root,
+        env=os.environ
+        | {"PATH": f"{stubs}:{os.environ['PATH']}", "TAPPER_OBJECT_STORE_PROVIDER": "minio"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text().splitlines()
+    assert calls[0] == "helper verify"
+    assert "--profile tapper-objects up" in calls[1]
+    assert calls[2].endswith("ps -q tap-minio")
+    assert calls[3] == "helper verify-container " + container
+    assert "alembic" in calls[4]
+
+
+def test_minio_dev_missing_receipt_stops_before_children(tmp_path: Path) -> None:
+    supervisor, environment, log = _supervisor_fixture(tmp_path, api_exit="17")
+    helper = supervisor.parent / "build-tapper-object-store.sh"
+    helper.write_text((ROOT / "scripts/build-tapper-object-store.sh").read_text())
+    environment["TAPPER_OBJECT_STORE_PROVIDER"] = "minio"
+    result = subprocess.run(
+        ["/bin/bash", str(supervisor)],
+        cwd=supervisor.parents[1],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "object-store build receipt is missing or invalid" in result.stderr
+    assert not log.exists() or not any(
+        line.startswith("start ") for line in log.read_text().splitlines()
+    )
+
+
+def test_compose_minio_is_a_separate_nonroot_store_with_no_image_pull() -> None:
+    config = _load_yaml_as_json(ROOT / "compose.yaml")
+    assert "tap-minio" in config["services"]
+    service = config["services"]["tap-minio"]
+    assert service["pull_policy"] == "never"
+    assert service["profiles"] == ["tapper-objects"]
+    assert service["ports"] == ["127.0.0.1:${TAPPER_S3_PORT:-19000}:9000"]
+    assert service["volumes"] == ["tapper-object-data:/data"]
+    assert service["user"] == "65532:65532"
+    assert service["environment"]["MINIO_ROOT_USER"] == "${TAPPER_S3_ACCESS_KEY:-tap-object-user}"
+    assert "MILVUS" not in json.dumps(service)

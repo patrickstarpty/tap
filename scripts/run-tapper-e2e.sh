@@ -51,6 +51,9 @@ unset BAILIAN_API_KEY BAILIAN_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
 unset TAP_RUN_PAID_EMBEDDING_RESEARCH
+unset TAPPER_OBJECT_STORE_PROVIDER TAPPER_S3_ENDPOINT TAPPER_S3_BUCKET TAPPER_S3_REGION
+unset TAPPER_S3_ACCESS_KEY TAPPER_S3_SECRET_KEY TAPPER_S3_STORE_ID TAPPER_S3_PORT
+unset TAPPER_LEGACY_AZURE_ENABLED TAPPER_OBJECT_STORE_IMAGE DOCKER_HOST
 
 tapper_e2e_state_root="${TMPDIR:-/tmp}"
 tapper_e2e_state_dir=""
@@ -74,6 +77,15 @@ export TAPPER_WEB_PORT=15173
 export TAP_DEMO_MODE=e2e
 export TAPPER_MODEL_BACKEND=fake
 export TAPPER_ANSWER_BACKEND=litellm
+export TAPPER_OBJECT_STORE_PROVIDER=minio
+export TAPPER_S3_ENDPOINT=http://127.0.0.1:29000
+export TAPPER_S3_BUCKET=tapper-e2e-objects
+export TAPPER_S3_REGION=us-east-1
+export TAPPER_S3_ACCESS_KEY=tap-e2e-object-key
+export TAPPER_S3_SECRET_KEY=tap-e2e-object-password
+export TAPPER_S3_STORE_ID=tapper-e2e
+export TAPPER_S3_PORT=29000
+export TAPPER_LEGACY_AZURE_ENABLED=0
 
 export MYSQL_ROOT_PASSWORD=tap-e2e-root
 export MYSQL_DATABASE=tap
@@ -126,6 +138,9 @@ readonly TAP_TAPPER_COMPOSE_PROJECT MYSQL_PORT REDIS_PORT AZURITE_BLOB_PORT
 readonly LITELLM_PORT MILVUS_PORT MILVUS_HEALTH_PORT TAPPER_API_HOST TAPPER_API_PORT
 readonly TAPPER_WEB_HOST TAPPER_WEB_PORT TAP_DEMO_MODE TAPPER_MODEL_BACKEND
 readonly TAPPER_ANSWER_BACKEND
+readonly TAPPER_OBJECT_STORE_PROVIDER TAPPER_S3_ENDPOINT TAPPER_S3_BUCKET TAPPER_S3_REGION
+readonly TAPPER_S3_ACCESS_KEY TAPPER_S3_SECRET_KEY TAPPER_S3_STORE_ID TAPPER_S3_PORT
+readonly TAPPER_LEGACY_AZURE_ENABLED
 readonly MYSQL_ROOT_PASSWORD MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD
 readonly TAP_DATABASE_URL TAP_ALEMBIC_DATABASE_URL TAP_REDIS_URL TAP_REDIS_COMMAND_STREAM
 readonly AZURE_STORAGE_CONNECTION_STRING LITELLM_BASE_URL LITELLM_MASTER_KEY
@@ -152,7 +167,7 @@ if ! uv run --project apps/backend python -c \
 fi
 
 if ! uv run --project apps/backend python - \
-  13306 16379 11000 14000 29530 19091 18000 15173 <<'PY'
+  13306 16379 11000 14000 29530 19091 18000 15173 29000 <<'PY'
 import socket
 import sys
 
@@ -218,7 +233,7 @@ fi
 
 compose() {
   docker --context "$docker_context" compose \
-    -f "$tapper_e2e_compose_file" -p "$tapper_e2e_project" --profile milvus "$@"
+    -f "$tapper_e2e_compose_file" -p "$tapper_e2e_project" --profile milvus --profile tapper-objects "$@"
 }
 
 stop_apps() {
@@ -302,9 +317,14 @@ tapper_e2e_state_dir="$(mktemp -d "$tapper_e2e_state_root/tap-tapper-e2e.XXXXXX"
 }
 chmod 700 "$tapper_e2e_state_dir"
 export TAPPER_E2E_STATE_FILE="$tapper_e2e_state_dir/state.json"
+TAPPER_OBJECT_STORE_IMAGE="$("$tapper_e2e_script_dir/build-tapper-object-store.sh" verify)"
+export TAPPER_OBJECT_STORE_IMAGE
+readonly TAPPER_OBJECT_STORE_IMAGE
 
 bootstrap_middleware() {
   compose up -d --wait --wait-timeout 180
+  object_container="$(docker --context "$docker_context" ps --filter label=com.docker.compose.project=tap-tapper-e2e --filter label=com.docker.compose.service=tap-minio --format '{{.ID}}')"
+  "$tapper_e2e_script_dir/build-tapper-object-store.sh" verify-container "$object_container"
   uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
   TAP_ALLOW_INITIAL_MILVUS_ROOT=1 \
     uv run --project apps/backend python scripts/milvus_bootstrap.py

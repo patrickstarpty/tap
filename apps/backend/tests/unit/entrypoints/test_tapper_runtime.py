@@ -57,6 +57,29 @@ def test_tapper_settings_use_the_new_namespace() -> None:
     assert settings.embedding_alias == "tapper-embedding"
 
 
+def test_minio_settings_require_closed_explicit_credentials_and_compose_shared_port() -> None:
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+
+    values = {
+        "TAPPER_OBJECT_STORE_PROVIDER": "minio",
+        "TAPPER_S3_ENDPOINT": "http://127.0.0.1:29000",
+        "TAPPER_S3_BUCKET": "tapper-test-objects",
+        "TAPPER_S3_REGION": "us-east-1",
+        "TAPPER_S3_ACCESS_KEY": "owned-key",
+        "TAPPER_S3_SECRET_KEY": "owned-secret",
+        "TAPPER_S3_STORE_ID": "owned-store",
+    }
+    settings = TapperSettings.from_mapping(values)
+    store = _runtime()._create_blob(settings)
+    assert isinstance(store, KnowledgeArtifactStore)
+    assert store.legacy is None
+    for key in tuple(values):
+        if key.startswith("TAPPER_S3_"):
+            with pytest.raises(ValueError):
+                TapperSettings.from_mapping({k: v for k, v in values.items() if k != key})
+    assert "owned-secret" not in repr(settings)
+
+
 def test_retired_local_revision_is_rejected_instead_of_rewritten() -> None:
     from alembic.config import Config
     from alembic.script import ScriptDirectory

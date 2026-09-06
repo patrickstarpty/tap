@@ -9,7 +9,10 @@ import {
   useState,
 } from "react";
 
-import { useDocumentListQuery } from "../../features/knowledge/api/queries";
+import {
+  useDocumentListQuery,
+  useUploadDocumentMutation,
+} from "../../features/knowledge/api/queries";
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat } from "./prototype/TapperChat";
@@ -413,6 +416,27 @@ function nextNumericId(
   );
 }
 
+function ProjectLibraryWorkspace({
+  projectId,
+  copy,
+  sources,
+}: {
+  projectId: string;
+  copy: PrototypeCopy;
+  sources: readonly LibrarySource[];
+}) {
+  const upload = useUploadDocumentMutation(projectId);
+  return (
+    <LibraryWorkspace
+      copy={copy}
+      sources={sources}
+      onAddSource={async (file) => {
+        await upload.mutateAsync({ file, onProgress: () => undefined });
+      }}
+    />
+  );
+}
+
 export function TapProductPrototype() {
   const runtime = useRuntimeModeQuery();
   const projectId = runtime.isSuccess ? runtime.data.projectId : null;
@@ -453,9 +477,6 @@ export function TapProductPrototype() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
   const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
-  const [localSources, setLocalSources] = useState<
-    readonly Pick<LibrarySource, "id" | "name" | "type">[]
-  >([]);
   const nextConversationId = useRef(
     nextNumericId(
       (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
@@ -496,7 +517,6 @@ export function TapProductPrototype() {
     ),
   );
   const nextCatalogId = useRef(1);
-  const nextLocalSourceId = useRef(1);
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
@@ -647,18 +667,7 @@ export function TapProductPrototype() {
       documentsQuery.data?.items,
     ],
   );
-  const sources = useMemo<readonly LibrarySource[]>(
-    () => [
-      ...documentSources,
-      ...localSources.map((source) => ({
-        ...source,
-        origin: "page-local" as const,
-        status: "ready" as const,
-        description: copy.library.localSourceDescription,
-      })),
-    ],
-    [copy.library.localSourceDescription, documentSources, localSources],
-  );
+  const sources = documentSources;
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -995,16 +1004,6 @@ export function TapProductPrototype() {
     setSidebarCollapsed(isNarrowViewport);
   };
 
-  const addLocalSource = (source: Pick<LibrarySource, "name" | "type">) => {
-    setLocalSources((current) => [
-      ...current,
-      {
-        ...source,
-        id: `local-source-${nextLocalSourceId.current++}`,
-      },
-    ]);
-  };
-
   return (
     <div
       className={`tap-product-shell${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
@@ -1197,11 +1196,16 @@ export function TapProductPrototype() {
           />
         ) : null}
         {activeModule === "library" ? (
-          <LibraryWorkspace
-            copy={copy}
-            sources={sources}
-            onAddSource={addLocalSource}
-          />
+          projectId === null ? (
+            <LibraryWorkspace copy={copy} sources={sources} />
+          ) : (
+            <ProjectLibraryWorkspace
+              key={projectId}
+              projectId={projectId}
+              copy={copy}
+              sources={sources}
+            />
+          )
         ) : null}
         {activeModule === "test-management" ? (
           <TestManagementWorkspace

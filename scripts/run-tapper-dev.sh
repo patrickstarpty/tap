@@ -72,6 +72,15 @@ if ! uv run --project apps/backend python -c \
   exit 2
 fi
 
+if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then
+  TAPPER_OBJECT_STORE_IMAGE="$(bash "$tapper_dev_script_dir/build-tapper-object-store.sh" verify)"
+  export TAPPER_OBJECT_STORE_IMAGE
+  tapper_dev_object_container="$(docker compose -f "$tapper_dev_repo_root/compose.yaml" \
+    -p "$tapper_dev_requested_project" --profile tapper-objects ps -q tap-minio)"
+  bash "$tapper_dev_script_dir/build-tapper-object-store.sh" \
+    verify-container "$tapper_dev_object_container" >/dev/null
+fi
+
 tapper_dev_web_root="$tapper_dev_repo_root/apps/web"
 tapper_dev_vite_bin="$tapper_dev_web_root/node_modules/.bin/vite"
 tapper_dev_vite_config="$tapper_dev_web_root/vite.config.ts"

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,8 @@ import {
   fakeKnowledgeClient,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
+import { renderApp } from "../../shared/testing/renderApp";
+import { RuntimeClientProvider } from "../../features/runtime/api/queries";
 import { TapProductPrototype } from "./TapProductPrototype";
 import { createInitialArtifactState } from "./prototype/artifacts/fixtures";
 import {
@@ -2039,7 +2041,7 @@ describe("Tap product prototype interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  it("adds a local Library file to the shared source controls", async () => {
+  it("uploads a Library file without making processing documents selectable", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -2062,71 +2064,83 @@ describe("Tap product prototype interactions", () => {
       within(addDialog).getByRole("button", { name: "Add source" }),
     );
 
-    expect(
-      within(screen.getByRole("list", { name: "Library sources" })).getByText(
-        "beneficiary-guide.txt",
-      ),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Library sources" })).getByText(
+          "beneficiary-guide.txt",
+        ),
+      ).toBeVisible(),
+    );
     await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(
       within(
         screen.getByRole("complementary", { name: "Knowledge sources" }),
-      ).getByText("beneficiary-guide.txt"),
-    ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Add to message" }));
-    await user.click(
-      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
-        "menuitem",
-        { name: "Add from Library" },
-      ),
-    );
-    expect(
-      screen.getByRole("option", { name: "beneficiary-guide.txt" }),
-    ).toBeVisible();
+      ).queryByText("beneficiary-guide.txt"),
+    ).toBeNull();
   });
 
-  it("identifies and cites a page-local Library source without an immutable label", async () => {
+  it("keeps uploads pending until the Project API receipt arrives", async () => {
     const user = userEvent.setup();
-    const { container } = renderPrototype();
-
+    const api = fakeKnowledgeClient().deferUpload();
+    renderKnowledgeApp(<TapProductPrototype />, { api });
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("button", { name: "Add source" }));
-    const addDialog = screen.getByRole("dialog", { name: "Add source" });
+    const dialog = screen.getByRole("dialog", { name: "Add source" });
     await user.upload(
-      within(addDialog).getByLabelText("Source file"),
-      new File(["beneficiary guidance"], "beneficiary-guide.txt", {
-        type: "text/plain",
-      }),
+      within(dialog).getByLabelText("Source file"),
+      new File(["bytes"], "pending.txt", { type: "text/plain" }),
     );
     await user.click(
-      within(addDialog).getByRole("button", { name: "Add source" }),
+      within(dialog).getByRole("button", { name: "Add source" }),
     );
-    await user.click(screen.getByRole("button", { name: "New chat" }));
-
-    const sources = screen.getByRole("complementary", {
-      name: "Knowledge sources",
-    });
-    const localSource = within(sources).getByRole("checkbox", {
-      name: /beneficiary-guide\.txt/,
-    });
-    expect(localSource).toHaveAccessibleName(
-      "beneficiary-guide.txtReady · Page-local Library source",
-    );
-    expect(localSource).not.toHaveAccessibleName(/immutable revision/);
-    await user.click(localSource);
-    await user.type(
-      screen.getByRole("textbox", { name: "Message Tapper" }),
-      "What beneficiary details are needed?",
-    );
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    const citations = within(
-      container.querySelector(".tap-turn") as HTMLElement,
-    ).getByRole("list", { name: "Selected context" });
-    expect(within(citations).getByText("beneficiary-guide.txt")).toBeVisible();
+    expect(dialog).toBeVisible();
     expect(
-      within(citations).getByText("Page-local Library source"),
-    ).toBeVisible();
+      within(dialog).getByRole("button", { name: "Add source" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("pending.txt")).toBeNull();
+    api.finishUpload();
+    expect(await screen.findByText("pending.txt")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Knowledge source · Processing")).toBeVisible();
+  });
+
+  it("keeps rejected uploads out of Library and permits retry", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withUploadProblem(
+      new Error("private provider details"),
+    );
+    renderKnowledgeApp(<TapProductPrototype />, { api });
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    const dialog = screen.getByRole("dialog", { name: "Add source" });
+    await user.upload(
+      within(dialog).getByLabelText("Source file"),
+      new File(["bytes"], "rejected.txt", { type: "text/plain" }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Add source" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Failed",
+    );
+    expect(screen.queryByText("rejected.txt")).toBeNull();
+    expect(screen.queryByText(/private provider/)).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Add source" }),
+    ).toBeEnabled();
+  });
+
+  it("disables Library uploads until runtime supplies the trusted Project", async () => {
+    const user = userEvent.setup();
+    renderApp(
+      <RuntimeClientProvider
+        client={{ getMode: () => new Promise(() => undefined) }}
+      >
+        <TapProductPrototype />
+      </RuntimeClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
   });
 
   it("contains add-source focus, hides the product background, and restores its trigger", async () => {
@@ -2157,7 +2171,7 @@ describe("Tap product prototype interactions", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("keeps a locally added source description in the current interface language", async () => {
+  it("keeps an uploaded source description in the current interface language", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -2173,10 +2187,12 @@ describe("Tap product prototype interactions", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Add source" }),
     );
-    expect(screen.getByText("Local source · page-only")).toBeVisible();
+    expect(
+      await screen.findByText("Knowledge source · Processing"),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByText("本地来源 · 仅当前页面")).toBeVisible();
+    expect(screen.getByText("知识来源 · 处理中")).toBeVisible();
     expect(screen.queryByText("Local source · page-only")).toBeNull();
   });
 

@@ -83,6 +83,29 @@ services:
       retries: 10
       start_period: 10s
 
+  tap-minio:
+    profiles: [tapper-objects]
+    image: ${TAPPER_OBJECT_STORE_IMAGE:-sha256:0000000000000000000000000000000000000000000000000000000000000000}
+    pull_policy: never
+    restart: unless-stopped
+    user: "65532:65532"
+    command: [server, /data, --address, ":9000"]
+    environment:
+      MINIO_ROOT_USER: ${TAPPER_S3_ACCESS_KEY:-tap-object-user}
+      MINIO_ROOT_PASSWORD: ${TAPPER_S3_SECRET_KEY:-tap-local-object-password}
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+    ports:
+      - "127.0.0.1:${TAPPER_S3_PORT:-19000}:9000"
+    volumes:
+      - tapper-object-data:/data
+    healthcheck:
+      test: [CMD, /minio-health]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+
   litellm:
     image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:v1.87.0}
     restart: unless-stopped
@@ -173,6 +196,7 @@ volumes:
   mysql-data:
   redis-data:
   azurite-data:
+  tapper-object-data:
   milvus-etcd-data:
   milvus-minio-data:
   milvus-data:

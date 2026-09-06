@@ -61,7 +61,7 @@ SAFE_ERROR_SUMMARIES = {
 
 
 class ArtifactLocator(str):
-    """Internal artifact address; public DTO mapping must never expose it."""
+    """Internal logical artifact reference; retains legacy bytes and never enters public DTOs."""
 
 
 class UploadStream(Protocol):

@@ -23,12 +23,8 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
-  onAddSource: (source: Pick<LibrarySource, "name" | "type">) => void;
+  onAddSource?: (file: File) => Promise<void>;
   sources: readonly LibrarySource[];
-}
-
-function sourceType(filename: string): string {
-  return filename.split(".").pop()?.toLocaleUpperCase() ?? "FILE";
 }
 
 export function LibraryWorkspace({
@@ -36,6 +32,8 @@ export function LibraryWorkspace({
   onAddSource,
   sources,
 }: LibraryWorkspaceProps) {
+  const [uploadPending, setUploadPending] = useState(false);
+  const [uploadFailed, setUploadFailed] = useState(false);
   const [mode, setMode] = useState<LibraryMode>("list");
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -96,22 +94,31 @@ export function LibraryWorkspace({
   const openAddDialog = (event: MouseEvent<HTMLElement>) => {
     addDialogTriggerRef.current = event.currentTarget;
     setSelectedFile(null);
+    setUploadFailed(false);
     setAddDialogOpen(true);
   };
 
   const closeAddDialog = () => {
+    if (uploadPending) return;
     setSelectedFile(null);
     setAddDialogOpen(false);
   };
 
-  const addSource = (event: FormEvent<HTMLFormElement>) => {
+  const addSource = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (selectedFile === null) return;
-    onAddSource({
-      name: selectedFile.name,
-      type: sourceType(selectedFile.name),
-    });
-    closeAddDialog();
+    if (selectedFile === null || onAddSource === undefined || uploadPending)
+      return;
+    setUploadPending(true);
+    setUploadFailed(false);
+    try {
+      await onAddSource(selectedFile);
+      setSelectedFile(null);
+      setAddDialogOpen(false);
+    } catch {
+      setUploadFailed(true);
+    } finally {
+      setUploadPending(false);
+    }
   };
 
   const sourceStatus = (source: LibrarySource) => {
@@ -133,6 +140,7 @@ export function LibraryWorkspace({
         <Button
           type="primary"
           icon={<PlusOutlined aria-hidden="true" />}
+          disabled={onAddSource === undefined}
           onClick={openAddDialog}
         >
           {copy.library.addSource}
@@ -287,6 +295,7 @@ export function LibraryWorkspace({
               <span>{copy.library.sourceFile}</span>
               <input
                 type="file"
+                disabled={uploadPending}
                 aria-label={copy.library.sourceFile}
                 accept=".pdf,.docx,.md,.txt"
                 onChange={(event) =>
@@ -294,12 +303,21 @@ export function LibraryWorkspace({
                 }
               />
             </label>
+            {uploadFailed ? <p role="alert">{copy.library.failed}</p> : null}
             <div className="tap-dialog-actions">
-              <Button onClick={closeAddDialog}>{copy.library.cancel}</Button>
+              <Button disabled={uploadPending} onClick={closeAddDialog}>
+                {copy.library.cancel}
+              </Button>
               <Button
                 type="primary"
                 htmlType="submit"
-                disabled={selectedFile === null}
+                aria-label={copy.library.addSource}
+                loading={uploadPending}
+                disabled={
+                  selectedFile === null ||
+                  onAddSource === undefined ||
+                  uploadPending
+                }
               >
                 {copy.library.addSource}
               </Button>

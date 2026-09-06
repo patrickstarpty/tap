@@ -50,6 +50,14 @@ SOURCE_HASH = "sha256:" + "a" * 64
 DOCUMENT_ID = DocumentId("doc_a")
 REVISION = str(revision_id_for(DOCUMENT_ID, SOURCE_HASH, PARSER_VERSION))
 
+
+@pytest.mark.asyncio
+async def test_real_azure_shared_knowledge_conformance(store):
+    from apps.backend.tests.contract.artifact_store_conformance import exercise_artifact_round_trip
+
+    await exercise_artifact_round_trip(store)
+
+
 AZURITE_CONNECTION = os.getenv(
     "AZURITE_CONNECTION_STRING",
     "UseDevelopmentStorage=true",

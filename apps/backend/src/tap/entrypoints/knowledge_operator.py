@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
     from tap.modules.knowledge.adapters.blob_artifacts import AzureBlobArtifactStore
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.ports.documents import ArtifactStore
 
 
@@ -72,13 +73,13 @@ class RuntimeOperationEffects:
         self._sessions = sessions
         self._resources = resources
         self._repository = repository
-        self._artifacts: AzureBlobArtifactStore | None = None
+        self._artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore | None = None
 
     @property
     def scope(self) -> ProjectScopeContext:
         return self._scope
 
-    def _blob(self) -> AzureBlobArtifactStore:
+    def _blob(self) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
         if self._artifacts is None:
             self._artifacts = tapper_runtime._create_blob(self._settings)
             self._resources.push(self._artifacts)
