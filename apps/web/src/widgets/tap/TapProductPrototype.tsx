@@ -50,6 +50,8 @@ import {
 } from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
+import { FWD_REPRESENTATIVE_SOURCES } from "./prototype/fwdKnowledge";
+import { SAMPLE_FILES } from "./prototype/sampleFiles";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import {
   appendTurn,
@@ -429,8 +431,9 @@ export function TapProductPrototype() {
       : loadPrototypeSnapshot(window.localStorage),
   );
   const [locale, setLocale] = useState<Locale>("en");
-  const [activeModule, setActiveModule] = useState<ProductModule>("tapper");
-  const lastTapperModule = useRef<ProductModule>("tapper");
+  const [activeModule, setActiveModule] = useState<ProductModule>(() =>
+    initialSnapshot?.library?.open ? "library" : "tapper",
+  );
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -464,7 +467,7 @@ export function TapProductPrototype() {
   const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
   const [localSources, setLocalSources] = useState<
     readonly Pick<LibrarySource, "id" | "name" | "type">[]
-  >([]);
+  >(() => initialSnapshot?.library?.localSources ?? []);
   const nextConversationId = useRef(
     nextNumericId(
       (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
@@ -505,7 +508,13 @@ export function TapProductPrototype() {
     ),
   );
   const nextCatalogId = useRef(1);
-  const nextLocalSourceId = useRef(1);
+  const nextLocalSourceId = useRef(
+    nextNumericId(
+      localSources.map(({ id }) => id),
+      "local-source",
+      0,
+    ),
+  );
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
@@ -562,8 +571,20 @@ export function TapProductPrototype() {
       activeConversationId,
       conversations,
       artifacts: artifactState,
+      library: {
+        open: activeModule === "library",
+        examplesLoaded: true,
+        fwdLoaded: true,
+        localSources,
+      },
     });
-  }, [activeConversationId, artifactState, conversations]);
+  }, [
+    activeConversationId,
+    artifactState,
+    conversations,
+    activeModule,
+    localSources,
+  ]);
 
   useEffect(
     () => () => {
@@ -659,6 +680,8 @@ export function TapProductPrototype() {
   const sources = useMemo<readonly LibrarySource[]>(
     () => [
       ...documentSources,
+      ...SAMPLE_FILES,
+      ...FWD_REPRESENTATIVE_SOURCES,
       ...localSources.map((source) => ({
         ...source,
         origin: "page-local" as const,
@@ -702,7 +725,6 @@ export function TapProductPrototype() {
     };
     setConversations((current) => [...current, createConversation(id)]);
     setActiveConversationId(id);
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -717,7 +739,6 @@ export function TapProductPrototype() {
       selector: ".tap-composer textarea",
     };
     setActiveConversationId(conversationId);
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -725,8 +746,8 @@ export function TapProductPrototype() {
   const selectModule = (module: ProductModule) => {
     if (module === "tapper") {
       if (isCompactViewport) setSourcesCollapsed(true);
-      setActiveModule(lastTapperModule.current);
-      setSidebarCollapsed(false);
+      setActiveModule("tapper");
+      if (isNarrowViewport) setSidebarCollapsed(true);
       return;
     }
     if (["agents", "skills", "library"].includes(module)) {
@@ -737,9 +758,8 @@ export function TapProductPrototype() {
           selector: focusTarget,
         };
       }
-      lastTapperModule.current = module;
       setActiveModule(module);
-      setSidebarCollapsed(isNarrowViewport);
+      if (isNarrowViewport) setSidebarCollapsed(true);
       return;
     }
     if (module === "test-management") setSelectedPlanId(null);
@@ -747,6 +767,16 @@ export function TapProductPrototype() {
     setActiveModule(module);
     setSidebarCollapsed(true);
   };
+
+  const catalogReferencesFor = (conversation: Conversation) =>
+    [...agents, ...skills]
+      .filter((item) =>
+        (item.kind === "agent"
+          ? conversation.selectedAgentIds
+          : conversation.selectedSkillIds
+        ).includes(item.id),
+      )
+      .map(({ id, kind, name }) => ({ id, kind, name }));
 
   const sendMessage = (prompt: string) => {
     if (composerContext) {
@@ -756,6 +786,7 @@ export function TapProductPrototype() {
         activeConversationId,
         locale,
       );
+      setComposerContext(null);
       return;
     }
     const intent = detectIntent(prompt);
@@ -772,6 +803,7 @@ export function TapProductPrototype() {
         modelId: conversation.modelId,
         prompt,
         sourceReferences,
+        catalogReferences: catalogReferencesFor(conversation),
         automationWorkflow:
           intent === "automation"
             ? {
@@ -801,7 +833,12 @@ export function TapProductPrototype() {
               locale: turnLocale,
               modelId: conversation.modelId,
               prompt,
-              sourceReferences: [],
+              sourceReferences: sources
+                .filter((source) =>
+                  conversation.selectedSourceIds.includes(source.id),
+                )
+                .map(({ id, name, origin }) => ({ id, name, origin })),
+              catalogReferences: catalogReferencesFor(conversation),
               pageContext: {
                 label: context.label,
                 summary: context.summary,
@@ -825,7 +862,6 @@ export function TapProductPrototype() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
     if (isCompactViewport) setSourcesCollapsed(true);
@@ -1067,7 +1103,6 @@ export function TapProductPrototype() {
         ? conversation
         : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
     });
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -1084,7 +1119,7 @@ export function TapProductPrototype() {
 
   return (
     <div
-      className={`tap-product-shell${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
+      className={`tap-product-shell${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
     >
       <PrototypeSidebar
         activeConversationId={activeConversationId}
@@ -1097,7 +1132,9 @@ export function TapProductPrototype() {
         onModuleChange={selectModule}
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
-        onToggleCollapsed={dismissTapperSidebar}
+        onToggleCollapsed={
+          sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
+        }
       />
       {mobileTapperDrawerOpen ? (
         <button
@@ -1113,18 +1150,6 @@ export function TapProductPrototype() {
         aria-hidden={mobileTapperDrawerOpen ? true : undefined}
         inert={mobileTapperDrawerOpen ? true : undefined}
       >
-        {tapperWorkspaceActive && sidebarCollapsed ? (
-          <button
-            type="button"
-            className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--left-expand"
-            aria-controls="tap-tapper-sidebar"
-            aria-expanded="false"
-            aria-label={copy.navigation.expandSidebar}
-            onClick={expandTapperSidebar}
-          >
-            <PanelToggleIcon side="left" state="collapsed" />
-          </button>
-        ) : null}
         <div hidden={activeModule !== "tapper"}>
           <div
             className={`tap-tapper-layout${sourcesCollapsed ? " tap-tapper-layout--sources-collapsed" : ""}`}

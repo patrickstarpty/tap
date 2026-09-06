@@ -160,6 +160,35 @@ describe("Tap product prototype interactions", () => {
     window.localStorage.clear();
   });
 
+  it("keeps representative knowledge in the default graph after a page remount", async () => {
+    const user = userEvent.setup();
+    const first = renderPrototype();
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(
+      screen.queryByRole("button", {
+        name: /FWD HK full demo|Examples loaded|Load examples/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
+    ).toBeVisible();
+    first.unmount();
+
+    renderPrototype();
+    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+    expect(
+      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Examples loaded" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
+    const list = screen.getByRole("list", { name: "Library sources" });
+    expect(within(list).getByText("Beneficiary test cases.xlsx")).toBeVisible();
+    expect(within(list).getByText("beneficiary.ts")).toBeVisible();
+    expect(within(list).queryByText("settlement.ts")).not.toBeInTheDocument();
+  });
+
   it("defaults to English and lets the user switch the interface language", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -245,7 +274,7 @@ describe("Tap product prototype interactions", () => {
       within(tapperNavigation)
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["New chat", "Agent", "Skills", "Library"]);
+    ).toEqual(["New chat", "Agents", "Skills", "Library"]);
     const newChatButton = within(tapperNavigation).getByRole("button", {
       name: "New chat",
     });
@@ -270,8 +299,8 @@ describe("Tap product prototype interactions", () => {
     ).toHaveAttribute("data-panel-state", "expanded");
     await user.click(collapseSidebar);
     expect(
-      screen.queryByRole("complementary", { name: "Tapper tools" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("complementary", { name: "Tapper tools" }),
+    ).toHaveAttribute("data-collapsed", "true");
     const expandSidebar = screen.getByRole("button", {
       name: "Expand sidebar",
     });
@@ -299,7 +328,7 @@ describe("Tap product prototype interactions", () => {
     const newChatButton = screen.getByRole("button", { name: "New chat" });
     expect(newChatButton).toHaveAttribute("aria-current", "page");
 
-    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
     expect(newChatButton).not.toHaveAttribute("aria-current");
 
     await user.click(newChatButton);
@@ -325,13 +354,13 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(tapperButton);
 
-    expect(tapperButton).toHaveAttribute("aria-expanded", "true");
+    expect(tapperButton).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByRole("navigation", { name: "Tapper tools" }),
     ).toBeVisible();
   });
 
-  it("restores the last Tapper surface when the workspace is reopened", async () => {
+  it("returns to the conversation when the workspace is reopened", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -341,10 +370,11 @@ describe("Tap product prototype interactions", () => {
     await user.click(screen.getByRole("button", { name: "Test Management" }));
     await user.click(screen.getByRole("button", { name: "Tapper" }));
 
-    expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute(
+    expect(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Skills" })).not.toHaveAttribute(
       "aria-current",
-      "page",
     );
   });
 
@@ -391,17 +421,14 @@ describe("Tap product prototype interactions", () => {
       const productRail = screen.getByRole("complementary", {
         name: "Product",
       });
-      const tapperButton = within(productRail).getByRole("button", {
-        name: "Tapper",
-      });
       const main = screen.getByRole("main");
 
       expect(
-        screen.queryByRole("complementary", { name: "Tapper tools" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("complementary", { name: "Tapper tools" }),
+      ).toHaveAttribute("data-collapsed", "true");
       expect(main).not.toHaveAttribute("aria-hidden");
 
-      await user.click(tapperButton);
+      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
 
       const collapseButton = screen.getByRole("button", {
         name: "Collapse sidebar",
@@ -418,8 +445,8 @@ describe("Tap product prototype interactions", () => {
       await user.keyboard("{Escape}");
 
       expect(
-        screen.queryByRole("complementary", { name: "Tapper tools" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("complementary", { name: "Tapper tools" }),
+      ).toHaveAttribute("data-collapsed", "true");
       expect(main).not.toHaveAttribute("aria-hidden");
       expect(main).not.toHaveAttribute("inert");
       expect(globalThis.document.body).not.toHaveStyle({
@@ -436,11 +463,11 @@ describe("Tap product prototype interactions", () => {
         screen.getByRole("button", { name: "Expand sidebar" }),
       ).toHaveFocus();
 
-      await user.click(tapperButton);
+      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
       await user.click(screen.getByRole("button", { name: "New chat" }));
       expect(
-        screen.queryByRole("complementary", { name: "Tapper tools" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("complementary", { name: "Tapper tools" }),
+      ).toHaveAttribute("data-collapsed", "true");
       expect(
         screen.getByRole("textbox", { name: "Message Tapper" }),
       ).toHaveFocus();
@@ -449,7 +476,7 @@ describe("Tap product prototype interactions", () => {
     }
   });
 
-  it("moves focus to a mobile Tapper destination and restores that surface", async () => {
+  it("moves focus to a mobile destination and returns to the conversation", async () => {
     const matchMedia = mockNarrowViewport();
 
     try {
@@ -461,8 +488,8 @@ describe("Tap product prototype interactions", () => {
       await user.click(screen.getByRole("button", { name: "Skills" }));
 
       expect(
-        screen.queryByRole("complementary", { name: "Tapper tools" }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("complementary", { name: "Tapper tools" }),
+      ).toHaveAttribute("data-collapsed", "true");
       const skillsHeading = screen.getByRole("heading", { name: "Skills" });
       expect(skillsHeading).toHaveFocus();
 
@@ -471,11 +498,12 @@ describe("Tap product prototype interactions", () => {
       expect(
         screen.getByRole("complementary", { name: "Tapper tools" }),
       ).toBeVisible();
-      expect(skillsHeading).toBeVisible();
-      expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute(
-        "aria-current",
-        "page",
-      );
+      expect(
+        screen.getByRole("textbox", { name: "Message Tapper" }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Skills" }),
+      ).not.toHaveAttribute("aria-current");
     } finally {
       matchMedia.mockRestore();
     }
@@ -487,9 +515,6 @@ describe("Tap product prototype interactions", () => {
     try {
       const user = userEvent.setup();
       renderPrototype();
-      const tapperButton = within(
-        screen.getByRole("complementary", { name: "Product" }),
-      ).getByRole("button", { name: "Tapper" });
 
       await user.click(
         screen.getByRole("button", { name: "Expand Knowledge sources" }),
@@ -498,7 +523,7 @@ describe("Tap product prototype interactions", () => {
         screen.getByRole("complementary", { name: "Knowledge sources" }),
       ).toBeVisible();
 
-      await user.click(tapperButton);
+      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
       await user.click(
         screen.getByRole("button", { name: "Collapse sidebar" }),
       );
@@ -546,7 +571,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(
       within(screen.getByRole("navigation", { name: "对话历史" })).getByRole(
         "button",
-        { name: `${englishPrompt} · 对话 1` },
+        { name: `${englishPrompt}` },
       ),
     );
     expect(
@@ -587,7 +612,9 @@ describe("Tap product prototype interactions", () => {
       message,
     );
     await user.keyboard("{Enter}");
-    expect(screen.getByText(message)).toBeVisible();
+    expect(
+      screen.getByText(message, { selector: ".tap-user-message" }),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(
@@ -597,11 +624,13 @@ describe("Tap product prototype interactions", () => {
     const history = screen.getByRole("navigation", { name: "Chat history" });
     await user.click(
       within(history).getByRole("button", {
-        name: `${message} · Conversation 1`,
+        name: `${message}`,
       }),
     );
     expect(screen.getByRole("log", { name: "Conversation" })).toBeVisible();
-    expect(screen.getByText(message)).toBeVisible();
+    expect(
+      screen.getByText(message, { selector: ".tap-user-message" }),
+    ).toBeVisible();
   });
 
   it("recalls the latest sent prompt with ArrowUp only when the composer is empty", async () => {
@@ -672,7 +701,7 @@ describe("Tap product prototype interactions", () => {
     const history = screen.getByRole("navigation", { name: "Chat history" });
     await user.click(
       within(history).getByRole("button", {
-        name: "New chat · Conversation 1 · 3 selected",
+        name: "New chat · 3 selected",
       }),
     );
 
@@ -825,7 +854,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
-      ).getByRole("button", { name: `${prompt} · Conversation 1` }),
+      ).getByRole("button", { name: `${prompt}` }),
     );
     expect(
       screen.getByRole("button", {
@@ -1470,11 +1499,11 @@ describe("Tap product prototype interactions", () => {
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await user.click(
+    expect(
       within(sources).getByRole("checkbox", {
         name: /health-disclosure-guide\.pdf/,
       }),
-    );
+    ).not.toBeChecked();
     await user.click(
       within(sources).getByRole("checkbox", {
         name: /life-underwriting-rules\.md/,
@@ -1512,19 +1541,23 @@ describe("Tap product prototype interactions", () => {
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
       ).getByRole("button", {
-        name: `${firstPrompt} · Conversation 1 · 1 selected`,
+        name: `${firstPrompt}`,
       }),
     );
     const restoredTurns = container.querySelectorAll(".tap-turn");
     expect(
-      within(restoredTurns[0] as HTMLElement).getByText(
-        "health-disclosure-guide.pdf",
-      ),
+      within(
+        within(restoredTurns[0] as HTMLElement).getByRole("list", {
+          name: "Selected context",
+        }),
+      ).getByText("health-disclosure-guide.pdf"),
     ).toBeVisible();
     expect(
-      within(restoredTurns[1] as HTMLElement).getByText(
-        "life-underwriting-rules.md",
-      ),
+      within(
+        within(restoredTurns[1] as HTMLElement).getByRole("list", {
+          name: "Selected context",
+        }),
+      ).getByText("life-underwriting-rules.md"),
     ).toBeVisible();
   });
 
@@ -1566,11 +1599,11 @@ describe("Tap product prototype interactions", () => {
     );
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await user.click(
+    expect(
       within(sources).getByRole("checkbox", {
         name: /life-underwriting-rules\.md/,
       }),
-    );
+    ).not.toBeChecked();
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
       "Generate an automation script for policy submission",
@@ -1800,7 +1833,7 @@ describe("Tap product prototype interactions", () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
     expect(screen.getByRole("heading", { name: "Agents" })).toBeVisible();
     await user.type(
       screen.getByRole("textbox", { name: "Search agents" }),
@@ -1901,7 +1934,7 @@ describe("Tap product prototype interactions", () => {
     const user = userEvent.setup();
     const { container } = renderPrototype();
 
-    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
     const trigger = screen.getByRole("button", { name: "Create agent" });
     await user.click(trigger);
 
@@ -1932,7 +1965,7 @@ describe("Tap product prototype interactions", () => {
     const user = userEvent.setup();
     const { container } = renderPrototype();
 
-    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
     const trigger = screen.getByRole("button", {
       name: "Edit Life Underwriting Analyst",
     });
@@ -2049,6 +2082,7 @@ describe("Tap product prototype interactions", () => {
     renderPrototype();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Add source" }));
     const addDialog = screen.getByRole("dialog", { name: "Add source" });
@@ -2167,6 +2201,7 @@ describe("Tap product prototype interactions", () => {
     renderPrototype();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
     await user.click(screen.getByRole("button", { name: "Add source" }));
     const dialog = screen.getByRole("dialog", { name: "Add source" });
     await user.upload(
@@ -2185,13 +2220,58 @@ describe("Tap product prototype interactions", () => {
     expect(screen.queryByText("Local source · page-only")).toBeNull();
   });
 
+  it("opens Library on the graph and locates search results before viewing their source", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(
+      screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
+    ).toBeVisible();
+    const search = screen.getByRole("textbox", { name: "Search library" });
+    await user.type(search, "disclosure");
+    const results = screen.getByRole("region", { name: "Search results" });
+    await user.click(
+      within(results).getByRole("button", { name: /Health disclosure/ }),
+    );
+    expect(
+      within(screen.getByRole("region", { name: "Node details" })).getByText(
+        "Health disclosure",
+      ),
+    ).toBeVisible();
+    await user.clear(search);
+    expect(screen.queryByRole("region", { name: "Search results" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Node details" })).toBeNull();
+    expect(
+      screen.getByRole("status", { name: "Zoom level" }),
+    ).toHaveTextContent("100%");
+    await user.type(search, "health-disclosure-guide");
+    await user.click(
+      within(screen.getByRole("region", { name: "Search results" })).getByRole(
+        "button",
+        { name: /health-disclosure-guide.pdf/ },
+      ),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "View source in document list" }),
+    );
+    expect(
+      screen.getByRole("tab", { name: "Documents", selected: true }),
+    ).toBeVisible();
+    expect(
+      within(screen.getByRole("list", { name: "Library sources" })).getByText(
+        "health-disclosure-guide.pdf",
+      ),
+    ).toBeVisible();
+  });
+
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(
-      screen.getByRole("tab", { name: "All", selected: true }),
+      screen.getByRole("tab", { name: "Documents", selected: true }),
     ).toBeVisible();
     const search = screen.getByRole("textbox", { name: "Search library" });
     await user.type(search, "disclosure");
@@ -2229,7 +2309,7 @@ describe("Tap product prototype interactions", () => {
     expect(within(graph).getByText("informs")).toBeVisible();
 
     await user.clear(search);
-    await user.click(screen.getByRole("tab", { name: "All" }));
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
   });
 
@@ -2238,7 +2318,8 @@ describe("Tap product prototype interactions", () => {
     renderPrototypeWithLibraryStatuses();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
-    expect(screen.getByText("4/4 sources")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
+    expect(screen.getByText("32/32 sources")).toBeVisible();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Type" }),
@@ -2258,14 +2339,81 @@ describe("Tap product prototype interactions", () => {
     expect(
       within(filteredSources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
-    expect(screen.getByText("1/4 sources")).toBeVisible();
+    expect(screen.getByText("1/32 sources")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(screen.getByText("4/4 sources")).toBeVisible();
+    expect(screen.getByText("32/32 sources")).toBeVisible();
     expect(
       within(screen.getByRole("list", { name: "Library sources" })).getByText(
         "application-checklist.docx",
       ),
+    ).toBeVisible();
+  });
+
+  it("dismisses the add menu on outside clicks without stealing focus", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+    const trigger = screen.getByRole("button", { name: "Add to message" });
+    await user.click(trigger);
+    expect(screen.getByRole("menu", { name: "Add to message" })).toBeVisible();
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+    await user.click(composer);
+    expect(screen.queryByRole("menu", { name: "Add to message" })).toBeNull();
+    expect(composer).toHaveFocus();
+    await user.click(trigger);
+    await user.click(
+      screen.getByRole("heading", { name: "What can I do for you?" }),
+    );
+    expect(screen.queryByRole("menu", { name: "Add to message" })).toBeNull();
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Use Skills" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("keeps collapsed tool navigation available and returns to the same Tapper draft", async () => {
+    const user = userEvent.setup();
+    renderPrototypeWithManyDocuments();
+    const input = screen.getByRole("textbox", { name: "Message Tapper" });
+    await user.type(input, "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
+    expect(input).toBeVisible();
+    expect(input).toHaveValue("Keep this draft");
+  });
+
+  it("can hide graph communities and close selected node details", async () => {
+    const user = userEvent.setup();
+    renderPrototypeWithManyDocuments();
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await user.click(
+      screen.getByRole("button", { name: "Toggle topic groups" }),
+    );
+    expect(
+      screen.queryByRole("checkbox", { name: /Sources · 23 nodes/ }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Toggle topic groups" }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /Sources · 23 nodes/ }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Health disclosure · Concept · Underwriting",
+      }),
+    );
+    expect(screen.getByRole("region", { name: "Node details" })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Close node details" }),
+    );
+    expect(screen.queryByRole("region", { name: "Node details" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Enter fullscreen" }),
     ).toBeVisible();
   });
 
@@ -2280,7 +2428,7 @@ describe("Tap product prototype interactions", () => {
       name: "Life insurance knowledge graph",
     });
     const sourcesCommunity = screen.getByRole("checkbox", {
-      name: /Sources · 5 nodes/,
+      name: /Sources · 23 nodes/,
     });
     expect(sourcesCommunity).toBeChecked();
     await user.click(sourcesCommunity);
@@ -2296,7 +2444,7 @@ describe("Tap product prototype interactions", () => {
     );
     const inspector = screen.getByRole("region", { name: "Node details" });
     expect(within(inspector).getByText("Health disclosure")).toBeVisible();
-    expect(within(inspector).getByText("3 connections")).toBeVisible();
+    expect(within(inspector).getByText("4 connections")).toBeVisible();
     expect(within(inspector).getByText("EXTRACTED")).toBeVisible();
 
     expect(
@@ -2335,9 +2483,11 @@ describe("Tap product prototype interactions", () => {
     const documents = within(summary).getByRole("list", {
       name: "Visible documents",
     });
-    expect(within(documents).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(documents).getAllByRole("listitem")).toHaveLength(33);
     expect(within(documents).getByText("beneficiary-guide.md")).toBeVisible();
-    expect(within(graph).getByText("beneficiary-guide.md")).toBeVisible();
+    expect(
+      within(graph).getByRole("button", { name: /beneficiary-guide\.md/ }),
+    ).toBeVisible();
 
     const concepts = within(summary).getByRole("list", {
       name: "Concepts",
@@ -2351,6 +2501,13 @@ describe("Tap product prototype interactions", () => {
       "Underwriting",
       "Health disclosure",
       "Beneficiary",
+      "Approval",
+      "Test cases",
+      "Exploration",
+      "New business",
+      "Policy servicing",
+      "Claims",
+      "Codebase",
     ]);
 
     const relationships = within(summary).getByRole("list", {
@@ -2371,7 +2528,7 @@ describe("Tap product prototype interactions", () => {
     ).toBeInTheDocument();
     expect(
       within(relationships).getByText(
-        "beneficiary-guide.md supports Life insurance application",
+        "beneficiary-guide.md supports Beneficiary",
       ),
     ).toBeInTheDocument();
     expect(graph).toHaveAttribute(

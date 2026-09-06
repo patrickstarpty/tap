@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 
 interface KnowledgeSourcesPanelProps {
@@ -93,9 +94,10 @@ export function KnowledgeSourcesPanel({
               checked={selectedIds.has(source.id)}
               onChange={() => onToggleSource(source.id)}
             >
-              <span className="tap-source-name">
+              <span className="tap-source-name" title={source.name}>
+                <FileTypeIcon type={source.type} />
                 <strong>{source.name}</strong>
-                <small>
+                <small className="tapper-visually-hidden">
                   {copy.sources.ready} ·{" "}
                   {source.origin === "knowledge-base"
                     ? copy.sources.immutableRevision

@@ -28,7 +28,7 @@ describe("Tapper floating assistant", () => {
     expect(
       screen.queryByRole("button", { name: "Ask Tapper" }),
     ).not.toBeInTheDocument();
-    for (const module of ["Agent", "Skills", "Library"]) {
+    for (const module of ["Agents", "Skills", "Library"]) {
       await user.click(screen.getByRole("button", { name: module }));
       expect(
         screen.queryByRole("button", { name: "Ask Tapper" }),
@@ -142,14 +142,22 @@ describe("Tapper floating assistant", () => {
     expect(
       screen.getByRole("textbox", { name: "Message Tapper" }),
     ).toHaveFocus();
-    expect(screen.getByText("What should I explore next?")).toBeInTheDocument();
+    expect(
+      screen.getByText("What should I explore next?", {
+        selector: ".tap-user-message",
+      }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Remove.*TP-101/ }),
     ).toBeInTheDocument();
     // The completed contextual turn is part of the existing persisted conversation.
     app.unmount();
     renderPrototype();
-    expect(screen.getByText("What should I explore next?")).toBeInTheDocument();
+    expect(
+      screen.getByText("What should I explore next?", {
+        selector: ".tap-user-message",
+      }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Prototype suggestion · based on page data"),
     ).toBeInTheDocument();

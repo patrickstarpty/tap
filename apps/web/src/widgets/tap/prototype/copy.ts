@@ -100,6 +100,35 @@ export interface PrototypeCopy {
     skillCatalog: string;
   };
   library: {
+    testingCommunity: string;
+    approval: string;
+    allocation: string;
+    testCasesNode: string;
+    exploration: string;
+    executionNode: string;
+    defect: string;
+    defines: string;
+    confirms: string;
+    validates: string;
+    extends: string;
+    drives: string;
+    reveals: string;
+    affects: string;
+    describes: string;
+    records: string;
+    configures: string;
+
+    loadExamples: string;
+    examplesLoaded: string;
+    example: string;
+    listView: string;
+    cardView: string;
+    preview: string;
+    filePreview: string;
+    closePreview: string;
+    download: string;
+    noPreview: string;
+
     heading: string;
     description: string;
     addSource: string;
@@ -127,12 +156,20 @@ export interface PrototypeCopy {
     noResults: string;
     illustrative: string;
     communities: string;
+    selectAllTopics: string;
     sourceCommunity: string;
+    newBusinessCommunity: string;
+    servicingCommunity: string;
+    claimsCommunity: string;
+    codebaseCommunity: string;
     applicationCommunity: string;
     underwritingCommunity: string;
     partiesCommunity: string;
     nodes: string;
     nodeDetails: string;
+    searchResults: string;
+    noMatchingNodes: string;
+    viewSource: string;
     selectNode: string;
     community: string;
     relationships: string;
@@ -144,6 +181,11 @@ export interface PrototypeCopy {
     zoomIn: string;
     zoomOut: string;
     resetView: string;
+    toggleCommunities: string;
+    closeNodeDetails: string;
+    enterFullscreen: string;
+    exitFullscreen: string;
+    fullscreenUnavailable: string;
     zoomLevel: string;
     extracted: string;
     inferred: string;
@@ -252,7 +294,7 @@ export const PROTOTYPE_COPY = {
     language: { en: "English", zh: "中文" },
     navigation: {
       tapper: "Tapper",
-      agents: "Agent",
+      agents: "Agents",
       skills: "Skills",
       library: "Library",
       "test-management": "Test Management",
@@ -362,11 +404,38 @@ export const PROTOTYPE_COPY = {
       skillCatalog: "Skill catalog",
     },
     library: {
+      loadExamples: "Load examples",
+      examplesLoaded: "Examples loaded",
+      example: "Example file",
+      listView: "List view",
+      cardView: "Card view",
+      preview: "Preview",
+      filePreview: "File preview",
+      closePreview: "Close preview",
+      download: "Download file",
+      noPreview: "No preview available for this source.",
+      testingCommunity: "Testing",
+      approval: "Approval",
+      allocation: "Allocation",
+      testCasesNode: "Test cases",
+      exploration: "Exploration",
+      executionNode: "Test execution",
+      defect: "Defect",
+      defines: "defines",
+      confirms: "confirms",
+      validates: "validates",
+      extends: "extends",
+      drives: "drives",
+      reveals: "reveals",
+      affects: "affects",
+      describes: "describes",
+      records: "records",
+      configures: "configures",
       heading: "Library",
       description:
         "Browse source material and explore its curated domain context.",
       addSource: "Add source",
-      all: "All",
+      all: "Documents",
       knowledgeGraph: "Knowledge Graph",
       sources: "Library sources",
       sourceCount: "sources",
@@ -389,16 +458,25 @@ export const PROTOTYPE_COPY = {
       failed: "Failed",
       noResults: "No matching sources",
       illustrative:
-        "Illustrative view — interactive relationships and communities are curated, not computed.",
-      communities: "Communities",
+        "Illustrative view — interactive relationships and topic groups are curated, not computed.",
+      communities: "Topic groups",
+      selectAllTopics: "Select all",
       sourceCommunity: "Sources",
+      newBusinessCommunity: "New business",
+      servicingCommunity: "Policy servicing",
+      claimsCommunity: "Claims",
+      codebaseCommunity: "Codebase",
       applicationCommunity: "Application",
       underwritingCommunity: "Underwriting",
       partiesCommunity: "Parties",
       nodes: "nodes",
       nodeDetails: "Node details",
+      searchResults: "Search results",
+      noMatchingNodes:
+        "No matching documents, concepts or entities. Try another keyword or clear the filters.",
+      viewSource: "View source in document list",
       selectNode: "Select a node to inspect its relationships.",
-      community: "Community",
+      community: "Topic group",
       relationships: "Relationships",
       provenance: "Provenance",
       documentNode: "Document",
@@ -408,6 +486,11 @@ export const PROTOTYPE_COPY = {
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetView: "Reset view",
+      toggleCommunities: "Toggle topic groups",
+      closeNodeDetails: "Close node details",
+      enterFullscreen: "Enter fullscreen",
+      exitFullscreen: "Exit fullscreen",
+      fullscreenUnavailable: "Fullscreen is unavailable in this browser.",
       zoomLevel: "Zoom level",
       extracted: "EXTRACTED",
       inferred: "INFERRED",
@@ -624,10 +707,37 @@ export const PROTOTYPE_COPY = {
       skillCatalog: "技能目录",
     },
     library: {
+      loadExamples: "加载示例文件",
+      examplesLoaded: "示例已加载",
+      example: "示例文件",
+      listView: "列表视图",
+      cardView: "卡片视图",
+      preview: "预览",
+      filePreview: "文件预览",
+      closePreview: "关闭预览",
+      download: "下载文件",
+      noPreview: "此来源暂无可用预览。",
+      testingCommunity: "测试验证",
+      approval: "变更审批",
+      allocation: "受益比例",
+      testCasesNode: "测试用例",
+      exploration: "探索测试",
+      executionNode: "测试执行",
+      defect: "缺陷",
+      defines: "定义",
+      confirms: "确认",
+      validates: "验证",
+      extends: "扩展",
+      drives: "驱动",
+      reveals: "发现",
+      affects: "影响",
+      describes: "描述",
+      records: "记录",
+      configures: "配置",
       heading: "知识库",
       description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
-      all: "全部",
+      all: "文档列表",
       knowledgeGraph: "知识图谱",
       sources: "知识库来源",
       sourceCount: "个来源",
@@ -649,16 +759,24 @@ export const PROTOTYPE_COPY = {
       processing: "处理中",
       failed: "失败",
       noResults: "没有匹配的来源",
-      illustrative: "交互原型 — 关系和社区由本原型编排，并非计算所得。",
-      communities: "社区",
+      illustrative: "交互原型 — 关系和主题分组由本原型编排，并非计算所得。",
+      communities: "主题分组",
+      selectAllTopics: "全选",
       sourceCommunity: "来源",
+      newBusinessCommunity: "新单",
+      servicingCommunity: "保全",
+      claimsCommunity: "理赔",
+      codebaseCommunity: "代码库",
       applicationCommunity: "投保申请",
       underwritingCommunity: "核保",
       partiesCommunity: "参与方",
       nodes: "个节点",
       nodeDetails: "节点详情",
+      searchResults: "搜索结果",
+      noMatchingNodes: "没有匹配的文档、概念或实体，请更换关键词或清除筛选。",
+      viewSource: "在文档列表中查看来源",
       selectNode: "选择节点以查看其关系。",
-      community: "社区",
+      community: "主题分组",
       relationships: "关系",
       provenance: "来源依据",
       documentNode: "文档",
@@ -668,6 +786,11 @@ export const PROTOTYPE_COPY = {
       zoomIn: "放大",
       zoomOut: "缩小",
       resetView: "重置视图",
+      toggleCommunities: "显示或收起主题分组",
+      closeNodeDetails: "关闭节点详情",
+      enterFullscreen: "进入全屏",
+      exitFullscreen: "退出全屏",
+      fullscreenUnavailable: "当前浏览器不支持全屏。",
       zoomLevel: "缩放比例",
       extracted: "已抽取",
       inferred: "推断",

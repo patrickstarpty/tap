@@ -2,6 +2,7 @@ import {
   DEFAULT_CODEX_MODEL_ID,
   isCodexModelId,
   type Conversation,
+  type LibrarySource,
 } from "../model";
 import type { ArtifactState } from "./model";
 
@@ -13,6 +14,12 @@ export interface PrototypeSnapshot {
   activeConversationId: string;
   conversations: readonly Conversation[];
   artifacts: ArtifactState;
+  library?: {
+    open: boolean;
+    examplesLoaded: boolean;
+    fwdLoaded: boolean;
+    localSources: readonly Pick<LibrarySource, "id" | "name" | "type">[];
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,7 +74,29 @@ export function readPrototypeSnapshot(
         ...(Array.isArray(conversation.turns) ? { turns } : {}),
       };
     });
-    return { ...value, conversations } as unknown as PrototypeSnapshot;
+    const library = isRecord(value.library)
+      ? {
+          open: value.library.open === true,
+          examplesLoaded: value.library.examplesLoaded === true,
+          fwdLoaded: value.library.fwdLoaded === true,
+          localSources: Array.isArray(value.library.localSources)
+            ? value.library.localSources
+                .filter(
+                  (source) =>
+                    isRecord(source) &&
+                    typeof source.id === "string" &&
+                    typeof source.name === "string" &&
+                    typeof source.type === "string",
+                )
+                .map(({ id, name, type }) => ({ id, name, type }))
+            : [],
+        }
+      : undefined;
+    return {
+      ...value,
+      conversations,
+      ...(library ? { library } : { library: undefined }),
+    } as unknown as PrototypeSnapshot;
   } catch {
     return null;
   }

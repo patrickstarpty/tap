@@ -1,0 +1,4 @@
+case_id,allocation_percent,expected_result
+BEN-001,100,accepted
+BEN-002,99,rejected
+BEN-003,101,rejected
