@@ -19,3 +19,5 @@
 - [Tapper V0 恢复与有界运维验收](2026-09-06-tapper-v0-recovery-review.md)：Task 4 通过；记录 Redis/Outbox 恢复、Operator 完成三写、0009、范围清理、独立审查及完整回归的实际限制。
 
 - [Tapper V0 对象存储与真实上传验收](2026-09-06-tapper-v0-object-storage-review.md)：Task 5 通过；记录独立 MinIO、旧 Azure 兼容、当前原型真实上传、重启验证、取消修正与回归限制。
+
+- [Tapper V0 文档解析隔离验收](2026-09-06-tapper-v0-parser-isolation-review.md)：Task 5A 通过；记录真实容器隔离、上传边界、冷恢复与原子记录修正、两轮复审及回归时序限制。

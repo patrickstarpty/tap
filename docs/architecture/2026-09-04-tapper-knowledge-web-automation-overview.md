@@ -36,15 +36,17 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 
 | 能力            | 当前仓库事实                                                                | v0.4 目标                                                                     |
 | --------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Knowledge       | 文档上传、可恢复摄取、Milvus `doc` 投影、限定来源回答与 Citation 基础已实现 | Project-scoped Source、持久 Conversation/SSE、真实脱敏/审计与质量门禁         |
+| Knowledge       | 文档上传、无网络隔离解析、可恢复摄取、Milvus `doc` 投影与 Citation 基础已实现 | Project-scoped Source、持久 Conversation/SSE、真实脱敏/审计与质量门禁         |
 | Knowledge Graph | 前端确定性 fixture                                                          | MySQL Snapshot/Node/Edge/Evidence、真实抽取 Worker 与 WebGL 探索              |
 | Test Management | 浏览器内 fixture                                                            | Test Plan/Test Case/BDD Draft、人工发布与不可变 Revision                      |
 | LCA             | 浏览器内 fixture、模拟 Run                                                  | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder      |
 | Execution       | Azure DevOps/Mobile 仅为旧原型探索                                          | Jenkins-first Provider、Published Revision、Evidence 和 Test Plan 结果投影    |
 | Identity        | 固定 Validation Scope、共同实时 Policy 与 Project 隔离                                                   | V0 typed Validation Actor/Project；P0 User/Session/Membership/RBAC            |
-| Deployment      | 开发 Compose 已加独立 TAP MinIO，保留 Azurite 显式兼容                        | TAP 独立 MinIO、Milvus、LiteLLM、自托管 Compose 与外置 Jenkins；P1 后才可生产 |
+| Deployment      | 开发 Compose 已有独立 TAP MinIO、私有 Parser supervisor/每任务容器，保留 Azurite 兼容                        | TAP 独立 MinIO、Milvus、LiteLLM、自托管 Compose 与外置 Jenkins；P1 后才可生产 |
 
 任何页面 fixture、模拟 `Passed`、fake Adapter 或单次本地 smoke 都不能被表述为目标能力已完成。
+
+[Task 5A 隔离解析验收](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)已完成：固定资源预算、流式上传防护、精确 owner/image 冷恢复及原子关联记录；同宿主用户/Docker 管理员仍属可信边界，V0 总门禁尚待 Task 5B。
 
 ## 3. 逻辑架构
 

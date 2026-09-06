@@ -134,7 +134,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)、[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)和[Project 接口验收](docs/reviews/2026-09-06-tapper-v0-http-review.md)；Project API、精确 Origin 与 Validation Mode 已接入当前产品原型，[Project Audit 基础](docs/reviews/2026-09-06-tapper-v0-audit-review.md)也已完成，[有界恢复与运维](docs/reviews/2026-09-06-tapper-v0-recovery-review.md)已接入，[MinIO 与真实上传](docs/reviews/2026-09-06-tapper-v0-object-storage-review.md)完成定向验收，继续实施隔离 Parser；V0 完整出口尚未通过。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
+V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)、[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)和[Project 接口验收](docs/reviews/2026-09-06-tapper-v0-http-review.md)；Project API、精确 Origin 与 Validation Mode 已接入当前产品原型，[Project Audit 基础](docs/reviews/2026-09-06-tapper-v0-audit-review.md)也已完成，[有界恢复与运维](docs/reviews/2026-09-06-tapper-v0-recovery-review.md)已接入，[MinIO 与真实上传](docs/reviews/2026-09-06-tapper-v0-object-storage-review.md)完成定向验收，[隔离 Parser](docs/reviews/2026-09-06-tapper-v0-parser-isolation-review.md)也已完成；当前执行 Task 5B，V0 完整出口尚未通过。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
 
 ## Tapper 本地知识工作区
 
@@ -149,12 +149,15 @@ cp .env.example .env
 # 在 .env 中填写 DASHSCOPE_API_KEY，并把 ws-your-workspace-id 换成自己的 Workspace ID；不要提交该文件
 make bootstrap
 make object-store-build PLATFORM=linux/arm64
+TAPPER_PARSER_PLATFORM=linux/arm64 make parser-build
 make demo-up
 make demo-check
 make demo-dev
 ```
 
 对象存储构建固定官方 MinIO 源码、Go 与 runtime 输入，在本机生成实际 image ID 和 ignored `.tapper/object-store-build.json` receipt；启动会核对 receipt、镜像与容器身份。以上命令的 `linux/arm64` 已实测；其他平台需指定对应平台并完成本机验证。MinIO 独立于 Milvus 自用存储，不发布 registry，也不把固定输入视为逐位一致重建的证明。
+
+文档解析镜像使用固定 Python 基础镜像和 `uv.lock` 中的四个解析依赖，在本机生成 `.tapper/parser-build.json` receipt；源码、锁或构建输入变化后需要重建。`make demo-dev` 先启动私有 Unix socket 监督进程，并以真实短解析确认可执行及可回收，再启动 API、Relay、Ingestion 与 Web。每次解析使用独立无网络容器，Parser 不开放 TCP 端口；停止应用时同时回收监督进程及其任务。`.tapper/parser-runtime/<compose-project>` 保留私有 owner/image 关联，重启先按原归属清理遗留任务，再执行当前镜像自检；不要把缺少错误文件当成清理成功。
 
 已有旧 `.env` 的工作区应同步所需配置，保留原凭据和存储引用。未配置 `TAPPER_OBJECT_STORE_PROVIDER` 时保留 Azure；新模板明确选择 MinIO。切换已有 Azure 数据时，显式设置 `TAPPER_LEGACY_AZURE_ENABLED=1` 并保留有效的 `AZURE_STORAGE_CONNECTION_STRING`，旧 locator 才能继续读取、删除及恢复 reservation；新写入进入 MinIO，不自动搬迁旧数据。
 

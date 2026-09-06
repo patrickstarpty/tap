@@ -480,28 +480,33 @@ V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project
 - Create: `deploy/parser/Dockerfile`
 - Create: `deploy/parser/build-inputs.json`
 - Create: `scripts/build-tapper-parser.sh`
+- Create: `scripts/parser_build.py`
 - Create: `scripts/parser_test_support.py`
 - Create: `deploy/parser/worker.py`
 - Create: `apps/backend/tests/contract/test_isolated_parser.py`
+- Modify: `apps/backend/tests/architecture/test_module_boundaries.py`
 - Create: `apps/backend/tests/security/test_document_upload_security.py`
+- Create: `apps/backend/tests/security/test_owned_parser.py`
+- Create: `apps/backend/tests/fixtures/parser_probe.py`
 - Create: `apps/backend/tests/fixtures/documents/hostile/README.md`
 - Create: `scripts/build-hostile-document-fixtures.py`
 - Create: `scripts/tapper-e2e-specs.json`
+- Create: `scripts/tapper_e2e_report.py`
 - Create: `apps/web/tests/e2e/knowledge-upload-security.spec.ts`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py`
 - Modify: `apps/backend/tests/unit/knowledge/test_document_parsers.py`
 - Modify: `apps/backend/tests/unit/knowledge/test_ingestion_worker.py`
 - Modify: `apps/backend/tests/integration/test_ingestion_recovery.py`
-- Modify: `apps/backend/tests/integration/test_ingestion_entrypoint.py`
+- Inspect: `apps/backend/tests/integration/test_ingestion_entrypoint.py`（现有入口/唤醒边界不直接解析，由独占后端回归验证）
 - Modify: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
-- Modify: `apps/backend/src/tap/interfaces/http/scope.py`
+- Inspect: `apps/backend/src/tap/interfaces/http/scope.py`（复用现有 authority 识别和 cached FormData，不作空修改）
 - Inspect: `apps/backend/src/tap/interfaces/http/app.py`（保留最外层 correlation 与精确 Origin 顺序）
-- Modify: `apps/backend/tests/contract/test_tapper_http_contract.py`
-- Modify: `apps/backend/tests/contract/test_validation_scope_http.py`
-- Modify: `apps/backend/tests/contract/test_http_problem_details.py`
-- Modify: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`
+- Inspect: `apps/backend/tests/contract/test_tapper_http_contract.py`（保留既有合同并运行完整模块）
+- Inspect: `apps/backend/tests/contract/test_validation_scope_http.py`（保留既有 Scope/Origin 预期并运行完整模块）
+- Inspect: `apps/backend/tests/contract/test_http_problem_details.py`（保留既有封闭 Problem 预期并运行完整模块）
+- Inspect: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`（保留 runtime graph/cleanup 测试并运行完整模块）
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `compose.yaml`
 - Modify: `scripts/run-tapper-dev.sh`
@@ -515,7 +520,11 @@ V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project
 
 **预检裁定（Task 5A 实施前置，尚未实现）：** 应用使用独立 async Parser Port，Ingestion 通过私有 Unix socket 访问专门的 host supervisor；仅监督进程具有固定的本机 Docker 控制能力。它按 Compose 的固定 job 模板为每次解析创建新的 `network_mode: none` 容器，通过固定 stdin/stdout 帧协议传入字节和封闭元数据。API/Ingestion 不持 Docker 客户端，容器无端口、host mount、Docker socket 或 Secret。dev/E2E 启动并管理监督进程；startup readiness 必须执行并回收同模板的真实短解析任务，不以闲置常驻容器代替执行健康。Unix socket 的 0700 父目录/0600 socket 保护跨 OS 用户访问，同一宿主用户仍属于一个信任域。
 
+监督进程从 Compose 读取封闭的单 service job 配置，显式禁用工作区 `.env` 和环境 Provider Secret 继承；为保证 stdin/stdout/stderr attach，使用固定 `docker create -i -a stdin -a stdout -a stderr` 后按已知 CID 启动。模板的全部安全与资源设置必须完整校验/映射，未知字段拒绝，实际容器 inspect 再次核对，不能因更换创建命令而丢失限制。
+
 成功与取消都以实际容器终态为依据：验证 owned CID/image/labels，TERM/KILL → wait → inspect stopped → remove，并回收本地 Docker CLI；不能把 CLI/网络调用结束当作解析子进程已停止。容器 PID1 独立限制启动后总寿命并回收子进程组；监督进程崩溃后仍由容器自身限制终止，重启按确切 owner namespace 对遗留任务进行核对和清理。Docker 不可用时保留无内容的 unresolved cleanup 记录并拒绝新任务，不伪造回收成功。生产协议不提供故障注入或任意命令入口；资源故障探针只进入单独的测试 image target。
+
+dev 在工作树 `.tapper/parser-runtime/<validated-project>/` 保留稳定的 owner/project/已核验 image 关联，使用 POSIX flock 排他；冷启动先按旧关联对账并回收，再绑定新 receipt。不能因 supervisor 非零退出或未写 unresolved 文件就删除状态。只有再次确认实际 owned 容器为空且本地进程完成回收，才能写 affirmative cleanup 证明；创建新工作前旧证明失效。超长 Unix socket 路径使用绑定 canonical state 与 UID 的短私有目录，保留 0700/归属/符号链接检查。固定 host-only 的 socket 路径查询与 cleanup-only 模式不进入解析请求协议；就绪证明绑定本次真实自检，旧 PID/socket marker 不得造成假就绪。测试必须覆盖从持久状态启动新 launcher/监督进程的 crash/restart，不能只复用内存中的旧对象。
 
 构建固定官方 Python 3.13.12 slim-bookworm 的平台 manifest：arm64 `sha256:34b27ac66ecf318887b55ea3c71f0db9307895efe631210231a66cc3fa130cf9`、amd64 `sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6`；已核对 registry 元数据，尚非运行证据。仅从现有 `uv.lock` 派生 pypdf 6.16.2、python-docx 1.2.0、lxml 6.1.2 与 typing-extensions 4.16.0 的固定平台 wheel URL/hash，不新增第二份依赖锁。临时构建上下文只含显式纯解析源码清单、协议/launcher、经过摘要校验的四包 wheel 和 provenance，不能发送整个仓库或安装 Backend SDK。receipt 同时绑定实际源码/锁/配方字节与最终 image/payload identity；启动拒绝陈旧制品，实际镜像必须验证普通 DOCX、加密 PDF 拒绝和无可选依赖兜底。平台 manifest 固定不等于该架构已经运行验收。
 
@@ -533,23 +542,38 @@ V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project
 
 上传使用专用 APIRoute 在 FastAPI `File(...)` 处理前执行有界 multipart 并缓存同一 FormData，保留生成合同；对所有失败、断连、取消和策略拒绝关闭已创建 spool。共享 authority 字段识别使 actor/project 等尝试仍返回原 403；Origin 在读取 body 前拒绝。帧长度、重复 JSON keys、截断、正常 EOF 与取消、输出上限及文档/Revision/media/filename/hash 绑定都必须验证；成功 payload 复用已有 canonical normalized codec。此窄框架接入须以当前锁定 Starlette/FastAPI 的实际行为测试，不能仅设置对文件无效的 max_part_size。
 
-- [ ] 写伪扩展、MIME/signature 不符、加密/超页 PDF、zip bomb、超大 entry、宏/OLE、external relationship、路径穿越、SSRF URL、timeout/OOM/crash 和安全错误不泄漏测试；E2E 证明拒绝后 API/Worker 仍健康。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest'`；预期 FAIL，原因为隔离 Parser、恶意 fixture 生成器或 E2E manifest 不存在，而不是浏览器或网络未启动。
-- [ ] 实现 deterministic hostile fixture builder 与隔离协议；测试不得提交真实恶意载荷以外的随机大文件。Compose/dev/e2e 统一启动并健康检查 Parser Worker，网络 policy 明确拒绝外部地址。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest' && make demo-e2e`；预期 PASS 且 E2E 报告 zero skipped/flaky。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(knowledge): isolate hostile document parsing`
+- [x] 写伪扩展、MIME/signature 不符、加密/超页 PDF、zip bomb、超大 entry、宏/OLE、external relationship、路径穿越、SSRF URL、timeout/OOM/crash 和安全错误不泄漏测试；E2E 证明拒绝后 API/Worker 仍健康。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest'`；预期 FAIL，原因为隔离 Parser、恶意 fixture 生成器或 E2E manifest 不存在，而不是浏览器或网络未启动。
+- [x] 实现 deterministic hostile fixture builder 与隔离协议；测试不得提交真实恶意载荷以外的随机大文件。Compose/dev/e2e 统一启动并健康检查 Parser Worker，网络 policy 明确拒绝外部地址。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest' && make demo-e2e`；预期 PASS 且 E2E 报告 zero skipped/flaky。再运行 `make check`、严格独占 MySQL/Redis/Azurite/MinIO wrapper 中的完整 Backend、完整 Web 回归和 `git diff --check`；禁止 plain `make test` 指向默认数据。
+- [x] Commit: `feat(knowledge): isolate hostile document parsing`
+
+**恢复记录一致性：** 校验后完全相同的 owner/project/image 关联保持原文件不变；新建或重新绑定通过同目录私有临时文件与原子替换完成。替换前的异常不能截断旧关联；在旧容器仍需回收时，必须保留可读的准确 owner/image。用有界故障注入验证，不扩大清理命名空间或运行预算。
+
+**完整回归裁定：** 既有 native-process architecture 测试按全 Backend 只允许 Codex Adapter，新增可信 Parser supervisor 后需要同步精确能力边界。仅允许固定 Codex Adapter 与固定 Parser supervisor entrypoint；应用侧 parser adapter/runtime 不得获得 Docker/native-process 能力或导入该监督进程，不能放开整个 entrypoints 目录。此测试文件加入本项最小修改范围，保留完整回归的原始失败，并运行完整 architecture 文件验证。
+
+**验收：** `963c700`；[Task 5A 验收记录](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)。最终复审/检查通过；fix2 契约 38、真实冷恢复 2 通过，fix1 四阶段 E2E 为 2/1/1/28 且零 skip/flaky/retry。完整 Backend 原始 2764 passed/1 旧架构断言失败/9 opt-in skip；该失败由完整架构文件 80 passed 覆盖，保留原始时间边界，不声称最终全套重跑。
 
 ### Task 5B: Close the V0 scope and reliability gate
 
 **Files:**
 
 - Create: `scripts/run-tapper-v0-gate.sh`
+- Create: `scripts/tapper_v0_gate.py`
 - Create: `apps/backend/tests/gates/test_v0_gate_report.py`
 - Create: `docs/reviews/<review-date>-v0-validation-scope-reliability-gate.md`
 - Modify: `docs/reviews/index.md`
 - Modify: `Makefile`
+- Modify: `scripts/migration_support.py`
+- Modify: `apps/backend/tests/integration/test_schema_drift.py`
+- Modify: `apps/backend/tests/unit/operations/test_redis_stream_recovery.py`
+- Modify: `apps/backend/tests/integration/test_knowledge_operations_recovery.py`
 
 **Gate:** `make gate-v0` runs schema drift, every `0006`–`0009` migration check, both authorization adapters' conformance, Project/Origin negative tests, Redis/Outbox recovery, bounded operator Audit, MinIO restart and parser security E2E. The report records planning baseline SHA, command, exit code, artifact digest and zero-skip count; missing evidence makes the gate fail.
+
+**预检裁定（尚未实施）：** shell 仅启动固定 Python gate runner；后者维护闭合命令表、五组显式 pytest 文件清单、原生 JUnit/Playwright 证据和源码摘要。只为 legacy relay 创建外层独占 MySQL，并组合已有 MinIO 与严格 receipt 验证的 Azurite；Project/MySQL、真实 Redis、Parser 和 E2E 保留各自独占 fixture。所有层级必须传播清理失败，schema/migration 与 nested fixture 的证据只包含封闭的非敏感拥有权/清理字段。补一项真实 SQL populated-ready/limit+1 snapshot 测试，关闭 Task 4 已记录的窄覆盖缺口，不把它称为真实 Milvus rebuild。
+
+完整 planning SHA 固定为 `a54ab433eae52500683a5ff6ff9d79466a30e1ca`，另记录实际测试 HEAD、未提交源码路径/模式/字节摘要，并在命令与清理后比较。报告目录必须新建且归本次运行所有；缺阶段、skip/flaky、原生计数不一致、非零退出、清理失败或源码变化均为 fail。Task 5A 的最终 E2E/exporter/Parser 接口在其验收后重读；失败命令缺少投影时记录明确的 absent/fail，不复制 private state 或伪造原生摘要。
 
 - [ ] 写 gate report parser，并用缺 planning SHA、缺命令、skipped test 与失败 migration 的 fixtures 验证非零退出。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 FAIL，原因为 V0 gate runner/report schema 不存在。
