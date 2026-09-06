@@ -106,7 +106,7 @@ class ProjectEventEnvelope:
 
 V0 Task 4 的 Operator 完成事件只在 `knowledge_operator_operation` 的结果、Audit 与 Outbox 同事务持久化后产生；`operationId` 等于 aggregate ID，`aggregate_version=1`。`command` 为 `recover-uploads | scavenge-staging | rebuild-milvus | reconcile-all`，`outcome` 为 `completed | partial | failed`；`resultDigest` 是已保存的封闭结果/计数的 canonical SHA-256（沿用 `sha256:` 前缀）。不含 Blob locator 或 Provider 原文。claim/lease 是运行协调，不是完成事件；重放原 operation 返回原结果和事件，不产生第二次完成。该项已由 Task 4 登记并接入实际完成事务，范围与验证限制见[恢复验收](../reviews/2026-09-06-tapper-v0-recovery-review.md)。
 
-`aggregate_id` 与 payload 中的资源 ID 上限为 64 字符，与现有 Outbox 存储一致；scope、event、correlation 与 idempotency ID 上限为 128 字符。时间戳必须带时区且可表示为 canonical UTC，不能只检查语法后让转换溢出阻塞持久事件处理。
+`aggregate_id` 与对应 payload 资源 ID 通常上限为64字符；Task6 对 `DocumentRevision` 单独扩为128，以保留真实68字符 Revision ID，其他 aggregate 仍保持64。`0010` 将 live/archive/dead-letter 三份 Outbox 的 aggregate 存储扩至128；不能据存储宽度放宽其他事件契约。scope、event、correlation 与 idempotency ID 上限为128字符。时间戳必须带时区且可表示为 canonical UTC，不能只检查语法后让转换溢出阻塞持久事件处理。
 
 ### 2.1 现有唤醒的迁移兼容契约
 
@@ -129,7 +129,7 @@ Outbox 的 canonical envelope JSON 非空；关系列的 Project/Actor/identity 
 
 `KnowledgeSource` 是 Project 内的逻辑容器，一个 Source 拥有一个或多个稳定 Document，每个 Document 拥有不可变 Revision。Knowledge 资源身份由 `project_id + source_id + document_id + revision_id + content_hash` 固定，Document 去重唯一性只在 `(project_id, dedupe_key)` 内成立；Chunk 另有跨 revision 稳定的 `logical_chunk_id` 与不可变 `chunk_id`。Citation 必须同时绑定 source/document revision、chunk、anchor、原文 digest 与回答时的授权快照。
 
-Legacy 数据迁移为每个现有 Document 创建同 Project Source，保留 Document ID，并把历史 `source_id=document_id` 显式映射到新 Source ID。Milvus 新版本 collection 使用 canonical `enterprise_id/project_id/source_id`；旧 `tenant_id` 是迁移输入而非公共或新物理契约。
+Task6 的 `0010` 已为每个 legacy Document 创建同 Project Source，保留所有 Document/Revision/Citation ID，并把历史 `source_id=document_id` 显式映射到新 Source ID。Answer 通过有序关联保留全部选中 Revision（含多Source和未引用项），原 selected JSON 不改写；复合约束保证 Source/Document/Revision/Citation 归属。具体迁移、审计及测试边界见[Source账本验收](../reviews/2026-09-06-tapper-v1-source-ledger-review.md)。Task6A 将为 Milvus 新版本 collection 引入 canonical `enterprise_id/project_id/source_id`；旧 `tenant_id` 是迁移输入而非公共或新物理契约。
 
 ```python
 class ModelGateway(Protocol):
