@@ -561,7 +561,7 @@
           "type": "string"
         },
         "aggregate_id": {
-          "maxLength": 64,
+          "maxLength": 128,
           "minLength": 1,
           "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
           "type": "string"
@@ -642,7 +642,7 @@
               "type": "string"
             },
             "revisionId": {
-              "maxLength": 64,
+              "maxLength": 128,
               "minLength": 1,
               "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
               "type": "string"
@@ -706,7 +706,7 @@
           "type": "string"
         },
         "aggregate_id": {
-          "maxLength": 64,
+          "maxLength": 128,
           "minLength": 1,
           "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
           "type": "string"
@@ -787,7 +787,7 @@
               "type": "string"
             },
             "revisionId": {
-              "maxLength": 64,
+              "maxLength": 128,
               "minLength": 1,
               "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
               "type": "string"

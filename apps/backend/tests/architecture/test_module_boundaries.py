@@ -946,3 +946,18 @@ def test_policy_scanner_allows_the_explicit_public_authorizer_builder(tmp_path: 
     assert not any(policy_import_exposes_construction(reference) for reference in references), (
         references
     )
+
+
+def test_task6_ledger_and_search_audit_use_governance_public_boundary():
+    forbidden = []
+    for path in (
+        KNOWLEDGE / "adapters" / "mysql_documents.py",
+        KNOWLEDGE / "adapters" / "mysql_audit.py",
+    ):
+        for reference in parsed_imports(path, package="tap.modules.knowledge"):
+            if (
+                reference.module.startswith("tap.modules.governance.")
+                and reference.module != "tap.modules.governance.ports.audit"
+            ):
+                forbidden.append(str(path.relative_to(BACKEND_SOURCE)))
+    assert forbidden == []

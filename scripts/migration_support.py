@@ -26,7 +26,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import MetaData, create_engine, inspect, select
+from sqlalchemy import MetaData, create_engine, inspect, select, text
 from sqlalchemy.engine import Connection, make_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,7 @@ BASELINE = "0005_projection_lineage"
 PROJECT_SCOPE_REVISION = "0007_project_scope_backfill"
 AUDIT_REVISION = "0008_project_audit"
 OPERATIONS_REVISION = "0009_outbox_operations"
+SOURCES_REVISION = "0010_knowledge_sources"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -573,6 +574,7 @@ def assert_preserved(
         PROJECT_SCOPE_REVISION,
         AUDIT_REVISION,
         OPERATIONS_REVISION,
+        SOURCES_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -608,9 +610,15 @@ def assert_preserved(
         PROJECT_SCOPE_REVISION,
         AUDIT_REVISION,
         OPERATIONS_REVISION,
+        SOURCES_REVISION,
     }:
         assert_identity_seed(connection)
-    if revision in {PROJECT_SCOPE_REVISION, AUDIT_REVISION, OPERATIONS_REVISION}:
+    if revision in {
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+        OPERATIONS_REVISION,
+        SOURCES_REVISION,
+    }:
         assert_scope_backfill(connection)
     return counts
 
@@ -831,7 +839,10 @@ def assert_scope_rejection_paths(database: IsolatedMysql, engine: Any) -> None:
         )
         connection.execute(
             text(
-                "INSERT INTO chat_turn SELECT 'downgrade-turn', chat_id, client_request_id, message, state, last_sequence, created_at, enterprise_id, 'downgrade-probe', actor_id, identity_mode, identity_origin FROM chat_turn WHERE turn_id='legacy-turn'"
+                "INSERT INTO chat_turn SELECT 'downgrade-turn', chat_id, "
+                "client_request_id, message, state, last_sequence, created_at, "
+                "enterprise_id, 'downgrade-probe', actor_id, identity_mode, "
+                "identity_origin FROM chat_turn WHERE turn_id='legacy-turn'"
             )
         )
     try:
@@ -1086,11 +1097,16 @@ def run_schema_gate() -> dict[str, Any]:
                 differences = schema_differences(
                     connection, load_authoritative_metadata()
                 )
+                actual_revision = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
             return {
                 "status": "failed" if differences else "passed",
                 "gate": "schema-drift",
                 "ownership": database.ownership,
                 "tables": len(load_authoritative_metadata().tables),
+                "table_names": sorted(load_authoritative_metadata().tables),
+                "revision": actual_revision,
                 "differences": differences,
             }
         finally:
@@ -1105,6 +1121,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         PROJECT_SCOPE_REVISION,
         AUDIT_REVISION,
         OPERATIONS_REVISION,
+        SOURCES_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1119,6 +1136,21 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
+            if revision == SOURCES_REVISION:
+                with engine.connect() as connection:
+                    assert_source_backfill(connection)
+                database.downgrade(OPERATIONS_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, OPERATIONS_REVISION)
+                    if "knowledge_source" in inspect(connection).get_table_names():
+                        raise ValueError("source downgrade retained owned tables")
+                database.upgrade(SOURCES_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCES_REVISION)
+                    assert_source_backfill(connection)
+                identity_result.update(
+                    source_backfill="passed", source_downgrade_replay="passed"
+                )
             if revision == OPERATIONS_REVISION:
                 with engine.connect() as connection:
                     assert_operations_constraints(connection)
@@ -1209,3 +1241,33 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             }
         finally:
             engine.dispose()
+
+
+def assert_source_backfill(connection: Connection) -> None:
+    import hashlib
+
+    source_id = (
+        "src_"
+        + hashlib.sha256(b"legacy-source-v1\0tapper-demo\0legacy-document").hexdigest()[
+            :32
+        ]
+    )
+    for table in (
+        "knowledge_document",
+        "knowledge_document_revision",
+        "knowledge_citation_snapshot",
+        "knowledge_source",
+        "knowledge_source_legacy_map",
+        "knowledge_answer_source",
+    ):
+        rows = connection.execute(text(f"SELECT source_id FROM {table}")).all()
+        if rows != [(source_id,)]:
+            raise ValueError("source backfill identity mismatch")
+    row = connection.execute(
+        text(
+            "SELECT document_id, revision_id, source_content_hash, ordinal "
+            "FROM knowledge_answer_source"
+        )
+    ).one()
+    if tuple(row) != ("legacy-document", "legacy-revision", "sha256:" + "a" * 64, 0):
+        raise ValueError("source answer selection mismatch")

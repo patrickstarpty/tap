@@ -41,15 +41,16 @@ from tap.modules.knowledge.adapters.codex_target import (
 )
 from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.adapters.milvus.audit import (
-    MilvusSearchAuditEvent,
     SearchAuditSink,
 )
+from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
+from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import (
     DocumentEmbeddingPort,
 )
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
-from tap.modules.knowledge.ports.models import AnswerGeneration, RedactionResult
+from tap.modules.knowledge.ports.models import AnswerGeneration
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
@@ -685,6 +686,8 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         raise TypeError("Tapper API runtime requires validated settings")
     resources = OwnedResources()
     try:
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
         engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
@@ -696,7 +699,14 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         _push_if_owned(resources, embeddings)
         answer_backend = _create_answer_backend(settings, embeddings=embeddings)
         _push_if_owned(resources, answer_backend.owner)
-        search, reader, target = await _create_search(settings)
+        search, reader, target = await _create_search(
+            settings,
+            audit_sink=MysqlSearchAuditSink(
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=repository.scope,
+                policy_version="tapper-demo-policy-v1",
+            ),
+        )
         resources.push(search)
         models_probe_client = _create_models_probe_client(settings)
         _push_if_owned(resources, models_probe_client)
@@ -719,7 +729,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             embeddings=embeddings,
             answers=answer_backend.generator,
             readiness=readiness,
-            redactor=LocalEgressRedactor(),
+            redactor=PatternEgressRedactor(),
             scope_provider=scope_provider,
             authorization_policy=authorization_policy,
         )
@@ -789,24 +799,6 @@ def _push_if_owned(resources: OwnedResources, resource: object | None) -> None:
         resources.push(resource)
 
 
-class LocalEgressRedactor:
-    """Fixed local egress decision that never logs or stores query content."""
-
-    async def redact(self, text: str) -> RedactionResult:
-        return RedactionResult(
-            sanitized_text=text,
-            redaction_version="tapper-local-egress-v1",
-        )
-
-
-class LocalSearchAuditSink(SearchAuditSink):
-    """Accept the fixed secret-free event without logging query or evidence content."""
-
-    async def emit(self, event: MilvusSearchAuditEvent) -> None:
-        if not isinstance(event, MilvusSearchAuditEvent):
-            raise TypeError("Tapper search audit requires the fixed Milvus event")
-
-
 async def _create_database(
     settings: TapperSettings,
 ) -> tuple[AsyncEngine, MysqlDocumentRepository]:
@@ -837,7 +829,7 @@ def _build_document_repository(
 ) -> MysqlDocumentRepository:
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
-    return MysqlDocumentRepository(sessions, scope=scope)
+    return MysqlDocumentRepository(sessions, scope=scope, audit_factory=create_project_audit)
 
 
 def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
@@ -1099,6 +1091,8 @@ def _build_document_index(
 
 async def _create_search(
     settings: TapperSettings,
+    *,
+    audit_sink: SearchAuditSink,
 ) -> tuple[MilvusSearchAdapter, PyMilvusReader, MilvusIndexTarget]:
     from pydantic import SecretStr
 
@@ -1130,7 +1124,7 @@ async def _create_search(
     )
     reader = _open_search_reader(config)
     try:
-        search = _build_search_adapter(config, reader)
+        search = _build_search_adapter(config, reader, audit_sink=audit_sink)
     except BaseException as error:
         local = OwnedResources()
         local.push(reader)
@@ -1148,13 +1142,15 @@ def _open_search_reader(config: MilvusSearchConfig) -> PyMilvusReader:
 def _build_search_adapter(
     config: MilvusSearchConfig,
     reader: MilvusReader,
+    *,
+    audit_sink: SearchAuditSink,
 ) -> MilvusSearchAdapter:
     from tap.modules.knowledge.adapters.milvus.search import MilvusSearchAdapter
 
     return MilvusSearchAdapter(
         config,
         reader,
-        LocalSearchAuditSink(),
+        audit_sink,
     )
 
 

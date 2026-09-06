@@ -27,6 +27,7 @@ from tap.modules.knowledge.domain.documents import (
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
+    DeletionTarget,
     DocumentCapacityExceeded,
     DocumentCursor,
     DocumentNotFound,
@@ -151,7 +152,18 @@ class DocumentService:
                     original = await self._artifacts.recover_original(
                         reservation.staging_key, reservation.revision_id
                     )
-                await self._repository.activate_upload(reservation, original)
+                if recovery.cancelled_source:
+                    original = await self._repository.record_upload_promotion(reservation, original)
+                    await self._artifacts.delete_revision_artifacts(
+                        DeletionTarget(
+                            document_id=reservation.document_id,
+                            revision_id=reservation.revision_id,
+                            chunk_ids=(),
+                            artifact_locators=(original,),
+                        )
+                    )
+                else:
+                    await self._repository.activate_upload(reservation, original)
             await _settle_cleanup(self._artifacts.discard_staging(reservation.staging_key))
             await self._repository.complete_upload_cleanup(
                 reservation.reservation_id, reservation.owner_token

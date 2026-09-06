@@ -230,6 +230,7 @@ class ReserveUpload:
     parser_version: str = PARSER_VERSION
     chunker_version: str = CHUNKER_VERSION
     pipeline_version: str = PIPELINE_VERSION
+    source_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.staging_key, str) or not self.staging_key.strip():
@@ -359,6 +360,7 @@ class IngestionJob:
 class UploadRecovery:
     reservation: UploadReservation
     activated: bool
+    cancelled_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,6 +475,8 @@ class IndexReceipt:
     revision_id: str
     index_version: str
     indexed_count: int
+    projection_digest: str | None = None
+    schema_version: str | None = None
 
     def __post_init__(self) -> None:
         if not self.revision_id or not self.index_version:
@@ -502,6 +506,8 @@ class IngestionWork:
     chunker_version: str
     pipeline_version: str
     manifest: tuple[ManifestChunk, ...]
+    chunk_manifest_digest: str | None = None
+    projection_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,6 +527,8 @@ class JobStageCommit(JobCheckpoint):
     embeddings_locator: ArtifactLocator | None = None
     manifest: tuple[ManifestChunk, ...] = ()
     chunk_count: int | None = None
+    chunk_manifest_digest: str | None = None
+    projection_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.chunk_count is not None and (

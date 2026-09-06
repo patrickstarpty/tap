@@ -78,6 +78,20 @@ PRESERVED_TABLES = {
     "knowledge_projection_lineage",
 }
 
+SOURCE_SCHEMA_TABLES = PRESERVED_TABLES | {
+    "enterprise",
+    "project",
+    "actor_principal",
+    "project_audit",
+    "outbox_archive",
+    "outbox_dead_letter",
+    "knowledge_operator_operation",
+    "knowledge_source",
+    "knowledge_source_legacy_map",
+    "knowledge_answer_source",
+    "knowledge_search_audit",
+}
+
 ANCHORS = {
     "contract/test_validation_authorization_policy.py": [
         "test_scope_identity_allows_registered_actor_and_rechecks_disable",
@@ -426,7 +440,9 @@ def validate_e2e(value: dict[str, Any], phase: str) -> dict[str, int]:
     return expected
 
 
-def validate_schema(value: dict[str, Any], revision: str | None) -> None:
+def validate_schema(
+    value: dict[str, Any], revision: str | None, *, schema_version: int = 1
+) -> None:
     require(value.get("status") == "passed", "schema or migration failed")
     owned = value.get("ownership", {})
     require(
@@ -437,6 +453,20 @@ def validate_schema(value: dict[str, Any], revision: str | None) -> None:
         "schema cleanup missing",
     )
     if revision is None:
+        if schema_version == 2:
+            names = value.get("table_names")
+            require(
+                value.get("gate") == "schema-drift"
+                and value.get("revision") == "0010_knowledge_sources"
+                and value.get("tables") == 25
+                and isinstance(names, list)
+                and len(names) == 25
+                and set(names) == SOURCE_SCHEMA_TABLES
+                and value.get("differences") == [],
+                "schema drift evidence incomplete",
+            )
+            return
+        require(schema_version == 1, "unsupported schema report version")
         require(
             value.get("gate") == "schema-drift"
             and value.get("tables") == 21
@@ -595,7 +625,7 @@ def source_snapshot() -> dict[str, Any]:
 
 def validate_report(output: Path, report: dict[str, Any]) -> dict[str, int]:
     require(
-        report.get("schemaVersion") == 1 and report.get("cleanup") == "complete",
+        report.get("schemaVersion") in {1, 2} and report.get("cleanup") == "complete",
         "report or cleanup incomplete",
     )
     validate_provenance(report["sourceBefore"], report["sourceAfter"])
@@ -628,7 +658,11 @@ def validate_report(output: Path, report: dict[str, Any]) -> dict[str, int]:
                 "schema artifact absent",
             )
             value = json.loads(read_artifact(output, artifacts[0]))
-            validate_schema(value, None if name == "schema" else name)
+            validate_schema(
+                value,
+                None if name == "schema" else name,
+                schema_version=report["schemaVersion"],
+            )
             validate_ownership(command.get("ownership", []), "mysql", 1)
         elif expected["kind"] == "pytest":
             require(
@@ -957,7 +991,7 @@ def run_gate() -> int:
     output.mkdir(mode=0o700)
     print("V0 gate evidence: " + str(output), flush=True)
     report: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "commands": [],
         "cleanup": "pending",
         "verdict": "fail",

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import insert
 
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.mysql import project
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
@@ -50,8 +51,12 @@ async def test_document_project_scope_isolates_digest_lookup_recovery_and_claims
                     project_id="other-project", enterprise_id="local", enabled=True
                 )
             )
-        first = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
-        second = MysqlDocumentRepository(sessions, scope=OTHER_SCOPE)
+        first = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
+        second = MysqlDocumentRepository(
+            sessions, scope=OTHER_SCOPE, audit_factory=create_project_audit
+        )
         now = datetime(2026, 9, 5)
 
         def command(staging_key: str) -> ReserveUpload:
@@ -115,7 +120,7 @@ async def test_document_project_scope_retains_only_its_answers_and_citations(
                 )
             )
         repositories = [
-            MysqlDocumentRepository(sessions, scope=scope)
+            MysqlDocumentRepository(sessions, scope=scope, audit_factory=create_project_audit)
             for scope in (VALIDATION_SCOPE, OTHER_SCOPE)
         ]
         selections = []
@@ -217,59 +222,91 @@ async def test_document_project_scope_retains_only_its_answers_and_citations(
 
 
 @pytest.mark.asyncio
-async def test_document_project_scope_keeps_owned_citation_when_revision_is_missing(
+async def test_document_project_scope_retains_owned_history_and_refuses_orphan_citation(
     project_database: str,
 ) -> None:
-    from tap.modules.knowledge.adapters.mysql_documents import (
-        knowledge_answer_snapshot,
-        knowledge_citation_snapshot,
+    from apps.backend.tests.integration.test_citation_snapshot_transaction import (
+        seed_ready,
+        snapshot,
     )
-    from tap.platform.db.project_scope import scope_values
+    from sqlalchemy import select, update
+    from sqlalchemy.exc import IntegrityError
+
+    from tap.modules.knowledge.adapters.mysql_documents import (
+        knowledge_citation_snapshot,
+        knowledge_document,
+        knowledge_document_revision,
+    )
 
     engine, sessions = create_engine_and_session_factory(project_database)
+    repository = MysqlDocumentRepository(
+        sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+    )
+    other = MysqlDocumentRepository(sessions, scope=OTHER_SCOPE, audit_factory=create_project_audit)
     try:
-        now = datetime(2026, 9, 5)
+        selected = await seed_ready(engine, "retained")
+        await repository.save_answer_with_citations(
+            snapshot("retained", selected, with_citation=True)
+        )
         async with sessions.begin() as session:
+            original_revision = dict(
+                (await session.execute(select(knowledge_document_revision))).mappings().one()
+            )
+            original_citation = dict(
+                (await session.execute(select(knowledge_citation_snapshot))).mappings().one()
+            )
             await session.execute(
-                insert(knowledge_answer_snapshot).values(
-                    **scope_values(VALIDATION_SCOPE),
-                    trace_id="retained-answer",
-                    query_hash="sha256:" + "a" * 64,
-                    selected_revisions_json=[
-                        {
-                            "documentId": "doc-retained",
-                            "revisionId": "rev-retained",
-                            "sourceContentHash": "sha256:" + "b" * 64,
-                        }
-                    ],
-                    created_at=now,
+                insert(knowledge_document_revision).values(
+                    **{
+                        **original_revision,
+                        "revision_id": "rev_latest",
+                        "parser_version": "parser-v2",
+                    }
                 )
             )
             await session.execute(
-                insert(knowledge_citation_snapshot).values(
-                    **scope_values(VALIDATION_SCOPE),
-                    trace_id="retained-answer",
-                    citation_id="retained-citation",
-                    document_id="doc-retained",
-                    revision_id="rev-retained",
-                    chunk_id="chunk-retained",
-                    source_content_hash="sha256:" + "b" * 64,
-                    chunk_content_hash="sha256:" + "c" * 64,
-                    anchor_json={
-                        "type": "document",
-                        "headingPath": [],
-                        "startOffset": 0,
-                        "endOffset": 8,
-                    },
-                    created_at=now,
-                )
+                update(knowledge_document)
+                .where(knowledge_document.c.document_id == selected.document_id)
+                .values(current_revision_id="rev_latest")
             )
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
-        lookup = await repository.load_citation("retained-citation")
+        lookup = await repository.load_citation("citation-retained")
         assert lookup is not None
-        assert lookup.citation.citation_id == "retained-citation"
-        assert lookup.document is None
-        assert lookup.manifest is None
+        assert lookup.citation.revision_id == selected.revision_id
+        assert lookup.document is not None
+        assert lookup.document.current_revision_id == "rev_latest"
+        assert lookup.manifest is not None
         assert await repository.citation_is_current(lookup.citation) is False
+        assert await other.load_citation("citation-retained") is None
+        # Supply a real Source identity: the rejection must be the ownership FK,
+        # not a missing required column before that constraint is exercised.
+        with pytest.raises(IntegrityError) as rejected:
+            async with sessions.begin() as session:
+                await session.execute(
+                    insert(knowledge_citation_snapshot).values(
+                        **{
+                            **original_citation,
+                            "citation_id": "orphan-citation",
+                            "revision_id": "missing-revision",
+                        }
+                    )
+                )
+        assert rejected.value.orig.args[0] == 1452
+        async with sessions() as session:
+            retained_revision = dict(
+                (
+                    await session.execute(
+                        select(knowledge_document_revision).where(
+                            knowledge_document_revision.c.revision_id == selected.revision_id
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            retained_citations = (
+                (await session.execute(select(knowledge_citation_snapshot))).mappings().all()
+            )
+        assert retained_revision == original_revision
+        assert retained_citations == [original_citation]
     finally:
         await engine.dispose()

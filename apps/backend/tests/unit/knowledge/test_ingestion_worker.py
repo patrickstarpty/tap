@@ -25,6 +25,7 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.sources import projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     ClaimedIngestionJob,
@@ -154,6 +155,12 @@ class StatefulRepository:
             )
         if commit.embeddings_locator is not None:
             self.work = replace(self.work, embeddings_locator=commit.embeddings_locator)
+        if commit.projection_digest is not None:
+            self.work = replace(
+                self.work,
+                projection_digest=commit.projection_digest,
+                chunk_manifest_digest=commit.chunk_manifest_digest,
+            )
         next_stage = {
             JobStage.STORED: JobStage.PARSING,
             JobStage.PARSING: JobStage.CHUNKING,
@@ -476,6 +483,10 @@ class Index:
             revision_id=work.revision_id,
             index_version=index_version,
             indexed_count=len(self.rows),
+            schema_version="schema-v1",
+            projection_digest=projection_digest(
+                work.revision_id, "schema-v1", index_version, work.manifest
+            ),
         )
 
     async def delete_revision(self, target: DeletionTarget) -> None:
@@ -1218,3 +1229,25 @@ async def test_run_once_rejects_unbounded_or_non_integer_limits(limit: object) -
 
     with pytest.raises(ValueError, match="between 1 and 50"):
         await worker.run_once(limit=limit)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_legacy_inflight_ready_reconciles_receipts_before_completion():
+    worker, repository, artifacts, embeddings, index, clock = worker_parts()
+    assert (await worker.run_once(limit=1)).ready == 1
+    original_manifest = repository.work.manifest
+    original_calls = embeddings.calls
+    repository.pending = True
+    repository.job = replace(repository.job, stage=JobStage.READY)
+    repository.work = replace(
+        repository.work, stage=JobStage.READY, chunk_manifest_digest=None, projection_digest=None
+    )
+    index.rows.clear()
+    repository.commits.clear()
+    assert (await worker.run_once(limit=1)).ready == 1
+    assert repository.work.manifest == original_manifest
+    assert repository.work.chunk_manifest_digest is not None
+    assert repository.work.projection_digest is not None
+    assert repository.commits == [JobStage.READY]
+    assert index.upsert_calls == 2
+    assert embeddings.calls == original_calls

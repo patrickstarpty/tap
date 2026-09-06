@@ -231,11 +231,23 @@ async def _seed_fence_facts(engine) -> None:
 
     now = datetime(2026, 9, 5)
     async with engine.begin() as connection:
+        from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
+
         for document_id in ("doc_a", "doc_b"):
+            await connection.execute(
+                insert(knowledge_source).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    source_id="src_" + document_id,
+                    name="fixture",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             await connection.execute(
                 insert(knowledge_document).values(
                     **scope_values(VALIDATION_SCOPE),
                     document_id=document_id,
+                    source_id="src_" + document_id,
                     filename="fence.txt",
                     media_type="text/plain",
                     source_content_hash="sha256:" + "a" * 64,
@@ -253,6 +265,7 @@ async def _seed_fence_facts(engine) -> None:
                 **scope_values(VALIDATION_SCOPE),
                 revision_id="rev_deleted",
                 document_id="doc_a",
+                source_id="src_doc_a",
                 source_content_hash="sha256:" + "a" * 64,
                 original_blob_locator="local/fence.txt",
                 parser_version="test",
@@ -270,6 +283,9 @@ async def _clean_fence_facts(engine) -> None:
         )
         await connection.execute(
             text("DELETE FROM knowledge_document WHERE document_id IN ('doc_a', 'doc_b')")
+        )
+        await connection.execute(
+            text("DELETE FROM knowledge_source WHERE source_id IN ('src_doc_a', 'src_doc_b')")
         )
 
 

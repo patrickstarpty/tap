@@ -8,6 +8,7 @@ import pytest
 from apps.backend.tests.owned_mysql import owned_project_database_url
 from sqlalchemy import select, text, update
 
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.platform.db.session import create_engine_and_session_factory
 
@@ -130,7 +131,9 @@ def test_operator_runtime_recovery_composes_existing_reservation_lifecycle(
     async def run():
         url = owned_project_database_url(owned_project_mysql)
         engine, sessions = create_engine_and_session_factory(url)
-        documents = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        documents = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             reservation = await documents.reserve_upload(
                 ReserveUpload.from_staged(
@@ -260,7 +263,9 @@ def test_operator_recovery_effect_replay_lease_loss_and_publication_gap(owned_pr
                 ).scalar_one()
                 assert result is None
 
-            documents = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+            documents = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await documents.reserve_upload(
                 ReserveUpload.from_staged(
                     StagedOriginal(
@@ -309,7 +314,9 @@ def test_operator_ready_snapshot_returns_populated_work_and_rejects_limit_plus_o
         engine, sessions = create_engine_and_session_factory(
             owned_project_database_url(owned_project_mysql)
         )
-        documents = ledger.MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        documents = ledger.MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         repository = MysqlOperationRepository(engine, scope=VALIDATION_SCOPE)
         expected = {}
         try:

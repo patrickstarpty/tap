@@ -42,11 +42,14 @@ class MysqlProjectAudit:
         *,
         correlation_id: str,
         idempotency_key: str,
+        resource_id: str | None = None,
     ) -> ProjectAuditFact:
         scope = require_audit_scope(scope)
         if scope != self._scope:
             raise ValueError("audit scope differs from bound scope")
-        digest = audit_content_digest(scope, action, resource, outcome, safe_metadata)
+        digest = audit_content_digest(
+            scope, action, resource, outcome, safe_metadata, resource_id=resource_id
+        )
         require_identifier("correlation_id", correlation_id)
         require_identifier("idempotency_key", idempotency_key)
         self._require_transaction()
@@ -56,6 +59,7 @@ class MysqlProjectAudit:
             "occurred_at": datetime.now(timezone.utc).replace(tzinfo=None),
             "action": action.value,
             "resource": resource.value,
+            "resource_id": resource_id,
             "outcome": outcome.value,
             "correlation_id": correlation_id,
             "idempotency_key": idempotency_key,
@@ -99,6 +103,7 @@ class MysqlProjectAudit:
             scope=persisted_scope,
             action=AuditAction(row["action"]),
             resource=AuditResource(row["resource"]),
+            resource_id=row["resource_id"],
             outcome=AuditOutcome(row["outcome"]),
             correlation_id=row["correlation_id"],
             idempotency_key=row["idempotency_key"],

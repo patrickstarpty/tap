@@ -272,7 +272,17 @@ class MilvusDocumentIndex:
             raise
         except Exception as error:
             raise IndexUnavailable("Tapper Milvus upsert failed") from error
-        return IndexReceipt(work.revision_id, index_version, len(chunks))
+        from tap.modules.knowledge.domain.sources import projection_digest
+
+        return IndexReceipt(
+            work.revision_id,
+            index_version,
+            len(chunks),
+            projection_digest(
+                work.revision_id, self._config.schema_version, index_version, work.manifest
+            ),
+            self._config.schema_version,
+        )
 
     async def fence_revision(self, target: DeletionTarget) -> None:
         try:

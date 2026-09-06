@@ -13,6 +13,12 @@ from tap.modules.access.domain.context import ProjectScopeContext, require_ident
 
 
 class AuditAction(StrEnum):
+    SOURCE_CREATED = "source-created"
+    SOURCE_DELETED = "source-deleted"
+    REVISION_ACCEPTED = "document-revision-accepted"
+    REVISION_READY = "document-revision-ready"
+    INGESTION_RETRIED = "document-ingestion-retried"
+    DELETION_REQUESTED = "document-deletion-requested"
     RECOVER_UPLOADS = "recover-uploads"
     SCAVENGE_STAGING = "scavenge-staging"
     REBUILD_MILVUS = "rebuild-milvus"
@@ -21,6 +27,8 @@ class AuditAction(StrEnum):
 
 class AuditResource(StrEnum):
     # The resource identity is the explicit Enterprise/Project scope.
+    KNOWLEDGE_SOURCE = "knowledge-source"
+    DOCUMENT_REVISION = "document-revision"
     PROJECT_MAINTENANCE = "project-maintenance"
 
 
@@ -84,6 +92,8 @@ def audit_content_digest(
     resource: AuditResource,
     outcome: AuditOutcome,
     safe_metadata: SafeAuditMetadata,
+    *,
+    resource_id: str | None = None,
 ) -> str:
     scope = require_audit_scope(scope)
     for value, kind in ((action, AuditAction), (resource, AuditResource), (outcome, AuditOutcome)):
@@ -91,6 +101,28 @@ def audit_content_digest(
             raise TypeError("audit vocabulary must use registered values")
     if type(safe_metadata) is not SafeAuditMetadata:
         raise TypeError("audit requires SafeAuditMetadata")
+    expected_resource = (
+        AuditResource.KNOWLEDGE_SOURCE
+        if action in {AuditAction.SOURCE_CREATED, AuditAction.SOURCE_DELETED}
+        else AuditResource.DOCUMENT_REVISION
+        if action
+        in {
+            AuditAction.REVISION_ACCEPTED,
+            AuditAction.REVISION_READY,
+            AuditAction.INGESTION_RETRIED,
+            AuditAction.DELETION_REQUESTED,
+        }
+        else AuditResource.PROJECT_MAINTENANCE
+    )
+    if resource is not expected_resource:
+        raise ValueError("audit action/resource mismatch")
+    if resource is AuditResource.PROJECT_MAINTENANCE:
+        if resource_id is not None:
+            raise ValueError("maintenance resource identity must be null")
+    else:
+        if resource_id is None:
+            raise ValueError("knowledge audit requires resource identity")
+        require_identifier("resource_id", resource_id)
     metadata = SafeAuditMetadata(safe_metadata.values)
     material = [
         scope.enterprise_id,
@@ -103,6 +135,8 @@ def audit_content_digest(
         outcome.value,
         dict(metadata.values),
     ]
+    if resource_id is not None:
+        material.append(resource_id)
     return hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -124,6 +158,7 @@ class ProjectAuditFact:
     idempotency_key: str
     content_digest: str
     safe_metadata: SafeAuditMetadata
+    resource_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("audit_id", "correlation_id", "idempotency_key"):
@@ -133,7 +168,12 @@ class ProjectAuditFact:
         object.__setattr__(self, "occurred_at", self.occurred_at.astimezone(timezone.utc))
         object.__setattr__(self, "scope", require_audit_scope(self.scope))
         if self.content_digest != audit_content_digest(
-            self.scope, self.action, self.resource, self.outcome, self.safe_metadata
+            self.scope,
+            self.action,
+            self.resource,
+            self.outcome,
+            self.safe_metadata,
+            resource_id=self.resource_id,
         ):
             raise ValueError("audit content digest does not match its facts")
         object.__setattr__(self, "safe_metadata", SafeAuditMetadata(self.safe_metadata.values))

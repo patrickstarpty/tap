@@ -171,7 +171,13 @@ class ProjectEventEnvelope:
             "correlation_id",
             "idempotency_key",
         ):
-            _identifier(getattr(self, name), name, max_length=64 if name == "aggregate_id" else 128)
+            _identifier(
+                getattr(self, name),
+                name,
+                max_length=64
+                if name == "aggregate_id" and self.aggregate_type != "DocumentRevision"
+                else 128,
+            )
         if self.causation_id is not None:
             _identifier(self.causation_id, "causation_id")
         if type(self.schema_version) is not int or self.schema_version != 1:
@@ -309,7 +315,10 @@ def project_event_schema() -> dict[str, Any]:
                 "idempotency_key",
             )
         }
-        properties["aggregate_id"]["maxLength"] = 64
+        aggregate_limit = (
+            128 if definition.aggregate_types == frozenset({"DocumentRevision"}) else 64
+        )
+        properties["aggregate_id"]["maxLength"] = aggregate_limit
         properties.update(
             {
                 "event_type": {"const": event_type},
@@ -338,7 +347,7 @@ def project_event_schema() -> dict[str, Any]:
                 payload[name] = {**identifier, **({"enum": list(choices)} if choices else {})}
         if event_type == "knowledge.operator.completed":
             payload["resultDigest"] = {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
-        payload[definition.aggregate_field]["maxLength"] = 64
+        payload[definition.aggregate_field]["maxLength"] = aggregate_limit
         properties["payload"] = {
             "type": "object",
             "additionalProperties": False,

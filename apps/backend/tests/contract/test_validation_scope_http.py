@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tap.contracts.http import DocumentPage
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices, KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
@@ -250,7 +251,7 @@ def test_actual_repository_binding_overrules_misleading_http_metadata(misbound):
             if misbound in {name, "all"}
             else VALIDATION_SCOPE
         )
-        return MysqlDocumentRepository(Sessions(), scope=scope)
+        return MysqlDocumentRepository(Sessions(), scope=scope, audit_factory=create_project_audit)
 
     actual_service = HttpKnowledge(
         documents=DocumentService(repository=repository("documents"), artifacts=object()),

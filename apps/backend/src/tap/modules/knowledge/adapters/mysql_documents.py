@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import NoReturn, cast
+from typing import NoReturn, Protocol, cast
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -44,11 +44,26 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.governance.ports.audit import (
+    AuditAction,
+    AuditOutcome,
+    AuditResource,
+    ProjectAuditPort,
+    SafeAuditMetadata,
+)
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     new_document_id,
     revision_id_for,
+)
+from tap.modules.knowledge.domain.sources import (
+    SourceRecord,
+    SourceUnavailable,
+    chunk_manifest_digest,
+    new_source_id,
+    source_facts_digest,
 )
 from tap.modules.knowledge.ports.answers import (
     AnswerSnapshot,
@@ -101,7 +116,11 @@ from tap.modules.knowledge.ports.documents import (
 )
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import augment_project_table, metadata, outbox
-from tap.platform.messaging.mysql_outbox import compatibility_outbox_values, scoped_outbox_id
+from tap.platform.messaging.mysql_outbox import (
+    compatibility_outbox_values,
+    scoped_outbox_id,
+    write_project_event,
+)
 
 CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
 ANSWER_SNAPSHOT_RETENTION = 1_000
@@ -113,10 +132,21 @@ ANSWER_SNAPSHOT_LOCK_ACQUIRE_SQL = "SELECT GET_LOCK(:lock_name, 5)"
 ANSWER_SNAPSHOT_LOCK_RELEASE_SQL = "SELECT RELEASE_LOCK(:lock_name)"
 _MAX_MYSQL_CONNECTION_ID = 2**64 - 1
 
+knowledge_source = Table(
+    "knowledge_source",
+    metadata,
+    Column("source_id", String(64), primary_key=True),
+    Column("name", String(255), nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("updated_at", DATETIME(fsp=6), nullable=False),
+    Column("deleted_at", DATETIME(fsp=6)),
+)
+
 knowledge_document = Table(
     "knowledge_document",
     metadata,
     Column("document_id", String(64), primary_key=True),
+    Column("source_id", String(64), nullable=False),
     Column("filename", String(255), nullable=False),
     Column("media_type", String(128), nullable=False),
     Column("current_revision_id", String(128)),
@@ -157,6 +187,9 @@ knowledge_document_revision = Table(
     "knowledge_document_revision",
     metadata,
     Column("revision_id", String(128), primary_key=True),
+    Column("source_id", String(64), nullable=False),
+    Column("chunk_manifest_digest", String(71)),
+    Column("projection_digest", String(71)),
     Column(
         "document_id",
         String(64),
@@ -263,6 +296,7 @@ knowledge_citation_snapshot = Table(
     "knowledge_citation_snapshot",
     metadata,
     Column("citation_id", String(64), primary_key=True),
+    Column("source_id", String(64), nullable=False),
     Column(
         "trace_id",
         String(64),
@@ -284,6 +318,27 @@ knowledge_citation_snapshot = Table(
 )
 
 
+knowledge_source_legacy_map = Table(
+    "knowledge_source_legacy_map",
+    metadata,
+    Column("legacy_source_id", String(64), primary_key=True),
+    Column("source_id", String(64), nullable=False),
+    Column("document_id", String(64), nullable=False),
+    UniqueConstraint("source_id", name="uq_source_legacy_source"),
+)
+knowledge_answer_source = Table(
+    "knowledge_answer_source",
+    metadata,
+    Column("trace_id", String(64), primary_key=True),
+    Column("revision_id", String(128), primary_key=True),
+    Column("source_id", String(64), nullable=False),
+    Column("document_id", String(64), nullable=False),
+    Column("source_content_hash", String(71), nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    UniqueConstraint("trace_id", "ordinal", name="uq_answer_source_ordinal"),
+)
+
+
 def _utc_naive(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
@@ -291,6 +346,9 @@ def _utc_naive(value: datetime) -> datetime:
 
 
 for _project_table in (
+    knowledge_source,
+    knowledge_source_legacy_map,
+    knowledge_answer_source,
     knowledge_document,
     knowledge_document_revision,
     knowledge_ingestion_job,
@@ -299,6 +357,61 @@ for _project_table in (
     knowledge_citation_snapshot,
 ):
     augment_project_table(_project_table)
+
+knowledge_document.append_constraint(
+    UniqueConstraint("project_id", "document_id", "source_id", name="uq_document_source_owner")
+)
+knowledge_document_revision.append_constraint(
+    UniqueConstraint(
+        "project_id", "revision_id", "document_id", "source_id", name="uq_revision_source_owner"
+    )
+)
+knowledge_answer_source.append_constraint(
+    UniqueConstraint(
+        "project_id",
+        "trace_id",
+        "revision_id",
+        "document_id",
+        "source_id",
+        name="uq_answer_source_owner",
+    )
+)
+for child in (knowledge_document_revision, knowledge_source_legacy_map):
+    child.append_constraint(
+        ForeignKeyConstraint(
+            ["project_id", "document_id", "source_id"],
+            [
+                "knowledge_document.project_id",
+                "knowledge_document.document_id",
+                "knowledge_document.source_id",
+            ],
+            name=f"fk_{child.name}_source_owner",
+        )
+    )
+for child in (knowledge_answer_source, knowledge_citation_snapshot):
+    child.append_constraint(
+        ForeignKeyConstraint(
+            ["project_id", "revision_id", "document_id", "source_id"],
+            [
+                "knowledge_document_revision.project_id",
+                "knowledge_document_revision.revision_id",
+                "knowledge_document_revision.document_id",
+                "knowledge_document_revision.source_id",
+            ],
+            name=f"fk_{child.name}_revision_owner",
+        )
+    )
+knowledge_citation_snapshot.append_constraint(
+    ForeignKeyConstraint(
+        ["project_id", "trace_id", "revision_id", "document_id", "source_id"],
+        [
+            f"knowledge_answer_source.{name}"
+            for name in ("project_id", "trace_id", "revision_id", "document_id", "source_id")
+        ],
+        name="fk_citation_answer_selection",
+        ondelete="CASCADE",
+    )
+)
 
 
 async def _database_now(session: AsyncSession) -> datetime:
@@ -577,13 +690,24 @@ def _job_from_row(row: RowMapping) -> IngestionJob:
     )
 
 
+class ProjectAuditFactory(Protocol):
+    def __call__(
+        self, connection: AsyncConnection, *, scope: ProjectScopeContext
+    ) -> ProjectAuditPort: ...
+
+
 class MysqlDocumentRepository:
     """The MySQL document/revision/job facts and their transaction boundaries."""
 
     def __init__(
-        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+        audit_factory: ProjectAuditFactory,
     ) -> None:
         self._scope = require_project_scope(scope)
+        self._audit_factory = audit_factory
         self._answer_snapshot_lock_name = (
             "tap:answer:"
             + sha256(f"{scope.enterprise_id}/{scope.project_id}".encode()).hexdigest()[:48]
@@ -594,6 +718,192 @@ class MysqlDocumentRepository:
     @property
     def scope(self) -> ProjectScopeContext:
         return self._scope
+
+    def _active_source(self):
+        return exists(
+            select(knowledge_source.c.source_id).where(
+                *scope_predicates(knowledge_source, self._scope),
+                knowledge_source.c.source_id == knowledge_document.c.source_id,
+                knowledge_source.c.deleted_at.is_(None),
+            )
+        )
+
+    async def _require_source(self, session: AsyncSession, source_id: str) -> RowMapping:
+        row = (
+            (
+                await session.execute(
+                    select(knowledge_source)
+                    .where(
+                        *scope_predicates(knowledge_source, self._scope),
+                        knowledge_source.c.source_id == source_id,
+                        knowledge_source.c.deleted_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise SourceUnavailable("source-unavailable")
+        return row
+
+    async def get_source(self, source_id: str) -> SourceRecord | None:
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(knowledge_source).where(
+                            *scope_predicates(knowledge_source, self._scope),
+                            knowledge_source.c.source_id == source_id,
+                            knowledge_source.c.deleted_at.is_(None),
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            return (
+                None
+                if row is None
+                else SourceRecord(
+                    row["source_id"], row["name"], row["created_at"], row["deleted_at"]
+                )
+            )
+
+    async def _audit(
+        self, session: AsyncSession, action: AuditAction, resource_id: str, key: str, facts: object
+    ) -> None:
+        await self._audit_factory(await session.connection(), scope=self._scope).append(
+            self._scope,
+            action,
+            AuditResource.KNOWLEDGE_SOURCE
+            if action in {AuditAction.SOURCE_CREATED, AuditAction.SOURCE_DELETED}
+            else AuditResource.DOCUMENT_REVISION,
+            AuditOutcome.COMPLETED,
+            SafeAuditMetadata({"content_digest": source_facts_digest(facts)[7:]}),
+            correlation_id=key,
+            idempotency_key=key,
+            resource_id=resource_id,
+        )
+
+    async def _revision_event(
+        self, session: AsyncSession, row: RowMapping, *, ready: bool, now: datetime, job_id: str
+    ) -> None:
+        revision_id = row["revision_id"]
+        event_type = (
+            "knowledge.document-revision.ready" if ready else "knowledge.document-revision.accepted"
+        )
+        key = revision_id if ready else revision_id + ":ingest"
+        payload = (
+            {
+                "revisionId": revision_id,
+                "chunkManifestDigest": row["chunk_manifest_digest"],
+                "projectionDigest": row["projection_digest"],
+            }
+            if ready
+            else {
+                "sourceId": row["source_id"],
+                "documentId": row["document_id"],
+                "revisionId": revision_id,
+                "contentHash": row["source_content_hash"],
+            }
+        )
+        await self._audit(
+            session,
+            AuditAction.REVISION_READY if ready else AuditAction.REVISION_ACCEPTED,
+            revision_id,
+            key,
+            payload,
+        )
+        await write_project_event(
+            session,
+            scope=self._scope,
+            envelope=ProjectEventEnvelope(
+                event_id=scoped_outbox_id(self._scope, kind=event_type, identity=revision_id),
+                event_type=event_type,
+                schema_version=1,
+                occurred_at=now.replace(tzinfo=timezone.utc),
+                scope_kind="PROJECT",
+                enterprise_id=self._scope.enterprise_id,
+                project_id=self._scope.project_id,
+                actor_id=self._scope.actor_id,
+                identity_mode=self._scope.identity_mode.value,
+                aggregate_type="DocumentRevision",
+                aggregate_id=revision_id,
+                aggregate_version=2 if ready else 1,
+                correlation_id=job_id,
+                causation_id=None,
+                idempotency_key=key,
+                payload=payload,
+            ),
+        )
+
+    async def delete_source(self, source_id: str) -> None:
+        for attempt in range(3):
+            try:
+                await self._delete_source_once(source_id)
+                return
+            except DBAPIError as error:
+                if _mysql_error_code(error) not in {1213, 1205} or attempt == 2:
+                    raise
+                await asyncio.sleep(0)
+
+    async def _delete_source_once(self, source_id: str) -> None:
+        async with self._sessions() as session, session.begin():
+            # Match stage mutation's job-before-source order before taking the tombstone lock.
+            await session.execute(
+                select(knowledge_ingestion_job.c.job_id)
+                .join(
+                    knowledge_document_revision,
+                    knowledge_ingestion_job.c.revision_id
+                    == knowledge_document_revision.c.revision_id,
+                )
+                .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
+                    knowledge_document_revision.c.source_id == source_id,
+                )
+                .order_by(knowledge_ingestion_job.c.job_id)
+                .with_for_update()
+            )
+            row = await self._require_source(session, source_id)
+            now = await _database_now(session)
+            documents = (
+                (
+                    await session.execute(
+                        select(knowledge_document)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.source_id == source_id,
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .order_by(knowledge_document.c.document_id)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            await session.execute(
+                update(knowledge_source)
+                .where(
+                    *scope_predicates(knowledge_source, self._scope),
+                    knowledge_source.c.source_id == source_id,
+                )
+                .values(deleted_at=now, updated_at=now)
+            )
+            for document in documents:
+                if document["activated_at"] is not None:
+                    await self._request_delete_in_session(
+                        session, DocumentId(document["document_id"])
+                    )
+            await self._audit(
+                session,
+                AuditAction.SOURCE_DELETED,
+                source_id,
+                source_id + ":delete",
+                [row["source_id"], [d["document_id"] for d in documents]],
+            )
 
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
@@ -633,6 +943,7 @@ class MysqlDocumentRepository:
                         )
                         .where(
                             *scope_predicates(knowledge_document, self._scope),
+                            self._active_source(),
                             *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_document.c.document_id.in_(ordered_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
@@ -776,12 +1087,32 @@ class MysqlDocumentRepository:
 
     async def _save_answer_snapshot(self, session: AsyncSession, snapshot: AnswerSnapshot) -> None:
         expected = snapshot.selected_revisions
+        source_rows = (
+            (
+                await session.execute(
+                    select(knowledge_document.c.source_id).where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        knowledge_document.c.document_id.in_(
+                            tuple(item.document_id for item in expected)
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        try:
+            for source_id in sorted(set(source_rows)):
+                await self._require_source(session, source_id)
+        except SourceUnavailable as error:
+            raise DocumentStateChanged("selected source changed") from error
         document_ids = tuple(item.document_id for item in expected)
         rows = list(
             (
                 await session.execute(
                     select(
                         knowledge_document.c.document_id,
+                        knowledge_document.c.source_id,
                         knowledge_document.c.current_revision_id,
                         knowledge_document.c.source_content_hash,
                         knowledge_document.c.status,
@@ -790,6 +1121,7 @@ class MysqlDocumentRepository:
                     )
                     .where(
                         *scope_predicates(knowledge_document, self._scope),
+                        self._active_source(),
                         knowledge_document.c.document_id.in_(document_ids),
                     )
                     .order_by(knowledge_document.c.document_id)
@@ -909,6 +1241,22 @@ class MysqlDocumentRepository:
                 created_at=now,
             )
         )
+        source_ids = {row["document_id"]: row["source_id"] for row in rows}
+        await session.execute(
+            insert(knowledge_answer_source),
+            [
+                {
+                    **scope_values(self._scope),
+                    "trace_id": snapshot.trace_id,
+                    "document_id": item.document_id,
+                    "revision_id": item.revision_id,
+                    "source_id": source_ids[item.document_id],
+                    "source_content_hash": item.source_content_hash,
+                    "ordinal": ordinal,
+                }
+                for ordinal, item in enumerate(expected)
+            ],
+        )
         if snapshot.citations:
             await session.execute(
                 insert(knowledge_citation_snapshot),
@@ -916,6 +1264,7 @@ class MysqlDocumentRepository:
                     {
                         **scope_values(self._scope),
                         "citation_id": item.citation_id,
+                        "source_id": source_ids[item.document_id],
                         "trace_id": item.trace_id,
                         "document_id": item.document_id,
                         "revision_id": item.revision_id,
@@ -1040,7 +1389,35 @@ class MysqlDocumentRepository:
                 .mappings()
                 .one_or_none()
             )
-        if row is None:
+            if row is None:
+                return None
+            selected_rows = (
+                (
+                    await session.execute(
+                        select(knowledge_answer_source)
+                        .where(
+                            *scope_predicates(knowledge_answer_source, self._scope),
+                            knowledge_answer_source.c.trace_id == row["answer_trace_id"],
+                        )
+                        .order_by(knowledge_answer_source.c.ordinal)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            source_active = await session.scalar(
+                select(knowledge_source.c.source_id)
+                .join(
+                    knowledge_document,
+                    knowledge_document.c.source_id == knowledge_source.c.source_id,
+                )
+                .where(
+                    *scope_predicates(knowledge_source, self._scope),
+                    knowledge_source.c.deleted_at.is_(None),
+                    knowledge_document.c.document_id == row["citation_document_id"],
+                )
+            )
+        if row is None or source_active is None:
             return None
         try:
             citation_anchor = _canonical_json_object(row["citation_anchor"])
@@ -1054,7 +1431,24 @@ class MysqlDocumentRepository:
                 chunk_content_hash=cast(str, row["citation_chunk_hash"]),
                 anchor_json=citation_anchor,
             )
-            selected = _selected_revisions(row["selected_revisions_json"])
+            selected = tuple(
+                ReadyDocumentRevision(
+                    document_id=item["document_id"],
+                    revision_id=item["revision_id"],
+                    source_content_hash=item["source_content_hash"],
+                )
+                for item in selected_rows
+            )
+            if not selected:
+                raise ValueError("missing answer source association")
+            raw_selected = row["selected_revisions_json"]
+            if isinstance(raw_selected, str):
+                raw_selected = json.loads(raw_selected)
+            if isinstance(raw_selected, list) and all(type(item) is str for item in raw_selected):
+                if raw_selected != [item.revision_id for item in selected]:
+                    raise ValueError("inconsistent legacy answer source association")
+            elif _selected_revisions(raw_selected, require_sorted=False) != selected:
+                raise ValueError("inconsistent answer source association")
             document_facts = None
             if row["document_id"] is not None:
                 document_facts = CitationDocumentFacts(
@@ -1131,6 +1525,8 @@ class MysqlDocumentRepository:
     async def _reserve_upload_once(self, command: ReserveUpload) -> UploadReservation:
         async with self._sessions() as session, session.begin():
             now = await _database_now(session)
+            if command.source_id is not None:
+                await self._require_source(session, command.source_id)
             active_rows = list(
                 (
                     await session.execute(
@@ -1149,6 +1545,9 @@ class MysqlDocumentRepository:
                 (row for row in active_rows if row["dedupe_key"] == command.dedupe_key), None
             )
             if duplicate is not None:
+                await self._require_source(session, duplicate["source_id"])
+                if command.source_id is not None and command.source_id != duplicate["source_id"]:
+                    raise SourceUnavailable("source-dedupe-conflict")
                 document_id = cast(str, duplicate["document_id"])
                 revision_id = (
                     cast(str, duplicate["current_revision_id"])
@@ -1198,6 +1597,24 @@ class MysqlDocumentRepository:
             if len(active_rows) >= MAX_DOCUMENTS:
                 raise DocumentCapacityExceeded
 
+            source_id = command.source_id or new_source_id()
+            if command.source_id is None:
+                await session.execute(
+                    insert(knowledge_source).values(
+                        **scope_values(self._scope),
+                        source_id=source_id,
+                        name=command.filename,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                await self._audit(
+                    session,
+                    AuditAction.SOURCE_CREATED,
+                    source_id,
+                    source_id + ":create",
+                    [source_id],
+                )
             document_id = new_document_id(lambda: uuid4().hex)
             owner_token = uuid4().hex
             expires_at = now + DEFAULT_RESERVATION_LEASE
@@ -1208,6 +1625,7 @@ class MysqlDocumentRepository:
                 insert(knowledge_document).values(
                     **scope_values(self._scope),
                     document_id=document_id,
+                    source_id=source_id,
                     filename=command.filename,
                     media_type=command.media_type,
                     current_revision_id=None,
@@ -1265,6 +1683,7 @@ class MysqlDocumentRepository:
             )
             if row is None or row["dedupe_key"] != reservation.dedupe_key:
                 raise JobLeaseLost(reservation.reservation_id)
+            await self._require_source(session, row["source_id"])
             if row["activated_at"] is not None:
                 return await self._record_for_row(session, row)
             if row["promoted_blob_locator"] is None:
@@ -1283,6 +1702,7 @@ class MysqlDocumentRepository:
                 insert(knowledge_document_revision).values(
                     **scope_values(self._scope),
                     revision_id=reservation.revision_id,
+                    source_id=row["source_id"],
                     document_id=reservation.document_id,
                     source_content_hash=row["source_content_hash"],
                     original_blob_locator=str(original),
@@ -1331,6 +1751,19 @@ class MysqlDocumentRepository:
                     updated_at=now,
                 )
             )
+            revision_row = (
+                (
+                    await session.execute(
+                        select(knowledge_document_revision).where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id == reservation.revision_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            await self._revision_event(session, revision_row, ready=False, now=now, job_id=job_id)
             activated_row = (
                 (
                     await session.execute(
@@ -1411,6 +1844,20 @@ class MysqlDocumentRepository:
             )
 
     async def claim_upload_recoveries(
+        self, *, worker_id: str, lease_duration: timedelta, limit: int
+    ) -> tuple[UploadRecovery, ...]:
+        for attempt in range(3):
+            try:
+                return await self._claim_upload_recoveries_once(
+                    worker_id=worker_id, lease_duration=lease_duration, limit=limit
+                )
+            except DBAPIError as error:
+                if _mysql_error_code(error) not in {1213, 1205} or attempt == 2:
+                    raise
+                await asyncio.sleep(0)
+        raise AssertionError("unreachable")
+
+    async def _claim_upload_recoveries_once(
         self,
         *,
         worker_id: str,
@@ -1442,9 +1889,28 @@ class MysqlDocumentRepository:
                     )
                 ).mappings()
             )
+            # Acquire every Source lock before any batch lease is allocated.
+            # A wait on a later Source must not consume an earlier item's lease.
+            sources: dict[str, RowMapping] = {}
+            for source_id in sorted({row["source_id"] for row in rows}):
+                sources[source_id] = (
+                    (
+                        await session.execute(
+                            select(knowledge_source)
+                            .where(
+                                *scope_predicates(knowledge_source, self._scope),
+                                knowledge_source.c.source_id == source_id,
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
             database_now = await _database_now(session)
             claimed: list[UploadRecovery] = []
             for row in rows:
+                source = sources[row["source_id"]]
                 if cast(datetime, row["reservation_expires_at"]) > database_now:
                     continue
                 token = uuid4().hex
@@ -1493,8 +1959,15 @@ class MysqlDocumentRepository:
                     UploadRecovery(
                         reservation=reservation,
                         activated=row["activated_at"] is not None,
+                        cancelled_source=source["deleted_at"] is not None
+                        and row["activated_at"] is None,
                     )
                 )
+            returned_at = await _database_now(session)
+            if claimed and database_now + lease_duration <= returned_at:
+                # Keep all previous owners/facts if the batch could not allocate
+                # live leases before returning; never issue an expired claim.
+                self._raise_lease_lost(claimed[0].reservation.reservation_id)
             return tuple(claimed)
 
     async def complete_upload_cleanup(self, reservation_id: str, owner_token: str) -> None:
@@ -1513,19 +1986,37 @@ class MysqlDocumentRepository:
                 .mappings()
                 .one_or_none()
             )
-            if row is None or row["activated_at"] is None:
+            if row is None:
                 raise JobLeaseLost(reservation_id)
             if row["staging_blob_locator"] is None:
                 return
             if row["reservation_owner_token"] != owner_token:
                 return
+            cancelled = False
+            if row["activated_at"] is None:
+                source = (
+                    (
+                        await session.execute(
+                            select(knowledge_source)
+                            .where(
+                                *scope_predicates(knowledge_source, self._scope),
+                                knowledge_source.c.source_id == row["source_id"],
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                if source["deleted_at"] is None:
+                    raise JobLeaseLost(reservation_id)
+                cancelled = True
             now = await _database_now(session)
             result = await session.execute(
                 update(knowledge_document)
                 .where(
                     *scope_predicates(knowledge_document, self._scope),
                     knowledge_document.c.document_id == reservation_id,
-                    knowledge_document.c.activated_at.is_not(None),
                     knowledge_document.c.reservation_owner_token == owner_token,
                 )
                 .values(
@@ -1533,6 +2024,9 @@ class MysqlDocumentRepository:
                     promoted_blob_locator=None,
                     reservation_owner_token=None,
                     reservation_expires_at=None,
+                    deleted_at=now if cancelled else row["deleted_at"],
+                    status=DocumentState.DELETING.value if cancelled else row["status"],
+                    dedupe_key=None if cancelled else row["dedupe_key"],
                     updated_at=now,
                 )
             )
@@ -1546,6 +2040,7 @@ class MysqlDocumentRepository:
         async with self._sessions() as session:
             statement = select(knowledge_document).where(
                 *scope_predicates(knowledge_document, self._scope),
+                self._active_source(),
                 knowledge_document.c.activated_at.is_not(None),
                 knowledge_document.c.deleted_at.is_(None),
                 knowledge_document.c.status != DocumentState.DELETING.value,
@@ -1554,6 +2049,7 @@ class MysqlDocumentRepository:
                 created_at, document_id = position
                 statement = statement.where(
                     *scope_predicates(knowledge_document, self._scope),
+                    self._active_source(),
                     or_(
                         knowledge_document.c.created_at < created_at,
                         and_(
@@ -1587,6 +2083,7 @@ class MysqlDocumentRepository:
         async with self._sessions() as session:
             statement = select(knowledge_document).where(
                 *scope_predicates(knowledge_document, self._scope),
+                self._active_source(),
                 knowledge_document.c.document_id == document_id,
                 knowledge_document.c.activated_at.is_not(None),
                 knowledge_document.c.deleted_at.is_(None),
@@ -1594,6 +2091,7 @@ class MysqlDocumentRepository:
             if not include_deleting:
                 statement = statement.where(
                     *scope_predicates(knowledge_document, self._scope),
+                    self._active_source(),
                     knowledge_document.c.status != DocumentState.DELETING.value,
                 )
             row = (await session.execute(statement)).mappings().one_or_none()
@@ -1652,6 +2150,7 @@ class MysqlDocumentRepository:
                 or document_row is None
             ):
                 raise RetryNotAllowed(str(document_id))
+            await self._require_source(session, document_row["source_id"])
             database_now = await _database_now(session)
             results = list(deserialize_stage_results(job_row["stage_results_json"]))
             first_incomplete = next(
@@ -1723,199 +2222,198 @@ class MysqlDocumentRepository:
     async def request_delete(self, document_id: DocumentId, now: datetime) -> IngestionJob:
         del now
         async with self._sessions() as session, session.begin():
-            candidate = (
-                (
-                    await session.execute(
-                        select(knowledge_document).where(
-                            *scope_predicates(knowledge_document, self._scope),
-                            knowledge_document.c.document_id == document_id,
-                            knowledge_document.c.activated_at.is_not(None),
-                            knowledge_document.c.deleted_at.is_(None),
-                        )
+            return await self._request_delete_in_session(session, document_id)
+
+    async def _request_delete_in_session(
+        self, session: AsyncSession, document_id: DocumentId
+    ) -> IngestionJob:
+        candidate = (
+            (
+                await session.execute(
+                    select(knowledge_document).where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        knowledge_document.c.document_id == document_id,
+                        knowledge_document.c.activated_at.is_not(None),
+                        knowledge_document.c.deleted_at.is_(None),
                     )
                 )
-                .mappings()
-                .one_or_none()
             )
-            if candidate is None:
-                raise RetryNotAllowed(str(document_id))
-            revision_id = cast(str, candidate["current_revision_id"])
-            job_rows = list(
-                (
-                    await session.execute(
-                        select(knowledge_ingestion_job)
-                        .where(
-                            *scope_predicates(knowledge_ingestion_job, self._scope),
-                            knowledge_ingestion_job.c.revision_id == revision_id,
-                        )
-                        .order_by(knowledge_ingestion_job.c.kind)
-                        .with_for_update()
+            .mappings()
+            .one_or_none()
+        )
+        if candidate is None:
+            raise RetryNotAllowed(str(document_id))
+        revision_id = cast(str, candidate["current_revision_id"])
+        job_rows = list(
+            (
+                await session.execute(
+                    select(knowledge_ingestion_job)
+                    .where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
+                        knowledge_ingestion_job.c.revision_id == revision_id,
                     )
-                ).mappings()
-            )
-            document_row = (
-                (
-                    await session.execute(
-                        select(knowledge_document)
-                        .where(
-                            *scope_predicates(knowledge_document, self._scope),
-                            knowledge_document.c.document_id == document_id,
-                            knowledge_document.c.current_revision_id == revision_id,
-                            knowledge_document.c.activated_at.is_not(None),
-                            knowledge_document.c.deleted_at.is_(None),
-                        )
-                        .with_for_update()
+                    .order_by(knowledge_ingestion_job.c.kind)
+                    .with_for_update()
+                )
+            ).mappings()
+        )
+        document_row = (
+            (
+                await session.execute(
+                    select(knowledge_document)
+                    .where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        knowledge_document.c.document_id == document_id,
+                        knowledge_document.c.current_revision_id == revision_id,
+                        knowledge_document.c.activated_at.is_not(None),
+                        knowledge_document.c.deleted_at.is_(None),
                     )
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if document_row is None:
-                raise RetryNotAllowed(str(document_id))
-            database_now = await _database_now(session)
-            ingestion = next(
-                (row for row in job_rows if row["kind"] == JobKind.INGESTION.value), None
-            )
-            if ingestion is not None and ingestion["status"] != JobState.COMPLETED.value:
-                lease_is_active = (
-                    ingestion["status"] == JobState.PROCESSING.value
-                    and ingestion["lease_token"] is not None
-                    and ingestion["lease_until"] is not None
-                    and cast(datetime, ingestion["lease_until"]) > database_now
-                )
-                cancelled_barrier_exists = (
-                    ingestion["status"] == JobState.CANCELLED.value
-                    and ingestion["lease_token"] is not None
-                    and ingestion["lease_until"] is not None
-                )
-                if not cancelled_barrier_exists:
-                    retained_until = None
-                    if lease_is_active:
-                        retained_until = max(
-                            cast(datetime, ingestion["lease_until"]),
-                            database_now + CANCELLED_OWNER_SETTLEMENT_LEASE,
-                        )
-                    await session.execute(
-                        update(knowledge_ingestion_job)
-                        .where(
-                            *scope_predicates(knowledge_ingestion_job, self._scope),
-                            knowledge_ingestion_job.c.job_id == ingestion["job_id"],
-                            knowledge_ingestion_job.c.status != JobState.COMPLETED.value,
-                        )
-                        .values(
-                            status=JobState.CANCELLED.value,
-                            lease_owner=ingestion["lease_owner"] if lease_is_active else None,
-                            lease_token=ingestion["lease_token"] if lease_is_active else None,
-                            lease_until=retained_until,
-                            updated_at=database_now,
-                            completed_at=None if lease_is_active else database_now,
-                        )
-                    )
-            await session.execute(
-                update(knowledge_document)
-                .where(
-                    *scope_predicates(knowledge_document, self._scope),
-                    knowledge_document.c.document_id == document_id,
-                )
-                .values(
-                    status=DocumentState.DELETING.value,
-                    stage=JobStage.STORED.value,
-                    error_code=None,
-                    error_summary=None,
-                    updated_at=database_now,
+                    .with_for_update()
                 )
             )
-            existing = next(
-                (row for row in job_rows if row["kind"] == JobKind.DELETION.value), None
+            .mappings()
+            .one_or_none()
+        )
+        if document_row is None:
+            raise RetryNotAllowed(str(document_id))
+        database_now = await _database_now(session)
+        ingestion = next((row for row in job_rows if row["kind"] == JobKind.INGESTION.value), None)
+        if ingestion is not None and ingestion["status"] != JobState.COMPLETED.value:
+            lease_is_active = (
+                ingestion["status"] == JobState.PROCESSING.value
+                and ingestion["lease_token"] is not None
+                and ingestion["lease_until"] is not None
+                and cast(datetime, ingestion["lease_until"]) > database_now
             )
-            if existing is not None:
-                if existing["status"] == JobState.FAILED.value:
-                    results = list(deserialize_stage_results(existing["stage_results_json"]))
-                    first_incomplete = next(
-                        result.stage
-                        for result in results
-                        if result.state is not StageState.COMPLETED
+            cancelled_barrier_exists = (
+                ingestion["status"] == JobState.CANCELLED.value
+                and ingestion["lease_token"] is not None
+                and ingestion["lease_until"] is not None
+            )
+            if not cancelled_barrier_exists:
+                retained_until = None
+                if lease_is_active:
+                    retained_until = max(
+                        cast(datetime, ingestion["lease_until"]),
+                        database_now + CANCELLED_OWNER_SETTLEMENT_LEASE,
                     )
-                    results = [
-                        result
-                        if result.state is StageState.COMPLETED
-                        else StageResult(result.stage, StageState.PENDING)
-                        for result in results
-                    ]
-                    attempt = cast(int, existing["attempt"]) + 1
-                    await session.execute(
-                        update(knowledge_ingestion_job)
-                        .where(
-                            *scope_predicates(knowledge_ingestion_job, self._scope),
-                            knowledge_ingestion_job.c.job_id == existing["job_id"],
-                            knowledge_ingestion_job.c.status == JobState.FAILED.value,
-                        )
-                        .values(
-                            attempt=attempt,
-                            status=JobState.PENDING.value,
-                            stage=first_incomplete.value,
-                            stage_results_json=serialize_stage_results(tuple(results)),
-                            lease_owner=None,
-                            lease_token=None,
-                            lease_until=None,
-                            next_attempt_at=database_now,
-                            error_code=None,
-                            error_summary=None,
-                            updated_at=database_now,
-                        )
+                await session.execute(
+                    update(knowledge_ingestion_job)
+                    .where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
+                        knowledge_ingestion_job.c.job_id == ingestion["job_id"],
+                        knowledge_ingestion_job.c.status != JobState.COMPLETED.value,
                     )
-                    await self._insert_job_outbox(
-                        session,
-                        document_id=str(document_id),
-                        job_id=cast(str, existing["job_id"]),
+                    .values(
+                        status=JobState.CANCELLED.value,
+                        lease_owner=ingestion["lease_owner"] if lease_is_active else None,
+                        lease_token=ingestion["lease_token"] if lease_is_active else None,
+                        lease_until=retained_until,
+                        updated_at=database_now,
+                        completed_at=None if lease_is_active else database_now,
+                    )
+                )
+        await session.execute(
+            update(knowledge_document)
+            .where(
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.document_id == document_id,
+            )
+            .values(
+                status=DocumentState.DELETING.value,
+                stage=JobStage.STORED.value,
+                error_code=None,
+                error_summary=None,
+                updated_at=database_now,
+            )
+        )
+        existing = next((row for row in job_rows if row["kind"] == JobKind.DELETION.value), None)
+        if existing is not None:
+            if existing["status"] == JobState.FAILED.value:
+                results = list(deserialize_stage_results(existing["stage_results_json"]))
+                first_incomplete = next(
+                    result.stage for result in results if result.state is not StageState.COMPLETED
+                )
+                results = [
+                    result
+                    if result.state is StageState.COMPLETED
+                    else StageResult(result.stage, StageState.PENDING)
+                    for result in results
+                ]
+                attempt = cast(int, existing["attempt"]) + 1
+                await session.execute(
+                    update(knowledge_ingestion_job)
+                    .where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
+                        knowledge_ingestion_job.c.job_id == existing["job_id"],
+                        knowledge_ingestion_job.c.status == JobState.FAILED.value,
+                    )
+                    .values(
                         attempt=attempt,
-                        message_type="knowledge.deletion_requested",
-                        now=database_now,
+                        status=JobState.PENDING.value,
+                        stage=first_incomplete.value,
+                        stage_results_json=serialize_stage_results(tuple(results)),
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=None,
+                        next_attempt_at=database_now,
+                        error_code=None,
+                        error_summary=None,
+                        updated_at=database_now,
                     )
-                    return IngestionJob(
-                        job_id=cast(str, existing["job_id"]),
-                        revision_id=cast(str, existing["revision_id"]),
-                        kind=JobKind.DELETION,
-                        attempt=attempt,
-                        status=JobState.PENDING,
-                        stage=first_incomplete,
-                        stages=tuple(results),
-                    )
-                return _job_from_row(existing)
-            job_id = _job_id()
-            initial_results = initial_stage_results(database_now)
-            await session.execute(
-                insert(knowledge_ingestion_job).values(
-                    **scope_values(self._scope),
-                    job_id=job_id,
-                    revision_id=revision_id,
-                    kind=JobKind.DELETION.value,
-                    attempt=1,
-                    status=JobState.PENDING.value,
-                    stage=JobStage.STORED.value,
-                    stage_results_json=serialize_stage_results(initial_results),
-                    next_attempt_at=database_now,
-                    created_at=database_now,
-                    updated_at=database_now,
                 )
-            )
-            await self._insert_job_outbox(
-                session,
-                document_id=str(document_id),
-                job_id=job_id,
-                attempt=1,
-                message_type="knowledge.deletion_requested",
-                now=database_now,
-            )
-            return IngestionJob(
+                await self._insert_job_outbox(
+                    session,
+                    document_id=str(document_id),
+                    job_id=cast(str, existing["job_id"]),
+                    attempt=attempt,
+                    message_type="knowledge.deletion_requested",
+                    now=database_now,
+                )
+                return IngestionJob(
+                    job_id=cast(str, existing["job_id"]),
+                    revision_id=cast(str, existing["revision_id"]),
+                    kind=JobKind.DELETION,
+                    attempt=attempt,
+                    status=JobState.PENDING,
+                    stage=first_incomplete,
+                    stages=tuple(results),
+                )
+            return _job_from_row(existing)
+        job_id = _job_id()
+        initial_results = initial_stage_results(database_now)
+        await session.execute(
+            insert(knowledge_ingestion_job).values(
+                **scope_values(self._scope),
                 job_id=job_id,
                 revision_id=revision_id,
-                kind=JobKind.DELETION,
+                kind=JobKind.DELETION.value,
                 attempt=1,
-                status=JobState.PENDING,
-                stage=JobStage.STORED,
-                stages=initial_results,
+                status=JobState.PENDING.value,
+                stage=JobStage.STORED.value,
+                stage_results_json=serialize_stage_results(initial_results),
+                next_attempt_at=database_now,
+                created_at=database_now,
+                updated_at=database_now,
             )
+        )
+        await self._insert_job_outbox(
+            session,
+            document_id=str(document_id),
+            job_id=job_id,
+            attempt=1,
+            message_type="knowledge.deletion_requested",
+            now=database_now,
+        )
+        return IngestionJob(
+            job_id=job_id,
+            revision_id=revision_id,
+            kind=JobKind.DELETION,
+            attempt=1,
+            status=JobState.PENDING,
+            stage=JobStage.STORED,
+            stages=initial_results,
+        )
 
     async def claim_jobs(
         self,
@@ -2246,6 +2744,20 @@ class MysqlDocumentRepository:
             database_now = await _database_now(session)
             if row["lease_until"] is None or row["lease_until"] <= database_now:
                 self._raise_lease_lost(commit.job_id)
+            if row["kind"] == JobKind.INGESTION.value:
+                source_id = await session.scalar(
+                    select(knowledge_document_revision.c.source_id).where(
+                        *scope_predicates(knowledge_document_revision, self._scope),
+                        knowledge_document_revision.c.revision_id == row["revision_id"],
+                    )
+                )
+                try:
+                    await self._require_source(session, str(source_id))
+                except SourceUnavailable:
+                    self._raise_lease_lost(commit.job_id)
+                database_now = await _database_now(session)
+                if row["lease_until"] <= database_now:
+                    self._raise_lease_lost(commit.job_id)
             if require_stage_facts and row["kind"] == JobKind.INGESTION.value:
                 required_fact = {
                     JobStage.PARSING: commit.normalized_locator,
@@ -2274,6 +2786,38 @@ class MysqlDocumentRepository:
                 revision_values["chunks_blob_locator"] = str(commit.chunks_locator)
             if commit.embeddings_locator is not None:
                 revision_values["embeddings_blob_locator"] = str(commit.embeddings_locator)
+            if commit.projection_digest is not None or commit.chunk_manifest_digest is not None:
+                if (
+                    commit.expected_stage not in {JobStage.PUBLISHING, JobStage.READY}
+                    or row["kind"] != JobKind.INGESTION.value
+                ):
+                    raise ValueError("receipt outside publishing")
+                for digest in (commit.projection_digest, commit.chunk_manifest_digest):
+                    if (
+                        type(digest) is not str
+                        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+                    ):
+                        raise ValueError("invalid ingestion receipt")
+                manifest_rows = (
+                    (
+                        await session.execute(
+                            select(knowledge_chunk_manifest)
+                            .where(
+                                *scope_predicates(knowledge_chunk_manifest, self._scope),
+                                knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                            )
+                            .order_by(knowledge_chunk_manifest.c.ordinal)
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                if commit.chunk_manifest_digest != chunk_manifest_digest(
+                    _manifest_from_rows(list(manifest_rows))
+                ):
+                    raise ValueError("receipt manifest differs from durable facts")
+                revision_values["projection_digest"] = cast(str, commit.projection_digest)
+                revision_values["chunk_manifest_digest"] = cast(str, commit.chunk_manifest_digest)
             if revision_values:
                 updated_revision = await session.execute(
                     update(knowledge_document_revision)
@@ -2326,29 +2870,6 @@ class MysqlDocumentRepository:
                             for item in commit.manifest
                         ],
                     )
-            result = await session.execute(
-                update(knowledge_ingestion_job)
-                .where(
-                    *scope_predicates(knowledge_ingestion_job, self._scope),
-                    knowledge_ingestion_job.c.job_id == commit.job_id,
-                    knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
-                    knowledge_ingestion_job.c.lease_token == commit.lease_token,
-                    knowledge_ingestion_job.c.lease_until > database_now,
-                    knowledge_ingestion_job.c.stage == commit.expected_stage.value,
-                )
-                .values(
-                    status=JobState.COMPLETED.value if is_complete else JobState.PROCESSING.value,
-                    stage=next_stage.value,
-                    stage_results_json=serialize_stage_results(tuple(results)),
-                    lease_owner=None if is_complete else row["lease_owner"],
-                    lease_token=None if is_complete else commit.lease_token,
-                    lease_until=None if is_complete else row["lease_until"],
-                    updated_at=database_now,
-                    completed_at=database_now if is_complete else None,
-                )
-            )
-            if result.rowcount != 1:
-                self._raise_lease_lost(commit.job_id)
             revision = knowledge_document_revision.alias("checkpoint_revision")
             document_id = await session.scalar(
                 select(revision.c.document_id).where(
@@ -2390,7 +2911,7 @@ class MysqlDocumentRepository:
                 ready_chunk_count = (
                     cast(int, manifest_count) if commit.chunk_count is None else commit.chunk_count
                 )
-                await session.execute(
+                document_update = await session.execute(
                     update(knowledge_document)
                     .where(
                         *scope_predicates(knowledge_document, self._scope),
@@ -2408,6 +2929,63 @@ class MysqlDocumentRepository:
                         updated_at=database_now,
                     )
                 )
+
+            if row["kind"] == JobKind.INGESTION.value and is_complete:
+                if document_update.rowcount != 1:
+                    self._raise_lease_lost(commit.job_id)
+                ready_revision = (
+                    (
+                        await session.execute(
+                            select(knowledge_document_revision).where(
+                                *scope_predicates(knowledge_document_revision, self._scope),
+                                knowledge_document_revision.c.revision_id == row["revision_id"],
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                if (
+                    not ready_revision["projection_digest"]
+                    or not ready_revision["chunk_manifest_digest"]
+                ):
+                    raise ValueError("ready requires durable publishing receipts")
+                await self._revision_event(
+                    session, ready_revision, ready=True, now=database_now, job_id=commit.job_id
+                )
+            # Source/fact/FK/Audit/Outbox writes above may have waited after the
+            # initial lease check. This final mutation still owns the locked job.
+            terminal_now = await _database_now(session)
+            if row["lease_until"] is None or row["lease_until"] <= terminal_now:
+                self._raise_lease_lost(commit.job_id)
+            result = await session.execute(
+                update(knowledge_ingestion_job)
+                .where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
+                    knowledge_ingestion_job.c.job_id == commit.job_id,
+                    knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
+                    knowledge_ingestion_job.c.lease_token == commit.lease_token,
+                    knowledge_ingestion_job.c.lease_until > func.utc_timestamp(6),
+                    knowledge_ingestion_job.c.stage == commit.expected_stage.value,
+                )
+                .values(
+                    status=JobState.COMPLETED.value if is_complete else JobState.PROCESSING.value,
+                    stage=next_stage.value,
+                    stage_results_json=serialize_stage_results(tuple(results)),
+                    lease_owner=None if is_complete else row["lease_owner"],
+                    lease_token=None if is_complete else commit.lease_token,
+                    lease_until=None if is_complete else row["lease_until"],
+                    updated_at=terminal_now,
+                    completed_at=terminal_now if is_complete else None,
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_lease_lost(commit.job_id)
+
+            # Even the guarded UPDATE can wait on a secondary-index lock. Check
+            # again after it settles; failure rolls back every write above.
+            if row["lease_until"] <= await _database_now(session):
+                self._raise_lease_lost(commit.job_id)
 
     async def load_ingestion_work(
         self,
@@ -2469,6 +3047,11 @@ class MysqlDocumentRepository:
                 job["kind"] == JobKind.DELETION.value
                 and document["status"] == DocumentState.DELETING.value
             )
+            if job["kind"] == JobKind.INGESTION.value:
+                try:
+                    await self._require_source(session, revision["source_id"])
+                except SourceUnavailable:
+                    self._raise_lease_lost(job_id)
             if not compatible or document["deleted_at"] is not None:
                 self._raise_lease_lost(job_id)
             manifest_rows = list(
@@ -2483,6 +3066,8 @@ class MysqlDocumentRepository:
                     )
                 ).mappings()
             )
+            if job["lease_until"] is None or job["lease_until"] <= await _database_now(session):
+                self._raise_lease_lost(job_id)
             return IngestionWork(
                 job_id=job_id,
                 lease_token=lease_token,
@@ -2501,6 +3086,8 @@ class MysqlDocumentRepository:
                 chunker_version=revision["chunker_version"],
                 pipeline_version=revision["pipeline_version"],
                 manifest=_manifest_from_rows(manifest_rows),
+                chunk_manifest_digest=revision["chunk_manifest_digest"],
+                projection_digest=revision["projection_digest"],
             )
 
     async def retry_job(self, retry: JobRetry) -> None:
@@ -2700,6 +3287,22 @@ class MysqlDocumentRepository:
         now: datetime,
     ) -> None:
         identity = f"knowledge-{message_type.split('.')[1]}:{job_id}:{attempt}"
+        if message_type == "knowledge.deletion_requested" or attempt > 1:
+            revision_id = await session.scalar(
+                select(knowledge_ingestion_job.c.revision_id).where(
+                    *scope_predicates(knowledge_ingestion_job, self._scope),
+                    knowledge_ingestion_job.c.job_id == job_id,
+                )
+            )
+            await self._audit(
+                session,
+                AuditAction.DELETION_REQUESTED
+                if message_type == "knowledge.deletion_requested"
+                else AuditAction.INGESTION_RETRIED,
+                str(revision_id),
+                identity,
+                [document_id, revision_id, attempt],
+            )
         await session.execute(
             insert(outbox).values(
                 **compatibility_outbox_values(
@@ -2753,7 +3356,9 @@ def _canonical_json_object(value: object) -> str:
     )
 
 
-def _selected_revisions(value: object) -> tuple[ReadyDocumentRevision, ...]:
+def _selected_revisions(
+    value: object, *, require_sorted: bool = True
+) -> tuple[ReadyDocumentRevision, ...]:
     decoded = json.loads(value) if isinstance(value, str) else value
     if not isinstance(decoded, list) or not 1 <= len(decoded) <= 20:
         raise ValueError("selected revisions must be a bounded array")
@@ -2773,9 +3378,9 @@ def _selected_revisions(value: object) -> tuple[ReadyDocumentRevision, ...]:
             )
         )
     result = tuple(rows)
-    if result != tuple(sorted(result, key=lambda item: item.document_id)) or len(
-        {item.document_id for item in result}
-    ) != len(result):
+    if (
+        require_sorted and result != tuple(sorted(result, key=lambda item: item.document_id))
+    ) or len({item.document_id for item in result}) != len(result):
         raise ValueError("selected revisions must be sorted and unique")
     return result
 

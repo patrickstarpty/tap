@@ -21,6 +21,7 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.sources import chunk_manifest_digest, projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
     ClaimedIngestionJob,
@@ -421,7 +422,10 @@ class IngestionWorker:
             )
             await self._commit(job, stage, embeddings_locator=locator)
             return
-        if stage is JobStage.PUBLISHING:
+        if stage is JobStage.PUBLISHING or (
+            stage is JobStage.READY
+            and (work.projection_digest is None or work.chunk_manifest_digest is None)
+        ):
             chunks = await self._read_chunks(work, stage)
             self._validate_manifest_versions(work, stage)
             embeddings_locator = _required_locator(work.embeddings_locator, stage)
@@ -463,6 +467,11 @@ class IngestionWorker:
                 receipt.revision_id != work.revision_id
                 or receipt.index_version != self._index_version
                 or receipt.indexed_count != len(work.manifest)
+                or not receipt.schema_version
+                or receipt.projection_digest
+                != projection_digest(
+                    work.revision_id, receipt.schema_version, self._index_version, work.manifest
+                )
             ):
                 raise _SafeStageError(
                     stage,
@@ -470,7 +479,13 @@ class IngestionWorker:
                     "index-contract-failed",
                     "contract-error",
                 )
-            await self._commit(job, stage)
+            await self._commit(
+                job,
+                stage,
+                chunk_count=len(work.manifest) if stage is JobStage.READY else None,
+                chunk_manifest_digest=chunk_manifest_digest(work.manifest),
+                projection_digest=receipt.projection_digest,
+            )
             return
         await self._commit(job, stage, chunk_count=len(work.manifest))
 
@@ -611,6 +626,8 @@ class IngestionWorker:
         embeddings_locator=None,  # type: ignore[no-untyped-def]
         manifest: tuple[ManifestChunk, ...] = (),
         chunk_count: int | None = None,
+        chunk_manifest_digest: str | None = None,
+        projection_digest: str | None = None,
     ) -> None:
         await self._repository.commit_stage(
             JobStageCommit(
@@ -623,6 +640,8 @@ class IngestionWorker:
                 embeddings_locator=embeddings_locator,
                 manifest=manifest,
                 chunk_count=chunk_count,
+                chunk_manifest_digest=chunk_manifest_digest,
+                projection_digest=projection_digest,
             )
         )
 

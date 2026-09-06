@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.sql.selectable import Select
 
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import (
@@ -46,7 +47,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 ANSWER_SNAPSHOT_LOCK_NAME = MysqlDocumentRepository(
-    async_sessionmaker(), scope=VALIDATION_SCOPE
+    async_sessionmaker(), scope=VALIDATION_SCOPE, audit_factory=create_project_audit
 )._answer_snapshot_lock_name
 
 DATABASE_URL = os.getenv(
@@ -149,16 +150,22 @@ class NeverAnswerGateway:
 async def clean(engine) -> None:  # type: ignore[no-untyped-def]
     async with engine.begin() as connection:
         await connection.execute(
-            text("DELETE FROM outbox WHERE aggregate_type = 'knowledge_document'")
+            text(
+                "DELETE FROM outbox WHERE aggregate_type IN "
+                "('knowledge_document', 'DocumentRevision')"
+            )
         )
         await connection.execute(text("UPDATE knowledge_document SET current_revision_id=NULL"))
         for table in (
             "knowledge_citation_snapshot",
+            "knowledge_answer_source",
             "knowledge_answer_snapshot",
             "knowledge_chunk_manifest",
             "knowledge_ingestion_job",
             "knowledge_document_revision",
+            "knowledge_source_legacy_map",
             "knowledge_document",
+            "knowledge_source",
         ):
             await connection.execute(text(f"DELETE FROM {table}"))
 
@@ -168,19 +175,33 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
     revision_id = f"rev_{suffix}"
     now = datetime(2026, 8, 28, 9, 0)
     async with engine.begin() as connection:
+        from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+        from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
+        from tap.platform.db.project_scope import scope_values
+
+        await connection.execute(
+            knowledge_source.insert().values(
+                **scope_values(VALIDATION_SCOPE),
+                source_id="src_" + suffix,
+                name="fixture",
+                created_at=now,
+                updated_at=now,
+            )
+        )
         await connection.execute(
             text(
-                "INSERT INTO knowledge_document (enterprise_id,project_id,actor_id,iden"
+                "INSERT INTO knowledge_document (source_id,enterprise_id,project_id,actor_id,iden"
                 "tity_mode,identity_origin,document_id,filename,media_type,current_revi"
                 "sion_id,source_content_hash,dedupe_key,reservation_parser_version,rese"
                 "rvation_chunker_version,reservation_pipeline_version,status,stage,chun"
-                "k_count,activated_at,created_at,updated_at) VALUES ('local','tapper-de"
+                "k_count,activated_at,created_at,updated_at) VALUES (:source_id,'local','tapper-de"
                 "mo','tapper-local-user','validation','VALIDATION',:document_id,:filena"
                 "me,'text/markdown',NULL,:source_hash,:dedupe_key,'tapper-parser-v1','t"
                 "apper-structure-512-v1','tapper-ingestion-v1','ready','ready',1,:now,:"
                 "now,:now)"
             ),
             {
+                "source_id": "src_" + suffix,
                 "document_id": document_id,
                 "filename": f"{suffix}.md",
                 "source_hash": SOURCE_HASH,
@@ -190,17 +211,18 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
         )
         await connection.execute(
             text(
-                "INSERT INTO knowledge_document_revision (enterprise_id,project_id,acto"
+                "INSERT INTO knowledge_document_revision (source_id,enterprise_id,project_id,acto"
                 "r_id,identity_mode,identity_origin,revision_id,document_id,source_cont"
                 "ent_hash,original_blob_locator,normalized_blob_locator,chunks_blob_loc"
                 "ator,parser_version,chunker_version,pipeline_version,created_at) VALUE"
-                "S ('local','tapper-demo','tapper-local-user','validation','VALIDATION'"
+                "S (:source_id,'local','tapper-demo','tapper-local-user','validation','VALIDATION'"
                 ",:revision_id,:document_id,:source_hash,'original',:normalized,:chunks"
                 ",'tapper-parser-v1','tapper-structure-512-v1','tapper-ingestion-v1',:n"
                 "ow)"
             ),
             {
                 "revision_id": revision_id,
+                "source_id": "src_" + suffix,
                 "document_id": document_id,
                 "source_hash": SOURCE_HASH,
                 "normalized": f"tapper-artifacts/revisions/{revision_id}/normalized-v1.json",
@@ -229,6 +251,7 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "chunk_id": f"h_{suffix}",
                 "logical_id": f"lc_{suffix}",
                 "revision_id": revision_id,
+                "source_id": "src_" + suffix,
                 "document_id": document_id,
                 "anchor_json": ANCHOR_JSON,
                 "chunk_hash": CHUNK_HASH,
@@ -269,7 +292,9 @@ def test_snapshot_and_exact_citations_commit_atomically_against_current_ready_ro
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             selected = await seed_ready(engine, "a")
             assert await repository.load_ready_revisions((selected.document_id,)) == (selected,)
@@ -320,7 +345,9 @@ def test_ready_lookup_rejects_current_revision_owned_by_another_document() -> No
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             first = await seed_ready(engine, "a")
             second = await seed_ready(engine, "b")
@@ -363,7 +390,9 @@ def test_trace_or_citation_conflict_rolls_back_the_whole_snapshot() -> None:
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             selected = await seed_ready(engine, "a")
             first = snapshot("trace-conflict", selected, with_citation=True)
@@ -391,7 +420,9 @@ def test_snapshot_rejects_citation_without_an_exact_manifest_fact(tamper: str) -
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             selected = await seed_ready(engine, "a")
             anchor_json = ANCHOR_JSON
@@ -481,16 +512,16 @@ def test_delete_cannot_cross_current_set_recheck_before_snapshot_commit() -> Non
             )
             saving = asyncio.create_task(
                 MysqlDocumentRepository(
-                    snapshot_sessions, scope=VALIDATION_SCOPE
+                    snapshot_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                 ).save_answer_with_citations(
                     snapshot("trace-delete-barrier", selected, with_citation=True)
                 )
             )
             await asyncio.wait_for(SnapshotDocumentBarrierSession.document_locked.wait(), timeout=5)
             deleting = asyncio.create_task(
-                MysqlDocumentRepository(delete_sessions, scope=VALIDATION_SCOPE).request_delete(
-                    DocumentId(selected.document_id), datetime(2026, 8, 28, 9, 1)
-                )
+                MysqlDocumentRepository(
+                    delete_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).request_delete(DocumentId(selected.document_id), datetime(2026, 8, 28, 9, 1))
             )
             await asyncio.wait_for(
                 DeleteDocumentAttemptSession.document_attempted.wait(), timeout=5
@@ -540,7 +571,7 @@ def test_cancelled_snapshot_rolls_back_and_releases_connection_scoped_lock() -> 
             )
             saving = asyncio.create_task(
                 MysqlDocumentRepository(
-                    snapshot_sessions, scope=VALIDATION_SCOPE
+                    snapshot_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                 ).save_answer_with_citations(
                     snapshot("trace-cancelled", selected, with_citation=True)
                 )
@@ -563,7 +594,7 @@ def test_cancelled_snapshot_rolls_back_and_releases_connection_scoped_lock() -> 
 
             await asyncio.wait_for(
                 MysqlDocumentRepository(
-                    setup_sessions, scope=VALIDATION_SCOPE
+                    setup_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                 ).save_answer_with_citations(
                     snapshot("trace-after-cancel", selected, with_citation=False)
                 ),
@@ -586,7 +617,7 @@ def test_cancellation_after_server_grants_named_lock_cannot_leak_pool_ownership(
             CancelAfterNamedLockRepository.lock_granted = asyncio.Event()
             saving = asyncio.create_task(
                 CancelAfterNamedLockRepository(
-                    sessions, scope=VALIDATION_SCOPE
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                 ).save_answer_with_citations(
                     snapshot("trace-lock-cancel", selected, with_citation=False)
                 )
@@ -607,7 +638,7 @@ def test_cancellation_after_server_grants_named_lock_cannot_leak_pool_ownership(
 
             await asyncio.wait_for(
                 MysqlDocumentRepository(
-                    sessions, scope=VALIDATION_SCOPE
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                 ).save_answer_with_citations(
                     snapshot("trace-after-lock-cancel", selected, with_citation=False)
                 ),
@@ -638,7 +669,7 @@ def test_cancellation_while_waiting_for_named_lock_settles_connection() -> None:
                 CancelWhileWaitingNamedLockRepository.acquisition_started = asyncio.Event()
                 saving = asyncio.create_task(
                     CancelWhileWaitingNamedLockRepository(
-                        sessions, scope=VALIDATION_SCOPE
+                        sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                     ).save_answer_with_citations(
                         snapshot("trace-wait-cancel", selected, with_citation=False)
                     )
@@ -661,7 +692,7 @@ def test_cancellation_while_waiting_for_named_lock_settles_connection() -> None:
 
             await asyncio.wait_for(
                 MysqlDocumentRepository(
-                    sessions, scope=VALIDATION_SCOPE
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
                 ).save_answer_with_citations(
                     snapshot("trace-after-wait-cancel", selected, with_citation=False)
                 ),
@@ -779,7 +810,9 @@ def test_in_flight_named_lock_is_killed_and_verified_before_return(
                         0.05,
                     )
                     repository = MysqlDocumentRepository(
-                        async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+                        async_sessionmaker(engine, expire_on_commit=False),
+                        scope=VALIDATION_SCOPE,
+                        audit_factory=create_project_audit,
                     )
                     with pytest.raises(AnswerSnapshotUnavailable):
                         await repository._acquire_answer_snapshot_lock(
@@ -831,7 +864,9 @@ def test_citation_lookup_joins_answer_ownership_and_rechecks_current_document() 
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             selected = await seed_ready(engine, "a")
             committed = snapshot("trace-lookup", selected, with_citation=True)
@@ -891,7 +926,9 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
-        repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = MysqlDocumentRepository(
+            sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+        )
         try:
             first = await seed_ready(engine, "a")
             second = await seed_ready(engine, "b")
@@ -924,12 +961,32 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
                     ),
                     old_answers,
                 )
+                from tap.modules.knowledge.adapters.mysql_documents import knowledge_answer_source
+                from tap.platform.db.project_scope import scope_values
+
+                await connection.execute(
+                    knowledge_answer_source.insert(),
+                    [
+                        {
+                            **scope_values(VALIDATION_SCOPE),
+                            "trace_id": answer["trace_id"],
+                            "revision_id": first.revision_id,
+                            "document_id": first.document_id,
+                            "source_id": "src_a",
+                            "source_content_hash": SOURCE_HASH,
+                            "ordinal": 0,
+                        }
+                        for answer in old_answers
+                    ],
+                )
                 await connection.execute(
                     text(
-                        "INSERT INTO knowledge_citation_snapshot (enterprise_id,project_id,acto"
+                        "INSERT INTO knowledge_citation_snapshot "
+                        "(source_id,enterprise_id,project_id,acto"
                         "r_id,identity_mode,identity_origin,citation_id,trace_id,document_id,re"
                         "vision_id,chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                        "created_at) VALUES ('local','tapper-demo','tapper-local-user','validat"
+                        "created_at) VALUES "
+                        "('src_a','local','tapper-demo','tapper-local-user','validat"
                         "ion','VALIDATION','old-citation','old-0000',:document_id,:revision_id,"
                         ":chunk_id,:source_hash,:chunk_hash,:anchor_json,:created_at)"
                     ),

@@ -16,6 +16,7 @@ project_audit = Table(
     Column("identity_origin", String(32), nullable=False),
     Column("action", String(64), nullable=False),
     Column("resource", String(64), nullable=False),
+    Column("resource_id", String(128)),
     Column("outcome", String(32), nullable=False),
     Column("correlation_id", String(128), nullable=False),
     Column("idempotency_key", String(128, collation="utf8mb4_bin"), nullable=False),

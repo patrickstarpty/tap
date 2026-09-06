@@ -220,6 +220,8 @@ async def _real_index():  # type: ignore[no-untyped-def]
         pending_roles = None
         pending_coordinator = None
 
+        from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
+
         async def clean_authority() -> None:
             async with engine.begin() as connection:
                 for table_name in (
@@ -243,6 +245,13 @@ async def _real_index():  # type: ignore[no-untyped-def]
                         delete(knowledge_document).where(
                             *scope_predicates(knowledge_document, VALIDATION_SCOPE),
                             knowledge_document.c.document_id == work().document_id,
+                        )
+                    )
+
+                    await connection.execute(
+                        delete(knowledge_source).where(
+                            *scope_predicates(knowledge_source, VALIDATION_SCOPE),
+                            knowledge_source.c.source_id == "src_projection_fixture",
                         )
                     )
 
@@ -319,9 +328,19 @@ async def _real_index():  # type: ignore[no-untyped-def]
         now = datetime(2026, 9, 5)
         async with engine.begin() as connection:
             await connection.execute(
+                insert(knowledge_source).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    source_id="src_projection_fixture",
+                    name="fixture",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await connection.execute(
                 insert(knowledge_document).values(
                     **scope_values(VALIDATION_SCOPE),
                     document_id=item.document_id,
+                    source_id="src_projection_fixture",
                     filename=item.filename,
                     media_type=item.media_type,
                     source_content_hash=item.source_content_hash,
@@ -339,6 +358,7 @@ async def _real_index():  # type: ignore[no-untyped-def]
                     **scope_values(VALIDATION_SCOPE),
                     revision_id=item.revision_id,
                     document_id=item.document_id,
+                    source_id="src_projection_fixture",
                     source_content_hash=item.source_content_hash,
                     original_blob_locator=str(item.original_locator),
                     parser_version=item.parser_version,

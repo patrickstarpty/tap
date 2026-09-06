@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "knowledge_source",
+    "knowledge_source_legacy_map",
+    "knowledge_answer_source",
+    "knowledge_search_audit",
     "enterprise",
     "project",
     "actor_principal",
@@ -134,7 +138,12 @@ def test_project_audit_metadata_declares_scoped_replay_and_ordering() -> None:
     assert "project_audit" in metadata.tables
     audit = metadata.tables["project_audit"]
     assert tuple(audit.primary_key.columns.keys()) == ("audit_id",)
-    assert all(not column.nullable and column.server_default is None for column in audit.c)
+    assert audit.c.resource_id.nullable
+    assert all(
+        not column.nullable and column.server_default is None
+        for column in audit.c
+        if column.name != "resource_id"
+    )
     assert audit.c.audit_id.type.collation == "utf8mb4_bin"
     assert audit.c.idempotency_key.type.collation == "utf8mb4_bin"
     assert isinstance(audit.c.occurred_at.type, DATETIME)

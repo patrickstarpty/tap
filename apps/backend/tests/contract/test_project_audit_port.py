@@ -155,3 +155,35 @@ def test_audit_domain_requires_actual_project_and_nonempty_actor() -> None:
             require_audit_scope(scope)
     with pytest.raises(TypeError):
         require_audit_scope(AnonymousContext(enterprise_id="local"))
+
+
+def test_knowledge_audit_requires_resource_identity_and_closed_pair():
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.governance.domain.audit import (
+        AuditAction,
+        AuditOutcome,
+        AuditResource,
+        SafeAuditMetadata,
+        audit_content_digest,
+    )
+
+    args = (
+        VALIDATION_SCOPE,
+        AuditAction.REVISION_ACCEPTED,
+        AuditResource.DOCUMENT_REVISION,
+        AuditOutcome.COMPLETED,
+        SafeAuditMetadata({"content_digest": "a" * 64}),
+    )
+    with pytest.raises(ValueError):
+        audit_content_digest(*args)
+    first = audit_content_digest(*args, resource_id="rev_" + "a" * 64)
+    assert first != audit_content_digest(*args, resource_id="rev_" + "b" * 64)
+    with pytest.raises(ValueError):
+        audit_content_digest(
+            VALIDATION_SCOPE,
+            AuditAction.REVISION_ACCEPTED,
+            AuditResource.KNOWLEDGE_SOURCE,
+            AuditOutcome.COMPLETED,
+            SafeAuditMetadata({}),
+            resource_id="src_1",
+        )

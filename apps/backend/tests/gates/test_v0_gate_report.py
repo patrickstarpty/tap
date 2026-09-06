@@ -565,3 +565,19 @@ def test_probe_child_image_read_mode_is_independent_of_host_umask(monkeypatch, t
     assert captured["mode"] == 0o644
     assert captured["private_mode"] == 0o700
     assert not captured["state"].exists()
+
+
+def test_schema_v2_requires_named_0010_inventory(gate):
+    value = schema_fixture()
+    value.update(
+        tables=25, revision="0010_knowledge_sources", table_names=sorted(gate.SOURCE_SCHEMA_TABLES)
+    )
+    gate.validate_schema(value, None, schema_version=2)
+    for changes in (
+        {"revision": "0009_outbox_operations"},
+        {"tables": 21},
+        {"table_names": []},
+        {"table_names": [*value["table_names"][:-1], "unexpected"]},
+    ):
+        with pytest.raises(ValueError):
+            gate.validate_schema({**value, **changes}, None, schema_version=2)

@@ -9,7 +9,18 @@ from tap.modules.governance.domain.audit import (
     AuditResource,
     ProjectAuditFact,
     SafeAuditMetadata,
+    require_audit_scope,
 )
+
+__all__ = [
+    "AuditAction",
+    "AuditOutcome",
+    "AuditResource",
+    "ProjectAuditFact",
+    "SafeAuditMetadata",
+    "ProjectAuditPort",
+    "require_audit_scope",
+]
 
 
 class ProjectAuditPort(Protocol):
@@ -23,4 +34,5 @@ class ProjectAuditPort(Protocol):
         *,
         correlation_id: str,
         idempotency_key: str,
+        resource_id: str | None = None,
     ) -> ProjectAuditFact: ...

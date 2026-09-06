@@ -11,6 +11,7 @@ from typing import Literal
 from tap.modules.access.domain.policy import ResourceGrant
 from tap.modules.knowledge.adapters.milvus.audit import (
     MilvusSearchAuditEvent,
+    SearchAuditMetadata,
     SearchAuditSink,
 )
 from tap.modules.knowledge.adapters.milvus.config import (
@@ -274,7 +275,24 @@ class MilvusSearchAdapter(SearchPort):
     ) -> MilvusSearchAuditEvent:
         plan = getattr(execution, "plan", None)
         target = self._audit_target
+        metadata = None
+        if isinstance(execution, SearchExecution):
+            try:
+                self._validate_execution(execution)
+                metadata = SearchAuditMetadata(
+                    execution.plan.tenant_id,
+                    execution.plan.project_id,
+                    execution.plan.sanitized_query_hash,
+                    execution.plan.acl_digest,
+                    execution.plan.policy_version,
+                    execution.plan.redaction_version,
+                    execution.plan.candidate_limit,
+                )
+                metadata.validate()
+            except (ValueError, TypeError, SearchBoundsExceeded, SearchUnavailable):
+                metadata = None
         return MilvusSearchAuditEvent(
+            metadata=metadata,
             outcome=outcome,
             provider="milvus",
             query_plan_id=_audit_string(getattr(plan, "query_plan_id", None)),

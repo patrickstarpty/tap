@@ -331,3 +331,36 @@ def test_event_rejects_instants_that_cannot_be_represented_in_canonical_utc(time
     encoded["occurred_at"] = timestamp
     with pytest.raises(ValueError, match="UTC"):
         ProjectEventEnvelope.from_dict(encoded)
+
+
+def test_document_revision_event_preserves_real_68_character_identity():
+    from tap.contracts.events import project_event_schema
+
+    revision = "rev_" + "a" * 64
+    event = domain_event(
+        event_type="knowledge.document-revision.accepted",
+        aggregate_type="DocumentRevision",
+        aggregate_id=revision,
+        idempotency_key=revision + ":ingest",
+        payload={
+            "sourceId": "src_1",
+            "documentId": "doc_1",
+            "revisionId": revision,
+            "contentHash": "sha256:" + "a" * 64,
+        },
+    )
+    branch = next(
+        branch
+        for branch in project_event_schema()["oneOf"]
+        if branch["properties"]["event_type"]["const"] == event.event_type
+    )
+    assert branch["properties"]["aggregate_id"]["maxLength"] == 128
+    assert branch["properties"]["payload"]["properties"]["revisionId"]["maxLength"] == 128
+    with pytest.raises(ValueError):
+        domain_event(aggregate_id="x" * 65)
+    with pytest.raises(ValueError):
+        domain_event(
+            event_type="knowledge.document-revision.ready",
+            aggregate_type="DocumentRevision",
+            aggregate_id="x" * 129,
+        )

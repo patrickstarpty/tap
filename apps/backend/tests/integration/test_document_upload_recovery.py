@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.interfaces.http.dependencies import UploadInput
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
@@ -111,7 +112,9 @@ def test_claimed_job_survives_repository_reconstruction() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            first_repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+            first_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await first_repository.reserve_upload(
                 ReserveUpload(
                     filename="restart.md",
@@ -127,7 +130,9 @@ def test_claimed_job_survives_repository_reconstruction() -> None:
             )
             del first_repository
 
-            claimed = await MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE).claim_jobs(
+            claimed = await MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            ).claim_jobs(
                 worker_id="worker-b",
                 now=datetime(2026, 8, 27, 9, 1),
                 lease_duration=timedelta(seconds=30),
@@ -152,7 +157,9 @@ def test_promotion_crash_is_taken_over_after_service_and_repository_reconstructi
             staged = await artifacts.stage_original(
                 markdown_upload("crash.md", b"# survives crash"), max_bytes=1024
             )
-            first_repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+            first_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await first_repository.reserve_upload(
                 ReserveUpload.from_staged(staged, now=datetime(2026, 8, 27, 9, 0))
             )
@@ -161,7 +168,9 @@ def test_promotion_crash_is_taken_over_after_service_and_repository_reconstructi
 
             await expire_reservations(engine)
             reconstructed = DocumentService(
-                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,
             )
             recovered = await reconstructed.recover_uploads(
@@ -171,9 +180,9 @@ def test_promotion_crash_is_taken_over_after_service_and_repository_reconstructi
             assert recovered == 1
             assert artifacts.staging == {}
             assert artifacts.formal[reservation.revision_id] == b"# survives crash"
-            visible = await MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE).get_document(
-                DocumentId(reservation.document_id)
-            )
+            visible = await MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            ).get_document(DocumentId(reservation.document_id))
             assert visible is not None
             async with engine.connect() as connection:
                 revision_count = await connection.scalar(
@@ -203,7 +212,9 @@ def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery() -
         artifacts.fail_cleanup = True
         try:
             service = DocumentService(
-                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,
             )
             with pytest.raises(KnowledgeRuntimeUnavailable) as caught:
@@ -219,7 +230,9 @@ def test_cleanup_failure_remains_a_durable_fact_until_reconstructed_recovery() -
             artifacts.fail_cleanup = False
             await expire_reservations(engine)
             reconstructed = DocumentService(
-                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,
             )
             assert (
@@ -252,7 +265,9 @@ def test_activation_holds_cleanup_lease_until_owner_clears_staging_fact() -> Non
         artifacts = DurableArtifactFake()
         artifacts.block_cleanup = True
         try:
-            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             upload = asyncio.create_task(
                 DocumentService(repository=repository, artifacts=artifacts).upload(
                     markdown_upload("cleanup-window.md", b"# cleanup window")
@@ -297,7 +312,9 @@ def test_expired_cleanup_takeover_does_not_turn_activated_upload_into_failure() 
         artifacts = DurableArtifactFake()
         artifacts.block_cleanup = True
         try:
-            repository = MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             upload = asyncio.create_task(
                 DocumentService(repository=repository, artifacts=artifacts).upload(
                     markdown_upload("cleanup-takeover.md", b"# cleanup takeover")
@@ -345,12 +362,16 @@ def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path
             owner_staged = await artifacts.stage_original(
                 markdown_upload("owner.md", b"# shared"), max_bytes=1024
             )
-            owner = await MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE).reserve_upload(
+            owner = await MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            ).reserve_upload(
                 ReserveUpload.from_staged(owner_staged, now=datetime(2026, 8, 27, 9, 0))
             )
 
             helper = DocumentService(
-                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,
             )
             accepted = await helper.upload(markdown_upload("renamed.md", b"# shared"))
@@ -371,7 +392,9 @@ def test_duplicate_helper_activates_owner_staging_without_a_second_dispatch_path
             await expire_reservations(engine)
             assert (
                 await DocumentService(
-                    repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
+                    repository=MysqlDocumentRepository(
+                        sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                    ),
                     artifacts=artifacts,
                 ).recover_uploads(
                     worker_id="helper-cleanup",
@@ -399,13 +422,17 @@ def test_duplicate_helper_uses_own_bytes_when_owner_staging_is_missing() -> None
             owner_staged = await artifacts.stage_original(
                 markdown_upload("owner-missing.md", b"# shared fallback"), max_bytes=1024
             )
-            owner = await MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE).reserve_upload(
+            owner = await MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            ).reserve_upload(
                 ReserveUpload.from_staged(owner_staged, now=datetime(2026, 8, 27, 9, 0))
             )
             artifacts.staging.pop(owner_staged.staging_key)
 
             accepted = await DocumentService(
-                repository=MysqlDocumentRepository(sessions, scope=VALIDATION_SCOPE),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,
             ).upload(markdown_upload("helper.md", b"# shared fallback"))
 

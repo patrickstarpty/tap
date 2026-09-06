@@ -1153,7 +1153,7 @@ async def test_codex_api_composes_litellm_embeddings_and_codex_answers(
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
         return search, object(), object()
 
     def legacy_model(_settings):  # type: ignore[no-untyped-def]
@@ -1379,9 +1379,9 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
             return await self._answers.answer(request.query, (), "quick-hybrid-v1")
 
     async def create_database(_settings):  # type: ignore[no-untyped-def]
-        return Resource("engine"), object()
+        return Resource("engine"), SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
         return Resource("search"), object(), object()
 
     def assemble(**kwargs):  # type: ignore[no-untyped-def]
@@ -1570,7 +1570,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     async def create_database(_settings):  # type: ignore[no-untyped-def]
         return engine, repository
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
         return search, reader, target
 
     monkeypatch.setattr(module, "_create_database", create_database)
@@ -1624,7 +1624,7 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
         return search, object(), object()
 
     monkeypatch.setattr(module, "_create_database", database)
@@ -1662,7 +1662,7 @@ async def test_api_failure_controller_construction_failure_closes_prior_owners(
             events.append(self.name)
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return Resource("engine"), object()
+        return Resource("engine"), SimpleNamespace(scope=VALIDATION_SCOPE)
 
     def fail_controller(_settings, _redis):  # type: ignore[no-untyped-def]
         raise primary
@@ -1709,7 +1709,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
 
-    async def fail_search(_settings):  # type: ignore[no-untyped-def]
+    async def fail_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_create_search", fail_search)
@@ -1748,7 +1748,7 @@ async def test_codex_owner_closes_once_when_api_construction_fails_after_selecti
     async def create_database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def fail_search(_settings):  # type: ignore[no-untyped-def]
+    async def fail_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_create_database", create_database)
@@ -1782,7 +1782,7 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
     blob = module._create_blob(settings)
     redis = module._create_redis(settings)
     model = module._create_embeddings(settings)
-    search, reader, target = await module._create_search(settings)
+    search, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
     models_probe = module._create_models_probe_client(settings)
     try:
         assert repository._sessions.kw["bind"] is engine
@@ -1850,13 +1850,13 @@ async def test_search_helper_closes_reader_if_adapter_construction_fails(monkeyp
     reader = Reader()
     monkeypatch.setattr(module, "_open_search_reader", lambda _config: reader)
 
-    def fail_adapter(_config, _reader):  # type: ignore[no-untyped-def]
+    def fail_adapter(_config, _reader, *, audit_sink):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_search_adapter", fail_adapter)
 
     with pytest.raises(RuntimeError) as captured:
-        await module._create_search(settings)
+        await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
     assert captured.value is primary
     assert events == ["reader"]
@@ -2755,7 +2755,7 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
             calls.append(f"blob:{name}")
             return {"public_access": None}
 
-    _, reader, target = await module._create_search(settings)
+    _, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
     class Milvus:
         async def describe_alias(self, alias: str) -> str:
@@ -3235,3 +3235,8 @@ def test_blob_private_properties_require_the_explicit_public_access_field(
     expected: bool,
 ) -> None:
     assert _runtime()._is_private_blob_container(properties) is expected
+
+
+class _UnusedSearchAudit:
+    async def emit(self, event):
+        raise AssertionError("construction-only test must not search")

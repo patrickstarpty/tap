@@ -11,7 +11,7 @@ outbox = Table(
     Column("outbox_id", String(128), primary_key=True),
     Column("command_id", String(128), nullable=False, unique=True),
     Column("aggregate_type", String(64), nullable=False),
-    Column("aggregate_id", String(64), nullable=False),
+    Column("aggregate_id", String(128), nullable=False),
     Column("sequence", BigInteger),
     Column("message_type", String(64), nullable=False),
     Column("status", String(24), nullable=False, server_default="pending"),
@@ -32,10 +32,19 @@ Index("ix_outbox_expired_lease", outbox.c.status, outbox.c.lease_until)
 PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = {
     "chat_event": (("turn_id", "chat_turn", "turn_id", None),),
     "turn_snapshot": (("turn_id", "chat_turn", "turn_id", None),),
+    "knowledge_source_legacy_map": (("source_id", "knowledge_source", "source_id", None),),
+    "knowledge_answer_source": (
+        ("trace_id", "knowledge_answer_snapshot", "trace_id", "CASCADE"),
+        ("source_id", "knowledge_source", "source_id", None),
+    ),
     "knowledge_document": (
         ("current_revision_id", "knowledge_document_revision", "revision_id", None),
+        ("source_id", "knowledge_source", "source_id", None),
     ),
-    "knowledge_document_revision": (("document_id", "knowledge_document", "document_id", None),),
+    "knowledge_document_revision": (
+        ("document_id", "knowledge_document", "document_id", None),
+        ("source_id", "knowledge_source", "source_id", None),
+    ),
     "knowledge_ingestion_job": (
         ("revision_id", "knowledge_document_revision", "revision_id", None),
     ),
@@ -44,6 +53,7 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
     ),
     "knowledge_citation_snapshot": (
         ("trace_id", "knowledge_answer_snapshot", "trace_id", "CASCADE"),
+        ("source_id", "knowledge_source", "source_id", None),
     ),
     "knowledge_projection_fence": (
         ("alias_name", "knowledge_projection_state", "alias_name", None),
