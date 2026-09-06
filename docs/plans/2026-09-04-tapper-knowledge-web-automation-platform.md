@@ -397,20 +397,31 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 
 **Files:**
 
+- Create: `apps/backend/src/tap/platform/storage/__init__.py`
 - Create: `apps/backend/src/tap/platform/storage/objects.py`
 - Create: `apps/backend/src/tap/platform/storage/s3.py`
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/object_artifacts.py`
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/artifact_codecs.py`（抽取两个实现确需共用的 codec，保留 Azure copy 状态机）
 - Create: `apps/backend/tests/contract/artifact_store_conformance.py`
+- Create: `apps/backend/tests/contract/test_object_artifacts.py`
+- Create: `apps/backend/tests/contract/test_minio_test_support.py`
+- Modify: `apps/backend/tests/integration/test_azurite_artifacts.py`（运行共同制品契约与显式 legacy 恢复）
+- Modify: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`（存储选择、缺配置与实际绑定验证）
 - Create: `deploy/minio/Dockerfile`
 - Create: `deploy/minio/build-inputs.json`
 - Create: `scripts/build-tapper-object-store.sh`
+- Create: `scripts/minio_test_support.py`
+- Create: `scripts/azurite_test_support.py`
+- Create: `apps/backend/tests/contract/test_azurite_test_support.py`（核对 build receipt、随机独占容器/卷和 loopback 地址，测试不接受任意 Provider URL）
+- Create: `apps/backend/tests/contract/test_object_store_build.py`（构建输入/实际产物/启动凭据契约）
 - Create: `apps/backend/tests/contract/object_store_conformance.py`
 - Create: `apps/backend/tests/contract/test_s3_object_store.py`
 - Create: `apps/backend/tests/integration/test_minio_artifacts.py`
+- Modify: `apps/backend/tests/integration/test_tapper_persistence_restart.py`（E2E 末尾以真实新制品读取/缺失检查保留重启、摘要与删除证明）
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/knowledge_operator.py`（两种制品实现的组合类型与实际 scope 校验，不改变恢复协议）
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `uv.lock`
 - Modify: `compose.yaml`
@@ -432,35 +443,44 @@ Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/or
 - Modify: `apps/web/src/shared/testing/e2eRequestFailures.test.ts`
 - Inspect: `apps/web/src/features/knowledge/api/queries.tsx`（复用已具备 Project 绑定的 upload mutation）
 
-**Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
+**Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`describe_verified`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
 
-**预检裁定（实施前置，尚未实现）：**
+**已实施裁定：**
 
 - Knowledge 继续使用 ArtifactStore；新增 KnowledgeArtifactStore 组合平台 ObjectStorePort。平台层不导入 Knowledge domain/application。共同验证分为平台对象契约与两种 Knowledge artifact 实现的共享 conformance；保留 Azure 既有 copy/cancellation 状态机及测试，不把旧 Azure Adapter 称为已经实现新平台 Port。
-- 新 ObjectRef 只含封闭 opaque store identity、可信 Project namespace 与 manifest digest，不含 endpoint/bucket/key。manifest 绑定内容摘要、大小、类型和封闭逻辑属性；promote 可显式接收 revision/artifact slot 的逻辑身份以避免跨 Revision 删除共用内容，物理 key 仍由 Adapter 生成。旧 SQL locator 原字节保留，无新增对象目录表或隐式数据迁移。
+- 新 ObjectRef 只含封闭 opaque store identity、可信 Project namespace 与 manifest digest，不含 endpoint/bucket/key。manifest 绑定内容摘要、大小、类型和封闭逻辑属性；promote 可显式接收 revision/artifact slot 的逻辑身份以避免跨 Revision 删除共用内容，物理 key 仍由 Adapter 生成。旧 SQL locator 原字节保留，无新增对象目录表或隐式数据迁移。 Knowledge 内部可用封闭 ArtifactLocator wrapper 组合逻辑 revision/kind 与 opaque ObjectRef，保持现有 1024 长度上限；仍存在的 manifest 必须以其受摘要保护的属性反向核对 wrapper/target，全部目标验证后才删除。伪造逻辑 wrapper 不能删除其他 Revision，新增 ObjectDescriptor / describe_verified 仅验证 ref-rooted manifest metadata，不代表 payload 已校验；缺 payload 不得跳过仍存在的 manifest 校验，只有确实缺 manifest 才保留幂等删除语义。
 - 配置明确选择 minio 或 azure；MinIO 模式可显式开启 legacy Azure，仅路由已识别旧 locator 的读/删和持久 reservation 恢复，新上传仍写 MinIO。未启用 legacy 时旧引用安全失败，不能误发往 S3；Azure 模式也不能把新对象 ref 当 Blob 路径。新旧混合制品先全部校验，再按 Provider 分别清理，不宣称跨 Provider 原子删除。
 - SDK 候选固定为官方 aiobotocore 3.9.1 源码 commit `c92e345814ad97e5ec0633dbd34be5d26ee90dd3` 与 botocore 1.43.75；[官方修正](https://github.com/aio-libs/aiobotocore/releases/tag/3.9.1)包含 HTTPSession 并发保护。预检已解析源码声明依赖，但实际源包构建与完整 lock 仍须在工作区独占环境通过；PyPI 3.9.1 尚不可用，不能填入不存在的 wheel 或静默降级。先替换本工作区 `.venv` 符号链接本身，保留原目标和其他工作区环境。
 - [MinIO 社区版现为源码发布](https://github.com/minio/minio/blob/master/README.md)。固定官方 release commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`、已核对的 Go 1.24.8 与 nonroot runtime image digest，以只读 go.sum/明确平台构建；不得沿用上游 Dockerfile 的 mutable latest。构建 receipt 区分源码/基础镜像/实际产物 identity，启动使用实际 `sha256` image ID、`pull_policy: never` 并核对 container.Image。最终 image digest 是构建后的验收事实；固定输入不等于已证明逐位一致的重建，也不涉及发布 registry。
 - S3 endpoint、region、credentials、store identity 与代理行为显式配置；缺配置在网络前拒绝，无 ambient AWS profile/IMDS 回退。网络调用保持原生 async，有绝对 deadline、流关闭和取消收敛测试；SDK 本地 TLS 初始化仍可能使用线程，不把它称为全无线程，也不能通过关闭 HTTPS 校验规避。
 
-**V0 E2E 接入前置：** 当前产品原型的 Library 已读取真实文档，但文件选择仅生成本地名称；旧 `tapper.spec.ts` / `persistence.spec.ts` 则依赖已不作为产品入口的独立知识页。先把已确认 Library 的现有文件选择动作接到 Project-bound Document upload mutation，保留原布局；未取得 runtime Project 时禁用上传，不制造本地成功。这个最小接入用于当前摄取/存储和下一项恶意上传门禁，不提前实现 Source ledger 或持久 Conversation。
+**V0 E2E 接入前置：** 本项实施前，产品原型的 Library 已读取真实文档，但文件选择仅生成本地名称；旧 `tapper.spec.ts` / `persistence.spec.ts` 则依赖已不作为产品入口的独立知识页。先把已确认 Library 的现有文件选择动作接到 Project-bound Document upload mutation，保留原布局；未取得 runtime Project 时禁用上传，不制造本地成功。这个最小接入用于当前摄取/存储和下一项恶意上传门禁，不提前实现 Source ledger 或持久 Conversation。
 
 V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project API 保留 Answer/Citation/digest/删除及重启后的持久性断言；写请求携带精确 Origin，Project 来自 runtime，错误审计 allowlist 同步正式路径。测试清楚区分浏览器上传/UI 可见性与 API 持久性，不再宣称旧知识页交互验收；完整问答、history 与 SSE 的产品 UI 在 Task 9 验收。不能改回旧页面、跳过持久性断言或用 route mock 代替真实中间件。新增上传接入执行已有原型交互测试与截图检查，所有数据门禁仍用独占 E2E 环境。
 
-- [ ] 抽取现有 Azure Blob contract 为共同 conformance，增加 digest mismatch、staging orphan、oversize、path traversal、opaque ref 和 MinIO restart 测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v`；预期 FAIL，原因为 shared port/S3 Adapter 不存在。
-- [ ] 固定 S3 SDK 和 MinIO image digest，实施 staging → SHA-256 verify → manifest promotion；SDK locator 只留在 Adapter。
-- [ ] 将 Knowledge runtime 切到配置选择的 shared port；保留 Azure Adapter contract 但不再作为当前 Compose 默认。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v && make demo-e2e`；预期 PASS：共同 contract、MinIO restart 与既有旅程全部通过。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(storage): add minio object store`
+- [x] 抽取现有 Azure Blob contract 为共同 conformance，增加 digest mismatch、staging orphan、oversize、path traversal、opaque ref 和 MinIO restart 测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v`；预期 FAIL，原因为 shared port/S3 Adapter 不存在。
+- [x] 固定 S3 SDK 和 MinIO image digest，实施 staging → SHA-256 verify → manifest promotion；SDK locator 只留在 Adapter。
+- [x] 将 Knowledge runtime 切到配置选择的 shared port；保留 Azure Adapter contract 但不再作为当前 Compose 默认。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v && make demo-e2e`；预期 PASS：共同 contract、MinIO restart 与既有旅程全部通过。再运行 `make check`、独占 MySQL/Redis/Azurite/MinIO wrapper 中的完整 Backend 与 Web 回归，以及 `git diff --check`；不得使用可能指向默认数据库的 plain `make test`。
+- [x] Commit: `feat(storage): add verified minio artifact store`
+
+**审查修正前置：** 新增混合 MinIO/Azure 测试在 Azure 客户端构造前核对独占 Azurite receipt、实际容器归属与 endpoint/account；MinIO receipt 不代表 Azure 所有权，原有 Azure fixture 不作无关改写。S3 操作 deadline 与有界取消 settlement 分开，重复取消不得中断清理，延迟 GET 结果的 Body 仍由 Adapter 关闭。
+
+**验收：** `e1be27f`；[Task 5 验收记录](../reviews/2026-09-06-tapper-v0-object-storage-review.md)。修复后 162 项契约、17 项真实存储、final make check/复审通过；原始全 Backend 2667 passed/9 skipped/6 warnings、全 Web 294 passed、三阶段真实 E2E 与 28 项持久性通过，后三类在 fix1 前执行，未冒称最终全套重跑。
 
 ### Task 5A: Isolate document parsing and close hostile upload paths
 
 **Files:**
 
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/isolated_parser.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/parser_protocol.py`
+- Create: `apps/backend/src/tap/interfaces/http/multipart.py`
 - Create: `apps/backend/src/tap/entrypoints/tapper_parser_worker.py`
 - Create: `deploy/parser/Dockerfile`
+- Create: `deploy/parser/build-inputs.json`
+- Create: `scripts/build-tapper-parser.sh`
+- Create: `scripts/parser_test_support.py`
 - Create: `deploy/parser/worker.py`
 - Create: `apps/backend/tests/contract/test_isolated_parser.py`
 - Create: `apps/backend/tests/security/test_document_upload_security.py`
@@ -468,17 +488,50 @@ V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project
 - Create: `scripts/build-hostile-document-fixtures.py`
 - Create: `scripts/tapper-e2e-specs.json`
 - Create: `apps/web/tests/e2e/knowledge-upload-security.spec.ts`
+- Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py`
+- Modify: `apps/backend/tests/unit/knowledge/test_document_parsers.py`
+- Modify: `apps/backend/tests/unit/knowledge/test_ingestion_worker.py`
+- Modify: `apps/backend/tests/integration/test_ingestion_recovery.py`
+- Modify: `apps/backend/tests/integration/test_ingestion_entrypoint.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
+- Modify: `apps/backend/src/tap/interfaces/http/scope.py`
+- Inspect: `apps/backend/src/tap/interfaces/http/app.py`（保留最外层 correlation 与精确 Origin 顺序）
+- Modify: `apps/backend/tests/contract/test_tapper_http_contract.py`
+- Modify: `apps/backend/tests/contract/test_validation_scope_http.py`
+- Modify: `apps/backend/tests/contract/test_http_problem_details.py`
+- Modify: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `compose.yaml`
 - Modify: `scripts/run-tapper-dev.sh`
 - Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `Makefile`
+- Inspect: `.gitignore`（现有 `.tapper/` 已排除本地 Parser build receipt，不作空修改）
+- Inspect: `.env.example`（仅必要的非敏感启动参数，不开放请求选择 Docker endpoint）
 
 **Security contract:** API 先限制 multipart 与总字节，再由非 root、只读 rootfs、无外网、无 host mount 的 Parser Worker 校验 magic/signature 与声明 MIME。PDF 固定最大页数/对象数；DOCX 固定 entry 数、单 entry 大小、总展开大小与压缩比，并拒绝宏、OLE、脚本、外部 relationship、绝对/父级路径。所有格式有 CPU/RAM/输出字节/墙钟限制；Worker 只返回规范化文本/anchor manifest，不读取 URL 或 Secret。
+
+**预检裁定（Task 5A 实施前置，尚未实现）：** 应用使用独立 async Parser Port，Ingestion 通过私有 Unix socket 访问专门的 host supervisor；仅监督进程具有固定的本机 Docker 控制能力。它按 Compose 的固定 job 模板为每次解析创建新的 `network_mode: none` 容器，通过固定 stdin/stdout 帧协议传入字节和封闭元数据。API/Ingestion 不持 Docker 客户端，容器无端口、host mount、Docker socket 或 Secret。dev/E2E 启动并管理监督进程；startup readiness 必须执行并回收同模板的真实短解析任务，不以闲置常驻容器代替执行健康。Unix socket 的 0700 父目录/0600 socket 保护跨 OS 用户访问，同一宿主用户仍属于一个信任域。
+
+成功与取消都以实际容器终态为依据：验证 owned CID/image/labels，TERM/KILL → wait → inspect stopped → remove，并回收本地 Docker CLI；不能把 CLI/网络调用结束当作解析子进程已停止。容器 PID1 独立限制启动后总寿命并回收子进程组；监督进程崩溃后仍由容器自身限制终止，重启按确切 owner namespace 对遗留任务进行核对和清理。Docker 不可用时保留无内容的 unresolved cleanup 记录并拒绝新任务，不伪造回收成功。生产协议不提供故障注入或任意命令入口；资源故障探针只进入单独的测试 image target。
+
+构建固定官方 Python 3.13.12 slim-bookworm 的平台 manifest：arm64 `sha256:34b27ac66ecf318887b55ea3c71f0db9307895efe631210231a66cc3fa130cf9`、amd64 `sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6`；已核对 registry 元数据，尚非运行证据。仅从现有 `uv.lock` 派生 pypdf 6.16.2、python-docx 1.2.0、lxml 6.1.2 与 typing-extensions 4.16.0 的固定平台 wheel URL/hash，不新增第二份依赖锁。临时构建上下文只含显式纯解析源码清单、协议/launcher、经过摘要校验的四包 wheel 和 provenance，不能发送整个仓库或安装 Backend SDK。receipt 同时绑定实际源码/锁/配方字节与最终 image/payload identity；启动拒绝陈旧制品，实际镜像必须验证普通 DOCX、加密 PDF 拒绝和无可选依赖兜底。平台 manifest 固定不等于该架构已经运行验收。
+
+初始固定预算如下；必须以普通既有 fixture 和真实独占容器验证，不按上传内容放宽：
+
+| 边界 | 限制 |
+| --- | --- |
+| HTTP multipart | 文件 25 MiB + envelope 64 KiB；一个 upload、零其他字段；boundary 70 bytes；part headers 总计 8 KiB/16 项；接收 30 秒；每 API 进程最多两个并发解析上传表单 |
+| 解析协议 | 控制头 4 KiB、内容 25 MiB、规范化回复 32 MiB、stderr 最多 16 KiB 且不输出其内容；一个活动解析、无无界队列 |
+| 容器 | 1 CPU、memory 与 memory+swap 均 512 MiB、16 PIDs、32 MiB tmpfs、64 fds、无 core dump |
+| 子进程/生命周期 | CPU soft/hard 8/10 秒、地址空间 384 MiB、文件 32 MiB；解析最多 25 秒、PID1 从启动起最多 35 秒；终态清理预算 15 秒，超时保留 unresolved |
+| PDF | 200 页、regular/compressed xref 合计 50,000 对象、遍历深度 64；解码内容每页 8 MiB/总计 32 MiB；初始化本身也受容器资源限制 |
+| DOCX | 2048 entries、单 entry 8 MiB、实际总展开 32 MiB、单项/总体压缩比 100:1；只接收 stored/deflated，不接受加密或包外 relationship |
+| 规范化文本 | 保留 8,000,000 字符上限，早期检查 UTF-8/编码回复字节、最多 10,000 blocks、32 级 heading 和 256 字符 heading；最终回复仍须匹配全部源身份和摘要 |
+
+上传使用专用 APIRoute 在 FastAPI `File(...)` 处理前执行有界 multipart 并缓存同一 FormData，保留生成合同；对所有失败、断连、取消和策略拒绝关闭已创建 spool。共享 authority 字段识别使 actor/project 等尝试仍返回原 403；Origin 在读取 body 前拒绝。帧长度、重复 JSON keys、截断、正常 EOF 与取消、输出上限及文档/Revision/media/filename/hash 绑定都必须验证；成功 payload 复用已有 canonical normalized codec。此窄框架接入须以当前锁定 Starlette/FastAPI 的实际行为测试，不能仅设置对文件无效的 max_part_size。
 
 - [ ] 写伪扩展、MIME/signature 不符、加密/超页 PDF、zip bomb、超大 entry、宏/OLE、external relationship、路径穿越、SSRF URL、timeout/OOM/crash 和安全错误不泄漏测试；E2E 证明拒绝后 API/Worker 仍健康。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest'`；预期 FAIL，原因为隔离 Parser、恶意 fixture 生成器或 E2E manifest 不存在，而不是浏览器或网络未启动。

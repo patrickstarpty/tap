@@ -9,7 +9,7 @@
 | 目标产品形态 | 单一企业、多 Project、多用户；P0 才实施身份/RBAC/多 Project                                                                  |
 | 应用技术栈   | React + TypeScript；Python 3.13 + FastAPI/ASGI；MySQL、Redis、MinIO、Milvus、LiteLLM                                         |
 | 部署基线     | 企业内网 Linux + Docker Compose；Jenkins Controller/Agent 外置                                                               |
-| 当前实现事实 | 已有 loopback Tapper `doc` 知识切片和纯前端产品原型；本架构其余能力尚未实现                                                  |
+| 当前实现事实 | 已有 loopback Tapper `doc` 切片；原型已接 Project Runtime/Library 真实上传，其余平台能力分阶段实施                                                  |
 
 ## 1. 架构目标与边界
 
@@ -41,8 +41,8 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 | Test Management | 浏览器内 fixture                                                            | Test Plan/Test Case/BDD Draft、人工发布与不可变 Revision                      |
 | LCA             | 浏览器内 fixture、模拟 Run                                                  | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder      |
 | Execution       | Azure DevOps/Mobile 仅为旧原型探索                                          | Jenkins-first Provider、Published Revision、Evidence 和 Test Plan 结果投影    |
-| Identity        | loopback 固定 demo policy                                                   | V0 typed Validation Actor/Project；P0 User/Session/Membership/RBAC            |
-| Deployment      | 开发 Compose 使用 MySQL/Redis/Azurite/Milvus/LiteLLM                        | TAP 独立 MinIO、Milvus、LiteLLM、自托管 Compose 与外置 Jenkins；P1 后才可生产 |
+| Identity        | 固定 Validation Scope、共同实时 Policy 与 Project 隔离                                                   | V0 typed Validation Actor/Project；P0 User/Session/Membership/RBAC            |
+| Deployment      | 开发 Compose 已加独立 TAP MinIO，保留 Azurite 显式兼容                        | TAP 独立 MinIO、Milvus、LiteLLM、自托管 Compose 与外置 Jenkins；P1 后才可生产 |
 
 任何页面 fixture、模拟 `Passed`、fake Adapter 或单次本地 smoke 都不能被表述为目标能力已完成。
 
@@ -137,7 +137,16 @@ class ModelGateway(Protocol):
 
 class ObjectStorePort(Protocol):
     async def put_staged(self, request: PutObjectRequest) -> StagedObject: ...
-    async def promote(self, staged: StagedObject, expected_sha256: str) -> ObjectRef: ...
+    async def promote(
+        self, staged: StagedObject, expected_sha256: str,
+        *, identity: str, attributes: Mapping[str, str],
+    ) -> ObjectRef: ...
+    async def describe_verified(self, ref: ObjectRef) -> ObjectDescriptor: ...
+    async def open_verified(self, ref: ObjectRef | StagingRef) -> VerifiedObject: ...
+    async def delete(self, ref: ObjectRef | StagingRef) -> None: ...
+    async def scavenge_staging(
+        self, *, now: datetime, visible_refs: frozenset[StagingRef], limit: int = 100,
+    ) -> StagingScavengeReceipt: ...
 
 class RecorderPort(Protocol):
     async def allocate(self, request: RecorderAllocationRequest) -> RecorderAllocation: ...
@@ -152,6 +161,8 @@ class ExecutionProvider(Protocol):
     async def cancel(self, provider_run_ref: ProviderRunRef) -> ProviderObservation: ...
     async def fetch_result(self, provider_run_ref: ProviderRunRef) -> ProviderResultManifest: ...
 ```
+
+ObjectRef 绑定可信 Project、封闭 store identity 与 manifest digest；物理 locator 留在 Adapter。`describe_verified` 只校验清单，`open_verified` 另验证内容；Knowledge 批量删除先校验全部存活清单的 Revision/kind，缺 payload 不能跳过清单校验。`ManagedObjectStore` 的建桶、privacy、Scope 与关闭能力只供基础设施组合使用，不并入业务 Port。
 
 Validation 和 Product 身份 Adapter、Milvus 与未来检索 Adapter、单一 LiteLLM Model Gateway、MinIO 与未来对象存储、Jenkins 与未来执行 Provider 都必须通过共同 contract tests；公共 API 不暴露 SDK 私有对象。Knowledge、Graph、Test Plan 与 Automation 只增加各自的结构化输出 Validator，不复制 alias、超时、脱敏和审计逻辑。RFC-006 的直接 Codex CLI 回答端口只保留为既有 loopback Demo 事实；V1 前必须把其 selector/Adapter 从默认 runtime/import graph 移入显式 legacy-loopback composition，后者不挂载 RFC-009 Project API、不计入 V1/VG，也不形成绕过 Model Gateway 的第二模型出口。
 
@@ -201,7 +212,7 @@ sequenceDiagram
 
 空白 New Chat 不落库；第一条消息同事务创建 Conversation、Turn 与不可变 Input Snapshot，并以 `conversation.turn.requested.inputSnapshotDigest` 固定发送时的 Project、Actor、model alias、Knowledge Revision、AI Agent、Skill 和检索策略。检索、Graph、回答与 Citation 核验完成后，另一事务写不可变 Answer/Evidence Snapshot，并由 `conversation.turn.completed.answerEvidenceSnapshotDigest` 引用其 digest（事件同时带 Snapshot ID）；该快照固定检索摘要、`graph_context_status`、实际使用的 Graph Snapshot ID 和 Citation Snapshot。只有 `APPLIED` 可带 Graph Snapshot ID；输入快照不得追加完成时字段。SSE 使用单调事件序号并支持 `Last-Event-ID` 恢复，取消和重试不覆盖旧 Turn 或快照。
 
-知识上传先写受限 staging，再由无网络、非 root、CPU/RAM/时间有界的 Parser Worker 处理。入口同时校验扩展名、声明 MIME 与 magic/signature；PDF 限制页数和对象规模，DOCX 限制单 entry、总展开量与压缩比并拒绝宏、脚本和外部 relationship。当前只接受可提取文本的 PDF/DOCX/Markdown/TXT，不做 OCR。解析、Chunk Manifest、对象晋级和 Milvus 发布均通过 MySQL 状态/Outbox 可恢复；失败或恶意输入不得在 API 进程内解析，也不得访问外部 URL。
+知识上传先写受限 staging，再由无网络、非 root、CPU/RAM/时间有界的 Parser Worker 处理。入口同时校验扩展名、声明 MIME 与 magic/signature；PDF 限制页数和对象规模，DOCX 限制单 entry、总展开量与压缩比并拒绝宏、脚本和外部 relationship。当前只接受可提取文本的 PDF/DOCX/Markdown/TXT，不做 OCR。解析、Chunk Manifest、对象晋级和 Milvus 发布均通过 MySQL 状态/Outbox 可恢复；失败或恶意输入不得在 API 进程内解析，也不得访问外部 URL。 Task 5A 的隔离部署采用独立 host supervisor：应用经私有 Unix socket 提交封闭字节任务，仅监督进程持固定 Docker 控制能力，每次解析运行于新的 network_mode:none 容器；容器无端口、host mount、Docker socket 或 Secret。Compose 定义 job 模板，dev/E2E 的启动健康检查真实执行并回收短任务；取消和成功均要求实际容器停止、核对和回收证据，Docker 不可用的未确认清理使服务拒绝新工作。该部署尚待 Task 5A 实现与门禁，完整预算见[实施计划](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md)。
 
 ### 5.2 Knowledge Graph
 
@@ -329,4 +340,4 @@ RFC-009 是完整数据模型、API、事件、质量阈值和风险说明的规
 
 平台品牌为 TAP，智能工作区与 AI Agent 入口为 Tapper；Execution Agent 仍为 Jenkins Pipeline Agent。所有 Web 工作区共用[浅色视觉规范](../reference/2026-09-05-tap-fwd-light-design.md)，由 app theme / CSS 语义色统一浅色画布、FWD 橙色强调与组件状态。该规范不改变模块依赖、API、Validation Mode 或 V0–P1 验收边界。
 
-V0 已完成 authoritative metadata、固定验证身份、Project 数据回填及 Task 2C 事件/Problem 基础。Alembic 显式装载 21 张表，共同授权核对有效 Enterprise/Project/Actor；原 14 张业务表和仓储强制 Project 范围，Outbox 使用 canonical envelope、同事务 writer 与非法事件持久拒绝。19 种领域事件和 4 种 compatibility event、29 种安全 Problem 使用唯一注册表，HTTP/SSE 与 Web 生成制品同步。证据和测试限制见[身份验收](../reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](../reviews/2026-09-05-tapper-v0-project-scope-review.md)与[契约验收](../reviews/2026-09-06-tapper-v0-contracts-review.md)。[Project HTTP 与 Validation Mode](../reviews/2026-09-06-tapper-v0-http-review.md) 已接入当前原型，HTTP 核对实际仓储 Scope，mutation 校验精确 Origin，Web 从可信 runtime 响应取得 Project 并隔离缓存。[Project Audit 基础](../reviews/2026-09-06-tapper-v0-audit-review.md)已提供绑定调用者事务的 Port，0008 保留旧数据并通过完整回归；[Task 4 恢复与有界运维](../reviews/2026-09-06-tapper-v0-recovery-review.md)已接入实际 operation receipt、Audit 与完成 Outbox 三写，0009 加入操作/归档/死信事实；Redis、范围内 staging 和索引重建保护完成定向验证。事件登记不等于业务流程完成；可靠性恢复与 V0 出口继续按计划实施。
+V0 已完成 authoritative metadata、固定验证身份、Project 数据回填及 Task 2C 事件/Problem 基础。Alembic 显式装载 21 张表，共同授权核对有效 Enterprise/Project/Actor；原 14 张业务表和仓储强制 Project 范围，Outbox 使用 canonical envelope、同事务 writer 与非法事件持久拒绝。19 种领域事件和 4 种 compatibility event、29 种安全 Problem 使用唯一注册表，HTTP/SSE 与 Web 生成制品同步。证据和测试限制见[身份验收](../reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](../reviews/2026-09-05-tapper-v0-project-scope-review.md)与[契约验收](../reviews/2026-09-06-tapper-v0-contracts-review.md)。[Project HTTP 与 Validation Mode](../reviews/2026-09-06-tapper-v0-http-review.md) 已接入当前原型，HTTP 核对实际仓储 Scope，mutation 校验精确 Origin，Web 从可信 runtime 响应取得 Project 并隔离缓存。[Project Audit 基础](../reviews/2026-09-06-tapper-v0-audit-review.md)已提供绑定调用者事务的 Port，0008 保留旧数据并通过完整回归；[Task 4 恢复与有界运维](../reviews/2026-09-06-tapper-v0-recovery-review.md)已接入实际 operation receipt、Audit 与完成 Outbox 三写，0009 加入操作/归档/死信事实；Redis、范围内 staging 和索引重建保护完成定向验证。[Task 5 对象存储](../reviews/2026-09-06-tapper-v0-object-storage-review.md)已加入独立 MinIO、显式旧 Azure 兼容及当前 Library 真实上传，真实重启与修复后取消/清单验证通过。事件登记不等于业务流程完成；隔离 Parser 与 V0 出口继续按计划实施。

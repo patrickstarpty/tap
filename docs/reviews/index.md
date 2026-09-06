@@ -17,3 +17,5 @@
 - [Tapper V0 Project Audit 账本验收](2026-09-06-tapper-v0-audit-review.md)：Task 3A 通过；记录闭集审计、同事务三写、0008 迁移、并发重放与冻结后的完整隔离回归。
 
 - [Tapper V0 恢复与有界运维验收](2026-09-06-tapper-v0-recovery-review.md)：Task 4 通过；记录 Redis/Outbox 恢复、Operator 完成三写、0009、范围清理、独立审查及完整回归的实际限制。
+
+- [Tapper V0 对象存储与真实上传验收](2026-09-06-tapper-v0-object-storage-review.md)：Task 5 通过；记录独立 MinIO、旧 Azure 兼容、当前原型真实上传、重启验证、取消修正与回归限制。
