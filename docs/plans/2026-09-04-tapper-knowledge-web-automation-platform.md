@@ -673,10 +673,50 @@ Source Picker 接入当前 Tapper 产品壳的来源区域和 Library；不替�
 
 **API/projection:** `/api/v1/projects/{project_id}/knowledge/sources` 提供 create-by-upload、list、detail、delete 和 retry；Document endpoint 只处理 Source 下的具体版本/状态。Milvus 新物理 collection 使用 canonical `enterprise_id/project_id/source_id`；旧 collection 的 `tenant_id` 与 `source_id=document_id` 只作为迁移输入，经 Task 6 的 legacy map 转换，绝不进入新 schema 或公共 DTO。写入与读回闭集验证 enterprise/project/source/document/revision/chunk/anchor/digest。Schema version 变更通过新 collection → fixture/rebuild → 完整性检查 → atomic alias cutover，不能原地假定旧 row 已有新字段。
 
+**2026-09-06 implementation rulings:** Task6 已由源码 `56ee2b5` 和验收 `11d47cb` 完成；以下约束细化现有任务，尚不代表 Task6A 完成。
+
+**Durable Source commands**
+
+- Add one Knowledge-owned `knowledge_source_command` ledger, not a generic platform framework. Use additive `0010a_source_commands` / `0010a_source_commands.py`, down_revision `0010_knowledge_sources`. This preserves the immutable0010 and future planned0011 Agent/Skill revision numbering. Alembic dependency order is authoritative; verify tooling accepts this exact identifier rather than renumbering unrelated future work. Report a concrete tooling conflict before changing this ruling.
+- Exact current schema becomes26 named tables. Update authoritative metadata/registry, migration-support and nonempty migration tests. Preserve original14-table fixture plus new command-specific refusal/replay cases. Refuse downgrade with command facts; permit empty migration-only round-trip. Do not modify0010.
+- Scope unique keys by trusted Enterprise/Project/key; include closed operation/route response version, target resource, Actor provenance and full canonical client request in its versioned digest. Required bounded128 nonblank opaque key, duplicate header refusal, binary/case-sensitive identity. Current authorization precedes replay. No memory-only key cache or Audit/Outbox-as-request-ledger shortcut.
+- Upload request binds normalized accepted filename, validated media, length and content hash plus any explicit targetSource; exclude multipart encoding, generated IDs, time/correlation and deployment-varying parser settings. Save server parser/pipeline facts in the existing reservation. Separate content dedupe from request idempotency: different keys may bind one resource, but each retains its original result/duplicate flag; same key with different canonical input conflicts.
+- Bind pending key to the existing reservation durably before activation. Finalize accepted response with activation's business/Audit/Outbox transaction; never issue202 before result durability or invent an uncreated job. Bounded pending duplicate returns a safe retryable in-progress response or reconciles the same reservation; never creates anotherSource. Persist terminal domain rejection safely; transient infrastructure failure stays recoverable rather than becoming a cached success.
+- Recovery settles every bound pending command at the corresponding activation/cancellation transaction. Cancelled-before-activation commands retain a durable closed failure with no fabricated Revision/job. Replay after later deletion returns the original outcome without resurrection. Preserve command history and original result after tombstones; do not add cascade/TTL or FKs that block existing cancelled-reservation cleanup. Distinguish historical command references from current authorization facts.
+- Retry/delete finalize key/result in the same lifecycle transaction. Replay original result before rechecking mutable preconditions. Keep domain lock order coherent with recovery; no command→job / job→command inversion, pre-read-only idempotency or separate-connection business commit. Cover real concurrent same/different keys and reserve/promote/activate/result/response crash boundaries.
+
+**Public and compatibility API**
+
+- Approve Source upload/list/detail/delete and targeted retry. Retry carries explicit Document/current Revision and expectedAttempt; the key, not expectedAttempt alone, provides replay. Paginated lists/detail retain Source1:NDocument cardinality and readiness/failure counts; use list default25/max50. Repeated same-Project tombstone delete may return204, absent/foreign remain identical404; no broad exception-to-success conversion.
+- Retain the old Document POST as a deprecated thin facade using its existing DTO/operation ID and the same single Source command pipeline. Require Idempotency-Key there and on other side-effect facades; canonical route/response version distinguishes facade replay. Preserve upload security/cleanup and existing GET/status contracts, now with explicit Source ownership. New shell uses Source routes. Do not remove the old API or introduce public Document-ID-as-Source aliases.
+- Web creates one key per user mutation intent and retains it for transport retries. Do not claim durable browser-intent restoration across reload. Update generated DTOs and existing affected client/security tests; no hand-written mirrored contracts or new dependencies.
+
+**Frozen Source selection**
+
+- Resolve trusted active Source IDs to ordered active Documents whose current revisions are READY; omit non-ready siblings and expose their counts. No older-READY fallback, arbitrary firstDocument, caller revision override or legacy public Source alias.
+- Keep existing20 selectedSource/expandedRevision bounds and50 activeDocument capacity. Reject overflow or a selectedSource with no ready currentRevision before provider I/O. Resolve grants by Source+explicitRevision, preserving original Document-based chunk identity.
+- Freeze the ordered Source/Document/Revision/hash tuple once. Subsequent retrieval/snapshot persistence rechecks that tuple's ownership, authorization, selected-current revision policy and tombstones. Newly-ready/new siblings neither join nor invalidate it. Do not create Task8 TurnInputSnapshot storage early or rewrite historical selected JSON; use Task6 normalized associations for history/citations.
+
+**Canonical Milvus and operator compatibility**
+
+- Approve closed v2 enterprise/project/source/document provenance and complete write/readback validation, including anchors/digests/counts and selected Revision. Retain immutable v1 descriptor/loader for explicit migration/rollback; no silent fallback or in-place row reinterpretation.
+- Build v2 in a fresh generation using validated SQL/artifact ownership and existing vectors; use legacy map only for genuine old mapped rows. Task6 uploads without map entries use authoritative ownership, not fabricated maps. Keep receipts/schema versions truthful and tombstone/lease/coordinator fences intact.
+- Cutover and rollback are explicit and bind matching runtime profile plus alias/corpus state; startup must report migration-required instead of swapping an existingv1 target. Preserve old physical generation during rollback window. No shared/default alias operations or paid embeddings.
+- Add new V0 report schemaVersion3 exact0010a/26-table profile while retaining unchanged historicalv1/21 andv2/0010/25 interpretation. Do not rewrite past evidence or rerun the fullV0 gate solely for profile growth. Root will verify historical validators separately.
+
+**Approved additional files and checks**
+
+Additional permitted implementation dependencies: Source/Document application+ports+repository, answer/policy/snapshot and Source+Revision disambiguation, HTTP composition/problems, versioned Milvus fixture/publish/config, current prototype Source extraction/copy/client tests, new Source-command migration/integration test and exact schema/gate profile support. No unrelated retrieval redesign. Report genuinely new dependencies before expanding further.
+
+Use a strictly owned disposable real Milvus project with explicit loopback ports, isolated SQL/artifacts, committed vectors and exact resource receipts. Existing default `make test-milvus` is not an authorized invocation. Prepare the owned recipe for Root review before starting services. No fake-server-only acceptance. Prefer the ignored reviewed recipe over an unsolicited reusable tracked runner.
+
+Literal RED/GREEN for behaviors; actual SQL atomicity/crash/lease evidence; generated contracts; Picker keyboard/loading/error/empty/Project-switch coverage; real versioned row/cutover/rollback evidence. Freeze before independent review and Root broad checks. If ports/documents.py changes, Root rebuilds/verifies the declared parser payload before broad validation. All production/source input hashes stay fixed during final checks. No plain make test, real models, shared services or UI replacement.
+
+
 - [ ] 写 Source HTTP idempotency/Project/删除/重试、错误类型，Milvus wrong enterprise/project/source/readback、旧 `source_id=document_id` cutover、alias rollback 和 Picker 键盘/空态测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx`；预期 FAIL，原因为 Source route/UI 与闭集 projection 尚未实现。
 - [ ] 实现 API、generated client 和 collection migration；`map_milvus_hit` 必须收到并核对 enterprise/project，任何字段缺失或 scope 不符返回安全的 search failure，不当作零结果。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx && make test-milvus`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [ ] 运行 `make contracts`、相关 Backend/Web 测试，以及 Root 审核的严格独占真实 Milvus 配方；预期 PASS。冻结源码并审查后运行 `make check`、隔离 Backend/Web 回归和 `git diff --check`；禁止直接运行连接默认资源的 `make test-milvus` 或 `make test`。
 - [ ] Commit: `feat(knowledge): expose sources and scope milvus rows`
 
 ### Task 7: Introduce one governed ModelGateway and expose its catalog
