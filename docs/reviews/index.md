@@ -28,3 +28,4 @@
 
 - [Tapper V1 Source API 与 projection 验收](2026-09-08-tapper-v1-source-api-and-projection-review.md)：Task6A通过；记录0010a/26表、Source API/Picker、canonical Milvus v2、显式v1回滚、五份审查和最终隔离回归。
 - [Tapper V1 统一 ModelGateway 与模型目录验收](2026-09-08-tapper-v1-model-gateway-review.md)：Task 7 通过；记录唯一 LiteLLM Gateway、Project 模型目录、legacy Codex 隔离、一轮审查修正和完整隔离回归。
+- [Tapper V1 AI Agent 与 Skill Revision 验收](2026-09-09-tapper-v1-ai-agent-skill-catalog-review.md)：Task 7A 通过；记录不可变 Catalog Revision、并发幂等 Validation seed、只读 API、选择器恢复态、四轮审查修正与隔离回归。
