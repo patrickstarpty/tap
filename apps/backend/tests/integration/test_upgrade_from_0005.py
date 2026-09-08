@@ -325,6 +325,140 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("preexisting_stream_sequence", "expected_stream_sequence"),
+    [(None, 1), (7, 7)],
+    ids=("a22-without-stream", "464-with-stream"),
+)
+def test_known_applied_0012_shapes_converge_without_readding_or_rewriting_columns(
+    owned_project_mysql,
+    preexisting_stream_sequence,
+    expected_stream_sequence,
+):
+    import asyncio
+
+    from scripts.migration_support import seed_baseline
+    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+    from tap.modules.chat.application.conversations import ConversationService
+
+    owned_project_mysql.downgrade("0005_projection_lineage")
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        with sync_engine.begin() as connection:
+            seed_baseline(connection)
+        owned_project_mysql.upgrade("0012_conversations")
+        with sync_engine.begin() as connection:
+            # Reproduce the schema already deployed from a22 while Alembic still reports 0012.
+            connection.execute(
+                text(
+                    "ALTER TABLE ai_agent_revision "
+                    "ADD COLUMN system_instruction VARCHAR(8000) NOT NULL, "
+                    "ADD COLUMN output_schema_json JSON NOT NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE skill_revision "
+                    "ADD COLUMN instruction_template VARCHAR(8000) NOT NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE chat_turn MODIFY COLUMN processing_attempt "
+                    "INTEGER NOT NULL DEFAULT 0, "
+                    "ADD COLUMN processing_lease_token VARCHAR(64), "
+                    "ADD COLUMN processing_lease_expires_at DATETIME(6)"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE chat_turn SET processing_lease_token='preserved-a22-lease', "
+                    "processing_lease_expires_at='2026-09-09 01:02:03.123456' "
+                    "WHERE turn_id='legacy-turn'"
+                )
+            )
+            if preexisting_stream_sequence is not None:
+                connection.execute(
+                    text("ALTER TABLE chat_event ADD COLUMN stream_sequence BIGINT NOT NULL")
+                )
+                connection.execute(
+                    text("UPDATE chat_event SET stream_sequence=:sequence"),
+                    {"sequence": preexisting_stream_sequence},
+                )
+
+        owned_project_mysql.upgrade("0012a_conversation_governance")
+
+        with sync_engine.connect() as connection:
+            inspector = inspect(connection)
+            turn_columns = {item["name"]: item for item in inspector.get_columns("chat_turn")}
+            assert {"processing_lease_token", "processing_lease_expires_at"} <= turn_columns.keys()
+            assert turn_columns["processing_attempt"]["default"] in {"'0'", "0", "0"}
+            agent_columns = {
+                item["name"]: item for item in inspector.get_columns("ai_agent_revision")
+            }
+            assert agent_columns["system_instruction"]["nullable"]
+            preserved = connection.execute(
+                text(
+                    "SELECT processing_lease_token,processing_lease_expires_at "
+                    "FROM chat_turn WHERE turn_id='legacy-turn'"
+                )
+            ).one()
+            assert preserved[0] == "preserved-a22-lease"
+            assert str(preserved[1]) == "2026-09-09 01:02:03.123456"
+            assert (
+                connection.execute(
+                    text("SELECT stream_sequence FROM chat_event WHERE event_id='legacy-event'")
+                ).scalar_one()
+                == expected_stream_sequence
+            )
+    finally:
+        sync_engine.dispose()
+
+    async def scenario() -> None:
+        engine = create_async_engine(
+            owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+        )
+        try:
+            repository = MysqlConversationRepository(
+                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+            )
+            loaded = await ConversationService(repository, scope=VALIDATION_SCOPE).load(
+                "legacy-chat"
+            )
+            assert loaded.turns[0].turn_id == "legacy-turn"
+            assert [(event.sequence, event.event_id) for event in loaded.events] == [
+                (expected_stream_sequence, "legacy-event")
+            ]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+    # A partially reconciled target must still downgrade without dropping a missing column.
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        with sync_engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE chat_turn DROP COLUMN processing_lease_expires_at")
+            )
+        owned_project_mysql.downgrade("0012_conversations")
+        with sync_engine.connect() as connection:
+            inspector = inspect(connection)
+            turn_columns = {item["name"]: item for item in inspector.get_columns("chat_turn")}
+            assert "processing_lease_token" not in turn_columns
+            assert "processing_lease_expires_at" not in turn_columns
+            assert turn_columns["processing_attempt"]["default"] in {"'1'", "1", 1}
+            assert "stream_sequence" not in {
+                item["name"] for item in inspector.get_columns("chat_event")
+            }
+    finally:
+        sync_engine.dispose()
+
+
 def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
     if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
         pytest.skip("requires owned isolated MySQL")

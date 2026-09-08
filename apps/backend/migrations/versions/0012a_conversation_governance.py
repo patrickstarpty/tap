@@ -12,10 +12,41 @@ branch_labels: str | None = None
 depends_on: str | None = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    return column_name in {
+        column["name"] for column in sa.inspect(op.get_bind()).get_columns(table_name)
+    }
+
+
+def _add_column_if_missing(table_name: str, column: sa.Column[object]) -> None:
+    if not _has_column(table_name, column.name):
+        op.add_column(table_name, column)
+
+
+def _drop_column_if_present(table_name: str, column_name: str) -> None:
+    if _has_column(table_name, column_name):
+        op.drop_column(table_name, column_name)
+
+
 def upgrade() -> None:
-    op.add_column("ai_agent_revision", sa.Column("system_instruction", sa.String(8000)))
-    op.add_column("ai_agent_revision", sa.Column("output_schema_json", JSON))
-    op.add_column("skill_revision", sa.Column("instruction_template", sa.String(8000)))
+    _add_column_if_missing("ai_agent_revision", sa.Column("system_instruction", sa.String(8000)))
+    _add_column_if_missing("ai_agent_revision", sa.Column("output_schema_json", JSON))
+    _add_column_if_missing("skill_revision", sa.Column("instruction_template", sa.String(8000)))
+    # The briefly deployed a22 shape made these execution-content columns non-null.
+    # Converge both that shape and the original released 0012 shape to the same target.
+    op.alter_column(
+        "ai_agent_revision",
+        "system_instruction",
+        existing_type=sa.String(8000),
+        nullable=True,
+    )
+    op.alter_column("ai_agent_revision", "output_schema_json", existing_type=JSON, nullable=True)
+    op.alter_column(
+        "skill_revision",
+        "instruction_template",
+        existing_type=sa.String(8000),
+        nullable=True,
+    )
     op.execute(
         sa.text(
             "UPDATE ai_agent_revision SET system_instruction="
@@ -40,9 +71,11 @@ def upgrade() -> None:
         existing_nullable=False,
         server_default="0",
     )
-    op.add_column("chat_turn", sa.Column("processing_lease_token", sa.String(64)))
-    op.add_column("chat_turn", sa.Column("processing_lease_expires_at", DATETIME(fsp=6)))
-    op.add_column("chat_event", sa.Column("stream_sequence", sa.BigInteger(), nullable=True))
+    _add_column_if_missing("chat_turn", sa.Column("processing_lease_token", sa.String(64)))
+    _add_column_if_missing("chat_turn", sa.Column("processing_lease_expires_at", DATETIME(fsp=6)))
+    _add_column_if_missing(
+        "chat_event", sa.Column("stream_sequence", sa.BigInteger(), nullable=True)
+    )
     op.execute(
         sa.text(
             "UPDATE chat_event event_row JOIN ("
@@ -52,23 +85,25 @@ def upgrade() -> None:
             "ON turn_row.project_id=event_row.project_id AND "
             "turn_row.turn_id=event_row.turn_id"
             ") ranked ON ranked.event_id=event_row.event_id "
-            "SET event_row.stream_sequence=ranked.cursor_value"
+            "SET event_row.stream_sequence=ranked.cursor_value "
+            "WHERE event_row.stream_sequence IS NULL"
         )
     )
     op.alter_column("chat_event", "stream_sequence", existing_type=sa.BigInteger(), nullable=False)
 
 
 def downgrade() -> None:
-    op.drop_column("chat_event", "stream_sequence")
-    op.drop_column("chat_turn", "processing_lease_expires_at")
-    op.drop_column("chat_turn", "processing_lease_token")
-    op.alter_column(
-        "chat_turn",
-        "processing_attempt",
-        existing_type=sa.Integer(),
-        existing_nullable=False,
-        server_default="1",
-    )
-    op.drop_column("skill_revision", "instruction_template")
-    op.drop_column("ai_agent_revision", "output_schema_json")
-    op.drop_column("ai_agent_revision", "system_instruction")
+    _drop_column_if_present("chat_event", "stream_sequence")
+    _drop_column_if_present("chat_turn", "processing_lease_expires_at")
+    _drop_column_if_present("chat_turn", "processing_lease_token")
+    if _has_column("chat_turn", "processing_attempt"):
+        op.alter_column(
+            "chat_turn",
+            "processing_attempt",
+            existing_type=sa.Integer(),
+            existing_nullable=False,
+            server_default="1",
+        )
+    _drop_column_if_present("skill_revision", "instruction_template")
+    _drop_column_if_present("ai_agent_revision", "output_schema_json")
+    _drop_column_if_present("ai_agent_revision", "system_instruction")
