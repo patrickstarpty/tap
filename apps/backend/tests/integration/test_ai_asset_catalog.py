@@ -77,6 +77,56 @@ async def test_mysql_seed_preserves_retirement_and_resolves_historical_agent_and
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
+    owned_project_mysql,
+) -> None:
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import ValidationAssetSeed, validation_asset_seed
+    from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        seed = validation_asset_seed(VALIDATION_SCOPE)
+        await asyncio.gather(
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed),
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed),
+        )
+        v2 = AiAgentRevision(
+            revision_id="validation-knowledge-agent-v2",
+            asset_id=seed.agents[0].asset_id,
+            display_name="Knowledge agent v2",
+            scope=VALIDATION_SCOPE,
+            content_digest=text_digest("validation-ai-agent-v2"),
+            system_instruction_digest=text_digest("knowledge-agent-system-instruction-v2"),
+            tool_allowlist=frozenset({"knowledge.search"}),
+            output_schema_digest=text_digest("knowledge-agent-output-schema-v2"),
+            adopted_from_revision_id=seed.agents[0].revision_id,
+        )
+        await asyncio.gather(
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(
+                ValidationAssetSeed(version="v2", agents=(v2,), skills=())
+            ),
+            MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(
+                ValidationAssetSeed(version="v2", agents=(v2,), skills=())
+            ),
+        )
+        assert [
+            item.revision_id
+            for item in await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).list_agents(
+                VALIDATION_SCOPE
+            )
+        ] == [seed.agents[0].revision_id, v2.revision_id]
+    finally:
+        await engine.dispose()
+
+
 def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

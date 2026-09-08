@@ -13,6 +13,9 @@ export function AgentSkillSelector({
   skillRevisionIds,
   onAgentChange,
   onSkillsChange,
+  loading = false,
+  error = null,
+  onRetry,
 }: {
   agents: readonly ApprovedAiAsset[];
   skills: readonly ApprovedAiAsset[];
@@ -20,6 +23,9 @@ export function AgentSkillSelector({
   skillRevisionIds: readonly string[];
   onAgentChange: (revisionId: string | null) => void;
   onSkillsChange: (revisionIds: string[]) => void;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [retiredSkillsRemoved, setRetiredSkillsRemoved] = useState(false);
@@ -29,15 +35,17 @@ export function AgentSkillSelector({
     [skills],
   );
   const activeSkills = skillRevisionIds.filter((id) => enabledSkillIds.has(id));
-  const retiredSkills = activeSkills.length !== skillRevisionIds.length;
+  const retiredSkills = !loading && activeSkills.length !== skillRevisionIds.length;
   useEffect(() => {
     if (retiredSkills) {
       onSkillsChange(activeSkills);
       setRetiredSkillsRemoved(true);
     }
   }, [activeSkills, onSkillsChange, retiredSkills]);
+  if (error)
+    return <div role="alert">{error}{onRetry && <Button onClick={onRetry}>Retry catalog</Button>}</div>;
   if (agentRevisionId !== null && selected === undefined)
-    return <span role="status">Agent unavailable</span>;
+    return <div role="status">Agent unavailable <Button onClick={() => onAgentChange(null)}>Clear agent</Button></div>;
   return (
     <div className="tap-agent-skill-selector">
       <label>
@@ -45,6 +53,7 @@ export function AgentSkillSelector({
         <select
           aria-label="Agent"
           value={agentRevisionId ?? ""}
+          disabled={loading || agents.length === 0}
           onChange={(event) => onAgentChange(event.target.value || null)}
         >
           <option value="">Select an agent</option>
@@ -55,9 +64,12 @@ export function AgentSkillSelector({
           ))}
         </select>
       </label>
+      {loading && <span role="status">Loading approved revisions</span>}
+      {!loading && agents.length === 0 && <span role="status">No approved agents available</span>}
       {retiredSkillsRemoved && <span role="status">Retired skills were removed</span>}
       <Button
         aria-expanded={skillsOpen}
+        disabled={loading || skills.length === 0}
         onClick={() => setSkillsOpen((open) => !open)}
       >
         Skills

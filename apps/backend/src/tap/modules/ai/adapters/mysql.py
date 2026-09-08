@@ -161,11 +161,20 @@ class MysqlAssetCatalog:
     async def seed(self, seed: ValidationAssetSeed) -> None:
         if not isinstance(seed, ValidationAssetSeed):
             raise TypeError("asset seed must be versioned server configuration")
-        async with self._sessions.begin() as session:
-            for revision in seed.agents:
-                await self._seed_agent(session, revision)
-            for skill_value in seed.skills:
-                await self._seed_skill(session, skill_value)
+        async with self._sessions() as session:
+            lock_name = f"tap:ai-assets:{self._scope.enterprise_id}:{self._scope.project_id}"
+            acquired = await session.scalar(select(func.get_lock(lock_name, 20)))
+            if acquired != 1:
+                raise AssetRevisionRejected()
+            try:
+                for revision in seed.agents:
+                    await self._seed_agent(session, revision)
+                for skill_value in seed.skills:
+                    await self._seed_skill(session, skill_value)
+                await session.commit()
+            finally:
+                await session.execute(select(func.release_lock(lock_name)))
+                await session.commit()
 
     async def _seed_agent(self, session: AsyncSession, revision: AiAgentRevision) -> None:
         self._assert_scope(revision.scope)
@@ -183,7 +192,9 @@ class MysqlAssetCatalog:
         )
         if existing is not None:
             existing_revision = self._agent(existing)
-            if self._agent_content(existing_revision) != self._agent_content(revision):
+            if self._agent_content(existing_revision) != self._agent_content(
+                revision
+            ) or not self._creator_matches(existing, revision.scope):
                 raise AssetRevisionRejected()
             return
         now = datetime.now(timezone.utc)
@@ -245,7 +256,9 @@ class MysqlAssetCatalog:
         )
         if existing is not None:
             existing_revision = self._skill(existing)
-            if self._skill_content(existing_revision) != self._skill_content(revision):
+            if self._skill_content(existing_revision) != self._skill_content(
+                revision
+            ) or not self._creator_matches(existing, revision.scope):
                 raise AssetRevisionRejected()
             return
         now = datetime.now(timezone.utc)
@@ -451,6 +464,11 @@ class MysqlAssetCatalog:
             value.applicable_tasks,
             value.adopted_from_revision_id,
         )
+
+    @staticmethod
+    def _creator_matches(row, scope: ProjectScopeContext) -> bool:
+        values = scope_values(scope)
+        return all(row[name] == value for name, value in values.items())
 
     async def _get_agent(
         self, scope: ProjectScopeContext, revision_id: str, *, enabled: bool
