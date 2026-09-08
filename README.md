@@ -181,7 +181,7 @@ DASHSCOPE_API_BASE=https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/com
 | Milvus         | `39530` / `29091`  | 本地 `doc` 可重建检索投影与健康端口                                                                     |
 | FastAPI / Vite | `8000` / `5173`    | Knowledge HTTP API 与 Tapper Web                                                                        |
 
-以下模型选择只描述当前已实现的 RFC-006 **历史 loopback Demo**，不属于 RFC-009 V1 的唯一 ModelGateway 合同，也不能作为 V1/VG 验收证据。当前代码仍暂时在既有本地 runtime 中提供该开关；实施计划 Task 7 会把 Codex selector/Adapter 移入不挂载 RFC-009 Project API 的显式 legacy-loopback composition。V1 默认、Validation 和 Product runtime 只装配 LiteLLM ModelGateway，并对 `TAPPER_ANSWER_BACKEND=codex` fail closed。
+RFC-009 V1 默认、Validation 和 Product runtime 现在只装配一个 LiteLLM `ModelGateway`，并对 `TAPPER_ANSWER_BACKEND=codex` fail closed。RFC-006 的直接 Codex CLI 路径只保留在不挂载 RFC-009 Project API 的显式 legacy-loopback composition，不属于 V1 合同，也不能作为 V1/VG 验收证据。
 
 该历史 Demo 的模型配置只来自服务端 `.env`，不在 UI 或单次请求暴露。默认及已验收的完整回答选择块为：
 
@@ -196,9 +196,9 @@ TAPPER_EMBEDDING_ALIAS=tapper-embedding
 TAPPER_EMBEDDING_DIMENSION=1536
 ```
 
-在当前历史 Demo 中，默认 `TAPPER_ANSWER_BACKEND=litellm`；要复验已经实现的本机 Codex 路径，只把该值改为 `codex`，其余固定值不变，然后停止并重新运行 `make demo-dev` 使 API/Relay/Worker 重新读取同一配置。若同时修改 LiteLLM route 或 credential，还要重新运行 `make demo-up`。两个值是启动时独占选择：LiteLLM 与 Codex 不会相互 fallback、hedge 或重试到另一后端。完成 Task 7 后，这一复验改走计划中的 `make legacy-tapper-codex-dev`，默认 `make demo-dev` 不再接受 Codex 直连。
+要复验历史本机 Codex 路径，必须显式运行 `make legacy-tapper-codex-dev`；该命令只绑定 loopback，固定使用直接 Codex 能力，不会启动 V1 Project API 或切换到 LiteLLM 回答路由。默认 `make demo-dev` 不接受 Codex 直连，也不会 fallback、hedge 或重试到 legacy runtime。
 
-无论选择哪一个回答后端，文档与查询 Embedding 都必须经 LiteLLM 固定 `tapper-embedding` alias 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`，并支持中文、英文和混合术语检索；这也是 LiteLLM 在 Codex 模式下仍为必需中间件的原因。LiteLLM `1.87.0` 回答模式另通过 DashScope provider 将 `tapper-chat` 路由到百炼 `qwen-plus`。
+V1 文档、查询 Embedding 和回答生成都经唯一 ModelGateway 的固定 alias：`tapper-embedding` 发往阿里云百炼/DashScope `text-embedding-v4`，维度固定为 `1536`；`tapper-chat` 当前路由到百炼 `qwen-plus`。公共模型目录的逻辑显示名与实际 provider/model 审计分离；`GPT-5.6 Sol` 显示名不是当前上游路由或 V1 质量证据。
 
 Codex 回答模式精确要求原生 `codex-cli 0.149.0`、`gpt-5.6-sol`、`ultra`、有效的本机 ChatGPT 登录、单智能体、零工具、单 API 进程内并发 `1` 和 300 秒超时，不读取或要求 `OPENAI_API_KEY`/`CODEX_API_KEY`。
 
@@ -227,13 +227,13 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 
 `make demo-check` 独立检查五个组件，只输出组件、结果和安全修复码：
 
-| 组件 / 修复码               | 处理方式                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MySQL / `start-mysql`       | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。                                                                                                                                                                                                                                                                                                                                             |
-| Redis / `start-redis`       | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:26379/0`。                                                                                                                                                                                                                                                                                                                                                     |
-| Blob / `start-blob`         | MinIO 模式先运行 `make object-store-build PLATFORM=linux/arm64`，核对 `.env.example` 的显式 `TAPPER_S3_*` 配置，再运行 `make demo-up`；Azure 模式核对 loopback connection string 与 private 容器。                                                                                                                                                                                                                                                                                                                        |
-| Milvus / `start-milvus`     | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。                                                                                                                                                                                                                                                                                                                              |
-| Models / `configure-models` | 两种模式都要在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、`dashscope/text-embedding-v4` 与完整 Workspace `/compatible-mode/v1` 地址，重启 `make demo-up` 和本地角色，并确认 `tapper-embedding`；LiteLLM 回答模式还要同步 `dashscope/qwen-plus` 并确认 `tapper-chat`，Codex 回答模式则检查精确原生 `0.149.0`、ChatGPT 登录与 tool-free catalog/feature 契约。Codex 失败不会回退 LiteLLM，用户只收到 `answer-unavailable` 安全文案。 |
+| 组件 / 修复码               | 处理方式                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MySQL / `start-mysql`       | 运行 `make demo-up`；确认 `TAP_DATABASE_URL` 与迁移 head 使用默认 loopback project。                                                                                                                                                                                                                                                                                                          |
+| Redis / `start-redis`       | 运行 `make demo-up`；确认 `TAP_REDIS_URL` 指向 `redis://127.0.0.1:26379/0`。                                                                                                                                                                                                                                                                                                                  |
+| Blob / `start-blob`         | MinIO 模式先运行 `make object-store-build PLATFORM=linux/arm64`，核对 `.env.example` 的显式 `TAPPER_S3_*` 配置，再运行 `make demo-up`；Azure 模式核对 loopback connection string 与 private 容器。                                                                                                                                                                                            |
+| Milvus / `start-milvus`     | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。                                                                                                                                                                                                                                                                                           |
+| Models / `configure-models` | 默认 V1 在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、`dashscope/text-embedding-v4`、`dashscope/qwen-plus` 与完整 Workspace `/compatible-mode/v1` 地址，重启 `make demo-up` 和本地角色，并确认 `tapper-embedding` / `tapper-chat`；只在显式复验 legacy 时检查精确原生 Codex `0.149.0`、ChatGPT 登录与 tool-free catalog/feature 契约。默认 runtime 对 Codex 直连 fail closed，不会回退 legacy。 |
 
 ### 确定性 E2E 与真实模型 smoke
 

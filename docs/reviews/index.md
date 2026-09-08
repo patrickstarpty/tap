@@ -27,3 +27,4 @@
 - [Tapper V1 知识来源账本验收](2026-09-06-tapper-v1-source-ledger-review.md)：Task6通过；记录0010/25表、事务Audit/Outbox、查询脱敏、两轮修正和最终Backend2880/Web294验证，V1质量出口仍待后续。
 
 - [Tapper V1 Source API 与 projection 验收](2026-09-08-tapper-v1-source-api-and-projection-review.md)：Task6A通过；记录0010a/26表、Source API/Picker、canonical Milvus v2、显式v1回滚、五份审查和最终隔离回归。
+- [Tapper V1 统一 ModelGateway 与模型目录验收](2026-09-08-tapper-v1-model-gateway-review.md)：Task 7 通过；记录唯一 LiteLLM Gateway、Project 模型目录、legacy Codex 隔离、一轮审查修正和完整隔离回归。
