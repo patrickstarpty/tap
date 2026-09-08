@@ -166,17 +166,22 @@ def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
 
 def test_0012_legacy_conversation_is_readable_through_new_repository(owned_project_mysql):
     import asyncio
+    from dataclasses import replace
 
+    import httpx
+    from apps.backend.tests.conftest import validation_http_services
     from scripts.migration_support import LEGACY_TIME, seed_baseline
     from sqlalchemy import create_engine, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.entrypoints.tapper_runtime import create_project_audit
+    from tap.interfaces.http.app import create_app
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
     from tap.modules.chat.application.conversations import ConversationService
     from tap.modules.chat.domain.conversations import (
         AnswerEvidence,
+        FrozenResource,
         GraphContextStatus,
         RetrievalSummary,
         TurnInput,
@@ -189,6 +194,25 @@ def test_0012_legacy_conversation_is_readable_through_new_repository(owned_proje
     try:
         with sync_engine.begin() as connection:
             seed_baseline(connection)
+            connection.execute(
+                text(
+                    "INSERT INTO chat_turn (turn_id,chat_id,client_request_id,message,state,"
+                    "last_sequence,created_at) SELECT 'legacy-turn-2',chat_id,'legacy-request-2',"
+                    "'Second legacy question',state,last_sequence,created_at + INTERVAL 1 SECOND "
+                    "FROM chat_turn "
+                    "WHERE turn_id='legacy-turn'"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO chat_event (event_id,turn_id,sequence,event_type,payload,"
+                    "schema_version,occurred_at) SELECT 'legacy-event-2','legacy-turn-2',"
+                    "sequence,event_type,"
+                    "payload,schema_version,occurred_at + INTERVAL 1 SECOND "
+                    "FROM chat_event "
+                    "WHERE event_id='legacy-event'"
+                )
+            )
     finally:
         sync_engine.dispose()
     owned_project_mysql.upgrade("0012_conversations")
@@ -204,11 +228,48 @@ def test_0012_legacy_conversation_is_readable_through_new_repository(owned_proje
             loaded = await repository.load("legacy-chat")
             assert loaded.created_at.replace(tzinfo=None) == LEGACY_TIME
             assert [(turn.turn_id, turn.input_snapshot.value.message) for turn in loaded.turns] == [
-                ("legacy-turn", "Legacy knowledge question")
+                ("legacy-turn", "Legacy knowledge question"),
+                ("legacy-turn-2", "Second legacy question"),
             ]
             assert [(event.sequence, event.event_id) for event in loaded.events] == [
-                (1, "legacy-event")
+                (1, "legacy-event"),
+                (2, "legacy-event-2"),
             ]
+            async with engine.connect() as connection:
+                preserved = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT event_id,sequence,payload,occurred_at FROM chat_event "
+                                "ORDER BY occurred_at,event_id"
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            assert [row["sequence"] for row in preserved] == [1, 1]
+            assert preserved[1]["payload"] == preserved[0]["payload"]
+            app = create_app(
+                replace(
+                    validation_http_services(),
+                    conversations=ConversationService(repository, scope=VALIDATION_SCOPE),
+                )
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            ) as client:
+                first_stream = await client.get(
+                    "/api/v1/projects/tapper-demo/conversations/legacy-chat/stream"
+                )
+                assert first_stream.text.count("id: 1\n") == 1
+                assert first_stream.text.count("id: 2\n") == 1
+                resumed_stream = await client.get(
+                    "/api/v1/projects/tapper-demo/conversations/legacy-chat/stream",
+                    headers={"Last-Event-ID": "1"},
+                )
+                assert "id: 1\n" not in resumed_stream.text
+                assert resumed_stream.text.count("id: 2\n") == 1
             documents = MysqlDocumentRepository(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,
@@ -231,23 +292,41 @@ def test_0012_legacy_conversation_is_readable_through_new_repository(owned_proje
                 ),
             )
             citations = await repository.resolve_citations("legacy-trace", ("legacy-citation",))
-            await service.complete_evidence(
-                "evidence-chat",
-                "evidence-turn",
-                AnswerEvidence(
-                    "grounded",
-                    "completed",
-                    RetrievalSummary("completed", trace_id="legacy-trace", authorized_hit_count=1),
-                    GraphContextStatus.NOT_REQUESTED,
-                    citations=citations,
+            evidence = AnswerEvidence(
+                "grounded",
+                "completed",
+                RetrievalSummary("completed", trace_id="legacy-trace", authorized_hit_count=1),
+                GraphContextStatus.NOT_REQUESTED,
+                citations=citations,
+            )
+            with pytest.raises(ValueError, match="frozen Turn resources"):
+                await service.complete_evidence("evidence-chat", "evidence-turn", evidence)
+            await service.create(
+                "bound-evidence-chat",
+                "bound-evidence-turn",
+                "bound-evidence-request",
+                TurnInput(
+                    message="bind legacy evidence",
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    identity_mode="validation",
+                    model_alias="tapper-chat",
+                    resolved_resources=(
+                        FrozenResource(
+                            selected[0].source_id,
+                            selected[0].document_id,
+                            selected[0].revision_id,
+                            selected[0].source_content_hash,
+                        ),
+                    ),
                 ),
             )
+            await service.complete_evidence("bound-evidence-chat", "bound-evidence-turn", evidence)
             async with engine.connect() as connection:
                 assert (
                     await connection.scalar(
                         text(
                             "SELECT COUNT(*) FROM turn_artifact_link "
-                            "WHERE turn_id='evidence-turn' AND artifact_id='legacy-citation'"
+                            "WHERE turn_id='bound-evidence-turn' AND artifact_id='legacy-citation'"
                         )
                     )
                     == 1

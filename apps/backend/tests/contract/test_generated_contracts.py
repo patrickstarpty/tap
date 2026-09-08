@@ -259,3 +259,19 @@ def test_catalog_generated_validation_response_is_problem_details(tmp_path: Path
     validation = operation.split("422: {", 1)[1].split("\n            };", 1)[0]
     assert '"application/problem+json": components["schemas"]["ProblemDetails"]' in validation
     assert "HTTPValidationError" not in validation
+
+
+def test_generated_conversation_validation_responses_are_problem_details(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    generated = json.loads((REPOSITORY_ROOT / "contracts/openapi/api.json").read_bytes())
+    for path, item in generated["paths"].items():
+        if "/conversations" not in path:
+            continue
+        for operation in item.values():
+            if not isinstance(operation, dict) or "operationId" not in operation:
+                continue
+            assert operation["responses"]["422"]["content"] == {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/ProblemDetails"}
+                }
+            }

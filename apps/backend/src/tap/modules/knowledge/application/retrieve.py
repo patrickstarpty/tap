@@ -7,6 +7,7 @@ import json
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, cast
 
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import (
@@ -196,8 +197,11 @@ class AuthorizedRetrieval:
         self,
         request: AnswerRequest,
         policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        governance=None,
     ) -> AnswerResponse:
-        run = await self._retrieve(request.as_search_request(), policy)
+        run = await self._retrieve(request.as_search_request(), policy, frozen_policy=frozen_policy)
         required = tuple(
             resource for resource in run.plan.resources if resource.mode is ResourceMode.REQUIRED
         )
@@ -208,14 +212,23 @@ class AuthorizedRetrieval:
             return self._abstain(run.response, missing_reason)
         if self._has_conflicting_sources(run.response.evidence):
             return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
-        current = await self._verify_current(run.policy)
+        current = run.policy if frozen_policy else await self._verify_current(run.policy)
         self._validate_binding(current, run.plan, run.context_snapshot)
-        generation = await self._answers.answer(
-            run.plan.sanitized_query,
-            run.response.evidence,
-            run.response.retrieval_profile_id.value,
+        generation = (
+            await cast(Any, self._answers).answer(
+                run.plan.sanitized_query,
+                run.response.evidence,
+                run.response.retrieval_profile_id.value,
+                governance=governance,
+            )
+            if governance is not None
+            else await self._answers.answer(
+                run.plan.sanitized_query,
+                run.response.evidence,
+                run.response.retrieval_profile_id.value,
+            )
         )
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, run.plan, run.context_snapshot)
         claims = _resolve_generated_claims(
             generation,
@@ -243,8 +256,19 @@ class AuthorizedRetrieval:
         self,
         request: SearchRequest,
         policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
     ) -> _RetrievalRun:
-        current = await self._verify_current(policy)
+        if (
+            frozen_policy
+            and self._models is not None
+            and (
+                self._models.scope.enterprise_id != policy.tenant_id
+                or self._models.scope.project_id != policy.project_id
+            )
+        ):
+            raise AuthorizationDenied("model gateway Project does not match retrieval policy")
+        current = policy if frozen_policy else await self._verify_current(policy)
         profile = PROFILES[request.answer_mode]
         source_families = self._source_families(request, current)
         environment = self._environment(request, current)
@@ -295,11 +319,11 @@ class AuthorizedRetrieval:
         )
         trace_id = self._id_factory()
 
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         embedding = await self._embeddings.embed(plan.sanitized_query)
         self._validate_embedding(embedding, plan)
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         hits = await self._search.search(
             SearchExecution(
@@ -309,7 +333,7 @@ class AuthorizedRetrieval:
                 query_vector=embedding.vector,
             )
         )
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         if not all(self._hit_is_in_execution(hit, plan) for hit in hits):
             raise AuthorizationDenied("Search returned evidence outside bound execution")

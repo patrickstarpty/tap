@@ -164,6 +164,9 @@ def _input_json(value):
         "resolved_resources": [asdict(item) for item in value.resolved_resources],
         "skill_revision_ids": list(value.skill_revision_ids),
         "skill_revision_digests": list(value.skill_revision_digests),
+        "agent_tool_allowlist": list(value.agent_tool_allowlist),
+        "skill_instruction_templates": list(value.skill_instruction_templates),
+        "skill_instruction_template_digests": list(value.skill_instruction_template_digests),
     }
 
 
@@ -231,6 +234,7 @@ class MysqlConversationRepository:
                 event_id=event.event_id,
                 turn_id=turn_id,
                 sequence=event.sequence,
+                stream_sequence=event.sequence,
                 event_type=event.event_type,
                 payload=dict(event.payload),
                 schema_version=1,
@@ -314,13 +318,13 @@ class MysqlConversationRepository:
 
     async def _next_event(self, session, conversation_id, event):
         latest = await session.scalar(
-            select(chat_event.c.sequence)
+            select(chat_event.c.stream_sequence)
             .join(chat_turn, chat_turn.c.turn_id == chat_event.c.turn_id)
             .where(
                 *scope_predicates(chat_event, self.scope),
                 chat_turn.c.chat_id == conversation_id,
             )
-            .order_by(chat_event.c.sequence.desc())
+            .order_by(chat_event.c.stream_sequence.desc())
             .limit(1)
         )
         return replace(event, sequence=(0 if latest is None else latest) + 1)
@@ -446,6 +450,15 @@ class MysqlConversationRepository:
                 agent_revision_digest=raw["agent_revision_digest"],
                 skill_revision_ids=tuple(raw["skill_revision_ids"]),
                 skill_revision_digests=tuple(raw["skill_revision_digests"]),
+                agent_system_instruction=raw.get("agent_system_instruction"),
+                agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
+                agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
+                agent_output_schema_json=raw.get("agent_output_schema_json"),
+                agent_output_schema_digest=raw.get("agent_output_schema_digest"),
+                skill_instruction_templates=tuple(raw.get("skill_instruction_templates", [])),
+                skill_instruction_template_digests=tuple(
+                    raw.get("skill_instruction_template_digests", [])
+                ),
                 acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
                 retrieval_policy_digest=raw["retrieval_policy_digest"],
             )
@@ -542,7 +555,7 @@ class MysqlConversationRepository:
                             *scope_predicates(chat_event, self.scope),
                             chat_turn.c.chat_id == conversation_id,
                         )
-                        .order_by(chat_event.c.sequence)
+                        .order_by(chat_event.c.stream_sequence)
                     )
                 )
                 .mappings()
@@ -551,7 +564,7 @@ class MysqlConversationRepository:
         events = tuple(
             ConversationEvent(
                 r["event_id"],
-                r["sequence"],
+                r["stream_sequence"],
                 r["event_type"],
                 r["payload"],
                 r["occurred_at"].replace(tzinfo=timezone.utc),
@@ -640,16 +653,25 @@ class MysqlConversationRepository:
                 raise ConversationNotFound
             if row["state"] in {"completed", "abstained", "failed", "canceled"}:
                 return await self._load_turn(session, row)
-            if row["state"] == "running" and (
-                not lease_token or lease_token != row["processing_lease_token"]
+            if (
+                row["state"] == "running"
+                and snapshot.value.outcome != "canceled"
+                and (not lease_token or lease_token != row["processing_lease_token"])
             ):
                 raise ConversationConflict("generation lease lost")
-            input_digest = await session.scalar(
-                select(turn_input_snapshot.c.snapshot_digest).where(
-                    *scope_predicates(turn_input_snapshot, self.scope),
-                    turn_input_snapshot.c.turn_id == turn_id,
+            input_row = (
+                (
+                    await session.execute(
+                        select(turn_input_snapshot).where(
+                            *scope_predicates(turn_input_snapshot, self.scope),
+                            turn_input_snapshot.c.turn_id == turn_id,
+                        )
+                    )
                 )
+                .mappings()
+                .one_or_none()
             )
+            input_digest = None if input_row is None else input_row["snapshot_digest"]
             if (
                 snapshot.project_id != self.scope.project_id
                 or snapshot.turn_id != turn_id
@@ -667,6 +689,19 @@ class MysqlConversationRepository:
                 )
             if snapshot.value.graph_context_status is GraphContextStatus.APPLIED:
                 raise ValueError("graph snapshot persistence is unavailable")
+            frozen_resources = {
+                (
+                    item["source_id"],
+                    item["document_id"],
+                    item["revision_id"],
+                    item["source_content_hash"],
+                )
+                for item in (
+                    [] if input_row is None else input_row["snapshot"].get("resolved_resources", [])
+                )
+            }
+            if snapshot.value.citations and not frozen_resources:
+                raise ValueError("citation is outside the frozen Turn resources")
             for citation in snapshot.value.citations:
                 citation_row = (
                     (
@@ -704,6 +739,13 @@ class MysqlConversationRepository:
                 )
                 if trusted_digest != citation.citation_digest:
                     raise ValueError("citation snapshot digest differs from persisted fact")
+                if (
+                    citation_row["source_id"],
+                    citation_row["document_id"],
+                    citation_row["revision_id"],
+                    citation_row["source_content_hash"],
+                ) not in frozen_resources:
+                    raise ValueError("citation is outside the frozen Turn resources")
                 await session.execute(
                     insert(turn_artifact_link).values(
                         **scope_values(self.scope),
@@ -824,6 +866,7 @@ class MysqlConversationRepository:
                         event_id=event.event_id,
                         turn_id=row["turn_id"],
                         sequence=event.sequence,
+                        stream_sequence=event.sequence,
                         event_type=event.event_type,
                         payload=dict(event.payload),
                         schema_version=1,
@@ -851,7 +894,7 @@ class MysqlConversationRepository:
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
         return tuple(claimed)
 
-    async def append_stream_event(self, conversation_id, turn_id, event):
+    async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
         if event.event_type in {
             "conversation.turn.requested",
             "conversation.turn.completed",
@@ -885,6 +928,10 @@ class MysqlConversationRepository:
                 raise ConversationNotFound
             if row["state"] in {"completed", "abstained", "failed", "canceled"}:
                 raise ConversationConflict("terminal Turn cannot accept stream events")
+            if row["state"] == "running" and (
+                not lease_token or lease_token != row["processing_lease_token"]
+            ):
+                raise ConversationConflict("generation lease lost")
             event = await self._next_event(session, conversation_id, event)
             await session.execute(
                 insert(chat_event).values(
@@ -892,6 +939,7 @@ class MysqlConversationRepository:
                     event_id=event.event_id,
                     turn_id=turn_id,
                     sequence=event.sequence,
+                    stream_sequence=event.sequence,
                     event_type=event.event_type,
                     payload=dict(event.payload),
                     schema_version=1,

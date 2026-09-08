@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -56,6 +57,8 @@ class AiAgentRevision:
     output_schema_digest: str
     status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
     adopted_from_revision_id: str | None = None
+    system_instruction: str | None = None
+    output_schema_json: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -82,6 +85,21 @@ class AiAgentRevision:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
+        if bool(self.system_instruction) != bool(self.output_schema_json):
+            raise AssetRevisionRejected()
+        if self.system_instruction is not None:
+            from tap.modules.ai.domain.models import schema_digest
+
+            try:
+                schema = json.loads(self.output_schema_json or "")
+            except (TypeError, json.JSONDecodeError) as error:
+                raise AssetRevisionRejected() from error
+            if (
+                not isinstance(schema, dict)
+                or text_digest(self.system_instruction) != self.system_instruction_digest
+                or schema_digest(schema) != self.output_schema_digest
+            ):
+                raise AssetRevisionRejected()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -95,6 +113,7 @@ class SkillRevision:
     applicable_tasks: frozenset[str]
     status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
     adopted_from_revision_id: str | None = None
+    instruction_template: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -121,3 +140,8 @@ class SkillRevision:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
+        if (
+            self.instruction_template is not None
+            and text_digest(self.instruction_template) != self.instruction_template_digest
+        ):
+            raise AssetRevisionRejected()

@@ -54,7 +54,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         events = []
         completed = []
 
-        async def emit(self, conversation_id, turn_id, event_type, payload):
+        async def emit(self, conversation_id, turn_id, event_type, payload, **_):
             self.events.append((conversation_id, turn_id, event_type, payload))
 
         async def complete_evidence(self, conversation_id, turn_id, evidence, **_):
@@ -88,6 +88,49 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
     assert conversations.completed[0][2].outcome == "completed"
 
 
+@pytest.mark.asyncio
+async def test_generation_worker_fences_delta_with_the_claimed_lease():
+    frozen = SimpleNamespace(
+        message="question",
+        model_alias="tapper-chat",
+        resolved_resources=(SimpleNamespace(source_id="src_" + "1" * 32),),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(value=frozen),
+                    ),
+                ),
+            )
+
+        async def resolve_citations(self, *_args):
+            return ()
+
+    class Conversations:
+        repository = Repository()
+        emitted = []
+
+        async def emit(self, *args, **kwargs):
+            self.emitted.append((args, kwargs))
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            return None
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(answer="delta", citations=(), abstained=False, trace_id="t")
+
+    conversations = Conversations()
+    await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
+    assert conversations.emitted[0][1] == {"lease_token": "lease-1"}
+
+
 async def _async_value(value):
     return value
 
@@ -98,12 +141,17 @@ async def test_default_worker_crosses_the_production_answer_service_with_frozen_
 
     from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.application.assets import validation_asset_seed
     from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 
     answers, repository, gateway = fixtures.service()
     repository.scope = VALIDATION_SCOPE
-    repository.load_revision_selection = lambda _ids: _async_value(repository.rows)
+
+    async def reject_current_reload(_ids):
+        raise AssertionError("accepted Turn must not re-read current revisions")
+
+    repository.load_revision_selection = reject_current_reload
     knowledge = KnowledgeHttpService(
         documents=SimpleNamespace(scope=VALIDATION_SCOPE),
         answers=answers,
@@ -111,6 +159,9 @@ async def test_default_worker_crosses_the_production_answer_service_with_frozen_
     )
     frozen = fixtures.ready()
     policy = build_demo_policy_context((frozen,))
+    assets = validation_asset_seed(VALIDATION_SCOPE)
+    agent = assets.agents[0]
+    skill = assets.skills[0]
     turn_input = TurnInput(
         message="What is the rule?",
         actor_id=VALIDATION_SCOPE.actor_id,
@@ -125,6 +176,17 @@ async def test_default_worker_crosses_the_production_answer_service_with_frozen_
                 frozen.source_content_hash,
             ),
         ),
+        agent_revision_id=agent.revision_id,
+        agent_revision_digest=agent.content_digest,
+        skill_revision_ids=(skill.revision_id,),
+        skill_revision_digests=(skill.content_digest,),
+        agent_system_instruction=agent.system_instruction,
+        agent_system_instruction_digest=agent.system_instruction_digest,
+        agent_tool_allowlist=tuple(sorted(agent.tool_allowlist)),
+        agent_output_schema_json=agent.output_schema_json,
+        agent_output_schema_digest=agent.output_schema_digest,
+        skill_instruction_templates=(skill.instruction_template,),
+        skill_instruction_template_digests=(skill.instruction_template_digest,),
         acl_digest=policy.acl_digest,
         retrieval_policy_digest=content_digest(
             {
@@ -157,7 +219,7 @@ async def test_default_worker_crosses_the_production_answer_service_with_frozen_
     class Conversations:
         repository = Repository()
 
-        async def emit(self, *_args):
+        async def emit(self, *_args, **_kwargs):
             pass
 
         async def complete_evidence(self, *_args, **_kwargs):

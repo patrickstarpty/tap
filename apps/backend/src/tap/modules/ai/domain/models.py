@@ -46,6 +46,39 @@ class ModelRequest:
     idempotency_key: str
     schema: dict[str, object] | None = None
     schema_digest: str | None = None
+    tool_allowlist: frozenset[str] = frozenset()
+    governance_digests: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GenerationGovernance:
+    model_alias: str
+    system_instruction: str
+    system_instruction_digest: str
+    skill_instructions: tuple[str, ...]
+    skill_instruction_digests: tuple[str, ...]
+    tool_allowlist: frozenset[str]
+    output_schema: dict[str, object]
+    output_schema_digest: str
+    revision_digests: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not self.model_alias
+            or not self.system_instruction.strip()
+            or self.system_instruction_digest != text_digest(self.system_instruction)
+            or len(self.skill_instructions) != len(self.skill_instruction_digests)
+            or any(
+                digest != text_digest(instruction)
+                for instruction, digest in zip(
+                    self.skill_instructions, self.skill_instruction_digests, strict=True
+                )
+            )
+            or not self.tool_allowlist <= {"knowledge.search", "knowledge.answer"}
+            or self.output_schema_digest != schema_digest(self.output_schema)
+            or not self.revision_digests
+        ):
+            raise ModelGatewayRejected()
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -11,6 +12,32 @@ from tap.modules.ai.domain.assets import (
     SkillRevision,
     text_digest,
 )
+from tap.modules.ai.domain.models import schema_digest
+
+VALIDATION_SYSTEM_INSTRUCTION = (
+    "Use only authorized Knowledge evidence and follow the selected skills."
+)
+VALIDATION_SKILL_INSTRUCTION = "Cite every factual claim with one or more supplied evidence labels."
+VALIDATION_OUTPUT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["answer", "claims"],
+    "properties": {
+        "answer": {"type": "string"},
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["text", "evidenceLabels"],
+                "properties": {
+                    "text": {"type": "string"},
+                    "evidenceLabels": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+}
 
 
 def _same_project(left: ProjectScopeContext, right: ProjectScopeContext) -> bool:
@@ -111,9 +138,13 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
                 display_name="Knowledge agent",
                 scope=scope,
                 content_digest=text_digest("validation-ai-agent-v1"),
-                system_instruction_digest=text_digest("knowledge-agent-system-instruction-v1"),
+                system_instruction_digest=text_digest(VALIDATION_SYSTEM_INSTRUCTION),
                 tool_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
-                output_schema_digest=text_digest("knowledge-agent-output-schema-v1"),
+                output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
+                system_instruction=VALIDATION_SYSTEM_INSTRUCTION,
+                output_schema_json=json.dumps(
+                    VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":")
+                ),
             ),
         ),
         skills=(
@@ -123,8 +154,9 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
                 display_name="Citation skill",
                 scope=scope,
                 content_digest=text_digest("validation-citation-skill-v1"),
-                instruction_template_digest=text_digest("citation-skill-template-v1"),
+                instruction_template_digest=text_digest(VALIDATION_SKILL_INSTRUCTION),
                 applicable_tasks=frozenset({"knowledge.answer"}),
+                instruction_template=VALIDATION_SKILL_INSTRUCTION,
             ),
         ),
     )

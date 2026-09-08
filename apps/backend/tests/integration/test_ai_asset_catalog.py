@@ -90,6 +90,7 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog, ai_agent_revision
     from tap.modules.ai.application.assets import ValidationAssetSeed, validation_asset_seed
     from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
+    from tap.modules.ai.domain.models import schema_digest
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     try:
@@ -99,6 +100,7 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed),
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed),
         )
+        v2_schema = {"type": "object"}
         v2 = AiAgentRevision(
             revision_id="validation-knowledge-agent-v2",
             asset_id=seed.agents[0].asset_id,
@@ -107,8 +109,10 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
             content_digest=text_digest("validation-ai-agent-v2"),
             system_instruction_digest=text_digest("knowledge-agent-system-instruction-v2"),
             tool_allowlist=frozenset({"knowledge.search"}),
-            output_schema_digest=text_digest("knowledge-agent-output-schema-v2"),
+            output_schema_digest=schema_digest(v2_schema),
             adopted_from_revision_id=seed.agents[0].revision_id,
+            system_instruction="knowledge-agent-system-instruction-v2",
+            output_schema_json='{"type":"object"}',
         )
         await asyncio.gather(
             MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(

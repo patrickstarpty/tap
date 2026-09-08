@@ -76,6 +76,20 @@ def upgrade() -> None:
     )
     op.add_column("chat_turn", sa.Column("processing_lease_token", sa.String(64)))
     op.add_column("chat_turn", sa.Column("processing_lease_expires_at", DATETIME(fsp=6)))
+    op.add_column("chat_event", sa.Column("stream_sequence", sa.BigInteger(), nullable=True))
+    op.execute(
+        sa.text(
+            "UPDATE chat_event event_row JOIN ("
+            "SELECT event_id, ROW_NUMBER() OVER (PARTITION BY turn_row.project_id, "
+            "turn_row.chat_id ORDER BY event_row.occurred_at,event_row.event_id) AS cursor_value "
+            "FROM chat_event event_row JOIN chat_turn turn_row "
+            "ON turn_row.project_id=event_row.project_id AND "
+            "turn_row.turn_id=event_row.turn_id"
+            ") ranked ON ranked.event_id=event_row.event_id "
+            "SET event_row.stream_sequence=ranked.cursor_value"
+        )
+    )
+    op.alter_column("chat_event", "stream_sequence", existing_type=sa.BigInteger(), nullable=False)
     op.create_table(
         "turn_input_snapshot",
         sa.Column("snapshot_id", sa.String(64), primary_key=True),
@@ -162,4 +176,5 @@ def downgrade() -> None:
     op.drop_column("chat_turn", "processing_lease_expires_at")
     op.drop_column("chat_turn", "processing_lease_token")
     op.drop_column("chat_turn", "processing_attempt")
+    op.drop_column("chat_event", "stream_sequence")
     op.drop_table("conversation")

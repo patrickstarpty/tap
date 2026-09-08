@@ -62,6 +62,8 @@ class AnswerOperations(Protocol):
 
     async def answer(self, request: AnswerRequest) -> AnswerResponse: ...
 
+    async def answer_frozen(self, *args, **kwargs) -> AnswerResponse: ...
+
 
 class CitationOperations(Protocol):
     @property
@@ -191,21 +193,30 @@ class KnowledgeHttpService:
         return await resolver(revision_ids)
 
     async def answer_conversation(self, request: RetrievalAnswerRequest, frozen_input):
+        import json
+
+        from tap.modules.ai.domain.models import GenerationGovernance, schema_digest, text_digest
         from tap.modules.chat.domain.conversations import content_digest
+        from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+        from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
         if frozen_input.model_alias != "tapper-chat":
             raise ValueError("accepted conversation model alias is unsupported")
-        current, policy = await self.resolve_conversation_selection(
-            tuple(item.revision_id for item in frozen_input.resolved_resources)
+        revisions = tuple(
+            sorted(
+                (
+                    ReadyDocumentRevision(
+                        item.document_id,
+                        item.revision_id,
+                        item.source_content_hash,
+                        item.source_id,
+                    )
+                    for item in frozen_input.resolved_resources
+                ),
+                key=lambda item: item.document_id,
+            )
         )
-        if {
-            (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
-            for item in current
-        } != {
-            (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
-            for item in frozen_input.resolved_resources
-        }:
-            raise ValueError("accepted resource selection is no longer current")
+        policy = build_demo_policy_context(revisions)
         if frozen_input.acl_digest != policy.acl_digest or frozen_input.retrieval_policy_digest != (
             content_digest(
                 {
@@ -216,10 +227,43 @@ class KnowledgeHttpService:
             )
         ):
             raise ValueError("accepted retrieval authority changed")
-        # Agent/Skill revision identities and content digests are intentionally carried on the
-        # immutable input boundary; the fixed V1 gateway accepts only their already-approved
-        # server-resolved form and never reloads browser-provided identities here.
-        return await self.answer(request)
+        governance = None
+        if frozen_input.agent_revision_id is not None:
+            if (
+                frozen_input.agent_system_instruction is None
+                or frozen_input.agent_system_instruction_digest
+                != text_digest(frozen_input.agent_system_instruction)
+                or frozen_input.agent_output_schema_json is None
+            ):
+                raise ValueError("accepted agent execution content is invalid")
+            output_schema = json.loads(frozen_input.agent_output_schema_json)
+            if (
+                not isinstance(output_schema, dict)
+                or schema_digest(output_schema) != frozen_input.agent_output_schema_digest
+            ):
+                raise ValueError("accepted agent output schema is invalid")
+            governance = GenerationGovernance(
+                model_alias=frozen_input.model_alias,
+                system_instruction=frozen_input.agent_system_instruction,
+                system_instruction_digest=frozen_input.agent_system_instruction_digest,
+                skill_instructions=frozen_input.skill_instruction_templates,
+                skill_instruction_digests=frozen_input.skill_instruction_template_digests,
+                tool_allowlist=frozenset(frozen_input.agent_tool_allowlist),
+                output_schema=output_schema,
+                output_schema_digest=frozen_input.agent_output_schema_digest,
+                revision_digests=(
+                    frozen_input.agent_revision_digest,
+                    frozen_input.agent_system_instruction_digest,
+                    frozen_input.agent_output_schema_digest,
+                    *frozen_input.skill_revision_digests,
+                    *frozen_input.skill_instruction_template_digests,
+                ),
+            )
+        domain_request = answer_request_from_http(request)
+        response = await self._answers.answer_frozen(
+            domain_request, revisions, policy, governance=governance
+        )
+        return answer_response_to_http(response)
 
     async def search(self, request: RetrievalSearchRequest) -> RetrievalSearchResponse:
         """Expose real evidence only to trusted in-process verification, never an HTTP route."""

@@ -280,6 +280,92 @@ async def test_knowledge_query_document_and_answer_calls_use_one_gateway():
 
 
 @pytest.mark.asyncio
+async def test_knowledge_answer_applies_frozen_agent_and_skill_authority_to_model_request():
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.ai.domain.models import (
+        GenerationGovernance,
+        ModelCallAudit,
+        ModelResult,
+        ModelUsage,
+        schema_digest,
+        text_digest,
+    )
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    output_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["answer", "claims"],
+        "properties": {
+            "answer": {"type": "string"},
+            "claims": {"type": "array", "items": {"type": "object"}},
+        },
+    }
+    captured = []
+
+    class CapturingGateway:
+        async def generate_structured(self, request):
+            captured.append(request)
+            return ModelResult(
+                output={
+                    "answer": "Grounded",
+                    "claims": [{"text": "Grounded", "evidenceLabels": ["S1"]}],
+                },
+                actual_model="provider-model",
+                usage=ModelUsage(),
+                actual_provider="provider",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "provider",
+                    "provider-model",
+                    ModelUsage(),
+                ),
+            )
+
+    governance = GenerationGovernance(
+        model_alias="tapper-chat",
+        system_instruction="Frozen system authority.",
+        system_instruction_digest=text_digest("Frozen system authority."),
+        skill_instructions=("Frozen citation template.",),
+        skill_instruction_digests=(text_digest("Frozen citation template."),),
+        tool_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+        output_schema=output_schema,
+        output_schema_digest=schema_digest(output_schema),
+        revision_digests=(text_digest("agent-revision"), text_digest("skill-revision")),
+    )
+    models = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+    await models.answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1", governance=governance
+    )
+    request = captured[0]
+    assert request.alias == "tapper-chat"
+    assert request.prompt == (
+        "Frozen system authority.\n\nFrozen citation template.\n\n"
+        "Answer only from supplied evidence. Return the governed JSON schema."
+    )
+    assert request.prompt_digest == text_digest(request.prompt)
+    assert request.schema == output_schema
+    assert request.schema_digest == schema_digest(output_schema)
+    assert request.tool_allowlist == frozenset({"knowledge.search", "knowledge.answer"})
+    assert request.governance_digests == governance.revision_digests
+
+
+@pytest.mark.asyncio
 async def test_litellm_gateway_exposes_governed_default_catalog() -> None:
     gateway = LiteLLMModelGateway(
         LiteLLMModelGatewayConfig(

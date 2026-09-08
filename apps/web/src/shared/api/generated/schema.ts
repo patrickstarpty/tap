@@ -1036,11 +1036,6 @@ export interface components {
              */
             type: "failure";
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
         /** HealthComponent */
         HealthComponent: {
             name: components["schemas"]["HealthComponentName"];
@@ -2183,15 +2178,6 @@ export interface components {
              */
             state: "running";
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-        };
         /** BddAnchor */
         tap__contracts__chat_stream__BddAnchor: {
             /** Featureid */
@@ -2843,13 +2829,13 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -2893,13 +2879,13 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
@@ -3061,13 +3047,13 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

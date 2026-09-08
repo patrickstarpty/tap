@@ -1134,6 +1134,14 @@ class MysqlDocumentRepository:
         return rows
 
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
+        await self._save_answer_with_citations(snapshot, allow_historical=False)
+
+    async def save_frozen_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
+        await self._save_answer_with_citations(snapshot, allow_historical=True)
+
+    async def _save_answer_with_citations(
+        self, snapshot: AnswerSnapshot, *, allow_historical: bool
+    ) -> None:
         if not isinstance(snapshot, AnswerSnapshot):
             raise TypeError("answer snapshot repository requires AnswerSnapshot")
         try:
@@ -1165,7 +1173,12 @@ class MysqlDocumentRepository:
                     # lock; the finally also covers cancellation during this boundary commit.
                     await connection.commit()
                     async with self._sessions(bind=connection) as session, session.begin():
-                        await self._save_answer_snapshot(session, snapshot)
+                        if allow_historical:
+                            await self._save_answer_snapshot(
+                                session, snapshot, allow_historical=True
+                            )
+                        else:
+                            await self._save_answer_snapshot(session, snapshot)
                 except asyncio.CancelledError as cancellation:
                     first_cancellation = cancellation
                 finally:
@@ -1253,7 +1266,13 @@ class MysqlDocumentRepository:
             raise failure from outcome.error
         return outcome.value
 
-    async def _save_answer_snapshot(self, session: AsyncSession, snapshot: AnswerSnapshot) -> None:
+    async def _save_answer_snapshot(
+        self,
+        session: AsyncSession,
+        snapshot: AnswerSnapshot,
+        *,
+        allow_historical: bool = False,
+    ) -> None:
         expected = snapshot.selected_revisions
         source_rows = (
             (
@@ -1269,11 +1288,12 @@ class MysqlDocumentRepository:
             .scalars()
             .all()
         )
-        try:
-            for source_id in sorted(set(source_rows)):
-                await self._require_source(session, source_id)
-        except SourceUnavailable as error:
-            raise DocumentStateChanged("selected source changed") from error
+        if not allow_historical:
+            try:
+                for source_id in sorted(set(source_rows)):
+                    await self._require_source(session, source_id)
+            except SourceUnavailable as error:
+                raise DocumentStateChanged("selected source changed") from error
         document_ids = tuple(item.document_id for item in expected)
         rows = list(
             (
@@ -1289,8 +1309,8 @@ class MysqlDocumentRepository:
                     )
                     .where(
                         *scope_predicates(knowledge_document, self._scope),
-                        self._active_source(),
                         knowledge_document.c.document_id.in_(document_ids),
+                        *(() if allow_historical else (self._active_source(),)),
                     )
                     .order_by(knowledge_document.c.document_id)
                     .with_for_update()
@@ -1319,10 +1339,12 @@ class MysqlDocumentRepository:
             )
             for item in expected
         )
-        if actual != wanted or any(
-            item.source_id is not None and item.source_id != row["source_id"]
+        identity_changed = len(rows) != len(expected) or any(
+            item.document_id != row["document_id"]
+            or (item.source_id is not None and item.source_id != row["source_id"])
             for item, row in zip(expected, rows, strict=False)
-        ):
+        )
+        if identity_changed or (not allow_historical and actual != wanted):
             raise DocumentStateChanged("selected document state changed before snapshot commit")
         revision_rows = list(
             (

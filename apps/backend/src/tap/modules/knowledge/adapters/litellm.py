@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.models import (
+    GenerationGovernance,
     ModelGatewayRejected,
     ModelGatewayUnavailable,
     ModelOperation,
@@ -48,6 +49,7 @@ _ANSWER_SCHEMA: dict[str, object] = {
         },
     },
 }
+_GOVERNED_ANSWER_PROMPT = "Answer only from supplied evidence. Return the governed JSON schema."
 
 
 class KnowledgeModelGateway:
@@ -126,7 +128,12 @@ class KnowledgeModelGateway:
         return EmbeddingArtifact(model_alias, self.embedding_dimension, vectors, chunk_ids)
 
     async def answer(
-        self, query: str, evidence: tuple[Evidence, ...], profile_id: str
+        self,
+        query: str,
+        evidence: tuple[Evidence, ...],
+        profile_id: str,
+        *,
+        governance: GenerationGovernance | None = None,
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -152,18 +159,39 @@ class KnowledgeModelGateway:
             separators=(",", ":"),
         )
         try:
+            prompt = _ANSWER_PROMPT
+            schema = _ANSWER_SCHEMA
+            alias = self.chat_alias
+            tools: frozenset[str] = frozenset()
+            governance_digests: tuple[str, ...] = ()
+            if governance is not None:
+                if governance.model_alias != self.chat_alias:
+                    raise ModelGatewayRejected()
+                prompt = "\n\n".join(
+                    (
+                        governance.system_instruction,
+                        *governance.skill_instructions,
+                        _GOVERNED_ANSWER_PROMPT,
+                    )
+                )
+                schema = governance.output_schema
+                alias = governance.model_alias
+                tools = governance.tool_allowlist
+                governance_digests = governance.revision_digests
             result = await self.gateway.generate_structured(
                 ModelRequest(
                     self.scope,
-                    self.chat_alias,
+                    alias,
                     ModelOperation.STRUCTURED,
-                    _ANSWER_PROMPT,
-                    text_digest(_ANSWER_PROMPT),
+                    prompt,
+                    text_digest(prompt),
                     context,
                     self.timeout_seconds,
                     str(uuid4()),
-                    _ANSWER_SCHEMA,
-                    schema_digest(_ANSWER_SCHEMA),
+                    schema,
+                    schema_digest(schema),
+                    tools,
+                    governance_digests,
                 )
             )
             answer, claims = parse_grounded_answer_payload(

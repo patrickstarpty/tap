@@ -128,3 +128,18 @@ def test_revisions_reject_mutable_collections_and_adoption_self_links() -> None:
                 output_schema_digest=text_digest("schema"),
                 adopted_from_revision_id=adopted_from_revision_id,
             )
+
+
+def test_validation_revisions_carry_digest_bound_execution_content() -> None:
+    import json
+
+    from tap.modules.ai.application.assets import validation_asset_seed
+    from tap.modules.ai.domain.assets import text_digest
+    from tap.modules.ai.domain.models import schema_digest
+
+    seed = validation_asset_seed(VALIDATION_SCOPE)
+    agent = seed.agents[0]
+    skill = seed.skills[0]
+    assert text_digest(agent.system_instruction) == agent.system_instruction_digest
+    assert schema_digest(json.loads(agent.output_schema_json)) == agent.output_schema_digest
+    assert text_digest(skill.instruction_template) == skill.instruction_template_digest

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import PolicyUnavailable, RetrievalPolicyContext
+from tap.modules.ai.domain.models import GenerationGovernance
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
@@ -122,6 +123,57 @@ class AnswerService:
             raise AnswerSnapshotUnavailable("answer snapshot validation failed") from error
         try:
             await self._repository.save_answer_with_citations(snapshot)
+        except (DocumentStateChanged, AnswerSnapshotUnavailable, asyncio.CancelledError):
+            raise
+        except Exception as error:
+            raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
+        return response
+
+    async def answer_frozen(
+        self,
+        request: AnswerRequest,
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        governance: GenerationGovernance | None,
+    ) -> AnswerResponse:
+        if (
+            not revisions
+            or tuple(sorted(revisions, key=lambda item: item.document_id)) != revisions
+        ):
+            raise DocumentStateChanged("accepted revision selection is invalid")
+        trusted = AnswerRequest(
+            query=request.query,
+            answer_mode=AnswerMode.QUICK,
+            source_families=(SourceFamily.DOC,),
+            resource_refs=_scope_refs(revisions),
+        )
+        grants = {
+            (grant.source_id, grant.revision, grant.source_content_hash)
+            for grant in policy.resource_grants
+        }
+        if grants != {
+            (item.source_id, item.revision_id, item.source_content_hash) for item in revisions
+        }:
+            raise DocumentStateChanged("accepted retrieval authority is invalid")
+        frozen_answer = getattr(self._knowledge, "answer_frozen", None)
+        response = (
+            await frozen_answer(trusted, policy, governance=governance)
+            if frozen_answer is not None
+            else await self._knowledge.answer(trusted, policy)
+        )
+        try:
+            snapshot = AnswerSnapshot.from_response(
+                response=response,
+                query=trusted.query,
+                selected_revisions=revisions,
+                corpus_version=self._corpus_version,
+            )
+            frozen_save = getattr(self._repository, "save_frozen_answer_with_citations", None)
+            if frozen_save is None:
+                await self._repository.save_answer_with_citations(snapshot)
+            else:
+                await frozen_save(snapshot)
         except (DocumentStateChanged, AnswerSnapshotUnavailable, asyncio.CancelledError):
             raise
         except Exception as error:

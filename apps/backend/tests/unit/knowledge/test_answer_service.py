@@ -248,6 +248,24 @@ async def test_conversation_revision_selection_resolves_current_rows_and_policy_
 
 
 @pytest.mark.asyncio
+async def test_frozen_conversation_answer_never_reloads_current_document_state():
+    answer_service, repository, gateway = service()
+    frozen = (ready(),)
+    from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+
+    async def reject_reload(*_args):
+        raise AssertionError("accepted Turn must not reload current revisions")
+
+    repository.load_source_revisions = reject_reload
+    repository.load_revision_selection = reject_reload
+    response = await answer_service.answer_frozen(
+        request_for("doc_a"), frozen, build_demo_policy_context(frozen), governance=None
+    )
+    assert response == answer_response()
+    assert gateway.requests[0].resource_refs[0].requested_revision == "rev_a"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("corpus", ["tapper-demo-v1", "tapper-demo-v2"])
 @pytest.mark.parametrize("abstained", [False, True])
 async def test_answer_uses_the_selected_runtime_projection_corpus(corpus, abstained):

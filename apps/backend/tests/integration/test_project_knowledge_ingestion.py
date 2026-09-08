@@ -503,6 +503,10 @@ def test_source_delete_answer_race_and_multisource_associations(
                 if deletion_first
                 else results[1] is None
             )
+            if deletion_first:
+                await repository.save_frozen_answer_with_citations(
+                    replace(next_answer, trace_id="frozen-after-delete")
+                )
             assert await repository.load_citation("citation-multi") is None
             assert await repository.load_ready_revisions((second.document_id,)) == (second,)
             async with sessions() as session:
@@ -512,6 +516,15 @@ def test_source_delete_answer_race_and_multisource_associations(
                     .where(knowledge_answer_snapshot.c.trace_id == "race-answer")
                 )
                 assert count == (0 if deletion_first else 1)
+                if deletion_first:
+                    assert (
+                        await session.scalar(
+                            select(func.count())
+                            .select_from(knowledge_answer_snapshot)
+                            .where(knowledge_answer_snapshot.c.trace_id == "frozen-after-delete")
+                        )
+                        == 1
+                    )
         finally:
             release.set()
             await engine.dispose()

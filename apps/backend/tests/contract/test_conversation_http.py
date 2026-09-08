@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -39,10 +40,28 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
         scope = VALIDATION_SCOPE
 
         async def get_agent(self, _scope, identity):
-            return SimpleNamespace(revision_id=identity, content_digest="sha256:" + "a" * 64)
+            from tap.modules.ai.domain.models import schema_digest, text_digest
+
+            schema = {"type": "object"}
+            return SimpleNamespace(
+                revision_id=identity,
+                content_digest="sha256:" + "a" * 64,
+                system_instruction="frozen agent instruction",
+                system_instruction_digest=text_digest("frozen agent instruction"),
+                tool_allowlist=frozenset({"knowledge.answer"}),
+                output_schema_json=json.dumps(schema, sort_keys=True, separators=(",", ":")),
+                output_schema_digest=schema_digest(schema),
+            )
 
         async def get_skill(self, _scope, identity):
-            return SimpleNamespace(revision_id=identity, content_digest="sha256:" + "b" * 64)
+            from tap.modules.ai.domain.models import text_digest
+
+            return SimpleNamespace(
+                revision_id=identity,
+                content_digest="sha256:" + "b" * 64,
+                instruction_template="frozen skill instruction",
+                instruction_template_digest=text_digest("frozen skill instruction"),
+            )
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -84,6 +103,11 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
     headers = {"Idempotency-Key": "request-1"}
     first = client.post("/api/v1/projects/tapper-demo/conversations", json=body, headers=headers)
     assert first.status_code == 202, first.text
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert frozen.agent_system_instruction == "frozen agent instruction"
+    assert frozen.agent_tool_allowlist == ("knowledge.answer",)
+    assert frozen.agent_output_schema_json == '{"type":"object"}'
+    assert frozen.skill_instruction_templates == ("frozen skill instruction",)
 
     app.state.http_services = replace(
         services, knowledge=None, model_catalog=None, asset_catalog=None

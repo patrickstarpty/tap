@@ -81,6 +81,13 @@ class TurnInput:
     agent_revision_digest: str | None = None
     skill_revision_ids: tuple[str, ...] = ()
     skill_revision_digests: tuple[str, ...] = ()
+    agent_system_instruction: str | None = None
+    agent_system_instruction_digest: str | None = None
+    agent_tool_allowlist: tuple[str, ...] = ()
+    agent_output_schema_json: str | None = None
+    agent_output_schema_digest: str | None = None
+    skill_instruction_templates: tuple[str, ...] = ()
+    skill_instruction_template_digests: tuple[str, ...] = ()
     acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
 
@@ -95,6 +102,23 @@ class TurnInput:
             raise ValueError("agent revision identity and digest must be paired")
         if len(self.skill_revision_ids) != len(self.skill_revision_digests):
             raise ValueError("skill revision identities and digests must be paired")
+        agent_content = (
+            self.agent_system_instruction,
+            self.agent_system_instruction_digest,
+            self.agent_output_schema_json,
+            self.agent_output_schema_digest,
+        )
+        if any(item is not None for item in agent_content) and not all(
+            item is not None for item in agent_content
+        ):
+            raise ValueError("agent revision execution content must be frozen")
+        if self.skill_instruction_templates and (
+            len(self.skill_revision_ids) != len(self.skill_instruction_templates)
+            or len(self.skill_revision_ids) != len(self.skill_instruction_template_digests)
+        ):
+            raise ValueError("skill revision execution content must be frozen")
+        if self.skill_instruction_templates and self.agent_revision_id is None:
+            raise ValueError("skill execution requires a frozen agent authority")
         if len({item.revision_id for item in self.resolved_resources}) != len(
             self.resolved_resources
         ):
@@ -103,10 +127,52 @@ class TurnInput:
             self.acl_digest,
             self.retrieval_policy_digest,
             *self.skill_revision_digests,
+            *self.skill_instruction_template_digests,
             *(() if self.agent_revision_digest is None else (self.agent_revision_digest,)),
+            *(
+                ()
+                if self.agent_system_instruction_digest is None
+                else (self.agent_system_instruction_digest,)
+            ),
+            *(
+                ()
+                if self.agent_output_schema_digest is None
+                else (self.agent_output_schema_digest,)
+            ),
         ):
             if _DIGEST.fullmatch(digest) is None:
                 raise ValueError("revision and policy digests must be canonical SHA-256")
+        if self.agent_system_instruction is not None:
+            expected = (
+                "sha256:"
+                + hashlib.sha256(self.agent_system_instruction.encode("utf-8")).hexdigest()
+            )
+            if expected != self.agent_system_instruction_digest:
+                raise ValueError("agent instruction digest differs from frozen content")
+        for instruction, digest in zip(
+            self.skill_instruction_templates,
+            self.skill_instruction_template_digests,
+            strict=True,
+        ):
+            if "sha256:" + hashlib.sha256(instruction.encode("utf-8")).hexdigest() != digest:
+                raise ValueError("skill instruction digest differs from frozen content")
+        if self.agent_output_schema_json is not None:
+            try:
+                schema = json.loads(self.agent_output_schema_json)
+                canonical = json.dumps(
+                    schema, sort_keys=True, separators=(",", ":"), allow_nan=False
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise ValueError("agent output schema must be canonical JSON") from error
+            if (
+                not isinstance(schema, dict)
+                or canonical != self.agent_output_schema_json
+                or "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                != self.agent_output_schema_digest
+            ):
+                raise ValueError("agent output schema digest differs from frozen content")
+        if set(self.agent_tool_allowlist) - {"knowledge.search", "knowledge.answer"}:
+            raise ValueError("agent tool authority is outside the closed allowlist")
 
     def material(self, *, project_id: str, turn_id: str) -> dict[str, object]:
         return {"projectId": project_id, "turnId": turn_id, **asdict(self)}

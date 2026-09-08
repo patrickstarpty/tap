@@ -50,7 +50,11 @@ class ConversationRepository(Protocol):
         lease_token: str | None = None,
     ) -> ConversationTurn: ...
     async def append_stream_event(
-        self, conversation_id: str, turn_id: str, event: ConversationEvent
+        self,
+        conversation_id: str,
+        turn_id: str,
+        event: ConversationEvent,
+        lease_token: str | None = None,
     ) -> ConversationEvent: ...
 
 
@@ -128,7 +132,7 @@ class InMemoryConversationRepository:
         )
         return found
 
-    async def append_stream_event(self, conversation_id, turn_id, event):
+    async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
         conversation = await self.load(conversation_id)
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
         if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
@@ -295,10 +299,17 @@ class ConversationService:
         )
 
     async def emit(
-        self, conversation_id: str, turn_id: str, event_type: str, payload: dict[str, object]
+        self,
+        conversation_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: dict[str, object],
+        *,
+        lease_token: str | None = None,
     ) -> ConversationEvent:
         return await self.repository.append_stream_event(
             conversation_id,
             turn_id,
             ConversationEvent(uuid4().hex, 1, event_type, payload, datetime.now(timezone.utc)),
+            lease_token=lease_token,
         )

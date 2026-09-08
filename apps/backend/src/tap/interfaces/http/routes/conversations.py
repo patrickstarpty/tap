@@ -35,6 +35,7 @@ router = APIRouter(
     prefix="/conversations",
     tags=["conversations"],
     dependencies=[Depends(project_authorization("knowledge.answer"))],
+    responses={422: problem_response_metadata("Request validation failed")},
 )
 
 
@@ -116,6 +117,25 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         agent_revision_digest=agent_digest,
         skill_revision_ids=tuple(body.skill_revision_ids),
         skill_revision_digests=tuple(item.content_digest for item in skills),
+        agent_system_instruction=(
+            None if body.agent_revision_id is None else agent.system_instruction
+        ),
+        agent_system_instruction_digest=None
+        if body.agent_revision_id is None
+        else agent.system_instruction_digest,
+        agent_tool_allowlist=()
+        if body.agent_revision_id is None
+        else tuple(sorted(agent.tool_allowlist)),
+        agent_output_schema_json=None
+        if body.agent_revision_id is None
+        else agent.output_schema_json,
+        agent_output_schema_digest=None
+        if body.agent_revision_id is None
+        else agent.output_schema_digest,
+        skill_instruction_templates=tuple(item.instruction_template for item in skills),
+        skill_instruction_template_digests=tuple(
+            item.instruction_template_digest for item in skills
+        ),
         acl_digest=policy.acl_digest,
         retrieval_policy_digest=content_digest(
             {

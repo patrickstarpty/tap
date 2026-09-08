@@ -66,7 +66,11 @@ class GenerationWorker:
             async def complete(evidence, chat=conversation_id, identity=turn.turn_id):
                 if evidence.answer:
                     await self.conversations.emit(
-                        chat, identity, "answer.delta", {"text": evidence.answer}
+                        chat,
+                        identity,
+                        "answer.delta",
+                        {"text": evidence.answer},
+                        lease_token=turn.lease_token,
                     )
                 await self.conversations.complete_evidence(
                     chat, identity, evidence, lease_token=turn.lease_token

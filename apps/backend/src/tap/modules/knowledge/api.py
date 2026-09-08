@@ -129,6 +129,11 @@ class KnowledgeAPI:
     ) -> AnswerResponse:
         return await self._retrieval.answer(request, policy)
 
+    async def answer_frozen(self, request, policy, *, governance):
+        return await self._retrieval.answer(
+            request, policy, frozen_policy=True, governance=governance
+        )
+
 
 def search_request_from_http(request: HttpSearchRequest) -> SearchRequest:
     """Map the Pydantic browser DTO into a framework-free application request."""

@@ -95,22 +95,33 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                 GraphContextStatus.NOT_REQUESTED,
             )
             with pytest.raises(ConversationConflict, match="lease"):
-                await restarted.complete_evidence(
+                await restarted.emit(
                     "conversation-1",
                     "turn-2",
-                    closed,
+                    "answer.delta",
+                    {"text": "stale"},
                     lease_token=first_claim.lease_token,
                 )
-            await restarted.complete_evidence(
+            await restarted.emit(
+                "conversation-1",
+                "turn-2",
+                "answer.delta",
+                {"text": "current"},
+                lease_token=second_claim.lease_token,
+            )
+            canceled = await restarted.cancel("conversation-1", "turn-2")
+            assert canceled.state == "canceled"
+            stale_completion = await restarted.complete_evidence(
                 "conversation-1",
                 "turn-2",
                 closed,
                 lease_token=second_claim.lease_token,
             )
+            assert stale_completion.state == "canceled"
             await restarted.append(
                 "conversation-1", "turn-3", "request-3", _input("reject fake evidence")
             )
-            with pytest.raises(ValueError, match="trusted persisted fact"):
+            with pytest.raises(ValueError, match="frozen Turn resources|trusted persisted fact"):
                 await restarted.complete_evidence(
                     "conversation-1",
                     "turn-3",
@@ -154,6 +165,38 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                     )
                     == 5
                 )
+            await restarted.create("conversation-race", "turn-race", "request-race", _input("race"))
+            race_claim = (await restarted.repository.claim_queued(limit=10))[-1][1]
+            await asyncio.gather(
+                restarted.cancel("conversation-race", "turn-race"),
+                restarted.complete_evidence(
+                    "conversation-race",
+                    "turn-race",
+                    closed,
+                    lease_token=race_claim.lease_token,
+                ),
+            )
+            race = await restarted.load("conversation-race")
+            assert race.turns[0].state in {"completed", "canceled"}
+            async with engine.connect() as connection:
+                assert (
+                    await connection.scalar(
+                        text(
+                            "SELECT COUNT(*) FROM turn_answer_evidence_snapshot "
+                            "WHERE turn_id='turn-race'"
+                        )
+                    )
+                    == 1
+                )
+                assert (
+                    await connection.scalar(
+                        text(
+                            "SELECT COUNT(*) FROM chat_event WHERE turn_id='turn-race' "
+                            "AND event_type='conversation.turn.completed'"
+                        )
+                    )
+                    == 1
+                )
                 assert (
                     await connection.scalar(
                         text(
@@ -161,7 +204,7 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                             "('conversation-turn-requested','conversation-turn-completed')"
                         )
                     )
-                    == 5
+                    == 7
                 )
         finally:
             async with engine.begin() as connection:
