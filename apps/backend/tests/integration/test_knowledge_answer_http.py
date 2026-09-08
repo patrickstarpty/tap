@@ -23,6 +23,7 @@ from tap.modules.knowledge.application.citations import (
     CitationUnavailable,
 )
 from tap.modules.knowledge.application.documents import DocumentService
+from tap.modules.knowledge.application.sources import SourceService
 from tap.modules.knowledge.domain.documents import DocumentParseRejected
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
@@ -30,6 +31,7 @@ from tap.modules.knowledge.domain.models import (
     ModelCallProvenance,
     RetrievalProfileId,
 )
+from tap.modules.knowledge.domain.sources import SourceCommand
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
     DocumentCapacityExceeded,
@@ -47,6 +49,9 @@ from tap.modules.knowledge.ports.errors import (
     ModelUnavailable,
     SearchUnavailable,
 )
+from tap.modules.knowledge.ports.sources import SourceRepository
+
+SOURCE_ID = "src_" + "a" * 32
 
 
 class Documents:
@@ -59,7 +64,7 @@ class Documents:
         if self.error is not None:
             raise self.error
 
-    async def upload(self, upload):  # type: ignore[no-untyped-def]
+    async def upload(self, upload, command: SourceCommand | None = None):  # type: ignore[no-untyped-def]
         self._fail()
         raise AssertionError(upload)
 
@@ -78,6 +83,21 @@ class Documents:
     async def delete_document(self, document_id):  # type: ignore[no-untyped-def]
         self._fail()
         raise AssertionError(document_id)
+
+
+class SourceCommandRepository:
+    scope = VALIDATION_SCOPE
+
+    def __init__(self, documents: Documents) -> None:
+        self.documents = documents
+
+    async def retry_failed(self, document_id, now, *, command):  # type: ignore[no-untyped-def]
+        self.documents._fail()
+        raise AssertionError((document_id, now, command))
+
+    async def request_delete(self, document_id, now, *, command):  # type: ignore[no-untyped-def]
+        self.documents._fail()
+        raise AssertionError((document_id, now, command))
 
 
 class Answers:
@@ -146,6 +166,10 @@ def harness() -> Harness:
         documents=documents,
         answers=answers,
         citations=citations,
+        sources=SourceService(
+            cast(SourceRepository, SourceCommandRepository(documents)),
+            cast(DocumentService, documents),
+        ),
     )
     return Harness(
         client=TestClient(
@@ -162,12 +186,11 @@ def harness() -> Harness:
     )
 
 
-def answer_payload(*document_ids: str) -> dict[str, object]:
+def answer_payload(*source_ids: str) -> dict[str, object]:
     return {
         "query": "What is the rule?",
         "resourceRefs": [
-            {"family": "doc", "sourceId": document_id, "mode": "scope"}
-            for document_id in document_ids
+            {"family": "doc", "sourceId": source_id, "mode": "scope"} for source_id in source_ids
         ],
     }
 
@@ -176,13 +199,13 @@ def test_http_normalizes_selection_and_maps_answer_and_citation_dtos() -> None:
     app = harness()
 
     answer = app.client.post(
-        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload("doc-a")
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
     )
     citation = app.client.get("/api/v1/projects/tapper-demo/knowledge/citations/citation-a")
 
     assert answer.status_code == 200
     assert answer.json()["abstained"] is True
-    assert app.answers.requests[0].resource_refs[0].source_id == "doc-a"
+    assert app.answers.requests[0].resource_refs[0].source_id == SOURCE_ID
     assert citation.status_code == 200
     assert citation.json() == {
         "citationId": "citation-a",
@@ -209,9 +232,9 @@ def test_empty_duplicate_and_hidden_controls_are_stable_400_problems() -> None:
     app = harness()
     empty = app.client.post("/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload())
     duplicate = app.client.post(
-        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload("doc-a", "doc-a")
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID, SOURCE_ID)
     )
-    control = answer_payload("doc-a") | {"topK": 1}
+    control = answer_payload(SOURCE_ID) | {"topK": 1}
     hidden = app.client.post("/api/v1/projects/tapper-demo/knowledge/answers", json=control)
 
     assert (empty.status_code, empty.json()["type"]) == (
@@ -233,7 +256,7 @@ def test_twenty_one_browser_refs_remain_contract_validation_422() -> None:
     app = harness()
     response = app.client.post(
         "/api/v1/projects/tapper-demo/knowledge/answers",
-        json=answer_payload(*(f"doc-{index}" for index in range(21))),
+        json=answer_payload(*(f"src_{index:032x}" for index in range(21))),
     )
 
     assert response.status_code == 422
@@ -244,8 +267,8 @@ def test_twenty_one_browser_refs_remain_contract_validation_422() -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        answer_payload("doc-a") | {"query": " \n\t "},
-        answer_payload("doc-a") | {"sources": ["doc", "doc"]},
+        answer_payload(SOURCE_ID) | {"query": " \n\t "},
+        answer_payload(SOURCE_ID) | {"sources": ["doc", "doc"]},
     ],
 )
 def test_domain_invalid_request_shape_is_contract_validation_422(
@@ -293,6 +316,7 @@ def test_upload_failures_are_redacted_stable_problems(
 
     response = app.client.post(
         "/api/v1/projects/tapper-demo/knowledge/documents",
+        headers={"Idempotency-Key": "upload-intent"},
         files={"upload": ("policy.md", b"# Policy", "text/markdown")},
     )
 
@@ -337,7 +361,7 @@ def test_document_command_failures_are_redacted_stable_problems(
     app = harness()
     app.documents.error = error
 
-    response = app.client.request(method, path)
+    response = app.client.request(method, path, headers={"Idempotency-Key": "command-intent"})
 
     assert response.status_code == status
     assert response.json()["type"] == problem_type
@@ -386,7 +410,7 @@ def test_answer_failures_are_redacted_stable_problems(
     app.answers.error = error
 
     response = app.client.post(
-        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload("doc-a")
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
     )
 
     assert response.status_code == status
@@ -399,7 +423,7 @@ def test_litellm_answer_failure_is_not_reported_as_embedding_failure() -> None:
     app.answers.error = AnswerUnavailable("private provider detail")
 
     response = app.client.post(
-        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload("doc-a")
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
     )
 
     assert response.status_code == 503
@@ -461,7 +485,9 @@ def test_document_provider_outages_are_redacted_rfc9457_503(
         if method == "post" and path == "/api/v1/projects/tapper-demo/knowledge/documents"
         else {}
     )
-    response = app.client.request(method, path, **kwargs)
+    response = app.client.request(
+        method, path, headers={"Idempotency-Key": "provider-outage-intent"}, **kwargs
+    )
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
@@ -474,7 +500,7 @@ def test_unexpected_rest_failure_is_a_redacted_rfc9457_fallback() -> None:
     app.answers.error = RuntimeError("provider token=secret")
 
     response = app.client.post(
-        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload("doc-a")
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
     )
 
     assert response.status_code == 503
@@ -506,7 +532,7 @@ def test_unexpected_rest_fallback_does_not_consume_caller_cancellation() -> None
         ) as client:
             with pytest.raises(asyncio.CancelledError, match="caller disconnected"):
                 await client.post(
-                    "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload("doc-a")
+                    "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
                 )
 
     asyncio.run(scenario())
@@ -560,14 +586,16 @@ def test_upload_cleanup_failure_does_not_replace_cancellation_through_asgi(
                     staging_key="staging-owner",
                 )
 
+        repository = Repository()
         documents = DocumentService(
-            repository=cast(DocumentRepository, Repository()),
+            repository=cast(DocumentRepository, repository),
             artifacts=cast(ArtifactStore, Artifacts()),
         )
         service = KnowledgeHttpService(
             documents=documents,
             answers=cast(Any, Answers()),
             citations=cast(Any, Citations()),
+            sources=SourceService(cast(SourceRepository, repository), documents),
         )
         transport = httpx.ASGITransport(
             app=create_app(
@@ -583,6 +611,7 @@ def test_upload_cleanup_failure_does_not_replace_cancellation_through_asgi(
             with pytest.raises(asyncio.CancelledError) as caught:
                 await client.post(
                     "/api/v1/projects/tapper-demo/knowledge/documents",
+                    headers={"Idempotency-Key": "cancel-upload-intent"},
                     files={"upload": ("policy.md", b"# Policy", "text/markdown")},
                 )
 

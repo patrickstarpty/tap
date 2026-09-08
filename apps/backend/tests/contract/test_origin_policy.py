@@ -30,7 +30,12 @@ def test_bad_origin_rejected_with_correlated_problem_before_io(headers):
 def test_exact_origin_allows_mutation_and_read_needs_no_origin():
     app, authority, knowledge = scoped_app()
     client = TestClient(app)
-    assert client.delete(PATH + "/doc", headers={"Origin": ORIGIN}).status_code == 204
+    assert (
+        client.delete(
+            PATH + "/doc", headers={"Origin": ORIGIN, "Idempotency-Key": "delete-intent"}
+        ).status_code
+        == 204
+    )
     assert authority.calls == ["scope", "knowledge.delete"]
     assert knowledge.calls == ["delete"]
     assert client.get(PATH).status_code == 200

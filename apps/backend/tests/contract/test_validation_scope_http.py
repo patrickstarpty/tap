@@ -39,7 +39,7 @@ class Knowledge:
         self.calls.append("list")
         return DocumentPage(items=[], next_cursor=None)
 
-    async def delete_document(self, document_id):
+    async def delete_document(self, document_id, key, correlation):
         self.calls.append("delete")
 
 

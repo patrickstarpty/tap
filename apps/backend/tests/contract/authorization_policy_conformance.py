@@ -119,13 +119,17 @@ class AuthorizationPolicyConformance:
     @pytest.mark.asyncio
     async def test_scope_identity_denial_precedes_retrieval_io(self, unavailable: bool) -> None:
         revision = ReadyDocumentRevision(
-            document_id="doc-one", revision_id="rev-one", source_content_hash="sha256:" + "a" * 64
+            document_id="doc-one",
+            revision_id="rev-one",
+            source_content_hash="sha256:" + "a" * 64,
+            source_id="src_" + "a" * 32,
         )
 
         class Repository:
             calls = 0
 
-            async def load_ready_revisions(self, document_ids):
+            async def load_current_source_revisions(self, selected):
+                assert selected == (("src_" + "a" * 32, "rev-one", "sha256:" + "a" * 64),)
                 self.calls += 1
                 return (revision,)
 

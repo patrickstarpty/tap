@@ -166,9 +166,16 @@ def test_source_delete_ready_race_has_bounded_atomic_order(owned_project_mysql, 
         class PausingSource(MysqlDocumentRepository):
             async def _require_source(self, session, source_id):
                 row = await super()._require_source(session, source_id)
-                locked.set()
-                await asyncio.wait_for(release.wait(), 5)
+                if not deletion_first:
+                    locked.set()
+                    await asyncio.wait_for(release.wait(), 5)
                 return row
+
+            async def _request_delete_in_session(self, session, document_id):
+                if deletion_first:
+                    locked.set()
+                    await asyncio.wait_for(release.wait(), 5)
+                return await super()._request_delete_in_session(session, document_id)
 
         paused = PausingSource(sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit)
         try:
@@ -390,14 +397,22 @@ def test_source_delete_answer_race_and_multisource_associations(
         class PausingSource(MysqlDocumentRepository):
             async def _require_source(self, session, source_id):
                 row = await super()._require_source(session, source_id)
-                locked.set()
-                await asyncio.wait_for(release.wait(), 5)
+                if not deletion_first:
+                    locked.set()
+                    await asyncio.wait_for(release.wait(), 5)
                 return row
+
+            async def _request_delete_in_session(self, session, document_id):
+                if deletion_first:
+                    locked.set()
+                    await asyncio.wait_for(release.wait(), 5)
+                return await super()._request_delete_in_session(session, document_id)
 
         paused = PausingSource(sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit)
         try:
             first = await seed_ready(engine, "a")
             second = await seed_ready(engine, "b")
+            assert first.source_id is not None and second.source_id is not None
             from tap.modules.knowledge.adapters.mysql_documents import knowledge_ingestion_job
             from tap.modules.knowledge.ports.documents import (
                 JobStage,
@@ -447,13 +462,13 @@ def test_source_delete_answer_race_and_multisource_associations(
                     .mappings()
                     .all()
                 )
-                assert [row["source_id"] for row in rows] == ["src_a", "src_b"]
+                assert [row["source_id"] for row in rows] == [first.source_id, second.source_id]
             with pytest.raises(IntegrityError):
                 async with sessions.begin() as session:
                     await session.execute(
                         update(knowledge_document_revision)
                         .where(knowledge_document_revision.c.revision_id == second.revision_id)
-                        .values(source_id="src_a")
+                        .values(source_id=first.source_id)
                     )
             async with sessions.begin() as session:
                 await session.execute(
@@ -462,12 +477,12 @@ def test_source_delete_answer_race_and_multisource_associations(
                     )
                 )
             assert (await repository.load_citation("citation-multi")).selected_revisions == (
-                first,
-                second,
+                replace(first, source_id=None),
+                replace(second, source_id=None),
             )
             next_answer = replace(answer, trace_id="race-answer", citations=())
             first_task = asyncio.create_task(
-                paused.delete_source("src_a")
+                paused.delete_source(first.source_id)
                 if deletion_first
                 else paused.save_answer_with_citations(next_answer)
             )
@@ -475,7 +490,7 @@ def test_source_delete_answer_race_and_multisource_associations(
             second_task = asyncio.create_task(
                 repository.save_answer_with_citations(next_answer)
                 if deletion_first
-                else repository.delete_source("src_a")
+                else repository.delete_source(first.source_id)
             )
             await asyncio.sleep(0.05)
             release.set()
