@@ -204,6 +204,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "conversation-not-found",
+                "Conversation not found",
+                404,
+                "The Conversation is unavailable in this Project.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "scope-mismatch",
                 "Scope mismatch",
                 403,

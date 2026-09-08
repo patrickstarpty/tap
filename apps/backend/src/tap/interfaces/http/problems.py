@@ -16,6 +16,11 @@ from tap.interfaces.http.dependencies import KnowledgeRuntimeUnavailable
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
+from tap.modules.chat.application.conversations import (
+    ConversationConflict,
+    ConversationNotFound,
+    InvalidConversationCursor,
+)
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     AnswerSnapshotUnavailable,
@@ -152,8 +157,19 @@ def register_problem_handlers(app: FastAPI) -> None:
         return problem_response(document_parse_problem(error), _request)
 
     @app.exception_handler(SourceCommandConflict)
+    @app.exception_handler(ConversationConflict)
     async def source_conflict(request: Request, error: SourceCommandConflict) -> JSONResponse:
         return problem_response("idempotency-conflict", request)
+
+    @app.exception_handler(ConversationNotFound)
+    async def conversation_not_found(request: Request, error: ConversationNotFound) -> JSONResponse:
+        return problem_response("conversation-not-found", request)
+
+    @app.exception_handler(InvalidConversationCursor)
+    async def conversation_cursor_invalid(
+        request: Request, error: InvalidConversationCursor
+    ) -> JSONResponse:
+        return problem_response("request-validation", request)
 
     @app.exception_handler(SourceCommandPending)
     async def source_pending(request: Request, error: SourceCommandPending) -> JSONResponse:

@@ -23,6 +23,8 @@ class AuditAction(StrEnum):
     SCAVENGE_STAGING = "scavenge-staging"
     REBUILD_MILVUS = "rebuild-milvus"
     RECONCILE_ALL = "reconcile-all"
+    CONVERSATION_TURN_REQUESTED = "conversation-turn-requested"
+    CONVERSATION_TURN_COMPLETED = "conversation-turn-completed"
 
 
 class AuditResource(StrEnum):
@@ -30,6 +32,7 @@ class AuditResource(StrEnum):
     KNOWLEDGE_SOURCE = "knowledge-source"
     DOCUMENT_REVISION = "document-revision"
     PROJECT_MAINTENANCE = "project-maintenance"
+    CONVERSATION_TURN = "conversation-turn"
 
 
 class AuditOutcome(StrEnum):
@@ -102,7 +105,13 @@ def audit_content_digest(
     if type(safe_metadata) is not SafeAuditMetadata:
         raise TypeError("audit requires SafeAuditMetadata")
     expected_resource = (
-        AuditResource.KNOWLEDGE_SOURCE
+        AuditResource.CONVERSATION_TURN
+        if action
+        in {
+            AuditAction.CONVERSATION_TURN_REQUESTED,
+            AuditAction.CONVERSATION_TURN_COMPLETED,
+        }
+        else AuditResource.KNOWLEDGE_SOURCE
         if action in {AuditAction.SOURCE_CREATED, AuditAction.SOURCE_DELETED}
         else AuditResource.DOCUMENT_REVISION
         if action

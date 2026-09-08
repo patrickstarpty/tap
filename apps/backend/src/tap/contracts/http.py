@@ -681,3 +681,79 @@ class ChatTurnAccepted(ContractModel):
     chat_id: str
     turn_id: str
     state: Literal["queued"]
+
+
+class ConversationCreateRequest(ContractModel):
+    message: Annotated[str, Field(strict=True, min_length=1, max_length=20_000)]
+    model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_revision_ids: Annotated[list[str], Field(max_length=50)] = []
+    document_revision_ids: Annotated[list[str], Field(max_length=50)] = []
+    agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+    skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
+
+    @field_validator("message")
+    @classmethod
+    def message_is_trimmed(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must be nonblank")
+        return value
+
+
+class ConversationTurnSummary(ContractModel):
+    turn_id: str
+    state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
+    attempt: StrictInt
+    input_snapshot_digest: CanonicalSha256
+    answer_evidence_snapshot_id: str | None = None
+    answer_evidence_snapshot_digest: CanonicalSha256 | None = None
+
+
+class ConversationSummary(ContractModel):
+    conversation_id: str
+    title: str
+    created_at: TimestampValue
+    updated_at: TimestampValue
+
+
+class ConversationPage(ContractModel):
+    items: list[ConversationSummary]
+    next_cursor: str | None = None
+
+
+class ConversationDetail(ConversationSummary):
+    turns: list[ConversationTurnSummary]
+
+
+class ConversationAccepted(ContractModel):
+    conversation_id: str
+    turn_id: str
+    state: Literal["queued"]
+
+
+class ConversationEventItem(ContractModel):
+    event_id: str
+    sequence: StrictInt
+    event_type: Literal[
+        "turn.started",
+        "context.assembled",
+        "query.plan_ready",
+        "stage.started",
+        "stage.completed",
+        "retrieval.hits_ready",
+        "rerank.completed",
+        "answer.delta",
+        "citation.resolved",
+        "turn.completed",
+        "turn.abstained",
+        "turn.degraded",
+        "turn.canceled",
+        "turn.failed",
+        "conversation.turn.requested",
+        "conversation.turn.completed",
+    ]
+    payload: dict[str, object]
+    occurred_at: TimestampValue
+
+
+class ConversationEventPage(ContractModel):
+    items: list[ConversationEventItem]

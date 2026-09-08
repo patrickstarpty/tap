@@ -76,6 +76,14 @@
       "type": "https://tap.example/problems/citation-unavailable"
     },
     {
+      "code": "conversation-not-found",
+      "detail": "The Conversation is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Conversation not found",
+      "type": "https://tap.example/problems/conversation-not-found"
+    },
+    {
       "code": "document-limit-reached",
       "detail": "The local knowledge space has reached its document limit.",
       "retryable": false,

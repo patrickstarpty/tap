@@ -24,7 +24,7 @@ from tap.modules.chat.domain.models import ChatId, CommandId, EventId, TurnId, T
 from tap.platform.db.session import create_engine_and_session_factory
 
 DATABASE_URL = os.getenv("TAP_DATABASE_URL", "")
-OWNED_TABLES = ("outbox", "turn_snapshot", "chat_event", "chat_turn")
+OWNED_TABLES = ("outbox", "turn_snapshot", "chat_event", "chat_turn", "conversation")
 
 
 async def _clean_owned_tables(engine: AsyncEngine) -> None:

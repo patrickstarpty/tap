@@ -30,6 +30,7 @@ from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvi
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
+from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 
@@ -132,6 +133,7 @@ class HttpServices:
     scope: ProjectScopeContext | None = None
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
+    conversations: ConversationService | None = None
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:
@@ -159,6 +161,14 @@ def model_catalog_service(request: Request) -> ModelCatalogHttpService:
 def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.asset_catalog if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def conversation_service(request: Request) -> ConversationService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.conversations if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

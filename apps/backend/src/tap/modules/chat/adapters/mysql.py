@@ -11,6 +11,7 @@ from sqlalchemy import (
     BigInteger,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Table,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
@@ -55,6 +57,7 @@ chat_turn = Table(
     Column("client_request_id", String(128), nullable=False),
     Column("message", Text, nullable=False),
     Column("state", String(32), nullable=False),
+    Column("processing_attempt", Integer, nullable=False, server_default="1"),
     Column("last_sequence", BigInteger, nullable=False, server_default="0"),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint("chat_id", "client_request_id", name="uq_chat_turn_client_request"),
@@ -95,6 +98,14 @@ turn_snapshot = Table(
 
 for _table in (chat_turn, chat_event, turn_snapshot):
     augment_project_table(_table)
+
+chat_turn.append_constraint(
+    ForeignKeyConstraint(
+        ["project_id", "chat_id"],
+        ["conversation.project_id", "conversation.conversation_id"],
+        name="fk_chat_turn_project_conversation",
+    )
+)
 
 
 _TERMINAL_AND_RUNNING_STATES: Mapping[str, TurnState] = {
@@ -143,6 +154,22 @@ class MysqlTurnRepository:
         created_at = _utc_naive(command.occurred_at)
         try:
             async with self._sessions() as session, session.begin():
+                await session.execute(
+                    text(
+                        "INSERT IGNORE INTO conversation "
+                        "(conversation_id,title,created_at,updated_at,enterprise_id,project_id,"
+                        "actor_id,identity_mode,identity_origin) VALUES "
+                        "(:conversation_id,:title,:created_at,:updated_at,:enterprise_id,"
+                        ":project_id,:actor_id,:identity_mode,:identity_origin)"
+                    ),
+                    {
+                        **scope_values(self._scope),
+                        "conversation_id": command.chat_id,
+                        "title": command.message[:120],
+                        "created_at": created_at,
+                        "updated_at": created_at,
+                    },
+                )
                 await session.execute(
                     insert(chat_turn).values(
                         **scope_values(self._scope),

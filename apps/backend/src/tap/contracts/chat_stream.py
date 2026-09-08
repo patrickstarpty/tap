@@ -270,6 +270,29 @@ class TurnFailedEvent(StreamContractModel):
     payload: TurnFailedPayload
 
 
+class ConversationTurnRequestedPayload(StreamContractModel):
+    conversation_id: str = Field(min_length=1)
+    turn_id: str = Field(min_length=1)
+    input_snapshot_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class ConversationTurnRequestedEvent(StreamContractModel):
+    type: Literal["conversation.turn.requested"]
+    payload: ConversationTurnRequestedPayload
+
+
+class ConversationTurnCompletedPayload(StreamContractModel):
+    turn_id: str = Field(min_length=1)
+    answer_evidence_snapshot_id: str = Field(min_length=1)
+    answer_evidence_snapshot_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    outcome: Literal["completed", "abstained", "canceled", "failed"]
+
+
+class ConversationTurnCompletedEvent(StreamContractModel):
+    type: Literal["conversation.turn.completed"]
+    payload: ConversationTurnCompletedPayload
+
+
 ChatStreamEvent = Annotated[
     TurnStartedEvent
     | ContextAssembledEvent
@@ -284,7 +307,9 @@ ChatStreamEvent = Annotated[
     | TurnAbstainedEvent
     | TurnDegradedEvent
     | TurnCanceledEvent
-    | TurnFailedEvent,
+    | TurnFailedEvent
+    | ConversationTurnRequestedEvent
+    | ConversationTurnCompletedEvent,
     Field(discriminator="type"),
 ]
 

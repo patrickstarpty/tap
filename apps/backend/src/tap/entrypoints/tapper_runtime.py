@@ -679,6 +679,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             scope_provider=scope_provider,
             authorization_policy=authorization_policy,
             asset_catalog=asset_catalog,
+            conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
@@ -1263,6 +1264,7 @@ def _assemble_http_services(
     scope_provider: ScopeProvider,
     authorization_policy: AuthorizationPolicy,
     asset_catalog: object | None = None,
+    conversation_sessions: object | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1307,6 +1309,15 @@ def _assemble_http_services(
         repository=cast(CitationRepository, repository),
         artifacts=cast(CitationArtifactStore, artifacts),
     )
+    conversations = None
+    if conversation_sessions is not None:
+        from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+        from tap.modules.chat.application.conversations import ConversationService
+
+        conversations = ConversationService(
+            MysqlConversationRepository(conversation_sessions, scope=repository.scope),  # type: ignore[arg-type]
+            scope=repository.scope,
+        )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
@@ -1323,6 +1334,7 @@ def _assemble_http_services(
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,
         scope=repository.scope,
+        conversations=conversations,
     )
 
 

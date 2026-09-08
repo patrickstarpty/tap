@@ -173,6 +173,8 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "rerank.completed",
         "answer.delta",
         "citation.resolved",
+        "conversation.turn.requested",
+        "conversation.turn.completed",
         "turn.completed",
         "turn.abstained",
         "turn.degraded",
@@ -197,7 +199,7 @@ def test_exporter_emits_private_events_and_problem_registry_without_public_leak(
     for path in ("openapi/api.json", "events/chat-stream.schema.json"):
         content = (tmp_path / path).read_text()
         assert "ProjectEventEnvelope" not in content
-        assert "inputSnapshotDigest" not in content
+        assert "inputSnapshotDigest" in content
         assert "extractionProfileDigest" not in content
 
 

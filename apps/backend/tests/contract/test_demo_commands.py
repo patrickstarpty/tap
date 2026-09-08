@@ -493,6 +493,7 @@ case " $* " in
   *" tap.entrypoints.tapper_api "*) exec tapper-child api ;;
   *" tap.entrypoints.relay_reconciler "*) exec tapper-child relay ;;
   *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
+  *" tap.entrypoints.tapper_generation_worker "*) exec tapper-child generation ;;
 esac
 exit 99
 """,
@@ -2685,12 +2686,14 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "api",
         "relay",
         "worker",
+        "generation",
         "web",
     }
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
         "parser",
         "relay",
         "worker",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -2735,7 +2738,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 5
+    assert len(_started_child_pids(log)) == 6
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2756,14 +2759,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 5 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 6 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all five children")
+        raise AssertionError("supervisor did not start all six children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2785,6 +2788,7 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         "api",
         "relay",
         "worker",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -2840,7 +2844,16 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    expected_roles = {"api", "relay", "worker", "web", "validation", "readiness", "curl"}
+    expected_roles = {
+        "api",
+        "relay",
+        "worker",
+        "generation",
+        "web",
+        "validation",
+        "readiness",
+        "curl",
+    }
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if log.exists():
@@ -2897,6 +2910,7 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "LITELLM_MASTER_KEY",
         "MILVUS_WRITER_PASSWORD",
     } <= environment_names["worker"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["generation"]
     output = stdout + stderr + log.read_text(encoding="utf-8")
     assert "caller-" not in output
     assert "provider-secret" not in output
@@ -2926,7 +2940,7 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     # Start the shortened readiness window only after the stubs can record TERM.
     # This barrier is bounded separately and remains inside the 10-second cap.
     stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
-while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 4 ]; do
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 5 ]; do
   [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
   sleep 0.05
 done
@@ -2960,6 +2974,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
         "api",
         "relay",
         "worker",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
