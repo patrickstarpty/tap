@@ -17,7 +17,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
@@ -194,17 +194,44 @@ class MysqlAssetCatalog:
                     await session.rollback()
                     raise
                 finally:
-                    released = await asyncio.shield(
-                        connection.scalar(select(func.release_lock(lock_name)))
-                    )
-                    if released != 1:
-                        release_error = AssetRevisionRejected()
+                    try:
+                        await self._release_catalog_lock(connection, lock_name)
+                    except BaseException as release_error:
                         if failure is not None:
                             raise release_error from failure
                         raise release_error
 
     def _lock_name(self) -> str:
         return f"tap:ai-assets:{self._scope.enterprise_id}:{self._scope.project_id}"
+
+    async def _release_catalog_lock(self, connection: AsyncConnection, lock_name: str) -> None:
+        release_task = asyncio.create_task(self._release_lock_io(connection, lock_name))
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                released = await asyncio.shield(release_task)
+                break
+            except asyncio.CancelledError as error:
+                if release_task.done():
+                    await connection.invalidate()
+                    raise error
+                cancellation = error
+            except BaseException as error:
+                await connection.invalidate()
+                if cancellation is not None:
+                    raise cancellation from error
+                raise
+        if released != 1:
+            await connection.invalidate()
+            rejection = AssetRevisionRejected()
+            if cancellation is not None:
+                raise cancellation from rejection
+            raise rejection
+        if cancellation is not None:
+            raise cancellation
+
+    async def _release_lock_io(self, connection: AsyncConnection, lock_name: str) -> int | None:
+        return await connection.scalar(select(func.release_lock(lock_name)))
 
     async def _seed_agent(self, session: AsyncSession, revision: AiAgentRevision) -> None:
         self._assert_scope(revision.scope)

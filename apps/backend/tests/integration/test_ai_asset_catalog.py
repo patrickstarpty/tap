@@ -233,6 +233,48 @@ async def test_mysql_seed_cancellation_and_timeout_leave_no_catalog_lock(
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_mysql_seed_waits_for_paused_release_before_returning_cancelled_connection(
+    owned_project_mysql,
+) -> None:
+    import asyncio
+
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import validation_asset_seed
+
+    release_started = asyncio.Event()
+    continue_release = asyncio.Event()
+
+    class PausingReleaseCatalog(MysqlAssetCatalog):
+        async def _release_lock_io(self, connection: AsyncConnection, lock_name: str) -> int:
+            release_started.set()
+            await continue_release.wait()
+            return await super()._release_lock_io(connection, lock_name)
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = PausingReleaseCatalog(sessions, scope=VALIDATION_SCOPE)
+        task = asyncio.create_task(catalog.seed(validation_asset_seed(VALIDATION_SCOPE)))
+        await release_started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        async with sessions() as session:
+            assert await session.scalar(select(func.is_free_lock(catalog._lock_name()))) == 0
+        continue_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with sessions() as session:
+            assert await session.scalar(select(func.is_free_lock(catalog._lock_name()))) == 1
+    finally:
+        await engine.dispose()
+
+
 def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
