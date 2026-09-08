@@ -82,7 +82,12 @@ describe("Tapper product prototype", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Tapper", "Test Management", "Low Code Automation"]);
+    ).toEqual([
+      "Tapper",
+      "Test Management",
+      "Test Analytics",
+      "Low Code Automation",
+    ]);
     expect(
       within(screen.getByRole("navigation", { name: "Tapper tools" }))
         .getAllByRole("button")
