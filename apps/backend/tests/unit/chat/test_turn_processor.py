@@ -4,7 +4,7 @@ import pytest
 
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
-from tap.modules.chat.domain.conversations import GraphContextStatus
+from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
 
 
 def test_graph_snapshot_is_legal_only_when_graph_context_was_applied():
@@ -43,6 +43,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
                     "conversation-1",
                     SimpleNamespace(
                         turn_id="turn-1",
+                        lease_token="lease-1",
                         input_snapshot=SimpleNamespace(value=SimpleNamespace(message="question")),
                     ),
                 ),
@@ -56,18 +57,112 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         async def emit(self, conversation_id, turn_id, event_type, payload):
             self.events.append((conversation_id, turn_id, event_type, payload))
 
-        async def complete_evidence(self, conversation_id, turn_id, evidence):
+        async def complete_evidence(self, conversation_id, turn_id, evidence, **_):
             self.completed.append((conversation_id, turn_id, evidence))
 
     class Knowledge:
+        requests = []
+
         async def answer(self, request):
+            self.requests.append(request)
             return SimpleNamespace(
                 answer="grounded", citations=[], abstained=False, trace_id="trace-1"
             )
 
     conversations = Conversations()
-    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+    knowledge = Knowledge()
+    turn = conversations.repository.claim_queued
+    original = await turn(limit=1)
+    value = original[0][1].input_snapshot.value
+    value.source_revision_ids = ("revision-1",)
+    value.resolved_resources = (
+        SimpleNamespace(source_id="src_" + "1" * 32, revision_id="revision-1"),
+    )
+    conversations.repository.claim_queued = lambda **_: _async_value(original)
+    assert await GenerationWorker(conversations, knowledge).run_once(limit=1) == 1
+    assert knowledge.requests[0].resource_refs[0].source_id == "src_" + "1" * 32
+    assert knowledge.requests[0].resource_refs[0].mode.value == "scope"
     assert conversations.events == [
         ("conversation-1", "turn-1", "answer.delta", {"text": "grounded"})
     ]
     assert conversations.completed[0][2].outcome == "completed"
+
+
+async def _async_value(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_default_worker_crosses_the_production_answer_service_with_frozen_selection():
+    from apps.backend.tests.unit.knowledge import test_answer_service as fixtures
+
+    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
+    from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+
+    answers, repository, gateway = fixtures.service()
+    repository.scope = VALIDATION_SCOPE
+    repository.load_revision_selection = lambda _ids: _async_value(repository.rows)
+    knowledge = KnowledgeHttpService(
+        documents=SimpleNamespace(scope=VALIDATION_SCOPE),
+        answers=answers,
+        citations=SimpleNamespace(scope=VALIDATION_SCOPE),
+    )
+    frozen = fixtures.ready()
+    policy = build_demo_policy_context((frozen,))
+    turn_input = TurnInput(
+        message="What is the rule?",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode="validation",
+        model_alias="tapper-chat",
+        source_revision_ids=(frozen.revision_id,),
+        resolved_resources=(
+            FrozenResource(
+                frozen.source_id,
+                frozen.document_id,
+                frozen.revision_id,
+                frozen.source_content_hash,
+            ),
+        ),
+        acl_digest=policy.acl_digest,
+        retrieval_policy_digest=content_digest(
+            {
+                "decisionId": policy.decision_id,
+                "policyVersion": policy.policy_version,
+                "corpusVersion": policy.active_corpus_version,
+            }
+        ),
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(value=turn_input),
+                    ),
+                ),
+            )
+
+        async def resolve_citations(self, trace_id, citation_ids):
+            assert trace_id == "trace-a"
+            return tuple(
+                CitationEvidence(identity, "sha256:" + "d" * 64) for identity in citation_ids
+            )
+
+    class Conversations:
+        repository = Repository()
+
+        async def emit(self, *_args):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            pass
+
+    assert await GenerationWorker(Conversations(), knowledge).run_once(limit=1) == 1
+    assert gateway.requests[0].resource_refs[0].source_id == frozen.source_id
+    assert repository.snapshots[0].selected_revisions == (frozen,)

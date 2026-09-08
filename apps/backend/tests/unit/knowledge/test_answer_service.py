@@ -171,6 +171,10 @@ class MemoryAnswerRepository:
         wanted = set(document_ids)
         return tuple(row for row in self.rows if row.source_id in wanted)
 
+    async def load_revision_selection(self, revision_ids):
+        wanted = set(revision_ids)
+        return tuple(row for row in self.rows if row.revision_id in wanted)
+
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
         if self.change_before_save:
             raise DocumentStateChanged("selected revision changed")
@@ -230,6 +234,17 @@ def service(
     repository = MemoryAnswerRepository(rows)
     gateway = Gateway(response)
     return AnswerService(repository=repository, knowledge=gateway), repository, gateway
+
+
+@pytest.mark.asyncio
+async def test_conversation_revision_selection_resolves_current_rows_and_policy_or_fails_closed():
+    answer_service, _, _ = service()
+    rows, policy = await answer_service.resolve_conversation_selection(("rev_a",))
+    assert rows == (ready(),)
+    assert policy.project_id == "tapper-demo"
+    assert policy.acl_digest.startswith("sha256:")
+    with pytest.raises(DocumentStateChanged, match="current and ready"):
+        await answer_service.resolve_conversation_selection(("missing",))
 
 
 @pytest.mark.asyncio

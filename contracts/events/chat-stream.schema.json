@@ -1962,12 +1962,30 @@
       "additionalProperties": false,
       "properties": {
         "answer": {
-          "$ref": "#/$defs/RetrievalAnswerResponse"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetrievalAnswerResponse"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "anyOf": [
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
         }
       },
-      "required": [
-        "answer"
-      ],
       "title": "TurnCompletedPayload",
       "type": "object"
     },

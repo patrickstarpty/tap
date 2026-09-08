@@ -8,13 +8,11 @@ import signal
 from dataclasses import dataclass
 from typing import Any
 
-from tap.contracts.http import RetrievalAnswerRequest
+from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest, SourceFamily
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import (
-    CitationEvidence,
     GraphContextStatus,
     RetrievalSummary,
-    content_digest,
 )
 
 
@@ -28,10 +26,30 @@ class GenerationWorker:
         for conversation_id, turn in claimed:
 
             async def provider(_snapshot, value=turn.input_snapshot.value):
-                answer = await self.knowledge.answer(RetrievalAnswerRequest(query=value.message))
-                citations = tuple(
-                    CitationEvidence(item.citation_id, content_digest(item.model_dump(mode="json")))
-                    for item in answer.citations
+                request = RetrievalAnswerRequest(
+                    query=value.message,
+                    sources=[SourceFamily.DOC],
+                    resource_refs=[
+                        ResourceRef(
+                            family=SourceFamily.DOC,
+                            source_id=item.source_id,
+                            mode=ResourceMode.SCOPE,
+                        )
+                        for item in value.resolved_resources
+                    ],
+                )
+                answer_boundary = getattr(self.knowledge, "answer_conversation", None)
+                answer = (
+                    await answer_boundary(request, value)
+                    if answer_boundary is not None
+                    else await self.knowledge.answer(request)
+                )
+                citations = (
+                    await self.conversations.repository.resolve_citations(
+                        answer.trace_id, tuple(item.citation_id for item in answer.citations)
+                    )
+                    if answer.citations
+                    else ()
                 )
                 return ProviderResult(
                     answer=answer.answer,
@@ -50,7 +68,9 @@ class GenerationWorker:
                     await self.conversations.emit(
                         chat, identity, "answer.delta", {"text": evidence.answer}
                     )
-                await self.conversations.complete_evidence(chat, identity, evidence)
+                await self.conversations.complete_evidence(
+                    chat, identity, evidence, lease_token=turn.lease_token
+                )
 
             await TurnProcessor(provider=provider, complete=complete).process(turn.input_snapshot)
         return len(claimed)

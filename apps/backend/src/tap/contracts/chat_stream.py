@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from pydantic.alias_generators import to_camel
 
 from tap.contracts.problems import ProblemDetails
@@ -225,7 +225,14 @@ class CitationResolvedEvent(StreamContractModel):
 
 
 class TurnCompletedPayload(StreamContractModel):
-    answer: RetrievalAnswerResponse
+    answer: RetrievalAnswerResponse | None = None
+    state: Literal["completed"] | None = None
+
+    @model_validator(mode="after")
+    def one_current_or_legacy_fact(self):
+        if (self.answer is None) == (self.state is None):
+            raise ValueError("turn completion must contain one current or legacy fact")
+        return self
 
 
 class TurnCompletedEvent(StreamContractModel):

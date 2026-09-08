@@ -47,6 +47,7 @@ class ConversationRepository(Protocol):
         turn_id: str,
         snapshot: AnswerEvidenceSnapshot,
         event: ConversationEvent,
+        lease_token: str | None = None,
     ) -> ConversationTurn: ...
     async def append_stream_event(
         self, conversation_id: str, turn_id: str, event: ConversationEvent
@@ -67,7 +68,7 @@ class InMemoryConversationRepository:
         conversation = await self.load(conversation_id)
         for existing in conversation.turns:
             if existing.client_request_id == turn.client_request_id:
-                if existing.input_snapshot.value.message != turn.input_snapshot.value.message:
+                if existing.input_snapshot.value != turn.input_snapshot.value:
                     raise ConversationConflict("idempotency-conflict")
                 return existing
         self.values[conversation_id] = replace(
@@ -107,7 +108,7 @@ class InMemoryConversationRepository:
         except KeyError as error:
             raise ConversationNotFound from error
 
-    async def complete(self, conversation_id, turn_id, snapshot, event):
+    async def complete(self, conversation_id, turn_id, snapshot, event, lease_token=None):
         conversation = await self.load(conversation_id)
         turns = []
         found = None
@@ -132,7 +133,11 @@ class InMemoryConversationRepository:
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
         if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
             raise ConversationConflict("terminal Turn cannot accept stream events")
-        event = replace(event, sequence=max(item.sequence for item in conversation.events) + 1)
+        event = replace(
+            event,
+            sequence=max(item.sequence for item in conversation.events) + 1,
+            turn_id=turn_id,
+        )
         self.values[conversation_id] = replace(
             conversation, events=(*conversation.events, event), updated_at=event.occurred_at
         )
@@ -144,7 +149,7 @@ class ConversationService:
         self.repository = repository
         self.scope = scope
 
-    def _turn(self, conversation_id, turn_id, request_id, value, *, attempt=1, now=None):
+    def _turn(self, conversation_id, turn_id, request_id, value, *, attempt=0, now=None):
         now = now or datetime.now(timezone.utc)
         snapshot = TurnInputSnapshot.create(
             snapshot_id=uuid4().hex,
@@ -163,6 +168,7 @@ class ConversationService:
                 "inputSnapshotDigest": snapshot.digest,
             },
             now,
+            turn_id,
         )
         return ConversationTurn(turn_id, request_id, attempt, "queued", snapshot), event
 
@@ -176,9 +182,7 @@ class ConversationService:
 
     async def append(self, conversation_id, turn_id, request_id, value):
         conversation = await self.load(conversation_id)
-        turn, event = self._turn(
-            conversation_id, turn_id, request_id, value, attempt=len(conversation.turns) + 1
-        )
+        turn, event = self._turn(conversation_id, turn_id, request_id, value)
         event = replace(event, sequence=len(conversation.events) + 1)
         return await self.repository.append_turn(conversation_id, turn, event)
 
@@ -190,6 +194,15 @@ class ConversationService:
         if value.project_id != self.scope.project_id:
             raise ConversationNotFound
         return value
+
+    async def replay(self, conversation_id: str, request_id: str):
+        try:
+            conversation = await self.load(conversation_id)
+        except ConversationNotFound:
+            return None
+        return next(
+            (turn for turn in conversation.turns if turn.client_request_id == request_id), None
+        )
 
     async def cancel(self, conversation_id, turn_id):
         conversation = await self.load(conversation_id)
@@ -245,7 +258,12 @@ class ConversationService:
         return await self.repository.complete(conversation_id, turn_id, snapshot, event)
 
     async def complete_evidence(
-        self, conversation_id: str, turn_id: str, evidence: AnswerEvidence
+        self,
+        conversation_id: str,
+        turn_id: str,
+        evidence: AnswerEvidence,
+        *,
+        lease_token: str | None = None,
     ) -> ConversationTurn:
         conversation = await self.load(conversation_id)
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
@@ -272,7 +290,9 @@ class ConversationService:
             },
             now,
         )
-        return await self.repository.complete(conversation_id, turn_id, snapshot, event)
+        return await self.repository.complete(
+            conversation_id, turn_id, snapshot, event, lease_token=lease_token
+        )
 
     async def emit(
         self, conversation_id: str, turn_id: str, event_type: str, payload: dict[str, object]

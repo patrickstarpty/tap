@@ -1,14 +1,21 @@
 import asyncio
 import json
 
+import pytest
 from apps.backend.tests.owned_mysql import owned_project_database_url
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
-from tap.modules.chat.application.conversations import ConversationService
-from tap.modules.chat.domain.conversations import TurnInput
+from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    CitationEvidence,
+    GraphContextStatus,
+    RetrievalSummary,
+    TurnInput,
+)
 
 
 def _input(message="Persist this"):
@@ -64,6 +71,57 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                 "conversation-1", "turn-1", answer="Grounded", graph_status="NOT_REQUESTED"
             )
             assert completed.answer_snapshot.input_snapshot_digest == original_digest
+            queued = await restarted.append(
+                "conversation-1", "turn-2", "request-2", _input("lease me")
+            )
+            assert queued.attempt == 0
+            first_claim = (await restarted.repository.claim_queued(limit=1))[0][1]
+            assert first_claim.attempt == 1 and first_claim.lease_token
+            assert await restarted.repository.claim_queued(limit=1) == ()
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE chat_turn SET processing_lease_expires_at=UTC_TIMESTAMP(6) "
+                        "- INTERVAL 1 SECOND WHERE turn_id='turn-2'"
+                    )
+                )
+            second_claim = (await restarted.repository.claim_queued(limit=1))[0][1]
+            assert second_claim.attempt == 2
+            assert second_claim.lease_token != first_claim.lease_token
+            closed = AnswerEvidence(
+                "recovered",
+                "completed",
+                RetrievalSummary("completed"),
+                GraphContextStatus.NOT_REQUESTED,
+            )
+            with pytest.raises(ConversationConflict, match="lease"):
+                await restarted.complete_evidence(
+                    "conversation-1",
+                    "turn-2",
+                    closed,
+                    lease_token=first_claim.lease_token,
+                )
+            await restarted.complete_evidence(
+                "conversation-1",
+                "turn-2",
+                closed,
+                lease_token=second_claim.lease_token,
+            )
+            await restarted.append(
+                "conversation-1", "turn-3", "request-3", _input("reject fake evidence")
+            )
+            with pytest.raises(ValueError, match="trusted persisted fact"):
+                await restarted.complete_evidence(
+                    "conversation-1",
+                    "turn-3",
+                    AnswerEvidence(
+                        "unsafe",
+                        "completed",
+                        RetrievalSummary("completed", trace_id="missing-trace"),
+                        GraphContextStatus.NOT_REQUESTED,
+                        citations=(CitationEvidence("missing", "sha256:" + "d" * 64),),
+                    ),
+                )
             async with engine.connect() as connection:
                 rows = (
                     (
@@ -94,7 +152,7 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                             "('conversation.turn.requested','conversation.turn.completed')"
                         )
                     )
-                    == 2
+                    == 5
                 )
                 assert (
                     await connection.scalar(
@@ -103,7 +161,7 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                             "('conversation-turn-requested','conversation-turn-completed')"
                         )
                     )
-                    == 2
+                    == 5
                 )
         finally:
             async with engine.begin() as connection:

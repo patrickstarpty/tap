@@ -1096,6 +1096,43 @@ class MysqlDocumentRepository:
                 if row["document_source_content_hash"] == row["revision_source_content_hash"]
             )
 
+    async def load_revision_selection(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]:
+        if not 1 <= len(revision_ids) <= 20 or len(set(revision_ids)) != len(revision_ids):
+            raise DocumentStateChanged("revision selection must be unique and bounded")
+        async with self._sessions() as session:
+            document_ids = tuple(
+                (
+                    await session.execute(
+                        select(knowledge_document.c.document_id)
+                        .join(
+                            knowledge_document_revision,
+                            and_(
+                                knowledge_document_revision.c.document_id
+                                == knowledge_document.c.document_id,
+                                knowledge_document_revision.c.revision_id
+                                == knowledge_document.c.current_revision_id,
+                            ),
+                        )
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            self._active_source(),
+                            knowledge_document.c.current_revision_id.in_(revision_ids),
+                            knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .order_by(knowledge_document.c.document_id)
+                    )
+                ).scalars()
+            )
+        rows = await self.load_ready_revisions(document_ids) if document_ids else ()
+        if {row.revision_id for row in rows} != set(revision_ids):
+            raise DocumentStateChanged("selected revision is not current and ready")
+        return rows
+
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
         if not isinstance(snapshot, AnswerSnapshot):
             raise TypeError("answer snapshot repository requires AnswerSnapshot")

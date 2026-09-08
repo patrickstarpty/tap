@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 
+from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import (
     ConversationAccepted,
     ConversationCreateRequest,
@@ -22,9 +24,11 @@ from tap.interfaces.http.dependencies import conversation_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
+from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import ModelGatewayRejected
-from tap.modules.chat.application.conversations import ConversationService
-from tap.modules.chat.domain.conversations import TurnInput, content_digest
+from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
+from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
+from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 router = APIRouter(
@@ -32,6 +36,34 @@ router = APIRouter(
     tags=["conversations"],
     dependencies=[Depends(project_authorization("knowledge.answer"))],
 )
+
+
+def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
+    value = turn.input_snapshot.value
+    return (
+        value.message == body.message
+        and value.model_alias == body.model_alias
+        and value.source_revision_ids == tuple(body.source_revision_ids)
+        and value.document_revision_ids == tuple(body.document_revision_ids)
+        and value.agent_revision_id == body.agent_revision_id
+        and value.skill_revision_ids == tuple(body.skill_revision_ids)
+    )
+
+
+async def _validate_replay(turn, body: ConversationCreateRequest, request: Request) -> None:
+    if not _matches_replay(turn, body):
+        raise ConversationConflict("idempotency-conflict")
+    try:
+        current = await _input(body, request)
+    except (
+        AssetRevisionRejected,
+        DocumentStateChanged,
+        KnowledgeRuntimeUnavailable,
+        ModelGatewayRejected,
+    ):
+        return
+    if current != turn.input_snapshot.value:
+        raise ConversationConflict("idempotency-conflict")
 
 
 async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput:
@@ -59,6 +91,11 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     )
     if body.skill_revision_ids and services.asset_catalog is None:
         raise KnowledgeRuntimeUnavailable
+    if services.knowledge is None:
+        raise KnowledgeRuntimeUnavailable
+    revisions, policy = await services.knowledge.resolve_conversation_selection(
+        tuple((*body.source_revision_ids, *body.document_revision_ids))
+    )
     return TurnInput(
         message=body.message,
         actor_id=scope.actor_id,
@@ -66,11 +103,27 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         model_alias=body.model_alias,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
+        resolved_resources=tuple(
+            FrozenResource(
+                source_id=item.source_id or item.document_id,
+                document_id=item.document_id,
+                revision_id=item.revision_id,
+                source_content_hash=item.source_content_hash,
+            )
+            for item in revisions
+        ),
         agent_revision_id=body.agent_revision_id,
         agent_revision_digest=agent_digest,
         skill_revision_ids=tuple(body.skill_revision_ids),
         skill_revision_digests=tuple(item.content_digest for item in skills),
-        retrieval_policy_digest=content_digest("tapper-demo-policy-v1"),
+        acl_digest=policy.acl_digest,
+        retrieval_policy_digest=content_digest(
+            {
+                "decisionId": policy.decision_id,
+                "policyVersion": policy.policy_version,
+                "corpusVersion": policy.active_corpus_version,
+            }
+        ),
     )
 
 
@@ -126,6 +179,12 @@ async def create(
     )
     conversation_id = hashlib.sha256(material.encode()).hexdigest()[:32]
     turn_id = hashlib.sha256((material + "/first-turn").encode()).hexdigest()[:32]
+    replay = await service.replay(conversation_id, idempotency_key)
+    if replay is not None:
+        await _validate_replay(replay, body, request)
+        return ConversationAccepted(
+            conversation_id=conversation_id, turn_id=replay.turn_id, state="queued"
+        )
     turn = await service.create(
         conversation_id, turn_id, idempotency_key, await _input(body, request)
     )
@@ -188,6 +247,12 @@ async def append(
     idempotency_key: str = Header(min_length=1, max_length=128),
     service: ConversationService = Depends(conversation_service),
 ):
+    replay = await service.replay(conversation_id, idempotency_key)
+    if replay is not None:
+        await _validate_replay(replay, body, request)
+        return ConversationAccepted(
+            conversation_id=conversation_id, turn_id=replay.turn_id, state="queued"
+        )
     turn = await service.append(
         conversation_id, uuid4().hex, idempotency_key, await _input(body, request)
     )
@@ -234,11 +299,18 @@ async def events(
 
 @router.get(
     "/{conversation_id}/stream",
-    response_class=Response,
+    response_class=StreamingResponse,
+    response_model=ChatEventEnvelope,
     operation_id="conversation_stream",
     responses={
         404: problem_response_metadata("Conversation not found"),
         422: problem_response_metadata("Invalid Last-Event-ID"),
+        200: {
+            "description": "Recoverable conversation event stream",
+            "content": {
+                "text/event-stream": {"schema": {"$ref": "#/components/schemas/ChatEventEnvelope"}}
+            },
+        },
     },
 )
 async def stream(
@@ -246,12 +318,37 @@ async def stream(
     last_event_id: str | None = Header(None, alias="Last-Event-ID", pattern=r"^(0|[1-9][0-9]*)$"),
     service: ConversationService = Depends(conversation_service),
 ):
-    value = await service.load(conversation_id)
-    body = encode_sse(
-        (
-            {"sequence": e.sequence, "eventType": e.event_type, "payload": dict(e.payload)}
-            for e in value.events
-        ),
-        last_event_id=last_event_id,
+    resume = 0 if last_event_id is None else int(last_event_id)
+
+    async def generate():
+        nonlocal resume
+        idle = 0
+        while idle < 10:
+            value = await service.load(conversation_id)
+            fresh = [event for event in value.events if event.sequence > resume]
+            if fresh:
+                idle = 0
+                for event in fresh:
+                    turn_id = event.turn_id or str(event.payload.get("turnId") or "")
+                    if not turn_id:
+                        raise ValueError("persisted event is missing its Turn binding")
+                    envelope = ChatEventEnvelope.model_validate(
+                        {
+                            "eventId": event.event_id,
+                            "sequence": event.sequence,
+                            "chatId": conversation_id,
+                            "turnId": turn_id,
+                            "occurredAt": event.occurred_at.isoformat(),
+                            "schemaVersion": 1,
+                            "event": {"type": event.event_type, "payload": dict(event.payload)},
+                        }
+                    ).model_dump(mode="json", by_alias=True)
+                    yield encode_sse((envelope,), last_event_id=str(resume))
+                    resume = event.sequence
+            else:
+                idle += 1
+                await asyncio.sleep(0.1)
+
+    return StreamingResponse(
+        generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
-    return Response(body, media_type="text/event-stream", headers={"Cache-Control": "no-cache"})

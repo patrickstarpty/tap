@@ -182,6 +182,45 @@ class KnowledgeHttpService:
         response = await self._answers.answer(domain_request)
         return answer_response_to_http(response)
 
+    async def resolve_conversation_selection(self, revision_ids: tuple[str, ...]):
+        resolver = getattr(self._answers, "resolve_conversation_selection", None)
+        if resolver is None:
+            from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+
+            raise KnowledgeRuntimeUnavailable
+        return await resolver(revision_ids)
+
+    async def answer_conversation(self, request: RetrievalAnswerRequest, frozen_input):
+        from tap.modules.chat.domain.conversations import content_digest
+
+        if frozen_input.model_alias != "tapper-chat":
+            raise ValueError("accepted conversation model alias is unsupported")
+        current, policy = await self.resolve_conversation_selection(
+            tuple(item.revision_id for item in frozen_input.resolved_resources)
+        )
+        if {
+            (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
+            for item in current
+        } != {
+            (item.source_id, item.document_id, item.revision_id, item.source_content_hash)
+            for item in frozen_input.resolved_resources
+        }:
+            raise ValueError("accepted resource selection is no longer current")
+        if frozen_input.acl_digest != policy.acl_digest or frozen_input.retrieval_policy_digest != (
+            content_digest(
+                {
+                    "decisionId": policy.decision_id,
+                    "policyVersion": policy.policy_version,
+                    "corpusVersion": policy.active_corpus_version,
+                }
+            )
+        ):
+            raise ValueError("accepted retrieval authority changed")
+        # Agent/Skill revision identities and content digests are intentionally carried on the
+        # immutable input boundary; the fixed V1 gateway accepts only their already-approved
+        # server-resolved form and never reloads browser-provided identities here.
+        return await self.answer(request)
+
     async def search(self, request: RetrievalSearchRequest) -> RetrievalSearchResponse:
         """Expose real evidence only to trusted in-process verification, never an HTTP route."""
 

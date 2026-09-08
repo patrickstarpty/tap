@@ -72,8 +72,10 @@ def upgrade() -> None:
     )
     op.add_column(
         "chat_turn",
-        sa.Column("processing_attempt", sa.Integer(), nullable=False, server_default="1"),
+        sa.Column("processing_attempt", sa.Integer(), nullable=False, server_default="0"),
     )
+    op.add_column("chat_turn", sa.Column("processing_lease_token", sa.String(64)))
+    op.add_column("chat_turn", sa.Column("processing_lease_expires_at", DATETIME(fsp=6)))
     op.create_table(
         "turn_input_snapshot",
         sa.Column("snapshot_id", sa.String(64), primary_key=True),
@@ -157,5 +159,7 @@ def downgrade() -> None:
     op.drop_table("turn_answer_evidence_snapshot")
     op.drop_table("turn_input_snapshot")
     op.drop_constraint("fk_chat_turn_project_conversation", "chat_turn", type_="foreignkey")
+    op.drop_column("chat_turn", "processing_lease_expires_at")
+    op.drop_column("chat_turn", "processing_lease_token")
     op.drop_column("chat_turn", "processing_attempt")
     op.drop_table("conversation")

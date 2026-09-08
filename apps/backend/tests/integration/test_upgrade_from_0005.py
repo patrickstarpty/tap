@@ -164,6 +164,100 @@ def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
     assert result["conversation_downgrade_replay"] == "passed"
 
 
+def test_0012_legacy_conversation_is_readable_through_new_repository(owned_project_mysql):
+    import asyncio
+
+    from scripts.migration_support import LEGACY_TIME, seed_baseline
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.entrypoints.tapper_runtime import create_project_audit
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+    from tap.modules.chat.application.conversations import ConversationService
+    from tap.modules.chat.domain.conversations import (
+        AnswerEvidence,
+        GraphContextStatus,
+        RetrievalSummary,
+        TurnInput,
+    )
+    from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+    from tap.modules.knowledge.ports.answers import DocumentStateChanged
+
+    owned_project_mysql.downgrade("0005_projection_lineage")
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        with sync_engine.begin() as connection:
+            seed_baseline(connection)
+    finally:
+        sync_engine.dispose()
+    owned_project_mysql.upgrade("0012_conversations")
+
+    async def scenario():
+        engine = create_async_engine(
+            owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+        )
+        try:
+            repository = MysqlConversationRepository(
+                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+            )
+            loaded = await repository.load("legacy-chat")
+            assert loaded.created_at.replace(tzinfo=None) == LEGACY_TIME
+            assert [(turn.turn_id, turn.input_snapshot.value.message) for turn in loaded.turns] == [
+                ("legacy-turn", "Legacy knowledge question")
+            ]
+            assert [(event.sequence, event.event_id) for event in loaded.events] == [
+                (1, "legacy-event")
+            ]
+            documents = MysqlDocumentRepository(
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
+                audit_factory=create_project_audit,
+            )
+            selected = await documents.load_revision_selection(("legacy-revision",))
+            assert selected[0].document_id == "legacy-document"
+            with pytest.raises(DocumentStateChanged):
+                await documents.load_revision_selection(("missing-revision",))
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            await service.create(
+                "evidence-chat",
+                "evidence-turn",
+                "evidence-request",
+                TurnInput(
+                    message="bind legacy evidence",
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    identity_mode="validation",
+                    model_alias="tapper-chat",
+                ),
+            )
+            citations = await repository.resolve_citations("legacy-trace", ("legacy-citation",))
+            await service.complete_evidence(
+                "evidence-chat",
+                "evidence-turn",
+                AnswerEvidence(
+                    "grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="legacy-trace", authorized_hit_count=1),
+                    GraphContextStatus.NOT_REQUESTED,
+                    citations=citations,
+                ),
+            )
+            async with engine.connect() as connection:
+                assert (
+                    await connection.scalar(
+                        text(
+                            "SELECT COUNT(*) FROM turn_artifact_link "
+                            "WHERE turn_id='evidence-turn' AND artifact_id='legacy-citation'"
+                        )
+                    )
+                    == 1
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_0010a_preserves_nonempty_predecessor_and_round_trips_empty_command_ledger(monkeypatch):
     if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
         pytest.skip("requires owned isolated MySQL")

@@ -16,7 +16,10 @@ def encode_sse(events: Iterable[Mapping[str, object]], *, last_event_id: str | N
         sequence = event["sequence"]
         if type(sequence) is not int or sequence <= resume:
             continue
-        event_type = event["eventType"]
-        data = json.dumps(event["payload"], separators=(",", ":"))
+        stream_event = event["event"]
+        if not isinstance(stream_event, Mapping):
+            raise ValueError("SSE event envelope is malformed")
+        event_type = stream_event["type"]
+        data = json.dumps(event, separators=(",", ":"))
         parts.append(f"id: {sequence}\nevent: {event_type}\ndata: {data}\n\n")
     return "".join(parts)

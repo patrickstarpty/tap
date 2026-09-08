@@ -231,6 +231,10 @@ class AnswerSnapshotRepository(Protocol):
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...
 
+    async def load_revision_selection(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]: ...
+
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None: ...
 
 

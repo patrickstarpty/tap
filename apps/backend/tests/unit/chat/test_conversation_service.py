@@ -60,6 +60,13 @@ async def test_append_is_idempotent_but_conflicting_reuse_is_rejected_and_pages_
     assert replay.turn_id == original.turn_id
     with pytest.raises(ValueError, match="idempotency"):
         await service.append("conversation-1", "discard", "request-2", _input("Different"))
+    with pytest.raises(ValueError, match="idempotency"):
+        await service.append(
+            "conversation-1",
+            "discard",
+            "request-2",
+            replace(_input("Next"), model_alias="other-model"),
+        )
     page, cursor = await service.list(limit=1, cursor=None)
     assert [item.conversation_id for item in page] == ["conversation-1"]
     assert cursor is None
@@ -75,7 +82,7 @@ async def test_completed_turn_cannot_be_canceled_and_retry_creates_a_new_attempt
     completed = await service.cancel("conversation-1", "turn-1")
     assert completed.state == "completed"
     retry = await service.retry("conversation-1", "turn-1", "turn-2", "request-2")
-    assert retry.attempt == 2
+    assert retry.attempt == 0
     assert retry.input_snapshot.digest != completed.input_snapshot.digest
     assert retry.input_snapshot.value == completed.input_snapshot.value
 

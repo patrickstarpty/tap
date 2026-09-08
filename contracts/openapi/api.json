@@ -87,6 +87,68 @@
         "title": "AiAgentRevisionSummary",
         "type": "object"
       },
+      "AnswerClaim": {
+        "additionalProperties": false,
+        "properties": {
+          "citationIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Citationids",
+            "type": "array"
+          },
+          "claimId": {
+            "minLength": 1,
+            "title": "Claimid",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "text",
+          "citationIds"
+        ],
+        "title": "AnswerClaim",
+        "type": "object"
+      },
+      "AnswerDeltaEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/AnswerDeltaPayload"
+          },
+          "type": {
+            "const": "answer.delta",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "AnswerDeltaEvent",
+        "type": "object"
+      },
+      "AnswerDeltaPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AnswerDeltaPayload",
+        "type": "object"
+      },
       "AnswerMode": {
         "enum": [
           "quick",
@@ -145,6 +207,54 @@
         "title": "BddAnchor",
         "type": "object"
       },
+      "BddAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
       "Body_knowledge_upload_document": {
         "properties": {
           "upload": {
@@ -171,6 +281,127 @@
           "upload"
         ],
         "title": "Body_knowledge_upload_source",
+        "type": "object"
+      },
+      "ChatEventEnvelope": {
+        "additionalProperties": false,
+        "description": "A recoverable, ordered event persisted for one chat turn.",
+        "properties": {
+          "chatId": {
+            "minLength": 1,
+            "title": "Chatid",
+            "type": "string"
+          },
+          "event": {
+            "discriminator": {
+              "mapping": {
+                "answer.delta": "#/components/schemas/AnswerDeltaEvent",
+                "citation.resolved": "#/components/schemas/CitationResolvedEvent",
+                "context.assembled": "#/components/schemas/ContextAssembledEvent",
+                "conversation.turn.completed": "#/components/schemas/ConversationTurnCompletedEvent",
+                "conversation.turn.requested": "#/components/schemas/ConversationTurnRequestedEvent",
+                "query.plan_ready": "#/components/schemas/QueryPlanReadyEvent",
+                "rerank.completed": "#/components/schemas/RerankCompletedEvent",
+                "retrieval.hits_ready": "#/components/schemas/RetrievalHitsReadyEvent",
+                "stage.completed": "#/components/schemas/StageCompletedEvent",
+                "stage.started": "#/components/schemas/StageStartedEvent",
+                "turn.abstained": "#/components/schemas/TurnAbstainedEvent",
+                "turn.canceled": "#/components/schemas/TurnCanceledEvent",
+                "turn.completed": "#/components/schemas/TurnCompletedEvent",
+                "turn.degraded": "#/components/schemas/TurnDegradedEvent",
+                "turn.failed": "#/components/schemas/TurnFailedEvent",
+                "turn.started": "#/components/schemas/TurnStartedEvent"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TurnStartedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/ContextAssembledEvent"
+              },
+              {
+                "$ref": "#/components/schemas/QueryPlanReadyEvent"
+              },
+              {
+                "$ref": "#/components/schemas/StageStartedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/StageCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/RetrievalHitsReadyEvent"
+              },
+              {
+                "$ref": "#/components/schemas/RerankCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/AnswerDeltaEvent"
+              },
+              {
+                "$ref": "#/components/schemas/CitationResolvedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnAbstainedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnDegradedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnCanceledEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnFailedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/ConversationTurnRequestedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/ConversationTurnCompletedEvent"
+              }
+            ],
+            "title": "Event"
+          },
+          "eventId": {
+            "minLength": 1,
+            "title": "Eventid",
+            "type": "string"
+          },
+          "occurredAt": {
+            "minLength": 1,
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "minimum": 1.0,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "turnId": {
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "eventId",
+          "sequence",
+          "chatId",
+          "turnId",
+          "occurredAt",
+          "schemaVersion",
+          "event"
+        ],
+        "title": "ChatEventEnvelope",
         "type": "object"
       },
       "ChatTurnAccepted": {
@@ -283,6 +514,67 @@
         "title": "ChatTurnRequest",
         "type": "object"
       },
+      "Citation": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkContentHash": {
+            "minLength": 1,
+            "title": "Chunkcontenthash",
+            "type": "string"
+          },
+          "chunkId": {
+            "minLength": 1,
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "citationId": {
+            "minLength": 1,
+            "title": "Citationid",
+            "type": "string"
+          },
+          "contentRole": {
+            "$ref": "#/components/schemas/ContentRole"
+          },
+          "derivedFromChunkIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivedfromchunkids"
+          },
+          "evidenceLabel": {
+            "minLength": 1,
+            "title": "Evidencelabel",
+            "type": "string"
+          },
+          "logicalChunkId": {
+            "minLength": 1,
+            "title": "Logicalchunkid",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRevisionRef"
+          }
+        },
+        "required": [
+          "citationId",
+          "evidenceLabel",
+          "chunkId",
+          "logicalChunkId",
+          "source",
+          "chunkContentHash",
+          "contentRole"
+        ],
+        "title": "Citation",
+        "type": "object"
+      },
       "CitationPreview": {
         "additionalProperties": false,
         "properties": {
@@ -359,6 +651,38 @@
         "title": "CitationPreview",
         "type": "object"
       },
+      "CitationResolvedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/CitationResolvedPayload"
+          },
+          "type": {
+            "const": "citation.resolved",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "CitationResolvedEvent",
+        "type": "object"
+      },
+      "CitationResolvedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "citation": {
+            "$ref": "#/components/schemas/Citation"
+          }
+        },
+        "required": [
+          "citation"
+        ],
+        "title": "CitationResolvedPayload",
+        "type": "object"
+      },
       "CodeAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -416,6 +740,62 @@
         "title": "CodeAnchor",
         "type": "object"
       },
+      "CodeAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "lineEnd": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "type": {
+            "const": "code",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
       "ContentRole": {
         "enum": [
           "source",
@@ -423,6 +803,46 @@
         ],
         "title": "ContentRole",
         "type": "string"
+      },
+      "ContextAssembledEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ContextAssembledPayload"
+          },
+          "type": {
+            "const": "context.assembled",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "ContextAssembledEvent",
+        "type": "object"
+      },
+      "ContextAssembledPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "tokenCount": {
+            "minimum": 0.0,
+            "title": "Tokencount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contextSnapshotId",
+          "tokenCount"
+        ],
+        "title": "ContextAssembledPayload",
+        "type": "object"
       },
       "ConversationAccepted": {
         "additionalProperties": false,
@@ -686,6 +1106,109 @@
         "title": "ConversationSummary",
         "type": "object"
       },
+      "ConversationTurnCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ConversationTurnCompletedPayload"
+          },
+          "type": {
+            "const": "conversation.turn.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "ConversationTurnCompletedEvent",
+        "type": "object"
+      },
+      "ConversationTurnCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answerEvidenceSnapshotDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Answerevidencesnapshotdigest",
+            "type": "string"
+          },
+          "answerEvidenceSnapshotId": {
+            "minLength": 1,
+            "title": "Answerevidencesnapshotid",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "abstained",
+              "canceled",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "turnId": {
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turnId",
+          "answerEvidenceSnapshotId",
+          "answerEvidenceSnapshotDigest",
+          "outcome"
+        ],
+        "title": "ConversationTurnCompletedPayload",
+        "type": "object"
+      },
+      "ConversationTurnRequestedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ConversationTurnRequestedPayload"
+          },
+          "type": {
+            "const": "conversation.turn.requested",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "ConversationTurnRequestedEvent",
+        "type": "object"
+      },
+      "ConversationTurnRequestedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "minLength": 1,
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "inputSnapshotDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Inputsnapshotdigest",
+            "type": "string"
+          },
+          "turnId": {
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "turnId",
+          "inputSnapshotDigest"
+        ],
+        "title": "ConversationTurnRequestedPayload",
+        "type": "object"
+      },
       "ConversationTurnSummary": {
         "additionalProperties": false,
         "properties": {
@@ -854,6 +1377,93 @@
               }
             ],
             "default": null,
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "DocumentAnchor",
+        "type": "object"
+      },
+      "DocumentAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Startoffset"
           },
           "type": {
@@ -1248,6 +1858,67 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "FailureAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1410,6 +2081,42 @@
         "type": "object"
       },
       "OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "OpenApiAnchor-Input": {
         "additionalProperties": false,
         "properties": {
           "jsonPointer": {
@@ -2341,6 +3048,52 @@
         "title": "ProblemDetails",
         "type": "object"
       },
+      "QueryPlanReadyEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/QueryPlanReadyPayload"
+          },
+          "type": {
+            "const": "query.plan_ready",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "QueryPlanReadyEvent",
+        "type": "object"
+      },
+      "QueryPlanReadyPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answerMode": {
+            "$ref": "#/components/schemas/AnswerMode"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "sourceFamilies": {
+            "items": {
+              "$ref": "#/components/schemas/SourceFamily"
+            },
+            "title": "Sourcefamilies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryPlanId",
+          "answerMode",
+          "sourceFamilies"
+        ],
+        "title": "QueryPlanReadyPayload",
+        "type": "object"
+      },
       "ReadyHealth": {
         "additionalProperties": false,
         "properties": {
@@ -2367,6 +3120,46 @@
           "components"
         ],
         "title": "ReadyHealth",
+        "type": "object"
+      },
+      "RerankCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/RerankCompletedPayload"
+          },
+          "type": {
+            "const": "rerank.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "RerankCompletedEvent",
+        "type": "object"
+      },
+      "RerankCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateCount": {
+            "minimum": 0.0,
+            "title": "Candidatecount",
+            "type": "integer"
+          },
+          "durationMs": {
+            "minimum": 0.0,
+            "title": "Durationms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidateCount",
+          "durationMs"
+        ],
+        "title": "RerankCompletedPayload",
         "type": "object"
       },
       "ResourceMode": {
@@ -2819,6 +3612,46 @@
           "embeddingModelVersion"
         ],
         "title": "RetrievalHit",
+        "type": "object"
+      },
+      "RetrievalHitsReadyEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/RetrievalHitsReadyPayload"
+          },
+          "type": {
+            "const": "retrieval.hits_ready",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "RetrievalHitsReadyEvent",
+        "type": "object"
+      },
+      "RetrievalHitsReadyPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "authorizedHitCount": {
+            "minimum": 0.0,
+            "title": "Authorizedhitcount",
+            "type": "integer"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "authorizedHitCount"
+        ],
+        "title": "RetrievalHitsReadyPayload",
         "type": "object"
       },
       "RetrievalScores": {
@@ -3515,6 +4348,47 @@
         "title": "SourceRetryRequest",
         "type": "object"
       },
+      "SourceRevisionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__StructuralAnchor"
+          },
+          "revision": {
+            "minLength": 1,
+            "title": "Revision",
+            "type": "string"
+          },
+          "revisionKind": {
+            "$ref": "#/components/schemas/RevisionKind"
+          },
+          "sourceContentHash": {
+            "minLength": 1,
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "sourceId": {
+            "minLength": 1,
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "sourceType": {
+            "minLength": 1,
+            "title": "Sourcetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "sourceType",
+          "revisionKind",
+          "revision",
+          "sourceContentHash",
+          "anchor"
+        ],
+        "title": "SourceRevisionRef",
+        "type": "object"
+      },
       "SourceSummary": {
         "additionalProperties": false,
         "properties": {
@@ -3565,6 +4439,80 @@
         "title": "SourceSummary",
         "type": "object"
       },
+      "StageCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/StageCompletedPayload"
+          },
+          "type": {
+            "const": "stage.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "StageCompletedEvent",
+        "type": "object"
+      },
+      "StageCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "durationMs": {
+            "minimum": 0.0,
+            "title": "Durationms",
+            "type": "integer"
+          },
+          "stage": {
+            "minLength": 1,
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "durationMs"
+        ],
+        "title": "StageCompletedPayload",
+        "type": "object"
+      },
+      "StageStartedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/StageStartedPayload"
+          },
+          "type": {
+            "const": "stage.started",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "StageStartedEvent",
+        "type": "object"
+      },
+      "StageStartedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "minLength": 1,
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage"
+        ],
+        "title": "StageStartedPayload",
+        "type": "object"
+      },
       "StructuralAnchor": {
         "description": "A closed, structural location inside one authorized source family.",
         "discriminator": {
@@ -3595,6 +4543,258 @@
           }
         ],
         "title": "StructuralAnchor"
+      },
+      "StructuralAnchor-Input": {
+        "description": "A closed, structural location inside one authorized source family.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/BddAnchor-Input",
+            "code": "#/components/schemas/CodeAnchor-Input",
+            "document": "#/components/schemas/DocumentAnchor-Input",
+            "failure": "#/components/schemas/FailureAnchor-Input",
+            "openapi": "#/components/schemas/OpenApiAnchor-Input"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DocumentAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/CodeAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/BddAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/OpenApiAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/FailureAnchor-Input"
+          }
+        ],
+        "title": "StructuralAnchor"
+      },
+      "TurnAbstainedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnAbstainedPayload"
+          },
+          "type": {
+            "const": "turn.abstained",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnAbstainedEvent",
+        "type": "object"
+      },
+      "TurnAbstainedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__RetrievalAnswerResponse"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "title": "TurnAbstainedPayload",
+        "type": "object"
+      },
+      "TurnCanceledEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnCanceledPayload"
+          },
+          "type": {
+            "const": "turn.canceled",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnCanceledEvent",
+        "type": "object"
+      },
+      "TurnCanceledPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "partialAnswerRetained": {
+            "title": "Partialanswerretained",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "partialAnswerRetained"
+        ],
+        "title": "TurnCanceledPayload",
+        "type": "object"
+      },
+      "TurnCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnCompletedPayload"
+          },
+          "type": {
+            "const": "turn.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnCompletedEvent",
+        "type": "object"
+      },
+      "TurnCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/tap__contracts__chat_stream__RetrievalAnswerResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "anyOf": [
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "title": "TurnCompletedPayload",
+        "type": "object"
+      },
+      "TurnDegradedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnDegradedPayload"
+          },
+          "type": {
+            "const": "turn.degraded",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnDegradedEvent",
+        "type": "object"
+      },
+      "TurnDegradedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "availableStages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Availablestages",
+            "type": "array"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "availableStages"
+        ],
+        "title": "TurnDegradedPayload",
+        "type": "object"
+      },
+      "TurnFailedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnFailedPayload"
+          },
+          "type": {
+            "const": "turn.failed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnFailedEvent",
+        "type": "object"
+      },
+      "TurnFailedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "problem": {
+            "$ref": "#/components/schemas/ProblemDetails"
+          }
+        },
+        "required": [
+          "problem"
+        ],
+        "title": "TurnFailedPayload",
+        "type": "object"
+      },
+      "TurnStartedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnStartedPayload"
+          },
+          "type": {
+            "const": "turn.started",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnStartedEvent",
+        "type": "object"
+      },
+      "TurnStartedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "running",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "TurnStartedPayload",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -3628,6 +4828,801 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "tap__contracts__chat_stream__BddAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__CodeAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "lineEnd": {
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "type": {
+            "const": "code",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__DocumentAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "DocumentAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__FailureAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__RetrievalAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "abstentionReason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbstentionReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "corpusVersion": {
+            "minLength": 1,
+            "title": "Corpusversion",
+            "type": "string"
+          },
+          "degradationReasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degradationreasons"
+          },
+          "degradedMode": {
+            "title": "Degradedmode",
+            "type": "boolean"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "retrievalProfileId": {
+            "minLength": 1,
+            "title": "Retrievalprofileid",
+            "type": "string"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "queryPlanId",
+          "contextSnapshotId",
+          "corpusVersion",
+          "retrievalProfileId",
+          "degradedMode",
+          "answer",
+          "abstained",
+          "claims",
+          "citations"
+        ],
+        "title": "RetrievalAnswerResponse",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__StructuralAnchor": {
+        "description": "A closed source location retained in a browser-visible citation.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/tap__contracts__chat_stream__BddAnchor",
+            "code": "#/components/schemas/tap__contracts__chat_stream__CodeAnchor",
+            "document": "#/components/schemas/tap__contracts__chat_stream__DocumentAnchor",
+            "failure": "#/components/schemas/tap__contracts__chat_stream__FailureAnchor",
+            "openapi": "#/components/schemas/tap__contracts__chat_stream__OpenApiAnchor"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__DocumentAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__CodeAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__BddAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__OpenApiAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__FailureAnchor"
+          }
+        ],
+        "title": "StructuralAnchor"
+      },
+      "tap__contracts__http__BddAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__CodeAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "lineEnd": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "type": {
+            "const": "code",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__DocumentAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "DocumentAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__FailureAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__RetrievalAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "abstentionReason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbstentionReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalCitation"
+            },
+            "maxItems": 20,
+            "title": "Citations",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "corpusVersion": {
+            "minLength": 1,
+            "title": "Corpusversion",
+            "type": "string"
+          },
+          "degradationReasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degradationreasons"
+          },
+          "degradedMode": {
+            "title": "Degradedmode",
+            "type": "boolean"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "retrievalProfileId": {
+            "minLength": 1,
+            "title": "Retrievalprofileid",
+            "type": "string"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "queryPlanId",
+          "contextSnapshotId",
+          "corpusVersion",
+          "retrievalProfileId",
+          "degradedMode",
+          "answer",
+          "abstained",
+          "claims",
+          "citations"
+        ],
+        "title": "RetrievalAnswerResponse",
+        "type": "object"
+      },
+      "tap__contracts__http__StructuralAnchor-Output": {
+        "description": "A closed, structural location inside one authorized source family.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/tap__contracts__http__BddAnchor",
+            "code": "#/components/schemas/tap__contracts__http__CodeAnchor",
+            "document": "#/components/schemas/tap__contracts__http__DocumentAnchor",
+            "failure": "#/components/schemas/tap__contracts__http__FailureAnchor",
+            "openapi": "#/components/schemas/tap__contracts__http__OpenApiAnchor"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__DocumentAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__CodeAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__BddAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__OpenApiAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__FailureAnchor"
+          }
+        ],
+        "title": "StructuralAnchor"
       }
     }
   },
@@ -4370,7 +6365,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response"
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatEventEnvelope"
+                }
+              }
+            },
+            "description": "Recoverable conversation event stream"
           },
           "403": {
             "content": {
@@ -4626,7 +6628,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RetrievalAnswerResponse"
+                  "$ref": "#/components/schemas/tap__contracts__http__RetrievalAnswerResponse"
                 }
               }
             },

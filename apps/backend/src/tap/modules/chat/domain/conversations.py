@@ -19,12 +19,53 @@ def content_digest(value: object) -> str:
     return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
 
 
+def citation_evidence_digest(
+    *,
+    citation_id: str,
+    trace_id: str,
+    source_id: str,
+    document_id: str,
+    revision_id: str,
+    chunk_id: str,
+    source_content_hash: str,
+    chunk_content_hash: str,
+    anchor: object,
+) -> str:
+    return content_digest(
+        {
+            "citationId": citation_id,
+            "traceId": trace_id,
+            "sourceId": source_id,
+            "documentId": document_id,
+            "revisionId": revision_id,
+            "chunkId": chunk_id,
+            "sourceContentHash": source_content_hash,
+            "chunkContentHash": chunk_content_hash,
+            "anchor": anchor,
+        }
+    )
+
+
 class GraphContextStatus(StrEnum):
     NOT_REQUESTED = "NOT_REQUESTED"
     APPLIED = "APPLIED"
     UNAVAILABLE = "UNAVAILABLE"
     REJECTED = "REJECTED"
     FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenResource:
+    source_id: str
+    document_id: str
+    revision_id: str
+    source_content_hash: str
+
+    def __post_init__(self) -> None:
+        if not all((self.source_id, self.document_id, self.revision_id)):
+            raise ValueError("resolved resource identity must be complete")
+        if _DIGEST.fullmatch(self.source_content_hash) is None:
+            raise ValueError("resolved resource content hash must be canonical SHA-256")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +76,12 @@ class TurnInput:
     model_alias: str
     source_revision_ids: tuple[str, ...] = ()
     document_revision_ids: tuple[str, ...] = ()
+    resolved_resources: tuple[FrozenResource, ...] = ()
     agent_revision_id: str | None = None
     agent_revision_digest: str | None = None
     skill_revision_ids: tuple[str, ...] = ()
     skill_revision_digests: tuple[str, ...] = ()
+    acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
 
     def __post_init__(self) -> None:
@@ -52,7 +95,12 @@ class TurnInput:
             raise ValueError("agent revision identity and digest must be paired")
         if len(self.skill_revision_ids) != len(self.skill_revision_digests):
             raise ValueError("skill revision identities and digests must be paired")
+        if len({item.revision_id for item in self.resolved_resources}) != len(
+            self.resolved_resources
+        ):
+            raise ValueError("resolved resources must be unique")
         for digest in (
+            self.acl_digest,
             self.retrieval_policy_digest,
             *self.skill_revision_digests,
             *(() if self.agent_revision_digest is None else (self.agent_revision_digest,)),
@@ -205,6 +253,7 @@ class ConversationEvent:
     event_type: str
     payload: Mapping[str, object]
     occurred_at: datetime
+    turn_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.event_type not in {
@@ -237,6 +286,7 @@ class ConversationTurn:
     state: str
     input_snapshot: TurnInputSnapshot
     answer_snapshot: AnswerEvidenceSnapshot | None = None
+    lease_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

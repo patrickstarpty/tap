@@ -430,6 +430,29 @@ export interface components {
             /** Toolallowlist */
             toolAllowlist: ("knowledge.search" | "knowledge.answer")[];
         };
+        /** AnswerClaim */
+        AnswerClaim: {
+            /** Citationids */
+            citationIds: string[];
+            /** Claimid */
+            claimId: string;
+            /** Text */
+            text: string;
+        };
+        /** AnswerDeltaEvent */
+        AnswerDeltaEvent: {
+            payload: components["schemas"]["AnswerDeltaPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "answer.delta";
+        };
+        /** AnswerDeltaPayload */
+        AnswerDeltaPayload: {
+            /** Text */
+            text: string;
+        };
         /**
          * AnswerMode
          * @enum {string}
@@ -455,6 +478,20 @@ export interface components {
              */
             type: "bdd";
         };
+        /** BddAnchor */
+        "BddAnchor-Input": {
+            /** Featureid */
+            featureId: string;
+            /** Scenarioid */
+            scenarioId?: string | null;
+            /** Stepid */
+            stepId?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bdd";
+        };
         /** Body_knowledge_upload_document */
         Body_knowledge_upload_document: {
             /**
@@ -470,6 +507,26 @@ export interface components {
              * Format: binary
              */
             upload: string;
+        };
+        /**
+         * ChatEventEnvelope
+         * @description A recoverable, ordered event persisted for one chat turn.
+         */
+        ChatEventEnvelope: {
+            /** Chatid */
+            chatId: string;
+            /** Event */
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"];
+            /** Eventid */
+            eventId: string;
+            /** Occurredat */
+            occurredAt: string;
+            /** Schemaversion */
+            schemaVersion: number;
+            /** Sequence */
+            sequence: number;
+            /** Turnid */
+            turnId: string;
         };
         /**
          * ChatTurnAccepted
@@ -506,6 +563,23 @@ export interface components {
             /** Sourcescope */
             sourceScope?: components["schemas"]["SourceFamily"][] | null;
         };
+        /** Citation */
+        Citation: {
+            /** Chunkcontenthash */
+            chunkContentHash: string;
+            /** Chunkid */
+            chunkId: string;
+            /** Citationid */
+            citationId: string;
+            contentRole: components["schemas"]["ContentRole"];
+            /** Derivedfromchunkids */
+            derivedFromChunkIds?: string[] | null;
+            /** Evidencelabel */
+            evidenceLabel: string;
+            /** Logicalchunkid */
+            logicalChunkId: string;
+            source: components["schemas"]["SourceRevisionRef"];
+        };
         /** CitationPreview */
         CitationPreview: {
             anchor: components["schemas"]["StructuralAnchor"];
@@ -534,6 +608,19 @@ export interface components {
              */
             suffix?: string;
         };
+        /** CitationResolvedEvent */
+        CitationResolvedEvent: {
+            payload: components["schemas"]["CitationResolvedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "citation.resolved";
+        };
+        /** CitationResolvedPayload */
+        CitationResolvedPayload: {
+            citation: components["schemas"]["Citation"];
+        };
         /** CodeAnchor */
         CodeAnchor: {
             /** Lineend */
@@ -555,11 +642,45 @@ export interface components {
              */
             type: "code";
         };
+        /** CodeAnchor */
+        "CodeAnchor-Input": {
+            /** Lineend */
+            lineEnd: number;
+            /** Linestart */
+            lineStart: number;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Symbol */
+            symbol?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "code";
+        };
         /**
          * ContentRole
          * @enum {string}
          */
         ContentRole: "source" | "generated_summary";
+        /** ContextAssembledEvent */
+        ContextAssembledEvent: {
+            payload: components["schemas"]["ContextAssembledPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "context.assembled";
+        };
+        /** ContextAssembledPayload */
+        ContextAssembledPayload: {
+            /** Contextsnapshotid */
+            contextSnapshotId: string;
+            /** Tokencount */
+            tokenCount: number;
+        };
         /** ConversationAccepted */
         ConversationAccepted: {
             /** Conversationid */
@@ -650,6 +771,47 @@ export interface components {
             /** Updatedat */
             updatedAt: string;
         };
+        /** ConversationTurnCompletedEvent */
+        ConversationTurnCompletedEvent: {
+            payload: components["schemas"]["ConversationTurnCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "conversation.turn.completed";
+        };
+        /** ConversationTurnCompletedPayload */
+        ConversationTurnCompletedPayload: {
+            /** Answerevidencesnapshotdigest */
+            answerEvidenceSnapshotDigest: string;
+            /** Answerevidencesnapshotid */
+            answerEvidenceSnapshotId: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "completed" | "abstained" | "canceled" | "failed";
+            /** Turnid */
+            turnId: string;
+        };
+        /** ConversationTurnRequestedEvent */
+        ConversationTurnRequestedEvent: {
+            payload: components["schemas"]["ConversationTurnRequestedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "conversation.turn.requested";
+        };
+        /** ConversationTurnRequestedPayload */
+        ConversationTurnRequestedPayload: {
+            /** Conversationid */
+            conversationId: string;
+            /** Inputsnapshotdigest */
+            inputSnapshotDigest: string;
+            /** Turnid */
+            turnId: string;
+        };
         /** ConversationTurnSummary */
         ConversationTurnSummary: {
             /** Answerevidencesnapshotdigest */
@@ -702,6 +864,24 @@ export interface components {
              * Startoffset
              * @default null
              */
+            startOffset?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+        };
+        /** DocumentAnchor */
+        "DocumentAnchor-Input": {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Endoffset */
+            endOffset?: number | null;
+            /** Headingpath */
+            headingPath?: string[] | null;
+            /** Page */
+            page?: number | null;
+            /** Startoffset */
             startOffset?: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -840,6 +1020,22 @@ export interface components {
              */
             type: "failure";
         };
+        /** FailureAnchor */
+        "FailureAnchor-Input": {
+            /** Incidentid */
+            incidentId: string;
+            /** Runid */
+            runId?: string | null;
+            /** Timeend */
+            timeEnd?: string | null;
+            /** Timestart */
+            timeStart?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "failure";
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -898,6 +1094,20 @@ export interface components {
         };
         /** OpenApiAnchor */
         OpenApiAnchor: {
+            /** Jsonpointer */
+            jsonPointer: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "openapi";
+        };
+        /** OpenApiAnchor */
+        "OpenApiAnchor-Input": {
             /** Jsonpointer */
             jsonPointer: string;
             /** Method */
@@ -1383,6 +1593,23 @@ export interface components {
             /** @constant */
             type?: "https://tap.example/problems/unsupported-document";
         });
+        /** QueryPlanReadyEvent */
+        QueryPlanReadyEvent: {
+            payload: components["schemas"]["QueryPlanReadyPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "query.plan_ready";
+        };
+        /** QueryPlanReadyPayload */
+        QueryPlanReadyPayload: {
+            answerMode: components["schemas"]["AnswerMode"];
+            /** Queryplanid */
+            queryPlanId: string;
+            /** Sourcefamilies */
+            sourceFamilies: components["schemas"]["SourceFamily"][];
+        };
         /** ReadyHealth */
         ReadyHealth: {
             /** Components */
@@ -1392,6 +1619,22 @@ export interface components {
              * @enum {string}
              */
             status: "ready" | "unready";
+        };
+        /** RerankCompletedEvent */
+        RerankCompletedEvent: {
+            payload: components["schemas"]["RerankCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "rerank.completed";
+        };
+        /** RerankCompletedPayload */
+        RerankCompletedPayload: {
+            /** Candidatecount */
+            candidateCount: number;
+            /** Durationms */
+            durationMs: number;
         };
         /**
          * ResourceMode
@@ -1543,6 +1786,22 @@ export interface components {
              * @default null
              */
             title?: string | null;
+        };
+        /** RetrievalHitsReadyEvent */
+        RetrievalHitsReadyEvent: {
+            payload: components["schemas"]["RetrievalHitsReadyPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "retrieval.hits_ready";
+        };
+        /** RetrievalHitsReadyPayload */
+        RetrievalHitsReadyPayload: {
+            /** Authorizedhitcount */
+            authorizedHitCount: number;
+            /** Traceid */
+            traceId: string;
         };
         /** RetrievalScores */
         RetrievalScores: {
@@ -1768,6 +2027,19 @@ export interface components {
             /** Revisionid */
             revisionId: string;
         };
+        /** SourceRevisionRef */
+        SourceRevisionRef: {
+            anchor: components["schemas"]["tap__contracts__chat_stream__StructuralAnchor"];
+            /** Revision */
+            revision: string;
+            revisionKind: components["schemas"]["RevisionKind"];
+            /** Sourcecontenthash */
+            sourceContentHash: string;
+            /** Sourceid */
+            sourceId: string;
+            /** Sourcetype */
+            sourceType: string;
+        };
         /** SourceSummary */
         SourceSummary: {
             /** Createdat */
@@ -1783,11 +2055,134 @@ export interface components {
             /** Sourceid */
             sourceId: string;
         };
+        /** StageCompletedEvent */
+        StageCompletedEvent: {
+            payload: components["schemas"]["StageCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage.completed";
+        };
+        /** StageCompletedPayload */
+        StageCompletedPayload: {
+            /** Durationms */
+            durationMs: number;
+            /** Stage */
+            stage: string;
+        };
+        /** StageStartedEvent */
+        StageStartedEvent: {
+            payload: components["schemas"]["StageStartedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage.started";
+        };
+        /** StageStartedPayload */
+        StageStartedPayload: {
+            /** Stage */
+            stage: string;
+        };
         /**
          * StructuralAnchor
          * @description A closed, structural location inside one authorized source family.
          */
         StructuralAnchor: components["schemas"]["DocumentAnchor"] | components["schemas"]["CodeAnchor"] | components["schemas"]["BddAnchor"] | components["schemas"]["OpenApiAnchor"] | components["schemas"]["FailureAnchor"];
+        /**
+         * StructuralAnchor
+         * @description A closed, structural location inside one authorized source family.
+         */
+        "StructuralAnchor-Input": components["schemas"]["DocumentAnchor-Input"] | components["schemas"]["CodeAnchor-Input"] | components["schemas"]["BddAnchor-Input"] | components["schemas"]["OpenApiAnchor-Input"] | components["schemas"]["FailureAnchor-Input"];
+        /** TurnAbstainedEvent */
+        TurnAbstainedEvent: {
+            payload: components["schemas"]["TurnAbstainedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.abstained";
+        };
+        /** TurnAbstainedPayload */
+        TurnAbstainedPayload: {
+            answer: components["schemas"]["tap__contracts__chat_stream__RetrievalAnswerResponse"];
+        };
+        /** TurnCanceledEvent */
+        TurnCanceledEvent: {
+            payload: components["schemas"]["TurnCanceledPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.canceled";
+        };
+        /** TurnCanceledPayload */
+        TurnCanceledPayload: {
+            /** Partialanswerretained */
+            partialAnswerRetained: boolean;
+        };
+        /** TurnCompletedEvent */
+        TurnCompletedEvent: {
+            payload: components["schemas"]["TurnCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.completed";
+        };
+        /** TurnCompletedPayload */
+        TurnCompletedPayload: {
+            answer?: components["schemas"]["tap__contracts__chat_stream__RetrievalAnswerResponse"] | null;
+            /** State */
+            state?: "completed" | null;
+        };
+        /** TurnDegradedEvent */
+        TurnDegradedEvent: {
+            payload: components["schemas"]["TurnDegradedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.degraded";
+        };
+        /** TurnDegradedPayload */
+        TurnDegradedPayload: {
+            /** Availablestages */
+            availableStages: string[];
+            /** Reason */
+            reason: string;
+        };
+        /** TurnFailedEvent */
+        TurnFailedEvent: {
+            payload: components["schemas"]["TurnFailedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.failed";
+        };
+        /** TurnFailedPayload */
+        TurnFailedPayload: {
+            problem: components["schemas"]["ProblemDetails"];
+        };
+        /** TurnStartedEvent */
+        TurnStartedEvent: {
+            payload: components["schemas"]["TurnStartedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.started";
+        };
+        /** TurnStartedPayload */
+        TurnStartedPayload: {
+            /**
+             * State
+             * @constant
+             */
+            state: "running";
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1797,6 +2192,228 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** BddAnchor */
+        tap__contracts__chat_stream__BddAnchor: {
+            /** Featureid */
+            featureId: string;
+            /** Scenarioid */
+            scenarioId?: string | null;
+            /** Stepid */
+            stepId?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bdd";
+        };
+        /** CodeAnchor */
+        tap__contracts__chat_stream__CodeAnchor: {
+            /** Lineend */
+            lineEnd: number;
+            /** Linestart */
+            lineStart: number;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Symbol */
+            symbol?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "code";
+        };
+        /** DocumentAnchor */
+        tap__contracts__chat_stream__DocumentAnchor: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Endoffset */
+            endOffset?: number | null;
+            /** Headingpath */
+            headingPath?: string[] | null;
+            /** Page */
+            page?: number | null;
+            /** Startoffset */
+            startOffset?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+        };
+        /** FailureAnchor */
+        tap__contracts__chat_stream__FailureAnchor: {
+            /** Incidentid */
+            incidentId: string;
+            /** Runid */
+            runId?: string | null;
+            /** Timeend */
+            timeEnd?: string | null;
+            /** Timestart */
+            timeStart?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "failure";
+        };
+        /** OpenApiAnchor */
+        tap__contracts__chat_stream__OpenApiAnchor: {
+            /** Jsonpointer */
+            jsonPointer: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "openapi";
+        };
+        /** RetrievalAnswerResponse */
+        tap__contracts__chat_stream__RetrievalAnswerResponse: {
+            /** Abstained */
+            abstained: boolean;
+            abstentionReason?: components["schemas"]["AbstentionReason"] | null;
+            /** Answer */
+            answer: string;
+            /** Citations */
+            citations: components["schemas"]["Citation"][];
+            /** Claims */
+            claims: components["schemas"]["AnswerClaim"][];
+            /** Contextsnapshotid */
+            contextSnapshotId: string;
+            /** Corpusversion */
+            corpusVersion: string;
+            /** Degradationreasons */
+            degradationReasons?: string[] | null;
+            /** Degradedmode */
+            degradedMode: boolean;
+            /** Queryplanid */
+            queryPlanId: string;
+            /** Retrievalprofileid */
+            retrievalProfileId: string;
+            /** Traceid */
+            traceId: string;
+        };
+        /**
+         * StructuralAnchor
+         * @description A closed source location retained in a browser-visible citation.
+         */
+        tap__contracts__chat_stream__StructuralAnchor: components["schemas"]["tap__contracts__chat_stream__DocumentAnchor"] | components["schemas"]["tap__contracts__chat_stream__CodeAnchor"] | components["schemas"]["tap__contracts__chat_stream__BddAnchor"] | components["schemas"]["tap__contracts__chat_stream__OpenApiAnchor"] | components["schemas"]["tap__contracts__chat_stream__FailureAnchor"];
+        /** BddAnchor */
+        tap__contracts__http__BddAnchor: {
+            /** Featureid */
+            featureId: string;
+            /** Scenarioid */
+            scenarioId?: string | null;
+            /** Stepid */
+            stepId?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bdd";
+        };
+        /** CodeAnchor */
+        tap__contracts__http__CodeAnchor: {
+            /** Lineend */
+            lineEnd: number;
+            /** Linestart */
+            lineStart: number;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Symbol */
+            symbol?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "code";
+        };
+        /** DocumentAnchor */
+        tap__contracts__http__DocumentAnchor: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Endoffset */
+            endOffset?: number | null;
+            /** Headingpath */
+            headingPath?: string[] | null;
+            /** Page */
+            page?: number | null;
+            /** Startoffset */
+            startOffset?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+        };
+        /** FailureAnchor */
+        tap__contracts__http__FailureAnchor: {
+            /** Incidentid */
+            incidentId: string;
+            /** Runid */
+            runId?: string | null;
+            /** Timeend */
+            timeEnd?: string | null;
+            /** Timestart */
+            timeStart?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "failure";
+        };
+        /** OpenApiAnchor */
+        tap__contracts__http__OpenApiAnchor: {
+            /** Jsonpointer */
+            jsonPointer: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "openapi";
+        };
+        /** RetrievalAnswerResponse */
+        tap__contracts__http__RetrievalAnswerResponse: {
+            /** Abstained */
+            abstained: boolean;
+            abstentionReason?: components["schemas"]["AbstentionReason"] | null;
+            /** Answer */
+            answer: string;
+            /** Citations */
+            citations: components["schemas"]["RetrievalCitation"][];
+            /** Claims */
+            claims: components["schemas"]["RetrievalClaim"][];
+            /** Contextsnapshotid */
+            contextSnapshotId: string;
+            /** Corpusversion */
+            corpusVersion: string;
+            /** Degradationreasons */
+            degradationReasons?: string[] | null;
+            /** Degradedmode */
+            degradedMode: boolean;
+            /** Queryplanid */
+            queryPlanId: string;
+            /** Retrievalprofileid */
+            retrievalProfileId: string;
+            /** Traceid */
+            traceId: string;
+        };
+        /**
+         * StructuralAnchor
+         * @description A closed, structural location inside one authorized source family.
+         */
+        "tap__contracts__http__StructuralAnchor-Output": components["schemas"]["tap__contracts__http__DocumentAnchor"] | components["schemas"]["tap__contracts__http__CodeAnchor"] | components["schemas"]["tap__contracts__http__BddAnchor"] | components["schemas"]["tap__contracts__http__OpenApiAnchor"] | components["schemas"]["tap__contracts__http__FailureAnchor"];
     };
     responses: never;
     parameters: never;
@@ -2301,12 +2918,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Recoverable conversation event stream */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "text/event-stream": components["schemas"]["ChatEventEnvelope"];
+                };
             };
             /** @description Project scope or authorization denied */
             403: {
@@ -2474,7 +3093,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RetrievalAnswerResponse"];
+                    "application/json": components["schemas"]["tap__contracts__http__RetrievalAnswerResponse"];
                 };
             };
             /** @description Invalid answer selection */

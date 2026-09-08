@@ -128,6 +128,17 @@ class AnswerService:
             raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
         return response
 
+    async def resolve_conversation_selection(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[tuple[ReadyDocumentRevision, ...], RetrievalPolicyContext]:
+        if not 1 <= len(revision_ids) <= 20 or len(set(revision_ids)) != len(revision_ids):
+            raise DocumentStateChanged("conversation revision selection must be unique and bounded")
+        rows = await self._repository.load_revision_selection(revision_ids)
+        if {item.revision_id for item in rows} != set(revision_ids):
+            raise DocumentStateChanged("conversation revision is not current and ready")
+        ordered = tuple(sorted(rows, key=lambda item: item.document_id))
+        return ordered, build_demo_policy_context(ordered, corpus_version=self._corpus_version)
+
     async def _load_selected_revisions(
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]:

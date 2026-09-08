@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -15,6 +16,7 @@ from sqlalchemy import (
     insert,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
@@ -36,10 +38,12 @@ from tap.modules.chat.domain.conversations import (
     Conversation,
     ConversationEvent,
     ConversationTurn,
+    FrozenResource,
     GraphContextStatus,
     RetrievalSummary,
     TurnInput,
     TurnInputSnapshot,
+    citation_evidence_digest,
 )
 from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
 from tap.modules.governance.domain.audit import (
@@ -157,6 +161,7 @@ def _input_json(value):
         **asdict(value),
         "source_revision_ids": list(value.source_revision_ids),
         "document_revision_ids": list(value.document_revision_ids),
+        "resolved_resources": [asdict(item) for item in value.resolved_resources],
         "skill_revision_ids": list(value.skill_revision_ids),
         "skill_revision_digests": list(value.skill_revision_digests),
     }
@@ -166,6 +171,58 @@ class MysqlConversationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext):
         self.sessions = sessions
         self.scope = require_project_scope(scope)
+
+    async def resolve_citations(
+        self, trace_id: str, citation_ids: tuple[str, ...]
+    ) -> tuple[CitationEvidence, ...]:
+        if not citation_ids or len(set(citation_ids)) != len(citation_ids):
+            raise ValueError("citation identities must be nonempty and unique")
+        async with self.sessions() as session:
+            placeholders = ",".join(f":citation_{index}" for index in range(len(citation_ids)))
+            rows = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
+                            "chunk_id,source_content_hash,chunk_content_hash,anchor_json "
+                            "FROM knowledge_citation_snapshot WHERE enterprise_id=:enterprise_id "
+                            "AND project_id=:project_id AND trace_id=:trace_id "
+                            f"AND citation_id IN ({placeholders})"
+                        ),
+                        {
+                            "enterprise_id": self.scope.enterprise_id,
+                            "project_id": self.scope.project_id,
+                            "trace_id": trace_id,
+                            **{
+                                f"citation_{index}": identity
+                                for index, identity in enumerate(citation_ids)
+                            },
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        if {row["citation_id"] for row in rows} != set(citation_ids):
+            raise ValueError("citation snapshot is not a trusted persisted fact")
+        by_id = {
+            row["citation_id"]: CitationEvidence(
+                row["citation_id"],
+                citation_evidence_digest(
+                    citation_id=row["citation_id"],
+                    trace_id=row["trace_id"],
+                    source_id=row["source_id"],
+                    document_id=row["document_id"],
+                    revision_id=row["revision_id"],
+                    chunk_id=row["chunk_id"],
+                    source_content_hash=row["source_content_hash"],
+                    chunk_content_hash=row["chunk_content_hash"],
+                    anchor=row["anchor_json"],
+                ),
+            )
+            for row in rows
+        }
+        return tuple(by_id[identity] for identity in citation_ids)
 
     async def _event(self, session, event, conversation_id, turn_id):
         await session.execute(
@@ -327,9 +384,10 @@ class MysqlConversationRepository:
                 .one_or_none()
             )
             if row is not None:
-                if row["message"] != turn.input_snapshot.value.message:
+                existing = await self._load_turn(session, row)
+                if existing.input_snapshot.value != turn.input_snapshot.value:
                     raise ConversationConflict("idempotency-conflict")
-                return await self._load_turn(session, row)
+                return existing
             event = await self._next_event(session, conversation_id, event)
             await self._insert_turn(session, conversation_id, turn, event)
             await session.execute(
@@ -353,30 +411,52 @@ class MysqlConversationRepository:
                 )
             )
             .mappings()
-            .one()
+            .one_or_none()
         )
-        raw = snapshot["snapshot"]
-        value = TurnInput(
-            message=raw["message"],
-            actor_id=raw["actor_id"],
-            identity_mode=raw["identity_mode"],
-            model_alias=raw["model_alias"],
-            source_revision_ids=tuple(raw["source_revision_ids"]),
-            document_revision_ids=tuple(raw["document_revision_ids"]),
-            agent_revision_id=raw["agent_revision_id"],
-            agent_revision_digest=raw["agent_revision_digest"],
-            skill_revision_ids=tuple(raw["skill_revision_ids"]),
-            skill_revision_digests=tuple(raw["skill_revision_digests"]),
-            retrieval_policy_digest=raw["retrieval_policy_digest"],
-        )
-        input_value = TurnInputSnapshot(
-            snapshot["snapshot_id"],
-            self.scope.project_id,
-            row["turn_id"],
-            value,
-            snapshot["snapshot_digest"],
-            snapshot["created_at"].replace(tzinfo=timezone.utc),
-        )
+        if snapshot is None:
+            value = TurnInput(
+                message=row["message"],
+                actor_id=row["actor_id"],
+                identity_mode=row["identity_mode"],
+                model_alias="tapper-chat",
+            )
+            input_value = TurnInputSnapshot.create(
+                snapshot_id="legacy-"
+                + hashlib.sha256(f"{self.scope.project_id}/{row['turn_id']}".encode()).hexdigest()[
+                    :32
+                ],
+                project_id=self.scope.project_id,
+                turn_id=row["turn_id"],
+                value=value,
+                now=row["created_at"].replace(tzinfo=timezone.utc),
+            )
+        else:
+            raw = snapshot["snapshot"]
+            value = TurnInput(
+                message=raw["message"],
+                actor_id=raw["actor_id"],
+                identity_mode=raw["identity_mode"],
+                model_alias=raw["model_alias"],
+                source_revision_ids=tuple(raw["source_revision_ids"]),
+                document_revision_ids=tuple(raw["document_revision_ids"]),
+                resolved_resources=tuple(
+                    FrozenResource(**item) for item in raw.get("resolved_resources", [])
+                ),
+                agent_revision_id=raw["agent_revision_id"],
+                agent_revision_digest=raw["agent_revision_digest"],
+                skill_revision_ids=tuple(raw["skill_revision_ids"]),
+                skill_revision_digests=tuple(raw["skill_revision_digests"]),
+                acl_digest=raw.get("acl_digest", "sha256:" + "0" * 64),
+                retrieval_policy_digest=raw["retrieval_policy_digest"],
+            )
+            input_value = TurnInputSnapshot(
+                snapshot["snapshot_id"],
+                self.scope.project_id,
+                row["turn_id"],
+                value,
+                snapshot["snapshot_digest"],
+                snapshot["created_at"].replace(tzinfo=timezone.utc),
+            )
         answer_row = (
             (
                 await session.execute(
@@ -419,6 +499,7 @@ class MysqlConversationRepository:
             row["state"],
             input_value,
             answer,
+            row.get("processing_lease_token"),
         )
 
     async def load(self, conversation_id):
@@ -474,6 +555,7 @@ class MysqlConversationRepository:
                 r["event_type"],
                 r["payload"],
                 r["occurred_at"].replace(tzinfo=timezone.utc),
+                r["turn_id"],
             )
             for r in erows
         )
@@ -527,7 +609,7 @@ class MysqlConversationRepository:
             else None
         )
 
-    async def complete(self, conversation_id, turn_id, snapshot, event):
+    async def complete(self, conversation_id, turn_id, snapshot, event, lease_token=None):
         async with self.sessions() as session, session.begin():
             parent = await session.scalar(
                 select(conversation.c.conversation_id)
@@ -558,6 +640,10 @@ class MysqlConversationRepository:
                 raise ConversationNotFound
             if row["state"] in {"completed", "abstained", "failed", "canceled"}:
                 return await self._load_turn(session, row)
+            if row["state"] == "running" and (
+                not lease_token or lease_token != row["processing_lease_token"]
+            ):
+                raise ConversationConflict("generation lease lost")
             input_digest = await session.scalar(
                 select(turn_input_snapshot.c.snapshot_digest).where(
                     *scope_predicates(turn_input_snapshot, self.scope),
@@ -579,6 +665,56 @@ class MysqlConversationRepository:
                 raise ValueError(
                     "Answer evidence snapshot/event binding differs from accepted Turn"
                 )
+            if snapshot.value.graph_context_status is GraphContextStatus.APPLIED:
+                raise ValueError("graph snapshot persistence is unavailable")
+            for citation in snapshot.value.citations:
+                citation_row = (
+                    (
+                        await session.execute(
+                            text(
+                                "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
+                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json "
+                                "FROM knowledge_citation_snapshot "
+                                "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
+                                "AND citation_id=:citation_id AND trace_id=:trace_id"
+                            ),
+                            {
+                                "enterprise_id": self.scope.enterprise_id,
+                                "project_id": self.scope.project_id,
+                                "citation_id": citation.citation_snapshot_id,
+                                "trace_id": snapshot.value.retrieval_summary.trace_id,
+                            },
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if citation_row is None:
+                    raise ValueError("citation snapshot is not a trusted persisted fact")
+                trusted_digest = citation_evidence_digest(
+                    citation_id=citation_row["citation_id"],
+                    trace_id=citation_row["trace_id"],
+                    source_id=citation_row["source_id"],
+                    document_id=citation_row["document_id"],
+                    revision_id=citation_row["revision_id"],
+                    chunk_id=citation_row["chunk_id"],
+                    source_content_hash=citation_row["source_content_hash"],
+                    chunk_content_hash=citation_row["chunk_content_hash"],
+                    anchor=citation_row["anchor_json"],
+                )
+                if trusted_digest != citation.citation_digest:
+                    raise ValueError("citation snapshot digest differs from persisted fact")
+                await session.execute(
+                    insert(turn_artifact_link).values(
+                        **scope_values(self.scope),
+                        link_id=uuid4().hex,
+                        turn_id=turn_id,
+                        artifact_kind="citation",
+                        artifact_id=citation.citation_snapshot_id,
+                        artifact_digest=trusted_digest,
+                        created_at=_naive(snapshot.created_at),
+                    )
+                )
             event = await self._next_event(session, conversation_id, event)
             raw = asdict(snapshot.value)
             raw["graph_context_status"] = snapshot.value.graph_context_status.value
@@ -598,7 +734,12 @@ class MysqlConversationRepository:
             await session.execute(
                 update(chat_turn)
                 .where(*scope_predicates(chat_turn, self.scope), chat_turn.c.turn_id == turn_id)
-                .values(state=snapshot.value.outcome, last_sequence=event.sequence)
+                .values(
+                    state=snapshot.value.outcome,
+                    last_sequence=event.sequence,
+                    processing_lease_token=None,
+                    processing_lease_expires_at=None,
+                )
             )
         persisted = await self.load(conversation_id)
         return next(turn for turn in persisted.turns if turn.turn_id == turn_id)
@@ -614,7 +755,16 @@ class MysqlConversationRepository:
                         select(chat_turn)
                         .where(
                             *scope_predicates(chat_turn, self.scope),
-                            chat_turn.c.state == "queued",
+                            or_(
+                                chat_turn.c.state == "queued",
+                                (
+                                    (chat_turn.c.state == "running")
+                                    & (
+                                        chat_turn.c.processing_lease_expires_at
+                                        < datetime.now(timezone.utc).replace(tzinfo=None)
+                                    )
+                                ),
+                            ),
                         )
                         .order_by(chat_turn.c.created_at, chat_turn.c.turn_id)
                         .limit(limit)
@@ -646,8 +796,17 @@ class MysqlConversationRepository:
                     .mappings()
                     .one_or_none()
                 )
-                if row is None or row["state"] != "queued":
+                now = datetime.now(timezone.utc)
+                if row is None or not (
+                    row["state"] == "queued"
+                    or (
+                        row["state"] == "running"
+                        and row["processing_lease_expires_at"] is not None
+                        and row["processing_lease_expires_at"] < _naive(now)
+                    )
+                ):
                     continue
+                lease_token = uuid4().hex
                 event = await self._next_event(
                     session,
                     row["chat_id"],
@@ -676,12 +835,19 @@ class MysqlConversationRepository:
                     .where(
                         *scope_predicates(chat_turn, self.scope),
                         chat_turn.c.turn_id == row["turn_id"],
-                        chat_turn.c.state == "queued",
                     )
-                    .values(state="running", last_sequence=event.sequence)
+                    .values(
+                        state="running",
+                        last_sequence=event.sequence,
+                        processing_attempt=row["processing_attempt"] + 1,
+                        processing_lease_token=lease_token,
+                        processing_lease_expires_at=_naive(now + timedelta(seconds=60)),
+                    )
                 )
                 mutable = dict(row)
                 mutable["state"] = "running"
+                mutable["processing_attempt"] = row["processing_attempt"] + 1
+                mutable["processing_lease_token"] = lease_token
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
         return tuple(claimed)
 
