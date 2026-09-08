@@ -132,8 +132,9 @@ class AnswerSnapshot:
         response: AnswerResponse,
         query: str,
         selected_revisions: tuple[ReadyDocumentRevision, ...],
+        corpus_version: str = "tapper-demo-v1",
     ) -> AnswerSnapshot:
-        _validate_gateway_response(response)
+        _validate_gateway_response(response, corpus_version=corpus_version)
         ordered = tuple(sorted(selected_revisions, key=lambda item: item.document_id))
         selected = {
             (
@@ -245,14 +246,15 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-def _validate_gateway_response(response: AnswerResponse) -> None:
+def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str) -> None:
     if not isinstance(response, AnswerResponse):
         raise TypeError("knowledge gateway must return AnswerResponse")
     _bounded("answer trace ID", response.trace_id, maximum=64)
     _bounded("answer query plan ID", response.query_plan_id, maximum=256)
     _bounded("answer context snapshot ID", response.context_snapshot_id, maximum=256)
     if (
-        response.corpus_version != "tapper-demo-v1"
+        corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}
+        or response.corpus_version != corpus_version
         or response.retrieval_profile_id is not RetrievalProfileId.QUICK_HYBRID_V1
         or not isinstance(response.answer, str)
         or type(response.abstained) is not bool

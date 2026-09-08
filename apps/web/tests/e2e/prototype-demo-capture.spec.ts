@@ -121,7 +121,9 @@ class CaptureManifest<Name extends string> {
 
 const captureManifest = new CaptureManifest(OUTPUTS);
 
-type DocumentAccepted = components["schemas"]["DocumentAccepted"];
+type SourceAccepted = components["schemas"]["SourceAccepted"];
+type SourceDetail = components["schemas"]["SourceDetail"];
+type SourceSummary = components["schemas"]["SourceSummary"];
 type DocumentDetail = components["schemas"]["DocumentDetail"];
 type DocumentSummary = components["schemas"]["DocumentSummary"];
 type RetrievalAnswerResponse = components["schemas"]["RetrievalAnswerResponse"];
@@ -219,7 +221,7 @@ const MOCK_ANSWER: RetrievalAnswerResponse = {
         revision: "rev-underwriting-20260905",
         revisionKind: "blob_version",
         sourceContentHash: "sha256:prototype-source",
-        sourceId: "doc_life_underwriting_guide",
+        sourceId: "src_11111111111111111111111111111111",
         sourceType: "document",
       },
     },
@@ -257,7 +259,7 @@ function documentDetail(document: DocumentSummary): DocumentDetail {
     ...document,
     normalizedPreview: "Deterministic prototype document preview.",
     revisionId: `revision_${document.documentId}`,
-    sourceContentHash: `sha256:${document.documentId}`,
+    sourceContentHash: `sha256:${createHash("sha256").update(document.documentId).digest("hex")}`,
     stages: INGESTION_STAGES.map((stage, index) => ({
       completedAt:
         index < activeStage || document.status === "ready"
@@ -292,6 +294,19 @@ async function installKnowledgeRoutes(
   page: Page,
   documents: readonly DocumentSummary[],
 ) {
+  let activeDocuments = [...documents];
+  const summary = (sourceId: string): SourceSummary => {
+    const owned = activeDocuments.filter((item) => item.sourceId === sourceId);
+    if (owned.length === 0) throw new Error("Unknown capture Source");
+    return {
+      sourceId,
+      name: owned[0].filename,
+      createdAt: "2026-09-05T02:00:00Z",
+      documentCount: owned.length,
+      readyCount: owned.filter((item) => item.status === "ready").length,
+      failedCount: owned.filter((item) => item.status === "failed").length,
+    };
+  };
   await page.route(
     "**/api/v1/projects/project-capture/knowledge/**",
     async (route) => {
@@ -300,20 +315,35 @@ async function installKnowledgeRoutes(
       const method = request.method();
 
       if (
-        path === "/api/v1/projects/project-capture/knowledge/documents" &&
+        path === "/api/v1/projects/project-capture/knowledge/sources" &&
         method === "GET"
       ) {
-        await fulfillJson(route, { items: documents, nextCursor: null });
+        await fulfillJson(route, {
+          items: [...new Set(activeDocuments.map((item) => item.sourceId))].map(
+            summary,
+          ),
+          nextCursor: null,
+        });
         return;
       }
       if (
-        path === "/api/v1/projects/project-capture/knowledge/documents" &&
+        path === "/api/v1/projects/project-capture/knowledge/sources" &&
         method === "POST"
       ) {
-        const receipt: DocumentAccepted = {
-          document: MOCK_UPLOAD,
-          duplicate: false,
-          jobId: "job_prototype_capture",
+        expect(request.headers()["idempotency-key"]).toBeTruthy();
+        activeDocuments = [
+          MOCK_UPLOAD,
+          ...activeDocuments.filter(
+            (item) => item.documentId !== MOCK_UPLOAD.documentId,
+          ),
+        ];
+        const receipt: SourceAccepted = {
+          source: summary(MOCK_UPLOAD.sourceId),
+          accepted: {
+            document: MOCK_UPLOAD,
+            duplicate: false,
+            jobId: "job_prototype_capture",
+          },
         };
         await fulfillJson(route, receipt, 202);
         return;
@@ -326,39 +356,76 @@ async function installKnowledgeRoutes(
         return;
       }
       if (path.endsWith("/retry") && method === "POST") {
-        const documentId = path.split("/").at(-2);
-        const document =
-          documents.find((item) => item.documentId === documentId) ??
-          MOCK_UPLOAD;
-        const receipt: DocumentAccepted = {
-          document,
-          duplicate: false,
-          jobId: "job_prototype_retry",
-        };
-        await fulfillJson(route, receipt, 202);
-        return;
+        const sourceId = path.split("/").at(-2);
+        const body = request.postDataJSON() as { documentId: string };
+        const document = activeDocuments.find(
+          (item) =>
+            item.sourceId === sourceId && item.documentId === body.documentId,
+        );
+        if (document !== undefined) {
+          expect(request.headers()["idempotency-key"]).toBeTruthy();
+          const retried: DocumentSummary = {
+            ...document,
+            status: "queued",
+            stage: "parsing",
+            errorCode: null,
+            errorSummary: null,
+          };
+          activeDocuments = activeDocuments.map((item) =>
+            item.documentId === retried.documentId ? retried : item,
+          );
+          const receipt: SourceAccepted = {
+            source: summary(retried.sourceId),
+            accepted: {
+              document: retried,
+              duplicate: false,
+              jobId: "job_prototype_retry",
+            },
+          };
+          await fulfillJson(route, receipt, 202);
+          return;
+        }
       }
       if (
         path.startsWith(
-          "/api/v1/projects/project-capture/knowledge/documents/",
+          "/api/v1/projects/project-capture/knowledge/sources/",
         ) &&
         method === "GET"
       ) {
-        const documentId = path.split("/").at(-1);
-        const document =
-          documents.find((item) => item.documentId === documentId) ??
-          MOCK_UPLOAD;
-        await fulfillJson(route, documentDetail(document));
-        return;
+        const sourceId = path.split("/").at(-1);
+        const owned = activeDocuments.filter(
+          (item) => item.sourceId === sourceId,
+        );
+        if (sourceId !== undefined && owned.length > 0) {
+          const detail: SourceDetail = {
+            ...summary(sourceId),
+            documents: {
+              items: owned.map((item) => ({
+                ...documentDetail(item),
+                attempt: 1,
+              })),
+              nextCursor: null,
+            },
+          };
+          await fulfillJson(route, detail);
+          return;
+        }
       }
       if (
         path.startsWith(
-          "/api/v1/projects/project-capture/knowledge/documents/",
+          "/api/v1/projects/project-capture/knowledge/sources/",
         ) &&
         method === "DELETE"
       ) {
-        await route.fulfill({ status: 204 });
-        return;
+        const sourceId = path.split("/").at(-1);
+        if (activeDocuments.some((item) => item.sourceId === sourceId)) {
+          expect(request.headers()["idempotency-key"]).toBeTruthy();
+          activeDocuments = activeDocuments.filter(
+            (item) => item.sourceId !== sourceId,
+          );
+          await route.fulfill({ status: 204 });
+          return;
+        }
       }
 
       await fulfillJson(
@@ -451,6 +518,78 @@ async function openComposerMenu(page: Page) {
 }
 
 test.use({ viewport: { width: 1280, height: 720 } });
+
+test("canonical Source fixture drives accessible selection without capture", async ({
+  page,
+}) => {
+  await startFlow(page, [
+    ...MOCK_DOCUMENTS,
+    {
+      ...MOCK_DOCUMENTS[0],
+      documentId: "doc_source_sibling",
+      filename: "Source sibling.pdf",
+    },
+  ]);
+  const source = page.getByRole("checkbox", {
+    name: /Life underwriting guide.pdf/,
+  });
+  await expect(source).toBeVisible();
+  await openComposerMenu(page);
+  await page.getByRole("menuitem", { name: "Add from Library" }).click();
+  await page
+    .getByRole("dialog", { name: "Add from Library" })
+    .getByRole("option", { name: "Life underwriting guide.pdf", exact: true })
+    .click();
+  await expect(source).toBeChecked();
+  await source.focus();
+  await page.keyboard.press("Space");
+  await expect(source).not.toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(source).toBeChecked();
+  await expect(
+    page.locator("#tap-knowledge-sources").getByRole("status"),
+  ).toHaveText("1 selected");
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "View Life underwriting guide.pdf",
+      exact: true,
+    })
+    .click();
+  const detail = page.getByRole("dialog", {
+    name: "Life underwriting guide.pdf",
+  });
+  await expect(detail).toContainText("2 documents");
+  await expect(detail).toContainText("Source sibling.pdf");
+  await detail
+    .getByRole("button", { name: "Delete source", exact: true })
+    .click();
+  await detail
+    .getByRole("button", { name: "Confirm delete", exact: true })
+    .click();
+  await expect(detail).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "View Life underwriting guide.pdf",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Add source", exact: true }).click();
+  const upload = page.getByRole("dialog", { name: "Add source" });
+  await upload.getByLabel("Source file").setInputFiles({
+    name: "Application notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Sanitized fixture upload."),
+  });
+  await upload.getByRole("button", { name: "Add source", exact: true }).click();
+  await expect(upload).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "View Application notes.txt",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
 
 test.describe("reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
@@ -724,6 +863,9 @@ test("04 through 08 capture composer context selection", async ({ page }) => {
   await sourceDialog
     .getByRole("option", { name: "Life underwriting guide.pdf" })
     .click();
+  await expect(
+    page.getByRole("checkbox", { name: /Life underwriting guide.pdf/ }),
+  ).toBeChecked();
 
   await openComposerMenu(page);
   await page.getByRole("menuitem", { name: "Use Agents" }).click();

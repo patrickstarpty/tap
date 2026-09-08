@@ -57,18 +57,62 @@ async def test_projection_cutover_retains_predecessor_and_guards_rollback(reposi
             await lease.reactivate_retained(retained, expected_current=fresh)
 
 
-async def test_operator_snapshot_carries_active_source_owner_and_rejects_tombstone(repository):
+@pytest_asyncio.fixture
+async def operator_repository(owned_project_mysql):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        yield (
+            MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            ),
+            engine,
+        )
+    finally:
+        await engine.dispose()
+
+
+async def test_operator_snapshot_carries_active_source_owner_and_rejects_tombstone(
+    operator_repository,
+):
     from sqlalchemy import insert, update
 
     from tap.modules.knowledge.adapters import mysql_documents as ledger
+    from tap.modules.knowledge.adapters.milvus_documents import (
+        MilvusDocumentIndex,
+        ReadyRevisionArtifacts,
+        TapperMilvusConfig,
+    )
     from tap.modules.knowledge.adapters.mysql_operations import MysqlOperationRepository
+    from tap.modules.knowledge.domain.documents import (
+        ChunkDraft,
+        DocumentId,
+        RevisionId,
+        canonical_sha256,
+        chunk_id_for,
+        logical_chunk_id_for,
+    )
+    from tap.modules.knowledge.ports.documents import EmbeddingArtifact
     from tap.platform.db.project_scope import scope_values
 
-    repo, engine = repository
+    repo, engine = operator_repository
     request = upload()
     reserved = await repo.reserve_upload(request)
     accepted = await repo.activate_upload(reserved, ArtifactLocator("blob:owned-snapshot"))
     source_id = (await repo.source_command_result(request.command.key)).body["source"]["sourceId"]
+    anchor = '{"type":"document"}'
+    content = "Owned receipt regression."
+    content_hash = canonical_sha256(content.encode())
+    chunk = ChunkDraft(
+        chunk_id_for(RevisionId(accepted.revision_id), anchor, content_hash),
+        logical_chunk_id_for(DocumentId(accepted.document_id), anchor),
+        DocumentId(accepted.document_id),
+        None,
+        content,
+        anchor,
+        request.source_content_hash,
+        content_hash,
+    )
     async with engine.begin() as connection:
         await connection.execute(
             update(ledger.knowledge_document)
@@ -78,7 +122,12 @@ async def test_operator_snapshot_carries_active_source_owner_and_rejects_tombsto
         await connection.execute(
             update(ledger.knowledge_document_revision)
             .where(ledger.knowledge_document_revision.c.revision_id == accepted.revision_id)
-            .values(chunks_blob_locator="chunks:owned", embeddings_blob_locator="embeddings:owned")
+            .values(
+                chunks_blob_locator="chunks:owned",
+                embeddings_blob_locator="embeddings:owned",
+                chunk_manifest_digest="sha256:" + "b" * 64,
+                projection_digest="sha256:" + "c" * 64,
+            )
         )
         await connection.execute(
             update(ledger.knowledge_ingestion_job)
@@ -88,22 +137,64 @@ async def test_operator_snapshot_carries_active_source_owner_and_rejects_tombsto
         await connection.execute(
             insert(ledger.knowledge_chunk_manifest).values(
                 **scope_values(VALIDATION_SCOPE),
-                chunk_id="chunk-" + uuid4().hex,
-                logical_chunk_id="logical-" + uuid4().hex,
+                chunk_id=str(chunk.chunk_id),
+                logical_chunk_id=str(chunk.logical_chunk_id),
                 revision_id=accepted.revision_id,
                 ordinal=0,
                 root_id=accepted.document_id,
                 parent_id=None,
                 anchor_json={"type": "document"},
-                chunk_content_hash="sha256:" + "a" * 64,
-                embedding_model_version="test",
-                index_version="test",
+                chunk_content_hash=content_hash,
+                embedding_model_version="tapper-embedding",
+                index_version="tapper-index-v1",
                 created_at=request.now,
             )
         )
     operations = MysqlOperationRepository(engine, scope=VALIDATION_SCOPE)
     records = await operations.ready_work(500)
     work = next(item for item in records if item.document_id == accepted.document_id)
+    assert work.chunk_manifest_digest == "sha256:" + "b" * 64
+    assert work.projection_digest == "sha256:" + "c" * 64
+    # Pure preflight: no provider is composed or called. SQL receipts must survive
+    # the repository boundary and reject otherwise matching loaded artifacts.
+    peers = [
+        MilvusDocumentIndex(
+            config=TapperMilvusConfig.for_schema(schema),
+            provisioner=None,
+            writer=None,
+            reader=None,
+            coordinator=None,
+        )
+        for schema in ("doc-schema-v1", "doc-schema-v2")
+    ]
+    record = ReadyRevisionArtifacts(
+        work,
+        (chunk,),
+        EmbeddingArtifact(
+            "tapper-embedding",
+            1536,
+            ((0.1,) * 1536,),
+            (str(chunk.chunk_id),),
+        ),
+        "tapper-index-v1",
+    )
+    with pytest.raises(ValueError, match="SQL manifest digest"):
+        peers[1]._validate_migration_artifacts((record,), peers[0])
+    record = replace(record, work=replace(work, chunk_manifest_digest=None))
+    with pytest.raises(ValueError, match="SQL projection receipt"):
+        peers[1]._validate_migration_artifacts((record,), peers[0])
+    peers[1]._validate_migration_artifacts(
+        (
+            replace(
+                record,
+                work=replace(
+                    record.work,
+                    projection_digest=None,
+                ),
+            ),
+        ),
+        peers[0],
+    )
     assert (work.enterprise_id, work.project_id, work.source_id) == (
         "local",
         "tapper-demo",

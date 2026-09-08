@@ -37,6 +37,7 @@ from tap.modules.knowledge.adapters.milvus_documents import (
     TapperMilvusConfig,
 )
 from tap.modules.knowledge.adapters.mysql_documents import knowledge_document
+from tap.modules.knowledge.adapters.mysql_operations import MysqlOperationRepository
 from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.domain.documents import (
@@ -287,16 +288,25 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
             embeddings = EmbeddingArtifact(
                 "tapper-embedding", 1536, (vector,), (str(chunk.chunk_id),)
             )
-            record = ReadyRevisionArtifacts(
-                work=work, chunks=(chunk,), embeddings=embeddings, index_version="tapper-index-v1"
-            )
             await old.upsert_revision(work, (chunk,), embeddings, index_version="tapper-index-v1")
 
             async def snapshot():
                 assert await repo.load_current_source_revisions(
                     ((source_id, owner.revision_id, owner.source_content_hash),)
                 ) == (owner,)
-                return (record,)
+                operations = MysqlOperationRepository(engine, scope=VALIDATION_SCOPE)
+                (stored,) = await operations.ready_work(20)
+                assert stored.document_id == owner.document_id
+                assert artifacts is not None
+                assert stored.chunks_locator is not None and stored.embeddings_locator is not None
+                return (
+                    ReadyRevisionArtifacts(
+                        work=stored,
+                        chunks=await artifacts.read_chunks(stored.chunks_locator),
+                        embeddings=await artifacts.read_embeddings(stored.embeddings_locator),
+                        index_version="tapper-index-v1",
+                    ),
+                )
 
             async def search(version):
                 profile = TapperMilvusConfig.for_schema(version)
@@ -341,15 +351,7 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                     assert audit.events[-1].outcome == "failure"
                 return hits
 
-            await search("doc-schema-v1")
-            migrated = await new.migrate_from_snapshot(old, snapshot)
-            assert migrated.row_count == 1
-            await search("doc-schema-v2")
-            assert await clients.reader.collection_exists("kb_doc_v1_tapper_demo")
-            await new.rollback_to(old, "kb_doc_v1_tapper_demo", snapshot)
-            await search("doc-schema-v1")
-            assert await clients.reader.collection_exists(migrated.physical_collection)
-            # Exercise the actual guarded CLI with persisted Knowledge MinIO artifacts.
+            # Seed SQL/artifacts once before direct migration and reuse them for the CLI.
             from tap.entrypoints.tapper_runtime import TapperSettings, _create_blob
             from tap.platform.db.project_scope import scope_values
 
@@ -422,6 +424,14 @@ async def test_real_owned_source_selection_cutover_and_explicit_rollback(reposit
                         created_at=request.now,
                     )
                 )
+            await search("doc-schema-v1")
+            migrated = await new.migrate_from_snapshot(old, snapshot)
+            assert migrated.row_count == 1
+            await search("doc-schema-v2")
+            assert await clients.reader.collection_exists("kb_doc_v1_tapper_demo")
+            await new.rollback_to(old, "kb_doc_v1_tapper_demo", snapshot)
+            await search("doc-schema-v1")
+            assert await clients.reader.collection_exists(migrated.physical_collection)
             cli_receipts = []
             for action, version in (
                 ("migrate-v1-to-v2", "doc-schema-v2"),

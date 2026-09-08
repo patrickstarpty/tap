@@ -41,6 +41,7 @@ from tap.modules.knowledge.domain.documents import (
     revision_id_for,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
+from tap.modules.knowledge.domain.sources import chunk_manifest_digest, projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     DeletionTarget,
@@ -48,6 +49,7 @@ from tap.modules.knowledge.ports.documents import (
     IngestionWork,
     JobKind,
     JobStage,
+    ManifestChunk,
 )
 from tap.modules.knowledge.ports.projection import ProjectionOwnershipReceipt
 from tap.operations.milvus.contracts import (
@@ -91,11 +93,14 @@ async def test_v2_startup_reports_migration_required_without_swapping_v1():
 
 
 @pytest.mark.asyncio
-async def test_versioned_migration_retains_v1_and_rollback_refuses_changed_snapshot(monkeypatch):
+@pytest.mark.parametrize("receipt_schema", [None, "doc-schema-v1", "doc-schema-v2"])
+async def test_versioned_migration_retains_v1_and_rollback_refuses_changed_snapshot(
+    monkeypatch, receipt_schema
+):
     memory = MemoryMilvus()
     old = index_for(memory)
     await old.ensure_target()
-    record = ready_record()
+    record = migration_record()
     record = replace(
         record,
         work=replace(
@@ -105,6 +110,20 @@ async def test_versioned_migration_retains_v1_and_rollback_refuses_changed_snaps
             source_id="src_" + "a" * 32,
         ),
     )
+    if receipt_schema is not None:
+        record = replace(
+            record,
+            work=replace(
+                record.work,
+                chunk_manifest_digest=chunk_manifest_digest(record.work.manifest),
+                projection_digest=projection_digest(
+                    record.work.revision_id,
+                    receipt_schema,
+                    record.index_version,
+                    record.work.manifest,
+                ),
+            ),
+        )
     await old.upsert_revision(
         record.work, record.chunks, record.embeddings, index_version=record.index_version
     )
@@ -147,6 +166,97 @@ async def test_versioned_migration_retains_v1_and_rollback_refuses_changed_snaps
     await current.rollback_to(old, TAPPER_PHYSICAL_COLLECTION, snapshot)
     assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
     assert receipt.physical_collection in memory.collections
+
+
+def migration_record():
+    record = ready_record()
+    item = record.chunks[0]
+    manifest = ManifestChunk(
+        str(item.chunk_id),
+        str(item.logical_chunk_id),
+        0,
+        str(item.root_id),
+        item.parent_id,
+        item.anchor_json,
+        item.chunk_content_hash,
+        TAPPER_EMBEDDING_MODEL,
+        record.index_version,
+    )
+    return replace(
+        record,
+        work=replace(
+            record.work,
+            manifest=(manifest,),
+            enterprise_id="local",
+            project_id="tapper-demo",
+            source_id="src_" + "a" * 32,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rollback", [False, True])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("chunk_content_hash", "sha256:" + "f" * 64),
+        ("chunk_id", "h_" + "f" * 64),
+        ("logical_chunk_id", "lc_" + "f" * 64),
+        ("ordinal", 1),
+        ("root_id", "wrong-document"),
+        ("parent_id", "wrong-parent"),
+        ("anchor_json", '{"type":"document"}'),
+        ("index_version", "wrong-index"),
+        ("embedding_model_version", "wrong-model"),
+        ("manifest", ()),
+        ("chunk_manifest_digest", "sha256:" + "f" * 64),
+        ("projection_digest", "sha256:" + "f" * 64),
+    ],
+)
+async def test_migration_manifest_contradiction_refuses_before_provider_mutation(
+    rollback, field, value
+):
+    memory = MemoryMilvus()
+    old = index_for(memory)
+    await old.ensure_target()
+    record = migration_record()
+    await old.upsert_revision(
+        record.work, record.chunks, record.embeddings, index_version=record.index_version
+    )
+    current = MilvusDocumentIndex(
+        config=TapperMilvusConfig.for_schema("doc-schema-v2"),
+        provisioner=MutationOnlyProvisioner(memory),
+        writer=memory,
+        reader=ReaderObserver(memory),
+        coordinator=memory.coordinator,
+    )
+
+    async def valid_snapshot():
+        return (record,)
+
+    if rollback:
+        await current.migrate_from_snapshot(old, valid_snapshot)
+    changed = (
+        replace(record.work, **{field: value})
+        if field in {"manifest", "chunk_manifest_digest", "projection_digest"}
+        else replace(record.work, manifest=(replace(record.work.manifest[0], **{field: value}),))
+    )
+
+    async def corrupted_snapshot():
+        return (replace(record, work=changed),)
+
+    alias = dict(memory.aliases)
+    events = tuple(memory.events)
+    grants = {key: set(values) for key, values in memory.grants.items()}
+    collections = set(memory.collections)
+    with pytest.raises(RebuildRejected):
+        if rollback:
+            await current.rollback_to(old, TAPPER_PHYSICAL_COLLECTION, corrupted_snapshot)
+        else:
+            await current.migrate_from_snapshot(old, corrupted_snapshot)
+    assert memory.aliases == alias
+    assert tuple(memory.events) == events
+    assert memory.grants == grants and set(memory.collections) == collections
 
 
 @pytest.mark.asyncio

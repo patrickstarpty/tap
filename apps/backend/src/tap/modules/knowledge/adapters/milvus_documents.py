@@ -29,11 +29,13 @@ from tap.modules.knowledge.domain.documents import (
     revision_id_for,
 )
 from tap.modules.knowledge.domain.models import SourceFamily
+from tap.modules.knowledge.domain.sources import chunk_manifest_digest, projection_digest
 from tap.modules.knowledge.ports.documents import (
     DeletionTarget,
     EmbeddingArtifact,
     IndexReceipt,
     IngestionWork,
+    ManifestChunk,
 )
 from tap.modules.knowledge.ports.errors import (
     IndexFenced,
@@ -421,12 +423,9 @@ class MilvusDocumentIndex:
         self._require_migration_peer(previous)
         try:
             async with self._coordinator.mutation(self._config.alias) as authority:
-                old = await previous._current_target_locked(authority)
                 records = await snapshot()
-                # The destination validates canonical SQL ownership before any
-                # generation is created; old rows must match that exact corpus.
-                for record in records:
-                    self._ownership_fields(record.work)
+                self._validate_migration_artifacts(records, previous)
+                old = await previous._current_target_locked(authority)
                 await previous._require_snapshot_parity(old, records)
                 return await self._rebuild_locked(authority, records, previous=previous)
         except RebuildRejected:
@@ -453,6 +452,8 @@ class MilvusDocumentIndex:
         self._require_migration_peer(previous)
         try:
             async with self._coordinator.mutation(self._config.alias) as authority:
+                records = await snapshot()
+                self._validate_migration_artifacts(records, previous)
                 current = await self._current_target_locked(authority)
                 previous._require_target_name(retained_physical)
                 await previous._require_descriptor(retained_physical)
@@ -465,9 +466,7 @@ class MilvusDocumentIndex:
                     or active.predecessor_collection != retained_physical
                 ):
                     raise IndexUnavailable("rollback retention lineage changed")
-                records = await snapshot()
                 for record in records:
-                    self._ownership_fields(record.work)
                     if await authority.is_fenced(record.work.revision_id):
                         raise IndexFenced("rollback snapshot includes a tombstone")
                 await previous._require_loaded(retained_physical)
@@ -499,6 +498,60 @@ class MilvusDocumentIndex:
             raise
         except Exception as error:
             raise RebuildRejected(("rollback_rejected",)) from error
+
+    def _validate_migration_artifacts(
+        self, records: tuple[ReadyRevisionArtifacts, ...], previous: MilvusDocumentIndex
+    ) -> None:
+        if not isinstance(records, tuple):
+            raise ValueError("migration snapshot must be closed")
+        seen: set[tuple[str, str]] = set()
+        for record in records:
+            if not isinstance(record, ReadyRevisionArtifacts):
+                raise ValueError("migration snapshot record is malformed")
+            work = record.work
+            identity = (work.document_id, work.revision_id)
+            if identity in seen:
+                raise ValueError("migration snapshot contains duplicate revision facts")
+            seen.add(identity)
+            # Pure validation, before discovery can create a target or reconcile cleanup.
+            self._revision_rows(
+                self._config.physical_collection,
+                work,
+                record.chunks,
+                record.embeddings,
+                record.index_version,
+            )
+            expected = tuple(
+                ManifestChunk(
+                    str(chunk.chunk_id),
+                    str(chunk.logical_chunk_id),
+                    ordinal,
+                    str(chunk.root_id),
+                    chunk.parent_id,
+                    chunk.anchor_json,
+                    chunk.chunk_content_hash,
+                    record.embeddings.model_alias,
+                    record.index_version,
+                )
+                for ordinal, chunk in enumerate(record.chunks)
+            )
+            if not isinstance(work.manifest, tuple) or work.manifest != expected:
+                raise ValueError("SQL manifest contradicts migration artifacts")
+            if (
+                work.chunk_manifest_digest is not None
+                and work.chunk_manifest_digest != chunk_manifest_digest(expected)
+            ):
+                raise ValueError("SQL manifest digest contradicts migration artifacts")
+            if (
+                work.projection_digest is not None
+                and sum(
+                    work.projection_digest
+                    == projection_digest(work.revision_id, schema, record.index_version, expected)
+                    for schema in (previous._config.schema_version, self._config.schema_version)
+                )
+                != 1
+            ):
+                raise ValueError("SQL projection receipt contradicts explicit migration profiles")
 
     async def _require_snapshot_parity(
         self, physical: str, records: tuple[ReadyRevisionArtifacts, ...]

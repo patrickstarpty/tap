@@ -439,6 +439,8 @@ class MysqlOperationRepository:
                         chunker_version=row["chunker_version"],
                         pipeline_version=row["pipeline_version"],
                         manifest=_manifest_from_rows(list(manifests)),
+                        chunk_manifest_digest=row["chunk_manifest_digest"],
+                        projection_digest=row["projection_digest"],
                         enterprise_id=self._scope.enterprise_id,
                         project_id=self._scope.project_id,
                         source_id=row["owner_source_id"],

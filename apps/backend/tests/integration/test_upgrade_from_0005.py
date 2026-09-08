@@ -133,6 +133,27 @@ def test_0010_source_revision_is_literal_and_registered():
     assert validate_revision("0010_knowledge_sources") == "0010_knowledge_sources"
 
 
+def test_0010a_source_command_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0010a_source_commands") == "0010a_source_commands"
+
+
+def test_0010a_preserves_nonempty_predecessor_and_round_trips_empty_command_ledger(monkeypatch):
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
+    from scripts.migration_support import BASELINE_ROWS, run_migration_gate
+
+    monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+    result = run_migration_gate("0010a_source_commands")
+    assert result["status"] == "passed"
+    assert len(result["preserved_rows"]) == 14
+    assert set(result["preserved_rows"]) == set(BASELINE_ROWS)
+    assert all(result["preserved_rows"].values())
+    assert result["source_commands_downgrade_replay"] == "passed"
+
+
 def test_0010_corruption_partial_state_multisource_and_downgrade_guards(owned_project_mysql):
     import importlib.util
 

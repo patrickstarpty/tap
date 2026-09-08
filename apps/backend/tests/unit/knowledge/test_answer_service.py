@@ -233,14 +233,33 @@ def service(
 
 
 @pytest.mark.asyncio
-async def test_answer_uses_the_selected_runtime_projection_corpus():
+@pytest.mark.parametrize("corpus", ["tapper-demo-v1", "tapper-demo-v2"])
+@pytest.mark.parametrize("abstained", [False, True])
+async def test_answer_uses_the_selected_runtime_projection_corpus(corpus, abstained):
     repository = MemoryAnswerRepository((ready(),))
-    gateway = Gateway()
-    service = AnswerService(
-        repository=repository, knowledge=gateway, corpus_version="tapper-demo-v2"
-    )
-    await service.answer(request_for("doc_a"))
-    assert gateway.policies[0].active_corpus_version == "tapper-demo-v2"
+    response = replace(answer_response(abstained=abstained), corpus_version=corpus)
+    gateway = Gateway(response)
+    service = AnswerService(repository=repository, knowledge=gateway, corpus_version=corpus)
+    assert await service.answer(request_for("doc_a")) == response
+    assert gateway.policies[0].active_corpus_version == corpus
+    assert len(repository.snapshots) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured,returned",
+    [("tapper-demo-v1", "tapper-demo-v2"), ("tapper-demo-v2", "tapper-demo-v1")],
+)
+async def test_answer_refuses_response_policy_corpus_mismatch_before_persistence(
+    configured, returned
+):
+    repository = MemoryAnswerRepository((ready(),))
+    gateway = Gateway(replace(answer_response(), corpus_version=returned))
+    service = AnswerService(repository=repository, knowledge=gateway, corpus_version=configured)
+    with pytest.raises(AnswerSnapshotUnavailable):
+        await service.answer(request_for("doc_a"))
+    assert gateway.policies[0].active_corpus_version == configured
+    assert repository.snapshots == []
 
 
 def test_empty_selection_fails_before_search_or_model_io() -> None:

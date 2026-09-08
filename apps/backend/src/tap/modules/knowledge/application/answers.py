@@ -110,10 +110,13 @@ class AnswerService:
         policy = build_demo_policy_context(ordered, corpus_version=self._corpus_version)
         response = await self._knowledge.answer(trusted, policy)
         try:
+            if policy.active_corpus_version != self._corpus_version:
+                raise ValueError("answer policy corpus changed")
             snapshot = AnswerSnapshot.from_response(
                 response=response,
                 query=trusted.query,
                 selected_revisions=ordered,
+                corpus_version=self._corpus_version,
             )
         except (TypeError, ValueError) as error:
             raise AnswerSnapshotUnavailable("answer snapshot validation failed") from error
