@@ -36,7 +36,9 @@ export function AgentSkillSelector({
   );
   const activeSkills = skillRevisionIds.filter((id) => enabledSkillIds.has(id));
   const retiredSkills =
-    !loading && activeSkills.length !== skillRevisionIds.length;
+    !loading &&
+    error === null &&
+    activeSkills.length !== skillRevisionIds.length;
   useEffect(() => {
     if (retiredSkills) {
       onSkillsChange(activeSkills);
@@ -50,7 +52,7 @@ export function AgentSkillSelector({
         {onRetry && <Button onClick={onRetry}>Retry catalog</Button>}
       </div>
     );
-  if (agentRevisionId !== null && selected === undefined)
+  if (!loading && agentRevisionId !== null && selected === undefined)
     return (
       <div role="status">
         Agent unavailable{" "}
@@ -77,7 +79,10 @@ export function AgentSkillSelector({
       </label>
       {loading && <span role="status">Loading approved revisions</span>}
       {!loading && agents.length === 0 && (
-        <span role="status">No approved agents available</span>
+        <span role="status">
+          No approved agents available
+          {onRetry && <Button onClick={onRetry}>Refresh catalog</Button>}
+        </span>
       )}
       {retiredSkillsRemoved && (
         <span role="status">Retired skills were removed</span>
@@ -98,6 +103,7 @@ export function AgentSkillSelector({
                 <input
                   type="checkbox"
                   checked={checked}
+                  disabled={loading}
                   onChange={() =>
                     onSkillsChange(
                       checked

@@ -625,6 +625,7 @@ def assert_preserved(
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1148,6 +1149,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             if revision == AI_ASSET_CATALOG_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)
+                    assert_scope_backfill(connection)
                     if {
                         "ai_agent",
                         "ai_agent_revision",
@@ -1212,7 +1214,9 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                     assert_preserved(connection, before, AI_ASSET_CATALOG_REVISION)
                     assert_source_backfill(connection)
                 identity_result.update(
-                    source_backfill="passed", ai_asset_downgrade_replay="passed"
+                    source_backfill="passed",
+                    scope_backfill="passed",
+                    ai_asset_downgrade_replay="passed",
                 )
             if revision == SOURCE_COMMANDS_REVISION:
                 with engine.connect() as connection:
@@ -1326,12 +1330,9 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             if revision == PROJECT_SCOPE_REVISION:
                 with engine.connect() as connection:
                     assert_scope_constraints(connection)
+                identity_result.update(scope_backfill="passed", constraints="passed")
                 assert_scope_rejection_paths(database, engine)
-                identity_result.update(
-                    scope_backfill="passed",
-                    constraints="passed",
-                    pre_ddl_rejection="passed",
-                )
+                identity_result["pre_ddl_rejection"] = "passed"
             return {
                 **identity_result,
                 "status": "passed",
@@ -1361,8 +1362,22 @@ def assert_source_backfill(connection: Connection) -> None:
         "knowledge_source_legacy_map",
         "knowledge_answer_source",
     ):
-        rows = connection.execute(text(f"SELECT source_id FROM {table}")).all()
-        if rows != [(source_id,)]:
+        rows = connection.execute(
+            text(
+                "SELECT source_id, enterprise_id, project_id, actor_id, "
+                f"identity_mode, identity_origin FROM {table}"
+            )
+        ).all()
+        if rows != [
+            (
+                source_id,
+                "local",
+                "tapper-demo",
+                "tapper-local-user",
+                "validation",
+                "VALIDATION",
+            )
+        ]:
             raise ValueError("source backfill identity mismatch")
     row = connection.execute(
         text(

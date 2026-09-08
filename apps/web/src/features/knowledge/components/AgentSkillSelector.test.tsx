@@ -120,4 +120,56 @@ describe("AgentSkillSelector", () => {
     await user.click(screen.getByRole("button", { name: "Clear agent" }));
     expect(change).toHaveBeenLastCalledWith(null);
   });
+
+  it("preserves selections through loading and errors while disabling open skill controls", async () => {
+    const user = userEvent.setup();
+    const skillsChange = vi.fn();
+    const agentChange = vi.fn();
+    const { rerender } = render(
+      <AgentSkillSelector
+        agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+        skills={[{ revisionId: "skill-v1", displayName: "Citation skill" }]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={agentChange}
+        onSkillsChange={skillsChange}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    rerender(
+      <AgentSkillSelector
+        agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+        skills={[{ revisionId: "skill-v1", displayName: "Citation skill" }]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={agentChange}
+        onSkillsChange={skillsChange}
+        loading
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading approved revisions",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Skills" })).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Citation skill" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("Agent unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clear agent")).not.toBeInTheDocument();
+    rerender(
+      <AgentSkillSelector
+        agents={[]}
+        skills={[]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={agentChange}
+        onSkillsChange={skillsChange}
+        error="Catalog unavailable"
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Catalog unavailable");
+    expect(skillsChange).not.toHaveBeenCalled();
+    expect(agentChange).not.toHaveBeenCalled();
+  });
 });

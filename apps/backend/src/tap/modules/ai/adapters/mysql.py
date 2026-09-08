@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -16,7 +17,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
@@ -148,6 +149,8 @@ skill_revision = Table(
 
 
 class MysqlAssetCatalog:
+    _LOCK_TIMEOUT_SECONDS = 20
+
     def __init__(
         self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
     ) -> None:
@@ -161,20 +164,47 @@ class MysqlAssetCatalog:
     async def seed(self, seed: ValidationAssetSeed) -> None:
         if not isinstance(seed, ValidationAssetSeed):
             raise TypeError("asset seed must be versioned server configuration")
-        async with self._sessions() as session:
-            lock_name = f"tap:ai-assets:{self._scope.enterprise_id}:{self._scope.project_id}"
-            acquired = await session.scalar(select(func.get_lock(lock_name, 20)))
+        engine = self._sessions.kw.get("bind")
+        if not isinstance(engine, AsyncEngine):
+            raise TypeError("asset catalog requires an async engine-bound session factory")
+        # MySQL advisory locks belong to a physical connection, not to a
+        # transaction. Own that connection independently of the session so a
+        # commit or rollback cannot return it to the pool before RELEASE_LOCK.
+        async with engine.connect() as connection:
+            lock_name = self._lock_name()
+            acquired = await connection.scalar(
+                select(func.get_lock(lock_name, self._LOCK_TIMEOUT_SECONDS))
+            )
             if acquired != 1:
                 raise AssetRevisionRejected()
-            try:
-                for revision in seed.agents:
-                    await self._seed_agent(session, revision)
-                for skill_value in seed.skills:
-                    await self._seed_skill(session, skill_value)
-                await session.commit()
-            finally:
-                await session.execute(select(func.release_lock(lock_name)))
-                await session.commit()
+            # GET_LOCK may have opened a repeatable-read transaction before a
+            # waiting caller acquired the lock. Reset that transaction while
+            # retaining the connection-scoped lock so reads see its predecessor.
+            await connection.rollback()
+            failure: BaseException | None = None
+            async with self._sessions(bind=connection) as session:
+                try:
+                    for revision in seed.agents:
+                        await self._seed_agent(session, revision)
+                    for skill_value in seed.skills:
+                        await self._seed_skill(session, skill_value)
+                    await session.commit()
+                except BaseException as error:
+                    failure = error
+                    await session.rollback()
+                    raise
+                finally:
+                    released = await asyncio.shield(
+                        connection.scalar(select(func.release_lock(lock_name)))
+                    )
+                    if released != 1:
+                        release_error = AssetRevisionRejected()
+                        if failure is not None:
+                            raise release_error from failure
+                        raise release_error
+
+    def _lock_name(self) -> str:
+        return f"tap:ai-assets:{self._scope.enterprise_id}:{self._scope.project_id}"
 
     async def _seed_agent(self, session: AsyncSession, revision: AiAgentRevision) -> None:
         self._assert_scope(revision.scope)
