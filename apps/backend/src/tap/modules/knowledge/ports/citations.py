@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import ChunkDraft, NormalizedArtifact
 from tap.modules.knowledge.ports.answers import CitationSnapshot, ReadyDocumentRevision
 from tap.modules.knowledge.ports.documents import (
@@ -41,6 +42,11 @@ class CitationLookup:
 
 
 class CitationRepository(Protocol):
+    """Durable operations run in the server-bound Project, independent of creator Actor."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def load_citation(self, citation_id: str) -> CitationLookup | None: ...
 
     async def citation_is_current(self, citation: CitationSnapshot) -> bool: ...

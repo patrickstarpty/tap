@@ -9,6 +9,18 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "knowledge_source",
+    "knowledge_source_command",
+    "knowledge_source_legacy_map",
+    "knowledge_answer_source",
+    "knowledge_search_audit",
+    "enterprise",
+    "project",
+    "actor_principal",
+    "project_audit",
+    "outbox_archive",
+    "outbox_dead_letter",
+    "knowledge_operator_operation",
     "outbox",
     "chat_turn",
     "chat_event",
@@ -62,7 +74,7 @@ def test_projection_metadata_preserves_existing_migration_constraints() -> None:
     assert any(
         isinstance(constraint, UniqueConstraint)
         and constraint.name == "uq_projection_lineage_operation"
-        and tuple(constraint.columns.keys()) == ("alias_name", "operation_id")
+        and tuple(constraint.columns.keys()) == ("project_id", "alias_name", "operation_id")
         for constraint in lineage.constraints
     )
     for table_name, column_name in (
@@ -75,3 +87,74 @@ def test_projection_metadata_preserves_existing_migration_constraints() -> None:
         assert str(metadata.tables[table_name].c[column_name].server_default.arg).lower() == (
             "current_timestamp(6)"
         )
+
+
+def test_all_business_metadata_requires_project_scope_and_parent_consistency() -> None:
+    from sqlalchemy import ForeignKeyConstraint
+
+    from tap.platform.db.registry import load_authoritative_metadata
+
+    metadata = load_authoritative_metadata()
+    for name in EXPECTED_TABLES - {"enterprise", "project", "actor_principal"}:
+        table = metadata.tables[name]
+        for field in (
+            "enterprise_id",
+            "project_id",
+            "actor_id",
+            "identity_mode",
+            "identity_origin",
+        ):
+            assert field in table.c, (name, field)
+            assert not table.c[field].nullable
+            assert table.c[field].server_default is None
+        foreign_keys = [
+            item for item in table.constraints if isinstance(item, ForeignKeyConstraint)
+        ]
+        assert any(
+            tuple(item.column_keys) == ("enterprise_id", "project_id") for item in foreign_keys
+        ), name
+        assert any(
+            tuple(item.column_keys) == ("enterprise_id", "actor_id") for item in foreign_keys
+        ), name
+    assert not metadata.tables["outbox"].c.envelope.nullable
+    assert not metadata.tables["outbox"].c.event_content_digest.nullable
+    for child, columns in (
+        ("chat_event", ("project_id", "turn_id")),
+        ("knowledge_document_revision", ("project_id", "document_id")),
+        ("knowledge_projection_fence", ("project_id", "revision_id")),
+    ):
+        assert any(
+            tuple(item.column_keys) == columns
+            for item in metadata.tables[child].foreign_key_constraints
+        )
+
+
+def test_project_audit_metadata_declares_scoped_replay_and_ordering() -> None:
+    from sqlalchemy import UniqueConstraint
+    from sqlalchemy.dialects.mysql import DATETIME
+
+    from tap.platform.db.registry import load_authoritative_metadata
+
+    metadata = load_authoritative_metadata()
+    assert "project_audit" in metadata.tables
+    audit = metadata.tables["project_audit"]
+    assert tuple(audit.primary_key.columns.keys()) == ("audit_id",)
+    assert audit.c.resource_id.nullable
+    assert all(
+        not column.nullable and column.server_default is None
+        for column in audit.c
+        if column.name != "resource_id"
+    )
+    assert audit.c.audit_id.type.collation == "utf8mb4_bin"
+    assert audit.c.idempotency_key.type.collation == "utf8mb4_bin"
+    assert isinstance(audit.c.occurred_at.type, DATETIME)
+    assert audit.c.occurred_at.type.fsp == 6
+    assert any(
+        isinstance(constraint, UniqueConstraint)
+        and tuple(constraint.columns.keys()) == ("enterprise_id", "project_id", "idempotency_key")
+        for constraint in audit.constraints
+    )
+    assert any(
+        tuple(index.columns.keys()) == ("enterprise_id", "project_id", "occurred_at", "audit_id")
+        for index in audit.indexes
+    )

@@ -49,6 +49,19 @@ export interface PrototypeCopy {
     ready: string;
     loading: string;
     noReadySources: string;
+    empty: string;
+    pending: string;
+    error: string;
+    retry: string;
+    view: string;
+    retryDocument: string;
+    deleteSource: string;
+    confirmDelete: string;
+    cancelDelete: string;
+    deleteWarning: string;
+    mutationFailed: string;
+    documents: string;
+    failed: string;
     noResults: string;
     manageKnowledge: string;
     provenanceHint: string;
@@ -299,6 +312,7 @@ export const PROTOTYPE_COPY = {
       library: "Library",
       "test-management": "Test Management",
       "low-code": "Low Code Automation",
+      "test-analytics": "Test Analytics",
       collapseSidebar: "Collapse sidebar",
       closeSidebar: "Close sidebar",
       expandSidebar: "Expand sidebar",
@@ -350,6 +364,21 @@ export const PROTOTYPE_COPY = {
       ready: "Ready",
       loading: "Loading sources",
       noReadySources: "No ready sources",
+      empty: "Upload your first source in Library",
+      pending: "Sources are processing",
+      error: "Sources could not be loaded",
+      retry: "Retry loading",
+      view: "View",
+      retryDocument: "Retry",
+      deleteSource: "Delete source",
+      confirmDelete: "Confirm delete",
+      cancelDelete: "Cancel",
+      deleteWarning:
+        "Delete this source and all its documents? It will no longer be available to Tapper.",
+      mutationFailed:
+        "The source could not be changed. Retry the same action or reload its current state.",
+      documents: "documents",
+      failed: "failed",
       noResults: "No matching sources",
       manageKnowledge: "Manage knowledge",
       provenanceHint:
@@ -607,6 +636,7 @@ export const PROTOTYPE_COPY = {
       library: "知识库",
       "test-management": "测试管理",
       "low-code": "低代码自动化",
+      "test-analytics": "测试分析",
       collapseSidebar: "收起侧边栏",
       closeSidebar: "关闭侧边栏",
       expandSidebar: "展开侧边栏",
@@ -656,6 +686,19 @@ export const PROTOTYPE_COPY = {
       ready: "已就绪",
       loading: "正在加载来源",
       noReadySources: "没有可用来源",
+      empty: "在知识库上传首个来源",
+      pending: "来源正在处理中",
+      error: "无法加载来源",
+      retry: "重试加载",
+      view: "查看",
+      retryDocument: "重试",
+      deleteSource: "删除来源",
+      confirmDelete: "确认删除",
+      cancelDelete: "取消",
+      deleteWarning: "删除此来源及其全部文档？Tapper 将无法再使用此来源。",
+      mutationFailed: "无法更改来源。请重试同一操作或重新加载当前状态。",
+      documents: "文档",
+      failed: "失败",
       noResults: "没有匹配的来源",
       manageKnowledge: "管理知识库",
       provenanceHint: "回答和生成的资产会记录每轮对话选择的来源上下文。",

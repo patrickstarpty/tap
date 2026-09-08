@@ -1,0 +1,279 @@
+{
+  "failureStages": [
+    "search",
+    "embedding",
+    "answer",
+    "graph",
+    "model",
+    "recorder",
+    "execution"
+  ],
+  "problems": [
+    {
+      "code": "answer-snapshot-unavailable",
+      "detail": "The grounded answer could not be committed atomically.",
+      "failureStage": "answer",
+      "retryable": true,
+      "status": 503,
+      "title": "Answer snapshot unavailable",
+      "type": "https://tap.example/problems/answer-snapshot-unavailable"
+    },
+    {
+      "code": "answer-unavailable",
+      "detail": "The answer service is currently unavailable.",
+      "failureStage": "answer",
+      "retryable": true,
+      "status": 503,
+      "title": "Answer unavailable",
+      "type": "https://tap.example/problems/answer-unavailable"
+    },
+    {
+      "code": "association-conflict",
+      "detail": "An asset is already associated with another asset.",
+      "retryable": false,
+      "status": 409,
+      "title": "Association conflict",
+      "type": "https://tap.example/problems/association-conflict"
+    },
+    {
+      "code": "authorization-denied",
+      "detail": "The current actor and scope do not allow this operation.",
+      "retryable": false,
+      "status": 403,
+      "title": "Authorization denied",
+      "type": "https://tap.example/problems/authorization-denied"
+    },
+    {
+      "code": "automation-mapping-required",
+      "detail": "The published revision requires a compatible step mapping.",
+      "retryable": false,
+      "status": 409,
+      "title": "Automation mapping required",
+      "type": "https://tap.example/problems/automation-mapping-required"
+    },
+    {
+      "code": "citation-stale",
+      "detail": "The citation no longer resolves to its exact source revision.",
+      "retryable": false,
+      "status": 404,
+      "title": "Citation stale",
+      "type": "https://tap.example/problems/citation-stale"
+    },
+    {
+      "code": "citation-unavailable",
+      "detail": "The citation provider is currently unavailable.",
+      "retryable": true,
+      "status": 503,
+      "title": "Citation unavailable",
+      "type": "https://tap.example/problems/citation-unavailable"
+    },
+    {
+      "code": "document-limit-reached",
+      "detail": "The local knowledge space has reached its document limit.",
+      "retryable": false,
+      "status": 429,
+      "title": "Document limit reached",
+      "type": "https://tap.example/problems/document-limit-reached"
+    },
+    {
+      "code": "document-not-found",
+      "detail": "The requested document does not exist.",
+      "retryable": false,
+      "status": 404,
+      "title": "Document not found",
+      "type": "https://tap.example/problems/document-not-found"
+    },
+    {
+      "code": "document-not-retryable",
+      "detail": "Only a failed document can be retried.",
+      "retryable": false,
+      "status": 409,
+      "title": "Document is not retryable",
+      "type": "https://tap.example/problems/document-not-retryable"
+    },
+    {
+      "code": "document-state-changed",
+      "detail": "A selected document is no longer ready at its selected revision.",
+      "retryable": false,
+      "status": 409,
+      "title": "Document state changed",
+      "type": "https://tap.example/problems/document-state-changed"
+    },
+    {
+      "code": "document-too-large",
+      "detail": "The document exceeds the 25 MiB upload limit.",
+      "retryable": false,
+      "status": 413,
+      "title": "Document too large",
+      "type": "https://tap.example/problems/document-too-large"
+    },
+    {
+      "code": "embedding-unavailable",
+      "detail": "The embedding service is currently unavailable.",
+      "failureStage": "embedding",
+      "retryable": true,
+      "status": 503,
+      "title": "Embedding unavailable",
+      "type": "https://tap.example/problems/embedding-unavailable"
+    },
+    {
+      "code": "empty-document",
+      "detail": "The document contains no processable content.",
+      "retryable": false,
+      "status": 400,
+      "title": "Empty document",
+      "type": "https://tap.example/problems/empty-document"
+    },
+    {
+      "code": "execution-provider-unavailable",
+      "detail": "The execution provider is currently unavailable.",
+      "failureStage": "execution",
+      "retryable": true,
+      "status": 503,
+      "title": "Execution provider unavailable",
+      "type": "https://tap.example/problems/execution-provider-unavailable"
+    },
+    {
+      "code": "graph-unavailable",
+      "detail": "The graph service is currently unavailable.",
+      "failureStage": "graph",
+      "retryable": true,
+      "status": 503,
+      "title": "Graph unavailable",
+      "type": "https://tap.example/problems/graph-unavailable"
+    },
+    {
+      "code": "idempotency-conflict",
+      "detail": "The idempotency key already identifies a different request.",
+      "retryable": false,
+      "status": 409,
+      "title": "Idempotency conflict",
+      "type": "https://tap.example/problems/idempotency-conflict"
+    },
+    {
+      "code": "knowledge-runtime-unavailable",
+      "detail": "The knowledge runtime is not configured.",
+      "retryable": true,
+      "status": 503,
+      "title": "Knowledge runtime unavailable",
+      "type": "https://tap.example/problems/knowledge-runtime-unavailable"
+    },
+    {
+      "code": "model-unavailable",
+      "detail": "The model service is currently unavailable.",
+      "failureStage": "model",
+      "retryable": true,
+      "status": 503,
+      "title": "Model unavailable",
+      "type": "https://tap.example/problems/model-unavailable"
+    },
+    {
+      "code": "recorder-unavailable",
+      "detail": "The recorder service is currently unavailable.",
+      "failureStage": "recorder",
+      "retryable": true,
+      "status": 503,
+      "title": "Recorder unavailable",
+      "type": "https://tap.example/problems/recorder-unavailable"
+    },
+    {
+      "code": "request-validation",
+      "detail": "The request body does not match the public API contract.",
+      "retryable": false,
+      "status": 422,
+      "title": "Request validation failed",
+      "type": "https://tap.example/problems/request-validation"
+    },
+    {
+      "code": "revision-conflict",
+      "detail": "The requested revision conflicts with the current revision.",
+      "retryable": false,
+      "status": 409,
+      "title": "Revision conflict",
+      "type": "https://tap.example/problems/revision-conflict"
+    },
+    {
+      "code": "scope-mismatch",
+      "detail": "The requested project does not match the current scope.",
+      "retryable": false,
+      "status": 403,
+      "title": "Scope mismatch",
+      "type": "https://tap.example/problems/scope-mismatch"
+    },
+    {
+      "code": "search-execution-rejected",
+      "detail": "The search execution exceeded a safety bound.",
+      "failureStage": "search",
+      "retryable": true,
+      "status": 503,
+      "title": "Search execution rejected",
+      "type": "https://tap.example/problems/search-execution-rejected"
+    },
+    {
+      "code": "search-unavailable",
+      "detail": "The search provider is currently unavailable.",
+      "failureStage": "search",
+      "retryable": true,
+      "status": 503,
+      "title": "Search unavailable",
+      "type": "https://tap.example/problems/search-unavailable"
+    },
+    {
+      "code": "source-command-pending",
+      "detail": "The original Source command is still in progress; retry the same key.",
+      "retryable": true,
+      "status": 503,
+      "title": "Source command in progress",
+      "type": "https://tap.example/problems/source-command-pending"
+    },
+    {
+      "code": "source-not-found",
+      "detail": "The Source is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Source not found",
+      "type": "https://tap.example/problems/source-not-found"
+    },
+    {
+      "code": "source-selection-required",
+      "detail": "Select between one and twenty unique ready documents.",
+      "retryable": false,
+      "status": 400,
+      "title": "Source selection required",
+      "type": "https://tap.example/problems/source-selection-required"
+    },
+    {
+      "code": "source-unavailable",
+      "detail": "The Source is no longer available for this command.",
+      "retryable": false,
+      "status": 409,
+      "title": "Source state changed",
+      "type": "https://tap.example/problems/source-unavailable"
+    },
+    {
+      "code": "turn-not-implemented",
+      "detail": "The durable chat turn workflow is not available yet.",
+      "retryable": false,
+      "status": 501,
+      "title": "Turn workflow not implemented",
+      "type": "https://tap.example/problems/turn-not-implemented"
+    },
+    {
+      "code": "unsupported-answer-control",
+      "detail": "The answer request contains a control unavailable in this demo.",
+      "retryable": false,
+      "status": 400,
+      "title": "Unsupported answer control",
+      "type": "https://tap.example/problems/unsupported-answer-control"
+    },
+    {
+      "code": "unsupported-document",
+      "detail": "The document filename, media type, or content is not supported.",
+      "retryable": false,
+      "status": 400,
+      "title": "Unsupported document",
+      "type": "https://tap.example/problems/unsupported-document"
+    }
+  ],
+  "schemaVersion": 1
+}

@@ -6,6 +6,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     ChunkId,
     DocumentId,
@@ -56,6 +57,11 @@ class CitationResolver:
     ) -> None:
         self._repository = repository
         self._artifacts = artifacts
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        """Expose the binding held by the actual repository, without a second label."""
+        return self._repository.scope
 
     async def resolve(self, citation_id: str) -> CitationPreviewResult:
         if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:

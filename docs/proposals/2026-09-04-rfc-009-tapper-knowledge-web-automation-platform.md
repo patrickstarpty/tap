@@ -956,6 +956,8 @@ execution.run.completed
 
 上述业务事件都是 Project-scoped，Envelope 固定 `event_id`、`event_type`、schema version、occurred_at、`scope_kind=PROJECT`、enterprise/project/actor、aggregate ID/version、correlation/causation ID，且 project/actor 非空。P0 的用户、Project 生命周期和认证事件使用独立 Platform/Auth Envelope：`scope_kind=PLATFORM | ANONYMOUS`，不伪造 `project_id`；已认证平台动作必须有 actor，登录失败等身份解析前事件可没有 actor，但保存安全的 subject fingerprint 与请求关联。消费者按 `event_id` 幂等；未知主版本进入 dead-letter，不静默忽略。
 
+现有 `turn.process_requested`、`chat.event_appended`、`knowledge.ingestion_requested` 与 `knowledge.deletion_requested` 在同一 registry 中作为显式 transport compatibility events 迁入 ProjectEnvelope，具体映射见[核心契约 §2.1](../reference/2026-09-04-tapper-platform-contracts.md#21-现有唤醒的迁移兼容契约)。它们保留历史事实，不冒充包含 Source/Input Snapshot 的上述领域事件；新旧流程都不得继续写入无信封的 Outbox。兼容信封的 `aggregate_version=0` 仅表示无领域版本的传输意图，不能作为新领域事件的 Revision。
+
 ### 15.3 Recorder WebSocket 例外
 
 REST/SSE/Transactional Outbox 仍是业务命令、状态和历史的权威通信方式。Recorder 画面与低延迟输入是当前路线唯一需要 WebSocket 的例外：

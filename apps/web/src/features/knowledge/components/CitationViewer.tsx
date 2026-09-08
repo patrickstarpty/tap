@@ -1,3 +1,4 @@
+import { useKnowledgeClient } from "../api/queries";
 import { Alert, Button, Descriptions, Skeleton, Typography } from "antd";
 
 import { useCitationQuery } from "../api/queries";
@@ -117,7 +118,9 @@ export function CitationViewer({
   } | null;
   onClose: () => void;
 }) {
+  const { projectId } = useKnowledgeClient();
   const citationQuery = useCitationQuery(
+    projectId,
     active?.id ?? null,
     active?.generation ?? 0,
   );

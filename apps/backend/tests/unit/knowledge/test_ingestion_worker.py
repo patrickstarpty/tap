@@ -25,6 +25,7 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.sources import projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     ClaimedIngestionJob,
@@ -154,6 +155,12 @@ class StatefulRepository:
             )
         if commit.embeddings_locator is not None:
             self.work = replace(self.work, embeddings_locator=commit.embeddings_locator)
+        if commit.projection_digest is not None:
+            self.work = replace(
+                self.work,
+                projection_digest=commit.projection_digest,
+                chunk_manifest_digest=commit.chunk_manifest_digest,
+            )
         next_stage = {
             JobStage.STORED: JobStage.PARSING,
             JobStage.PARSING: JobStage.CHUNKING,
@@ -320,7 +327,7 @@ class BlockingWriteArtifacts(StatefulArtifacts):
 
 
 class Parser:
-    def parse(self, source):  # type: ignore[no-untyped-def]
+    async def parse(self, source):  # type: ignore[no-untyped-def]
         text = source.content.decode()
         return NormalizedArtifact(
             filename=source.filename,
@@ -344,7 +351,7 @@ class Parser:
 
 
 class RejectedParser(Parser):
-    def parse(self, source):  # type: ignore[no-untyped-def]
+    async def parse(self, source):  # type: ignore[no-untyped-def]
         del source
         raise DocumentParseRejected("ocr-required")
 
@@ -476,6 +483,10 @@ class Index:
             revision_id=work.revision_id,
             index_version=index_version,
             indexed_count=len(self.rows),
+            schema_version="schema-v1",
+            projection_digest=projection_digest(
+                work.revision_id, "schema-v1", index_version, work.manifest
+            ),
         )
 
     async def delete_revision(self, target: DeletionTarget) -> None:
@@ -799,7 +810,7 @@ async def test_durable_manifest_version_drift_stops_before_provider_write(
 
     worker, repository, artifacts, embeddings, index, _ = worker_parts()
     chunks = Chunker().chunk(
-        Parser().parse(
+        await Parser().parse(
             DocumentSource(
                 content=SOURCE_BYTES,
                 filename="source.md",
@@ -873,7 +884,7 @@ async def test_worker_rejects_full_chunk_manifest_rebinding_before_embedding(
     """An ID-only readback check would accept changed provenance under a stable chunk ID."""
     worker, repository, artifacts, embeddings, index, _ = worker_parts()
     chunks = Chunker().chunk(
-        Parser().parse(
+        await Parser().parse(
             DocumentSource(
                 content=SOURCE_BYTES,
                 filename="source.md",
@@ -1012,9 +1023,9 @@ async def test_lease_lost_during_embedding_settles_provider_and_writes_no_result
     """An old owner must stop before artifact/checkpoint/index writes after takeover."""
 
     worker, repository, _, embeddings, index, _ = worker_parts()
-    # Normalized/chunks writes now consume two fenced renewals each; the sixth
-    # renewal is the embedding heartbeat after the provider has started.
-    repository.lose_on_renewal = 6
+    # Parsing and normalized/chunks writes each consume two fenced renewals;
+    # the eighth renewal is the embedding heartbeat after it starts.
+    repository.lose_on_renewal = 8
     embeddings.release = asyncio.Event()
 
     task = asyncio.create_task(worker.run_once(limit=1))
@@ -1031,9 +1042,9 @@ async def test_lease_lost_during_embedding_settles_provider_and_writes_no_result
 @pytest.mark.parametrize(
     ("blocked_write", "lost_renewal", "locator_name"),
     [
-        ("normalized", 2, "normalized_locator"),
-        ("chunks", 4, "chunks_locator"),
-        ("embeddings", 8, "embeddings_locator"),
+        ("normalized", 4, "normalized_locator"),
+        ("chunks", 6, "chunks_locator"),
+        ("embeddings", 10, "embeddings_locator"),
     ],
 )
 @pytest.mark.asyncio
@@ -1218,3 +1229,25 @@ async def test_run_once_rejects_unbounded_or_non_integer_limits(limit: object) -
 
     with pytest.raises(ValueError, match="between 1 and 50"):
         await worker.run_once(limit=limit)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_legacy_inflight_ready_reconciles_receipts_before_completion():
+    worker, repository, artifacts, embeddings, index, clock = worker_parts()
+    assert (await worker.run_once(limit=1)).ready == 1
+    original_manifest = repository.work.manifest
+    original_calls = embeddings.calls
+    repository.pending = True
+    repository.job = replace(repository.job, stage=JobStage.READY)
+    repository.work = replace(
+        repository.work, stage=JobStage.READY, chunk_manifest_digest=None, projection_digest=None
+    )
+    index.rows.clear()
+    repository.commits.clear()
+    assert (await worker.run_once(limit=1)).ready == 1
+    assert repository.work.manifest == original_manifest
+    assert repository.work.chunk_manifest_digest is not None
+    assert repository.work.projection_digest is not None
+    assert repository.commits == [JobStage.READY]
+    assert index.upsert_calls == 2
+    assert embeddings.calls == original_calls

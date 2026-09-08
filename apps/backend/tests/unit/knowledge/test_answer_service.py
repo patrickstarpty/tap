@@ -41,6 +41,7 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tap.modules.knowledge.domain.sources import legacy_source_id
 from tap.modules.knowledge.ports.errors import ModelUnavailable, SearchUnavailable
 
 SOURCE_HASH = "sha256:" + "a" * 64
@@ -53,7 +54,9 @@ def ready(
     revision_id: str = "rev_a",
     source_hash: str = SOURCE_HASH,
 ) -> ReadyDocumentRevision:
-    return ReadyDocumentRevision(document_id, revision_id, source_hash)
+    return ReadyDocumentRevision(
+        document_id, revision_id, source_hash, legacy_source_id("tapper-demo", document_id)
+    )
 
 
 def request_for(*document_ids: str) -> AnswerRequest:
@@ -62,7 +65,7 @@ def request_for(*document_ids: str) -> AnswerRequest:
         resource_refs=tuple(
             ResourceRef(
                 family=SourceFamily.DOC,
-                source_id=document_id,
+                source_id=legacy_source_id("tapper-demo", document_id),
                 mode=ResourceMode.SCOPE,
             )
             for document_id in document_ids
@@ -106,7 +109,7 @@ def citation(
         or "h_"
         + str(logical_chunk_id_for(DocumentId(document_id), anchor_json)).removeprefix("lc_"),
         source=SourceRevisionRef(
-            source_id=document_id,
+            source_id=legacy_source_id("tapper-demo", document_id),
             source_type="doc",
             revision_kind=RevisionKind.BLOB_VERSION,
             revision=revision_id,
@@ -161,12 +164,12 @@ class MemoryAnswerRepository:
         self.change_before_save = False
         self.load_requests: list[tuple[str, ...]] = []
 
-    async def load_ready_revisions(
+    async def load_source_revisions(
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]:
         self.load_requests.append(document_ids)
         wanted = set(document_ids)
-        return tuple(row for row in self.rows if row.document_id in wanted)
+        return tuple(row for row in self.rows if row.source_id in wanted)
 
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
         if self.change_before_save:
@@ -227,6 +230,36 @@ def service(
     repository = MemoryAnswerRepository(rows)
     gateway = Gateway(response)
     return AnswerService(repository=repository, knowledge=gateway), repository, gateway
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corpus", ["tapper-demo-v1", "tapper-demo-v2"])
+@pytest.mark.parametrize("abstained", [False, True])
+async def test_answer_uses_the_selected_runtime_projection_corpus(corpus, abstained):
+    repository = MemoryAnswerRepository((ready(),))
+    response = replace(answer_response(abstained=abstained), corpus_version=corpus)
+    gateway = Gateway(response)
+    service = AnswerService(repository=repository, knowledge=gateway, corpus_version=corpus)
+    assert await service.answer(request_for("doc_a")) == response
+    assert gateway.policies[0].active_corpus_version == corpus
+    assert len(repository.snapshots) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured,returned",
+    [("tapper-demo-v1", "tapper-demo-v2"), ("tapper-demo-v2", "tapper-demo-v1")],
+)
+async def test_answer_refuses_response_policy_corpus_mismatch_before_persistence(
+    configured, returned
+):
+    repository = MemoryAnswerRepository((ready(),))
+    gateway = Gateway(replace(answer_response(), corpus_version=returned))
+    service = AnswerService(repository=repository, knowledge=gateway, corpus_version=configured)
+    with pytest.raises(AnswerSnapshotUnavailable):
+        await service.answer(request_for("doc_a"))
+    assert gateway.policies[0].active_corpus_version == configured
+    assert repository.snapshots == []
 
 
 def test_empty_selection_fails_before_search_or_model_io() -> None:
@@ -377,7 +410,7 @@ def test_nonready_or_missing_selected_source_fails_before_knowledge_io() -> None
         with pytest.raises(DocumentStateChanged):
             await answer_service.answer(request_for("doc_processing"))
 
-        assert repository.load_requests == [("doc_processing",)]
+        assert repository.load_requests == [(legacy_source_id("tapper-demo", "doc_processing"),)]
         assert gateway.requests == []
 
     asyncio.run(scenario())
@@ -407,9 +440,13 @@ def test_answer_uses_only_trusted_selected_rows_and_preserves_gateway_response()
         trusted = gateway.requests[0]
         assert trusted.answer_mode is AnswerMode.QUICK
         assert trusted.source_families == (SourceFamily.DOC,)
-        assert tuple(ref.source_id for ref in trusted.resource_refs) == ("doc_a", "doc_b")
+        assert tuple(ref.source_id for ref in trusted.resource_refs) == tuple(
+            legacy_source_id("tapper-demo", item) for item in ("doc_a", "doc_b")
+        )
         assert all(ref.mode is ResourceMode.SCOPE for ref in trusted.resource_refs)
-        assert gateway.policies[0].resource_grants[0].source_id == "doc_a"
+        assert gateway.policies[0].resource_grants[0].source_id == legacy_source_id(
+            "tapper-demo", "doc_a"
+        )
         assert len(repository.snapshots) == 1
         snapshot = repository.snapshots[0]
         assert tuple(item.document_id for item in snapshot.selected_revisions) == (
@@ -438,13 +475,19 @@ def test_internal_search_uses_the_same_current_selected_revision_authority() -> 
         )
 
         assert response.evidence == ()
-        assert repository.load_requests == [("doc_b", "doc_a")]
+        assert repository.load_requests == [
+            tuple(legacy_source_id("tapper-demo", item) for item in ("doc_b", "doc_a"))
+        ]
         assert len(gateway.requests) == 1
         trusted = gateway.requests[0]
         assert trusted.source_families == (SourceFamily.DOC,)
-        assert tuple(ref.source_id for ref in trusted.resource_refs) == ("doc_a", "doc_b")
+        assert tuple(ref.source_id for ref in trusted.resource_refs) == tuple(
+            legacy_source_id("tapper-demo", item) for item in ("doc_a", "doc_b")
+        )
         assert all(ref.mode is ResourceMode.SCOPE for ref in trusted.resource_refs)
-        assert gateway.policies[0].resource_grants[0].source_id == "doc_a"
+        assert gateway.policies[0].resource_grants[0].source_id == legacy_source_id(
+            "tapper-demo", "doc_a"
+        )
         assert repository.snapshots == []
 
     asyncio.run(scenario())
@@ -682,3 +725,34 @@ def test_snapshot_value_rejects_citation_rebound_to_another_trace() -> None:
                 ),
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_canonical_source_expands_documents_and_preserves_document_chunk_identity():
+    source_id = "src_" + "a" * 32
+    rows = (
+        replace(ready(), source_id=source_id),
+        replace(ready("doc_b", "rev_b", SECOND_HASH), source_id=source_id),
+    )
+    evidence = citation()
+    response = answer_response(
+        citations=(replace(evidence, source=replace(evidence.source, source_id=source_id)),)
+    )
+    repository = MemoryAnswerRepository(rows)
+
+    async def load_sources(ids):
+        assert ids == (source_id,)
+        return rows
+
+    repository.load_source_revisions = load_sources
+    gateway = Gateway(response)
+    answer_service = AnswerService(repository=repository, knowledge=gateway)
+    request = AnswerRequest(
+        query="What is the rule?",
+        resource_refs=(ResourceRef(SourceFamily.DOC, source_id, ResourceMode.SCOPE),),
+    )
+    assert await answer_service.answer(request) is response
+    assert [
+        (ref.source_id, ref.requested_revision) for ref in gateway.requests[0].resource_refs
+    ] == [(source_id, "rev_a"), (source_id, "rev_b")]
+    assert repository.snapshots[0].citations[0].document_id == "doc_a"

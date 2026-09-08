@@ -82,6 +82,7 @@ class ProjectEventEnvelope:
 | ------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------- |
 | `knowledge.document-revision.accepted`      | DocumentRevision   | `sourceId, documentId, revisionId, contentHash` / `revisionId:ingest`                     |
 | `knowledge.document-revision.ready`         | DocumentRevision   | `revisionId, chunkManifestDigest, projectionDigest` / `revisionId`                        |
+| `knowledge.operator.completed`             | KnowledgeOperation | `operationId, command, outcome, resultDigest` / operation                              |
 | `knowledge.graph-snapshot.requested`        | GraphSnapshot      | `snapshotId, sourceRevisionIds[], extractionProfileDigest` / snapshot                     |
 | `knowledge.graph-snapshot.ready`            | GraphSnapshot      | `snapshotId, graphDigest, evidenceDigest` / snapshot                                      |
 | `conversation.turn.requested`               | Turn               | `conversationId, turnId, inputSnapshotDigest` / turn                                      |
@@ -101,11 +102,34 @@ class ProjectEventEnvelope:
 
 每个消费者声明接受的 `schema_version`、业务幂等键和 retry/dead-letter 策略；未知 major、缺字段或跨 Project payload 进入可审计 dead-letter，不能 ack 后静默丢弃。状态改变事件必须与对应状态、Audit 和 Outbox 同事务；完成事件不能在必需 Manifest 尚未持久化时发出。SSE Schema 是这些内部事件的授权闭集投影，单独生成版本化 JSON Schema。
 
+完成事件的 `outcome` 使用以下闭集：Conversation 沿用 Turn 终态 `completed | abstained | canceled | failed`，均须引用已持久化的 Answer/Evidence Snapshot，失败或空结果也不能省略该事实；Debug Execution 和 Execution Run 使用 §7 的 `TestOutcome`；Recorder Session 使用 `OperationStatus` 的终态 `SUCCEEDED | FAILED | CANCELLED | TIMED_OUT`。状态改变事件的 `from/to` 使用 §7 的 `OperationStatus`，合法转换由对应领域状态机验证。Provider 原始状态不得直接代替这些值。事件类型已登记不代表对应生产流程已经实现。
+
+V0 Task 4 的 Operator 完成事件只在 `knowledge_operator_operation` 的结果、Audit 与 Outbox 同事务持久化后产生；`operationId` 等于 aggregate ID，`aggregate_version=1`。`command` 为 `recover-uploads | scavenge-staging | rebuild-milvus | reconcile-all`，`outcome` 为 `completed | partial | failed`；`resultDigest` 是已保存的封闭结果/计数的 canonical SHA-256（沿用 `sha256:` 前缀）。不含 Blob locator 或 Provider 原文。claim/lease 是运行协调，不是完成事件；重放原 operation 返回原结果和事件，不产生第二次完成。该项已由 Task 4 登记并接入实际完成事务，范围与验证限制见[恢复验收](../reviews/2026-09-06-tapper-v0-recovery-review.md)。
+
+`aggregate_id` 与对应 payload 资源 ID 通常上限为64字符；Task6 对 `DocumentRevision` 单独扩为128，以保留真实68字符 Revision ID，其他 aggregate 仍保持64。`0010` 将 live/archive/dead-letter 三份 Outbox 的 aggregate 存储扩至128；不能据存储宽度放宽其他事件契约。scope、event、correlation 与 idempotency ID 上限为128字符。时间戳必须带时区且可表示为 canonical UTC，不能只检查语法后让转换溢出阻塞持久事件处理。
+
+### 2.1 现有唤醒的迁移兼容契约
+
+V0 Task 2B 在同一封闭 registry 中先登记以下 major version 1 的 transport compatibility events。它们只表达已有的处理/通知意图，不能被改名为需要 Input Snapshot 或 Source 的新领域事件；新领域流程切换后不再产生相应兼容事件，历史记录仍可验证。
+
+| event type | 允许的历史 / 当前 aggregate type | payload |
+| --- | --- | --- |
+| `turn.process_requested` | `turn`、`chat_turn` | `aggregateId, sequence` |
+| `chat.event_appended` | `turn`、`chat_turn` | `aggregateId, sequence` |
+| `knowledge.ingestion_requested` | `knowledge_document` | `aggregateId, sequence` |
+| `knowledge.deletion_requested` | `knowledge_document` | `aggregateId, sequence` |
+
+`aggregateId` 精确等于信封 `aggregate_id`；`sequence` 保留原 nullable 非负整数，不含业务正文。兼容信封的 `aggregate_version` 为原 sequence，缺失时使用 `0` 明确表示“无领域版本的传输意图”；此哨兵不得用于新领域事件或解释为资产 Revision。迁移保存原 Outbox ID、command ID、aggregate、sequence 和时间戳：`event_id=outbox_id`、`idempotency_key=command_id`、`occurred_at=created_at`（UTC）；无法恢复的 correlation 使用原 Outbox ID，`causation_id=null`。event/correlation/idempotency ID 上限保留为 128 字符。未知历史 type 或非法 shape 在 DDL 前拒绝，不能制造缺失的 Source、Snapshot 或请求事实。
+
+Outbox 的 canonical envelope JSON 非空；关系列的 Project/Actor/identity mode、command、aggregate、sequence 与 JSON 必须一致。每次新写入都使用唯一 registry / 同事务 writer；读取时发现矛盾必须 fail closed，Task 2C 把未知版本和非法持久事件收敛到 durable dead-letter。Redis 只发布 Project 与事件身份提示，不复制内部 payload，也不能成为可信身份来源。
+
+`event_content_digest` 对可信 scope、event type/schema version、aggregate type/ID/version 和闭集 payload 做 canonical 摘要，排除生成的投递 ID 与时间。它用于检测同事件幂等键的不同内容，**不代表业务请求摘要**。业务服务另行比较完整 canonical request；例如 Turn 的同 client request key/不同 message 返回 `idempotency-conflict`，不能因唤醒 payload 相同而返回旧结果。
+
 ## 3. Knowledge 与 Conversation
 
 `KnowledgeSource` 是 Project 内的逻辑容器，一个 Source 拥有一个或多个稳定 Document，每个 Document 拥有不可变 Revision。Knowledge 资源身份由 `project_id + source_id + document_id + revision_id + content_hash` 固定，Document 去重唯一性只在 `(project_id, dedupe_key)` 内成立；Chunk 另有跨 revision 稳定的 `logical_chunk_id` 与不可变 `chunk_id`。Citation 必须同时绑定 source/document revision、chunk、anchor、原文 digest 与回答时的授权快照。
 
-Legacy 数据迁移为每个现有 Document 创建同 Project Source，保留 Document ID，并把历史 `source_id=document_id` 显式映射到新 Source ID。Milvus 新版本 collection 使用 canonical `enterprise_id/project_id/source_id`；旧 `tenant_id` 是迁移输入而非公共或新物理契约。
+Task6 的 `0010` 已为每个 legacy Document 创建同 Project Source，保留所有 Document/Revision/Citation ID，并把历史 `source_id=document_id` 显式映射到新 Source ID。Answer 通过有序关联保留全部选中 Revision（含多Source和未引用项），原 selected JSON 不改写；复合约束保证 Source/Document/Revision/Citation 归属。具体迁移、审计及测试边界见[Source账本验收](../reviews/2026-09-06-tapper-v1-source-ledger-review.md)。Task6A 将为 Milvus 新版本 collection 引入 canonical `enterprise_id/project_id/source_id`；旧 `tenant_id` 是迁移输入而非公共或新物理契约。
 
 ```python
 class ModelGateway(Protocol):

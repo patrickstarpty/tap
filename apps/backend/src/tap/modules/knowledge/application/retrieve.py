@@ -441,22 +441,19 @@ class AuthorizedRetrieval:
         resource: ResourceRef,
         policy: RetrievalPolicyContext,
     ) -> ResolvedResourceRef:
-        grant = next(
-            (
-                candidate
-                for candidate in policy.resource_grants
-                if candidate.family == resource.family.value
-                and candidate.source_id == resource.source_id
-            ),
-            None,
+        grants = tuple(
+            candidate
+            for candidate in policy.resource_grants
+            if candidate.family == resource.family.value
+            and candidate.source_id == resource.source_id
+            and (
+                resource.requested_revision is None
+                or candidate.revision == resource.requested_revision
+            )
         )
-        if grant is None:
-            raise AuthorizationDenied("resource is not authorized")
-        if (
-            resource.requested_revision is not None
-            and resource.requested_revision != grant.revision
-        ):
-            raise AuthorizationDenied("resource revision is unavailable or unauthorized")
+        if len(grants) != 1:
+            raise AuthorizationDenied("resource revision is unavailable, ambiguous or unauthorized")
+        grant = grants[0]
         if resource.anchor is not None and not AuthorizedRetrieval._anchor_allowed(resource, grant):
             raise AuthorizationDenied("resource anchor is not authorized")
         try:

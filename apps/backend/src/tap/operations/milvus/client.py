@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import logging
 import re
 import threading
@@ -740,10 +741,18 @@ class PyMilvusDocProvisioner(MilvusDocProvisioner):
         name: str,
         schema: Mapping[str, object],
     ) -> None:
+        description = schema.get("description")
+        if not isinstance(description, str) or not description.startswith(
+            "tap-collection-metadata-v1:"
+        ):
+            raise ValueError("explicit collection schema profile is required")
+        version = json.loads(description.split(":", 1)[1]).get("schemaVersion")
+        if version not in {"doc-schema-v1", "doc-schema-v2"}:
+            raise ValueError("unsupported collection schema profile")
         index_names = (
             "dense_vector",
             "bm25_sparse",
-            "tenant_id",
+            "enterprise_id" if version == "doc-schema-v2" else "tenant_id",
             "project_id",
             "allowed_group_ids",
             "classification_rank",
@@ -846,11 +855,24 @@ class PyMilvusWriter:
 class PyMilvusDocReader:
     """Strong-consistency persisted-row reader for projection reconciliation."""
 
-    def __init__(self, client: _SyncClient, *, database_name: str) -> None:
+    def __init__(
+        self,
+        client: _SyncClient,
+        *,
+        database_name: str,
+        allowed_schema_versions: tuple[str, ...] = ("doc-schema-v1",),
+    ) -> None:
         if not isinstance(database_name, str) or not database_name or len(database_name) > 255:
             raise ValueError("Milvus document reader database must be bounded")
         self._client = client
         self._database_name = database_name
+        if allowed_schema_versions not in {
+            ("doc-schema-v1",),
+            ("doc-schema-v2",),
+            ("doc-schema-v1", "doc-schema-v2"),
+        }:
+            raise ValueError("Milvus document reader profiles must be explicit and closed")
+        self._allowed_schema_versions = allowed_schema_versions
 
     async def collection_exists(self, name: str) -> bool:
         raw = await _doc_call(
@@ -875,6 +897,7 @@ class PyMilvusDocReader:
             raw,
             expected_alias=alias,
             expected_database=self._database_name,
+            allowed_schema_versions=self._allowed_schema_versions,
         )
 
     async def describe_collection_schema(
@@ -1020,7 +1043,11 @@ async def create_tapper_document_clients(
                 database_name=database,
             ),
             writer=PyMilvusWriter(writer_client),
-            reader=PyMilvusDocReader(reader_client, database_name=database),
+            reader=PyMilvusDocReader(
+                reader_client,
+                database_name=database,
+                allowed_schema_versions=("doc-schema-v1", "doc-schema-v2"),
+            ),
         )
     except BaseException as primary:
         errors: list[BaseException] = [primary]
@@ -1611,7 +1638,11 @@ def _validated_base_grants(
         if (
             record.object_type != "Collection"
             or record.database_name != database_name
-            or _PUBLISHER_COLLECTION_NAME.fullmatch(record.object_name) is None
+            or (
+                _PUBLISHER_COLLECTION_NAME.fullmatch(record.object_name) is None
+                and re.fullmatch(r"kb_doc_v2_tapper_demo(?:_[0-9a-f]{12})?", record.object_name)
+                is None
+            )
             or record.privilege not in allowed_concrete
         ):
             raise RuntimeError("Milvus returned invalid concrete grant metadata")
@@ -1661,6 +1692,7 @@ def _exact_doc_alias_collection(
     *,
     expected_alias: str,
     expected_database: str,
+    allowed_schema_versions: tuple[str, ...],
 ) -> str:
     if not isinstance(raw, Mapping) or set(raw) != {
         "alias",
@@ -1673,7 +1705,16 @@ def _exact_doc_alias_collection(
         raw.get("alias") != expected_alias
         or raw.get("db_name") != expected_database
         or not isinstance(collection_name, str)
-        or _PUBLISHER_COLLECTION_NAME.fullmatch(collection_name) is None
+        or not any(
+            re.fullmatch(
+                {
+                    "doc-schema-v1": r"kb_doc_v1_tapper_demo(?:_[0-9a-f]{12})?",
+                    "doc-schema-v2": r"kb_doc_v2_tapper_demo(?:_[0-9a-f]{12})?",
+                }[version],
+                collection_name,
+            )
+            for version in allowed_schema_versions
+        )
     ):
         raise RuntimeError("Milvus returned malformed alias metadata")
     return collection_name

@@ -419,14 +419,15 @@ def test_only_milvus_transport_imports_pymilvus() -> None:
     assert consumers == {transport}
 
 
-def test_only_codex_answer_adapter_owns_native_process_capability() -> None:
-    """A second process-capable model adapter would bypass the fixed Codex boundary."""
+def test_only_fixed_codex_adapter_and_parser_supervisor_own_native_process_capability() -> None:
+    """Native process authority is confined to two explicit implementation files."""
     codex_adapter = KNOWLEDGE / "adapters" / "codex_exec.py"
     process_callers = {
         path for path in recursive_python_files(BACKEND_SOURCE) if native_process_calls(path)
     }
 
-    assert process_callers == {codex_adapter}
+    parser_supervisor = BACKEND_SOURCE / "entrypoints" / "tapper_parser_worker.py"
+    assert process_callers == {codex_adapter, parser_supervisor}
     imports = _imports(codex_adapter)
     assert (
         ImportReference(
@@ -441,6 +442,24 @@ def test_only_codex_answer_adapter_owns_native_process_capability() -> None:
         or reference.symbol in {"QueryEmbeddingPort", "ModelPort", "Embedding"}
         for reference in imports
     )
+
+
+def test_application_cannot_import_parser_supervisor_or_docker_client() -> None:
+    supervisor = BACKEND_SOURCE / "entrypoints" / "tapper_parser_worker.py"
+    for path in recursive_python_files(BACKEND_SOURCE):
+        if path == supervisor:
+            continue
+        for reference in _imports(path):
+            assert not (
+                reference.module == "tap.entrypoints.tapper_parser_worker"
+                or reference.module.startswith("tap.entrypoints.tapper_parser_worker.")
+                or (
+                    reference.module == "tap.entrypoints"
+                    and reference.symbol == "tapper_parser_worker"
+                )
+                or reference.module in {"docker", "aiodocker"}
+                or reference.module.startswith(("docker.", "aiodocker."))
+            ), (path, reference)
 
 
 @pytest.mark.parametrize(
@@ -927,3 +946,18 @@ def test_policy_scanner_allows_the_explicit_public_authorizer_builder(tmp_path: 
     assert not any(policy_import_exposes_construction(reference) for reference in references), (
         references
     )
+
+
+def test_task6_ledger_and_search_audit_use_governance_public_boundary():
+    forbidden = []
+    for path in (
+        KNOWLEDGE / "adapters" / "mysql_documents.py",
+        KNOWLEDGE / "adapters" / "mysql_audit.py",
+    ):
+        for reference in parsed_imports(path, package="tap.modules.knowledge"):
+            if (
+                reference.module.startswith("tap.modules.governance.")
+                and reference.module != "tap.modules.governance.ports.audit"
+            ):
+                forbidden.append(str(path.relative_to(BACKEND_SOURCE)))
+    assert forbidden == []

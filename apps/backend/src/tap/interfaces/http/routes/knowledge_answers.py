@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from tap.contracts.http import RetrievalAnswerRequest, RetrievalAnswerResponse
 from tap.interfaces.http.dependencies import knowledge_service
 from tap.interfaces.http.problems import problem_response_metadata
+from tap.interfaces.http.scope import project_authorization
 
-router = APIRouter(prefix="/v1/knowledge", tags=["knowledge"])
+router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
 @router.post(
     "/answers",
     operation_id="knowledge_create_answer",
+    dependencies=[Depends(project_authorization("knowledge.answer"))],
     response_model=RetrievalAnswerResponse,
     responses={
         status.HTTP_400_BAD_REQUEST: problem_response_metadata("Invalid answer selection"),

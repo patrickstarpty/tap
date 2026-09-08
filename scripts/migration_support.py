@@ -11,11 +11,12 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import FrameType
@@ -25,11 +26,16 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import MetaData, create_engine, inspect, select
+from sqlalchemy import MetaData, create_engine, inspect, select, text
 from sqlalchemy.engine import Connection, make_url
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "0005_projection_lineage"
+PROJECT_SCOPE_REVISION = "0007_project_scope_backfill"
+AUDIT_REVISION = "0008_project_audit"
+OPERATIONS_REVISION = "0009_outbox_operations"
+SOURCES_REVISION = "0010_knowledge_sources"
+SOURCE_COMMANDS_REVISION = "0010a_source_commands"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -248,6 +254,71 @@ def validate_isolated_database(url: str, project: str) -> None:
         raise ValueError("refusing a shared, default, or non-loopback database")
 
 
+def _normalize_check_sql(expression: str) -> str:
+    """Remove MySQL reflection decoration without changing quoted SQL content."""
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(expression):
+        character = expression[position]
+        if character in "'\"`":
+            quote = character
+            start = position
+            position += 1
+            while position < len(expression):
+                if expression[position] == "\\":
+                    position = min(position + 2, len(expression))
+                elif expression[position] == quote:
+                    position += 1
+                    if position < len(expression) and expression[position] == quote:
+                        position += 1
+                    else:
+                        break
+                else:
+                    position += 1
+            quoted = expression[start:position]
+            # Only unquote ordinary identifiers; meaningful quoted whitespace or
+            # escaped delimiters must never compare equal to different names.
+            if quote == "`" and re.fullmatch(r"`[A-Za-z_][A-Za-z0-9_$]*`", quoted):
+                tokens.append(("sql", quoted[1:-1]))
+            else:
+                tokens.append(("quoted", quoted))
+        elif character.isspace():
+            while position < len(expression) and expression[position].isspace():
+                position += 1
+            tokens.append(("space", " "))
+        elif word := re.match(r"[A-Za-z_][A-Za-z0-9_$]*", expression[position:]):
+            value = word.group()
+            position += len(value)
+            if not (
+                value.lower() in {"_utf8mb4", "_utf8", "_ascii"}
+                and position < len(expression)
+                and expression[position] == "'"
+            ):
+                tokens.append(("sql", value))
+        else:
+            tokens.append(("sql", character))
+            position += 1
+
+    while tokens:
+        if tokens[0][0] == "space":
+            tokens.pop(0)
+            continue
+        if tokens[-1][0] == "space":
+            tokens.pop()
+            continue
+        if tokens[0] != ("sql", "(") or tokens[-1] != ("sql", ")"):
+            break
+        depth = 0
+        for offset, token in enumerate(tokens):
+            depth += (token == ("sql", "(")) - (token == ("sql", ")"))
+            if depth == 0:
+                break
+        if offset != len(tokens) - 1:
+            break
+        tokens = tokens[1:-1]
+    return "".join(value for _, value in tokens)
+
+
 def schema_differences(
     connection: Connection, metadata: MetaData
 ) -> list[dict[str, Any]]:
@@ -280,12 +351,12 @@ def schema_differences(
         from sqlalchemy import CheckConstraint
 
         expected_checks = {
-            (item.name, str(item.sqltext))
+            (item.name, _normalize_check_sql(str(item.sqltext)))
             for item in table.constraints
             if isinstance(item, CheckConstraint)
         }
         actual_checks = {
-            (item.get("name"), item["sqltext"])
+            (item.get("name"), _normalize_check_sql(item["sqltext"]))
             for item in inspector.get_check_constraints(name)
         }
         if expected_checks != actual_checks:
@@ -336,8 +407,15 @@ def _local_environment() -> dict[str, str]:
 class IsolatedMysql:
     url: str
     project: str
+    ownership: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     def upgrade(self, revision: str) -> None:
+        self._migrate("upgrade", revision)
+
+    def downgrade(self, revision: str) -> None:
+        self._migrate("downgrade", revision)
+
+    def _migrate(self, direction: str, revision: str) -> None:
         validate_isolated_database(self.url, self.project)
         env = _local_environment()
         env["TAP_ALEMBIC_DATABASE_URL"] = self.url
@@ -350,7 +428,7 @@ class IsolatedMysql:
                 "alembic",
                 "-c",
                 "apps/backend/alembic.ini",
-                "upgrade",
+                direction,
                 revision,
             ],
             env=env,
@@ -441,6 +519,8 @@ def isolated_mysql() -> Iterator[IsolatedMysql]:
             number: signal.signal(number, _interrupt_gate)
             for number in (signal.SIGINT, signal.SIGTERM)
         }
+        ownership = {"event": "owned-mysql", "identity": project, "state": "started"}
+        print(json.dumps(ownership), file=sys.stderr, flush=True)
         try:
             _run([*command, "up", "-d", "--wait", "--wait-timeout", "180"], env=env)
             address = _run([*command, "port", "mysql", "3306"], env=env)
@@ -448,13 +528,18 @@ def isolated_mysql() -> Iterator[IsolatedMysql]:
                 raise ValueError("MySQL must be published only on loopback")
             url = f"mysql+pymysql://tap_gate:{password}@{address}/{database}?charset=utf8mb4"
             validate_isolated_database(url, project)
-            yield IsolatedMysql(url=url, project=project)
+            yield IsolatedMysql(url=url, project=project, ownership=ownership)
         finally:
             for number in previous_handlers:
                 signal.signal(number, signal.SIG_IGN)
             try:
                 _run([*command, "down", "--volumes", "--remove-orphans"], env=env)
+                ownership["state"] = "complete"
+            except BaseException:
+                ownership["state"] = "failed"
+                raise
             finally:
+                print(json.dumps(ownership), file=sys.stderr, flush=True)
                 for number, previous in previous_handlers.items():
                     signal.signal(number, previous)
 
@@ -484,7 +569,15 @@ def assert_preserved(
     connection: Connection, before: dict[str, list[dict[str, Any]]], revision: str
 ) -> dict[str, int]:
     """Fail closed until a new revision explicitly registers its data assertions."""
-    if revision != BASELINE:
+    if revision not in {
+        BASELINE,
+        "0006_validation_identity",
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+        OPERATIONS_REVISION,
+        SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
+    }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
         )
@@ -497,11 +590,504 @@ def assert_preserved(
     counts = {}
     for name, expected in before.items():
         table = after.tables[name]
-        actual = [dict(row) for row in connection.execute(select(table)).mappings()]
+        # Compare frozen original columns only, ordered by stable primary key.
+        columns = list(expected[0])
+        actual = [
+            dict(row)
+            for row in connection.execute(
+                select(*(table.c[key] for key in columns)).order_by(
+                    *table.primary_key.columns
+                )
+            ).mappings()
+        ]
+        expected = sorted(
+            expected,
+            key=lambda row: tuple(row[key.name] for key in table.primary_key.columns),
+        )
         if actual != expected:
             raise ValueError(f"baseline data changed in {name}")
         counts[name] = len(actual)
+    if revision in {
+        "0006_validation_identity",
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+        OPERATIONS_REVISION,
+        SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
+    }:
+        assert_identity_seed(connection)
+    if revision in {
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+        OPERATIONS_REVISION,
+        SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
+    }:
+        assert_scope_backfill(connection)
     return counts
+
+
+def assert_identity_seed(connection: Connection) -> dict[str, str]:
+    identity = MetaData()
+    identity.reflect(connection, only=["enterprise", "project", "actor_principal"])
+    expected = {
+        "enterprise": {"enterprise_id": "local", "enabled": True},
+        "project": {
+            "project_id": "tapper-demo",
+            "enterprise_id": "local",
+            "enabled": True,
+        },
+        "actor_principal": {
+            "actor_id": "tapper-local-user",
+            "enterprise_id": "local",
+            "principal_type": "VALIDATION",
+            "enabled": True,
+        },
+    }
+    for name, row in expected.items():
+        actual = [
+            dict(value)
+            for value in connection.execute(select(identity.tables[name])).mappings()
+        ]
+        if actual != [row]:
+            raise ValueError(f"invalid identity seed in {name}")
+    return {
+        "enterprise": "local",
+        "project": "tapper-demo",
+        "actor": "tapper-local-user",
+        "principal_type": "VALIDATION",
+    }
+
+
+def assert_scope_backfill(connection: Connection) -> None:
+    from tap.platform.messaging.mysql_outbox import validate_outbox_row
+
+    metadata = MetaData()
+    metadata.reflect(connection, only=list(BASELINE_ROWS))
+    expected = {
+        "enterprise_id": "local",
+        "project_id": "tapper-demo",
+        "actor_id": "tapper-local-user",
+        "identity_mode": "validation",
+        "identity_origin": "VALIDATION",
+    }
+    for name in BASELINE_ROWS:
+        table = metadata.tables[name]
+        for row in connection.execute(select(table)).mappings():
+            if any(row[field] != value for field, value in expected.items()):
+                raise ValueError(f"invalid scope backfill in {name}")
+            if name == "outbox":
+                validate_outbox_row(dict(row))
+
+
+def assert_scope_constraints(connection: Connection) -> None:
+    """Probe real relational isolation, and roll back all temporary test records."""
+    from sqlalchemy.exc import DBAPIError
+
+    metadata = MetaData()
+    metadata.reflect(connection)
+    # Reflection opens a transaction; rollback before the explicit evidence scope.
+    connection.rollback()
+    transaction = connection.begin()
+    try:
+        connection.execute(
+            metadata.tables["enterprise"]
+            .insert()
+            .values(enterprise_id="other-enterprise")
+        )
+        connection.execute(
+            metadata.tables["actor_principal"]
+            .insert()
+            .values(
+                enterprise_id="other-enterprise",
+                actor_id="foreign-actor",
+                principal_type="VALIDATION",
+            )
+        )
+        connection.execute(
+            metadata.tables["project"]
+            .insert()
+            .values(enterprise_id="local", project_id="other-project")
+        )
+        turns = metadata.tables["chat_turn"]
+        base = dict(connection.execute(select(turns)).mappings().one())
+        connection.execute(
+            turns.insert().values(
+                **{**base, "turn_id": "other-turn", "project_id": "other-project"}
+            )
+        )
+        documents = metadata.tables["knowledge_document"]
+        document = dict(connection.execute(select(documents)).mappings().one())
+        connection.execute(
+            documents.insert().values(
+                **{
+                    **document,
+                    "document_id": "other-document",
+                    "project_id": "other-project",
+                    "current_revision_id": None,
+                }
+            )
+        )
+        bad_rows = [
+            (
+                turns,
+                {
+                    **base,
+                    "turn_id": "bad-enterprise",
+                    "client_request_id": "bad-enterprise",
+                    "enterprise_id": "other-enterprise",
+                },
+            ),
+            (
+                turns,
+                {
+                    **base,
+                    "turn_id": "bad-actor",
+                    "client_request_id": "bad-actor",
+                    "actor_id": "foreign-actor",
+                },
+            ),
+            (
+                turns,
+                {
+                    **base,
+                    "turn_id": "missing-scope",
+                    "client_request_id": "missing-scope",
+                    "project_id": None,
+                },
+            ),
+        ]
+        events = metadata.tables["chat_event"]
+        event = dict(connection.execute(select(events)).mappings().one())
+        bad_rows.append(
+            (
+                events,
+                {
+                    **event,
+                    "event_id": "cross-project-child",
+                    "project_id": "other-project",
+                    "sequence": 2,
+                },
+            )
+        )
+        revisions = metadata.tables["knowledge_document_revision"]
+        revision = dict(connection.execute(select(revisions)).mappings().one())
+        bad_rows.append(
+            (
+                revisions,
+                {
+                    **revision,
+                    "revision_id": "cross-project-revision",
+                    "project_id": "other-project",
+                },
+            )
+        )
+        citations = metadata.tables["knowledge_citation_snapshot"]
+        citation = dict(connection.execute(select(citations)).mappings().one())
+        bad_rows.append(
+            (
+                citations,
+                {
+                    **citation,
+                    "citation_id": "cross-project-citation",
+                    "project_id": "other-project",
+                },
+            )
+        )
+        outbox = metadata.tables["outbox"]
+        event_row = dict(connection.execute(select(outbox)).mappings().one())
+        bad_rows.append(
+            (
+                outbox,
+                {
+                    **event_row,
+                    "outbox_id": "missing-envelope",
+                    "command_id": "missing-envelope",
+                    "envelope": None,
+                },
+            )
+        )
+        for table, row in bad_rows:
+            savepoint = connection.begin_nested()
+            try:
+                connection.execute(table.insert().values(**row))
+            except DBAPIError as error:
+                savepoint.rollback()
+                if (
+                    error.orig is None
+                    or not error.orig.args
+                    or error.orig.args[0] not in {1048, 1452, 3819}
+                ):
+                    raise
+            else:
+                savepoint.rollback()
+                raise ValueError(f"missing Project constraint in {table.name}")
+        answers = metadata.tables["knowledge_answer_snapshot"]
+        connection.execute(answers.delete())
+        if connection.execute(select(citations)).first() is not None:
+            raise ValueError("scoped citation cascade was not preserved")
+    finally:
+        transaction.rollback()
+
+
+def assert_scope_rejection_paths(database: IsolatedMysql, engine: Any) -> None:
+    """Prove failed preflights leave schema and historical rows available for repair."""
+    from sqlalchemy import text
+
+    # First reject the lossy downgrade before it can remove a scope column.
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO project(project_id,enterprise_id) VALUES ('downgrade-probe','local')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chat_turn SELECT 'downgrade-turn', chat_id, "
+                "client_request_id, message, state, last_sequence, created_at, "
+                "enterprise_id, 'downgrade-probe', actor_id, identity_mode, "
+                "identity_origin FROM chat_turn WHERE turn_id='legacy-turn'"
+            )
+        )
+    try:
+        database.downgrade("0006_validation_identity")
+    except RuntimeError:
+        pass
+    else:
+        raise ValueError("unsafe cross-Project downgrade was accepted")
+    with engine.begin() as connection:
+        if "project_id" not in {
+            item["name"] for item in inspect(connection).get_columns("chat_turn")
+        }:
+            raise ValueError("downgrade preflight ran after destructive DDL")
+        connection.execute(text("DELETE FROM chat_turn WHERE turn_id='downgrade-turn'"))
+        connection.execute(
+            text("DELETE FROM project WHERE project_id='downgrade-probe'")
+        )
+    database.downgrade("0006_validation_identity")
+    for statement, restore in (
+        (
+            "UPDATE outbox SET message_type='unknown.event'",
+            "UPDATE outbox SET message_type='turn.process_requested'",
+        ),
+        ("UPDATE outbox SET sequence=-1", "UPDATE outbox SET sequence=1"),
+        (
+            "UPDATE knowledge_projection_fence SET revision_id='orphan-revision'",
+            "UPDATE knowledge_projection_fence SET revision_id='legacy-revision'",
+        ),
+    ):
+        with engine.begin() as connection:
+            connection.execute(text(statement))
+        try:
+            database.upgrade(PROJECT_SCOPE_REVISION)
+        except RuntimeError:
+            pass
+        else:
+            raise ValueError("invalid legacy data was accepted")
+        with engine.begin() as connection:
+            if "project_id" in {
+                item["name"] for item in inspect(connection).get_columns("chat_turn")
+            }:
+                raise ValueError("legacy validation occurred after DDL")
+            connection.execute(text(restore))
+    database.upgrade(PROJECT_SCOPE_REVISION)
+    with engine.connect() as connection:
+        assert_scope_backfill(connection)
+
+
+# New revision evidence is separate from the frozen fourteen-table 0005 fixture.
+AUDIT_PROBE_ROW: dict[str, Any] = {
+    "audit_id": "migration-audit",
+    "enterprise_id": "local",
+    "project_id": "tapper-demo",
+    "actor_id": "tapper-local-user",
+    "identity_mode": "validation",
+    "identity_origin": "VALIDATION",
+    "action": "recover-uploads",
+    "resource": "project-maintenance",
+    "outcome": "completed",
+    "correlation_id": "migration-correlation",
+    "idempotency_key": "migration-replay",
+    "content_digest": "d" * 64,
+    "safe_metadata": {},
+    "occurred_at": LEGACY_TIME,
+}
+
+
+def assert_audit_constraints(connection: Connection) -> None:
+    """Exercise non-null scope, relational provenance and binary replay keys."""
+    from sqlalchemy.exc import IntegrityError
+
+    metadata = MetaData()
+    metadata.reflect(connection, only=["project_audit", "project", "actor_principal"])
+    audit = metadata.tables["project_audit"]
+    if connection.execute(select(audit)).first() is not None:
+        raise ValueError("new audit table must start empty after upgrade or replay")
+    connection.rollback()
+    transaction = connection.begin()
+    try:
+        connection.execute(audit.insert(), AUDIT_PROBE_ROW)
+        stored = dict(connection.execute(select(audit)).mappings().one())
+        if stored != AUDIT_PROBE_ROW:
+            raise ValueError("audit fact or microsecond timestamp changed")
+        connection.execute(
+            metadata.tables["project"].insert(),
+            {"enterprise_id": "local", "project_id": "audit-other-project"},
+        )
+        for overrides in (
+            {"audit_id": "MIGRATION-AUDIT", "idempotency_key": "MIGRATION-REPLAY"},
+            {"audit_id": "audit-other", "project_id": "audit-other-project"},
+        ):
+            connection.execute(audit.insert(), {**AUDIT_PROBE_ROW, **overrides})
+        bad_rows: list[tuple[dict[str, Any], int]] = [
+            ({"audit_id": "audit-duplicate"}, 1062),
+            ({"audit_id": "audit-no-project", "project_id": "missing-project"}, 1452),
+            ({"audit_id": "audit-no-actor", "actor_id": "missing-actor"}, 1452),
+            (
+                {
+                    "audit_id": "audit-wrong-enterprise",
+                    "enterprise_id": "missing-enterprise",
+                },
+                1452,
+            ),
+        ]
+        bad_rows.extend(
+            ({"audit_id": "audit-null-" + field, field: None}, 1048)
+            for field in (
+                "enterprise_id",
+                "project_id",
+                "actor_id",
+                "identity_mode",
+                "identity_origin",
+                "action",
+                "resource",
+                "outcome",
+                "correlation_id",
+                "idempotency_key",
+                "content_digest",
+                "occurred_at",
+            )
+        )
+        for overrides, expected_code in bad_rows:
+            if expected_code != 1062 and "idempotency_key" not in overrides:
+                overrides = {**overrides, "idempotency_key": overrides["audit_id"]}
+            savepoint = connection.begin_nested()
+            try:
+                connection.execute(audit.insert(), {**AUDIT_PROBE_ROW, **overrides})
+            except IntegrityError as error:
+                savepoint.rollback()
+                if error.orig is None or error.orig.args[0] != expected_code:
+                    raise
+            else:
+                savepoint.rollback()
+                raise ValueError("missing audit relational or replay constraint")
+    finally:
+        transaction.rollback()
+
+
+def assert_operations_constraints(connection: Connection) -> None:
+    """Probe Project ownership, binary receipt keys and atomic completion shape."""
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    metadata = MetaData()
+    names = [
+        "outbox_archive",
+        "outbox_dead_letter",
+        "knowledge_operator_operation",
+        "outbox",
+    ]
+    metadata.reflect(connection, only=names)
+    for name in names[:-1]:
+        if connection.execute(select(metadata.tables[name])).first() is not None:
+            raise ValueError("new operation evidence must start empty")
+    connection.rollback()
+    transaction = connection.begin()
+    try:
+        original = dict(
+            connection.execute(select(metadata.tables["outbox"])).mappings().one()
+        )
+        evidence_tables: list[tuple[str, dict[str, Any]]] = [
+            ("outbox_archive", {"archived_at": LEGACY_TIME}),
+            (
+                "outbox_dead_letter",
+                {
+                    "failed_at": LEGACY_TIME,
+                    "reason": "delivery-failed",
+                    "redriven_at": None,
+                },
+            ),
+        ]
+        for name, extra in evidence_tables:
+            table = metadata.tables[name]
+            connection.execute(table.insert(), {**original, **extra})
+            stored = dict(connection.execute(select(table)).mappings().one())
+            if any(stored[key] != value for key, value in original.items()):
+                raise ValueError("archive changed original evidence")
+            for field in ("enterprise_id", "project_id", "actor_id"):
+                savepoint = connection.begin_nested()
+                try:
+                    connection.execute(
+                        table.insert(),
+                        {
+                            **original,
+                            **extra,
+                            "outbox_id": "invalid-" + field,
+                            field: "missing",
+                        },
+                    )
+                except IntegrityError:
+                    savepoint.rollback()
+                else:
+                    savepoint.rollback()
+                    raise ValueError("missing operations ownership constraint")
+        table = metadata.tables["knowledge_operator_operation"]
+        row = {
+            "operation_id": "operation",
+            "enterprise_id": "local",
+            "project_id": "tapper-demo",
+            "actor_id": "tapper-local-user",
+            "identity_mode": "validation",
+            "identity_origin": "VALIDATION",
+            "idempotency_key": "operation",
+            "command": "recover-uploads",
+            "parameters": {"limit": 1},
+            "parameters_digest": "a" * 64,
+            "correlation_id": "original",
+            "fence": 1,
+            "claim_token": "claim",
+            "lease_until": LEGACY_TIME,
+            "created_at": LEGACY_TIME,
+        }
+        connection.execute(table.insert(), row)
+        connection.execute(
+            table.insert(),
+            {**row, "operation_id": "OPERATION", "idempotency_key": "OPERATION"},
+        )
+        for override in (
+            {"operation_id": "duplicate"},
+            {"operation_id": "invalid-fence", "idempotency_key": "other", "fence": 0},
+            {
+                "operation_id": "invalid-result",
+                "idempotency_key": "other",
+                "result": {"outcome": "completed"},
+            },
+            {"operation_id": "invalid-project", "project_id": "missing"},
+            {
+                "operation_id": "invalid-actor",
+                "idempotency_key": "other",
+                "actor_id": "missing",
+            },
+        ):
+            savepoint = connection.begin_nested()
+            try:
+                connection.execute(table.insert(), {**row, **override})
+            except (IntegrityError, OperationalError):
+                savepoint.rollback()
+            else:
+                savepoint.rollback()
+                raise ValueError("missing operation receipt constraint")
+    finally:
+        transaction.rollback()
 
 
 def run_schema_gate() -> dict[str, Any]:
@@ -515,10 +1101,16 @@ def run_schema_gate() -> dict[str, Any]:
                 differences = schema_differences(
                     connection, load_authoritative_metadata()
                 )
+                actual_revision = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
             return {
                 "status": "failed" if differences else "passed",
                 "gate": "schema-drift",
+                "ownership": database.ownership,
                 "tables": len(load_authoritative_metadata().tables),
+                "table_names": sorted(load_authoritative_metadata().tables),
+                "revision": actual_revision,
                 "differences": differences,
             }
         finally:
@@ -527,7 +1119,15 @@ def run_schema_gate() -> dict[str, Any]:
 
 def run_migration_gate(revision: str) -> dict[str, Any]:
     validate_revision(revision)
-    if revision != BASELINE:
+    if revision not in {
+        BASELINE,
+        "0006_validation_identity",
+        PROJECT_SCOPE_REVISION,
+        AUDIT_REVISION,
+        OPERATIONS_REVISION,
+        SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
+    }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
         )
@@ -540,11 +1140,162 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             database.upgrade(revision)
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
+            identity_result: dict[str, Any] = {}
+            if revision == SOURCE_COMMANDS_REVISION:
+                with engine.connect() as connection:
+                    assert_source_backfill(connection)
+                    if (
+                        connection.execute(
+                            text("SELECT COUNT(*) FROM knowledge_source_command")
+                        ).scalar_one()
+                        != 0
+                    ):
+                        raise ValueError("migration fabricated Source command facts")
+                database.downgrade(SOURCES_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCES_REVISION)
+                    if (
+                        "knowledge_source_command"
+                        in inspect(connection).get_table_names()
+                    ):
+                        raise ValueError("Source command downgrade retained its table")
+                database.upgrade(SOURCE_COMMANDS_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCE_COMMANDS_REVISION)
+                    assert_source_backfill(connection)
+                identity_result.update(source_commands_downgrade_replay="passed")
+            if revision == SOURCES_REVISION:
+                with engine.connect() as connection:
+                    assert_source_backfill(connection)
+                database.downgrade(OPERATIONS_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, OPERATIONS_REVISION)
+                    if "knowledge_source" in inspect(connection).get_table_names():
+                        raise ValueError("source downgrade retained owned tables")
+                database.upgrade(SOURCES_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCES_REVISION)
+                    assert_source_backfill(connection)
+                identity_result.update(
+                    source_backfill="passed", source_downgrade_replay="passed"
+                )
+            if revision == OPERATIONS_REVISION:
+                with engine.connect() as connection:
+                    assert_operations_constraints(connection)
+                database.downgrade(AUDIT_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, AUDIT_REVISION)
+                    if {
+                        "outbox_archive",
+                        "outbox_dead_letter",
+                        "knowledge_operator_operation",
+                    } & set(inspect(connection).get_table_names()):
+                        raise ValueError("operations downgrade retained owned tables")
+                database.upgrade(OPERATIONS_REVISION)
+                with engine.connect() as connection:
+                    assert_operations_constraints(connection)
+                    assert_preserved(connection, before, OPERATIONS_REVISION)
+                identity_result.update(
+                    operations_constraints="passed",
+                    operations_downgrade_replay="passed",
+                )
+            if revision == AUDIT_REVISION:
+                with engine.connect() as connection:
+                    assert_audit_constraints(connection)
+                    assert_scope_constraints(connection)
+                # Persist one new fact, then prove only the 0008-owned table is removed.
+                with engine.begin() as connection:
+                    audit_metadata = MetaData()
+                    audit_metadata.reflect(connection, only=["project_audit"])
+                    connection.execute(
+                        audit_metadata.tables["project_audit"].insert(), AUDIT_PROBE_ROW
+                    )
+                database.downgrade(PROJECT_SCOPE_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, PROJECT_SCOPE_REVISION)
+                    if "project_audit" in inspect(connection).get_table_names():
+                        raise ValueError(
+                            "audit downgrade did not remove its owned table"
+                        )
+                database.upgrade(AUDIT_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, AUDIT_REVISION)
+                    assert_audit_constraints(connection)
+                identity_result.update(
+                    scope_backfill="passed",
+                    audit_constraints="passed",
+                    audit_downgrade_replay="passed",
+                )
+            if revision in {
+                "0006_validation_identity",
+                PROJECT_SCOPE_REVISION,
+                AUDIT_REVISION,
+                OPERATIONS_REVISION,
+            }:
+                with engine.connect() as connection:
+                    identity_result["identity_seed"] = assert_identity_seed(connection)
+                database.downgrade(BASELINE)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, BASELINE)
+                    if {
+                        "enterprise",
+                        "project",
+                        "actor_principal",
+                        "project_audit",
+                    } & set(inspect(connection).get_table_names()):
+                        raise ValueError(
+                            "identity downgrade did not remove owned tables"
+                        )
+                database.upgrade(revision)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, revision)
+                identity_result["downgrade_replay"] = "passed"
+            if revision == PROJECT_SCOPE_REVISION:
+                with engine.connect() as connection:
+                    assert_scope_constraints(connection)
+                assert_scope_rejection_paths(database, engine)
+                identity_result.update(
+                    scope_backfill="passed",
+                    constraints="passed",
+                    pre_ddl_rejection="passed",
+                )
             return {
+                **identity_result,
                 "status": "passed",
                 "gate": "migration-check",
+                "ownership": database.ownership,
                 "revision": revision,
                 "preserved_rows": counts,
             }
         finally:
             engine.dispose()
+
+
+def assert_source_backfill(connection: Connection) -> None:
+    import hashlib
+
+    source_id = (
+        "src_"
+        + hashlib.sha256(b"legacy-source-v1\0tapper-demo\0legacy-document").hexdigest()[
+            :32
+        ]
+    )
+    for table in (
+        "knowledge_document",
+        "knowledge_document_revision",
+        "knowledge_citation_snapshot",
+        "knowledge_source",
+        "knowledge_source_legacy_map",
+        "knowledge_answer_source",
+    ):
+        rows = connection.execute(text(f"SELECT source_id FROM {table}")).all()
+        if rows != [(source_id,)]:
+            raise ValueError("source backfill identity mismatch")
+    row = connection.execute(
+        text(
+            "SELECT document_id, revision_id, source_content_hash, ordinal "
+            "FROM knowledge_answer_source"
+        )
+    ).one()
+    if tuple(row) != ("legacy-document", "legacy-revision", "sha256:" + "a" * 64, 0):
+        raise ValueError("source answer selection mismatch")

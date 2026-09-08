@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.sql.dml import Insert
 from sqlalchemy.sql.selectable import Select
 
+from tap.entrypoints.tapper_runtime import create_project_audit
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
@@ -38,11 +40,14 @@ DATABASE_URL = os.getenv(
 )
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
+    "knowledge_answer_source",
     "knowledge_answer_snapshot",
     "knowledge_chunk_manifest",
     "knowledge_ingestion_job",
     "knowledge_document_revision",
+    "knowledge_source_legacy_map",
     "knowledge_document",
+    "knowledge_source",
 )
 
 
@@ -156,7 +161,10 @@ def encoded_cursor(payload: object, *, canonical_json: bool = True) -> DocumentC
 async def clean(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await connection.execute(
-            text("DELETE FROM outbox WHERE aggregate_type = 'knowledge_document'")
+            text(
+                "DELETE FROM outbox WHERE aggregate_type IN "
+                "('knowledge_document', 'DocumentRevision')"
+            )
         )
         await connection.execute(text("UPDATE knowledge_document SET current_revision_id = NULL"))
         for table in KNOWLEDGE_TABLES:
@@ -168,7 +176,9 @@ def test_activated_upload_is_one_durable_document_revision_job_and_outbox() -> N
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(command(1))
             record = await repository.activate_upload(
                 reservation, ArtifactLocator("blob:original/document-1")
@@ -207,7 +217,9 @@ def test_activation_persists_the_reserved_nondefault_pipeline_versions() -> None
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="versioned.md",
@@ -250,8 +262,12 @@ def test_concurrent_renamed_duplicate_has_one_identity_and_one_dispatch_path() -
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            first_repo = MysqlDocumentRepository(sessions)
-            second_repo = MysqlDocumentRepository(sessions)
+            first_repo = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            second_repo = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             digest = "d" * 64
 
             async def submit(repository: MysqlDocumentRepository, filename: str):
@@ -294,7 +310,9 @@ def test_late_helper_cannot_reopen_cleanup_fact_after_active_cleanup() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(command(72))
             first = await repository.activate_upload(
                 reservation, ArtifactLocator("blob:canonical-original")
@@ -350,12 +368,12 @@ def test_empty_dedupe_range_deadlock_is_retried_as_one_owned_and_one_pending() -
         try:
             digest = "b" * 64
             first, second = await asyncio.gather(
-                MysqlDocumentRepository(sessions).reserve_upload(
-                    command(70, digest=digest, filename="first.md")
-                ),
-                MysqlDocumentRepository(sessions).reserve_upload(
-                    command(71, digest=digest, filename="renamed.md")
-                ),
+                MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).reserve_upload(command(70, digest=digest, filename="first.md")),
+                MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).reserve_upload(command(71, digest=digest, filename="renamed.md")),
             )
 
             assert {first.state, second.state} == {
@@ -377,14 +395,20 @@ def test_capacity_lock_allows_exactly_one_of_two_concurrent_unique_fiftieth_docu
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             for number in range(49):
                 reserved = await repository.reserve_upload(command(number + 100))
                 await repository.activate_upload(reserved, ArtifactLocator(f"blob:{number}"))
 
             results = await asyncio.gather(
-                MysqlDocumentRepository(sessions).reserve_upload(command(900)),
-                MysqlDocumentRepository(sessions).reserve_upload(command(901)),
+                MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).reserve_upload(command(900)),
+                MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).reserve_upload(command(901)),
                 return_exceptions=True,
             )
             assert sum(isinstance(item, DocumentCapacityExceeded) for item in results) == 1
@@ -401,7 +425,9 @@ def test_lease_token_ownership_and_expired_lease_recovery_are_conditional() -> N
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(3))
             await repository.activate_upload(reserved, ArtifactLocator("blob:lease"))
             first = (
@@ -441,7 +467,9 @@ def test_lease_token_ownership_and_expired_lease_recovery_are_conditional() -> N
                         completed_at=datetime(2026, 8, 27, 10, 1, 2),
                     )
                 )
-            recovered = await MysqlDocumentRepository(sessions).claim_jobs(
+            recovered = await MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            ).claim_jobs(
                 worker_id="worker-b",
                 now=datetime(2026, 8, 27, 10, 2),
                 lease_duration=timedelta(seconds=30),
@@ -461,7 +489,9 @@ def test_active_duplicate_is_returned_before_capacity_and_keeps_one_job() -> Non
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             original = await repository.reserve_upload(command(4, digest="a" * 64))
             activated = await repository.activate_upload(original, ArtifactLocator("blob:active"))
             for number in range(49):
@@ -492,7 +522,9 @@ def test_cursor_is_stable_and_malformed_or_widened_values_fail_closed() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             created: list[str] = []
             for number in range(3):
                 reserved = await repository.reserve_upload(command(number + 20))
@@ -620,7 +652,9 @@ def test_cursor_v1_rejects_every_noncanonical_position_mutation(cursor: Document
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             with pytest.raises(InvalidDocumentCursor):
                 await repository.list_documents(cursor, 1)
         finally:
@@ -634,7 +668,9 @@ def test_only_failed_ingestion_retries_from_first_incomplete_stage_without_secre
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(30))
             record = await repository.activate_upload(reserved, ArtifactLocator("blob:retry"))
             with pytest.raises(Exception) as ineligible:
@@ -710,7 +746,9 @@ def test_lease_renewal_requires_the_current_unexpired_token() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(35))
             await repository.activate_upload(reserved, ArtifactLocator("blob:renew"))
             claimed = (
@@ -780,7 +818,9 @@ def test_old_lease_token_loses_when_real_row_lock_wait_crosses_expiry(operation:
         blocker = await engine.connect()
         transaction = None
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(80))
             await repository.activate_upload(reserved, ArtifactLocator("blob:stale-clock"))
             claimed = (
@@ -856,7 +896,9 @@ def test_job_lease_duration_is_strict_positive_and_bounded(
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         try:
             with pytest.raises(ValueError):
-                await MysqlDocumentRepository(sessions).claim_jobs(
+                await MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).claim_jobs(
                     worker_id="bounded-worker",
                     now=datetime(2026, 8, 27),
                     lease_duration=lease_duration,
@@ -875,7 +917,9 @@ def test_claim_lease_is_based_on_post_lock_database_time() -> None:
         engine, setup_sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            setup_repository = MysqlDocumentRepository(setup_sessions)
+            setup_repository = MysqlDocumentRepository(
+                setup_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await setup_repository.reserve_upload(command(81))
             await setup_repository.activate_upload(reserved, ArtifactLocator("blob:claim-clock"))
             ClaimSelectionDelaySession.delayed = False
@@ -886,7 +930,9 @@ def test_claim_lease_is_based_on_post_lock_database_time() -> None:
             )
 
             claimed = (
-                await MysqlDocumentRepository(delayed_sessions).claim_jobs(
+                await MysqlDocumentRepository(
+                    delayed_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).claim_jobs(
                     worker_id="post-lock-clock",
                     now=datetime(2026, 8, 27),
                     lease_duration=timedelta(milliseconds=600),
@@ -908,7 +954,9 @@ def test_delete_is_immediately_unselectable_and_final_delete_releases_dedupe_ide
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             source = command(40, digest="b" * 64)
             reserved = await repository.reserve_upload(source)
             record = await repository.activate_upload(reserved, ArtifactLocator("blob:delete"))
@@ -982,7 +1030,9 @@ def test_failed_deletion_stays_unselectable_and_reissued_delete_requeues_cleanup
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(45))
             record = await repository.activate_upload(reserved, ArtifactLocator("blob:delete-fail"))
             deletion = await repository.request_delete(
@@ -1042,7 +1092,9 @@ def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock() 
         engine, setup_sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            setup = MysqlDocumentRepository(setup_sessions)
+            setup = MysqlDocumentRepository(
+                setup_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await setup.reserve_upload(command(47))
             record = await setup.activate_upload(reserved, ArtifactLocator("blob:retry-delete"))
             ingestion = (
@@ -1075,9 +1127,9 @@ def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock() 
                 engine, class_=DeleteLockOrderBarrierSession, expire_on_commit=False
             )
             retry = asyncio.create_task(
-                MysqlDocumentRepository(retry_sessions).retry_failed(
-                    DocumentId(record.document_id), datetime(2026, 8, 27, 12, 22)
-                )
+                MysqlDocumentRepository(
+                    retry_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).retry_failed(DocumentId(record.document_id), datetime(2026, 8, 27, 12, 22))
             )
             first_lock = asyncio.create_task(RetryLockOrderBarrierSession.document_locked.wait())
             correct_lock = asyncio.create_task(RetryLockOrderBarrierSession.job_locked.wait())
@@ -1089,9 +1141,9 @@ def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock() 
                 waiter.cancel()
 
             deleting = asyncio.create_task(
-                MysqlDocumentRepository(delete_sessions).request_delete(
-                    DocumentId(record.document_id), datetime(2026, 8, 27, 12, 23)
-                )
+                MysqlDocumentRepository(
+                    delete_sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ).request_delete(DocumentId(record.document_id), datetime(2026, 8, 27, 12, 23))
             )
             await asyncio.wait_for(DeleteLockOrderBarrierSession.job_attempted.wait(), timeout=5)
             if RetryLockOrderBarrierSession.job_locked.is_set():
@@ -1161,7 +1213,9 @@ def test_delete_waits_for_inflight_job_then_fences_every_old_ingestion_transitio
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(46))
             record = await repository.activate_upload(reserved, ArtifactLocator("blob:inflight"))
             ingestion = (
@@ -1277,7 +1331,9 @@ def test_failed_promotion_is_hidden_and_fenced_for_durable_takeover() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(50))
             with pytest.raises(DataError):
                 await repository.activate_upload(reserved, ArtifactLocator("x" * 1025))
@@ -1323,7 +1379,9 @@ def test_late_outbox_failure_keeps_promoted_locator_for_durable_takeover() -> No
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await clean(engine)
         try:
-            repository = OutboxFailureRepository(sessions)
+            repository = OutboxFailureRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reserved = await repository.reserve_upload(command(55))
             with pytest.raises(RuntimeError, match="injected transactional outbox failure"):
                 await repository.activate_upload(reserved, ArtifactLocator("blob:late-failure"))

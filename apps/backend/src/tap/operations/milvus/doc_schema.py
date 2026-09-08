@@ -73,13 +73,13 @@ class DocCollectionMetadata:
         _canonical_digest("schema_sha256", self.schema_sha256)
         if type(self.vector_dimension) is not int or not 1 <= self.vector_dimension <= 4096:
             raise ValueError("vector_dimension must be an integer from one through 4096")
-        if self.schema_sha256 != doc_schema_sha256():
+        if self.schema_sha256 != doc_schema_sha256(self.schema_version):
             raise ValueError("doc collection metadata does not match the canonical schema")
 
 
 def build_doc_collection_schema(metadata: DocCollectionMetadata) -> dict[str, object]:
     _metadata(metadata)
-    fields = _canonical_fields()
+    fields = _canonical_fields(metadata.schema_version)
     dense = next(field for field in fields if field["name"] == "dense_vector")
     dense["params"] = {"dim": metadata.vector_dimension}
     return {
@@ -91,14 +91,14 @@ def build_doc_collection_schema(metadata: DocCollectionMetadata) -> dict[str, ob
         "vector_dimension": metadata.vector_dimension,
         "fields": tuple(fields),
         "functions": (copy.deepcopy(BM25_FUNCTION),),
-        "indexes": copy.deepcopy(INDEXES),
+        "indexes": _indexes(metadata.schema_version),
     }
 
 
-def doc_schema_sha256() -> str:
+def doc_schema_sha256(schema_version: str = "doc-schema-v1") -> str:
     canonical = {
         "consistency_level": "Strong",
-        "fields": _canonical_fields(),
+        "fields": _canonical_fields(schema_version),
         "functions": [
             {
                 "input_field_names": ["content"],
@@ -108,7 +108,7 @@ def doc_schema_sha256() -> str:
                 "type": 1,
             }
         ],
-        "indexes": _canonical_indexes(),
+        "indexes": _canonical_indexes(schema_version),
     }
     encoded = json.dumps(
         canonical,
@@ -133,7 +133,9 @@ def doc_collection_description(metadata: DocCollectionMetadata) -> str:
     return _METADATA_PREFIX + json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def _canonical_fields() -> list[dict[str, object]]:
+def _canonical_fields(schema_version: str = "doc-schema-v1") -> list[dict[str, object]]:
+    _schema_version(schema_version)
+
     def field(
         name: str,
         data_type: int,
@@ -171,7 +173,11 @@ def _canonical_fields() -> list[dict[str, object]]:
             },
         ),
         field("content_role", 21, {"max_length": 32}),
-        field("tenant_id", 21, {"max_length": 256}),
+        field(
+            "enterprise_id" if schema_version == "doc-schema-v2" else "tenant_id",
+            21,
+            {"max_length": 256},
+        ),
         field("project_id", 21, {"max_length": 256}),
         field(
             "allowed_group_ids",
@@ -187,6 +193,11 @@ def _canonical_fields() -> list[dict[str, object]]:
         field("corpus_version", 21, {"max_length": 256}),
         field("schema_version", 21, {"max_length": 256}),
         field("embedding_model_version", 21, {"max_length": 256}),
+        *(
+            [field("document_id", 21, {"max_length": 64})]
+            if schema_version == "doc-schema-v2"
+            else []
+        ),
         field("source_id", 21, {"max_length": 1024}),
         field("source_type", 21, {"max_length": 32}),
         field("revision_kind", 21, {"max_length": 32}),
@@ -205,7 +216,7 @@ def _canonical_fields() -> list[dict[str, object]]:
     ]
 
 
-def _canonical_indexes() -> list[dict[str, object]]:
+def _canonical_indexes(schema_version: str = "doc-schema-v1") -> list[dict[str, object]]:
     return sorted(
         (
             {
@@ -215,7 +226,7 @@ def _canonical_indexes() -> list[dict[str, object]]:
                 "metric_type": value.get("metric_type"),
                 "params": copy.deepcopy(value.get("params", {})),
             }
-            for field_name, value in INDEXES.items()
+            for field_name, value in _indexes(schema_version).items()
         ),
         key=lambda item: cast(str, item["field_name"]),
     )
@@ -247,3 +258,16 @@ def _canonical_digest(name: str, value: object) -> str:
     ):
         raise ValueError(f"{name} must be a canonical SHA-256 digest")
     return text
+
+
+def _schema_version(value: str) -> None:
+    if value not in {"doc-schema-v1", "doc-schema-v2"}:
+        raise ValueError("unsupported doc schema version")
+
+
+def _indexes(schema_version: str) -> dict[str, dict[str, object]]:
+    _schema_version(schema_version)
+    indexes = copy.deepcopy(INDEXES)
+    if schema_version == "doc-schema-v2":
+        indexes["enterprise_id"] = indexes.pop("tenant_id")
+    return indexes

@@ -12,6 +12,7 @@ from tap.modules.knowledge.domain.models import (
     ResourceMode,
     SourceFamily,
 )
+from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import SearchBoundsExceeded
 from tap.modules.knowledge.ports.models import SearchExecution
 
@@ -23,6 +24,8 @@ _MAX_LOCATORS = 32
 _FILTER_FIELDS = frozenset(
     {
         "tenant_id",
+        "enterprise_id",
+        "document_id",
         "project_id",
         "allowed_group_ids",
         "classification_rank",
@@ -88,6 +91,8 @@ def compile_milvus_filter(
     family: SourceFamily,
     *,
     max_bytes: int,
+    schema_version: str = "doc-schema-v1",
+    owners: tuple[ReadyDocumentRevision, ...] | None = None,
 ) -> str:
     """Compile only trusted execution facts into a bounded Milvus expression."""
     if type(max_bytes) is not int or not 1 <= max_bytes <= _MAX_FILTER_BYTES:
@@ -96,6 +101,10 @@ def compile_milvus_filter(
         raise SearchBoundsExceeded("filter input must be a trusted search execution")
     if family is not SourceFamily.DOC:
         raise SearchBoundsExceeded("Milvus filter supports only the doc source family")
+    if schema_version not in {"doc-schema-v1", "doc-schema-v2"}:
+        raise SearchBoundsExceeded("unsupported projection profile")
+    if schema_version == "doc-schema-v2" and owners is None:
+        raise SearchBoundsExceeded("canonical projection requires SQL ownership")
 
     policy = execution.policy
     plan = execution.plan
@@ -124,7 +133,9 @@ def compile_milvus_filter(
         else (plan.effective_environment, "global")
     )
     clauses = [
-        _ExpressionBuilder.equal("tenant_id", policy.tenant_id),
+        _ExpressionBuilder.equal(
+            "enterprise_id" if schema_version == "doc-schema-v2" else "tenant_id", policy.tenant_id
+        ),
         _ExpressionBuilder.equal("project_id", policy.project_id),
         _ExpressionBuilder.array_contains_any("allowed_group_ids", group_ids),
         _ExpressionBuilder.integer_membership("classification_rank", ranks),
@@ -142,8 +153,13 @@ def compile_milvus_filter(
         locator_count = sum(_locator_count(resource.subtree) for resource in scoped)
         if locator_count > _MAX_LOCATORS:
             raise SearchBoundsExceeded("filter subtree locators exceed the bound")
-        resource_clauses = tuple(_resource_clause(resource) for resource in scoped)
+        resource_clauses = tuple(
+            _resource_clause(resource, schema_version=schema_version, owners=owners)
+            for resource in scoped
+        )
         clauses.append(f"({_ExpressionBuilder.any_of(resource_clauses)})")
+    elif owners is not None:
+        raise SearchBoundsExceeded("owned projection requires explicit selected scope")
 
     expression = _ExpressionBuilder.all_of(clauses)
     if len(expression.encode("utf-8")) > max_bytes:
@@ -151,12 +167,36 @@ def compile_milvus_filter(
     return expression
 
 
-def _resource_clause(resource: ResolvedResourceRef) -> str:
+def _resource_clause(
+    resource: ResolvedResourceRef,
+    *,
+    schema_version: str = "doc-schema-v1",
+    owners: tuple[ReadyDocumentRevision, ...] | None = None,
+) -> str:
+    owner = None
+    if owners is not None:
+        matches = tuple(
+            item
+            for item in owners
+            if item.source_id == resource.source_id
+            and item.revision_id == resource.revision
+            and item.source_content_hash == resource.source_content_hash
+        )
+        if len(matches) != 1:
+            raise SearchBoundsExceeded("selected resource lacks unique SQL ownership")
+        owner = matches[0]
     parts = [
-        _ExpressionBuilder.equal("source_id", resource.source_id),
+        _ExpressionBuilder.equal(
+            "source_id",
+            owner.document_id
+            if owner is not None and schema_version == "doc-schema-v1"
+            else resource.source_id,
+        ),
         _ExpressionBuilder.equal("source_revision", resource.revision),
         _ExpressionBuilder.equal("source_content_hash", resource.source_content_hash),
     ]
+    if owner is not None and schema_version == "doc-schema-v2":
+        parts.append(_ExpressionBuilder.equal("document_id", owner.document_id))
     if resource.subtree is not None:
         locators = []
         if resource.subtree.root_ids:

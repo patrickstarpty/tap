@@ -649,3 +649,33 @@ button:focus-visible,
 .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous) {
   color: var(--tap-ink);
 }
+
+.tap-validation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  min-width: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--tap-accent-line);
+  background: var(--tap-accent-soft);
+  color: var(--tap-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tap-validation-banner strong {
+  color: var(--tap-accent);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .tap-validation-banner {
+    justify-content: flex-start;
+  }
+}
