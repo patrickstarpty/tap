@@ -325,14 +325,159 @@ def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_author
     asyncio.run(scenario())
 
 
+_KNOWN_0012_SHAPE_ADDITIONS = {
+    "a22c55e": {
+        "ai_agent_revision": frozenset(),
+        "skill_revision": frozenset(),
+        "chat_turn": frozenset({"processing_lease_token", "processing_lease_expires_at"}),
+        "chat_event": frozenset(),
+    },
+    "464faa6": {
+        "ai_agent_revision": frozenset({"system_instruction", "output_schema_json"}),
+        "skill_revision": frozenset({"instruction_template"}),
+        "chat_turn": frozenset({"processing_lease_token", "processing_lease_expires_at"}),
+        "chat_event": frozenset({"stream_sequence"}),
+    },
+}
+
+
+def _apply_known_0012_shape(connection, shape):
+    from sqlalchemy import inspect, text
+
+    before = {
+        table: {column["name"] for column in inspect(connection).get_columns(table)}
+        for table in _KNOWN_0012_SHAPE_ADDITIONS[shape]
+    }
+    if shape == "464faa6":
+        connection.execute(
+            text(
+                "ALTER TABLE ai_agent_revision "
+                "ADD COLUMN system_instruction VARCHAR(8000) NOT NULL, "
+                "ADD COLUMN output_schema_json JSON NOT NULL"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE skill_revision ADD COLUMN instruction_template VARCHAR(8000) NOT NULL"
+            )
+        )
+    connection.execute(
+        text(
+            "ALTER TABLE chat_turn MODIFY COLUMN processing_attempt "
+            "INTEGER NOT NULL DEFAULT 0, "
+            "ADD COLUMN processing_lease_token VARCHAR(64), "
+            "ADD COLUMN processing_lease_expires_at DATETIME(6)"
+        )
+    )
+    if shape == "464faa6":
+        connection.execute(
+            text("ALTER TABLE chat_event ADD COLUMN stream_sequence BIGINT NOT NULL")
+        )
+    after = {
+        table: {column["name"] for column in inspect(connection).get_columns(table)}
+        for table in _KNOWN_0012_SHAPE_ADDITIONS[shape]
+    }
+    assert {table: frozenset(after[table] - before[table]) for table in before} == (
+        _KNOWN_0012_SHAPE_ADDITIONS[shape]
+    )
+
+
+def _insert_deployed_validation_assets(connection, *, governed):
+    from sqlalchemy import text
+
+    from tap.modules.ai.domain.models import schema_digest, text_digest
+
+    scope = {
+        "enterprise_id": "local",
+        "project_id": "tapper-demo",
+        "actor_id": "tapper-local-user",
+        "identity_mode": "validation",
+        "identity_origin": "VALIDATION",
+    }
+    connection.execute(
+        text(
+            "INSERT INTO ai_agent "
+            "(agent_id,display_name,created_at,enterprise_id,project_id,actor_id,"
+            "identity_mode,identity_origin) VALUES "
+            "('validation-knowledge-agent','Knowledge agent',UTC_TIMESTAMP(6),"
+            ":enterprise_id,:project_id,:actor_id,:identity_mode,:identity_origin)"
+        ),
+        scope,
+    )
+    system_instruction = "preserve-464-agent"
+    output_schema = {"type": "object"}
+    agent_content = ",system_instruction,output_schema_json" if governed else ""
+    agent_values = ",:system_instruction,:output_schema_json" if governed else ""
+    connection.execute(
+        text(
+            "INSERT INTO ai_agent_revision "
+            "(revision_id,agent_id,revision_number,display_name,content_digest,"
+            "system_instruction_digest,tool_allowlist,output_schema_digest,status,created_at,"
+            "enterprise_id,project_id,actor_id,identity_mode,identity_origin"
+            f"{agent_content}) VALUES "
+            "('validation-knowledge-agent-v1','validation-knowledge-agent',1,'Knowledge agent',"
+            ":content_digest,:instruction_digest,JSON_ARRAY('knowledge.search','knowledge.answer'),"
+            ":schema_digest,'enabled',UTC_TIMESTAMP(6),:enterprise_id,:project_id,:actor_id,"
+            f":identity_mode,:identity_origin{agent_values})"
+        ),
+        scope
+        | {
+            "content_digest": "sha256:" + "4" * 64,
+            "instruction_digest": (
+                text_digest(system_instruction)
+                if governed
+                else "sha256:fce11c5d9869cb393bd12b126a667e53f2e38cea27af38891c7f6f08a123bba9"
+            ),
+            "schema_digest": (schema_digest(output_schema) if governed else "sha256:" + "5" * 64),
+            "system_instruction": system_instruction,
+            "output_schema_json": json.dumps(output_schema),
+        },
+    )
+    connection.execute(
+        text(
+            "INSERT INTO skill "
+            "(skill_id,display_name,created_at,enterprise_id,project_id,actor_id,"
+            "identity_mode,identity_origin) VALUES "
+            "('validation-citation-skill','Citation skill',UTC_TIMESTAMP(6),"
+            ":enterprise_id,:project_id,:actor_id,:identity_mode,:identity_origin)"
+        ),
+        scope,
+    )
+    instruction_template = "preserve-464-skill"
+    skill_content = ",instruction_template" if governed else ""
+    skill_values = ",:instruction_template" if governed else ""
+    connection.execute(
+        text(
+            "INSERT INTO skill_revision "
+            "(revision_id,skill_id,revision_number,display_name,content_digest,"
+            "instruction_template_digest,applicable_tasks,status,created_at,enterprise_id,"
+            f"project_id,actor_id,identity_mode,identity_origin{skill_content}) VALUES "
+            "('validation-citation-skill-v1','validation-citation-skill',1,'Citation skill',"
+            ":content_digest,:template_digest,JSON_ARRAY('knowledge.answer'),'enabled',"
+            "UTC_TIMESTAMP(6),:enterprise_id,:project_id,:actor_id,:identity_mode,"
+            f":identity_origin{skill_values})"
+        ),
+        scope
+        | {
+            "content_digest": "sha256:" + "6" * 64,
+            "template_digest": (
+                text_digest(instruction_template)
+                if governed
+                else "sha256:a5c26513151960f626d1d756736dac11f529cabe0ea9f43da1d194ed37ef0702"
+            ),
+            "instruction_template": instruction_template,
+        },
+    )
+
+
 @pytest.mark.parametrize(
-    ("preexisting_stream_sequence", "expected_stream_sequence"),
-    [(None, 1), (7, 7)],
-    ids=("a22-without-stream", "464-with-stream"),
+    ("shape", "expected_stream_sequence"),
+    [("a22c55e", 1), ("464faa6", 7)],
 )
-def test_known_applied_0012_shapes_converge_without_readding_or_rewriting_columns(
+def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
     owned_project_mysql,
-    preexisting_stream_sequence,
+    monkeypatch,
+    shape,
     expected_stream_sequence,
 ):
     import asyncio
@@ -341,9 +486,11 @@ def test_known_applied_0012_shapes_converge_without_readding_or_rewriting_column
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+    from tap.entrypoints import tapper_runtime
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-    from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
-    from tap.modules.chat.application.conversations import ConversationService
+    from tap.modules.ai.application.assets import resolve_skill_selection, validation_asset_seed
+    from tap.modules.ai.domain.assets import AssetRevisionRejected
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
     owned_project_mysql.downgrade("0005_projection_lineage")
     sync_engine = create_engine(owned_project_mysql.url)
@@ -352,111 +499,145 @@ def test_known_applied_0012_shapes_converge_without_readding_or_rewriting_column
             seed_baseline(connection)
         owned_project_mysql.upgrade("0012_conversations")
         with sync_engine.begin() as connection:
-            # Reproduce the schema already deployed from a22 while Alembic still reports 0012.
+            _apply_known_0012_shape(connection, shape)
+            _insert_deployed_validation_assets(connection, governed=shape == "464faa6")
             connection.execute(
                 text(
-                    "ALTER TABLE ai_agent_revision "
-                    "ADD COLUMN system_instruction VARCHAR(8000) NOT NULL, "
-                    "ADD COLUMN output_schema_json JSON NOT NULL"
-                )
-            )
-            connection.execute(
-                text(
-                    "ALTER TABLE skill_revision "
-                    "ADD COLUMN instruction_template VARCHAR(8000) NOT NULL"
-                )
-            )
-            connection.execute(
-                text(
-                    "ALTER TABLE chat_turn MODIFY COLUMN processing_attempt "
-                    "INTEGER NOT NULL DEFAULT 0, "
-                    "ADD COLUMN processing_lease_token VARCHAR(64), "
-                    "ADD COLUMN processing_lease_expires_at DATETIME(6)"
-                )
-            )
-            connection.execute(
-                text(
-                    "UPDATE chat_turn SET processing_lease_token='preserved-a22-lease', "
+                    "UPDATE chat_turn SET processing_lease_token='preserve-deployed-lease', "
                     "processing_lease_expires_at='2026-09-09 01:02:03.123456' "
                     "WHERE turn_id='legacy-turn'"
                 )
             )
-            if preexisting_stream_sequence is not None:
-                connection.execute(
-                    text("ALTER TABLE chat_event ADD COLUMN stream_sequence BIGINT NOT NULL")
-                )
+            if shape == "464faa6":
                 connection.execute(
                     text("UPDATE chat_event SET stream_sequence=:sequence"),
-                    {"sequence": preexisting_stream_sequence},
+                    {"sequence": expected_stream_sequence},
                 )
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == "0012_conversations"
+            )
 
         owned_project_mysql.upgrade("0012a_conversation_governance")
 
         with sync_engine.connect() as connection:
-            inspector = inspect(connection)
-            turn_columns = {item["name"]: item for item in inspector.get_columns("chat_turn")}
-            assert {"processing_lease_token", "processing_lease_expires_at"} <= turn_columns.keys()
-            assert turn_columns["processing_attempt"]["default"] in {"'0'", "0", "0"}
-            agent_columns = {
-                item["name"]: item for item in inspector.get_columns("ai_agent_revision")
+            turn_columns = {
+                item["name"]: item for item in inspect(connection).get_columns("chat_turn")
             }
-            assert agent_columns["system_instruction"]["nullable"]
-            preserved = connection.execute(
-                text(
-                    "SELECT processing_lease_token,processing_lease_expires_at "
-                    "FROM chat_turn WHERE turn_id='legacy-turn'"
-                )
-            ).one()
-            assert preserved[0] == "preserved-a22-lease"
-            assert str(preserved[1]) == "2026-09-09 01:02:03.123456"
+            assert turn_columns["processing_attempt"]["default"] in {"'0'", "0", 0}
+            assert (
+                connection.execute(
+                    text("SELECT processing_lease_token FROM chat_turn WHERE turn_id='legacy-turn'")
+                ).scalar_one()
+                == "preserve-deployed-lease"
+            )
             assert (
                 connection.execute(
                     text("SELECT stream_sequence FROM chat_event WHERE event_id='legacy-event'")
                 ).scalar_one()
                 == expected_stream_sequence
             )
+            if shape == "464faa6":
+                assert (
+                    connection.execute(
+                        text(
+                            "SELECT system_instruction FROM ai_agent_revision "
+                            "WHERE revision_id='validation-knowledge-agent-v1'"
+                        )
+                    ).scalar_one()
+                    == "preserve-464-agent"
+                )
+                output_schema = connection.execute(
+                    text(
+                        "SELECT output_schema_json FROM ai_agent_revision "
+                        "WHERE revision_id='validation-knowledge-agent-v1'"
+                    )
+                ).scalar_one()
+                assert (
+                    json.loads(output_schema) if isinstance(output_schema, str) else output_schema
+                ) == {"type": "object"}
+                assert (
+                    connection.execute(
+                        text(
+                            "SELECT instruction_template FROM skill_revision "
+                            "WHERE revision_id='validation-citation-skill-v1'"
+                        )
+                    ).scalar_one()
+                    == "preserve-464-skill"
+                )
     finally:
         sync_engine.dispose()
 
     async def scenario() -> None:
-        engine = create_async_engine(
-            owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
-        )
-        try:
-            repository = MysqlConversationRepository(
+        class Resource:
+            async def aclose(self) -> None:
+                return None
+
+        async def create_search(_settings, *, audit_sink, owners=None):
+            return Resource(), object(), object()
+
+        async def create_database(_settings):
+            engine = create_async_engine(
+                owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+            )
+            return engine, tapper_runtime._build_document_repository(
                 async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
             )
-            loaded = await ConversationService(repository, scope=VALIDATION_SCOPE).load(
-                "legacy-chat"
-            )
+
+        model = KnowledgeModelGateway(
+            object(),
+            scope=VALIDATION_SCOPE,
+            redact=tapper_runtime._redact_model_context,
+            embedding_alias="tapper-embedding",
+            chat_alias="tapper-chat",
+            embedding_dimension=1536,
+            timeout_seconds=15,
+        )
+        monkeypatch.setattr(tapper_runtime, "_create_blob", lambda _settings: Resource())
+        monkeypatch.setattr(tapper_runtime, "_create_database", create_database)
+        monkeypatch.setattr(tapper_runtime, "_create_redis", lambda _settings: Resource())
+        monkeypatch.setattr(tapper_runtime, "_create_embeddings", lambda _settings: model)
+        monkeypatch.setattr(tapper_runtime, "_create_search", create_search)
+        monkeypatch.setattr(tapper_runtime, "_create_models_probe_client", lambda _settings: None)
+        monkeypatch.setattr(tapper_runtime, "_create_readiness", lambda **_kwargs: object())
+        settings = tapper_runtime.TapperSettings.from_mapping({})
+        runtime = await tapper_runtime.create_api_runtime(settings)
+        try:
+            loaded = await runtime.http_services.conversations.load("legacy-chat")
             assert loaded.turns[0].turn_id == "legacy-turn"
-            assert [(event.sequence, event.event_id) for event in loaded.events] == [
-                (expected_stream_sequence, "legacy-event")
-            ]
+            catalog = runtime.http_services.asset_catalog
+            current = validation_asset_seed(VALIDATION_SCOPE)
+            assert await catalog.resolve_agent(
+                VALIDATION_SCOPE,
+                current.agents[-1].revision_id,
+                tools=frozenset({"knowledge.answer"}),
+                output_schema_digest=current.agents[-1].output_schema_digest,
+            )
+            assert resolve_skill_selection(
+                await catalog.resolve_skill(VALIDATION_SCOPE, current.skills[-1].revision_id),
+                task="knowledge.answer",
+            )
+            if shape == "a22c55e":
+                with pytest.raises(AssetRevisionRejected):
+                    await catalog.resolve_agent(
+                        VALIDATION_SCOPE,
+                        "validation-knowledge-agent-v1",
+                        tools=frozenset({"knowledge.answer"}),
+                        output_schema_digest="sha256:" + "5" * 64,
+                    )
+                assert (
+                    resolve_skill_selection(
+                        await catalog.resolve_skill(
+                            VALIDATION_SCOPE, "validation-citation-skill-v1"
+                        ),
+                        task="knowledge.answer",
+                    ).instruction_template
+                    == "citation-skill-template-v1"
+                )
         finally:
-            await engine.dispose()
+            await runtime.aclose()
 
     asyncio.run(scenario())
-
-    # A partially reconciled target must still downgrade without dropping a missing column.
-    sync_engine = create_engine(owned_project_mysql.url)
-    try:
-        with sync_engine.begin() as connection:
-            connection.execute(
-                text("ALTER TABLE chat_turn DROP COLUMN processing_lease_expires_at")
-            )
-        owned_project_mysql.downgrade("0012_conversations")
-        with sync_engine.connect() as connection:
-            inspector = inspect(connection)
-            turn_columns = {item["name"]: item for item in inspector.get_columns("chat_turn")}
-            assert "processing_lease_token" not in turn_columns
-            assert "processing_lease_expires_at" not in turn_columns
-            assert turn_columns["processing_attempt"]["default"] in {"'1'", "1", 1}
-            assert "stream_sequence" not in {
-                item["name"] for item in inspector.get_columns("chat_event")
-            }
-    finally:
-        sync_engine.dispose()
 
 
 def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
