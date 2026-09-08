@@ -69,6 +69,7 @@ import {
 import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
 import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
 import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
+import { TestAnalyticsWorkspace } from "./prototype/TestAnalyticsWorkspace";
 import "./TapProductPrototype.css";
 
 function BddPreview({ copy }: { copy: PrototypeCopy }) {
@@ -1300,6 +1301,9 @@ export function TapProductPrototype() {
             onAddSource={addLocalSource}
           />
         ) : null}
+        {activeModule === "test-analytics" ? (
+          <TestAnalyticsWorkspace locale={locale} />
+        ) : null}
         {activeModule === "test-management" ? (
           <TestManagementWorkspace
             state={artifactState}
@@ -1359,7 +1363,7 @@ export function TapProductPrototype() {
         ) : null}
       </main>
       <TapperFloatingAssistant
-        visible={!tapperWorkspaceActive}
+        visible={!tapperWorkspaceActive && activeModule !== "test-analytics"}
         context={floatingContext}
         conversation={activeConversation}
         draft={messageDraft}
