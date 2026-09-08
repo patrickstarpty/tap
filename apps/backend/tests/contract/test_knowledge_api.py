@@ -24,6 +24,7 @@ from tap.contracts.http import (
 from tap.contracts.http import (
     RetrievalSearchResponse as HttpSearchResponse,
 )
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.access.application.authorize import build_retrieval_policy_context
 from tap.modules.access.domain.policy import (
     AuthorizationDenied,
@@ -39,7 +40,6 @@ from tap.modules.knowledge.adapters.azure_ai_search import (
     AzureIndexTarget,
     AzureSearchConfig,
 )
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.api import (
     KnowledgeAPI,
     answer_request_from_http,

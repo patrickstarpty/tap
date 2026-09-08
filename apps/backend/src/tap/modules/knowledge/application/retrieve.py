@@ -56,6 +56,7 @@ from tap.modules.knowledge.ports.models import (
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
+    GovernedKnowledgeModels,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -162,13 +163,22 @@ class AuthorizedRetrieval:
         self,
         *,
         search: SearchPort,
-        embeddings: QueryEmbeddingPort,
-        answers: AnswerGenerationPort,
+        embeddings: QueryEmbeddingPort | None = None,
+        answers: AnswerGenerationPort | None = None,
+        models: GovernedKnowledgeModels | None = None,
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
     ) -> None:
         self._search = search
+        if models is not None:
+            if embeddings is not None or answers is not None:
+                raise ValueError("governed models cannot be mixed with legacy providers")
+            embeddings = models
+            answers = models
+        if embeddings is None or answers is None:
+            raise ValueError("Knowledge requires a complete model boundary")
+        self._models = models
         self._embeddings = embeddings
         self._answers = answers
         self._policy_verifier = policy_verifier
@@ -346,6 +356,11 @@ class AuthorizedRetrieval:
         self,
         expected: RetrievalPolicyContext,
     ) -> RetrievalPolicyContext:
+        if self._models is not None and (
+            self._models.scope.enterprise_id != expected.tenant_id
+            or self._models.scope.project_id != expected.project_id
+        ):
+            raise AuthorizationDenied("model gateway Project does not match retrieval policy")
         current = await self._policy_verifier.verify_current(expected)
         if current is None:
             raise PolicyUnavailable("current Project Policy is unavailable")

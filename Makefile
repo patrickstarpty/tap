@@ -4,7 +4,7 @@ TAP_TAPPER_COMPOSE_PROJECT ?= tap-tapper-demo
 export TAP_TAPPER_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
+.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -134,6 +134,9 @@ demo-dev: ## run API, relay, ingestion worker, and Web on strict loopback ports
 	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
 	bash scripts/run-tapper-dev.sh
+
+legacy-tapper-codex-dev: ## run only the retired loopback Codex answer composition
+	bash scripts/run-tapper-legacy-codex-dev.sh
 
 demo-e2e: ## run the isolated deterministic browser and persistence journey
 	@set -eu; \

@@ -19,12 +19,12 @@ from tap.contracts.http import (
     RetrievalAnswerRequest,
     SourceFamily,
 )
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter
 from tap.entrypoints.tapper_runtime import (
     TapperSettings,
     _create_embeddings,
     create_api_runtime,
 )
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter
 
 _CHAT_ALIAS = "tapper-chat"
 _EMBEDDING_ALIAS = "tapper-embedding"

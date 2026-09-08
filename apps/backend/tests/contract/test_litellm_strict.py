@@ -11,12 +11,12 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer_payload
-from tap.modules.knowledge.adapters.litellm import (
+from tap.entrypoints.legacy_litellm import (
     LiteLLMAdapter,
     LiteLLMConfig,
     ModelUnavailable,
 )
+from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer_payload
 from tap.modules.knowledge.domain.models import (
     CodeAnchor,
     ContentRole,

@@ -28,6 +28,7 @@ from tap.contracts.http import (
 )
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 
@@ -79,6 +80,16 @@ class ReadinessHttpService(Protocol):
     async def check(self) -> ReadyHealth: ...
 
 
+class ModelCatalogHttpService(Protocol):
+    @property
+    def default_alias(self) -> str: ...
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def list_models(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]: ...
+
+
 class _UnconfiguredReadiness:
     async def check(self) -> ReadyHealth:
         return ReadyHealth(
@@ -108,6 +119,7 @@ class HttpServices:
     scope_provider: ScopeProvider | None = None
     authorization_policy: AuthorizationPolicy | None = None
     scope: ProjectScopeContext | None = None
+    model_catalog: ModelCatalogHttpService | None = None
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:
@@ -122,6 +134,14 @@ def readiness_service(request: Request) -> ReadinessHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.readiness if isinstance(services, HttpServices) else None
     return service or _UNCONFIGURED_READINESS
+
+
+def model_catalog_service(request: Request) -> ModelCatalogHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.model_catalog if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
 
 
 def source_command_key(

@@ -19,13 +19,13 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 
 from tap.entrypoints import tapper_ingestion_worker
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.entrypoints.tapper_runtime import (
     TapperSettings,
     create_project_audit,
     create_worker_runtime,
 )
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application.ingestion import WorkerRun
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload
@@ -612,7 +612,7 @@ def test_main_uses_only_the_fixed_runtime_factory_and_one_settings_snapshot(
     assert seen[0].database_url.endswith("127.0.0.1:13306/tap?charset=utf8mb4")
 
 
-def test_worker_entrypoint_parses_codex_selection_without_discovery(
+def test_worker_entrypoint_rejects_codex_selection_without_discovery(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
     seen: list[TapperSettings] = []
@@ -629,12 +629,12 @@ def test_worker_entrypoint_parses_codex_selection_without_discovery(
     monkeypatch.setattr(tapper_ingestion_worker, "run", fixed_run)
     monkeypatch.setattr(tapper_ingestion_worker.asyncio, "run", runner.run)
     try:
-        tapper_ingestion_worker.main(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
+        with pytest.raises(ValueError, match="TAPPER_ANSWER_BACKEND=codex is unavailable"):
+            tapper_ingestion_worker.main(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
     finally:
         runner.close()
 
-    assert len(seen) == 1
-    assert seen[0].answer_backend == "codex"
+    assert seen == []
 
 
 def test_worker_main_suppresses_worker_thread_rpc_details_for_the_full_process_lifetime(

@@ -23,8 +23,16 @@ _EMAIL = re.compile(
 
 
 class PatternEgressRedactor:
+    def __init__(self, *, max_chars: int = 8000) -> None:
+        self._max_chars = max_chars
+
     async def redact(self, text: str) -> RedactionResult:
-        if type(text) is not str or len(text) > 8000 or "\x00" in text:
+        return RedactionResult(
+            sanitized_text=await self.redact_text(text), redaction_version=VERSION
+        )
+
+    async def redact_text(self, text: str) -> str:
+        if type(text) is not str or len(text) > self._max_chars or "\x00" in text:
             raise RedactionUnavailable("query redaction rejected input")
         # Input is bounded before scans. Never consume only a credential prefix.
         output: list[str] = []
@@ -78,7 +86,4 @@ class PatternEgressRedactor:
             output.extend((sanitized[offset:start], quote + "[REDACTED_SECRET]" + quote))
             offset = end
         output.append(sanitized[offset:])
-        return RedactionResult(
-            sanitized_text=_EMAIL.sub("[REDACTED_EMAIL]", "".join(output)),
-            redaction_version=VERSION,
-        )
+        return _EMAIL.sub("[REDACTED_EMAIL]", "".join(output))

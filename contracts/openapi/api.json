@@ -844,6 +844,19 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthComponent": {
         "additionalProperties": false,
         "properties": {
@@ -927,6 +940,69 @@
           "status"
         ],
         "title": "LiveHealth",
+        "type": "object"
+      },
+      "ModelCatalogItem": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "enum": [
+                "chat",
+                "embed",
+                "structured"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias",
+          "displayName",
+          "capabilities"
+        ],
+        "title": "ModelCatalogItem",
+        "type": "object"
+      },
+      "ModelCatalogPage": {
+        "additionalProperties": false,
+        "properties": {
+          "defaultAlias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Defaultalias",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCatalogItem"
+            },
+            "maxItems": 32,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "defaultAlias",
+          "items"
+        ],
+        "title": "ModelCatalogPage",
         "type": "object"
       },
       "OpenApiAnchor": {
@@ -2998,6 +3074,39 @@
           }
         ],
         "title": "StructuralAnchor"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
       }
     }
   },
@@ -3007,6 +3116,70 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/projects/{project_id}/ai/models": {
+      "get": {
+        "operationId": "ai_list_models",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Model catalog unavailable"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/answers": {
       "post": {
         "operationId": "knowledge_create_answer",

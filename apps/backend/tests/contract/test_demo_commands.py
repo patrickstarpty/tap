@@ -1524,7 +1524,7 @@ def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_sta
     assert "provider-secret-invalid-host" not in output.err
 
 
-def test_tapper_ensure_parses_codex_selection_without_discovery(
+def test_tapper_ensure_rejects_codex_selection_without_discovery(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1558,10 +1558,12 @@ def test_tapper_ensure_parses_codex_selection_without_discovery(
     )
 
     output = capsys.readouterr()
-    assert result == 0
-    assert seen == ["codex"]
-    assert output.out == "Tapper resources ready.\n"
-    assert output.err == ""
+    assert result == 1
+    assert seen == []
+    assert output.out == ""
+    assert output.err == (
+        "Tapper resource ensure failed at configuration; check local middleware configuration.\n"
+    )
 
 
 def test_tapper_ensure_cli_redacts_provider_failures(
@@ -2183,6 +2185,10 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
+    if answer_backend == "codex":
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping({"TAPPER_ANSWER_BACKEND": answer_backend})
+        return
     settings = TapperSettings.from_mapping(
         {
             "TAPPER_ANSWER_BACKEND": answer_backend,
@@ -2202,181 +2208,82 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
 
 
 @pytest.mark.parametrize(
-    ("labels", "expected", "readiness_calls"),
+    ("labels", "expected"),
     [
-        (("tapper-embedding",), True, 1),
-        (("tapper-chat",), False, 0),
+        (("tapper-embedding", "tapper-chat"), True),
+        (("tapper-embedding",), False),
+        (("tapper-chat",), False),
     ],
 )
-def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
-    monkeypatch,
-    labels: tuple[str, ...],
-    expected: bool,
-    readiness_calls: int,
-) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
+def test_safe_models_probe_requires_both_aliases_and_closes_all_owners(
+    monkeypatch, labels, expected
+):
+    import httpx
+
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
-    events: list[str] = []
-
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": label,
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    }
-                    for label in labels
-                ],
-            }
-        ).encode()
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            events.append("models")
-            yield self.content
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class ModelsClient:
-        def stream(self, method: str, path: str) -> ResponseContext:
-            assert (method, path) == ("GET", "v1/models")
-            return ResponseContext()
-
-        async def aclose(self) -> None:
-            events.append("close:models")
+    settings = TapperSettings.from_mapping({})
+    closed = []
 
     class Embeddings:
-        async def aclose(self) -> None:
-            events.append("close:embeddings")
+        async def aclose(self):
+            closed.append("embeddings")
 
-    class Codex:
-        async def check_ready(self) -> None:
-            events.append("codex-ready")
+    def handler(request):
+        assert request.method == "GET" and request.url.path == "/v1/models"
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": alias, "object": "model", "created": 0, "owned_by": "tap"}
+                    for alias in labels
+                ],
+            },
+        )
 
-        async def aclose(self) -> None:
-            events.append("close:codex")
-
-    embeddings = Embeddings()
-    codex = Codex()
-    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
-    monkeypatch.setattr(
-        safe_check,
-        "_create_answer_backend",
-        lambda _settings, *, embeddings: TapperAnswerBackend(
-            generator=codex,
-            readiness=codex.check_ready,
-            owner=codex,
-        ),
+    client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(handler)
     )
-    monkeypatch.setattr(
-        safe_check,
-        "_create_models_probe_client",
-        lambda _settings: ModelsClient(),
-    )
-
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
     assert (
         asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
         is expected
     )
-    assert events.count("codex-ready") == readiness_calls
-    assert events[-3:] == ["close:models", "close:codex", "close:embeddings"]
+    assert client.is_closed
+    assert closed == ["embeddings"]
 
 
-def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
+def test_safe_models_probe_closes_all_owners_when_transport_fails(monkeypatch):
+    import httpx
+
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
+    events = []
+
+    class Embeddings:
+        async def aclose(self):
+            events.append("embeddings")
+
+    def fail(request):
+        raise RuntimeError("private provider detail")
+
+    client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(fail)
     )
-    events: list[str] = []
-
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": "tapper-embedding",
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    }
-                ],
-            }
-        ).encode()
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            yield self.content
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class Owner:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        async def aclose(self) -> None:
-            events.append(f"close:{self.name}")
-
-    class ModelsClient(Owner):
-        def stream(self, _method: str, _path: str) -> ResponseContext:
-            return ResponseContext()
-
-    class Codex(Owner):
-        async def check_ready(self) -> None:
-            raise RuntimeError("login=/private/auth.json provider-secret")
-
-    embeddings = Owner("embeddings")
-    codex = Codex("codex")
-    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
-    monkeypatch.setattr(
-        safe_check,
-        "_create_answer_backend",
-        lambda _settings, *, embeddings: TapperAnswerBackend(
-            generator=codex,
-            readiness=codex.check_ready,
-            owner=codex,
-        ),
-    )
-    monkeypatch.setattr(
-        safe_check,
-        "_create_models_probe_client",
-        lambda _settings: ModelsClient("models"),
-    )
-
-    with pytest.raises(RuntimeError, match="provider-secret"):
-        asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
-
-    assert events == ["close:models", "close:codex", "close:embeddings"]
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
+    with pytest.raises(RuntimeError, match="private provider detail"):
+        asyncio.run(
+            safe_check._check_models(
+                TapperSettings.from_mapping({}), {"DASHSCOPE_API_KEY": "configured"}
+            )
+        )
+    assert client.is_closed
+    assert events == ["embeddings"]
 
 
 def test_litellm_exposes_exactly_the_two_fixed_tapper_aliases() -> None:
@@ -2970,7 +2877,7 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "DASHSCOPE_API_BASE",
         "CODEX_API_BASE",
     }
-    assert "CODEX_HOME" in environment_names["api"]
+    assert "CODEX_HOME" not in environment_names["api"]
     for role, names in environment_names.items():
         assert not forbidden_provider_names & names
         if role != "api":

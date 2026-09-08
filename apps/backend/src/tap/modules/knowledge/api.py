@@ -76,6 +76,7 @@ from tap.modules.knowledge.domain.models import (
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
+    GovernedKnowledgeModels,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -97,8 +98,9 @@ class KnowledgeAPI:
         self,
         *,
         search: SearchPort,
-        embeddings: QueryEmbeddingPort,
-        answers: AnswerGenerationPort,
+        embeddings: QueryEmbeddingPort | None = None,
+        answers: AnswerGenerationPort | None = None,
+        models: GovernedKnowledgeModels | None = None,
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str] | None = None,
@@ -107,6 +109,7 @@ class KnowledgeAPI:
             search=search,
             embeddings=embeddings,
             answers=answers,
+            models=models,
             policy_verifier=policy_verifier,
             redactor=redactor,
             id_factory=id_factory or (lambda: str(uuid4())),

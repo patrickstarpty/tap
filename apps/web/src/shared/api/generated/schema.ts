@@ -1,4 +1,21 @@
 export interface paths {
+    "/api/v1/projects/{project_id}/ai/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Models */
+        get: operations["ai_list_models"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/answers": {
         parameters: {
             query?: never;
@@ -524,6 +541,11 @@ export interface components {
              */
             type: "failure";
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /** HealthComponent */
         HealthComponent: {
             name: components["schemas"]["HealthComponentName"];
@@ -558,6 +580,22 @@ export interface components {
              * @constant
              */
             status: "ok";
+        };
+        /** ModelCatalogItem */
+        ModelCatalogItem: {
+            /** Alias */
+            alias: string;
+            /** Capabilities */
+            capabilities: ("chat" | "embed" | "structured")[];
+            /** Displayname */
+            displayName: string;
+        };
+        /** ModelCatalogPage */
+        ModelCatalogPage: {
+            /** Defaultalias */
+            defaultAlias: string;
+            /** Items */
+            items: components["schemas"]["ModelCatalogItem"][];
         };
         /** OpenApiAnchor */
         OpenApiAnchor: {
@@ -1407,6 +1445,15 @@ export interface components {
          * @description A closed, structural location inside one authorized source family.
          */
         StructuralAnchor: components["schemas"]["DocumentAnchor"] | components["schemas"]["CodeAnchor"] | components["schemas"]["BddAnchor"] | components["schemas"]["OpenApiAnchor"] | components["schemas"]["FailureAnchor"];
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1416,6 +1463,55 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    ai_list_models: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalogPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Model catalog unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     knowledge_create_answer: {
         parameters: {
             query?: never;

@@ -21,6 +21,7 @@ from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
 from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sources_router
+from tap.interfaces.http.routes.model_catalog import router as model_catalog_router
 from tap.interfaces.http.scope import resolve_project_scope
 from tap.modules.access.domain.context import IdentityMode
 from tap.modules.access.domain.policy import AuthorizationDenied
@@ -92,6 +93,7 @@ def create_app(
         knowledge_documents_router,
         knowledge_answers_router,
         citations_router,
+        model_catalog_router,
     ):
         app.include_router(
             router,

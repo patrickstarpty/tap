@@ -35,6 +35,19 @@ class RuntimeMode(ContractModel):
     identity_mode: Literal["validation"]
 
 
+class ModelCatalogItem(ContractModel):
+    alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    capabilities: Annotated[
+        list[Literal["chat", "embed", "structured"]], Field(min_length=1, max_length=3)
+    ]
+
+
+class ModelCatalogPage(ContractModel):
+    default_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    items: Annotated[list[ModelCatalogItem], Field(max_length=32)]
+
+
 class SourceFamily(str, Enum):
     DOC = "doc"
     CODE = "code"

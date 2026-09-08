@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import httpx
 import pytest
 
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.documents import (
     BlockKind,

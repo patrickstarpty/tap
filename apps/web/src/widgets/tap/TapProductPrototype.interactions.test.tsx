@@ -51,6 +51,23 @@ function renderPrototype() {
   return renderKnowledgeApp(<TapProductPrototype />, { api });
 }
 
+it("preserves the draft and prevents sending when the governed model is unavailable", async () => {
+  const { queryClient } = renderPrototype();
+  const user = userEvent.setup();
+  const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+  await user.type(composer, "Keep this draft");
+  await act(async () => {
+    queryClient.setQueriesData(
+      { queryKey: ["model-catalog"] },
+      { defaultAlias: "tapper-chat", items: [] },
+    );
+  });
+  expect(await screen.findByText("Model unavailable")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await user.keyboard("{Enter}");
+  expect(composer).toHaveValue("Keep this draft");
+});
+
 it("uses canonical Source API identities in the existing source panel", async () => {
   const api = fakeKnowledgeClient().withDocuments([
     document({ filename: "Legacy document only" }),

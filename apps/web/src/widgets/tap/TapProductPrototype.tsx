@@ -1266,6 +1266,7 @@ export function TapProductPrototype() {
               </button>
             ) : null}
             <TapperChat
+              projectId={projectId}
               agents={agents}
               conversation={activeConversation}
               copy={copy}

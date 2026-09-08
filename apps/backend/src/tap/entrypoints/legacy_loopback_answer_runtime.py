@@ -1,4 +1,4 @@
-"""Strict settings, lifecycle ownership, and composition roots for Tapper local runtime."""
+"""Frozen RFC-006 loopback composition. It never mounts RFC-009 Project APIs."""
 
 from __future__ import annotations
 
@@ -7,11 +7,15 @@ import inspect
 import ipaddress
 import json
 import math
+import os
+import platform
 import re
+import shutil
+import stat
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.contracts.http import (
@@ -21,24 +25,35 @@ from tap.contracts.http import (
     HealthRemediationCode,
     ReadyHealth,
 )
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.adapters.litellm import LiteLLMModelGateway, LiteLLMModelGatewayConfig
-from tap.modules.ai.application.catalog import ModelCatalog
-from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+from tap.modules.knowledge.adapters.codex_exec import (
+    CodexExecAnswerAdapter,
+    CodexExecConfig,
+)
+from tap.modules.knowledge.adapters.codex_target import (
+    CodexTargetRejected,
+    NativeCodexTarget,
+    resolve_native_codex_target,
+)
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
 )
 from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import (
     DocumentEmbeddingPort,
 )
+from tap.modules.knowledge.ports.errors import AnswerUnavailable
+from tap.modules.knowledge.ports.models import AnswerGeneration
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
+    AnswerGenerationPort,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -77,6 +92,8 @@ _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _MODEL_ROUTE = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?:/[A-Za-z0-9][A-Za-z0-9._:-]{0,127})*\Z"
 )
+_CODEX_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
+_CODEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
 _FIXED_COLLECTION = "kb_doc_v1_tapper_demo"
 _FIXED_ALIAS = "kb_doc_tapper_demo_active"
 _FIXED_CORPUS = "tapper-demo-v1"
@@ -102,6 +119,9 @@ class TapperSettings:
     web_port: int
     model_backend: str
     answer_backend: str
+    codex_model: str
+    codex_reasoning_effort: str
+    codex_timeout_seconds: float
     embedding_dimension: int
     poll_seconds: float
     job_batch_size: int
@@ -168,14 +188,33 @@ class TapperSettings:
             raise ValueError(
                 "TAPPER_MODEL_BACKEND=fake requires exact TAP_DEMO_MODE=e2e and vice versa"
             )
-        if values.get("TAPPER_ANSWER_BACKEND") == "codex":
-            raise ValueError("TAPPER_ANSWER_BACKEND=codex is unavailable in the V1 runtime")
         answer_backend = _fixed_choice(
             values,
             "TAPPER_ANSWER_BACKEND",
             default="litellm",
-            choices=frozenset({"litellm"}),
+            choices=frozenset({"litellm", "codex"}),
         )
+        if backend == "fake" and answer_backend == "codex":
+            raise ValueError(
+                "TAPPER_ANSWER_BACKEND=codex is unavailable with the fake model backend"
+            )
+        codex_model = _value(values, "TAPPER_CODEX_MODEL", "gpt-5.6-sol")
+        if _CODEX_MODEL.fullmatch(codex_model) is None:
+            raise ValueError("TAPPER_CODEX_MODEL is outside the closed syntax")
+        codex_reasoning_effort = _fixed_choice(
+            values,
+            "TAPPER_CODEX_REASONING_EFFORT",
+            default="ultra",
+            choices=_CODEX_REASONING_EFFORTS,
+        )
+        codex_timeout_seconds = _duration(
+            values,
+            "TAPPER_CODEX_TIMEOUT_SECONDS",
+            300.0,
+            maximum=900,
+        )
+        if codex_timeout_seconds < 30:
+            raise ValueError("TAPPER_CODEX_TIMEOUT_SECONDS is outside the closed bound")
 
         api_host = _loopback_host(values, "TAPPER_API_HOST", "127.0.0.1")
         web_host = _loopback_host(values, "TAPPER_WEB_HOST", "127.0.0.1")
@@ -352,6 +391,9 @@ class TapperSettings:
             web_port=_integer(values, "TAPPER_WEB_PORT", 5173, minimum=1, maximum=65535),
             model_backend=backend,
             answer_backend=answer_backend,
+            codex_model=codex_model,
+            codex_reasoning_effort=codex_reasoning_effort,
+            codex_timeout_seconds=codex_timeout_seconds,
             embedding_dimension=dimension,
             poll_seconds=_duration(values, "TAPPER_POLL_SECONDS", 1.0, maximum=60),
             job_batch_size=_integer(
@@ -426,6 +468,37 @@ CloseCallback = Callable[[], Awaitable[object] | object]
 
 class TapperEmbeddingPort(QueryEmbeddingPort, DocumentEmbeddingPort, Protocol):
     """The one real or fake adapter shared by query and document Embedding."""
+
+
+@dataclass(frozen=True, slots=True)
+class TapperAnswerBackend:
+    """Selected generator plus its optional readiness and ownership boundaries."""
+
+    generator: AnswerGenerationPort
+    readiness: Callable[[], Awaitable[None]] | None
+    owner: object | None
+
+
+class _UnavailableCodexAnswers:
+    """Fail closed without retaining startup discovery or login details."""
+
+    _MESSAGE = "Codex answer backend is unavailable"
+
+    async def answer(
+        self,
+        query: str,
+        evidence: tuple[Evidence, ...],
+        profile_id: str,
+    ) -> AnswerGeneration:
+        del query, evidence, profile_id
+        raise AnswerUnavailable(self._MESSAGE)
+
+    async def check_ready(self) -> None:
+        raise AnswerUnavailable(self._MESSAGE)
+
+
+class _CodexConfigurationUnavailable(RuntimeError):
+    """Expected local login-location failure without sensitive detail retention."""
 
 
 class TapperFailureController(Protocol):
@@ -626,8 +699,6 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
 
     if not isinstance(settings, TapperSettings):
         raise TypeError("Tapper API runtime requires validated settings")
-    if settings.answer_backend != "litellm":
-        raise ValueError("Tapper V1 requires the governed model gateway")
     resources = OwnedResources()
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -641,6 +712,8 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         failure_controller = _create_stage_controller(settings, redis)
         embeddings = _create_embeddings(settings)
         _push_if_owned(resources, embeddings)
+        answer_backend = _create_answer_backend(settings, embeddings=embeddings)
+        _push_if_owned(resources, answer_backend.owner)
         search, reader, target = await _create_search(
             settings,
             owners=repository,
@@ -659,6 +732,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             redis=redis,
             artifacts=artifacts,
             embeddings=embeddings,
+            answer_backend=answer_backend,
             milvus_reader=reader,
             milvus_target=target,
             models_probe_client=models_probe_client,
@@ -669,6 +743,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             artifacts=artifacts,
             search=search,
             embeddings=embeddings,
+            answers=answer_backend.generator,
             readiness=readiness,
             redactor=PatternEgressRedactor(),
             scope_provider=scope_provider,
@@ -690,8 +765,6 @@ async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
 
     if not isinstance(settings, TapperSettings):
         raise TypeError("Tapper worker runtime requires validated settings")
-    if settings.answer_backend != "litellm":
-        raise ValueError("Tapper V1 requires the governed model gateway")
     resources = OwnedResources()
     try:
         engine, repository = await _create_database(settings)
@@ -837,38 +910,109 @@ def _create_redis(settings: TapperSettings) -> Redis:
     )
 
 
-async def _redact_model_context(text: str) -> str:
-    return await PatternEgressRedactor(max_chars=262144).redact_text(text)
-
-
-def _create_embeddings(settings: TapperSettings) -> KnowledgeModelGateway:
-    config = LiteLLMModelGatewayConfig(
-        base_url=settings.litellm_base_url,
-        api_key=settings.litellm_api_key,
-        chat_alias=settings.chat_alias,
-        embedding_alias=settings.embedding_alias,
-        chat_model=settings.litellm_model,
-        embedding_model=settings.litellm_embedding_model,
-        embedding_dimension=settings.embedding_dimension,
-        timeout_seconds=settings.model_timeout_seconds,
-    )
-    gateway: LiteLLMModelGateway
-    if settings.e2e_mode:
-        from tap.testing.deterministic_model_gateway import DeterministicModelGateway
-
-        gateway = DeterministicModelGateway(
-            config, scope=VALIDATION_SCOPE, redact=_redact_model_context
+def _create_litellm_adapter(settings: TapperSettings) -> LiteLLMAdapter:
+    return LiteLLMAdapter(
+        LiteLLMConfig(
+            base_url=settings.litellm_base_url,
+            api_key=settings.litellm_api_key,
+            embedding_model_id=settings.embedding_alias,
+            answer_model_id=settings.chat_alias,
+            answer_profile_id=settings.retrieval_profile,
+            embedding_dimension=settings.embedding_dimension,
+            allowed_embedding_model_labels=settings.allowed_embedding_model_labels,
+            allowed_answer_model_labels=settings.allowed_answer_model_labels,
+            allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
+            deadline_seconds=settings.model_timeout_seconds,
+            read_timeout_seconds=min(10.0, settings.model_timeout_seconds),
         )
-    else:
-        gateway = LiteLLMModelGateway(config, scope=VALIDATION_SCOPE, redact=_redact_model_context)
-    return KnowledgeModelGateway(
-        gateway,
-        scope=VALIDATION_SCOPE,
-        redact=_redact_model_context,
-        embedding_alias=settings.embedding_alias,
-        chat_alias=settings.chat_alias,
-        embedding_dimension=settings.embedding_dimension,
-        timeout_seconds=settings.model_timeout_seconds,
+    )
+
+
+def _create_embeddings(settings: TapperSettings) -> TapperEmbeddingPort:
+    if settings.e2e_mode:
+        from tap.testing.deterministic_model import DeterministicTapperModel
+
+        return cast(TapperEmbeddingPort, DeterministicTapperModel())
+
+    return cast(TapperEmbeddingPort, _create_litellm_adapter(settings))
+
+
+def _codex_config(
+    settings: TapperSettings,
+    target: NativeCodexTarget,
+) -> CodexExecConfig:
+    codex_home = _resolve_codex_home()
+    return CodexExecConfig(
+        target=target,
+        codex_home=codex_home,
+        model_id=settings.codex_model,
+        reasoning_effort=cast(
+            Literal["low", "medium", "high", "xhigh", "max", "ultra"],
+            settings.codex_reasoning_effort,
+        ),
+        profile_id=settings.retrieval_profile,
+        allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
+        timeout_seconds=settings.codex_timeout_seconds,
+    )
+
+
+def _resolve_codex_home() -> Path:
+    try:
+        configured_home = os.environ.get("CODEX_HOME")
+        candidate = Path(configured_home) if configured_home is not None else Path.home() / ".codex"
+        codex_home = candidate.resolve(strict=True)
+        codex_home_stat = codex_home.lstat()
+    except (OSError, RuntimeError, ValueError):
+        raise _CodexConfigurationUnavailable("Codex login location is unavailable") from None
+    if not stat.S_ISDIR(codex_home_stat.st_mode):
+        raise _CodexConfigurationUnavailable("Codex login location is unavailable")
+    return codex_home
+
+
+def _create_answer_backend(
+    settings: TapperSettings,
+    *,
+    embeddings: TapperEmbeddingPort,
+) -> TapperAnswerBackend:
+    if settings.e2e_mode or settings.answer_backend == "litellm":
+        return TapperAnswerBackend(
+            generator=cast(AnswerGenerationPort, embeddings),
+            readiness=None,
+            owner=None,
+        )
+
+    command = shutil.which("codex")
+    if command is None:
+        return _unavailable_codex_backend()
+    try:
+        target = resolve_native_codex_target(
+            Path(command),
+            system=platform.system(),
+            machine=platform.machine(),
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+    except CodexTargetRejected:
+        return _unavailable_codex_backend()
+    try:
+        config = _codex_config(settings, target)
+    except _CodexConfigurationUnavailable:
+        return _unavailable_codex_backend()
+    adapter = CodexExecAnswerAdapter(config)
+
+    return TapperAnswerBackend(
+        generator=adapter,
+        readiness=adapter.check_ready,
+        owner=adapter,
+    )
+
+
+def _unavailable_codex_backend() -> TapperAnswerBackend:
+    unavailable = _UnavailableCodexAnswers()
+    return TapperAnswerBackend(
+        generator=unavailable,
+        readiness=unavailable.check_ready,
+        owner=None,
     )
 
 
@@ -1074,6 +1218,7 @@ def _create_readiness(
     redis: Redis,
     artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     embeddings: QueryEmbeddingPort,
+    answer_backend: TapperAnswerBackend,
     milvus_reader: MilvusReader,
     milvus_target: MilvusIndexTarget,
     models_probe_client: httpx.AsyncClient | None,
@@ -1129,9 +1274,13 @@ def _create_readiness(
         if models_probe_client is None:
             return False
         labels = await _read_models_labels(models_probe_client)
-        required_labels = {settings.embedding_alias, settings.chat_alias}
+        required_labels = {settings.embedding_alias}
+        if settings.answer_backend == "litellm":
+            required_labels.add(settings.chat_alias)
         if labels is None or not required_labels <= labels:
             return False
+        if answer_backend.readiness is not None:
+            await answer_backend.readiness()
         return True
 
     return ReadinessService(
@@ -1230,7 +1379,8 @@ def _assemble_http_services(
     repository: MysqlDocumentRepository,
     artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     search: SearchPort,
-    embeddings: KnowledgeModelGateway,
+    embeddings: QueryEmbeddingPort,
+    answers: AnswerGenerationPort,
     readiness: ReadinessHttpService,
     redactor: EgressRedactionPort,
     scope_provider: ScopeProvider,
@@ -1260,7 +1410,8 @@ def _assemble_http_services(
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
         search=search,
-        models=embeddings,
+        embeddings=embeddings,
+        answers=answers,
         policy_verifier=DemoCurrentPolicyVerifier(
             repository,
             scope_provider=scope_provider,
@@ -1280,9 +1431,6 @@ def _assemble_http_services(
         artifacts=cast(CitationArtifactStore, artifacts),
     )
     return HttpServices(
-        model_catalog=ModelCatalog(
-            embeddings.gateway, scope=embeddings.scope, default_alias=embeddings.chat_alias
-        ),
         knowledge=KnowledgeHttpService(
             documents=documents,
             answers=answer_service,
@@ -1544,3 +1692,69 @@ def _blob_connection_string(values: Mapping[str, str]) -> str:
     if len(value) > 8192 or "\x00" in value:
         raise ValueError(f"{name} must be a bounded connection string")
     return value
+
+
+class LegacyLoopbackSettings:
+    @classmethod
+    def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
+        if values.get("TAPPER_ANSWER_BACKEND") != "codex":
+            raise ValueError("legacy loopback requires TAPPER_ANSWER_BACKEND=codex")
+        return TapperSettings.from_mapping(values)
+
+
+def build_legacy_app(settings: TapperSettings, *, runtime_factory=None):  # type: ignore[no-untyped-def]
+    if settings.answer_backend != "codex" or settings.e2e_mode:
+        raise ValueError("legacy loopback requires the historical Codex backend")
+    from contextlib import asynccontextmanager
+
+    from tap.interfaces.http.app import create_app
+
+    @asynccontextmanager
+    async def lifespan(app):  # type: ignore[no-untyped-def]
+        runtime = await (runtime_factory or create_api_runtime)(settings)
+        app.state.http_services = runtime.http_services
+        try:
+            yield
+        finally:
+            await runtime.aclose()
+
+    app = create_app(
+        lifespan=lifespan,
+        validation_mode=True,
+        allowed_origins=frozenset({f"http://{settings.web_host}:{settings.web_port}"}),
+    )
+    # Only historical loopback Knowledge routes and health are mounted.
+    app.router.routes[:] = [
+        route
+        for route in app.router.routes
+        if getattr(route, "path", "").startswith(("/v1/knowledge/", "/v1/citations/", "/health/"))
+    ]
+    app.title = "Tapper legacy RFC-006 (not V1 evidence)"
+    return app
+
+
+def main(environment: Mapping[str, str] | None = None) -> None:
+    import uvicorn
+
+    settings = LegacyLoopbackSettings.from_mapping(
+        os.environ if environment is None else environment
+    )
+    uvicorn.run(
+        build_legacy_app(settings),
+        host=settings.api_host,
+        port=settings.api_port,
+        log_config=None,
+        access_log=False,
+    )
+
+
+if __name__ == "__main__":
+    import sys
+
+    try:
+        main()
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    except BaseException:
+        print("Legacy Tapper failed; check loopback provider configuration.", file=sys.stderr)
+        raise SystemExit(1) from None

@@ -78,8 +78,14 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
     project_id = request.path_params.get("project_id")
     if project_id is not None and project_id != services.scope.project_id:
         raise AuthorizationDenied("scope-mismatch")
-    if services.knowledge is not None and (
-        getattr(services.knowledge, "scope", None) != services.scope
+    if (
+        services.knowledge is not None
+        and getattr(services.knowledge, "scope", None) != services.scope
+    ):
+        raise AuthorizationDenied("scope-mismatch")
+    if (
+        services.model_catalog is not None
+        and getattr(services.model_catalog, "scope", None) != services.scope
     ):
         raise AuthorizationDenied("scope-mismatch")
     scope = await services.scope_provider.current(RequestFacts(project_id=project_id))
@@ -103,7 +109,9 @@ def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
             scope,
             action,
             ResourceRef(
-                enterprise_id=scope.enterprise_id, project_id=scope.project_id, kind="knowledge"
+                enterprise_id=scope.enterprise_id,
+                project_id=scope.project_id,
+                kind=("ai" if action.startswith("ai.") else "knowledge"),
             ),
         )
         request.state.project_scope = scope

@@ -15,7 +15,6 @@ from sqlalchemy import text
 from tap.entrypoints.tapper_runtime import (
     TapperSettings,
     OwnedResources,
-    _create_answer_backend,
     _create_blob,
     _create_database,
     _create_embeddings,
@@ -174,9 +173,7 @@ async def _check_milvus(settings: TapperSettings, _values: Mapping[str, str]) ->
 
 async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> bool:
     if settings.e2e_mode:
-        from tap.testing.deterministic_model import DeterministicTapperModel
-
-        model = DeterministicTapperModel(dimension=settings.embedding_dimension)
+        model = _create_embeddings(settings)
         embedding = await model.embed("Tapper deterministic readiness")
         vector = embedding.vector
         return (
@@ -196,20 +193,14 @@ async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> 
     try:
         embeddings = _create_embeddings(settings)
         _push_if_owned(resources, embeddings)
-        answer_backend = _create_answer_backend(settings, embeddings=embeddings)
-        _push_if_owned(resources, answer_backend.owner)
         client = _create_models_probe_client(settings)
         _push_if_owned(resources, client)
         if client is None:
             healthy = False
         else:
             labels = await _read_models_labels(client)
-            required_labels = {settings.embedding_alias}
-            if settings.answer_backend == "litellm":
-                required_labels.add(settings.chat_alias)
+            required_labels = {settings.embedding_alias, settings.chat_alias}
             healthy = labels is not None and required_labels <= labels
-            if healthy and answer_backend.readiness is not None:
-                await answer_backend.readiness()
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("model check settlement unexpectedly returned")

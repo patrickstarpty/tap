@@ -1,18 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-unset tapper_dev_caller_codex_home_set tapper_dev_caller_codex_home_value
-tapper_dev_caller_codex_home_set=0
-tapper_dev_caller_codex_home_value=""
-if [ "${CODEX_HOME+x}" = x ]; then
-  tapper_dev_caller_codex_home_set=1
-  tapper_dev_caller_codex_home_value="$CODEX_HOME"
-fi
 unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
-readonly tapper_dev_caller_codex_home_set tapper_dev_caller_codex_home_value
 
 tapper_dev_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 tapper_dev_repo_root="$(CDPATH= cd -- "$tapper_dev_script_dir/.." && pwd)"
@@ -47,21 +39,14 @@ export TAPPER_API_PORT="${TAPPER_API_PORT:-8000}"
 export TAPPER_WEB_HOST="${TAPPER_WEB_HOST:-127.0.0.1}"
 export TAPPER_WEB_PORT="${TAPPER_WEB_PORT:-5173}"
 
-unset tapper_dev_codex_home_set tapper_dev_codex_home_value
-tapper_dev_codex_home_set=0
-tapper_dev_codex_home_value=""
-if [ "${CODEX_HOME+x}" = x ]; then
-  tapper_dev_codex_home_set=1
-  tapper_dev_codex_home_value="$CODEX_HOME"
-elif [ "$tapper_dev_caller_codex_home_set" -eq 1 ]; then
-  tapper_dev_codex_home_set=1
-  tapper_dev_codex_home_value="$tapper_dev_caller_codex_home_value"
-fi
 unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
-readonly tapper_dev_codex_home_set tapper_dev_codex_home_value
+if [ "${TAPPER_ANSWER_BACKEND:-litellm}" != litellm ]; then
+  echo "Tapper V1 requires the governed model gateway." >&2
+  exit 2
+fi
 
 cd "$tapper_dev_repo_root"
 
@@ -213,12 +198,7 @@ while [ ! -S "$TAPPER_PARSER_SOCKET" ] || \
   sleep 0.1
 done
 
-(
-  if [ "$tapper_dev_codex_home_set" -eq 1 ]; then
-    export CODEX_HOME="$tapper_dev_codex_home_value"
-  fi
-  exec uv run --project apps/backend python -m tap.entrypoints.tapper_api
-) &
+(exec uv run --project apps/backend python -m tap.entrypoints.tapper_api) &
 tapper_dev_api_pid=$!
 (exec uv run --project apps/backend python -m tap.entrypoints.relay_reconciler) &
 tapper_dev_relay_pid=$!

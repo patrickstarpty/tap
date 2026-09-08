@@ -66,7 +66,7 @@ describe("prototype persistence", () => {
     expect(readPrototypeSnapshot(null)).toBeNull();
   });
 
-  it("adds the default Codex model when restoring a legacy Conversation", () => {
+  it("adds the governed default alias when restoring a legacy Conversation", () => {
     const legacyConversation = createConversation(
       "chat-1",
     ) as unknown as Record<string, unknown>;
@@ -81,6 +81,6 @@ describe("prototype persistence", () => {
       }),
     );
 
-    expect(restored?.conversations[0]?.modelId).toBe("gpt-5.6-sol");
+    expect(restored?.conversations[0]?.modelId).toBe("tapper-chat");
   });
 });

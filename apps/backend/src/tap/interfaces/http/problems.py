@@ -14,6 +14,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from tap.contracts.problems import ProblemDetails, build_problem
 from tap.interfaces.http.dependencies import KnowledgeRuntimeUnavailable
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     AnswerSnapshotUnavailable,
@@ -227,6 +228,18 @@ def register_problem_handlers(app: FastAPI) -> None:
         _request: Request, _error: PolicyUnavailable
     ) -> JSONResponse:
         return problem_response("search-unavailable", _request)
+
+    @app.exception_handler(ModelGatewayUnavailable)
+    async def model_gateway_unavailable_problem(
+        request: Request, _error: ModelGatewayUnavailable
+    ) -> JSONResponse:
+        return problem_response("model-unavailable", request)
+
+    @app.exception_handler(ModelGatewayRejected)
+    async def model_gateway_rejected_problem(
+        request: Request, _error: ModelGatewayRejected
+    ) -> JSONResponse:
+        return problem_response("request-validation", request)
 
     @app.exception_handler(ModelUnavailable)
     async def embedding_unavailable_problem(
