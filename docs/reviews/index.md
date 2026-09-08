@@ -25,3 +25,5 @@
 - [V0 Validation Scope 与可靠性门禁](2026-09-06-v0-validation-scope-reliability-gate.md)：Task 5B 与 V0 通过；保留首轮失败、清理/权限修正与复审，记录最终 296 项必需验证、原生证据和源码一致性。
 
 - [Tapper V1 知识来源账本验收](2026-09-06-tapper-v1-source-ledger-review.md)：Task6通过；记录0010/25表、事务Audit/Outbox、查询脱敏、两轮修正和最终Backend2880/Web294验证，V1质量出口仍待后续。
+
+- [Tapper V1 Source API 与 projection 验收](2026-09-08-tapper-v1-source-api-and-projection-review.md)：Task6A通过；记录0010a/26表、Source API/Picker、canonical Milvus v2、显式v1回滚、五份审查和最终隔离回归。

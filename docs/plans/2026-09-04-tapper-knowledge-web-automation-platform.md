@@ -704,6 +704,8 @@ Source Picker 接入当前 Tapper 产品壳的来源区域和 Library；不替�
 - Cutover and rollback are explicit and bind matching runtime profile plus alias/corpus state; startup must report migration-required instead of swapping an existingv1 target. Preserve old physical generation during rollback window. No shared/default alias operations or paid embeddings.
 - Add new V0 report schemaVersion3 exact0010a/26-table profile while retaining unchanged historicalv1/21 andv2/0010/25 interpretation. Do not rewrite past evidence or rerun the fullV0 gate solely for profile growth. Root will verify historical validators separately.
 
+- Explicit v1 rollback also supports the canonical Source client: translate only trusted frozen Source/Document/Revision/hash tuples to legacy Document-ID filters, then map validated hits back to canonical Source. Preserve Document chunk/anchor identity and require unique mapping. Validate legacy tenant/project plus authoritative SQL Enterprise/Project ownership and existing ACL; never claim a physical enterprise field exists in v1. Missing/ambiguous/mismatched ownership or profile fails closed. No schema autodetection, silent fallback, fabricated legacy map or public Document-ID alias. Verify real cutover/rollback through Source selection and wrong-owner/revision refusal.
+
 **Approved additional files and checks**
 
 Additional permitted implementation dependencies: Source/Document application+ports+repository, answer/policy/snapshot and Source+Revision disambiguation, HTTP composition/problems, versioned Milvus fixture/publish/config, current prototype Source extraction/copy/client tests, new Source-command migration/integration test and exact schema/gate profile support. No unrelated retrieval redesign. Report genuinely new dependencies before expanding further.
@@ -713,11 +715,13 @@ Use a strictly owned disposable real Milvus project with explicit loopback ports
 Literal RED/GREEN for behaviors; actual SQL atomicity/crash/lease evidence; generated contracts; Picker keyboard/loading/error/empty/Project-switch coverage; real versioned row/cutover/rollback evidence. Freeze before independent review and Root broad checks. If ports/documents.py changes, Root rebuilds/verifies the declared parser payload before broad validation. All production/source input hashes stay fixed during final checks. No plain make test, real models, shared services or UI replacement.
 
 
-- [ ] 写 Source HTTP idempotency/Project/删除/重试、错误类型，Milvus wrong enterprise/project/source/readback、旧 `source_id=document_id` cutover、alias rollback 和 Picker 键盘/空态测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx`；预期 FAIL，原因为 Source route/UI 与闭集 projection 尚未实现。
-- [ ] 实现 API、generated client 和 collection migration；`map_milvus_hit` 必须收到并核对 enterprise/project，任何字段缺失或 scope 不符返回安全的 search failure，不当作零结果。
-- [ ] 运行 `make contracts`、相关 Backend/Web 测试，以及 Root 审核的严格独占真实 Milvus 配方；预期 PASS。冻结源码并审查后运行 `make check`、隔离 Backend/Web 回归和 `git diff --check`；禁止直接运行连接默认资源的 `make test-milvus` 或 `make test`。
-- [ ] Commit: `feat(knowledge): expose sources and scope milvus rows`
+- [x] 写 Source HTTP idempotency/Project/删除/重试、错误类型，Milvus wrong enterprise/project/source/readback、旧 `source_id=document_id` cutover、alias rollback 和 Picker 键盘/空态测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx`；预期 FAIL，原因为 Source route/UI 与闭集 projection 尚未实现。
+- [x] 实现 API、generated client 和 collection migration；`map_milvus_hit` 必须收到并核对 enterprise/project，任何字段缺失或 scope 不符返回安全的 search failure，不当作零结果。
+- [x] 运行 `make contracts`、相关 Backend/Web 测试，以及 Root 审核的严格独占真实 Milvus 配方；预期 PASS。冻结源码并审查后运行 `make check`、隔离 Backend/Web 回归和 `git diff --check`；禁止直接运行连接默认资源的 `make test-milvus` 或 `make test`。
+- [x] Commit: `feat(knowledge): expose sources and scope milvus rows`
+
+**实际验收：** [Task6A Source API 与 projection 验收](../reviews/2026-09-08-tapper-v1-source-api-and-projection-review.md)；源码 `6f30aeb`，修正 `37727c4`、`fa42609`、`1051a17`、`7217997`，五份独立审查/复审最终无发现。最终 Backend2968 passed/26 skipped，Web306 passed，真实独占 Milvus cutover/rollback 1 passed；V1质量出口仍待后续任务。
 
 ### Task 7: Introduce one governed ModelGateway and expose its catalog
 

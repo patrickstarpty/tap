@@ -128,17 +128,17 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 当前状态
 
 - 架构状态：`v0.4 accepted — validation-first knowledge and web automation`
-- 实现状态：`Tapper local doc Q&A slice + frontend prototype implemented; v0.4 platform in progress, V0 gate passed`
+- 实现状态：`Tapper local doc Q&A slice + frontend prototype implemented; v0.4 platform in progress, V0 gate passed, V1 Source API/projection complete`
 - 当前交付重点：`V1 Trusted Knowledge and durable conversation`
 - 后续顺序：`V1 Knowledge → V2 Graph → V3 Test Design → V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)、[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)和[Project 接口验收](docs/reviews/2026-09-06-tapper-v0-http-review.md)；Project API、精确 Origin 与 Validation Mode 已接入当前产品原型，[Project Audit 基础](docs/reviews/2026-09-06-tapper-v0-audit-review.md)也已完成，[有界恢复与运维](docs/reviews/2026-09-06-tapper-v0-recovery-review.md)已接入，[MinIO 与真实上传](docs/reviews/2026-09-06-tapper-v0-object-storage-review.md)完成定向验收，[隔离 Parser](docs/reviews/2026-09-06-tapper-v0-parser-isolation-review.md)也已完成；[V0 完整出口](docs/reviews/2026-09-06-v0-validation-scope-reliability-gate.md)已通过；[V1 Source 账本](docs/reviews/2026-09-06-tapper-v1-source-ledger-review.md)现已完成内部实现与验收，下一步接入 Source API/Picker、canonical Milvus，再推进可信检索与持久 Conversation。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
+V0 已完成 authoritative metadata、固定 Validation Scope/共同授权、`0006` identity registry、`0007` Project 数据回填与统一事件/错误契约。实现范围和测试限制见[身份验收](docs/reviews/2026-09-05-tapper-v0-identity-review.md)、[Project 隔离验收](docs/reviews/2026-09-05-tapper-v0-project-scope-review.md)、[契约验收](docs/reviews/2026-09-06-tapper-v0-contracts-review.md)和[Project 接口验收](docs/reviews/2026-09-06-tapper-v0-http-review.md)；Project API、精确 Origin 与 Validation Mode 已接入当前产品原型，[Project Audit 基础](docs/reviews/2026-09-06-tapper-v0-audit-review.md)也已完成，[有界恢复与运维](docs/reviews/2026-09-06-tapper-v0-recovery-review.md)已接入，[MinIO 与真实上传](docs/reviews/2026-09-06-tapper-v0-object-storage-review.md)完成定向验收，[隔离 Parser](docs/reviews/2026-09-06-tapper-v0-parser-isolation-review.md)也已完成；[V0 完整出口](docs/reviews/2026-09-06-v0-validation-scope-reliability-gate.md)已通过；[V1 Source 账本](docs/reviews/2026-09-06-tapper-v1-source-ledger-review.md)与 [Source API/Picker、canonical Milvus projection](docs/reviews/2026-09-08-tapper-v1-source-api-and-projection-review.md)现已完成实现与验收，下一步进入 Task 7 的统一 ModelGateway/catalog。此前确认的 TAP 产品原型已统一为 FWD 启发的浅色风格，设计规则见 [TAP 浅色视觉规范](docs/reference/2026-09-05-tap-fwd-light-design.md)。旧独立知识页不是本轮视觉改造基线。
 
 ## Tapper 本地知识工作区
 
-Tapper 当前产品入口是已确认的 TAP 原型，已读取固定 Project 与文档列表；Library 的文件选择已接入真实上传与服务端状态，未取得可信 runtime Project 时禁用上传。后端 Knowledge API 已支持上传、六阶段 ingestion、基于 ready 来源的单次非流式问答和逐条引用。完整问答交互与持久 Conversation UI 在 Task 9 实施；当前存储 E2E 通过 Library 验证上传，通过正式 Project API 验证 Answer/Citation。尚未交付登录、服务端 Conversation/history、SSE、停止/队列、真实 Graph 或 OCR，v0.4 完整平台继续按计划实施。API、Web 和所有中间件只绑定精确 loopback；无身份验证仅适用于单机开发，不能开放到局域网或生产环境。Milvus 已被接受为目标 `doc` 检索后端，但当前本地门禁不等于生产认证、TLS、备份、容量或多 Project 隔离已经完成。
+Tapper 当前产品入口是已确认的 TAP 原型，已读取可信 Project 与 Source 列表；Library 的 Source Picker 已接入真实上传、服务端状态和 Project 切换清空，未取得可信 runtime Project 时禁用上传。后端 Knowledge API 已支持 Source create/list/detail/delete/retry、兼容 Document facade、六阶段 ingestion、基于 ready 来源的单次非流式问答和逐条引用。本地 Milvus `doc-schema-v2` 已使用 canonical Enterprise/Project/Source/Document/Revision 投影，并验证显式 v1 cutover/rollback。完整问答交互与持久 Conversation UI 在 Task 9 实施；当前存储 E2E 通过 Library 验证上传，通过正式 Project API 验证 Answer/Citation。尚未交付登录、服务端 Conversation/history、SSE、停止/队列、真实 Graph 或 OCR，v0.4 完整平台继续按计划实施。API、Web 和所有中间件只绑定精确 loopback；无身份验证仅适用于单机开发，不能开放到局域网或生产环境。当前本地门禁不等于生产认证、TLS、备份、容量或企业 Azure 四索引已经完成。
 
 支持文本可提取的 PDF、DOCX、Markdown（MD）和 TXT。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
 
