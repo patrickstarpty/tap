@@ -5,6 +5,23 @@ from __future__ import annotations
 import math
 
 
+def _json_equal(left: object, right: object) -> bool:
+    """JSON numbers compare numerically; booleans are never numbers."""
+    if type(left) in {int, float} and type(right) in {int, float}:
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _json_equal(value, right[key]) for key, value in left.items()
+        )
+    return left == right
+
+
 def check_schema(schema: object, depth: int = 0) -> None:
     if depth > 16 or not isinstance(schema, dict):
         raise ValueError("invalid locked schema")
@@ -68,5 +85,5 @@ def validate_output(schema: dict[str, object], value: object) -> None:
     if "enum" in schema:
         choices = schema["enum"]
         assert isinstance(choices, list)
-        if value not in choices:
+        if not any(_json_equal(value, choice) for choice in choices):
             raise ValueError("structured output does not match locked enum")

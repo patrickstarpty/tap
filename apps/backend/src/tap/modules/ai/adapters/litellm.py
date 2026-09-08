@@ -33,13 +33,41 @@ Redact = Callable[[str], Awaitable[str]]
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderModelMapping:
+    """Explicit private upstream identity, distinct from a governed routing alias."""
+
+    provider: str = field(repr=False)
+    model: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.provider, str)
+            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.provider) is None
+            or not isinstance(self.model, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}", self.model) is None
+        ):
+            raise ValueError("model gateway requires an explicit provider/model mapping")
+
+    @classmethod
+    def from_route(cls, route: str) -> ProviderModelMapping:
+        if not isinstance(route, str) or "/" not in route:
+            raise ValueError("model gateway requires an explicit provider/model mapping")
+        provider, model = route.split("/", 1)
+        return cls(provider, model)
+
+    @property
+    def route(self) -> str:
+        return f"{self.provider}/{self.model}"
+
+
+@dataclass(frozen=True, slots=True)
 class LiteLLMModelGatewayConfig:
     base_url: str
     api_key: str = field(repr=False)
     chat_alias: str
     embedding_alias: str
-    chat_model: str = field(repr=False)
-    embedding_model: str = field(repr=False)
+    chat_model: ProviderModelMapping = field(repr=False)
+    embedding_model: ProviderModelMapping = field(repr=False)
     embedding_dimension: int
     timeout_seconds: float = 15.0
     max_retries: int = 1
@@ -61,9 +89,19 @@ class LiteLLMModelGatewayConfig:
             raise ValueError("model gateway requires HTTPS or loopback HTTP")
         if not self.api_key or len(self.api_key) > 4096:
             raise ValueError("model gateway requires a bounded credential")
-        for value in (self.chat_alias, self.embedding_alias, self.chat_model, self.embedding_model):
+        for value in (self.chat_alias, self.embedding_alias):
             if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", value) is None:
                 raise ValueError("model gateway requires fixed bounded routes")
+        aliases = {self.chat_alias, self.embedding_alias}
+        for target in (self.chat_model, self.embedding_model):
+            if (
+                not isinstance(target, ProviderModelMapping)
+                or target.provider in aliases
+                or target.model in aliases
+                or target.model.rsplit("/", 1)[-1] in aliases
+                or target.route in aliases
+            ):
+                raise ValueError("provider/model mapping cannot use a logical alias")
         if self.chat_alias == self.embedding_alias or not self.disabled_aliases <= {
             self.chat_alias,
             self.embedding_alias,
@@ -301,19 +339,23 @@ class LiteLLMModelGateway:
     def _normalize(
         self, request: ModelRequest, body: dict[str, Any], headers: httpx.Headers
     ) -> ModelResult:
-        configured = (
+        mapping = (
             self._config.embedding_model
             if request.operation is ModelOperation.EMBED
             else self._config.chat_model
         )
-        actual = body["model"]
+        returned_model = body["model"]
         # An echoed logical alias is not evidence of an actual upstream model.
-        if actual not in {configured, configured.rsplit("/", 1)[-1]}:
+        if returned_model in {
+            self._config.chat_alias,
+            self._config.embedding_alias,
+        } or returned_model not in {mapping.route, mapping.model}:
             raise ModelGatewayUnavailable()
+        actual = mapping.route
         group = headers.get("x-litellm-model-group")
         if group is not None and group != request.alias:
             raise ModelGatewayUnavailable()
-        provider = configured.split("/", 1)[0]
+        provider = mapping.provider
         usage = body.get("usage", {})
         if not isinstance(usage, dict):
             raise ModelGatewayUnavailable()

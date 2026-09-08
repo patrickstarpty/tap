@@ -26,7 +26,11 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationS
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.adapters.litellm import LiteLLMModelGateway, LiteLLMModelGatewayConfig
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+    ProviderModelMapping,
+)
 from tap.modules.ai.application.catalog import ModelCatalog
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
@@ -847,8 +851,16 @@ def _create_embeddings(settings: TapperSettings) -> KnowledgeModelGateway:
         api_key=settings.litellm_api_key,
         chat_alias=settings.chat_alias,
         embedding_alias=settings.embedding_alias,
-        chat_model=settings.litellm_model,
-        embedding_model=settings.litellm_embedding_model,
+        chat_model=(
+            ProviderModelMapping("fake", "deterministic-chat-v1")
+            if settings.e2e_mode
+            else ProviderModelMapping.from_route(settings.litellm_model)
+        ),
+        embedding_model=(
+            ProviderModelMapping("fake", "deterministic-embedding-v1")
+            if settings.e2e_mode
+            else ProviderModelMapping.from_route(settings.litellm_embedding_model)
+        ),
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
     )

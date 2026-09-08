@@ -9,7 +9,11 @@ import pytest
 from model_gateway_conformance import assert_catalog_conformance, assert_gateway_conformance
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.litellm import LiteLLMModelGateway, LiteLLMModelGatewayConfig
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+    ProviderModelMapping,
+)
 from tap.modules.ai.domain.models import (
     ModelCapability,
     ModelDescriptor,
@@ -57,10 +61,13 @@ def configured_gateway(handler, **changes):
         api_key="private-provider-key",
         chat_alias="tapper-chat",
         embedding_alias="tapper-embedding",
-        chat_model="openai/gpt-5.6-sol",
-        embedding_model="dashscope/text-embedding-v4",
+        chat_model=ProviderModelMapping("openai", "gpt-5.6-sol"),
+        embedding_model=ProviderModelMapping("dashscope", "text-embedding-v4"),
         embedding_dimension=2,
     )
+    for field in ("chat_model", "embedding_model"):
+        if field in changes and isinstance(changes[field], str):
+            changes[field] = ProviderModelMapping.from_route(changes[field])
     return LiteLLMModelGateway(
         replace(config, **changes),
         scope=VALIDATION_SCOPE,
@@ -280,8 +287,8 @@ async def test_litellm_gateway_exposes_governed_default_catalog() -> None:
             api_key="not-a-real-key",
             chat_alias="tapper-chat",
             embedding_alias="tapper-embedding",
-            chat_model="provider-chat",
-            embedding_model="provider-embed",
+            chat_model=ProviderModelMapping("provider", "chat"),
+            embedding_model=ProviderModelMapping("provider", "embed"),
             embedding_dimension=2,
         ),
         scope=VALIDATION_SCOPE,
@@ -352,3 +359,66 @@ async def test_structured_digest_binds_an_immutable_schema_during_redaction():
     assert result.audit.schema_digest == digest(
         json.dumps(transmitted, sort_keys=True, separators=(",", ":"))
     )
+
+
+@pytest.mark.parametrize("field", ["chat_model", "embedding_model"])
+@pytest.mark.parametrize("alias", ["tapper-chat", "tapper-embedding"])
+@pytest.mark.parametrize("prefix", ["", "openai/"])
+def test_configured_logical_alias_is_not_an_upstream_mapping(field, alias, prefix):
+    with pytest.raises(ValueError, match="mapping"):
+        configured_gateway(success, **{field: prefix + alias})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", list(ModelOperation))
+async def test_actual_model_audit_normalizes_provider_mapping_and_rejects_aliases(operation):
+    from tap.modules.ai.domain.models import ModelGatewayUnavailable
+
+    req = request(operation)
+    call = "generate_structured" if operation is ModelOperation.STRUCTURED else operation.value
+    route = (
+        "dashscope/text-embedding-v4" if operation is ModelOperation.EMBED else "openai/gpt-5.6-sol"
+    )
+
+    def bare_model(incoming):
+        return httpx.Response(
+            200, json=success(incoming).json() | {"model": route.split("/", 1)[1]}
+        )
+
+    gateway = configured_gateway(bare_model)
+    result = await getattr(gateway, call)(req)
+    assert result.actual_model == route
+    assert result.actual_provider == route.split("/", 1)[0]
+    assert result.audit.actual_model == route
+    assert "private-provider-key" not in repr(result)
+    assert "must stay private" not in repr(result)
+    for alias in ("tapper-chat", "tapper-embedding"):
+
+        def echoed(incoming):
+            return httpx.Response(200, json=success(incoming).json() | {"model": alias})
+
+        with pytest.raises(ModelGatewayUnavailable, match="^model-unavailable$"):
+            await getattr(configured_gateway(echoed), call)(req)
+
+
+@pytest.mark.asyncio
+async def test_logical_sol_display_never_relabels_actual_qwen_evidence():
+    def qwen(incoming):
+        return httpx.Response(200, json=success(incoming).json() | {"model": "qwen-plus"})
+
+    gateway = configured_gateway(qwen, chat_model=ProviderModelMapping("dashscope", "qwen-plus"))
+    result = await gateway.chat(request())
+    assert result.actual_provider == "dashscope"
+    assert result.actual_model == result.audit.actual_model == "dashscope/qwen-plus"
+    assert (await gateway.catalog(VALIDATION_SCOPE))[0].display_name == "GPT-5.6 Sol"
+    assert "Sol" not in repr(result) and "private-provider-key" not in repr(result)
+
+
+@pytest.mark.parametrize("field", ["chat_model", "embedding_model"])
+def test_gateway_configuration_rejects_untyped_alias_and_provider_namespace_collision(field):
+    gateway = configured_gateway(success)
+    for invalid in ("tapper-chat", ProviderModelMapping("tapper-chat", "upstream")):
+        with pytest.raises(ValueError, match="mapping") as error:
+            replace(gateway._config, **{field: invalid})
+        assert "private-provider-key" not in str(error.value)
+    assert "private-provider-key" not in repr(gateway._config)

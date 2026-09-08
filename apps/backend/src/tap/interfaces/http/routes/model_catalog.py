@@ -16,7 +16,10 @@ router = APIRouter(prefix="/ai", tags=["ai"])
     "/models",
     operation_id="ai_list_models",
     response_model=ModelCatalogPage,
-    responses={503: problem_response_metadata("Model catalog unavailable")},
+    responses={
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Model catalog unavailable"),
+    },
     dependencies=[Depends(project_authorization("ai.models.read"))],
 )
 async def list_models(request: Request) -> ModelCatalogPage:

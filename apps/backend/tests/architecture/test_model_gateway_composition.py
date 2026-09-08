@@ -36,7 +36,9 @@ def test_v1_knowledge_models_share_one_gateway() -> None:
     from tap.modules.ai.ports.gateway import ModelGateway
     from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
-    models = _create_embeddings(TapperSettings.from_mapping({}))
+    models = _create_embeddings(
+        TapperSettings.from_mapping({"LITELLM_MODEL": "dashscope/qwen-plus"})
+    )
     assert isinstance(models, KnowledgeModelGateway)
     assert isinstance(models.gateway, ModelGateway)
 

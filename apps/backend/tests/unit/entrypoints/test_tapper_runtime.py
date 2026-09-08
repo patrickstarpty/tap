@@ -1259,8 +1259,8 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
         assert blob._config.operation_timeout_seconds == settings.blob_timeout_seconds
         assert model.embedding_model_id == "tapper-embedding"
         assert model.chat_alias == "tapper-chat"
-        assert model.gateway._config.embedding_model == settings.litellm_embedding_model
-        assert model.gateway._config.chat_model == settings.litellm_model
+        assert model.gateway._config.embedding_model.route == settings.litellm_embedding_model
+        assert model.gateway._config.chat_model.route == settings.litellm_model
         assert search._reader is reader
         assert search._owners is repository
         assert search._config.targets[target.family] is target

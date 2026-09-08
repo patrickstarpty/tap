@@ -19,12 +19,13 @@ from tap.contracts.http import (
     RetrievalAnswerRequest,
     SourceFamily,
 )
-from tap.entrypoints.legacy_litellm import LiteLLMAdapter
 from tap.entrypoints.tapper_runtime import (
     TapperSettings,
     _create_embeddings,
     create_api_runtime,
 )
+from tap.modules.ai.adapters.litellm import LiteLLMModelGateway
+from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 
 _CHAT_ALIAS = "tapper-chat"
 _EMBEDDING_ALIAS = "tapper-embedding"
@@ -82,14 +83,19 @@ async def _embed_through_production_route() -> TapperSettings:
         raise AssertionError("the fixed Tapper model route is not configured")
 
     model = _create_embeddings(settings)
-    if not isinstance(model, LiteLLMAdapter):
-        raise AssertionError("the production model adapter is not LiteLLM")
     started = time.monotonic_ns()
     try:
+        if (
+            not isinstance(model, KnowledgeModelGateway)
+            or type(model.gateway) is not LiteLLMModelGateway
+        ):
+            raise AssertionError(
+                "the production model boundary is not the governed LiteLLM gateway"
+            )
         single = await model.embed(_CROSS_LANGUAGE_INPUTS[0])
-        embeddings = await model.embed_many(_CROSS_LANGUAGE_INPUTS)
+        embeddings = tuple([await model.embed(text) for text in _CROSS_LANGUAGE_INPUTS])
     finally:
-        await model.close()
+        await model.aclose()
 
     for embedding in (*embeddings, single):
         usage = embedding.usage
@@ -194,3 +200,68 @@ async def test_real_tapper_aliases_produce_grounded_cited_answer() -> None:
         )
     finally:
         logging.disable(previous_log_disable)
+
+
+@pytest.mark.asyncio
+async def test_enabled_smoke_setup_uses_governed_gateway_without_provider_io(monkeypatch, capsys):
+    import json
+    from types import SimpleNamespace
+
+    import httpx
+
+    from tap.modules.ai.ports.gateway import ModelGateway
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    module = __import__(__name__)
+    monkeypatch.setattr(
+        module,
+        "os",
+        SimpleNamespace(
+            environ={"TAP_RUN_TAPPER_REAL_MODEL_SMOKE": "1", "LITELLM_MODEL": "dashscope/qwen-plus"}
+        ),
+    )
+    factory = _create_embeddings
+    models = []
+    sent = []
+    answer_settings = []
+
+    def handler(incoming):
+        sent.append(incoming)
+        payload = json.loads(incoming.content)
+        assert incoming.url.path == "/v1/embeddings"
+        assert payload["model"] == _EMBEDDING_ALIAS
+        assert payload["metadata"]["project_id"] == "tapper-demo"
+        index = _CROSS_LANGUAGE_INPUTS.index(payload["input"])
+        axis = (0, 0, 1, 2, 2, 3)[index]
+        vector = [0.0] * _EMBEDDING_DIMENSION
+        vector[axis] = 1.0
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/text-embedding-v4",
+                "data": [{"index": 0, "embedding": vector}],
+                "usage": {"prompt_tokens": 3},
+            },
+        )
+
+    def instrumented_factory(settings):
+        model = factory(settings)
+        assert isinstance(model, KnowledgeModelGateway)
+        assert isinstance(model.gateway, ModelGateway)
+        model.gateway._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        models.append(model)
+        return model
+
+    async def no_paid_answer(settings):
+        answer_settings.append(settings)
+
+    monkeypatch.setattr(module, "_create_embeddings", instrumented_factory)
+    monkeypatch.setattr(module, "_answer_through_production_graph", no_paid_answer)
+    await test_real_tapper_aliases_produce_grounded_cited_answer()
+    assert len(models) == 1
+    assert len(sent) == 7
+    assert models[0].gateway._client.is_closed
+    assert len(answer_settings) == 1
+    output = capsys.readouterr().out
+    assert "zh_to_en=true en_to_zh=true" in output
+    assert "qwen" not in output and "dashscope" not in output

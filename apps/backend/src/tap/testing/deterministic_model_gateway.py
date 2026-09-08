@@ -9,7 +9,12 @@ from typing import Any
 import httpx
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.adapters.litellm import LiteLLMModelGateway, LiteLLMModelGatewayConfig, Redact
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+    ProviderModelMapping,
+    Redact,
+)
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest
 from tap.testing.deterministic_model import _first_evidence_sentence, deterministic_vector
 
@@ -19,7 +24,11 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         self, config: LiteLLMModelGatewayConfig, *, scope: ProjectScopeContext, redact: Redact
     ) -> None:
         super().__init__(
-            replace(config, chat_model="fake/tapper-chat", embedding_model="fake/tapper-embedding"),
+            replace(
+                config,
+                chat_model=ProviderModelMapping("fake", "deterministic-chat-v1"),
+                embedding_model=ProviderModelMapping("fake", "deterministic-embedding-v1"),
+            ),
             scope=scope,
             redact=redact,
         )
@@ -34,7 +43,7 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 else tuple([1.0] + [0.0] * (self._config.embedding_dimension - 1))
             )
             body: dict[str, Any] = {
-                "model": "fake/tapper-embedding",
+                "model": "fake/deterministic-embedding-v1",
                 "data": [{"index": 0, "embedding": list(vector)}],
                 "usage": {"prompt_tokens": len(request.context.split())},
             }
@@ -61,7 +70,7 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 )
                 content = json.dumps(output)
             body = {
-                "model": "fake/tapper-chat",
+                "model": "fake/deterministic-chat-v1",
                 "choices": [{"message": {"content": content}}],
                 "usage": {
                     "prompt_tokens": len(request.context.split()),

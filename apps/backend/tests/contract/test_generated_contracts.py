@@ -243,3 +243,17 @@ def test_exported_problem_component_matches_runtime_and_all_refs_resolve(tmp_pat
 
     check_refs(schema)
     assert "ProjectEventEnvelope" not in schema["components"]["schemas"]
+
+
+def test_catalog_generated_validation_response_is_problem_details(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    schema = json.loads((tmp_path / "openapi/api.json").read_bytes())
+    response = schema["paths"]["/api/v1/projects/{project_id}/ai/models"]["get"]["responses"]["422"]
+    assert response["content"] == {
+        "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}
+    }
+    typescript = (REPOSITORY_ROOT / "apps/web/src/shared/api/generated/schema.ts").read_text()
+    operation = typescript.split("    ai_list_models: {", 1)[1].split("\n    };", 1)[0]
+    validation = operation.split("422: {", 1)[1].split("\n            };", 1)[0]
+    assert '"application/problem+json": components["schemas"]["ProblemDetails"]' in validation
+    assert "HTTPValidationError" not in validation

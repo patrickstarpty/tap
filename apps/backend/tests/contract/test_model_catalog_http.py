@@ -89,3 +89,31 @@ def test_catalog_cross_project_and_unavailability_use_safe_problem_details():
     assert unavailable.headers["content-type"] == "application/problem+json"
     assert unavailable.json()["type"].endswith("/model-unavailable")
     assert "provider" not in unavailable.text
+
+
+def test_catalog_validation_problem_matches_its_openapi_response():
+    from tap.modules.ai.domain.models import ModelGatewayRejected
+
+    class Rejected(_Catalog):
+        async def list_models(self, scope):
+            raise ModelGatewayRejected()
+
+    authority = _Authority()
+    app = create_app(
+        HttpServices(
+            model_catalog=Rejected(),
+            scope_provider=authority,
+            authorization_policy=authority,
+            scope=VALIDATION_SCOPE,
+        )
+    )
+    response = TestClient(app).get("/api/v1/projects/tapper-demo/ai/models")
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["type"] == "https://tap.example/problems/request-validation"
+    documented = app.openapi()["paths"]["/api/v1/projects/{project_id}/ai/models"]["get"][
+        "responses"
+    ]["422"]["content"]
+    assert documented == {
+        "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}
+    }

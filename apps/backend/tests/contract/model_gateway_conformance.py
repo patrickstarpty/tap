@@ -68,6 +68,9 @@ async def assert_gateway_conformance(gateway):
         assert result.audit.actual_model == result.actual_model
         assert result.audit.usage == result.usage
         assert result.actual_provider
+        assert result.actual_model.startswith(result.actual_provider + "/")
+        assert result.actual_model.split("/", 1)[1] not in {"tapper-chat", "tapper-embedding"}
+        assert result.actual_provider not in {"tapper-chat", "tapper-embedding"}
         assert not hasattr(result, "reasoning_content")
     for invalid in (
         replace(base, alias="unknown"),
