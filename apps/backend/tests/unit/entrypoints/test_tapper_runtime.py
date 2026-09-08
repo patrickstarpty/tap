@@ -17,8 +17,10 @@ import traceback
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from conftest import validation_http_services
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from pymilvus.decorators import _log_rpc_error
@@ -33,6 +35,7 @@ from tap.contracts.http import (
 from tap.entrypoints.tapper_runtime import TapperSettings
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.domain.models import (
     ContentRole,
     DocumentAnchor,
@@ -47,11 +50,50 @@ from tap.modules.knowledge.domain.models import (
 def test_tapper_settings_use_the_new_namespace() -> None:
     settings = TapperSettings.from_mapping({})
 
-    assert settings.collection == "kb_doc_v1_tapper_demo"
+    assert settings.collection == "kb_doc_v2_tapper_demo"
     assert settings.alias == "kb_doc_tapper_demo_active"
-    assert settings.corpus_version == "tapper-demo-v1"
+    assert settings.corpus_version == "tapper-demo-v2"
     assert settings.chat_alias == "tapper-chat"
     assert settings.embedding_alias == "tapper-embedding"
+
+
+def test_source_projection_runtime_profile_requires_matching_explicit_rollback():
+    settings = TapperSettings.from_mapping({"TAPPER_SCHEMA_VERSION": "doc-schema-v1"})
+    assert (settings.schema_version, settings.collection, settings.corpus_version) == (
+        "doc-schema-v1",
+        "kb_doc_v1_tapper_demo",
+        "tapper-demo-v1",
+    )
+    for overrides in (
+        {"TAPPER_SCHEMA_VERSION": "doc-schema-v3"},
+        {"TAPPER_COLLECTION": "kb_doc_v1_tapper_demo"},
+        {"TAPPER_SCHEMA_VERSION": "doc-schema-v1", "TAPPER_CORPUS_VERSION": "tapper-demo-v2"},
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(overrides)
+
+
+def test_minio_settings_require_closed_explicit_credentials_and_compose_shared_port() -> None:
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+
+    values = {
+        "TAPPER_OBJECT_STORE_PROVIDER": "minio",
+        "TAPPER_S3_ENDPOINT": "http://127.0.0.1:29000",
+        "TAPPER_S3_BUCKET": "tapper-test-objects",
+        "TAPPER_S3_REGION": "us-east-1",
+        "TAPPER_S3_ACCESS_KEY": "owned-key",
+        "TAPPER_S3_SECRET_KEY": "owned-secret",
+        "TAPPER_S3_STORE_ID": "owned-store",
+    }
+    settings = TapperSettings.from_mapping(values)
+    store = _runtime()._create_blob(settings)
+    assert isinstance(store, KnowledgeArtifactStore)
+    assert store.legacy is None
+    for key in tuple(values):
+        if key.startswith("TAPPER_S3_"):
+            with pytest.raises(ValueError):
+                TapperSettings.from_mapping({k: v for k, v in values.items() if k != key})
+    assert "owned-secret" not in repr(settings)
 
 
 def test_retired_local_revision_is_rejected_instead_of_rewritten() -> None:
@@ -86,6 +128,7 @@ def _emit_provider_rpc_error(details: str) -> None:
 
 def valid_settings() -> dict[str, str]:
     return {
+        "TAPPER_SCHEMA_VERSION": "doc-schema-v1",
         "TAPPER_API_HOST": "127.0.0.1",
         "TAPPER_API_PORT": "18000",
         "TAPPER_WEB_HOST": "127.0.0.1",
@@ -1056,12 +1099,14 @@ def test_http_readiness_uses_injected_service_and_keeps_http_200_for_unready() -
 def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> None:
     """The composition root must assemble the approved graph, not a parallel RAG stack."""
 
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
     artifacts = object()
     search = object()
     model = object()
     readiness = object()
     redactor = object()
+    scope_provider = object()
+    authorization_policy = object()
 
     services = _runtime()._assemble_http_services(
         repository=repository,
@@ -1071,6 +1116,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
         answers=model,
         readiness=readiness,
         redactor=redactor,
+        scope_provider=scope_provider,
+        authorization_policy=authorization_policy,
     )
 
     assert services.readiness is readiness
@@ -1088,6 +1135,8 @@ def test_api_graph_reuses_one_repository_and_blob_across_existing_services() -> 
     assert retrieval._search is search
     assert retrieval._embeddings is model
     assert retrieval._answers is model
+    assert retrieval._policy_verifier._scope_provider is scope_provider
+    assert retrieval._policy_verifier._authorization_policy is authorization_policy
     assert retrieval._policy_verifier._repository is repository
     assert retrieval._redactor is redactor
 
@@ -1119,9 +1168,9 @@ async def test_codex_api_composes_litellm_embeddings_and_codex_answers(
     search = Resource("search")
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return search, object(), object()
 
     def legacy_model(_settings):  # type: ignore[no-untyped-def]
@@ -1338,6 +1387,8 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
             events.append(self.name)
 
     class UnavailableKnowledge:
+        scope = VALIDATION_SCOPE
+
         def __init__(self, answers) -> None:  # type: ignore[no-untyped-def]
             self._answers = answers
 
@@ -1345,13 +1396,13 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
             return await self._answers.answer(request.query, (), "quick-hybrid-v1")
 
     async def create_database(_settings):  # type: ignore[no-untyped-def]
-        return Resource("engine"), object()
+        return Resource("engine"), SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return Resource("search"), object(), object()
 
     def assemble(**kwargs):  # type: ignore[no-untyped-def]
-        return HttpServices(
+        return validation_http_services(
             knowledge=UnavailableKnowledge(kwargs["answers"]),
             readiness=kwargs["readiness"],
         )
@@ -1396,11 +1447,17 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
 
     runtime = await module.create_api_runtime(settings)
     try:
-        client = TestClient(create_app(runtime.http_services), raise_server_exceptions=False)
+        client = TestClient(
+            create_app(
+                runtime.http_services, allowed_origins=frozenset({"http://127.0.0.1:15175"})
+            ),
+            raise_server_exceptions=False,
+            headers={"Origin": "http://127.0.0.1:15175"},
+        )
 
         liveness = client.get("/health/live")
         response = client.post(
-            "/v1/knowledge/answers",
+            "/api/v1/projects/tapper-demo/knowledge/answers",
             json={
                 "query": "What is the rule?",
                 "resourceRefs": [{"family": "doc", "sourceId": "doc-a", "mode": "scope"}],
@@ -1410,11 +1467,17 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
         assert liveness.status_code == 200
         assert liveness.json() == {"status": "ok"}
         assert response.status_code == 503
+        correlation_id = response.headers["X-Correlation-ID"]
+        assert len(correlation_id) == 32
+        assert all(character in "0123456789abcdef" for character in correlation_id)
         assert response.json() == {
             "type": "https://tap.example/problems/answer-unavailable",
             "title": "Answer unavailable",
             "status": 503,
             "detail": "The answer service is currently unavailable.",
+            "correlationId": correlation_id,
+            "retryable": True,
+            "failureStage": "answer",
         }
         assert "private" not in response.text
         assert "login" not in response.text
@@ -1502,7 +1565,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     events: list[str] = []
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
     reader = object()
     target = object()
 
@@ -1524,7 +1587,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     async def create_database(_settings):  # type: ignore[no-untyped-def]
         return engine, repository
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return search, reader, target
 
     monkeypatch.setattr(module, "_create_database", create_database)
@@ -1576,9 +1639,9 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     search = Resource()
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return search, object(), object()
 
     monkeypatch.setattr(module, "_create_database", database)
@@ -1616,7 +1679,7 @@ async def test_api_failure_controller_construction_failure_closes_prior_owners(
             events.append(self.name)
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return Resource("engine"), object()
+        return Resource("engine"), SimpleNamespace(scope=VALIDATION_SCOPE)
 
     def fail_controller(_settings, _redis):  # type: ignore[no-untyped-def]
         raise primary
@@ -1640,7 +1703,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     events: list[str] = []
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
 
     class Resource:
         def __init__(self, name: str) -> None:
@@ -1663,7 +1726,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
 
-    async def fail_search(_settings):  # type: ignore[no-untyped-def]
+    async def fail_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_create_search", fail_search)
@@ -1700,9 +1763,9 @@ async def test_codex_owner_closes_once_when_api_construction_fails_after_selecti
     codex = Resource("codex")
 
     async def create_database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def fail_search(_settings):  # type: ignore[no-untyped-def]
+    async def fail_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_create_database", create_database)
@@ -1736,7 +1799,9 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
     blob = module._create_blob(settings)
     redis = module._create_redis(settings)
     model = module._create_embeddings(settings)
-    search, reader, target = await module._create_search(settings)
+    search, reader, target = await module._create_search(
+        settings, audit_sink=_UnusedSearchAudit(), owners=repository
+    )
     models_probe = module._create_models_probe_client(settings)
     try:
         assert repository._sessions.kw["bind"] is engine
@@ -1748,6 +1813,7 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
         )
         assert model._config.allowed_answer_model_labels == settings.allowed_answer_model_labels
         assert search._reader is reader
+        assert search._owners is repository
         assert search._config.targets[target.family] is target
         assert target.alias == settings.alias
         assert target.vector_dimension == 1536
@@ -1778,7 +1844,7 @@ async def test_database_helper_disposes_engine_if_repository_construction_fails(
     engine = Engine()
     monkeypatch.setattr(module, "_open_database", lambda _settings: (engine, object()))
 
-    def fail_repository(_sessions):  # type: ignore[no-untyped-def]
+    def fail_repository(_sessions, *, scope):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_document_repository", fail_repository)
@@ -1804,13 +1870,13 @@ async def test_search_helper_closes_reader_if_adapter_construction_fails(monkeyp
     reader = Reader()
     monkeypatch.setattr(module, "_open_search_reader", lambda _config: reader)
 
-    def fail_adapter(_config, _reader):  # type: ignore[no-untyped-def]
+    def fail_adapter(_config, _reader, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_search_adapter", fail_adapter)
 
     with pytest.raises(RuntimeError) as captured:
-        await module._create_search(settings)
+        await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
     assert captured.value is primary
     assert events == ["reader"]
@@ -1998,7 +2064,15 @@ def test_failure_route_is_absent_from_ordinary_runtime_and_openapi() -> None:
     paths = app.openapi()["paths"]
 
     assert "/__e2e/fail-next/{stage}" not in paths
-    assert TestClient(app).post("/__e2e/fail-next/embedding").status_code == 404
+    assert (
+        TestClient(app)
+        .post(
+            "/__e2e/fail-next/embedding",
+            headers={"Origin": f"http://{settings.web_host}:{settings.web_port}"},
+        )
+        .status_code
+        == 404
+    )
 
 
 def test_exact_e2e_failure_route_accepts_only_closed_stage_and_empty_body() -> None:
@@ -2026,7 +2100,9 @@ def test_exact_e2e_failure_route_accepts_only_closed_stage_and_empty_body() -> N
 
     app = build_runtime_app(settings, runtime_factory=factory)
     assert "/__e2e/fail-next/{stage}" not in app.openapi()["paths"]
-    with TestClient(app) as client:
+    with TestClient(
+        app, headers={"Origin": f"http://{settings.web_host}:{settings.web_port}"}
+    ) as client:
         accepted = client.post("/__e2e/fail-next/embedding")
         invalid = client.post("/__e2e/fail-next/ready")
         body = client.post("/__e2e/fail-next/parsing", json={"message": "arbitrary"})
@@ -2042,7 +2118,7 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
     resources = module.OwnedResources()
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
     artifacts = object()
     model = object()
     index = object()
@@ -2085,7 +2161,7 @@ async def test_codex_worker_constructs_only_litellm_embeddings(
             return None
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return Resource(), object()
+        return Resource(), SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
         return Resource()
@@ -2146,7 +2222,7 @@ async def test_create_worker_runtime_registers_only_index_and_closes_outer_graph
     redis = Resource("redis")
     model = Resource("model")
     index = Resource("index")
-    repository = object()
+    repository = SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, repository
@@ -2209,7 +2285,7 @@ async def test_worker_outer_owner_closes_real_document_index_roles_transitively(
     )
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
         return index
@@ -2258,7 +2334,7 @@ async def test_create_worker_runtime_partial_index_failure_closes_prior_owners(
     model = Resource("model")
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def fail_index(_settings, _engine):  # type: ignore[no-untyped-def]
         raise primary
@@ -2308,7 +2384,7 @@ async def test_document_index_helper_closes_all_role_wrappers_if_index_build_fai
     monkeypatch.setattr(
         module,
         "_create_projection_coordinator",
-        lambda _settings, _engine: coordinator,
+        lambda _settings, _engine, *, scope: coordinator,
     )
 
     def fail_build(_settings, _engine, _parts):  # type: ignore[no-untyped-def]
@@ -2358,7 +2434,7 @@ async def test_document_index_helper_preserves_cancel_after_role_clients_return(
     monkeypatch.setattr(
         module,
         "_create_projection_coordinator",
-        lambda _settings, _engine: coordinator,
+        lambda _settings, _engine, *, scope: coordinator,
     )
     monkeypatch.setattr(module, "_build_document_index", cancel_build)
 
@@ -2392,7 +2468,7 @@ async def test_worker_assembly_failure_closes_complete_index_before_prior_owners
     index = Resource("index")
 
     async def database(_settings):  # type: ignore[no-untyped-def]
-        return engine, object()
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
     async def document_index(_settings, _engine):  # type: ignore[no-untyped-def]
         return index
@@ -2699,7 +2775,7 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
             calls.append(f"blob:{name}")
             return {"public_access": None}
 
-    _, reader, target = await module._create_search(settings)
+    _, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
 
     class Milvus:
         async def describe_alias(self, alias: str) -> str:
@@ -3179,3 +3255,8 @@ def test_blob_private_properties_require_the_explicit_public_access_field(
     expected: bool,
 ) -> None:
     assert _runtime()._is_private_blob_container(properties) is expected
+
+
+class _UnusedSearchAudit:
+    async def emit(self, event):
+        raise AssertionError("construction-only test must not search")

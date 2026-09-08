@@ -27,6 +27,8 @@ date: 2026-09-04
 
 本次启动交付包含两个独立验收项：下述 UI 浅色视觉统一，以及 V0 Task 1 的 authoritative metadata / migration harness。55 个平台任务与 V0–P1 顺序保留；本次启动不把其余任务标为已实现，后续仍按逐里程碑门禁推进。
 
+用户已要求在启动交付后继续实施；从 V0 Task 2A 起按本计划顺序执行，每项以实际测试和 Review 更新进度。
+
 本次实际证据：[原型浅色改造与 V0 启动验收](../reviews/2026-09-05-tap-fwd-and-v0-start-review.md)。
 
 ### UI：全平台 FWD 浅色视觉统一
@@ -62,6 +64,7 @@ date: 2026-09-04
 - 所有 Problem Details `type` 使用契约中登记的绝对 HTTPS URI，并固定 HTTP status、`correlationId`、工作流失败的封闭 `failureStage` 与 `retryable`；日志与公开错误不得包含凭据、Provider 请求正文或敏感内容。
 - Backend domain 不依赖 FastAPI、Pydantic HTTP DTO、SQLAlchemy、Redis、MinIO、Milvus、LiteLLM、Playwright、Jenkins 或 subprocess。跨 bounded context 只调用公开 application API/Port。
 - Web 保持 `app/pages → widgets → features → shared`，Feature 不导入 Prototype 状态。所有公开 DTO 从 Backend 生成到 `contracts/openapi/api.json` 和 `apps/web/src/shared/api/generated/schema.ts`，不得手写镜像类型。
+- 所有后续 UI 接入均以 `App → TapperPage → TapProductPrototype` 及其已确认的 FWD 浅色子组件为产品基线。旧 `TapperWorkspace` 仅保留必要调用兼容，不作为页面替换、视觉参照或验收入口。
 - 所有 Project 业务表从创建时就有非空 `project_id` 与 Actor/Origin 字段；所有 Repository 查询强制 Project filter。客户端不能传入 actor、role、enterprise 或权威 scope。
 - V0–VG 只允许固定 Validation Enterprise/Project/Actor、验证数据、验证 Secret 和非生产目标；只能绑定 loopback 或受控企业内网。Validation build/configuration 不得晋级 Staging/Production。
 - AI、Graph、Recorder 与 Copilot 只产生 Draft/Proposal。Published Revision 必须经过确定性验证与人工发布；Published/Superseded 不可编辑。
@@ -159,20 +162,25 @@ class AuthorizationPolicy(Protocol):
 
 `0006` 创建 `enterprise`、`project`、`actor_principal`，并 seed `local` / `tapper-demo` / `tapper-local-user`，principal type 为 `VALIDATION`。`AnonymousContext` 包含服务端确定的 `enterprise_id`；Validation composition 只产生一个固定 `ProjectScopeContext`，不开放 Anonymous/Platform 业务能力。
 
-- [ ] 先写 scope/value-object、Validation policy、第二个 in-memory policy Adapter、identity registry 与 `0005 → 0006` 非空升级测试；共同 conformance 覆盖未知 action、非法 scope/resource、跨 Project、Platform scope 读 Project 内容、禁用 Actor 与 Provider I/O 前拒绝。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 FAIL，原因为新 context/Adapter/table/revision 不存在。
-- [ ] 实现固定服务端 `ValidationScopeProvider`，把现有 `DemoCurrentPolicyVerifier` 的可信边界迁到共同 `AuthorizationPolicy`；核心 service 不出现 `if validation_mode`。
-- [ ] 将 identity metadata 加入 authoritative registry；`0006` downgrade 只删除自身对象，seed 使用稳定自然键且可重放。
-- [ ] 运行 `make migration-check MIGRATION=0006_validation_identity && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(access): register validation identity scope`
+- [x] 先写 scope/value-object、Validation policy、第二个 in-memory policy Adapter、identity registry 与 `0005 → 0006` 非空升级测试；共同 conformance 覆盖未知 action、非法 scope/resource、跨 Project、Platform scope 读 Project 内容、禁用 Actor 与 Provider I/O 前拒绝。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 FAIL，原因为新 context/Adapter/table/revision 不存在。
+- [x] 实现固定服务端 `ValidationScopeProvider`，把现有 `DemoCurrentPolicyVerifier` 的可信边界迁到共同 `AuthorizationPolicy`；核心 service 不出现 `if validation_mode`。
+- [x] 将 identity metadata 加入 authoritative registry；`0006` downgrade 只删除自身对象，seed 使用稳定自然键且可重放。
+- [x] 运行 `make migration-check MIGRATION=0006_validation_identity && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/unit/access/test_scope_context.py apps/backend/tests/contract/test_validation_authorization_policy.py apps/backend/tests/contract/test_alternate_authorization_policy.py apps/backend/tests/integration/test_validation_identity_registry.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'identity or scope or 0006'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(access): register validation identity scope`
+
+**验收：** `e206538`；[Task 2A 验收记录](../reviews/2026-09-05-tapper-v0-identity-review.md)。
 
 ### Task 2B: Backfill every existing business row into the Validation Project
 
 **Files:**
 
+- Create: `apps/backend/src/tap/contracts/events.py`
+- Create: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`
+- Create: `apps/backend/tests/contract/test_legacy_event_envelope.py`
 - Create: `apps/backend/migrations/versions/0007_project_scope_backfill.py`
 - Create: `apps/backend/tests/integration/test_project_scope_backfill.py`
-- Modify: `apps/backend/src/tap/modules/chat/domain/models.py`
+- Inspect: `apps/backend/src/tap/modules/chat/domain/models.py`（保留原领域 ID/模型；Project scope 绑定在 repository 构造参数中）
 - Modify: `apps/backend/src/tap/modules/chat/application/ports.py`
 - Modify: `apps/backend/src/tap/modules/chat/adapters/mysql.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
@@ -186,17 +194,23 @@ class AuthorizationPolicy(Protocol):
 
 **Migration contract:** `0007` 以 nullable columns → bounded batch backfill → orphan/duplicate validation → Project/Actor FK 与 Project-prefixed index/unique constraint → non-null 的顺序处理当前 14 张业务表。现有 `knowledge_document.dedupe_key` 改为 `(project_id, dedupe_key)` 唯一；所有 Chat/Knowledge/Projection/Outbox repository 强制绑定 `ProjectScopeContext`。Migration 保留原主键、revision、sequence、digest、时间戳和对象 locator。
 
-- [ ] 扩展旧数据 fixture，使每张当前表至少有一行，并写 ID/digest/sequence 保留、nullable 中间态、global dedupe constraint 被替换、跨 Project 同 digest 可共存、未知/孤儿 Actor 拒绝和 repository 无 scope 不可调用测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k '0007 or project_scope'`；预期 FAIL，原因为 `0007` 与 Project-bound repository 尚不存在。
-- [ ] 实现 `0007` 与 repository 签名；所有 read/write/filter/idempotency key 均包含 Project，Outbox 增加非空 Project/Actor/identity mode 并保留 aggregate sequence。
-- [ ] 运行 `make migration-check MIGRATION=0007_project_scope_backfill && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k '0007 or project_scope'`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(access): backfill project scoped records`
+**执行期接口补全（2026-09-05）：** 本 Task 同时建立 `contracts/events.py` 中四种现有 transport compatibility event 的最小封闭注册表、`platform/messaging/mysql_outbox.py` 的同事务 value builder，以及 `0007` 的非空 canonical envelope JSON / `event_content_digest`。映射与版本规则见核心契约 §2；不得继续写入无信封的旧唤醒记录。Task 2C 在此基础上扩展领域事件、生成制品、Problem 与 dead-letter，不另改已完成的迁移。旧记录先检查 type/shape，再执行 MySQL DDL；历史 Envelope 只使用已知事实。内容摘要不替代业务请求幂等比较，Turn 的同 key/不同 message 必须拒绝。
+
+需要同步的调用点还包括 `scripts/migration_support.py`、`entrypoints/relay_reconciler.py`、`platform/messaging/redis_dispatch.py` / `redis_wakeup.py` 及现有 repository integration fixtures。Redis 去重和提示带 Project，可信 scope 仍由服务端提供。Projection 保留物理 alias 的全局所有权和原锁名，同一 alias 的另一 Project 必须在 Provider I/O 前拒绝；不能仅添加 Project 锁便共享物理 alias。Cursor 和问答保留锁按 Project 绑定。
+
+- [x] 扩展旧数据 fixture，使每张当前表至少有一行，并写 ID/digest/sequence 保留、nullable 中间态、global dedupe constraint 被替换、跨 Project 同 digest 可共存、未知/孤儿 Actor 拒绝和 repository 无 scope 不可调用测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 FAIL，原因为 `0007` 与 Project-bound repository 尚不存在。
+- [x] 实现 `0007` 与 repository 签名；所有 read/write/filter/idempotency key 均包含 Project，Outbox 增加非空 Project/Actor/identity mode 并保留 aggregate sequence。
+- [x] 运行 `make migration-check MIGRATION=0007_project_scope_backfill && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/integration/test_project_scope_backfill.py apps/backend/tests/integration/test_upgrade_from_0005.py apps/backend/tests/contract/test_legacy_event_envelope.py -v -k '0007 or project_scope or legacy_event'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(access): backfill project scoped records`
+
+**验收：** `4160984`；[Task 2B 验收记录](../reviews/2026-09-05-tapper-v0-project-scope-review.md)。迁移、定向验证、check 与复审通过；完整 Backend 回归为 2393 passed、9 skipped、1 failed，两次单独复跑通过，原因未定，不将完整 target 标为通过。保留该观察并继续同一 V0 内的 Task 2C，V0 出口仍需完整门禁。
 
 ### Task 2C: Freeze Project event and Problem Details contracts
 
 **Files:**
 
-- Create: `apps/backend/src/tap/contracts/events.py`
+- Extend: `apps/backend/src/tap/contracts/events.py`（Task 2B 的兼容事件基础）
 - Create: `apps/backend/src/tap/contracts/problems.py`
 - Create: `apps/backend/tests/contract/test_project_event_envelope.py`
 - Create: `apps/backend/tests/contract/test_problem_registry.py`
@@ -207,17 +221,25 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/contracts/http.py`
 - Modify: `apps/backend/src/tap/contracts/chat_stream.py`
 - Modify: `apps/backend/src/tap/interfaces/http/problems.py`
-- Create: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`
+- Extend: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`（Task 2B 的同事务基础）
 - Modify: `scripts/export_contracts.py`
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
+- Modify: `apps/web/src/features/knowledge/api/client.ts`
+- Modify: `apps/web/src/features/knowledge/api/client.test.ts`
+- Modify: `apps/backend/tests/contract/test_generated_contracts.py`
+- Modify: `apps/backend/tests/contract/test_http_problem_details.py`
 
 **Contracts:** `ProjectEventEnvelope` 固定 `event_id/event_type/schema_version/occurred_at/scope_kind/enterprise_id/project_id/actor_id/identity_mode/aggregate_type/aggregate_id/aggregate_version/correlation_id/causation_id/idempotency_key/payload`；payload 必须匹配登记的 event type/version。Problem registry 固定绝对 URI、HTTP status、safe title/detail、`correlationId`、封闭 `failureStage` 与 `retryable`，包含 RFC 的 scope、authorization、idempotency、revision、association、mapping、answer、graph、model/search、recorder 与 execution 错误。相同 idempotency key/相同 canonical request 返回原结果；同 key/不同 request 返回 `409 idempotency-conflict`。
 
-- [ ] 写 envelope 缺字段、未知主版本 dead-letter、内部 payload 不可公开、短 slug 不合法、URI/status 漂移、缺 `correlationId/failureStage/retryable` 和敏感 detail 拒绝测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 FAIL，原因为 event/problem registry 与生成制品不存在。
-- [ ] 实现唯一 event/problem registry；Outbox、HTTP 和 SSE 只引用该 registry，Web 只消费生成类型。`scripts/export_contracts.py` 生成 OpenAPI、所有公开 SSE schema、Project event schema 与 problem registry，`--check` 检测多余/缺失制品。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(contracts): freeze events and problem details`
+**执行期接口补全：** 按核心契约 §9，所有 Problem 要求 `correlationId/retryable`，只有工作流错误要求封闭 `failureStage`，不为请求校验等错误制造工作流阶段。每次响应使用当前关联 ID，不能在 import 时固定一个 ID。Web 客户端的传输失败与注册 Problem 分开表达，不能继续伪造 `about:blank` 或服务器关联 ID。私有事件 Schema 不进入公开 SSE/HTTP payload；不透明资源 ID 的 Project 归属由拥有该资源的 scoped application transaction 验证，不能通过 ID 前缀或 payload 形状假装完成归属检查。
+
+- [x] 写 envelope 缺字段、未知主版本 dead-letter、内部 payload 不可公开、短 slug 不合法、URI/status 漂移、缺 `correlationId/failureStage/retryable` 和敏感 detail 拒绝测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 FAIL，原因为 event/problem registry 与生成制品不存在。
+- [x] 实现唯一 event/problem registry；Outbox、HTTP 和 SSE 只引用该 registry，Web 只消费生成类型。`scripts/export_contracts.py` 生成 OpenAPI、所有公开 SSE schema、Project event schema 与 problem registry，`--check` 检测多余/缺失制品。
+- [x] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_event_envelope.py apps/backend/tests/contract/test_problem_registry.py -v`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(contracts): freeze events and problem details`
+
+**验收：** `2728053`；[Task 2C 验收记录](../reviews/2026-09-06-tapper-v0-contracts-review.md)。最终字面量 68 例、runtime 176 例、Web 267 例及 check/复审通过；原完整 Backend 回归的 4 个旧断言失败已定向关闭，保留其原始结果与源码时序限制，不声称最终源码完整 Backend suite 已重跑。
 
 ### Task 3: Enforce Project HTTP paths and show Validation Mode
 
@@ -227,6 +249,8 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/src/tap/interfaces/http/middleware/origin.py`
 - Create: `apps/backend/tests/contract/test_validation_scope_http.py`
 - Create: `apps/backend/tests/contract/test_origin_policy.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_api.py`
+- Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Create: `apps/web/src/features/runtime/api/client.ts`
 - Create: `apps/web/src/features/runtime/api/queries.ts`
 - Create: `apps/web/src/features/runtime/components/ValidationModeBanner.tsx`
@@ -234,6 +258,8 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/interfaces/http/dependencies.py`
 - Modify: `apps/backend/src/tap/interfaces/http/app.py`
 - Modify: `apps/backend/src/tap/interfaces/http/knowledge_service.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/application/{documents,answers,citations}.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/ports/{documents,answers,citations}.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_answers.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/citations.py`
@@ -244,20 +270,33 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/web/src/features/knowledge/api/queries.tsx`
 - Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
 - Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
-- Modify: `apps/web/src/app/App.tsx`
+- Inspect: `apps/web/src/app/App.tsx`（已通过 `AppProviders` 包裹 `TapperPage`，保持原型入口）
+- Modify: `apps/web/src/app/providers.tsx`
 - Modify: `apps/web/src/app/styles.css`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.css`
 - Modify: `apps/web/src/pages/TapperPage.test.tsx`
+- Modify: `apps/web/vite.config.ts`
+- Modify: `apps/web/tests/e2e/prototype-demo-capture.spec.ts`
 - Modify: `scripts/export_contracts.py`
+
+**UI 基线：** Banner 接入 `TapperPage` 展示的 `TapProductPrototype` / App 外壳，沿用已确认的浅色原型。旧 `TapperWorkspace` 只因 API 调用签名变化更新兼容测试，不作为本次实施的产品页面；同步原型中 `useDocumentListQuery` 的 Project 参数。
+
+Runtime 尚未返回可信 Project 时保留原型外壳和导航，明确显示连接状态并禁用依赖服务器的操作，不能生成浏览器端 Project 回退值或伪造已验证身份。原型截图 fixture 显式模拟 runtime endpoint；实际预览与业务请求使用服务端响应。
+
+HTTP 装配必须核对实际 application / repository 绑定的 Scope；不能仅比较独立的 `HttpServices.scope` 标签。
 
 **API:** Project Knowledge 路径统一为 `GET/POST /api/v1/projects/{project_id}/knowledge/documents`、`GET/DELETE /api/v1/projects/{project_id}/knowledge/documents/{document_id}`、`POST /api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry`、`POST /api/v1/projects/{project_id}/knowledge/answers` 与 `GET /api/v1/projects/{project_id}/knowledge/citations/{citation_id}`，另加 `GET /api/v1/runtime-mode`。`project_id != scope.project_id` 返回 `scope-mismatch`；请求 Header/Cookie/DTO 出现身份、角色或企业覆盖字段直接拒绝。所有浏览器状态变更校验精确 Origin，不开启宽泛 CORS。
 
-- [ ] 写 HTTP contract，覆盖正确 Project、错误 Project、伪造 `X-Actor-Id`/`X-Role`、跨源 mutation 和 runtime-mode DTO；写 Banner 可访问性/持久显示以及 Knowledge client/path/query key 包含固定 Validation Project 的测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 FAIL，原因为新路由/组件不存在且旧 client 仍调用 `/v1/knowledge/*`。
-- [ ] 实现 Project path dependency、Origin gate 与 runtime-mode；旧 `/v1/knowledge/documents`、`/v1/knowledge/answers` 与 `/v1/knowledge/citations/{citation_id}` 只可在 validation/local 装配中映射同一 Scope，并在 OpenAPI 标为 deprecated。
-- [ ] 实现 Banner 文案“操作统一记录到固定 Validation Actor，不代表个人身份”，不能被用户永久关闭。
-- [ ] 让 runtime query 提供固定 Validation Project ID，Knowledge client/query keys 从创建时就显式接收 `project_id`；旧路径只由后端 validation compatibility router 使用，正式 Web 不调用 deprecated path。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(web): expose validation scope boundary`
+- [x] 写 HTTP contract，覆盖正确 Project、错误 Project、伪造 `X-Actor-Id`/`X-Role`、跨源 mutation 和 runtime-mode DTO；写 Banner 可访问性/持久显示以及 Knowledge client/path/query key 包含固定 Validation Project 的测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 FAIL，原因为新路由/组件不存在且旧 client 仍调用 `/v1/knowledge/*`。
+- [x] 实现 Project path dependency、Origin gate 与 runtime-mode；旧 `/v1/knowledge/documents`、`/v1/knowledge/answers` 与 `/v1/knowledge/citations/{citation_id}` 只可在 validation/local 装配中映射同一 Scope，并在 OpenAPI 标为 deprecated。
+- [x] 实现 Banner 文案“操作统一记录到固定 Validation Actor，不代表个人身份”，不能被用户永久关闭。
+- [x] 让 runtime query 提供固定 Validation Project ID，Knowledge client/query keys 从创建时就显式接收 `project_id`；旧路径只由后端 validation compatibility router 使用，正式 Web 不调用 deprecated path。
+- [x] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_validation_scope_http.py apps/backend/tests/contract/test_origin_policy.py -v && corepack pnpm --filter @tap/web test -- --run src/features/runtime/components/ValidationModeBanner.test.tsx src/features/knowledge/api/queries.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/pages/TapperPage.test.tsx`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(web): expose validation scope boundary`
+
+**验收：** `7395d70`；[Task 3 验收记录](../reviews/2026-09-06-tapper-v0-http-review.md)。原始完整 Backend 的唯一旧断言失败保留记录，修正后定向验证通过。
 
 ### Task 3A: Persist the Project Audit ledger before operator actions
 
@@ -266,20 +305,27 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/src/tap/modules/governance/domain/audit.py`
 - Create: `apps/backend/src/tap/modules/governance/ports/audit.py`
 - Create: `apps/backend/src/tap/modules/governance/adapters/mysql_audit.py`
+- Create: `apps/backend/src/tap/modules/governance/adapters/schema.py`
 - Create: `apps/backend/migrations/versions/0008_project_audit.py`
 - Create: `apps/backend/tests/contract/test_project_audit_port.py`
 - Create: `apps/backend/tests/integration/test_project_audit_transaction.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
+- Modify: `apps/backend/tests/architecture/test_migration_metadata.py`
+- Modify: `scripts/migration_support.py`（加入 `0008` 专属保留/约束/降级验证）
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
-**Contract:** `ProjectAuditPort.append(scope, action, resource, outcome, safe_metadata)` 只接受 `ProjectScopeContext`，正文、query、Prompt、Secret 和 Provider payload 均不允许进入 metadata。需要审计的应用事务必须通过同一 SQLAlchemy connection 同时提交业务状态、Audit 与 Outbox；失败时三者一起回滚。
+**Contract:** `ProjectAuditPort.append(scope, action, resource, outcome, safe_metadata, *, correlation_id, idempotency_key)` 只接受 `ProjectScopeContext`；correlation 与业务幂等键由调用者显式传入，保留原 HTTP / command / event 的关联，不能从身份 context 猜测或由 Adapter 重新生成。Adapter 绑定调用者已有的 SQLAlchemy connection，要求 active transaction，不能自行 begin/commit；业务状态、Audit 与 Outbox 同事务，失败时三者一起回滚。
 
-- [ ] 写 scope/actor 非空、metadata 闭集与大小、敏感值拒绝、事务三写/回滚、重复 idempotency 和 `0005 → 0008` 数据保持测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 FAIL，原因为 Audit port/table/revision 不存在。
-- [ ] 实现 Audit domain/Adapter 与 `0008_project_audit`，加入 authoritative registry；只保存稳定 action/resource/outcome、correlation、actor/project、identity mode 和安全 metadata。
-- [ ] 运行 `make migration-check MIGRATION=0008_project_audit && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(audit): persist project audit facts`
+Audit 保存稳定 ID、UTC 时间、Enterprise/Project/Actor、identity mode/origin、action/resource/outcome、correlation、idempotency key、内容 digest 和安全 metadata。Action/resource/outcome 与 metadata 使用封闭契约；metadata 仅接受已登记的有界计数、枚举或 digest，不接受任意字符串。正文、query、Prompt、Secret、对象存储定位符和 Provider payload 均拒绝。幂等范围为 Enterprise + Project + key；相同业务内容返回原 Audit（包括原时间和 correlation），内容变化冲突，不把重试生成的 ID/时间当作新事实。资源存在性与状态转换仍由同事务的领域应用校验。V0 先覆盖后续 Task 4 的有界 Operator 结果；其他领域在其任务接入，不能把基础表完成等同于 RFC 全量 Audit 覆盖。
+
+- [x] 写 scope/actor 非空、metadata 闭集与大小、敏感值拒绝、事务三写/回滚、重复 idempotency 和 `0005 → 0008` 数据保持测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 FAIL，原因为 Audit port/table/revision 不存在。
+- [x] 实现 Audit domain/Adapter 与 `0008_project_audit`，加入 authoritative registry；只保存稳定 action/resource/outcome、correlation、actor/project、identity mode 和安全 metadata。
+- [x] 运行 `make migration-check MIGRATION=0008_project_audit && make schema-drift && uv run --project apps/backend pytest apps/backend/tests/contract/test_project_audit_port.py apps/backend/tests/integration/test_project_audit_transaction.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'audit or 0008'`；预期 PASS。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(audit): persist project audit facts`
+
+**验收：** `a7cb719`；[Task 3A 验收记录](../reviews/2026-09-06-tapper-v0-audit-review.md)。冻结后的完整隔离回归通过。
 
 ### Task 4: Recover Redis/Outbox and expose bounded Knowledge operations
 
@@ -288,113 +334,260 @@ class AuthorizationPolicy(Protocol):
 - Create: `apps/backend/src/tap/platform/messaging/redis_recovery.py`
 - Create: `apps/backend/src/tap/platform/messaging/outbox_archive.py`
 - Create: `apps/backend/src/tap/entrypoints/knowledge_operator.py`
+- Create: `apps/backend/src/tap/modules/knowledge/domain/operations.py`
+- Create: `apps/backend/src/tap/modules/knowledge/ports/operations.py`
+- Create: `apps/backend/src/tap/modules/knowledge/application/operations.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/mysql_operations.py`
 - Create: `apps/backend/migrations/versions/0009_outbox_operations.py`
 - Create: `scripts/knowledge-operator.py`
 - Create: `apps/backend/tests/unit/operations/test_redis_stream_recovery.py`
 - Create: `apps/backend/tests/unit/operations/test_knowledge_operator.py`
 - Create: `apps/backend/tests/integration/test_outbox_archive.py`
 - Create: `apps/backend/tests/integration/test_knowledge_operations_recovery.py`
+- Modify: `apps/backend/src/tap/platform/messaging/mysql_outbox.py`（归档后仍核对原完成事实的幂等键与内容）
 - Modify: `apps/backend/src/tap/platform/messaging/redis_dispatch.py`
 - Modify: `apps/backend/src/tap/platform/messaging/redis_wakeup.py`
 - Modify: `apps/backend/src/tap/platform/db/schema.py`
 - Modify: `apps/backend/src/tap/platform/db/registry.py`
 - Modify: `apps/backend/src/tap/contracts/events.py`
 - Modify: `contracts/events/project-event.schema.json`
-- Modify: `apps/backend/src/tap/modules/chat/application/ports.py`
+- Inspect: `apps/backend/src/tap/modules/chat/application/ports.py`（保留既有 claim/settlement Port；维护动作由独立有界 recovery adapter 提供）
 - Modify: `apps/backend/src/tap/modules/chat/adapters/mysql.py`
-- Modify: `apps/backend/src/tap/entrypoints/relay_reconciler.py`
+- Inspect: `apps/backend/src/tap/entrypoints/relay_reconciler.py`（复用其已有 scoped Relay 组合，恢复接入 publisher/wakeup/Outbox adapter 与 Operator）
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
+- Modify: `apps/backend/src/tap/modules/access/adapters/validation.py`
+- Modify: `apps/backend/tests/contract/test_generated_contracts.py`
+- Modify: `apps/backend/tests/contract/test_project_event_envelope.py`
+- Modify: `apps/backend/tests/contract/authorization_policy_conformance.py`
+- Modify: `apps/backend/tests/contract/test_alternate_authorization_policy.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/adapters/milvus_documents.py`
+- Modify: `apps/backend/tests/contract/test_document_index_contract.py`
+- Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
+- Modify: `apps/backend/tests/contract/test_blob_artifact_contract.py`
+- Modify: `apps/backend/tests/integration/test_azurite_artifacts.py`
+- Modify: `apps/backend/tests/architecture/test_migration_metadata.py`
+- Modify: `scripts/migration_support.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
+- Modify: `apps/backend/tests/contract/test_demo_commands.py`（目标测试副本在 trap-ready 后开始原就绪窗口，覆盖受控慢启动）
+- Modify: `apps/web/src/features/knowledge/components/KnowledgeLibrary.test.tsx`（使用已有上传完成控制消除中间进度断言的计时竞争）
 - Modify: `Makefile`
 
 **Operations:** 实现 `reclaim_pending(group, consumer, idle_for, limit)`、`trim_acknowledged(max_length)`、`redrive_dead_letters(limit)`、`archive_published(older_than, limit)`；Operator 固定支持 `recover-uploads`、`scavenge-staging --limit`、`rebuild-milvus`、`reconcile-all`，每次只作用当前 Validation Project，并通过 Task 3A 的 `ProjectAuditPort` 记录结果。`0009` 的 archive/dead-letter metadata 加入 authoritative registry；未知事件主版本只进入 dead-letter，不能被 redrive 成已知事件。
 
-- [ ] 写 pending message、过期 lease、重复 redrive、archive batch、上传恢复、staging scavenger、Milvus rebuild、Audit 三写和 `0005 → 0009` 数据保持测试。
+**实施前置收口：**
+
+- Operator 通过共同 Policy 的显式 `knowledge.operate` / `knowledge` pair 重新核对有效 Validation identity；ScopeProvider 输出不能代替授权。未授权、Project 不匹配与参数非法均在 Provider I/O 前拒绝。
+- `0009` 增加 Project-scoped `knowledge_operator_operation`，保存调用身份、参数摘要、幂等键、原 correlation、lease/fencing 与完成结果。初始 claim/续租属于运行协调；只有完成结果持久化才构成完成事实。完成结果、Task 3A Audit 与 `knowledge.operator.completed` Outbox 在同一 connection 提交或回滚，不把 Provider 效果描述成 SQL 事务的一部分。重试先读已有 receipt，相同 key/参数返回原结果，不同参数冲突；活跃 lease 不重复执行，过期 takeover 保留原关联并依靠既有 primitive 的幂等和 fencing 恢复。
+- 完成事件的 `KnowledgeOperation` aggregate ID 是稳定 operation ID，version 固定为首个完成事实的 `1`；payload 与 [Core Contracts §2](../reference/2026-09-04-tapper-platform-contracts.md#2-project-事件信封) 一致，不借用 ingestion compatibility event。CLI 可生成一次性的调用幂等键，并提供显式重试键；它不是身份或范围输入。Audit 只记录 `completed | partial | failed` 的实际结果，不制造已成功的启动事件。
+- 新 staging 写入使用从可信 Enterprise/Project 派生的物理 namespace，scavenger 仅扫描该 namespace 并尊重本 Project 的可见引用、时间与 ETag/claim 条件。不能凭调用者字段或对象自述扩大范围。已有旧 staging locator 只可由有范围约束的持久 reservation 恢复；无法确定归属的 legacy orphan 保留，不因不在当前 Project 的 pins 内而删除。
+- rebuild 的 SQL/artifact snapshot 必须在已有全局 alias mutation lock 内取得，SQL 读事务也在取得锁后开始。还要覆盖 Provider upsert 已释放锁、SQL ready 尚未提交的 PUBLISHING 空档：存在无法确认的活跃发布时拒绝/延后 cutover，或以等价协调证明不会漏掉该版本。超过快照上限必须中止，不能以截断结果重建完整索引。
+- Redis trim 必须保留所有相关 consumer group 的 pending/未读消息。对共享 stream 不能只按当前 Project 的 ACK 或 MAXLEN 截断其他 Project 的工作；scope 隔离与旧 hint 的可重建迁移必须显式验证。归档/dead-letter 保存原 envelope、identity 与 digest；历史 raw provider error 不进入公开 CLI/Audit 输出。
+
+- [x] 写 pending message、过期 lease、重复 redrive、archive batch、上传恢复、staging scavenger、Milvus rebuild、Audit 三写和 `0005 → 0009` 数据保持测试。
 - [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009'`；预期 FAIL，原因为 recovery/operator/revision 不存在。
-- [ ] 实现有界 batch、claim token、ack 后 trim 与归档；Redis 操作失败只影响唤醒延迟，Relay 仍从 MySQL 未发布 Outbox 恢复。
-- [ ] 增加 `make knowledge-recover` 的显式参数校验，拒绝空 Project、负 limit 和默认生产地址。
-- [ ] 运行 `make migration-check MIGRATION=0009_outbox_operations && make schema-drift && make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009' && uv run --project apps/backend pytest apps/backend/tests/integration/test_relay_recovery.py -v -k relay`；预期 PASS，字面量 RED 命令已转绿且 Relay 扩展场景通过。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(ops): recover durable knowledge dispatch`
+- [x] 实现有界 batch、claim token、ack 后 trim 与归档；Redis 操作失败只影响唤醒延迟，Relay 仍从 MySQL 未发布 Outbox 恢复。
+- [x] 增加 `make knowledge-recover` 的显式参数校验，拒绝空 Project、负 limit 和默认生产地址。
+- [x] 运行 `make migration-check MIGRATION=0009_outbox_operations && make schema-drift && make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/operations/test_redis_stream_recovery.py apps/backend/tests/unit/operations/test_knowledge_operator.py apps/backend/tests/integration/test_outbox_archive.py apps/backend/tests/integration/test_knowledge_operations_recovery.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'recovery or archive or operator or 0009' && uv run --project apps/backend pytest apps/backend/tests/integration/test_relay_recovery.py -v -k relay`；预期 PASS，字面量 RED 命令已转绿且 Relay 扩展场景通过。再运行 `make check && make test && git diff --check`。
+- [x] Commit: `feat(ops): recover durable knowledge dispatch`
+
+**验收：** `a0f892f`；[Task 4 验收记录](../reviews/2026-09-06-tapper-v0-recovery-review.md)。定向 27 passed、Web 289 passed、迁移/21 表 drift/check 与审查通过。完整 Backend 为 2592 passed、9 skipped、1 failed；唯一既有启动测试经受控 RED、有界同步修正、完整文件 89 passed 和复审关闭，未重复完整 Backend。组件 RED 已执行，但原计划的单次全文件字面量 RED 未捕获，保留该执行偏差，不回填未运行命令。
 
 ### Task 5: Introduce provider-neutral MinIO object storage
 
 **Files:**
 
+- Create: `apps/backend/src/tap/platform/storage/__init__.py`
 - Create: `apps/backend/src/tap/platform/storage/objects.py`
 - Create: `apps/backend/src/tap/platform/storage/s3.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/object_artifacts.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/artifact_codecs.py`（抽取两个实现确需共用的 codec，保留 Azure copy 状态机）
+- Create: `apps/backend/tests/contract/artifact_store_conformance.py`
+- Create: `apps/backend/tests/contract/test_object_artifacts.py`
+- Create: `apps/backend/tests/contract/test_minio_test_support.py`
+- Modify: `apps/backend/tests/integration/test_azurite_artifacts.py`（运行共同制品契约与显式 legacy 恢复）
+- Modify: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`（存储选择、缺配置与实际绑定验证）
+- Create: `deploy/minio/Dockerfile`
+- Create: `deploy/minio/build-inputs.json`
+- Create: `scripts/build-tapper-object-store.sh`
+- Create: `scripts/minio_test_support.py`
+- Create: `scripts/azurite_test_support.py`
+- Create: `apps/backend/tests/contract/test_azurite_test_support.py`（核对 build receipt、随机独占容器/卷和 loopback 地址，测试不接受任意 Provider URL）
+- Create: `apps/backend/tests/contract/test_object_store_build.py`（构建输入/实际产物/启动凭据契约）
 - Create: `apps/backend/tests/contract/object_store_conformance.py`
 - Create: `apps/backend/tests/contract/test_s3_object_store.py`
 - Create: `apps/backend/tests/integration/test_minio_artifacts.py`
+- Modify: `apps/backend/tests/integration/test_tapper_persistence_restart.py`（E2E 末尾以真实新制品读取/缺失检查保留重启、摘要与删除证明）
 - Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/blob_artifacts.py`
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
+- Modify: `apps/backend/src/tap/entrypoints/knowledge_operator.py`（两种制品实现的组合类型与实际 scope 校验，不改变恢复协议）
 - Modify: `apps/backend/pyproject.toml`
 - Modify: `uv.lock`
 - Modify: `compose.yaml`
+- Modify: `Makefile`
+- Modify: `.gitignore`（排除工作区本地构建 receipt）
+- Modify: `scripts/run-tapper-dev.sh`
+- Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `.env.example`
 - Modify: `scripts/check-tapper-demo.py`
 - Modify: `scripts/tapper_collection.py`
 - Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `README.md`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
+- Modify: `apps/web/src/widgets/tap/prototype/LibraryWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`
+- Modify: `apps/web/tests/e2e/tapper.spec.ts`
+- Modify: `apps/web/tests/e2e/persistence.spec.ts`
+- Modify: `apps/web/src/shared/testing/e2eRequestFailures.ts`
+- Modify: `apps/web/src/shared/testing/e2eRequestFailures.test.ts`
+- Inspect: `apps/web/src/features/knowledge/api/queries.tsx`（复用已具备 Project 绑定的 upload mutation）
 
-**Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
+**Port:** `ObjectStorePort` 提供 `put_staged`、`promote(expected_sha256)`、`describe_verified`、`open_verified`、`delete`、`scavenge_staging`；返回 opaque `ObjectRef`，任何 API/DTO 不得暴露 bucket/key/endpoint。MinIO 使用 TAP 独立 service/bucket/credential，不复用 `milvus-minio`。
 
-- [ ] 抽取现有 Azure Blob contract 为共同 conformance，增加 digest mismatch、staging orphan、oversize、path traversal、opaque ref 和 MinIO restart 测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v`；预期 FAIL，原因为 shared port/S3 Adapter 不存在。
-- [ ] 固定 S3 SDK 和 MinIO image digest，实施 staging → SHA-256 verify → manifest promotion；SDK locator 只留在 Adapter。
-- [ ] 将 Knowledge runtime 切到配置选择的 shared port；保留 Azure Adapter contract 但不再作为当前 Compose 默认。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v && make demo-e2e`；预期 PASS：共同 contract、MinIO restart 与既有旅程全部通过。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(storage): add minio object store`
+**已实施裁定：**
+
+- Knowledge 继续使用 ArtifactStore；新增 KnowledgeArtifactStore 组合平台 ObjectStorePort。平台层不导入 Knowledge domain/application。共同验证分为平台对象契约与两种 Knowledge artifact 实现的共享 conformance；保留 Azure 既有 copy/cancellation 状态机及测试，不把旧 Azure Adapter 称为已经实现新平台 Port。
+- 新 ObjectRef 只含封闭 opaque store identity、可信 Project namespace 与 manifest digest，不含 endpoint/bucket/key。manifest 绑定内容摘要、大小、类型和封闭逻辑属性；promote 可显式接收 revision/artifact slot 的逻辑身份以避免跨 Revision 删除共用内容，物理 key 仍由 Adapter 生成。旧 SQL locator 原字节保留，无新增对象目录表或隐式数据迁移。 Knowledge 内部可用封闭 ArtifactLocator wrapper 组合逻辑 revision/kind 与 opaque ObjectRef，保持现有 1024 长度上限；仍存在的 manifest 必须以其受摘要保护的属性反向核对 wrapper/target，全部目标验证后才删除。伪造逻辑 wrapper 不能删除其他 Revision，新增 ObjectDescriptor / describe_verified 仅验证 ref-rooted manifest metadata，不代表 payload 已校验；缺 payload 不得跳过仍存在的 manifest 校验，只有确实缺 manifest 才保留幂等删除语义。
+- 配置明确选择 minio 或 azure；MinIO 模式可显式开启 legacy Azure，仅路由已识别旧 locator 的读/删和持久 reservation 恢复，新上传仍写 MinIO。未启用 legacy 时旧引用安全失败，不能误发往 S3；Azure 模式也不能把新对象 ref 当 Blob 路径。新旧混合制品先全部校验，再按 Provider 分别清理，不宣称跨 Provider 原子删除。
+- SDK 候选固定为官方 aiobotocore 3.9.1 源码 commit `c92e345814ad97e5ec0633dbd34be5d26ee90dd3` 与 botocore 1.43.75；[官方修正](https://github.com/aio-libs/aiobotocore/releases/tag/3.9.1)包含 HTTPSession 并发保护。预检已解析源码声明依赖，但实际源包构建与完整 lock 仍须在工作区独占环境通过；PyPI 3.9.1 尚不可用，不能填入不存在的 wheel 或静默降级。先替换本工作区 `.venv` 符号链接本身，保留原目标和其他工作区环境。
+- [MinIO 社区版现为源码发布](https://github.com/minio/minio/blob/master/README.md)。固定官方 release commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`、已核对的 Go 1.24.8 与 nonroot runtime image digest，以只读 go.sum/明确平台构建；不得沿用上游 Dockerfile 的 mutable latest。构建 receipt 区分源码/基础镜像/实际产物 identity，启动使用实际 `sha256` image ID、`pull_policy: never` 并核对 container.Image。最终 image digest 是构建后的验收事实；固定输入不等于已证明逐位一致的重建，也不涉及发布 registry。
+- S3 endpoint、region、credentials、store identity 与代理行为显式配置；缺配置在网络前拒绝，无 ambient AWS profile/IMDS 回退。网络调用保持原生 async，有绝对 deadline、流关闭和取消收敛测试；SDK 本地 TLS 初始化仍可能使用线程，不把它称为全无线程，也不能通过关闭 HTTPS 校验规避。
+
+**V0 E2E 接入前置：** 本项实施前，产品原型的 Library 已读取真实文档，但文件选择仅生成本地名称；旧 `tapper.spec.ts` / `persistence.spec.ts` 则依赖已不作为产品入口的独立知识页。先把已确认 Library 的现有文件选择动作接到 Project-bound Document upload mutation，保留原布局；未取得 runtime Project 时禁用上传，不制造本地成功。这个最小接入用于当前摄取/存储和下一项恶意上传门禁，不提前实现 Source ledger 或持久 Conversation。
+
+V0 旅程通过当前 Library 验证真实上传与状态，通过正式 Project API 保留 Answer/Citation/digest/删除及重启后的持久性断言；写请求携带精确 Origin，Project 来自 runtime，错误审计 allowlist 同步正式路径。测试清楚区分浏览器上传/UI 可见性与 API 持久性，不再宣称旧知识页交互验收；完整问答、history 与 SSE 的产品 UI 在 Task 9 验收。不能改回旧页面、跳过持久性断言或用 route mock 代替真实中间件。新增上传接入执行已有原型交互测试与截图检查，所有数据门禁仍用独占 E2E 环境。
+
+- [x] 抽取现有 Azure Blob contract 为共同 conformance，增加 digest mismatch、staging orphan、oversize、path traversal、opaque ref 和 MinIO restart 测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v`；预期 FAIL，原因为 shared port/S3 Adapter 不存在。
+- [x] 固定 S3 SDK 和 MinIO image digest，实施 staging → SHA-256 verify → manifest promotion；SDK locator 只留在 Adapter。
+- [x] 将 Knowledge runtime 切到配置选择的 shared port；保留 Azure Adapter contract 但不再作为当前 Compose 默认。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_s3_object_store.py apps/backend/tests/integration/test_minio_artifacts.py -v && make demo-e2e`；预期 PASS：共同 contract、MinIO restart 与既有旅程全部通过。再运行 `make check`、独占 MySQL/Redis/Azurite/MinIO wrapper 中的完整 Backend 与 Web 回归，以及 `git diff --check`；不得使用可能指向默认数据库的 plain `make test`。
+- [x] Commit: `feat(storage): add verified minio artifact store`
+
+**审查修正前置：** 新增混合 MinIO/Azure 测试在 Azure 客户端构造前核对独占 Azurite receipt、实际容器归属与 endpoint/account；MinIO receipt 不代表 Azure 所有权，原有 Azure fixture 不作无关改写。S3 操作 deadline 与有界取消 settlement 分开，重复取消不得中断清理，延迟 GET 结果的 Body 仍由 Adapter 关闭。
+
+**验收：** `e1be27f`；[Task 5 验收记录](../reviews/2026-09-06-tapper-v0-object-storage-review.md)。修复后 162 项契约、17 项真实存储、final make check/复审通过；原始全 Backend 2667 passed/9 skipped/6 warnings、全 Web 294 passed、三阶段真实 E2E 与 28 项持久性通过，后三类在 fix1 前执行，未冒称最终全套重跑。
 
 ### Task 5A: Isolate document parsing and close hostile upload paths
 
 **Files:**
 
 - Create: `apps/backend/src/tap/modules/knowledge/adapters/isolated_parser.py`
+- Create: `apps/backend/src/tap/modules/knowledge/adapters/parser_protocol.py`
+- Create: `apps/backend/src/tap/interfaces/http/multipart.py`
 - Create: `apps/backend/src/tap/entrypoints/tapper_parser_worker.py`
 - Create: `deploy/parser/Dockerfile`
+- Create: `deploy/parser/build-inputs.json`
+- Create: `scripts/build-tapper-parser.sh`
+- Create: `scripts/parser_build.py`
+- Create: `scripts/parser_test_support.py`
 - Create: `deploy/parser/worker.py`
 - Create: `apps/backend/tests/contract/test_isolated_parser.py`
+- Modify: `apps/backend/tests/architecture/test_module_boundaries.py`
 - Create: `apps/backend/tests/security/test_document_upload_security.py`
+- Create: `apps/backend/tests/security/test_owned_parser.py`
+- Create: `apps/backend/tests/fixtures/parser_probe.py`
 - Create: `apps/backend/tests/fixtures/documents/hostile/README.md`
 - Create: `scripts/build-hostile-document-fixtures.py`
 - Create: `scripts/tapper-e2e-specs.json`
+- Create: `scripts/tapper_e2e_report.py`
 - Create: `apps/web/tests/e2e/knowledge-upload-security.spec.ts`
+- Modify: `apps/backend/src/tap/modules/knowledge/ports/documents.py`
 - Modify: `apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py`
+- Modify: `apps/backend/tests/unit/knowledge/test_document_parsers.py`
+- Modify: `apps/backend/tests/unit/knowledge/test_ingestion_worker.py`
+- Modify: `apps/backend/tests/integration/test_ingestion_recovery.py`
+- Inspect: `apps/backend/tests/integration/test_ingestion_entrypoint.py`（现有入口/唤醒边界不直接解析，由独占后端回归验证）
 - Modify: `apps/backend/src/tap/modules/knowledge/application/ingestion.py`
 - Modify: `apps/backend/src/tap/interfaces/http/routes/knowledge_documents.py`
+- Inspect: `apps/backend/src/tap/interfaces/http/scope.py`（复用现有 authority 识别和 cached FormData，不作空修改）
+- Inspect: `apps/backend/src/tap/interfaces/http/app.py`（保留最外层 correlation 与精确 Origin 顺序）
+- Inspect: `apps/backend/tests/contract/test_tapper_http_contract.py`（保留既有合同并运行完整模块）
+- Inspect: `apps/backend/tests/contract/test_validation_scope_http.py`（保留既有 Scope/Origin 预期并运行完整模块）
+- Inspect: `apps/backend/tests/contract/test_http_problem_details.py`（保留既有封闭 Problem 预期并运行完整模块）
+- Inspect: `apps/backend/tests/unit/entrypoints/test_tapper_runtime.py`（保留 runtime graph/cleanup 测试并运行完整模块）
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `compose.yaml`
 - Modify: `scripts/run-tapper-dev.sh`
 - Modify: `scripts/run-tapper-e2e.sh`
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `Makefile`
+- Inspect: `.gitignore`（现有 `.tapper/` 已排除本地 Parser build receipt，不作空修改）
+- Inspect: `.env.example`（仅必要的非敏感启动参数，不开放请求选择 Docker endpoint）
 
 **Security contract:** API 先限制 multipart 与总字节，再由非 root、只读 rootfs、无外网、无 host mount 的 Parser Worker 校验 magic/signature 与声明 MIME。PDF 固定最大页数/对象数；DOCX 固定 entry 数、单 entry 大小、总展开大小与压缩比，并拒绝宏、OLE、脚本、外部 relationship、绝对/父级路径。所有格式有 CPU/RAM/输出字节/墙钟限制；Worker 只返回规范化文本/anchor manifest，不读取 URL 或 Secret。
 
-- [ ] 写伪扩展、MIME/signature 不符、加密/超页 PDF、zip bomb、超大 entry、宏/OLE、external relationship、路径穿越、SSRF URL、timeout/OOM/crash 和安全错误不泄漏测试；E2E 证明拒绝后 API/Worker 仍健康。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest'`；预期 FAIL，原因为隔离 Parser、恶意 fixture 生成器或 E2E manifest 不存在，而不是浏览器或网络未启动。
-- [ ] 实现 deterministic hostile fixture builder 与隔离协议；测试不得提交真实恶意载荷以外的随机大文件。Compose/dev/e2e 统一启动并健康检查 Parser Worker，网络 policy 明确拒绝外部地址。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest' && make demo-e2e`；预期 PASS 且 E2E 报告 zero skipped/flaky。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(knowledge): isolate hostile document parsing`
+**预检裁定（Task 5A 实施前置，尚未实现）：** 应用使用独立 async Parser Port，Ingestion 通过私有 Unix socket 访问专门的 host supervisor；仅监督进程具有固定的本机 Docker 控制能力。它按 Compose 的固定 job 模板为每次解析创建新的 `network_mode: none` 容器，通过固定 stdin/stdout 帧协议传入字节和封闭元数据。API/Ingestion 不持 Docker 客户端，容器无端口、host mount、Docker socket 或 Secret。dev/E2E 启动并管理监督进程；startup readiness 必须执行并回收同模板的真实短解析任务，不以闲置常驻容器代替执行健康。Unix socket 的 0700 父目录/0600 socket 保护跨 OS 用户访问，同一宿主用户仍属于一个信任域。
+
+监督进程从 Compose 读取封闭的单 service job 配置，显式禁用工作区 `.env` 和环境 Provider Secret 继承；为保证 stdin/stdout/stderr attach，使用固定 `docker create -i -a stdin -a stdout -a stderr` 后按已知 CID 启动。模板的全部安全与资源设置必须完整校验/映射，未知字段拒绝，实际容器 inspect 再次核对，不能因更换创建命令而丢失限制。
+
+成功与取消都以实际容器终态为依据：验证 owned CID/image/labels，TERM/KILL → wait → inspect stopped → remove，并回收本地 Docker CLI；不能把 CLI/网络调用结束当作解析子进程已停止。容器 PID1 独立限制启动后总寿命并回收子进程组；监督进程崩溃后仍由容器自身限制终止，重启按确切 owner namespace 对遗留任务进行核对和清理。Docker 不可用时保留无内容的 unresolved cleanup 记录并拒绝新任务，不伪造回收成功。生产协议不提供故障注入或任意命令入口；资源故障探针只进入单独的测试 image target。
+
+dev 在工作树 `.tapper/parser-runtime/<validated-project>/` 保留稳定的 owner/project/已核验 image 关联，使用 POSIX flock 排他；冷启动先按旧关联对账并回收，再绑定新 receipt。不能因 supervisor 非零退出或未写 unresolved 文件就删除状态。只有再次确认实际 owned 容器为空且本地进程完成回收，才能写 affirmative cleanup 证明；创建新工作前旧证明失效。超长 Unix socket 路径使用绑定 canonical state 与 UID 的短私有目录，保留 0700/归属/符号链接检查。固定 host-only 的 socket 路径查询与 cleanup-only 模式不进入解析请求协议；就绪证明绑定本次真实自检，旧 PID/socket marker 不得造成假就绪。测试必须覆盖从持久状态启动新 launcher/监督进程的 crash/restart，不能只复用内存中的旧对象。
+
+构建固定官方 Python 3.13.12 slim-bookworm 的平台 manifest：arm64 `sha256:34b27ac66ecf318887b55ea3c71f0db9307895efe631210231a66cc3fa130cf9`、amd64 `sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6`；已核对 registry 元数据，尚非运行证据。仅从现有 `uv.lock` 派生 pypdf 6.16.2、python-docx 1.2.0、lxml 6.1.2 与 typing-extensions 4.16.0 的固定平台 wheel URL/hash，不新增第二份依赖锁。临时构建上下文只含显式纯解析源码清单、协议/launcher、经过摘要校验的四包 wheel 和 provenance，不能发送整个仓库或安装 Backend SDK。receipt 同时绑定实际源码/锁/配方字节与最终 image/payload identity；启动拒绝陈旧制品，实际镜像必须验证普通 DOCX、加密 PDF 拒绝和无可选依赖兜底。平台 manifest 固定不等于该架构已经运行验收。
+
+初始固定预算如下；必须以普通既有 fixture 和真实独占容器验证，不按上传内容放宽：
+
+| 边界 | 限制 |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP multipart | 文件 25 MiB + envelope 64 KiB；一个 upload、零其他字段；boundary 70 bytes；part headers 总计 8 KiB/16 项；接收 30 秒；每 API 进程最多两个并发解析上传表单 |
+| 解析协议 | 控制头 4 KiB、内容 25 MiB、规范化回复 32 MiB、stderr 最多 16 KiB 且不输出其内容；一个活动解析、无无界队列 |
+| 容器 | 1 CPU、memory 与 memory+swap 均 512 MiB、16 PIDs、32 MiB tmpfs、64 fds、无 core dump |
+| 子进程/生命周期 | CPU soft/hard 8/10 秒、地址空间 384 MiB、文件 32 MiB；解析最多 25 秒、PID1 从启动起最多 35 秒；终态清理预算 15 秒，超时保留 unresolved |
+| PDF | 200 页、regular/compressed xref 合计 50,000 对象、遍历深度 64；解码内容每页 8 MiB/总计 32 MiB；初始化本身也受容器资源限制 |
+| DOCX | 2048 entries、单 entry 8 MiB、实际总展开 32 MiB、单项/总体压缩比 100:1；只接收 stored/deflated，不接受加密或包外 relationship |
+| 规范化文本 | 保留 8,000,000 字符上限，早期检查 UTF-8/编码回复字节、最多 10,000 blocks、32 级 heading 和 256 字符 heading；最终回复仍须匹配全部源身份和摘要 |
+
+上传使用专用 APIRoute 在 FastAPI `File(...)` 处理前执行有界 multipart 并缓存同一 FormData，保留生成合同；对所有失败、断连、取消和策略拒绝关闭已创建 spool。共享 authority 字段识别使 actor/project 等尝试仍返回原 403；Origin 在读取 body 前拒绝。帧长度、重复 JSON keys、截断、正常 EOF 与取消、输出上限及文档/Revision/media/filename/hash 绑定都必须验证；成功 payload 复用已有 canonical normalized codec。此窄框架接入须以当前锁定 Starlette/FastAPI 的实际行为测试，不能仅设置对文件无效的 max_part_size。
+
+- [x] 写伪扩展、MIME/signature 不符、加密/超页 PDF、zip bomb、超大 entry、宏/OLE、external relationship、路径穿越、SSRF URL、timeout/OOM/crash 和安全错误不泄漏测试；E2E 证明拒绝后 API/Worker 仍健康。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest'`；预期 FAIL，原因为隔离 Parser、恶意 fixture 生成器或 E2E manifest 不存在，而不是浏览器或网络未启动。
+- [x] 实现 deterministic hostile fixture builder 与隔离协议；测试不得提交真实恶意载荷以外的随机大文件。Compose/dev/e2e 统一启动并健康检查 Parser Worker，网络 policy 明确拒绝外部地址。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_isolated_parser.py apps/backend/tests/security/test_document_upload_security.py apps/backend/tests/contract/test_demo_commands.py -v -k 'parser or upload or e2e_manifest' && make demo-e2e`；预期 PASS 且 E2E 报告 zero skipped/flaky。再运行 `make check`、严格独占 MySQL/Redis/Azurite/MinIO wrapper 中的完整 Backend、完整 Web 回归和 `git diff --check`；禁止 plain `make test` 指向默认数据。
+- [x] Commit: `feat(knowledge): isolate hostile document parsing`
+
+**恢复记录一致性：** 校验后完全相同的 owner/project/image 关联保持原文件不变；新建或重新绑定通过同目录私有临时文件与原子替换完成。替换前的异常不能截断旧关联；在旧容器仍需回收时，必须保留可读的准确 owner/image。用有界故障注入验证，不扩大清理命名空间或运行预算。
+
+**完整回归裁定：** 既有 native-process architecture 测试按全 Backend 只允许 Codex Adapter，新增可信 Parser supervisor 后需要同步精确能力边界。仅允许固定 Codex Adapter 与固定 Parser supervisor entrypoint；应用侧 parser adapter/runtime 不得获得 Docker/native-process 能力或导入该监督进程，不能放开整个 entrypoints 目录。此测试文件加入本项最小修改范围，保留完整回归的原始失败，并运行完整 architecture 文件验证。
+
+**验收：** `963c700`；[Task 5A 验收记录](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)。最终复审/检查通过；fix2 契约 38、真实冷恢复 2 通过，fix1 四阶段 E2E 为 2/1/1/28 且零 skip/flaky/retry。完整 Backend 原始 2764 passed/1 旧架构断言失败/9 opt-in skip；该失败由完整架构文件 80 passed 覆盖，保留原始时间边界，不声称最终全套重跑。
 
 ### Task 5B: Close the V0 scope and reliability gate
 
 **Files:**
 
 - Create: `scripts/run-tapper-v0-gate.sh`
+- Create: `scripts/tapper_v0_gate.py`
 - Create: `apps/backend/tests/gates/test_v0_gate_report.py`
 - Create: `docs/reviews/<review-date>-v0-validation-scope-reliability-gate.md`
 - Modify: `docs/reviews/index.md`
 - Modify: `Makefile`
+- Modify: `scripts/migration_support.py`
+- Modify: `scripts/parser_test_support.py`
+- Modify: `apps/backend/tests/security/test_document_upload_security.py`
+- Modify: `apps/backend/tests/integration/test_schema_drift.py`
+- Modify: `apps/backend/tests/unit/operations/test_redis_stream_recovery.py`
+- Modify: `apps/backend/tests/integration/test_knowledge_operations_recovery.py`
 
 **Gate:** `make gate-v0` runs schema drift, every `0006`–`0009` migration check, both authorization adapters' conformance, Project/Origin negative tests, Redis/Outbox recovery, bounded operator Audit, MinIO restart and parser security E2E. The report records planning baseline SHA, command, exit code, artifact digest and zero-skip count; missing evidence makes the gate fail.
 
-- [ ] 写 gate report parser，并用缺 planning SHA、缺命令、skipped test 与失败 migration 的 fixtures 验证非零退出。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 FAIL，原因为 V0 gate runner/report schema 不存在。
-- [ ] 实现 `scripts/run-tapper-v0-gate.sh` 和 `make gate-v0`；脚本只调用明确命令，任何 skip、缺日志或非零子命令都使总 gate 失败。
-- [ ] 运行 `make gate-v0 && uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 PASS。用实际日期替换 `<review-date>`，写入证据与唯一结论 `pass | fail`；只有 `pass` 才进入 V1。再运行 `git diff --check`。
-- [ ] Commit: `test(platform): record v0 validation gate`
+**实施裁定：** shell 仅启动固定 Python gate runner；后者维护闭合命令表、五组显式 pytest 文件清单、原生 JUnit/Playwright 证据和源码摘要。只为 legacy relay 创建外层独占 MySQL，并组合已有 MinIO 与严格 receipt 验证的 Azurite；Project/MySQL、真实 Redis、Parser 和 E2E 保留各自独占 fixture。所有层级必须传播清理失败，schema/migration 与 nested fixture 的证据只包含封闭的非敏感拥有权/清理字段。补一项真实 SQL populated-ready/limit+1 snapshot 测试，关闭 Task 4 已记录的窄覆盖缺口，不把它称为真实 Milvus rebuild。
+
+完整 planning SHA 固定为 `a54ab433eae52500683a5ff6ff9d79466a30e1ca`，另记录实际测试 HEAD、未提交源码路径/模式/字节摘要，并在命令与清理后比较。报告目录必须新建且归本次运行所有；缺阶段、skip/flaky、原生计数不一致、非零退出、清理失败或源码变化均为 fail。Task 5A 的最终 E2E/exporter/Parser 接口在其验收后重读；失败命令缺少投影时记录明确的 absent/fail，不复制 private state 或伪造原生摘要。
+
+- [x] 写 gate report parser，并用缺 planning SHA、缺命令、skipped test 与失败 migration 的 fixtures 验证非零退出。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 FAIL，原因为 V0 gate runner/report schema 不存在。
+- [x] 实现 `scripts/run-tapper-v0-gate.sh` 和 `make gate-v0`；脚本只调用明确命令，任何 skip、缺日志或非零子命令都使总 gate 失败。
+- [x] 运行 `make gate-v0 && uv run --project apps/backend pytest apps/backend/tests/gates/test_v0_gate_report.py -v`；预期 PASS。用实际日期替换 `<review-date>`，写入证据与唯一结论 `pass | fail`；只有 `pass` 才进入 V1。再运行 `git diff --check`。
+- [x] Commit: `test(platform): record v0 validation gate`
+
+**门禁首轮修正边界：** 子命令退出与 pass-only 原生报告校验不能替代清理证明；清理失败或无法确认时，在创建后续资源前停止并汇总 unresolved/failed，仍记录完整的 not-run 命令。门禁固定 `umask 077`；独占测试探针构建目录中的非敏感 `child.py` 明确为容器可读的 `0644`，不依赖调用者 umask，不放宽生产 UID、capability 或资源预算。以惰性编排/文件权限回归和真实独占探针验证，保留首轮实际失败，最终重新运行完整门禁。
+
+**原生用例名称修正：** 第二轮全部 11 个命令退出 0、所有 296 项必需用例通过，但一个恶意上传参数被 pytest 自动展开为 8,367 字符的名称，超出报告 1,024 字符上限，汇总仍 fail。仅为该既有参数化测试设置稳定短 IDs，不改输入、断言、用例数量或报告上限；先以新原生 XML 验证身份识别，再复审并重跑固定门禁。两轮原始 fail 均保留。
+
+**验收：** 源码 `f71f06c`；[V0 完整门禁](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md)通过。首轮失败与两项修正保留，最终固定命令集 296 passed、零跳过，清理和源码一致性验证通过；可进入 Task 6。
 
 ## V1 — Trusted Knowledge and Durable Conversation
 
@@ -422,14 +615,29 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/backend/src/tap/entrypoints/tapper_runtime.py`
 - Modify: `apps/backend/tests/integration/test_upgrade_from_0005.py`
 
-**Rules/migration:** `knowledge_source` 是用户选择的 Project 资源，一个 Source 拥有一到多个 Document；当前上传流程原子创建一个 Source 与一个 Document。`0010` 对每个旧 `knowledge_document` 创建新 legacy Source；Source ID 固定为 `src_` 加 `sha256("legacy-source-v1\0" + project_id + "\0" + document_id)` 的前 32 个小写 hex，并在 `knowledge_source_legacy_map` 保存旧 `source_id=document_id` 到新 Source ID 的映射。给 Document/Revision/Answer/Citation 加 Source FK，保留所有原 Document/Revision/Citation ID、digest/locator，再按 nullable → backfill → validate → FK/index → non-null 收紧。摄取事务写业务状态、Task 3A Project Audit 和 `knowledge.document-revision.accepted` Outbox；ready 时写 `knowledge.document-revision.ready`。Search Audit 只保存 query hash、scope、policy/version、family、候选/结果数量和拒绝原因，不保存原 query/evidence。
+**Rules/migration:** `knowledge_source` 是用户选择的 Project 资源，一个 Source 拥有一到多个 Document；当前上传流程原子创建一个 Source 与一个 Document。`0010` 对每个旧 `knowledge_document` 创建新 legacy Source；Source ID 固定为 `src_` 加 `sha256("legacy-source-v1\0" + project_id + "\0" + document_id)` 的前 32 个小写 hex，并在 `knowledge_source_legacy_map` 保存旧 `source_id=document_id` 到新 Source ID 的映射。给 Document/Revision/Citation 加 Source FK；Answer 通过有序 `knowledge_answer_source` 关联全部选中 Revision，支持多 Source 和无 Citation 的选中项，不能增加单值 Source FK。保留所有原 ID、digest/locator 与 selected JSON，明确解析旧字符串数组和当前对象数组，未知形状、重复、孤儿或跨 Project 关联在 DDL 前按安全计数拒绝；按 nullable → backfill → validate → FK/index → non-null 收紧，并用复合 FK 保证 Source/Document/Revision/Citation 所有权一致。
 
-- [ ] 写跨 Project Source、Source/Document cardinality、删除/重试、旧 ID/Revision/Citation 保留、redaction 命中/误报、Audit 无正文、accepted/ready 事件 payload/幂等键闭集和 `0005 → 0010` 非空升级测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/knowledge/test_source_service.py apps/backend/tests/contract/test_egress_redaction.py apps/backend/tests/integration/test_project_knowledge_ingestion.py apps/backend/tests/integration/test_search_audit.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'source or redaction or search_audit or 0010'`；预期 FAIL，原因为 Source/Redactor/revision 不存在。
-- [ ] 实现 Source ledger、事务事件、真实 pattern redactor 和持久 Audit，替换 `LocalEgressRedactor`/`LocalSearchAuditSink` no-op；把 `knowledge.document-revision.accepted/ready` 的封闭 payload 注册到唯一事件 registry，状态、Audit 与 Outbox 同事务。
-- [ ] 把 Source metadata 加入 authoritative registry；migration 检测孤儿/重复映射时失败并输出安全计数，不静默生成新业务 ID。
-- [ ] 运行 `make migration-check MIGRATION=0010_knowledge_sources && make schema-drift && make contracts && uv run --project apps/backend pytest apps/backend/tests/unit/knowledge/test_source_service.py apps/backend/tests/contract/test_egress_redaction.py apps/backend/tests/integration/test_project_knowledge_ingestion.py apps/backend/tests/integration/test_search_audit.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'source or redaction or search_audit or 0010'`；预期 PASS，且 Project event schema 含 accepted/ready payload。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(knowledge): scope sources and persist safe audit`
+**2026-09-06 preflight rulings / additional files:** 除上述文件外，修改 `platform/db/schema.py`、`modules/governance/{domain/audit.py,ports/audit.py,adapters/mysql_audit.py,adapters/schema.py}`、`modules/knowledge/adapters/milvus/search.py`、`modules/knowledge/adapters/milvus_documents.py`、`scripts/migration_support.py`、`scripts/tapper_v0_gate.py` 与直接相关的 Audit、event、ingestion、migration、architecture 和 gate 测试；均以 `apps/backend/src/tap/` 为未写出的源码路径前缀。必要时增加最小 `modules/knowledge/ports/sources.py`。不改变公共 HTTP/Web 或 Milvus 物理 schema；Task 6A 承接 Source API/Picker 与 canonical projection。
+
+- 新增四表：`knowledge_source`、`knowledge_source_legacy_map`、`knowledge_answer_source`、`knowledge_search_audit`，authoritative registry 为 25 表。Source 与上传 reservation 同事务，activation 后才写 accepted；重试沿用 Source/Document/Revision，不重复 accepted。Source tombstone 阻止所有子项的新读取、重试、ready 和 answer 提交，保留历史事实；已有 Document/Revision 不可换属其他 Source。
+- Source 在上传 activation 前删除时，recovery 从同 Project 的 SQL 事实识别 cancelled reservation，复用既有 artifact/staging 清理及身份校验；成功或既有契约确认幂等完成后才结清 Document tombstone，失败保留可恢复事实，不再尝试 activation，也不生成 Revision/accepted。覆盖 reserve/promote/activate 边界、重复恢复和清理失败，不改变 Task 5 缺 manifest 的安全保留策略。
+- 实际 Revision ID 长 68 字符；0010 将 live/archive/dead-letter 三份 Outbox 的 aggregate 列扩至 128，只放宽 `DocumentRevision` 事件及其 aggregate payload 的契约上限，其他事件保留 64。accepted/ready payload 已登记，实施其生产者而不重复 registry。accepted key 为 `revisionId:ingest`，ready key 为 `revisionId`，业务状态、闭合 Project Audit 和 Outbox 同 SQL 事务。
+- `project_audit` 新增 nullable `resource_id`：历史维护记录为 null，保留旧 digest 算法；新的 Source/Revision 生命周期使用强制资源身份和闭合 action/resource 组合，关联内容只通过 canonical digest 绑定。保留首次 correlation/time，变更资源的 replay 拒绝，不开放任意 metadata。
+- Knowledge Repository 通过 composition 注入的 transaction Audit factory 调用公开 Governance Port；复用现有 `create_project_audit` 与同一 SQL connection，现有 Repository 构造点显式传入 factory。不得直接导入另一 bounded context 的 MySQL adapter、另开事务或缺省为 no-op；更新必要构造点/fixtures，并用 architecture 测试守住该边界。
+- PUBLISHING 的 flush/fence/parity 成功后返回版本化 logical projection digest，连同 chunk manifest digest 持久化；READY 在 lease、Source/Document 有效且更新成功时才写事件。旧已完成 READY 不伪造 receipt/历史事件；迁移后在途 READY 缺 receipt 时在现有 lease 下重做 publish/reconciliation 后完成，不改写迁移前事实。
+- Search Audit 本阶段记录 Milvus search attempt 的 provider/mapped candidate 数量，不等同于最终授权 evidence 数量；只持久化 trusted scope、query hash、policy/version、family、闭合数量/原因。成功 Audit 提交后才返回命中，Audit 不可用时 fail closed，不保存正文或 provider exception。
+- 本阶段替换现有 query egress no-op，固定 `tapper-pattern-egress-v1`，最多 8000 字符，使用有界 PEM private-key、显式 Bearer/secret assignment 与保守 email 规则；完整值脱敏，非法/超限或未闭合敏感块在 I/O 前拒绝。覆盖 query embedding、BM25 和 answer question，canonical evidence/vector 不变；完整模型上下文脱敏由 Task 7 的统一 Gateway 完成，不把本阶段称为全模型脱敏。
+- 0010 保持旧十四表 fixture 和全部原字段值，另加多来源/异常数据 fixture；仅允许未产生 V1 新事实的 migration-only downgrade/replay，任何会丢失新 Source/Audit/event/receipt 事实或窄化长 ID 的操作在 DDL 前拒绝。MySQL 部分 DDL 状态明确检测并 fail closed，不声称事务回滚或默认实现自动修复。
+- schema-drift 输出 revision 和精确表名。V0 新报告 schemaVersion 2 必须匹配 0010 的精确 25 表，旧 schemaVersion 1 报告保留历史 21 表验证；不修改旧报告，不放宽为任意表数，也不把 V0 的四个历史 migration 检查替换成 0010。
+
+- [x] 写跨 Project Source、Source/Document cardinality、删除/重试、旧 ID/Revision/Citation 保留、redaction 命中/误报、Audit 无正文、accepted/ready 事件 payload/幂等键闭集和 `0005 → 0010` 非空升级测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/unit/knowledge/test_source_service.py apps/backend/tests/contract/test_egress_redaction.py apps/backend/tests/integration/test_project_knowledge_ingestion.py apps/backend/tests/integration/test_search_audit.py apps/backend/tests/integration/test_upgrade_from_0005.py -v -k 'source or redaction or search_audit or 0010'`；预期 FAIL，原因为 Source/Redactor/revision 不存在。
+- [x] 实现 Source ledger、多来源 Answer 关联、事务事件、query pattern redactor 和持久 Search Audit，替换两个 no-op；实现已登记 accepted/ready 的生产者、真实 receipt 和闭合资源 Audit，证明状态、Audit 与 Outbox 同事务及删除/重试/并发 read fences。
+- [x] 把 Source metadata 加入 authoritative registry；migration 检测孤儿/重复映射时失败并输出安全计数，不静默生成新业务 ID。
+- [x] 在验证所有权的 disposable MySQL 中运行 `make migration-check MIGRATION=0010_knowledge_sources`、`make schema-drift` 和全部新增/直接相关 focused 测试，再运行 `make contracts` 与窄 lint/type/architecture/event/gate 检查；预期 PASS。冻结源码，经独立审查和必要修正后，由 Root 运行最终 `make check`、严格隔离的 Backend/Web 回归及 `git diff --check`。禁止直接执行会使用默认数据库的 `make test`，禁止源码变化中的 broad suite 作为最终证据，不重复完整 V0 gate。
+- [x] Commit: `feat(knowledge): scope sources and persist safe audit`
+
+**实际验收：** [Task6 Source账本验收](../reviews/2026-09-06-tapper-v1-source-ledger-review.md)；源码 `56ee2b5`，两轮复审通过，最终Backend2880 passed/9 skipped、Web294 passed。保留首次完整回归失败与Parser凭据刷新记录；V1质量出口未完成。
 
 ### Task 6A: Expose Source APIs and migrate the Milvus projection contract
 
@@ -457,15 +665,63 @@ class AuthorizationPolicy(Protocol):
 - Modify: `apps/web/src/shared/api/generated/schema.ts`
 - Modify: `apps/web/src/features/knowledge/api/client.ts`
 - Modify: `apps/web/src/features/knowledge/api/queries.tsx`
-- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
+- Modify: `apps/web/src/widgets/tap/prototype/LibraryWorkspace.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`
+
+Source Picker 接入当前 Tapper 产品壳的来源区域和 Library；不替换为旧独立知识页。
 
 **API/projection:** `/api/v1/projects/{project_id}/knowledge/sources` 提供 create-by-upload、list、detail、delete 和 retry；Document endpoint 只处理 Source 下的具体版本/状态。Milvus 新物理 collection 使用 canonical `enterprise_id/project_id/source_id`；旧 collection 的 `tenant_id` 与 `source_id=document_id` 只作为迁移输入，经 Task 6 的 legacy map 转换，绝不进入新 schema 或公共 DTO。写入与读回闭集验证 enterprise/project/source/document/revision/chunk/anchor/digest。Schema version 变更通过新 collection → fixture/rebuild → 完整性检查 → atomic alias cutover，不能原地假定旧 row 已有新字段。
 
-- [ ] 写 Source HTTP idempotency/Project/删除/重试、错误类型，Milvus wrong enterprise/project/source/readback、旧 `source_id=document_id` cutover、alias rollback 和 Picker 键盘/空态测试。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx`；预期 FAIL，原因为 Source route/UI 与闭集 projection 尚未实现。
-- [ ] 实现 API、generated client 和 collection migration；`map_milvus_hit` 必须收到并核对 enterprise/project，任何字段缺失或 scope 不符返回安全的 search failure，不当作零结果。
-- [ ] 运行 `make contracts && uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx && make test-milvus`；预期 PASS。再运行 `make check && make test && git diff --check`。
-- [ ] Commit: `feat(knowledge): expose sources and scope milvus rows`
+**2026-09-06 implementation rulings:** Task6 已由源码 `56ee2b5` 和验收 `11d47cb` 完成；以下约束细化现有任务，尚不代表 Task6A 完成。
+
+**Durable Source commands**
+
+- Add one Knowledge-owned `knowledge_source_command` ledger, not a generic platform framework. Use additive `0010a_source_commands` / `0010a_source_commands.py`, down_revision `0010_knowledge_sources`. This preserves the immutable0010 and future planned0011 Agent/Skill revision numbering. Alembic dependency order is authoritative; verify tooling accepts this exact identifier rather than renumbering unrelated future work. Report a concrete tooling conflict before changing this ruling.
+- Exact current schema becomes26 named tables. Update authoritative metadata/registry, migration-support and nonempty migration tests. Preserve original14-table fixture plus new command-specific refusal/replay cases. Refuse downgrade with command facts; permit empty migration-only round-trip. Do not modify0010.
+- Scope unique keys by trusted Enterprise/Project/key; include closed operation/route response version, target resource, Actor provenance and full canonical client request in its versioned digest. Required bounded128 nonblank opaque key, duplicate header refusal, binary/case-sensitive identity. Current authorization precedes replay. No memory-only key cache or Audit/Outbox-as-request-ledger shortcut.
+- Upload request binds normalized accepted filename, validated media, length and content hash plus any explicit targetSource; exclude multipart encoding, generated IDs, time/correlation and deployment-varying parser settings. Save server parser/pipeline facts in the existing reservation. Separate content dedupe from request idempotency: different keys may bind one resource, but each retains its original result/duplicate flag; same key with different canonical input conflicts.
+- Bind pending key to the existing reservation durably before activation. Finalize accepted response with activation's business/Audit/Outbox transaction; never issue202 before result durability or invent an uncreated job. Bounded pending duplicate returns a safe retryable in-progress response or reconciles the same reservation; never creates anotherSource. Persist terminal domain rejection safely; transient infrastructure failure stays recoverable rather than becoming a cached success.
+- Recovery settles every bound pending command at the corresponding activation/cancellation transaction. Cancelled-before-activation commands retain a durable closed failure with no fabricated Revision/job. Replay after later deletion returns the original outcome without resurrection. Preserve command history and original result after tombstones; do not add cascade/TTL or FKs that block existing cancelled-reservation cleanup. Distinguish historical command references from current authorization facts.
+- Retry/delete finalize key/result in the same lifecycle transaction. Replay original result before rechecking mutable preconditions. Keep domain lock order coherent with recovery; no command→job / job→command inversion, pre-read-only idempotency or separate-connection business commit. Cover real concurrent same/different keys and reserve/promote/activate/result/response crash boundaries.
+
+**Public and compatibility API**
+
+- Approve Source upload/list/detail/delete and targeted retry. Retry carries explicit Document/current Revision and expectedAttempt; the key, not expectedAttempt alone, provides replay. Paginated lists/detail retain Source1:NDocument cardinality and readiness/failure counts; use list default25/max50. Repeated same-Project tombstone delete may return204, absent/foreign remain identical404; no broad exception-to-success conversion.
+- Retain the old Document POST as a deprecated thin facade using its existing DTO/operation ID and the same single Source command pipeline. Require Idempotency-Key there and on other side-effect facades; canonical route/response version distinguishes facade replay. Preserve upload security/cleanup and existing GET/status contracts, now with explicit Source ownership. New shell uses Source routes. Do not remove the old API or introduce public Document-ID-as-Source aliases.
+- Web creates one key per user mutation intent and retains it for transport retries. Do not claim durable browser-intent restoration across reload. Update generated DTOs and existing affected client/security tests; no hand-written mirrored contracts or new dependencies.
+
+**Frozen Source selection**
+
+- Resolve trusted active Source IDs to ordered active Documents whose current revisions are READY; omit non-ready siblings and expose their counts. No older-READY fallback, arbitrary firstDocument, caller revision override or legacy public Source alias.
+- Keep existing20 selectedSource/expandedRevision bounds and50 activeDocument capacity. Reject overflow or a selectedSource with no ready currentRevision before provider I/O. Resolve grants by Source+explicitRevision, preserving original Document-based chunk identity.
+- Freeze the ordered Source/Document/Revision/hash tuple once. Subsequent retrieval/snapshot persistence rechecks that tuple's ownership, authorization, selected-current revision policy and tombstones. Newly-ready/new siblings neither join nor invalidate it. Do not create Task8 TurnInputSnapshot storage early or rewrite historical selected JSON; use Task6 normalized associations for history/citations.
+
+**Canonical Milvus and operator compatibility**
+
+- Approve closed v2 enterprise/project/source/document provenance and complete write/readback validation, including anchors/digests/counts and selected Revision. Retain immutable v1 descriptor/loader for explicit migration/rollback; no silent fallback or in-place row reinterpretation.
+- Build v2 in a fresh generation using validated SQL/artifact ownership and existing vectors; use legacy map only for genuine old mapped rows. Task6 uploads without map entries use authoritative ownership, not fabricated maps. Keep receipts/schema versions truthful and tombstone/lease/coordinator fences intact.
+- Cutover and rollback are explicit and bind matching runtime profile plus alias/corpus state; startup must report migration-required instead of swapping an existingv1 target. Preserve old physical generation during rollback window. No shared/default alias operations or paid embeddings.
+- Add new V0 report schemaVersion3 exact0010a/26-table profile while retaining unchanged historicalv1/21 andv2/0010/25 interpretation. Do not rewrite past evidence or rerun the fullV0 gate solely for profile growth. Root will verify historical validators separately.
+
+- Explicit v1 rollback also supports the canonical Source client: translate only trusted frozen Source/Document/Revision/hash tuples to legacy Document-ID filters, then map validated hits back to canonical Source. Preserve Document chunk/anchor identity and require unique mapping. Validate legacy tenant/project plus authoritative SQL Enterprise/Project ownership and existing ACL; never claim a physical enterprise field exists in v1. Missing/ambiguous/mismatched ownership or profile fails closed. No schema autodetection, silent fallback, fabricated legacy map or public Document-ID alias. Verify real cutover/rollback through Source selection and wrong-owner/revision refusal.
+
+**Approved additional files and checks**
+
+Additional permitted implementation dependencies: Source/Document application+ports+repository, answer/policy/snapshot and Source+Revision disambiguation, HTTP composition/problems, versioned Milvus fixture/publish/config, current prototype Source extraction/copy/client tests, new Source-command migration/integration test and exact schema/gate profile support. No unrelated retrieval redesign. Report genuinely new dependencies before expanding further.
+
+Use a strictly owned disposable real Milvus project with explicit loopback ports, isolated SQL/artifacts, committed vectors and exact resource receipts. Existing default `make test-milvus` is not an authorized invocation. Prepare the owned recipe for Root review before starting services. No fake-server-only acceptance. Prefer the ignored reviewed recipe over an unsolicited reusable tracked runner.
+
+Literal RED/GREEN for behaviors; actual SQL atomicity/crash/lease evidence; generated contracts; Picker keyboard/loading/error/empty/Project-switch coverage; real versioned row/cutover/rollback evidence. Freeze before independent review and Root broad checks. If ports/documents.py changes, Root rebuilds/verifies the declared parser payload before broad validation. All production/source input hashes stay fixed during final checks. No plain make test, real models, shared services or UI replacement.
+
+
+- [x] 写 Source HTTP idempotency/Project/删除/重试、错误类型，Milvus wrong enterprise/project/source/readback、旧 `source_id=document_id` cutover、alias rollback 和 Picker 键盘/空态测试。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/contract/test_knowledge_source_http.py apps/backend/tests/integration/test_milvus_source_projection.py apps/backend/tests/integration/test_milvus_search_acl.py -v && corepack pnpm --filter @tap/web test -- --run src/features/knowledge/components/KnowledgeSourcePicker.test.tsx`；预期 FAIL，原因为 Source route/UI 与闭集 projection 尚未实现。
+- [x] 实现 API、generated client 和 collection migration；`map_milvus_hit` 必须收到并核对 enterprise/project，任何字段缺失或 scope 不符返回安全的 search failure，不当作零结果。
+- [x] 运行 `make contracts`、相关 Backend/Web 测试，以及 Root 审核的严格独占真实 Milvus 配方；预期 PASS。冻结源码并审查后运行 `make check`、隔离 Backend/Web 回归和 `git diff --check`；禁止直接运行连接默认资源的 `make test-milvus` 或 `make test`。
+- [x] Commit: `feat(knowledge): expose sources and scope milvus rows`
+
+**实际验收：** [Task6A Source API 与 projection 验收](../reviews/2026-09-08-tapper-v1-source-api-and-projection-review.md)；源码 `6f30aeb`，修正 `37727c4`、`fa42609`、`1051a17`、`7217997`，五份独立审查/复审最终无发现。最终 Backend2968 passed/26 skipped，Web306 passed，真实独占 Milvus cutover/rollback 1 passed；V1质量出口仍待后续任务。
 
 ### Task 7: Introduce one governed ModelGateway and expose its catalog
 
@@ -601,8 +857,7 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Create: `apps/web/tests/e2e/knowledge-conversation.spec.ts`
 - Modify: `apps/web/src/pages/TapperPage.tsx`
 - Modify: `apps/web/src/pages/TapperPage.test.tsx`
-- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.tsx`
-- Modify: `apps/web/src/widgets/tapper/TapperWorkspace.test.tsx`
+- Modify: `apps/web/src/widgets/tap/TapProductPrototype.interactions.test.tsx`
 - Modify: `apps/web/src/features/knowledge/components/GroundedAnswer.tsx`
 - Modify: `apps/web/src/features/knowledge/components/CitationViewer.tsx`
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`
@@ -610,12 +865,12 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 - Modify: `apps/backend/tests/contract/test_demo_commands.py`
 - Modify: `scripts/run-tapper-e2e.sh`
 
-**UX:** 保留 RFC-008 的一级 Rail、Tapper 二级 Sidebar、可移除 Context chips、上箭头输入历史、Codex 式 composer/minimap/收展和模型触发器；回答、Conversation history、Source、Citation 与模型均来自真实 API。Prototype localStorage Conversation 不迁入服务端，也不再作为默认数据源。
+**UX:** 在当前 `TapProductPrototype` 产品壳中替换本地数据连接，保持页面入口；保留 RFC-008 的一级 Rail、Tapper 二级 Sidebar、可移除 Context chips、上箭头输入历史、Codex 式 composer/minimap/收展和模型触发器；回答、Conversation history、Source、Citation 与模型均来自真实 API。Prototype localStorage Conversation 不迁入服务端，也不再作为默认数据源。
 
 - [ ] 写首条消息创建历史、后续轮次追加同一项、跨模块/刷新恢复、SSE reconnect/cancel、Source/Agent/Skill 删除只影响未来 Turn、上箭头召回不自动发送、Citation deep-link 和错误/空/加载态测试。
-- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest`；预期 FAIL，原因为真实 Conversation client/state 或 E2E 登记尚未接入。
+- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tap/TapProductPrototype.interactions.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest`；预期 FAIL，原因为真实 Conversation client/state 或 E2E 登记尚未接入。
 - [ ] 以生成类型实现 client/query/stream reducer，把默认 Tapper 页面接到真实服务；保留 Prototype 作为明确 demo fixture，不从它读取权威资产。E2E runner 注册 `knowledge-conversation.spec.ts`，检查报告至少执行该 spec 的声明用例且 zero unexpected/flaky/skipped，不再写死 `expected == 1`。
-- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tapper/TapperWorkspace.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest && make demo-e2e`；预期 PASS：真实 Source/Agent/Skill、Conversation、SSE reconnect 与重启旅程全部通过。再运行 `make check && make test && git diff --check`。
+- [ ] 运行 `corepack pnpm --filter @tap/web test -- --run src/pages/TapperPage.test.tsx src/widgets/tap/TapProductPrototype.interactions.test.tsx src/features/conversations && uv run --project apps/backend pytest apps/backend/tests/contract/test_demo_commands.py -v -k e2e_manifest && make demo-e2e`；预期 PASS：真实 Source/Agent/Skill、Conversation、SSE reconnect 与重启旅程全部通过。再运行 `make check && make test && git diff --check`。
 - [ ] Commit: `feat(web): connect tapper to durable conversations`
 
 ### Task 10: Gate V1 with QUALITY-KB-01

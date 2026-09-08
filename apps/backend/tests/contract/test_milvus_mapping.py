@@ -166,3 +166,14 @@ def test_map_milvus_hit_rejects_non_positive_or_non_integer_local_rank(
 ) -> None:
     with pytest.raises(SearchUnavailable):
         map_milvus_hit(valid_doc_row(), bound_target(), local_rank=local_rank)  # type: ignore[arg-type]
+
+
+def test_v2_mapping_requires_sql_ownership_and_does_not_accept_legacy_row_shape():
+    from dataclasses import replace
+
+    bound = replace(
+        bound_target(), configured=replace(doc_target(), schema_version="doc-schema-v2")
+    )
+    row = {**valid_doc_row(), "schema_version": "doc-schema-v2"}
+    with pytest.raises(SearchUnavailable):
+        map_milvus_hit(row, bound, 1)

@@ -1,10 +1,5 @@
 const APPROVED_ORIGIN = "http://127.0.0.1:15173";
 const DOCUMENT_ID = "doc_[0-9a-f]{32}";
-const DOCUMENT_PATH = new RegExp(
-  `^/v1/knowledge/documents/${DOCUMENT_ID}$`,
-  "u",
-);
-const DOCUMENT_LIST_PATH = "/v1/knowledge/documents";
 const SAFE_METHOD = /^[A-Z]{1,16}$/u;
 const SAFE_BROWSER_ERROR = /^net::ERR_[A-Z0-9_]{1,64}$/u;
 
@@ -21,11 +16,15 @@ export interface E2ERequestResponse {
 }
 
 type ClosedPathLabel =
-  "document-detail" | "document-list" | "outside-allowlist";
+  | "document-detail"
+  | "document-list"
+  | "runtime-discovery"
+  | "outside-allowlist";
 
 interface ClassifiedRequest {
   exactDocumentDetail: boolean;
   exactDocumentList: boolean;
+  exactRuntimeDiscovery: boolean;
   label: ClosedPathLabel;
   method: string;
 }
@@ -47,7 +46,10 @@ export function isApprovedE2EPageRequest(url: string): boolean {
   }
 }
 
-function classifyRequest(failure: E2ERequestFailure): ClassifiedRequest {
+function classifyRequest(
+  failure: E2ERequestFailure,
+  projectId: string,
+): ClassifiedRequest {
   const method = SAFE_METHOD.test(failure.method) ? failure.method : "UNKNOWN";
   let parsed: URL | undefined;
   try {
@@ -59,36 +61,51 @@ function classifyRequest(failure: E2ERequestFailure): ClassifiedRequest {
     return {
       exactDocumentDetail: false,
       exactDocumentList: false,
+      exactRuntimeDiscovery: false,
       label: "outside-allowlist",
       method,
     };
   }
-  const listPath = parsed.pathname === DOCUMENT_LIST_PATH;
-  const detailPath = DOCUMENT_PATH.test(parsed.pathname);
+  const documentListPath = `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge/documents`;
+  const listPath = parsed.pathname === documentListPath;
+  const detailPath =
+    parsed.pathname.startsWith(`${documentListPath}/`) &&
+    new RegExp(`^${DOCUMENT_ID}$`, "u").test(
+      parsed.pathname.slice(documentListPath.length + 1),
+    );
+  const runtimePath = parsed.pathname === "/api/v1/runtime-mode";
   return {
+    exactRuntimeDiscovery: runtimePath && parsed.search === "",
     exactDocumentDetail: detailPath && parsed.search === "",
     exactDocumentList: listPath && parsed.search === "?limit=50",
     label: listPath
       ? "document-list"
       : detailPath
         ? "document-detail"
-        : "outside-allowlist",
+        : runtimePath
+          ? "runtime-discovery"
+          : "outside-allowlist",
     method,
   };
 }
 
 export class E2ERequestFailureAudit<RequestIdentity extends object> {
+  constructor(private readonly projectId: string) {}
+
   readonly #completedNoContentDeletes = new WeakSet<RequestIdentity>();
 
   observeResponse(
     request: RequestIdentity,
     response: E2ERequestResponse,
   ): void {
-    const classified = classifyRequest({
-      errorText: "",
-      method: response.method,
-      url: response.url,
-    });
+    const classified = classifyRequest(
+      {
+        errorText: "",
+        method: response.method,
+        url: response.url,
+      },
+      this.projectId,
+    );
     if (
       response.status === 204 &&
       classified.method === "DELETE" &&
@@ -102,10 +119,12 @@ export class E2ERequestFailureAudit<RequestIdentity extends object> {
     request: RequestIdentity,
     failure: E2ERequestFailure,
   ): string | null {
-    const classified = classifyRequest(failure);
+    const classified = classifyRequest(failure, this.projectId);
     const approvedGetCancellation =
       classified.method === "GET" &&
-      (classified.exactDocumentList || classified.exactDocumentDetail);
+      (classified.exactDocumentList ||
+        classified.exactDocumentDetail ||
+        classified.exactRuntimeDiscovery);
     const approvedDeleteCancellation =
       classified.method === "DELETE" &&
       classified.exactDocumentDetail &&

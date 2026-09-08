@@ -8,6 +8,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 from pydantic.alias_generators import to_camel
 
+from tap.contracts.problems import ProblemDetails
+
 
 class StreamContractModel(BaseModel):
     """Base model for browser-visible stream payloads."""
@@ -260,8 +262,7 @@ class TurnCanceledEvent(StreamContractModel):
 
 
 class TurnFailedPayload(StreamContractModel):
-    code: str = Field(min_length=1)
-    retryable: bool
+    problem: ProblemDetails
 
 
 class TurnFailedEvent(StreamContractModel):

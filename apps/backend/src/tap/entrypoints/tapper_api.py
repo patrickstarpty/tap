@@ -61,7 +61,11 @@ def build_runtime_app(
                 app.state._tapper_lifecycle_failure = _ApiLifecycleFailure.SHUTDOWN
                 raise RuntimeError("Tapper API runtime shutdown failed.") from None
 
-    runtime_app = create_app(lifespan=lifespan)
+    runtime_app = create_app(
+        lifespan=lifespan,
+        validation_mode=True,
+        allowed_origins=frozenset({f"http://{settings.web_host}:{settings.web_port}"}),
+    )
     runtime_app.state._tapper_lifecycle_failure = None
     if settings.e2e_mode:
         _register_e2e_failure_route(runtime_app)

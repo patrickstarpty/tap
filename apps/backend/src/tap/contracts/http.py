@@ -17,11 +17,22 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
+from tap.contracts.problems import ProblemDetails as ProblemDetails
+
 
 class ContractModel(BaseModel):
     """Base model that exposes camelCase JSON without accepting unknown fields."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
+class RuntimeMode(ContractModel):
+    """Server-owned validation context; never a personal authentication claim."""
+
+    mode: Literal["validation"]
+    project_id: str = Field(min_length=1, max_length=128)
+    actor_id: str = Field(min_length=1, max_length=128)
+    identity_mode: Literal["validation"]
 
 
 class SourceFamily(str, Enum):
@@ -162,6 +173,7 @@ class DocumentStageSnapshot(ContractModel):
 
 
 class DocumentSummary(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
     document_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
     media_type: Literal[
@@ -205,6 +217,45 @@ class DocumentDetail(DocumentSummary):
         if self.status is not DocumentStatus.FAILED and fields_present:
             raise ValueError("only failed documents may expose public error fields")
         return self
+
+
+class SourceSummary(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    created_at: TimestampValue
+    document_count: Annotated[StrictInt, Field(ge=0, le=50)]
+    ready_count: Annotated[StrictInt, Field(ge=0, le=50)]
+    failed_count: Annotated[StrictInt, Field(ge=0, le=50)]
+
+
+class SourcePage(ContractModel):
+    items: Annotated[list[SourceSummary], Field(max_length=50)]
+    next_cursor: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
+
+
+class SourceDocument(DocumentDetail):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    attempt: Annotated[StrictInt, Field(ge=1)]
+
+
+class SourceDocumentPage(ContractModel):
+    items: Annotated[list[SourceDocument], Field(max_length=50)]
+    next_cursor: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
+
+
+class SourceDetail(SourceSummary):
+    documents: SourceDocumentPage
+
+
+class SourceAccepted(ContractModel):
+    source: SourceSummary
+    accepted: DocumentAccepted
+
+
+class SourceRetryRequest(ContractModel):
+    document_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    expected_attempt: Annotated[StrictInt, Field(ge=1)]
 
 
 class CitationPreview(ContractModel):
@@ -587,13 +638,3 @@ class ChatTurnAccepted(ContractModel):
     chat_id: str
     turn_id: str
     state: Literal["queued"]
-
-
-class ProblemDetails(ContractModel):
-    """RFC 9457 problem details returned by the public HTTP interface."""
-
-    type: str = Field(pattern=r"^https://")
-    title: str = Field(min_length=1)
-    status: int = Field(ge=100, le=599)
-    detail: str = Field(min_length=1)
-    instance: str | None = None

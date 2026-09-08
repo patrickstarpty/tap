@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from datetime import timedelta
 from time import monotonic
 from typing import Protocol, cast
 
 from redis.exceptions import RedisError, ResponseError
 
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.platform.db.project_scope import require_project_scope
 from tap.platform.messaging.redis_dispatch import AsyncRedisStream, DispatchWakeup
+from tap.platform.messaging.redis_recovery import RecoveryRedis, RedisStreamRecovery
 
 
 class WakeupConsumer(Protocol):
@@ -26,11 +30,13 @@ class RedisWakeupConsumer:
         self,
         *,
         redis: AsyncRedisStream,
+        scope: ProjectScopeContext,
         stream_name: str,
         group_name: str,
         consumer_name: str,
         aggregate_type: str,
     ) -> None:
+        self._scope = require_project_scope(scope)
         for name, value in {
             "stream_name": stream_name,
             "group_name": group_name,
@@ -45,6 +51,12 @@ class RedisWakeupConsumer:
         self._consumer_name = consumer_name
         self._aggregate_type = aggregate_type
         self._group_ready = False
+        self._recovery = RedisStreamRecovery(
+            redis=cast(RecoveryRedis, redis),
+            scope=self._scope,
+            stream_name=stream_name,
+            aggregate_type=aggregate_type,
+        )
 
     async def wait(self, *, max_wait_seconds: float) -> DispatchWakeup | None:
         if (
@@ -57,6 +69,11 @@ class RedisWakeupConsumer:
         started = monotonic()
         try:
             await self._ensure_group()
+            reclaimed = await self._recovery.reclaim_pending(
+                self._group_name, self._consumer_name, timedelta(seconds=30), 1
+            )
+            if reclaimed:
+                return reclaimed[0]
             while True:
                 remaining = max_wait_seconds - (monotonic() - started)
                 if remaining <= 0:
@@ -76,6 +93,7 @@ class RedisWakeupConsumer:
                     stream_id,
                     fields,
                     aggregate_type=self._aggregate_type,
+                    scope=self._scope,
                 )
                 if wakeup is not None:
                     return wakeup
@@ -94,6 +112,7 @@ class RedisWakeupConsumer:
     async def ack(self, wakeup: DispatchWakeup) -> None:
         try:
             await self._redis.xack(self._stream_name, self._group_name, wakeup.stream_id)
+            await self._recovery.trim_acknowledged(10_000)
         except asyncio.CancelledError:
             raise
         except RedisError:
@@ -139,6 +158,7 @@ def _decode_wakeup(
     fields: dict[str, object],
     *,
     aggregate_type: str,
+    scope: ProjectScopeContext,
 ) -> DispatchWakeup | None:
     payload = fields.get("payload")
     if not isinstance(payload, str):
@@ -148,6 +168,11 @@ def _decode_wakeup(
     except json.JSONDecodeError:
         return None
     if not isinstance(value, dict) or value.get("aggregateType") != aggregate_type:
+        return None
+    if (value.get("enterpriseId"), value.get("projectId")) != (
+        scope.enterprise_id,
+        scope.project_id,
+    ):
         return None
     aggregate_id = value.get("aggregateId")
     if not isinstance(aggregate_id, str) or not aggregate_id:

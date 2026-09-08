@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     DocumentId,
     RevisionId,
@@ -45,11 +46,14 @@ class ReadyDocumentRevision:
     document_id: str
     revision_id: str
     source_content_hash: str
+    source_id: str | None = None
 
     def __post_init__(self) -> None:
         _bounded("ready document ID", self.document_id, maximum=64)
         _bounded("ready revision ID", self.revision_id, maximum=128)
         _digest(self.source_content_hash)
+        if self.source_id is not None and not re.fullmatch(r"src_[0-9a-f]{32}", self.source_id):
+            raise ValueError("ready Source ID must be canonical")
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,11 +132,17 @@ class AnswerSnapshot:
         response: AnswerResponse,
         query: str,
         selected_revisions: tuple[ReadyDocumentRevision, ...],
+        corpus_version: str = "tapper-demo-v1",
     ) -> AnswerSnapshot:
-        _validate_gateway_response(response)
+        _validate_gateway_response(response, corpus_version=corpus_version)
         ordered = tuple(sorted(selected_revisions, key=lambda item: item.document_id))
         selected = {
-            (item.document_id, item.revision_id, item.source_content_hash) for item in ordered
+            (
+                item.source_id or item.document_id,
+                item.revision_id,
+                item.source_content_hash,
+            ): item.document_id
+            for item in ordered
         }
         citations: list[CitationSnapshot] = []
         for item in response.citations:
@@ -141,6 +151,11 @@ class AnswerSnapshot:
                 source.anchor, DocumentAnchor
             ):
                 raise ValueError("answer citation provenance is malformed")
+            document_id = selected.get(
+                (source.source_id, source.revision, source.source_content_hash)
+            )
+            if document_id is None:
+                raise ValueError("answer citation is outside the selected document revisions")
             anchor_json = _document_anchor_json(source.anchor)
             if (
                 item.family is not SourceFamily.DOC
@@ -161,7 +176,7 @@ class AnswerSnapshot:
                 )
                 or item.logical_chunk_id
                 != logical_chunk_projection_id(
-                    logical_chunk_id_for(DocumentId(source.source_id), anchor_json)
+                    logical_chunk_id_for(DocumentId(document_id), anchor_json)
                 )
                 or (
                     source.source_id,
@@ -175,7 +190,7 @@ class AnswerSnapshot:
                 CitationSnapshot(
                     trace_id=response.trace_id,
                     citation_id=item.citation_id,
-                    document_id=source.source_id,
+                    document_id=document_id,
                     revision_id=source.revision,
                     chunk_id=item.chunk_id,
                     source_content_hash=source.source_content_hash,
@@ -199,6 +214,19 @@ class AnswerSnapshot:
 
 
 class AnswerSnapshotRepository(Protocol):
+    """Durable operations run in the server-bound Project, independent of creator Actor."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def load_source_revisions(
+        self, source_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]: ...
+
+    async def load_current_source_revisions(
+        self, selected: tuple[tuple[str, str, str], ...]
+    ) -> tuple[ReadyDocumentRevision, ...]: ...
+
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...
@@ -218,14 +246,15 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-def _validate_gateway_response(response: AnswerResponse) -> None:
+def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str) -> None:
     if not isinstance(response, AnswerResponse):
         raise TypeError("knowledge gateway must return AnswerResponse")
     _bounded("answer trace ID", response.trace_id, maximum=64)
     _bounded("answer query plan ID", response.query_plan_id, maximum=256)
     _bounded("answer context snapshot ID", response.context_snapshot_id, maximum=256)
     if (
-        response.corpus_version != "tapper-demo-v1"
+        corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}
+        or response.corpus_version != corpus_version
         or response.retrieval_profile_id is not RetrievalProfileId.QUICK_HYBRID_V1
         or not isinstance(response.answer, str)
         or type(response.abstained) is not bool

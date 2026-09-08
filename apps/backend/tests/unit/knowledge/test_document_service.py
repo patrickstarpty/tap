@@ -139,6 +139,7 @@ class MemoryDocumentRepository:
         now = datetime(2026, 8, 27, 10, 0, 0)
         job_id = f"job-{reservation.document_id}"
         record = DocumentRecord.queued(
+            source_id="src_" + "a" * 32,
             document_id=reservation.document_id,
             revision_id=reservation.revision_id,
             filename="policy.md",
@@ -295,6 +296,7 @@ def test_capacity_rejection_discards_only_the_current_staging_artifact() -> None
         now = datetime(2026, 8, 27, 10, 0)
         for number in range(50):
             repository.records_by_key[f"existing-{number}"] = DocumentRecord.queued(
+                source_id="src_" + "a" * 32,
                 document_id=f"existing-doc-{number}",
                 revision_id=f"existing-rev-{number}",
                 filename=f"existing-{number}.md",

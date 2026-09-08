@@ -2,42 +2,63 @@
 
 from sqlalchemy import MetaData
 
+from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
+from tap.modules.governance.adapters.schema import project_audit
+from tap.modules.knowledge.adapters.mysql_audit import knowledge_search_audit
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_answer_snapshot,
+    knowledge_answer_source,
     knowledge_chunk_manifest,
     knowledge_citation_snapshot,
     knowledge_document,
     knowledge_document_revision,
     knowledge_ingestion_job,
+    knowledge_source,
+    knowledge_source_command,
+    knowledge_source_legacy_map,
 )
+from tap.modules.knowledge.adapters.mysql_operations import knowledge_operator_operation
 from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_cleanup,
     knowledge_projection_fence,
     knowledge_projection_lineage,
     knowledge_projection_state,
 )
-from tap.platform.db.schema import outbox
+from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
+
+# Explicit Project business inventory, separate from identity-registry ownership.
+# Adapter-local declarations carry the scope contract before they are copied.
+BUSINESS_TABLES = (
+    knowledge_search_audit,
+    project_audit,
+    outbox_archive,
+    outbox_dead_letter,
+    knowledge_operator_operation,
+    outbox,
+    chat_turn,
+    chat_event,
+    turn_snapshot,
+    knowledge_document,
+    knowledge_document_revision,
+    knowledge_ingestion_job,
+    knowledge_chunk_manifest,
+    knowledge_source,
+    knowledge_source_command,
+    knowledge_source_legacy_map,
+    knowledge_answer_source,
+    knowledge_answer_snapshot,
+    knowledge_citation_snapshot,
+    knowledge_projection_state,
+    knowledge_projection_fence,
+    knowledge_projection_cleanup,
+    knowledge_projection_lineage,
+)
 
 
 def load_authoritative_metadata() -> MetaData:
-    """Return only explicitly owned tables, copied into a fresh migration registry."""
+    """Return registered identities and scoped business tables in a fresh registry."""
     authoritative = MetaData()
-    for table in (
-        outbox,
-        chat_turn,
-        chat_event,
-        turn_snapshot,
-        knowledge_document,
-        knowledge_document_revision,
-        knowledge_ingestion_job,
-        knowledge_chunk_manifest,
-        knowledge_answer_snapshot,
-        knowledge_citation_snapshot,
-        knowledge_projection_state,
-        knowledge_projection_fence,
-        knowledge_projection_cleanup,
-        knowledge_projection_lineage,
-    ):
+    for table in (enterprise, project, actor_principal, *BUSINESS_TABLES):
         table.to_metadata(authoritative)
     return authoritative

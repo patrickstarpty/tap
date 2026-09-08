@@ -1,15 +1,24 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { fireEvent, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   document,
+  documentDetail,
   fakeKnowledgeClient,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
+import { renderApp } from "../../shared/testing/renderApp";
+import { RuntimeClientProvider } from "../../features/runtime/api/queries";
 import { TapProductPrototype } from "./TapProductPrototype";
 import { createInitialArtifactState } from "./prototype/artifacts/fixtures";
 import {
@@ -41,6 +50,125 @@ function renderPrototype() {
 
   return renderKnowledgeApp(<TapProductPrototype />, { api });
 }
+
+it("uses canonical Source API identities in the existing source panel", async () => {
+  const api = fakeKnowledgeClient().withDocuments([
+    document({ filename: "Legacy document only" }),
+  ]);
+  api.listSources = vi.fn().mockResolvedValue({
+    items: [
+      {
+        sourceId: "src_" + "a".repeat(32),
+        name: "Canonical policy",
+        documentCount: 2,
+        readyCount: 1,
+        failedCount: 0,
+        createdAt: "2026-09-08T00:00:00Z",
+      },
+    ],
+    nextCursor: null,
+  });
+  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const checkbox = await screen.findByRole("checkbox", {
+    name: /Canonical policy/,
+  });
+  await userEvent.click(checkbox);
+  expect(checkbox).toBeChecked();
+  expect(api.listSources).toHaveBeenCalled();
+  expect(
+    screen.queryByRole("checkbox", { name: /Legacy document only/ }),
+  ).not.toBeInTheDocument();
+  await act(async () =>
+    queryClient.setQueryData(["runtime-mode"], {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: "other-project",
+      actorId: "actor-test",
+    }),
+  );
+  await waitFor(() => expect(screen.getByText("0 selected")).toBeVisible());
+});
+
+it("shows Source documents in Library and targets retry and confirmed deletion", async () => {
+  const api = fakeKnowledgeClient();
+  const source = {
+    sourceId: "src_" + "a".repeat(32),
+    name: "Canonical policy",
+    documentCount: 2,
+    readyCount: 1,
+    failedCount: 1,
+    createdAt: "2026-09-08T00:00:00Z",
+  };
+  api.listSources = vi
+    .fn()
+    .mockResolvedValue({ items: [source], nextCursor: null });
+  api.getSource = vi.fn().mockResolvedValue({
+    ...source,
+    documents: {
+      items: [
+        {
+          ...documentDetail({
+            documentId: "doc_a",
+            filename: "failed.txt",
+            status: "failed",
+            revisionId: "rev_a",
+          }),
+          sourceId: source.sourceId,
+          attempt: 2,
+        },
+      ],
+      nextCursor: null,
+    },
+  });
+  api.retrySource = vi.fn().mockResolvedValue({
+    source,
+    accepted: {
+      document: document({ sourceId: source.sourceId }),
+      duplicate: false,
+      jobId: "job_a",
+    },
+  });
+  api.deleteSource = vi.fn().mockResolvedValue(undefined);
+  renderKnowledgeApp(<TapProductPrototype />, { api });
+  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View Canonical policy" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Canonical policy",
+  });
+  expect(await within(dialog).findByText("failed.txt")).toBeVisible();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Retry failed.txt" }),
+  );
+  await waitFor(() =>
+    expect(api.retrySource).toHaveBeenCalledWith(
+      source.sourceId,
+      { documentId: "doc_a", revisionId: "rev_a", expectedAttempt: 2 },
+      expect.any(String),
+    ),
+  );
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Delete source" }),
+  );
+  expect(api.deleteSource).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Confirm delete" }),
+  );
+  await waitFor(() =>
+    expect(api.deleteSource).toHaveBeenCalledWith(
+      source.sourceId,
+      expect.any(String),
+    ),
+  );
+});
+
+it("distinguishes Library loading from an empty Source collection", async () => {
+  const api = fakeKnowledgeClient().deferList();
+  renderKnowledgeApp(<TapProductPrototype />, { api });
+  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  expect(screen.getByRole("status", { name: "Loading sources" })).toBeVisible();
+});
 
 function installPrototypeStyles() {
   const style = window.document.createElement("style");
@@ -160,7 +288,7 @@ describe("Tap product prototype interactions", () => {
     window.localStorage.clear();
   });
 
-  it("keeps representative knowledge in the default graph after a page remount", async () => {
+  it("keeps Project sources in the document list after a page remount", async () => {
     const user = userEvent.setup();
     const first = renderPrototype();
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -170,22 +298,36 @@ describe("Tap product prototype interactions", () => {
       }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
+      screen.getByRole("tab", { name: "Documents", selected: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: "View life-underwriting-rules.md",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: "View health-disclosure-guide.pdf",
+      }),
     ).toBeVisible();
     first.unmount();
 
     renderPrototype();
-    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
-    expect(
-      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
-    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Library" }));
     expect(
       screen.queryByRole("button", { name: "Examples loaded" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Documents" }));
     const list = screen.getByRole("list", { name: "Library sources" });
-    expect(within(list).getByText("Beneficiary test cases.xlsx")).toBeVisible();
-    expect(within(list).getByText("beneficiary.ts")).toBeVisible();
+    expect(
+      within(list).getByRole("button", {
+        name: "View life-underwriting-rules.md",
+      }),
+    ).toBeVisible();
+    expect(
+      within(list).getByRole("button", {
+        name: "View health-disclosure-guide.pdf",
+      }),
+    ).toBeVisible();
     expect(within(list).queryByText("settlement.ts")).not.toBeInTheDocument();
   });
 
@@ -2077,7 +2219,7 @@ describe("Tap product prototype interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  it("adds a local Library file to the shared source controls", async () => {
+  it("uploads a Library file without making processing documents selectable", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -2101,71 +2243,83 @@ describe("Tap product prototype interactions", () => {
       within(addDialog).getByRole("button", { name: "Add source" }),
     );
 
-    expect(
-      within(screen.getByRole("list", { name: "Library sources" })).getByText(
-        "beneficiary-guide.txt",
-      ),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Library sources" })).getByText(
+          "beneficiary-guide.txt",
+        ),
+      ).toBeVisible(),
+    );
     await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(
       within(
         screen.getByRole("complementary", { name: "Knowledge sources" }),
-      ).getByText("beneficiary-guide.txt"),
-    ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Add to message" }));
-    await user.click(
-      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
-        "menuitem",
-        { name: "Add from Library" },
-      ),
-    );
-    expect(
-      screen.getByRole("option", { name: "beneficiary-guide.txt" }),
-    ).toBeVisible();
+      ).queryByText("beneficiary-guide.txt"),
+    ).toBeNull();
   });
 
-  it("identifies and cites a page-local Library source without an immutable label", async () => {
+  it("keeps uploads pending until the Project API receipt arrives", async () => {
     const user = userEvent.setup();
-    const { container } = renderPrototype();
-
+    const api = fakeKnowledgeClient().deferUpload();
+    renderKnowledgeApp(<TapProductPrototype />, { api });
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("button", { name: "Add source" }));
-    const addDialog = screen.getByRole("dialog", { name: "Add source" });
+    const dialog = screen.getByRole("dialog", { name: "Add source" });
     await user.upload(
-      within(addDialog).getByLabelText("Source file"),
-      new File(["beneficiary guidance"], "beneficiary-guide.txt", {
-        type: "text/plain",
-      }),
+      within(dialog).getByLabelText("Source file"),
+      new File(["bytes"], "pending.txt", { type: "text/plain" }),
     );
     await user.click(
-      within(addDialog).getByRole("button", { name: "Add source" }),
+      within(dialog).getByRole("button", { name: "Add source" }),
     );
-    await user.click(screen.getByRole("button", { name: "New chat" }));
-
-    const sources = screen.getByRole("complementary", {
-      name: "Knowledge sources",
-    });
-    const localSource = within(sources).getByRole("checkbox", {
-      name: /beneficiary-guide\.txt/,
-    });
-    expect(localSource).toHaveAccessibleName(
-      "beneficiary-guide.txtReady · Page-local Library source",
-    );
-    expect(localSource).not.toHaveAccessibleName(/immutable revision/);
-    await user.click(localSource);
-    await user.type(
-      screen.getByRole("textbox", { name: "Message Tapper" }),
-      "What beneficiary details are needed?",
-    );
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    const citations = within(
-      container.querySelector(".tap-turn") as HTMLElement,
-    ).getByRole("list", { name: "Selected context" });
-    expect(within(citations).getByText("beneficiary-guide.txt")).toBeVisible();
+    expect(dialog).toBeVisible();
     expect(
-      within(citations).getByText("Page-local Library source"),
-    ).toBeVisible();
+      within(dialog).getByRole("button", { name: "Add source" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("pending.txt")).toBeNull();
+    api.finishUpload();
+    expect(await screen.findByText("pending.txt")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Knowledge source · Processing")).toBeVisible();
+  });
+
+  it("keeps rejected uploads out of Library and permits retry", async () => {
+    const user = userEvent.setup();
+    const api = fakeKnowledgeClient().withUploadProblem(
+      new Error("private provider details"),
+    );
+    renderKnowledgeApp(<TapProductPrototype />, { api });
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    const dialog = screen.getByRole("dialog", { name: "Add source" });
+    await user.upload(
+      within(dialog).getByLabelText("Source file"),
+      new File(["bytes"], "rejected.txt", { type: "text/plain" }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Add source" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Failed",
+    );
+    expect(screen.queryByText("rejected.txt")).toBeNull();
+    expect(screen.queryByText(/private provider/)).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Add source" }),
+    ).toBeEnabled();
+  });
+
+  it("disables Library uploads until runtime supplies the trusted Project", async () => {
+    const user = userEvent.setup();
+    renderApp(
+      <RuntimeClientProvider
+        client={{ getMode: () => new Promise(() => undefined) }}
+      >
+        <TapProductPrototype />
+      </RuntimeClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
   });
 
   it("contains add-source focus, hides the product background, and restores its trigger", async () => {
@@ -2196,7 +2350,7 @@ describe("Tap product prototype interactions", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("keeps a locally added source description in the current interface language", async () => {
+  it("keeps an uploaded source description in the current interface language", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
@@ -2213,17 +2367,20 @@ describe("Tap product prototype interactions", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Add source" }),
     );
-    expect(screen.getByText("Local source · page-only")).toBeVisible();
+    expect(
+      await screen.findByText("Knowledge source · Processing"),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByText("本地来源 · 仅当前页面")).toBeVisible();
+    expect(screen.getByText("知识来源 · 处理中")).toBeVisible();
     expect(screen.queryByText("Local source · page-only")).toBeNull();
   });
 
-  it("opens Library on the graph and locates search results before viewing their source", async () => {
+  it("switches Library to the graph and locates search results before viewing their source", async () => {
     const user = userEvent.setup();
     renderPrototype();
     await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
@@ -2319,7 +2476,7 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
-    expect(screen.getByText("32/32 sources")).toBeVisible();
+    expect(screen.getByText("4/4 sources")).toBeVisible();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Type" }),
@@ -2339,10 +2496,10 @@ describe("Tap product prototype interactions", () => {
     expect(
       within(filteredSources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
-    expect(screen.getByText("1/32 sources")).toBeVisible();
+    expect(screen.getByText("1/4 sources")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(screen.getByText("32/32 sources")).toBeVisible();
+    expect(screen.getByText("4/4 sources")).toBeVisible();
     expect(
       within(screen.getByRole("list", { name: "Library sources" })).getByText(
         "application-checklist.docx",
@@ -2394,13 +2551,13 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("button", { name: "Toggle topic groups" }),
     );
     expect(
-      screen.queryByRole("checkbox", { name: /Sources · 23 nodes/ }),
+      screen.queryByRole("checkbox", { name: /Sources · 5 nodes/ }),
     ).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Toggle topic groups" }),
     );
     expect(
-      screen.getByRole("checkbox", { name: /Sources · 23 nodes/ }),
+      screen.getByRole("checkbox", { name: /Sources · 5 nodes/ }),
     ).toBeVisible();
     await user.click(
       screen.getByRole("button", {
@@ -2428,7 +2585,7 @@ describe("Tap product prototype interactions", () => {
       name: "Life insurance knowledge graph",
     });
     const sourcesCommunity = screen.getByRole("checkbox", {
-      name: /Sources · 23 nodes/,
+      name: /Sources · 5 nodes/,
     });
     expect(sourcesCommunity).toBeChecked();
     await user.click(sourcesCommunity);
@@ -2483,7 +2640,7 @@ describe("Tap product prototype interactions", () => {
     const documents = within(summary).getByRole("list", {
       name: "Visible documents",
     });
-    expect(within(documents).getAllByRole("listitem")).toHaveLength(33);
+    expect(within(documents).getAllByRole("listitem")).toHaveLength(5);
     expect(within(documents).getByText("beneficiary-guide.md")).toBeVisible();
     expect(
       within(graph).getByRole("button", { name: /beneficiary-guide\.md/ }),

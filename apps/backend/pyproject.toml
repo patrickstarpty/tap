@@ -20,8 +20,13 @@ dependencies = [
   "tiktoken==0.14.0",
   "azure-storage-blob==12.30.0",
   "aiohttp==3.14.3",
+  "aiobotocore==3.9.1",
+  "botocore==1.43.75",
   "uvicorn==0.52.4",
 ]
+
+[tool.uv.sources]
+aiobotocore = { git = "https://github.com/aio-libs/aiobotocore.git", rev = "c92e345814ad97e5ec0633dbd34be5d26ee90dd3" }
 
 [dependency-groups]
 dev = [

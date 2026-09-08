@@ -72,6 +72,15 @@ if ! uv run --project apps/backend python -c \
   exit 2
 fi
 
+if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then
+  TAPPER_OBJECT_STORE_IMAGE="$(bash "$tapper_dev_script_dir/build-tapper-object-store.sh" verify)"
+  export TAPPER_OBJECT_STORE_IMAGE
+  tapper_dev_object_container="$(docker compose -f "$tapper_dev_repo_root/compose.yaml" \
+    -p "$tapper_dev_requested_project" --profile tapper-objects ps -q tap-minio)"
+  bash "$tapper_dev_script_dir/build-tapper-object-store.sh" \
+    verify-container "$tapper_dev_object_container" >/dev/null
+fi
+
 tapper_dev_web_root="$tapper_dev_repo_root/apps/web"
 tapper_dev_vite_bin="$tapper_dev_web_root/node_modules/.bin/vite"
 tapper_dev_vite_config="$tapper_dev_web_root/vite.config.ts"
@@ -83,6 +92,8 @@ if [ ! -x "$tapper_dev_vite_bin" ] || \
   exit 2
 fi
 
+tapper_dev_parser_pid=""
+tapper_dev_parser_state=""
 tapper_dev_api_pid=""
 tapper_dev_relay_pid=""
 tapper_dev_worker_pid=""
@@ -146,6 +157,27 @@ cleanup() {
     fi
   done
 
+  if [ -n "$tapper_dev_parser_pid" ]; then
+    terminate_pid "$tapper_dev_parser_pid" || cleanup_failed=1
+    parser_deadline=$(( SECONDS + 25 ))
+    while kill -0 "$tapper_dev_parser_pid" 2>/dev/null && [ "$SECONDS" -lt "$parser_deadline" ]; do
+      sleep 0.1
+    done
+    if kill -0 "$tapper_dev_parser_pid" 2>/dev/null; then
+      kill -KILL "$tapper_dev_parser_pid" 2>/dev/null || true
+      cleanup_failed=1
+    fi
+    wait "$tapper_dev_parser_pid" 2>/dev/null || cleanup_failed=1
+  fi
+  if [ -n "$tapper_dev_parser_state" ]; then
+    # A dead child or absent unresolved marker never proves remote cleanup.
+    # Reconcile the persisted exact association in a new locked process.
+    env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+      "$tapper_dev_repo_root/.venv/bin/python" -m tap.entrypoints.tapper_parser_worker \
+      --state-dir "$tapper_dev_parser_state" --project "$tapper_dev_requested_project" \
+      --cleanup-only || cleanup_failed=1
+  fi
+
   if [ "$cleanup_failed" -ne 0 ]; then
     echo "Tapper application cleanup failed." >&2
     [ "$primary_status" -ne 0 ] || primary_status=1
@@ -156,6 +188,30 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+tapper_dev_parser_state="$tapper_dev_repo_root/.tapper/parser-runtime/$tapper_dev_requested_project"
+TAPPER_PARSER_SOCKET="$(exec env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+  "$tapper_dev_repo_root/.venv/bin/python" -m tap.entrypoints.tapper_parser_worker \
+  --state-dir "$tapper_dev_parser_state" --project "$tapper_dev_requested_project" --socket-path)"
+export TAPPER_PARSER_SOCKET
+parser_old_ready="$(cat "$tapper_dev_parser_state/ready-pid" 2>/dev/null || true)"
+(exec env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+  "$tapper_dev_repo_root/.venv/bin/python" -m tap.entrypoints.tapper_parser_worker \
+  --state-dir "$tapper_dev_parser_state" --project "$tapper_dev_requested_project") &
+tapper_dev_parser_pid=$!
+if [ "$parser_old_ready" = "$tapper_dev_parser_pid" ]; then
+  echo "Parser readiness identity was reused." >&2
+  exit 1
+fi
+parser_ready_deadline=$(( SECONDS + 60 ))
+while [ ! -S "$TAPPER_PARSER_SOCKET" ] || \
+  [ "$(cat "$tapper_dev_parser_state/ready-pid" 2>/dev/null || true)" != "$tapper_dev_parser_pid" ]; do
+  if ! kill -0 "$tapper_dev_parser_pid" 2>/dev/null || [ "$SECONDS" -ge "$parser_ready_deadline" ]; then
+    echo "Parser did not pass owned startup execution." >&2
+    exit 1
+  fi
+  sleep 0.1
+done
 
 (
   if [ "$tapper_dev_codex_home_set" -eq 1 ]; then
@@ -174,6 +230,11 @@ tapper_dev_worker_pid=$!
 tapper_dev_web_pid=$!
 
 child_exit_status() {
+  if [ -n "$tapper_dev_parser_pid" ] && ! kill -0 "$tapper_dev_parser_pid" 2>/dev/null; then
+    if wait "$tapper_dev_parser_pid"; then status=1; else status=$?; fi
+    tapper_dev_parser_pid=""
+    return "$status"
+  fi
   if [ -n "$tapper_dev_api_pid" ] && ! kill -0 "$tapper_dev_api_pid" 2>/dev/null; then
     if wait "$tapper_dev_api_pid"; then status=1; else status=$?; fi
     tapper_dev_api_pid=""

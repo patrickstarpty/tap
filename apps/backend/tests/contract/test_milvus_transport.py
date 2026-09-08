@@ -180,6 +180,30 @@ def _canonical_schema() -> dict[str, object]:
     }
 
 
+def test_v2_transport_accepts_only_complete_enterprise_index_profile():
+    from tap.modules.knowledge.adapters.milvus.transport import validate_collection_indexes
+    from tap.operations.milvus.doc_schema import (
+        DocCollectionMetadata,
+        build_doc_collection_schema,
+        doc_schema_sha256,
+    )
+
+    schema = build_doc_collection_schema(
+        DocCollectionMetadata(
+            "doc-schema-v2", doc_schema_sha256("doc-schema-v2"), "owned-v2", "model", 1536
+        )
+    )
+    indexes = _raw_indexes()
+    indexes["enterprise_id"] = {
+        **indexes.pop("tenant_id"),
+        "field_name": "enterprise_id",
+        "index_name": "enterprise_id",
+    }
+    validate_collection_indexes(tuple(indexes.values()), expected_schema=schema)
+    with pytest.raises(ValueError):
+        validate_collection_indexes(tuple(_raw_indexes().values()), expected_schema=schema)
+
+
 def _schema_digest() -> str:
     encoded = json.dumps(
         _canonical_schema(),

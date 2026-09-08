@@ -51,6 +51,9 @@ unset BAILIAN_API_KEY BAILIAN_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
 unset TAP_RUN_PAID_EMBEDDING_RESEARCH
+unset TAPPER_OBJECT_STORE_PROVIDER TAPPER_S3_ENDPOINT TAPPER_S3_BUCKET TAPPER_S3_REGION
+unset TAPPER_S3_ACCESS_KEY TAPPER_S3_SECRET_KEY TAPPER_S3_STORE_ID TAPPER_S3_PORT
+unset TAPPER_LEGACY_AZURE_ENABLED TAPPER_OBJECT_STORE_IMAGE DOCKER_HOST
 
 tapper_e2e_state_root="${TMPDIR:-/tmp}"
 tapper_e2e_state_dir=""
@@ -74,6 +77,15 @@ export TAPPER_WEB_PORT=15173
 export TAP_DEMO_MODE=e2e
 export TAPPER_MODEL_BACKEND=fake
 export TAPPER_ANSWER_BACKEND=litellm
+export TAPPER_OBJECT_STORE_PROVIDER=minio
+export TAPPER_S3_ENDPOINT=http://127.0.0.1:29000
+export TAPPER_S3_BUCKET=tapper-e2e-objects
+export TAPPER_S3_REGION=us-east-1
+export TAPPER_S3_ACCESS_KEY=tap-e2e-object-key
+export TAPPER_S3_SECRET_KEY=tap-e2e-object-password
+export TAPPER_S3_STORE_ID=tapper-e2e
+export TAPPER_S3_PORT=29000
+export TAPPER_LEGACY_AZURE_ENABLED=0
 
 export MYSQL_ROOT_PASSWORD=tap-e2e-root
 export MYSQL_DATABASE=tap
@@ -126,6 +138,9 @@ readonly TAP_TAPPER_COMPOSE_PROJECT MYSQL_PORT REDIS_PORT AZURITE_BLOB_PORT
 readonly LITELLM_PORT MILVUS_PORT MILVUS_HEALTH_PORT TAPPER_API_HOST TAPPER_API_PORT
 readonly TAPPER_WEB_HOST TAPPER_WEB_PORT TAP_DEMO_MODE TAPPER_MODEL_BACKEND
 readonly TAPPER_ANSWER_BACKEND
+readonly TAPPER_OBJECT_STORE_PROVIDER TAPPER_S3_ENDPOINT TAPPER_S3_BUCKET TAPPER_S3_REGION
+readonly TAPPER_S3_ACCESS_KEY TAPPER_S3_SECRET_KEY TAPPER_S3_STORE_ID TAPPER_S3_PORT
+readonly TAPPER_LEGACY_AZURE_ENABLED
 readonly MYSQL_ROOT_PASSWORD MYSQL_DATABASE MYSQL_USER MYSQL_PASSWORD
 readonly TAP_DATABASE_URL TAP_ALEMBIC_DATABASE_URL TAP_REDIS_URL TAP_REDIS_COMMAND_STREAM
 readonly AZURE_STORAGE_CONNECTION_STRING LITELLM_BASE_URL LITELLM_MASTER_KEY
@@ -152,7 +167,7 @@ if ! uv run --project apps/backend python -c \
 fi
 
 if ! uv run --project apps/backend python - \
-  13306 16379 11000 14000 29530 19091 18000 15173 <<'PY'
+  13306 16379 11000 14000 29530 19091 18000 15173 29000 <<'PY'
 import socket
 import sys
 
@@ -218,7 +233,7 @@ fi
 
 compose() {
   docker --context "$docker_context" compose \
-    -f "$tapper_e2e_compose_file" -p "$tapper_e2e_project" --profile milvus "$@"
+    -f "$tapper_e2e_compose_file" -p "$tapper_e2e_project" --profile milvus --profile tapper-objects "$@"
 }
 
 stop_apps() {
@@ -267,6 +282,12 @@ cleanup() {
   if [ "$tapper_e2e_compose_mutated" -eq 1 ]; then
     compose down --volumes --remove-orphans >/dev/null 2>&1 || cleanup_failed=1
   fi
+  if [ -n "$tapper_e2e_state_dir" ] && [ -n "${TAPPER_E2E_EVIDENCE_DIR:-}" ]; then
+    evidence_cleanup=failed
+    [ "$cleanup_failed" -eq 0 ] || evidence_cleanup=failed
+    python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" export "$tapper_e2e_state_dir" \
+      "$TAPPER_E2E_EVIDENCE_DIR" "$evidence_cleanup" || cleanup_failed=1
+  fi
   if [ -n "$tapper_e2e_state_dir" ]; then
     case "$tapper_e2e_state_dir" in
       "$tapper_e2e_state_root"/tap-tapper-e2e.*) \
@@ -277,6 +298,12 @@ cleanup() {
   if [ "$tapper_e2e_lock_owned" -eq 1 ]; then
     rmdir "$tapper_e2e_lock_dir" 2>/dev/null || cleanup_failed=1
     tapper_e2e_lock_owned=0
+  fi
+  if [ -n "${TAPPER_E2E_EVIDENCE_DIR:-}" ]; then
+    evidence_cleanup=complete
+    [ "$cleanup_failed" -eq 0 ] || evidence_cleanup=failed
+    python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" finish \
+      "$TAPPER_E2E_EVIDENCE_DIR" "$evidence_cleanup" || cleanup_failed=1
   fi
   if [ "$cleanup_failed" -ne 0 ]; then
     echo "Tapper E2E cleanup failed." >&2
@@ -302,9 +329,16 @@ tapper_e2e_state_dir="$(mktemp -d "$tapper_e2e_state_root/tap-tapper-e2e.XXXXXX"
 }
 chmod 700 "$tapper_e2e_state_dir"
 export TAPPER_E2E_STATE_FILE="$tapper_e2e_state_dir/state.json"
+export TAPPER_E2E_HOSTILE_DIR="$tapper_e2e_state_dir/hostile"
+uv run --project apps/backend python "$tapper_e2e_script_dir/build-hostile-document-fixtures.py" "$TAPPER_E2E_HOSTILE_DIR"
+TAPPER_OBJECT_STORE_IMAGE="$("$tapper_e2e_script_dir/build-tapper-object-store.sh" verify)"
+export TAPPER_OBJECT_STORE_IMAGE
+readonly TAPPER_OBJECT_STORE_IMAGE
 
 bootstrap_middleware() {
   compose up -d --wait --wait-timeout 180
+  object_container="$(docker --context "$docker_context" ps --filter label=com.docker.compose.project=tap-tapper-e2e --filter label=com.docker.compose.service=tap-minio --format '{{.ID}}')"
+  "$tapper_e2e_script_dir/build-tapper-object-store.sh" verify-container "$object_container"
   uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
   TAP_ALLOW_INITIAL_MILVUS_ROOT=1 \
     uv run --project apps/backend python scripts/milvus_bootstrap.py
@@ -391,12 +425,16 @@ start_apps() {
 }
 
 run_playwright() {
-  spec_file="$1"
   phase="$2"
   report_file="$tapper_e2e_state_dir/playwright-$phase.json"
   error_file="$tapper_e2e_state_dir/playwright-$phase.err"
+  specs=()
+  while IFS= read -r spec; do specs+=("$spec"); done < <(
+    python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" specs "$phase"
+  )
+  [ "${#specs[@]}" -gt 0 ] || return 1
   if TAPPER_E2E_PHASE="$phase" \
-    corepack pnpm --filter @tap/web exec playwright test "$spec_file" \
+    corepack pnpm --filter @tap/web exec playwright test "${specs[@]}" \
       --config=playwright.config.ts --reporter=json >"$report_file" 2>"$error_file"; then
     :
   else
@@ -404,28 +442,8 @@ run_playwright() {
     echo "Tapper E2E phase $phase failed." >&2
     return "$phase_status"
   fi
-  if uv run --project apps/backend python - "$report_file" >/dev/null 2>&1 <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    report = json.load(handle)
-stats = report.get("stats") if isinstance(report, dict) else None
-if not isinstance(stats, dict):
-    raise SystemExit(1)
-if (
-    stats.get("expected") != 1
-    or stats.get("unexpected") != 0
-    or stats.get("flaky") != 0
-    or stats.get("skipped") != 0
-):
-    raise SystemExit(1)
-PY
-  then
-    return 0
-  fi
-  echo "Tapper E2E phase $phase returned an invalid result." >&2
-  return 1
+  python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" validate "$phase" "$report_file" \
+    "$tapper_e2e_state_dir/phase-$phase.json"
 }
 
 run_journey() {
@@ -447,7 +465,8 @@ run_journey() {
 
   TAPPER_E2E_PHASE=verify TAP_RUN_TAPPER_E2E=1 \
     uv run --project apps/backend pytest -q \
-      apps/backend/tests/integration/test_tapper_persistence_restart.py
+      apps/backend/tests/integration/test_tapper_persistence_restart.py \
+      --junitxml="$tapper_e2e_state_dir/pytest-verify.xml"
 }
 
 run_journey

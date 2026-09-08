@@ -488,6 +488,856 @@
       "title": "OpenApiAnchor",
       "type": "object"
     },
+    "ProblemDetails": {
+      "additionalProperties": false,
+      "description": "Closed RFC 9457 error projection; only registered safe text is accepted.",
+      "oneOf": [
+        {
+          "properties": {
+            "detail": {
+              "const": "The grounded answer could not be committed atomically."
+            },
+            "failureStage": {
+              "const": "answer"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Answer snapshot unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/answer-snapshot-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The answer service is currently unavailable."
+            },
+            "failureStage": {
+              "const": "answer"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Answer unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/answer-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "An asset is already associated with another asset."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Association conflict"
+            },
+            "type": {
+              "const": "https://tap.example/problems/association-conflict"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The current actor and scope do not allow this operation."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 403
+            },
+            "title": {
+              "const": "Authorization denied"
+            },
+            "type": {
+              "const": "https://tap.example/problems/authorization-denied"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The published revision requires a compatible step mapping."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Automation mapping required"
+            },
+            "type": {
+              "const": "https://tap.example/problems/automation-mapping-required"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The citation no longer resolves to its exact source revision."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Citation stale"
+            },
+            "type": {
+              "const": "https://tap.example/problems/citation-stale"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The citation provider is currently unavailable."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Citation unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/citation-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The local knowledge space has reached its document limit."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 429
+            },
+            "title": {
+              "const": "Document limit reached"
+            },
+            "type": {
+              "const": "https://tap.example/problems/document-limit-reached"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The requested document does not exist."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Document not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/document-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "Only a failed document can be retried."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Document is not retryable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/document-not-retryable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "A selected document is no longer ready at its selected revision."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Document state changed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/document-state-changed"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The document exceeds the 25 MiB upload limit."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 413
+            },
+            "title": {
+              "const": "Document too large"
+            },
+            "type": {
+              "const": "https://tap.example/problems/document-too-large"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The embedding service is currently unavailable."
+            },
+            "failureStage": {
+              "const": "embedding"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Embedding unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/embedding-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The document contains no processable content."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 400
+            },
+            "title": {
+              "const": "Empty document"
+            },
+            "type": {
+              "const": "https://tap.example/problems/empty-document"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The execution provider is currently unavailable."
+            },
+            "failureStage": {
+              "const": "execution"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Execution provider unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/execution-provider-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The graph service is currently unavailable."
+            },
+            "failureStage": {
+              "const": "graph"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Graph unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/graph-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The idempotency key already identifies a different request."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Idempotency conflict"
+            },
+            "type": {
+              "const": "https://tap.example/problems/idempotency-conflict"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The knowledge runtime is not configured."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Knowledge runtime unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-runtime-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The model service is currently unavailable."
+            },
+            "failureStage": {
+              "const": "model"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Model unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/model-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The recorder service is currently unavailable."
+            },
+            "failureStage": {
+              "const": "recorder"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Recorder unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/recorder-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The request body does not match the public API contract."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Request validation failed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/request-validation"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The requested revision conflicts with the current revision."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Revision conflict"
+            },
+            "type": {
+              "const": "https://tap.example/problems/revision-conflict"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The requested project does not match the current scope."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 403
+            },
+            "title": {
+              "const": "Scope mismatch"
+            },
+            "type": {
+              "const": "https://tap.example/problems/scope-mismatch"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The search execution exceeded a safety bound."
+            },
+            "failureStage": {
+              "const": "search"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Search execution rejected"
+            },
+            "type": {
+              "const": "https://tap.example/problems/search-execution-rejected"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The search provider is currently unavailable."
+            },
+            "failureStage": {
+              "const": "search"
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Search unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/search-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The original Source command is still in progress; retry the same key."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Source command in progress"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-command-pending"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Source is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Source not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "Select between one and twenty unique ready documents."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 400
+            },
+            "title": {
+              "const": "Source selection required"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-selection-required"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Source is no longer available for this command."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Source state changed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The durable chat turn workflow is not available yet."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 501
+            },
+            "title": {
+              "const": "Turn workflow not implemented"
+            },
+            "type": {
+              "const": "https://tap.example/problems/turn-not-implemented"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The answer request contains a control unavailable in this demo."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 400
+            },
+            "title": {
+              "const": "Unsupported answer control"
+            },
+            "type": {
+              "const": "https://tap.example/problems/unsupported-answer-control"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The document filename, media type, or content is not supported."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 400
+            },
+            "title": {
+              "const": "Unsupported document"
+            },
+            "type": {
+              "const": "https://tap.example/problems/unsupported-document"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "correlationId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Correlationid",
+          "type": "string"
+        },
+        "detail": {
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "failureStage": {
+          "anyOf": [
+            {
+              "enum": [
+                "search",
+                "embedding",
+                "answer",
+                "graph",
+                "model",
+                "recorder",
+                "execution"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failurestage"
+        },
+        "instance": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instance"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "status": {
+          "maximum": 599,
+          "minimum": 400,
+          "title": "Status",
+          "type": "integer"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "https://tap.example/problems/answer-snapshot-unavailable",
+            "https://tap.example/problems/answer-unavailable",
+            "https://tap.example/problems/association-conflict",
+            "https://tap.example/problems/authorization-denied",
+            "https://tap.example/problems/automation-mapping-required",
+            "https://tap.example/problems/citation-stale",
+            "https://tap.example/problems/citation-unavailable",
+            "https://tap.example/problems/document-limit-reached",
+            "https://tap.example/problems/document-not-found",
+            "https://tap.example/problems/document-not-retryable",
+            "https://tap.example/problems/document-state-changed",
+            "https://tap.example/problems/document-too-large",
+            "https://tap.example/problems/embedding-unavailable",
+            "https://tap.example/problems/empty-document",
+            "https://tap.example/problems/execution-provider-unavailable",
+            "https://tap.example/problems/graph-unavailable",
+            "https://tap.example/problems/idempotency-conflict",
+            "https://tap.example/problems/knowledge-runtime-unavailable",
+            "https://tap.example/problems/model-unavailable",
+            "https://tap.example/problems/recorder-unavailable",
+            "https://tap.example/problems/request-validation",
+            "https://tap.example/problems/revision-conflict",
+            "https://tap.example/problems/scope-mismatch",
+            "https://tap.example/problems/search-execution-rejected",
+            "https://tap.example/problems/search-unavailable",
+            "https://tap.example/problems/source-command-pending",
+            "https://tap.example/problems/source-not-found",
+            "https://tap.example/problems/source-selection-required",
+            "https://tap.example/problems/source-unavailable",
+            "https://tap.example/problems/turn-not-implemented",
+            "https://tap.example/problems/unsupported-answer-control",
+            "https://tap.example/problems/unsupported-document"
+          ],
+          "pattern": "^https://",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "status",
+        "detail",
+        "correlationId",
+        "retryable"
+      ],
+      "title": "ProblemDetails",
+      "type": "object"
+    },
     "QueryPlanReadyEvent": {
       "additionalProperties": false,
       "properties": {
@@ -1036,19 +1886,12 @@
     "TurnFailedPayload": {
       "additionalProperties": false,
       "properties": {
-        "code": {
-          "minLength": 1,
-          "title": "Code",
-          "type": "string"
-        },
-        "retryable": {
-          "title": "Retryable",
-          "type": "boolean"
+        "problem": {
+          "$ref": "#/$defs/ProblemDetails"
         }
       },
       "required": [
-        "code",
-        "retryable"
+        "problem"
       ],
       "title": "TurnFailedPayload",
       "type": "object"

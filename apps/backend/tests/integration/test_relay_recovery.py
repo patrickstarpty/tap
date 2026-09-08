@@ -11,16 +11,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.mysql import MysqlTurnRepository, OutboxStore
 from tap.modules.chat.application.ports import CreateTurnCommand, DispatchMessage, LeaseLost
 from tap.modules.chat.domain.models import ChatId, CommandId, TurnId
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_dispatch import RedisDispatchPublisher, Relay
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
+DATABASE_URL = os.getenv("TAP_DATABASE_URL", "")
 OWNED_TABLES = ("outbox", "turn_snapshot", "chat_event", "chat_turn")
 
 
@@ -89,6 +87,9 @@ class RedisLuaEmulator:
         self.dedup_keys: set[str] = set()
 
     async def eval(self, script: str, number_of_keys: int, *values: object) -> int:
+        if number_of_keys == 1:
+            # This emulator has no consumer groups: recovery must retain every hint.
+            return 0
         assert number_of_keys == 2
         dedup_key = str(values[0])
         capacity = int(values[-2]) if len(values) == 5 else 100_000
@@ -120,10 +121,13 @@ async def _clean_owned_tables(engine: AsyncEngine) -> None:
 def _run_with_clean_database(
     scenario: Callable[[AsyncEngine, MysqlTurnRepository, OutboxStore], Awaitable[None]],
 ) -> None:
+    if not DATABASE_URL:
+        pytest.skip("requires isolated TAP_DATABASE_URL")
+
     async def run() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
-        repository = MysqlTurnRepository(sessions)
-        outbox = OutboxStore(sessions)
+        repository = MysqlTurnRepository(sessions, scope=VALIDATION_SCOPE)
+        outbox = OutboxStore(sessions, scope=VALIDATION_SCOPE)
         await _clean_owned_tables(engine)
         try:
             await scenario(engine, repository, outbox)
@@ -217,7 +221,7 @@ def test_publish_failure_records_attempt_and_waits_until_injected_retry_time() -
             )
         assert row["attempt_count"] == 1
         assert row["next_attempt_at"] == datetime(2026, 8, 23, 11, 30, 5)
-        assert row["last_error"] == "redis unavailable"
+        assert row["last_error"] == "dispatch_unavailable"
 
         clock.advance(timedelta(seconds=5))
         succeeding = AtomicMemoryPublisher()
@@ -304,11 +308,14 @@ def test_xadd_failure_cannot_leave_a_marker_that_suppresses_retry() -> None:
     async def scenario() -> None:
         redis = RedisLuaEmulator(fail_next_xadd=True)
         publisher = RedisDispatchPublisher(
+            scope=VALIDATION_SCOPE,
             redis=redis,
             stream_name="tap:commands",
             dedup_ttl=timedelta(hours=1),
         )
         message = DispatchMessage(
+            enterprise_id="local",
+            project_id="tapper-demo",
             command_id=CommandId("retryable-command"),
             outbox_id="retryable-outbox",
             aggregate_type="chat_turn",
@@ -336,6 +343,7 @@ def test_full_redis_stream_keeps_outbox_pending_for_retry() -> None:
         await repository.create_with_outbox(_command(30, now))
         redis = RedisLuaEmulator(stream=['{"commandId":"unseen-command"}'])
         publisher = RedisDispatchPublisher(
+            scope=VALIDATION_SCOPE,
             redis=redis,
             stream_name="tap:commands",
             dedup_ttl=timedelta(hours=1),
@@ -369,7 +377,7 @@ def test_full_redis_stream_keeps_outbox_pending_for_retry() -> None:
         assert row["status"] == "pending"
         assert row["attempt_count"] == 1
         assert row["next_attempt_at"] == datetime(2026, 8, 23, 12, 30, 5)
-        assert row["last_error"] == "Redis command stream reached capacity 1"
+        assert row["last_error"] == "stream_capacity"
 
     _run_with_clean_database(scenario)
 
@@ -413,7 +421,7 @@ def test_maximum_attempt_failure_becomes_a_durable_terminal_fact() -> None:
         assert dict(row) == {
             "status": "delivery_failed",
             "attempt_count": 10,
-            "last_error": "permanent outage",
+            "last_error": "dispatch_unavailable",
         }
 
     _run_with_clean_database(scenario)
@@ -527,12 +535,15 @@ def test_redis_adapter_atomically_deduplicates_a_lookup_only_message() -> None:
     async def scenario() -> None:
         redis = RecordingRedis(result=1)
         publisher = RedisDispatchPublisher(
+            scope=VALIDATION_SCOPE,
             redis=redis,
             stream_name="tap:commands",
             dedup_ttl=timedelta(hours=1),
             max_stream_length=10_000,
         )
         message = DispatchMessage(
+            enterprise_id="local",
+            project_id="tapper-demo",
             command_id=CommandId("safe-command"),
             outbox_id="safe-outbox",
             aggregate_type="chat_turn",
@@ -545,8 +556,8 @@ def test_redis_adapter_atomically_deduplicates_a_lookup_only_message() -> None:
         script, number_of_keys, values = redis.calls[0]
         payload = json.loads(str(values[4]))
         assert number_of_keys == 2
-        assert values[:3] == (
-            "tap:dispatch-dedup:safe-command",
+        assert str(values[0]).startswith("tap:dispatch-dedup:")
+        assert values[1:3] == (
             "tap:commands",
             3600,
         )
@@ -554,6 +565,8 @@ def test_redis_adapter_atomically_deduplicates_a_lookup_only_message() -> None:
         assert payload == {
             "aggregateId": "safe-turn",
             "aggregateType": "chat_turn",
+            "enterpriseId": "local",
+            "projectId": "tapper-demo",
             "commandId": "safe-command",
             "outboxId": "safe-outbox",
             "sequence": None,

@@ -26,6 +26,10 @@ from tap.contracts.http import (
     ReadyHealth,
 )
 from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
+from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
+from tap.modules.access.application.scope import RequestFacts
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.adapters.codex_exec import (
     CodexExecAnswerAdapter,
     CodexExecConfig,
@@ -37,15 +41,16 @@ from tap.modules.knowledge.adapters.codex_target import (
 )
 from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.adapters.milvus.audit import (
-    MilvusSearchAuditEvent,
     SearchAuditSink,
 )
+from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
+from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import (
     DocumentEmbeddingPort,
 )
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
-from tap.modules.knowledge.ports.models import AnswerGeneration, RedactionResult
+from tap.modules.knowledge.ports.models import AnswerGeneration
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
@@ -57,9 +62,15 @@ from tap.operations.milvus.contracts import validate_milvus_role_usernames
 if TYPE_CHECKING:
     import httpx
     from redis.asyncio import Redis
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import (
+        AsyncConnection,
+        AsyncEngine,
+        AsyncSession,
+        async_sessionmaker,
+    )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.blob_artifacts import AzureBlobArtifactStore
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
@@ -70,7 +81,9 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.milvus_documents import MilvusDocumentIndex
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
+    from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.documents import JobStage
     from tap.operations.milvus.client import TapperDocumentMilvusClients
 
@@ -100,6 +113,7 @@ class TapperSettings:
     """One validated authority for every API, worker, and provider setting."""
 
     api_host: str
+    parser_socket: str
     api_port: int
     web_host: str
     web_port: int
@@ -146,6 +160,14 @@ class TapperSettings:
     milvus_provisioner_username: str
     milvus_provisioner_password: str = field(repr=False)
     e2e_mode: bool
+    object_store_provider: str = "azure"
+    s3_endpoint: str = ""
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_access_key: str = field(default="", repr=False)
+    s3_secret_key: str = field(default="", repr=False)
+    s3_store_id: str = ""
+    legacy_azure_enabled: bool = False
     tenant_id: str = _FIXED_TENANT
     project_id: str = _FIXED_PROJECT
     group_id: str = _FIXED_GROUP
@@ -220,7 +242,52 @@ class TapperSettings:
             expected_path="/0",
             expected_query="",
         )
-        blob_connection_string = _blob_connection_string(values)
+        object_provider = _fixed_choice(
+            values,
+            "TAPPER_OBJECT_STORE_PROVIDER",
+            default="azure",
+            choices=frozenset({"azure", "minio"}),
+        )
+        legacy_azure = (
+            _fixed_choice(
+                values, "TAPPER_LEGACY_AZURE_ENABLED", default="0", choices=frozenset({"0", "1"})
+            )
+            == "1"
+        )
+        if legacy_azure and object_provider != "minio":
+            raise ValueError("legacy Azure compatibility requires MinIO mode")
+        s3_values = {
+            name: _value(values, "TAPPER_S3_" + name.upper(), "")
+            for name in ("endpoint", "bucket", "region", "access_key", "secret_key", "store_id")
+        }
+        if object_provider == "minio":
+            from pydantic import SecretStr
+
+            from tap.platform.storage.s3 import S3ObjectConfig
+
+            if any(not value for value in s3_values.values()):
+                raise ValueError("MinIO requires explicit object configuration")
+            _loopback_url(
+                values,
+                "TAPPER_S3_ENDPOINT",
+                "",
+                schemes=frozenset({"http"}),
+                allow_userinfo=False,
+                root_only=True,
+            )
+            S3ObjectConfig(
+                endpoint=s3_values["endpoint"],
+                bucket=s3_values["bucket"],
+                region=s3_values["region"],
+                access_key=SecretStr(s3_values["access_key"]),
+                secret_key=SecretStr(s3_values["secret_key"]),
+                store_id=s3_values["store_id"],
+            )
+        if legacy_azure and not _value(values, "AZURE_STORAGE_CONNECTION_STRING", ""):
+            raise ValueError("legacy Azure requires an explicit connection string")
+        blob_connection_string = (
+            _blob_connection_string(values) if object_provider == "azure" or legacy_azure else ""
+        )
         litellm_base_url = _loopback_url(
             values,
             "LITELLM_BASE_URL",
@@ -259,9 +326,23 @@ class TapperSettings:
             allowed_answer_labels = frozenset({_FIXED_CHAT_ALIAS})
             allowed_embedding_labels = frozenset({_FIXED_EMBEDDING_ALIAS})
 
-        collection = _fixed_value(values, "TAPPER_COLLECTION", _FIXED_COLLECTION)
+        schema_version = _fixed_choice(
+            values,
+            "TAPPER_SCHEMA_VERSION",
+            default="doc-schema-v2",
+            choices=frozenset({"doc-schema-v1", "doc-schema-v2"}),
+        )
+        collection = _fixed_value(
+            values,
+            "TAPPER_COLLECTION",
+            "kb_doc_v2_tapper_demo" if schema_version == "doc-schema-v2" else _FIXED_COLLECTION,
+        )
         alias = _fixed_value(values, "TAPPER_ALIAS", _FIXED_ALIAS)
-        corpus = _fixed_value(values, "TAPPER_CORPUS_VERSION", _FIXED_CORPUS)
+        corpus = _fixed_value(
+            values,
+            "TAPPER_CORPUS_VERSION",
+            "tapper-demo-v2" if schema_version == "doc-schema-v2" else _FIXED_CORPUS,
+        )
         chat_alias = _fixed_value(values, "TAPPER_CHAT_ALIAS", _FIXED_CHAT_ALIAS)
         embedding_alias = _fixed_value(values, "TAPPER_EMBEDDING_ALIAS", _FIXED_EMBEDDING_ALIAS)
         retrieval_profile = _fixed_value(
@@ -302,6 +383,9 @@ class TapperSettings:
 
         return cls(
             api_host=api_host,
+            parser_socket=_value(
+                values, "TAPPER_PARSER_SOCKET", "/tmp/tapper-parser-unavailable.sock"
+            ),
             api_port=_integer(values, "TAPPER_API_PORT", 8000, minimum=1, maximum=65535),
             web_host=web_host,
             web_port=_integer(values, "TAPPER_WEB_PORT", 5173, minimum=1, maximum=65535),
@@ -325,7 +409,7 @@ class TapperSettings:
             chat_alias=chat_alias,
             embedding_alias=embedding_alias,
             retrieval_profile=retrieval_profile,
-            schema_version=_FIXED_SCHEMA_VERSION,
+            schema_version=schema_version,
             index_version=_fixed_value(values, "TAPPER_INDEX_VERSION", "tapper-index-v1"),
             pipeline_version=_fixed_value(values, "TAPPER_PIPELINE_VERSION", "tapper-ingestion-v1"),
             worker_id=_identity(values, "TAPPER_WORKER_ID", "tapper-local-worker"),
@@ -345,6 +429,14 @@ class TapperSettings:
             redis_url=redis_url,
             redis_stream=_identity(values, "TAP_REDIS_COMMAND_STREAM", "tap:commands"),
             blob_connection_string=blob_connection_string,
+            object_store_provider=object_provider,
+            s3_endpoint=s3_values["endpoint"],
+            s3_bucket=s3_values["bucket"],
+            s3_region=s3_values["region"],
+            s3_access_key=s3_values["access_key"],
+            s3_secret_key=s3_values["secret_key"],
+            s3_store_id=s3_values["store_id"],
+            legacy_azure_enabled=legacy_azure,
             litellm_base_url=litellm_base_url,
             litellm_api_key=_secret(values, "LITELLM_MASTER_KEY", "tap-local-master-key"),
             litellm_model=litellm_model,
@@ -581,6 +673,15 @@ class ReadinessService:
             return False
 
 
+def create_project_audit(
+    connection: AsyncConnection, *, scope: ProjectScopeContext
+) -> ProjectAuditPort:
+    """Bind Audit to an existing application transaction and explicit trusted scope."""
+    from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
+
+    return MysqlProjectAudit(connection, scope=scope)
+
+
 @dataclass(slots=True)
 class TapperApiRuntime:
     """One API process graph with a single outer ownership boundary."""
@@ -600,6 +701,8 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         raise TypeError("Tapper API runtime requires validated settings")
     resources = OwnedResources()
     try:
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
         engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
@@ -611,7 +714,15 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         _push_if_owned(resources, embeddings)
         answer_backend = _create_answer_backend(settings, embeddings=embeddings)
         _push_if_owned(resources, answer_backend.owner)
-        search, reader, target = await _create_search(settings)
+        search, reader, target = await _create_search(
+            settings,
+            owners=repository,
+            audit_sink=MysqlSearchAuditSink(
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=repository.scope,
+                policy_version="tapper-demo-policy-v1",
+            ),
+        )
         resources.push(search)
         models_probe_client = _create_models_probe_client(settings)
         _push_if_owned(resources, models_probe_client)
@@ -626,6 +737,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             milvus_target=target,
             models_probe_client=models_probe_client,
         )
+        scope_provider, authorization_policy = _create_validation_authority(engine)
         services = _assemble_http_services(
             repository=repository,
             artifacts=artifacts,
@@ -633,7 +745,10 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             embeddings=embeddings,
             answers=answer_backend.generator,
             readiness=readiness,
-            redactor=LocalEgressRedactor(),
+            redactor=PatternEgressRedactor(),
+            scope_provider=scope_provider,
+            authorization_policy=authorization_policy,
+            corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
             http_services=services,
@@ -701,30 +816,13 @@ def _push_if_owned(resources: OwnedResources, resource: object | None) -> None:
         resources.push(resource)
 
 
-class LocalEgressRedactor:
-    """Fixed local egress decision that never logs or stores query content."""
-
-    async def redact(self, text: str) -> RedactionResult:
-        return RedactionResult(
-            sanitized_text=text,
-            redaction_version="tapper-local-egress-v1",
-        )
-
-
-class LocalSearchAuditSink(SearchAuditSink):
-    """Accept the fixed secret-free event without logging query or evidence content."""
-
-    async def emit(self, event: MilvusSearchAuditEvent) -> None:
-        if not isinstance(event, MilvusSearchAuditEvent):
-            raise TypeError("Tapper search audit requires the fixed Milvus event")
-
-
 async def _create_database(
     settings: TapperSettings,
 ) -> tuple[AsyncEngine, MysqlDocumentRepository]:
     engine, sessions = _open_database(settings)
     try:
-        repository = _build_document_repository(sessions)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        repository = _build_document_repository(sessions, scope=scope)
     except BaseException as error:
         local = OwnedResources()
         local.push(engine)
@@ -743,13 +841,15 @@ def _open_database(
 
 def _build_document_repository(
     sessions: async_sessionmaker[AsyncSession],
+    *,
+    scope: ProjectScopeContext,
 ) -> MysqlDocumentRepository:
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
-    return MysqlDocumentRepository(sessions)
+    return MysqlDocumentRepository(sessions, scope=scope, audit_factory=create_project_audit)
 
 
-def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore:
+def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
     from pydantic import SecretStr
 
     from tap.modules.knowledge.adapters.blob_artifacts import (
@@ -757,11 +857,42 @@ def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore:
         AzureBlobArtifactStore,
     )
 
+    if settings.object_store_provider == "minio":
+        from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+        from tap.platform.storage.s3 import S3ObjectConfig, S3ObjectStore
+
+        legacy = (
+            AzureBlobArtifactStore(
+                scope=VALIDATION_SCOPE,
+                config=AzureBlobArtifactConfig(
+                    connection_string=SecretStr(settings.blob_connection_string),
+                    operation_timeout_seconds=settings.blob_timeout_seconds,
+                ),
+            )
+            if settings.legacy_azure_enabled
+            else None
+        )
+        return KnowledgeArtifactStore(
+            S3ObjectStore(
+                S3ObjectConfig(
+                    endpoint=settings.s3_endpoint,
+                    bucket=settings.s3_bucket,
+                    region=settings.s3_region,
+                    access_key=SecretStr(settings.s3_access_key),
+                    secret_key=SecretStr(settings.s3_secret_key),
+                    store_id=settings.s3_store_id,
+                    timeout_seconds=settings.blob_timeout_seconds,
+                ),
+                scope=VALIDATION_SCOPE,
+            ),
+            legacy=legacy,
+        )
     return AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(
             connection_string=SecretStr(settings.blob_connection_string),
             operation_timeout_seconds=settings.blob_timeout_seconds,
-        )
+        ),
     )
 
 
@@ -894,7 +1025,8 @@ async def _create_document_index(
     parts = await _open_document_clients(settings)
     coordinator: MysqlProjectionCoordinator | None = None
     try:
-        coordinator = _create_projection_coordinator(settings, engine)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        coordinator = _create_projection_coordinator(settings, engine, scope=scope)
         return _build_document_index(settings, coordinator, parts)
     except BaseException as error:
         local = OwnedResources()
@@ -931,12 +1063,15 @@ async def _open_document_clients(
 def _create_projection_coordinator(
     settings: TapperSettings,
     engine: AsyncEngine,
+    *,
+    scope: ProjectScopeContext,
 ) -> MysqlProjectionCoordinator:
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
 
     return MysqlProjectionCoordinator(
         engine,
         authority_namespace=settings.compose_project,
+        scope=scope,
     )
 
 
@@ -973,6 +1108,9 @@ def _build_document_index(
 
 async def _create_search(
     settings: TapperSettings,
+    *,
+    audit_sink: SearchAuditSink,
+    owners: AnswerSnapshotRepository | None = None,
 ) -> tuple[MilvusSearchAdapter, PyMilvusReader, MilvusIndexTarget]:
     from pydantic import SecretStr
 
@@ -988,7 +1126,7 @@ async def _create_search(
         alias=settings.alias,
         physical_name_prefix=settings.collection,
         schema_version=settings.schema_version,
-        schema_sha256=doc_schema_sha256(),
+        schema_sha256=doc_schema_sha256(settings.schema_version),
         corpus_version=settings.corpus_version,
         embedding_model_version=settings.embedding_alias,
         vector_dimension=settings.embedding_dimension,
@@ -1004,7 +1142,7 @@ async def _create_search(
     )
     reader = _open_search_reader(config)
     try:
-        search = _build_search_adapter(config, reader)
+        search = _build_search_adapter(config, reader, audit_sink=audit_sink, owners=owners)
     except BaseException as error:
         local = OwnedResources()
         local.push(reader)
@@ -1022,13 +1160,17 @@ def _open_search_reader(config: MilvusSearchConfig) -> PyMilvusReader:
 def _build_search_adapter(
     config: MilvusSearchConfig,
     reader: MilvusReader,
+    *,
+    audit_sink: SearchAuditSink,
+    owners: AnswerSnapshotRepository | None = None,
 ) -> MilvusSearchAdapter:
     from tap.modules.knowledge.adapters.milvus.search import MilvusSearchAdapter
 
     return MilvusSearchAdapter(
         config,
         reader,
-        LocalSearchAuditSink(),
+        audit_sink,
+        owners=owners,
     )
 
 
@@ -1054,12 +1196,27 @@ def _is_private_blob_container(properties: object) -> bool:
     )
 
 
+async def _artifacts_private(artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore) -> bool:
+    from tap.modules.knowledge.adapters.blob_artifacts import (
+        ARTIFACTS_CONTAINER,
+        ORIGINALS_CONTAINER,
+    )
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+
+    if isinstance(artifacts, KnowledgeArtifactStore):
+        return await artifacts.is_private()
+    for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
+        if not _is_private_blob_container(await artifacts.container_properties(container)):
+            return False
+    return True
+
+
 def _create_readiness(
     *,
     settings: TapperSettings,
     engine: AsyncEngine,
     redis: Redis,
-    artifacts: AzureBlobArtifactStore,
+    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     embeddings: QueryEmbeddingPort,
     answer_backend: TapperAnswerBackend,
     milvus_reader: MilvusReader,
@@ -1068,10 +1225,6 @@ def _create_readiness(
 ) -> ReadinessService:
     from sqlalchemy import text
 
-    from tap.modules.knowledge.adapters.blob_artifacts import (
-        ARTIFACTS_CONTAINER,
-        ORIGINALS_CONTAINER,
-    )
     from tap.modules.knowledge.adapters.milvus.targets import bind_target
     from tap.modules.knowledge.adapters.milvus.transport import MilvusQueryRequest
 
@@ -1089,11 +1242,7 @@ def _create_readiness(
         return await redis.ping() is True
 
     async def blob_ready() -> bool:
-        for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
-            properties = await artifacts.container_properties(container)
-            if not _is_private_blob_container(properties):
-                return False
-        return True
+        return await _artifacts_private(artifacts)
 
     async def milvus_ready() -> bool:
         bound = await bind_target(milvus_reader, milvus_target)
@@ -1212,15 +1361,31 @@ def _discover_alembic_head() -> str:
     return heads[0]
 
 
+def _create_validation_authority(engine: AsyncEngine) -> tuple[ScopeProvider, AuthorizationPolicy]:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.access.adapters.mysql import MysqlIdentityRegistry
+    from tap.modules.access.adapters.validation import (
+        ValidationAuthorizationPolicy,
+        ValidationScopeProvider,
+    )
+
+    registry = MysqlIdentityRegistry(async_sessionmaker(engine, expire_on_commit=False))
+    return ValidationScopeProvider(), ValidationAuthorizationPolicy(registry)
+
+
 def _assemble_http_services(
     *,
     repository: MysqlDocumentRepository,
-    artifacts: AzureBlobArtifactStore,
+    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     search: SearchPort,
     embeddings: QueryEmbeddingPort,
     answers: AnswerGenerationPort,
     readiness: ReadinessHttpService,
     redactor: EgressRedactionPort,
+    scope_provider: ScopeProvider,
+    authorization_policy: AuthorizationPolicy,
+    corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1230,12 +1395,14 @@ def _assemble_http_services(
     from tap.modules.knowledge.application.citations import CitationResolver
     from tap.modules.knowledge.application.demo_policy import DemoCurrentPolicyVerifier
     from tap.modules.knowledge.application.documents import DocumentService
+    from tap.modules.knowledge.application.sources import SourceService
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.citations import (
         CitationArtifactStore,
         CitationRepository,
     )
     from tap.modules.knowledge.ports.documents import ArtifactStore, DocumentRepository
+    from tap.modules.knowledge.ports.sources import SourceRepository
 
     document_repository = cast(DocumentRepository, repository)
     artifact_store = cast(ArtifactStore, artifacts)
@@ -1245,12 +1412,18 @@ def _assemble_http_services(
         search=search,
         embeddings=embeddings,
         answers=answers,
-        policy_verifier=DemoCurrentPolicyVerifier(repository),
+        policy_verifier=DemoCurrentPolicyVerifier(
+            repository,
+            scope_provider=scope_provider,
+            authorization_policy=authorization_policy,
+            corpus_version=corpus_version,
+        ),
         redactor=redactor,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
         knowledge=knowledge,
+        corpus_version=corpus_version,
     )
     search_service = answer_service
     citations = CitationResolver(
@@ -1263,8 +1436,12 @@ def _assemble_http_services(
             answers=answer_service,
             citations=citations,
             searches=search_service,
+            sources=SourceService(cast(SourceRepository, repository), documents),
         ),
         readiness=readiness,
+        scope_provider=scope_provider,
+        authorization_policy=authorization_policy,
+        scope=repository.scope,
     )
 
 
@@ -1272,7 +1449,7 @@ def _assemble_worker_runtime(
     *,
     settings: TapperSettings,
     repository: MysqlDocumentRepository,
-    artifacts: AzureBlobArtifactStore,
+    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     embeddings: TapperEmbeddingPort,
     index: MilvusDocumentIndex,
     redis: Redis,
@@ -1283,7 +1460,7 @@ def _assemble_worker_runtime(
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.knowledge.adapters.document_chunker import StructuralChunker
-    from tap.modules.knowledge.adapters.document_parsers import ParserRegistry
+    from tap.modules.knowledge.adapters.isolated_parser import IsolatedParser
     from tap.modules.knowledge.application.ingestion import IngestionWorker
     from tap.modules.knowledge.ports.documents import (
         ArtifactStore,
@@ -1297,7 +1474,7 @@ def _assemble_worker_runtime(
     worker = IngestionWorker(
         repository=cast(DocumentRepository, repository),
         artifacts=cast(ArtifactStore, artifacts),
-        parser=ParserRegistry(),
+        parser=IsolatedParser(settings.parser_socket),
         chunker=StructuralChunker(),
         embeddings=cast(DocumentEmbeddingPort, embeddings),
         index=cast(DocumentIndexPort, index),
@@ -1308,6 +1485,7 @@ def _assemble_worker_runtime(
         stage_hook=stage_hook,
     )
     wakeups = RedisWakeupConsumer(
+        scope=repository.scope,
         redis=cast(AsyncRedisStream, redis),
         stream_name=settings.redis_stream,
         group_name="tapper-ingestion",

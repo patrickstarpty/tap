@@ -53,7 +53,3 @@ class IndexFenced(IndexError):
 
 class IndexReconciliationFailed(IndexError):
     """Persisted index rows did not match the requested projection."""
-
-
-SEARCH_UNAVAILABLE_TYPE = "https://tap.example/problems/search-unavailable"
-SEARCH_EXECUTION_REJECTED_TYPE = "https://tap.example/problems/search-execution-rejected"

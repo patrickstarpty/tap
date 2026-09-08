@@ -8,8 +8,9 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
     PARSER_VERSION,
@@ -19,6 +20,9 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedArtifact,
     canonical_sha256,
 )
+
+if TYPE_CHECKING:
+    from tap.modules.knowledge.domain.sources import SourceCommand
 
 PIPELINE_VERSION = "tapper-ingestion-v1"
 MAX_DOCUMENTS = 50
@@ -60,7 +64,7 @@ SAFE_ERROR_SUMMARIES = {
 
 
 class ArtifactLocator(str):
-    """Internal artifact address; public DTO mapping must never expose it."""
+    """Internal logical artifact reference; retains legacy bytes and never enters public DTOs."""
 
 
 class UploadStream(Protocol):
@@ -229,6 +233,8 @@ class ReserveUpload:
     parser_version: str = PARSER_VERSION
     chunker_version: str = CHUNKER_VERSION
     pipeline_version: str = PIPELINE_VERSION
+    source_id: str | None = None
+    command: SourceCommand | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.staging_key, str) or not self.staging_key.strip():
@@ -257,6 +263,7 @@ class ReserveUpload:
 
 @dataclass(frozen=True, slots=True)
 class DocumentRecord:
+    source_id: str
     document_id: str
     revision_id: str
     filename: str
@@ -276,6 +283,7 @@ class DocumentRecord:
     def queued(
         cls,
         *,
+        source_id: str,
         document_id: str,
         revision_id: str,
         filename: str,
@@ -285,6 +293,7 @@ class DocumentRecord:
         now: datetime,
     ) -> DocumentRecord:
         return cls(
+            source_id=source_id,
             document_id=document_id,
             revision_id=revision_id,
             filename=filename,
@@ -358,6 +367,7 @@ class IngestionJob:
 class UploadRecovery:
     reservation: UploadReservation
     activated: bool
+    cancelled_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,6 +482,8 @@ class IndexReceipt:
     revision_id: str
     index_version: str
     indexed_count: int
+    projection_digest: str | None = None
+    schema_version: str | None = None
 
     def __post_init__(self) -> None:
         if not self.revision_id or not self.index_version:
@@ -501,6 +513,11 @@ class IngestionWork:
     chunker_version: str
     pipeline_version: str
     manifest: tuple[ManifestChunk, ...]
+    chunk_manifest_digest: str | None = None
+    projection_digest: str | None = None
+    source_id: str | None = None
+    enterprise_id: str | None = None
+    project_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -509,6 +526,9 @@ class DeletionTarget:
     revision_id: str
     chunk_ids: tuple[str, ...]
     artifact_locators: tuple[ArtifactLocator, ...]
+    source_id: str | None = None
+    enterprise_id: str | None = None
+    project_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -520,6 +540,8 @@ class JobStageCommit(JobCheckpoint):
     embeddings_locator: ArtifactLocator | None = None
     manifest: tuple[ManifestChunk, ...] = ()
     chunk_count: int | None = None
+    chunk_manifest_digest: str | None = None
+    projection_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.chunk_count is not None and (
@@ -539,6 +561,23 @@ class JobRetry:
     def __post_init__(self) -> None:
         if self.error_code not in SAFE_JOB_ERRORS:
             raise ValueError("job retry must use a safe closed error code")
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactScavengeReceipt:
+    scanned: int
+    removed: tuple[str, ...]
+
+
+class StagingScavenger(Protocol):
+    """Scan only the trusted Project namespace; retain pins and legacy orphans."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def scavenge_staging(
+        self, *, now: datetime, visible_staging_keys: frozenset[str], limit: int = 100
+    ) -> ArtifactScavengeReceipt: ...
 
 
 class ArtifactStore(Protocol):
@@ -582,6 +621,11 @@ class ArtifactStore(Protocol):
 
 
 class DocumentRepository(Protocol):
+    """Durable operations run in the server-bound Project, independent of creator Actor."""
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def reserve_upload(self, command: ReserveUpload) -> UploadReservation: ...
 
     async def activate_upload(
@@ -671,6 +715,12 @@ class DocumentParser(Protocol):
     """Converts one closed media type into a safe normalized artifact."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact: ...
+
+
+class DocumentParserPort(Protocol):
+    """Cancellable isolated parsing; terminal return includes remote cleanup."""
+
+    async def parse(self, source: DocumentSource) -> NormalizedArtifact: ...
 
 
 class DocumentChunker(Protocol):

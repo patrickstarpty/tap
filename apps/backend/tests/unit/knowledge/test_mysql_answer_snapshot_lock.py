@@ -5,6 +5,7 @@ from contextlib import suppress
 
 import pytest
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.ports.answers import (
@@ -169,6 +170,8 @@ def test_acquire_deadline_preserves_caller_cancellation_and_terminates_connectio
             0.02,
         )
         repository = object.__new__(MysqlDocumentRepository)
+        repository._scope = VALIDATION_SCOPE
+        repository._answer_snapshot_lock_name = "project-answer-lock"
         connection = _ControlledConnection()
         repository._engine = _Engine(connection)  # type: ignore[assignment]
         acquiring = asyncio.create_task(
@@ -296,6 +299,8 @@ def test_failed_acquire_is_server_settled_exactly_once_by_full_save_path(
         connection = _ControlledConnection(result="malformed")
         connection.allow_result.set()
         repository = object.__new__(MysqlDocumentRepository)
+        repository._scope = VALIDATION_SCOPE
+        repository._answer_snapshot_lock_name = "project-answer-lock"
         repository._engine = _Engine(connection)  # type: ignore[assignment]
         repository._sessions = _Sessions()  # type: ignore[assignment]
         answer = AnswerSnapshot(
@@ -325,6 +330,8 @@ def test_acquire_has_a_client_deadline_and_terminates_uncertain_ownership(
             raising=False,
         )
         repository = object.__new__(MysqlDocumentRepository)
+        repository._scope = VALIDATION_SCOPE
+        repository._answer_snapshot_lock_name = "project-answer-lock"
         connection = _ControlledConnection()
         repository._engine = _Engine(connection)  # type: ignore[assignment]
         acquiring = asyncio.create_task(
@@ -355,6 +362,8 @@ def test_snapshot_body_cancellation_wins_over_a_release_failure(
         _settlement_succeeds(monkeypatch)
         connection = _ControlledConnection(error=RuntimeError("release password=secret"))
         repository = object.__new__(_CancelInSnapshotRepository)
+        repository._scope = VALIDATION_SCOPE
+        repository._answer_snapshot_lock_name = "project-answer-lock"
         repository._engine = _Engine(connection)  # type: ignore[assignment]
         repository._sessions = _Sessions()  # type: ignore[assignment]
         _CancelInSnapshotRepository.snapshot_started = asyncio.Event()
