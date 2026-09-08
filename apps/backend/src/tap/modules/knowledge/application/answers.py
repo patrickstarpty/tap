@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -69,9 +70,13 @@ class AnswerService:
         *,
         repository: AnswerSnapshotRepository,
         knowledge: KnowledgeAnswerGateway,
+        corpus_version: str = "tapper-demo-v1",
     ) -> None:
         self._repository = repository
         self._knowledge = knowledge
+        if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
+            raise ValueError("unsupported projection corpus")
+        self._corpus_version = corpus_version
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -89,7 +94,9 @@ class AnswerService:
             source_families=(SourceFamily.DOC,),
             resource_refs=_scope_refs(ordered),
         )
-        return await self._knowledge.search(trusted, build_demo_policy_context(ordered))
+        return await self._knowledge.search(
+            trusted, build_demo_policy_context(ordered, corpus_version=self._corpus_version)
+        )
 
     async def answer(self, request: AnswerRequest) -> AnswerResponse:
         document_ids = validate_answer_selection(request)
@@ -100,7 +107,7 @@ class AnswerService:
             source_families=(SourceFamily.DOC,),
             resource_refs=_scope_refs(ordered),
         )
-        policy = build_demo_policy_context(ordered)
+        policy = build_demo_policy_context(ordered, corpus_version=self._corpus_version)
         response = await self._knowledge.answer(trusted, policy)
         try:
             snapshot = AnswerSnapshot.from_response(
@@ -122,15 +129,15 @@ class AnswerService:
         self, document_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]:
         try:
-            rows = await self._repository.load_ready_revisions(document_ids)
-        except asyncio.CancelledError:
+            rows = await self._repository.load_source_revisions(document_ids)
+        except (asyncio.CancelledError, DocumentStateChanged):
             raise
         except Exception as error:
             raise PolicyUnavailable("current document policy is unavailable") from error
         if (
-            len(rows) != len(document_ids)
+            not 1 <= len(rows) <= 20
             or len({row.document_id for row in rows}) != len(rows)
-            or set(document_ids) != {row.document_id for row in rows}
+            or set(document_ids) != {row.source_id for row in rows}
         ):
             raise DocumentStateChanged("selected document is not ready and current")
         return tuple(sorted(rows, key=lambda item: item.document_id))
@@ -170,6 +177,8 @@ def _validate_selection(request: AnswerRequest | SearchRequest) -> tuple[str, ..
         )
     ):
         raise AnswerSelectionRejected("unsupported-answer-control")
+    if any(re.fullmatch(r"src_[0-9a-f]{32}", ref.source_id) is None for ref in refs):
+        raise AnswerSelectionRejected("source-selection-required")
     return tuple(ref.source_id for ref in refs)
 
 
@@ -179,7 +188,8 @@ def _scope_refs(
     return tuple(
         ResourceRef(
             family=SourceFamily.DOC,
-            source_id=row.document_id,
+            source_id=row.source_id or "",
+            requested_revision=row.revision_id,
             mode=ResourceMode.SCOPE,
         )
         for row in rows

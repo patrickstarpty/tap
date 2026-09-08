@@ -82,6 +82,20 @@
         "title": "Body_knowledge_upload_document",
         "type": "object"
       },
+      "Body_knowledge_upload_source": {
+        "properties": {
+          "upload": {
+            "format": "binary",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_knowledge_upload_source",
+        "type": "object"
+      },
       "ChatTurnAccepted": {
         "additionalProperties": false,
         "description": "The durable identity returned after a turn has been accepted for processing.",
@@ -535,6 +549,11 @@
             "title": "Sourcecontenthash",
             "type": "string"
           },
+          "sourceId": {
+            "pattern": "^src_[0-9a-f]{32}$",
+            "title": "Sourceid",
+            "type": "string"
+          },
           "stage": {
             "$ref": "#/components/schemas/IngestionStage"
           },
@@ -558,6 +577,7 @@
           }
         },
         "required": [
+          "sourceId",
           "documentId",
           "filename",
           "mediaType",
@@ -729,6 +749,11 @@
             "title": "Mediatype",
             "type": "string"
           },
+          "sourceId": {
+            "pattern": "^src_[0-9a-f]{32}$",
+            "title": "Sourceid",
+            "type": "string"
+          },
           "stage": {
             "$ref": "#/components/schemas/IngestionStage"
           },
@@ -743,6 +768,7 @@
           }
         },
         "required": [
+          "sourceId",
           "documentId",
           "filename",
           "mediaType",
@@ -1523,6 +1549,50 @@
           {
             "properties": {
               "detail": {
+                "const": "The original Source command is still in progress; retry the same key."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": true
+              },
+              "status": {
+                "const": 503
+              },
+              "title": {
+                "const": "Source command in progress"
+              },
+              "type": {
+                "const": "https://tap.example/problems/source-command-pending"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The Source is unavailable in this Project."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 404
+              },
+              "title": {
+                "const": "Source not found"
+              },
+              "type": {
+                "const": "https://tap.example/problems/source-not-found"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "Select between one and twenty unique ready documents."
               },
               "failureStage": {
@@ -1539,6 +1609,28 @@
               },
               "type": {
                 "const": "https://tap.example/problems/source-selection-required"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The Source is no longer available for this command."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 409
+              },
+              "title": {
+                "const": "Source state changed"
+              },
+              "type": {
+                "const": "https://tap.example/problems/source-unavailable"
               }
             }
           },
@@ -1699,7 +1791,10 @@
               "https://tap.example/problems/scope-mismatch",
               "https://tap.example/problems/search-execution-rejected",
               "https://tap.example/problems/search-unavailable",
+              "https://tap.example/problems/source-command-pending",
+              "https://tap.example/problems/source-not-found",
               "https://tap.example/problems/source-selection-required",
+              "https://tap.example/problems/source-unavailable",
               "https://tap.example/problems/turn-not-implemented",
               "https://tap.example/problems/unsupported-answer-control",
               "https://tap.example/problems/unsupported-document"
@@ -2520,6 +2615,239 @@
         "title": "RuntimeMode",
         "type": "object"
       },
+      "SourceAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "$ref": "#/components/schemas/DocumentAccepted"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceSummary"
+          }
+        },
+        "required": [
+          "source",
+          "accepted"
+        ],
+        "title": "SourceAccepted",
+        "type": "object"
+      },
+      "SourceDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Createdat",
+            "type": "string"
+          },
+          "documentCount": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Documentcount",
+            "type": "integer"
+          },
+          "documents": {
+            "$ref": "#/components/schemas/SourceDocumentPage"
+          },
+          "failedCount": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Failedcount",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "readyCount": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Readycount",
+            "type": "integer"
+          },
+          "sourceId": {
+            "pattern": "^src_[0-9a-f]{32}$",
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "name",
+          "createdAt",
+          "documentCount",
+          "readyCount",
+          "failedCount",
+          "documents"
+        ],
+        "title": "SourceDetail",
+        "type": "object"
+      },
+      "SourceDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "chunkCount": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Chunkcount",
+            "type": "integer"
+          },
+          "documentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Documentid",
+            "type": "string"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errorcode"
+          },
+          "errorSummary": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errorsummary"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "mediaType": {
+            "enum": [
+              "application/pdf",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "text/markdown",
+              "text/plain"
+            ],
+            "title": "Mediatype",
+            "type": "string"
+          },
+          "normalizedPreview": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalizedpreview"
+          },
+          "revisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "sourceContentHash": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "sourceId": {
+            "pattern": "^src_[0-9a-f]{32}$",
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/IngestionStage"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentStageSnapshot"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Stages",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          },
+          "updatedAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "documentId",
+          "filename",
+          "mediaType",
+          "status",
+          "stage",
+          "chunkCount",
+          "updatedAt",
+          "revisionId",
+          "sourceContentHash",
+          "stages",
+          "attempt"
+        ],
+        "title": "SourceDocument",
+        "type": "object"
+      },
+      "SourceDocumentPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceDocument"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SourceDocumentPage",
+        "type": "object"
+      },
       "SourceFamily": {
         "enum": [
           "doc",
@@ -2529,6 +2857,116 @@
         ],
         "title": "SourceFamily",
         "type": "string"
+      },
+      "SourcePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceSummary"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SourcePage",
+        "type": "object"
+      },
+      "SourceRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Documentid",
+            "type": "string"
+          },
+          "expectedAttempt": {
+            "minimum": 1.0,
+            "title": "Expectedattempt",
+            "type": "integer"
+          },
+          "revisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "revisionId",
+          "expectedAttempt"
+        ],
+        "title": "SourceRetryRequest",
+        "type": "object"
+      },
+      "SourceSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Createdat",
+            "type": "string"
+          },
+          "documentCount": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Documentcount",
+            "type": "integer"
+          },
+          "failedCount": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Failedcount",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "readyCount": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Readycount",
+            "type": "integer"
+          },
+          "sourceId": {
+            "pattern": "^src_[0-9a-f]{32}$",
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "name",
+          "createdAt",
+          "documentCount",
+          "readyCount",
+          "failedCount"
+        ],
+        "title": "SourceSummary",
+        "type": "object"
       },
       "StructuralAnchor": {
         "description": "A closed, structural location inside one authorized source family.",
@@ -2840,6 +3278,7 @@
         ]
       },
       "post": {
+        "deprecated": true,
         "operationId": "knowledge_upload_document",
         "parameters": [
           {
@@ -2850,6 +3289,17 @@
               "maxLength": 128,
               "minLength": 1,
               "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
               "type": "string"
             }
           }
@@ -2963,6 +3413,17 @@
               "maxLength": 128,
               "minLength": 1,
               "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
               "type": "string"
             }
           }
@@ -3132,6 +3593,17 @@
               "title": "Project Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3197,6 +3669,705 @@
           }
         },
         "summary": "Retry Document",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/sources": {
+      "get": {
+        "operationId": "knowledge_list_sources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          }
+        },
+        "summary": "List Sources",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "knowledge_upload_source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_knowledge_upload_source"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          }
+        },
+        "summary": "Upload Source",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/sources/{source_id}": {
+      "delete": {
+        "operationId": "knowledge_delete_source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          }
+        },
+        "summary": "Delete Source",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "get": {
+        "operationId": "knowledge_get_source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          }
+        },
+        "summary": "Get Source",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/sources/{source_id}/retry": {
+      "post": {
+        "operationId": "knowledge_retry_source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Source request failed"
+          }
+        },
+        "summary": "Retry Source",
         "tags": [
           "knowledge"
         ]

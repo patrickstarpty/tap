@@ -8,9 +8,28 @@ import type {
   KnowledgeClient,
   RetrievalAnswerRequest,
   RetrievalAnswerResponse,
+  SourceSummary,
 } from "../api/types";
 
 const NOW = "2026-08-28T07:30:00Z";
+
+function fixtureSourceId(documentId: string): string {
+  let hash = 2166136261;
+  for (const character of documentId)
+    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return `src_${(hash >>> 0).toString(16).padStart(8, "0").repeat(4)}`;
+}
+
+function sourceSummary(item: DocumentSummary): SourceSummary {
+  return {
+    sourceId: item.sourceId,
+    name: item.filename,
+    documentCount: 1,
+    readyCount: item.status === "ready" ? 1 : 0,
+    failedCount: item.status === "failed" ? 1 : 0,
+    createdAt: NOW,
+  };
+}
 
 const DEFAULT_STAGES: DocumentStageSnapshot[] = [
   { stage: "stored", state: "completed", completedAt: NOW, errorCode: null },
@@ -32,6 +51,7 @@ export function document(
   return {
     chunkCount: 0,
     documentId: "doc-1",
+    sourceId: fixtureSourceId(overrides.documentId ?? "doc-1"),
     errorCode: null,
     errorSummary: null,
     filename: "handbook.md",
@@ -244,6 +264,45 @@ export function fakeKnowledgeClient(
 
   const api: FakeKnowledgeClient = {
     projectId,
+    async listSources(input) {
+      const page = await api.listDocuments(input);
+      return {
+        items: page.items.map(sourceSummary),
+        nextCursor: page.nextCursor,
+      };
+    },
+    async getSource(sourceId, signal) {
+      const item = documents.find(
+        (candidate) => candidate.sourceId === sourceId,
+      );
+      if (item === undefined) throw new Error("Unknown fixture Source");
+      const detail = await api.getDocument(item.documentId, signal);
+      return {
+        ...sourceSummary(item),
+        documents: { items: [{ ...detail, attempt: 1 }], nextCursor: null },
+      };
+    },
+    async uploadSource(file, onProgress, signal) {
+      const accepted = await api.uploadDocument(file, onProgress, signal);
+      return { source: sourceSummary(accepted.document), accepted };
+    },
+    async retrySource(sourceId, request) {
+      const item = documents.find(
+        (candidate) =>
+          candidate.sourceId === sourceId &&
+          candidate.documentId === request.documentId,
+      );
+      if (item === undefined)
+        throw new Error("Unknown fixture Source document");
+      const accepted = await api.retryDocument(item.documentId);
+      return { source: sourceSummary(accepted.document), accepted };
+    },
+    async deleteSource(sourceId) {
+      const items = documents.filter(
+        (candidate) => candidate.sourceId === sourceId,
+      );
+      for (const item of items) await api.deleteDocument(item.documentId);
+    },
     listCalls: 0,
     listInputs: [],
     listSignals: [],

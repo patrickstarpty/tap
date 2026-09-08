@@ -219,12 +219,36 @@
       "type": "https://tap.example/problems/search-unavailable"
     },
     {
+      "code": "source-command-pending",
+      "detail": "The original Source command is still in progress; retry the same key.",
+      "retryable": true,
+      "status": 503,
+      "title": "Source command in progress",
+      "type": "https://tap.example/problems/source-command-pending"
+    },
+    {
+      "code": "source-not-found",
+      "detail": "The Source is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Source not found",
+      "type": "https://tap.example/problems/source-not-found"
+    },
+    {
       "code": "source-selection-required",
       "detail": "Select between one and twenty unique ready documents.",
       "retryable": false,
       "status": 400,
       "title": "Source selection required",
       "type": "https://tap.example/problems/source-selection-required"
+    },
+    {
+      "code": "source-unavailable",
+      "detail": "The Source is no longer available for this command.",
+      "retryable": false,
+      "status": 409,
+      "title": "Source state changed",
+      "type": "https://tap.example/problems/source-unavailable"
     },
     {
       "code": "turn-not-implemented",

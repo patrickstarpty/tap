@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Literal, TypeVar, cast
 
@@ -24,6 +25,13 @@ from tap.modules.knowledge.domain.documents import (
     DocumentParseRejected,
     MediaType,
     validate_filename_media_type,
+)
+from tap.modules.knowledge.domain.sources import (
+    SourceCommand,
+    SourceCommandConflict,
+    SourceCommandPending,
+    SourceCommandReplay,
+    SourceUnavailable,
 )
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
@@ -70,10 +78,14 @@ class DocumentService:
         """Expose the binding held by the actual repository, without a second label."""
         return self._repository.scope
 
-    async def upload(self, upload: UploadStream) -> DocumentAccepted:
-        return await _document_runtime_boundary(self._upload(upload))
+    async def upload(
+        self, upload: UploadStream, command: SourceCommand | None = None
+    ) -> DocumentAccepted:
+        return await _document_runtime_boundary(self._upload(upload, command))
 
-    async def _upload(self, upload: UploadStream) -> DocumentAccepted:
+    async def _upload(
+        self, upload: UploadStream, command: SourceCommand | None = None
+    ) -> DocumentAccepted:
         try:
             media_type = MediaType(upload.media_type)
         except ValueError as error:
@@ -85,7 +97,7 @@ class DocumentService:
             raise DocumentParseRejected("empty-document")
         try:
             reservation = await self._repository.reserve_upload(
-                ReserveUpload.from_staged(staged, now=self._clock())
+                replace(ReserveUpload.from_staged(staged, now=self._clock()), command=command)
             )
         except BaseException as error:
             try:
@@ -227,6 +239,10 @@ async def _document_runtime_boundary(operation: Awaitable[_T]) -> _T:
         raise
     except (
         DocumentParseRejected,
+        SourceCommandReplay,
+        SourceCommandConflict,
+        SourceCommandPending,
+        SourceUnavailable,
         DocumentCapacityExceeded,
         DocumentNotFound,
         InvalidDocumentCursor,
@@ -291,6 +307,7 @@ def _iso(value: datetime) -> str:
 
 def _summary(record: DocumentRecord) -> DocumentSummary:
     return DocumentSummary(
+        source_id=record.source_id,
         document_id=record.document_id,
         filename=record.filename,
         media_type=cast(PublicMediaType, MediaType(record.media_type).value),

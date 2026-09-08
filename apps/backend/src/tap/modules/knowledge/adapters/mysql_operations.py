@@ -319,6 +319,7 @@ class MysqlOperationRepository:
             knowledge_document,
             knowledge_document_revision,
             knowledge_ingestion_job,
+            knowledge_source,
         )
         from tap.modules.knowledge.ports.documents import (
             ArtifactLocator,
@@ -350,6 +351,10 @@ class MysqlOperationRepository:
                         select(
                             knowledge_document.c.filename,
                             knowledge_document.c.media_type,
+                            knowledge_source.c.source_id.label("owner_source_id"),
+                            knowledge_source.c.enterprise_id.label("owner_enterprise_id"),
+                            knowledge_source.c.project_id.label("owner_project_id"),
+                            knowledge_source.c.deleted_at.label("owner_deleted_at"),
                             knowledge_document_revision,
                         )
                         .select_from(
@@ -357,6 +362,9 @@ class MysqlOperationRepository:
                                 knowledge_document_revision,
                                 knowledge_document.c.current_revision_id
                                 == knowledge_document_revision.c.revision_id,
+                            ).outerjoin(
+                                knowledge_source,
+                                knowledge_source.c.source_id == knowledge_document.c.source_id,
                             )
                         )
                         .where(
@@ -377,6 +385,15 @@ class MysqlOperationRepository:
                 raise ValueError("ready corpus exceeds rebuild bound")
             result = []
             for row in rows:
+                if (
+                    row["owner_source_id"] is None
+                    or row["owner_enterprise_id"] != self._scope.enterprise_id
+                    or row["owner_project_id"] != self._scope.project_id
+                    or row["owner_deleted_at"] is not None
+                ):
+                    raise ValueError(
+                        "ready artifact Source ownership is not active in this Project"
+                    )
                 manifests = (
                     (
                         await connection.execute(
@@ -422,6 +439,9 @@ class MysqlOperationRepository:
                         chunker_version=row["chunker_version"],
                         pipeline_version=row["pipeline_version"],
                         manifest=_manifest_from_rows(list(manifests)),
+                        enterprise_id=self._scope.enterprise_id,
+                        project_id=self._scope.project_id,
+                        source_id=row["owner_source_id"],
                     )
                 )
             return tuple(result)

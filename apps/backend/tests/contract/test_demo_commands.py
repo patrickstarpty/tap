@@ -18,6 +18,184 @@ import yaml
 from pymilvus.decorators import _log_rpc_error
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+def task6a_collection_module():
+    spec = importlib.util.spec_from_file_location(
+        "task6a_collection", ROOT / "scripts/tapper_collection.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "action,profile,retained,valid",
+    [
+        ("migrate-v1-to-v2", "doc-schema-v2", None, True),
+        ("migrate-v1-to-v2", "doc-schema-v1", None, False),
+        ("rollback-v2-to-v1", "doc-schema-v1", "kb_doc_v1_tapper_demo_123456abcdef", True),
+        ("rollback-v2-to-v1", "doc-schema-v2", "kb_doc_v1_tapper_demo", False),
+        ("rollback-v2-to-v1", "doc-schema-v1", None, False),
+        ("rollback-v2-to-v1", "doc-schema-v1", "kb_doc_v1_other", False),
+    ],
+)
+def test_task6a_collection_actions_bind_explicit_profiles(action, profile, retained, valid):
+    module = task6a_collection_module()
+    settings = SimpleNamespace(schema_version=profile)
+    if valid:
+        module.validate_migration_profile(settings, action, retained)
+    else:
+        with pytest.raises(ValueError):
+            module.validate_migration_profile(settings, action, retained)
+
+
+def test_task6a_collection_refuses_default_project_before_docker_or_providers(
+    tmp_path, monkeypatch
+):
+    module = task6a_collection_module()
+    monkeypatch.setattr(module, "_docker", lambda *_: pytest.fail("default project reached Docker"))
+    with pytest.raises(ValueError, match="owned"):
+        module.verify_owned_migration(SimpleNamespace(compose_project="tap-tapper-demo"), tmp_path)
+
+
+@pytest.mark.parametrize(
+    "changed", [None, "database_url", "milvus_uri", "s3_endpoint", "legacy_azure_enabled"]
+)
+@pytest.mark.parametrize("mysql_service", ["mysql-cli", "mysql-cli-final"])
+def test_task6a_collection_owned_guard_binds_every_provider_endpoint(
+    tmp_path, monkeypatch, changed, mysql_service
+):
+    module = task6a_collection_module()
+    project = "tap-task6a-123456abcdef"
+    (tmp_path / "ownership.json").write_text(
+        json.dumps({"project": project, "migration_mysql_service": mysql_service})
+    )
+    inventory = {
+        "container": ["mysql-cli-id", "milvus-id", "objects-id"],
+        "volume": [project + "_data"],
+        "network": ["network-id"],
+    }
+    for kind, ids in inventory.items():
+        (tmp_path / f"{kind}-ids.json").write_text(json.dumps(ids))
+    containers = [
+        {
+            "Config": {
+                "Labels": {
+                    "com.docker.compose.project": project,
+                    "com.docker.compose.service": service,
+                }
+            },
+            "NetworkSettings": {"Ports": {port: [{"HostIp": "127.0.0.1", "HostPort": host}]}},
+        }
+        for service, port, host in [
+            (mysql_service, "3306/tcp", "35306"),
+            ("milvus", "19530/tcp", "40530"),
+            ("tap-minio", "9000/tcp", "41000"),
+        ]
+    ]
+
+    def docker(kind, operation, *args):
+        if operation == "ls":
+            return "\n".join(inventory[kind])
+        assert operation == "inspect" and list(args) == inventory[kind]
+        return json.dumps(
+            containers
+            if kind == "container"
+            else [{"Labels": {"com.docker.compose.project": project}}]
+        )
+
+    monkeypatch.setattr(module, "_docker", docker)
+    settings = SimpleNamespace(
+        compose_project=project,
+        database_url="mysql+asyncmy://tap:test@127.0.0.1:35306/tap",
+        alembic_database_url="mysql+pymysql://tap:test@127.0.0.1:35306/tap",
+        milvus_uri="http://127.0.0.1:40530",
+        object_store_provider="minio",
+        legacy_azure_enabled=False,
+        s3_endpoint="http://127.0.0.1:41000",
+    )
+    if changed is not None:
+        setattr(
+            settings,
+            changed,
+            True if changed == "legacy_azure_enabled" else "http://127.0.0.1:9999",
+        )
+        with pytest.raises(ValueError):
+            module.verify_owned_migration(settings, tmp_path)
+    else:
+        module.verify_owned_migration(settings, tmp_path)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_task6a_collection_closes_only_opened_clients_on_migration_settlement(monkeypatch, fail):
+    from tap.entrypoints.tapper_runtime import TapperSettings
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    module = task6a_collection_module()
+    events = []
+
+    class Resource:
+        def __init__(self, name):
+            self.name = name
+
+        async def aclose(self):
+            events.append(self.name)
+
+    async def database(_settings):
+        return Resource("database"), SimpleNamespace(scope=VALIDATION_SCOPE)
+
+    async def clients(_settings):
+        return SimpleNamespace(
+            provisioner=Resource("provisioner"),
+            writer=Resource("writer"),
+            reader=Resource("reader"),
+        )
+
+    async def ready_work(_limit):
+        return ()
+
+    class Index:
+        async def migrate_from_snapshot(self, previous, snapshot):
+            assert await snapshot() == ()
+            if fail:
+                raise RuntimeError("injected migration refusal")
+            return SimpleNamespace(
+                physical_collection="kb_doc_v2_tapper_demo_123456abcdef",
+                alias="kb_doc_tapper_demo_active",
+            )
+
+    monkeypatch.setattr(module, "_create_database", database)
+    monkeypatch.setattr(module, "_open_document_clients", clients)
+    monkeypatch.setattr(
+        module, "_create_projection_coordinator", lambda *args, **kwargs: Resource("coordinator")
+    )
+    monkeypatch.setattr(module, "_build_document_index", lambda *args: Index())
+    monkeypatch.setattr(module, "_create_blob", lambda *args: Resource("artifacts"))
+    monkeypatch.setattr(
+        module,
+        "MysqlOperationRepository",
+        lambda *args, **kwargs: SimpleNamespace(ready_work=ready_work),
+    )
+    settings = TapperSettings.from_mapping(
+        {
+            "LITELLM_MODEL": "openai/test-chat",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        }
+    )
+    if fail:
+        with pytest.raises(RuntimeError, match="injected"):
+            asyncio.run(module.migrate_projection(settings, "migrate-v1-to-v2", None, 20))
+    else:
+        assert (
+            asyncio.run(module.migrate_projection(settings, "migrate-v1-to-v2", None, 20))[
+                "physicalCollection"
+            ]
+            == "kb_doc_v2_tapper_demo_123456abcdef"
+        )
+    assert events == ["artifacts", "reader", "writer", "provisioner", "coordinator", "database"]
+
+
 E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173, 29000)
 EXPECTED_ENV = {
     "TAP_TAPPER_COMPOSE_PROJECT",
@@ -1103,7 +1281,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
             events.append("close:blob")
 
     class Receipt:
-        physical_collection = "kb_doc_v1_tapper_demo"
+        physical_collection = "kb_doc_v2_tapper_demo"
         alias = "kb_doc_tapper_demo_active"
 
     class Index:

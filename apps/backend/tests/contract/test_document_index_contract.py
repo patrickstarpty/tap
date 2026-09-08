@@ -55,7 +55,6 @@ from tap.operations.milvus.contracts import (
     WRITER_PRIVILEGES,
     MilvusScopedGrant,
 )
-from tap.operations.milvus.doc_schema import doc_schema_sha256
 
 EXPECTED_INDEXES = frozenset(
     {
@@ -70,6 +69,111 @@ EXPECTED_INDEXES = frozenset(
         "deleted",
     }
 )
+
+
+@pytest.mark.asyncio
+async def test_v2_startup_reports_migration_required_without_swapping_v1():
+    memory = MemoryMilvus()
+    old = index_for(memory)
+    await old.ensure_target()
+    current = MilvusDocumentIndex(
+        config=TapperMilvusConfig.for_schema("doc-schema-v2"),
+        provisioner=MutationOnlyProvisioner(memory),
+        writer=memory,
+        reader=ReaderObserver(memory),
+        coordinator=memory.coordinator,
+    )
+    with pytest.raises(IndexTargetProvisioningFailed) as error:
+        await current.ensure_target()
+    assert error.value.stage.value == "migration-required"
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
+    assert tuple(memory.collections) == (TAPPER_PHYSICAL_COLLECTION,)
+
+
+@pytest.mark.asyncio
+async def test_versioned_migration_retains_v1_and_rollback_refuses_changed_snapshot(monkeypatch):
+    memory = MemoryMilvus()
+    old = index_for(memory)
+    await old.ensure_target()
+    record = ready_record()
+    record = replace(
+        record,
+        work=replace(
+            record.work,
+            enterprise_id="local",
+            project_id="tapper-demo",
+            source_id="src_" + "a" * 32,
+        ),
+    )
+    await old.upsert_revision(
+        record.work, record.chunks, record.embeddings, index_version=record.index_version
+    )
+    current = MilvusDocumentIndex(
+        config=TapperMilvusConfig.for_schema("doc-schema-v2"),
+        provisioner=MutationOnlyProvisioner(memory),
+        writer=memory,
+        reader=ReaderObserver(memory),
+        coordinator=memory.coordinator,
+    )
+
+    async def snapshot():
+        assert memory.coordinator.lock.locked()
+        return (record,)
+
+    receipt = await current.migrate_from_snapshot(old, snapshot)
+    row = next(iter(memory.collections[receipt.physical_collection].values()))
+    assert row["source_id"] == record.work.source_id and row["document_id"] == "doc_a"
+    assert row["enterprise_id"] == "local" and "tenant_id" not in row
+    assert memory.coordinator.owned[TAPPER_PHYSICAL_COLLECTION].status == "retained"
+    await current.ensure_target()
+    assert TAPPER_PHYSICAL_COLLECTION in memory.collections
+
+    async def deleted_snapshot():
+        return ()
+
+    original_parity = old._require_snapshot_parity
+
+    async def require_authorized_parity(physical, records):
+        assert await memory.collection_grants(physical, "tap_reader")
+        await original_parity(physical, records)
+
+    monkeypatch.setattr(old, "_require_snapshot_parity", require_authorized_parity)
+
+    with pytest.raises(RebuildRejected):
+        await current.rollback_to(old, TAPPER_PHYSICAL_COLLECTION, deleted_snapshot)
+    assert memory.aliases[TAPPER_ALIAS] == receipt.physical_collection
+    assert not await memory.collection_grants(TAPPER_PHYSICAL_COLLECTION, "tap_reader")
+    assert not await memory.collection_grants(TAPPER_PHYSICAL_COLLECTION, "tap_writer")
+    await current.rollback_to(old, TAPPER_PHYSICAL_COLLECTION, snapshot)
+    assert memory.aliases[TAPPER_ALIAS] == TAPPER_PHYSICAL_COLLECTION
+    assert receipt.physical_collection in memory.collections
+
+
+@pytest.mark.asyncio
+async def test_canonical_rebuild_preserves_document_fence_without_fabricating_source():
+    memory = MemoryMilvus()
+    config = TapperMilvusConfig.for_schema("doc-schema-v2")
+    index = MilvusDocumentIndex(
+        config=config,
+        provisioner=MutationOnlyProvisioner(memory),
+        writer=memory,
+        reader=ReaderObserver(memory),
+        coordinator=memory.coordinator,
+    )
+    await index.ensure_target()
+    target = DeletionTarget(
+        "doc_a",
+        work().revision_id,
+        (),
+        (),
+        enterprise_id="local",
+        project_id="tapper-demo",
+        source_id="src_" + "a" * 32,
+    )
+    await index.fence_revision(target)
+    receipt = await index.rebuild(())
+    assert receipt.row_count == 0
+    assert memory.coordinator.fence_records == {target.revision_id: "doc_a"}
 
 
 @pytest.mark.asyncio
@@ -246,6 +350,8 @@ class MemoryProjectionCoordinator:
     async def activate_build(
         self,
         receipt: ProjectionOwnershipReceipt,
+        *,
+        retain_predecessor: bool = False,
     ) -> tuple[int, str]:
         if self.cancel_activation:
             self.cancel_activation = False
@@ -262,14 +368,33 @@ class MemoryProjectionCoordinator:
             raise RuntimeError("projection build ownership conflicts")
         if self.physical is not None:
             predecessor = self.owned.get(self.physical)
+            if retain_predecessor and predecessor is None:
+                predecessor = ProjectionOwnershipReceipt(
+                    self.physical, "f" * 32, self.physical, "active"
+                )
             if predecessor is not None and predecessor.status == "active":
-                self.owned[self.physical] = replace(predecessor, status="cleanup")
+                self.owned[self.physical] = replace(
+                    predecessor, status="retained" if retain_predecessor else "cleanup"
+                )
         self.generation += 1
         self.physical = receipt.physical_collection
         self.owned[receipt.physical_collection] = replace(receipt, status="active")
         if self.activate_error_after_success:
             self.activate_error_after_success = False
             raise RuntimeError("activation response lost after durable commit")
+        return self.generation, self.physical
+
+    async def reactivate_retained(self, receipt, *, expected_current):
+        if (
+            self.physical != expected_current
+            or self.owned.get(receipt.physical_collection) != receipt
+            or receipt.status != "retained"
+        ):
+            raise IndexUnavailable("retained generation changed")
+        self.owned[expected_current] = replace(self.owned[expected_current], status="retained")
+        self.owned[receipt.physical_collection] = replace(receipt, status="active")
+        self.physical = receipt.physical_collection
+        self.generation += 1
         return self.generation, self.physical
 
     async def abandon_build(self, receipt: ProjectionOwnershipReceipt) -> None:
@@ -347,7 +472,7 @@ class MemoryMilvus:
             raise RuntimeError("injected index creation interruption")
         present = self.indexes.setdefault(name, set())
         created = 0
-        for index_name in EXPECTED_INDEXES:
+        for index_name in self.schemas[name]["indexes"]:
             if index_name in present:
                 continue
             if self.fail_after_index_creations == created:
@@ -373,9 +498,9 @@ class MemoryMilvus:
         return MilvusCollectionDescriptor(
             collection_name=name,
             family=SourceFamily.DOC,
-            schema_version=TAPPER_SCHEMA_VERSION,
-            schema_sha256=doc_schema_sha256(),
-            corpus_version=TAPPER_CORPUS_VERSION,
+            schema_version=json.loads(schema["description"].split(":", 1)[1])["schemaVersion"],
+            schema_sha256=json.loads(schema["description"].split(":", 1)[1])["schemaSha256"],
+            corpus_version=json.loads(schema["description"].split(":", 1)[1])["corpusVersion"],
             embedding_model_version=self.descriptor_model,
             vector_dimension=1536,
             dynamic_fields_enabled=False,
@@ -384,7 +509,7 @@ class MemoryMilvus:
 
     async def describe_collection(self, name: str) -> MilvusCollectionDescriptor:
         self.events.append(f"describe-full:{name}")
-        if self.indexes.get(name) != EXPECTED_INDEXES:
+        if self.indexes.get(name) != set(self.schemas[name]["indexes"]):
             raise RuntimeError("indexes are incomplete")
         return await self.describe_collection_schema(name, self.schemas[name])
 
@@ -395,7 +520,7 @@ class MemoryMilvus:
     ) -> None:
         self.events.append(f"describe-indexes:{name}")
         assert schema == self.schemas[name]
-        if self.indexes.get(name) != EXPECTED_INDEXES:
+        if self.indexes.get(name) != set(self.schemas[name]["indexes"]):
             raise RuntimeError("indexes are incomplete")
 
     async def grant_collection(self, name: str, role_name: str) -> None:
@@ -486,6 +611,8 @@ class MemoryMilvus:
             rows = (row for row in rows if row.get("chunk_id") == chunk_id)
         elif filter_expression == 'source_type == "tapper_fence"':
             rows = (row for row in rows if row.get("source_type") == "tapper_fence")
+        elif filter_expression == 'source_type != "tapper_fence"':
+            rows = (row for row in rows if row.get("source_type") != "tapper_fence")
         elif filter_expression.startswith("corpus_version == "):
             corpus = json.loads(filter_expression.split(" == ", 1)[1])
             rows = (row for row in rows if row.get("corpus_version") == corpus)
@@ -1467,3 +1594,40 @@ async def test_close_attempts_every_distinct_client_after_one_fails() -> None:
     with pytest.raises(RuntimeError, match="injected close failure"):
         await index.close()
     assert closed == ["reader", "writer", "provisioner", "coordinator"]
+
+
+def test_v2_projection_requires_trusted_sql_source_ownership():
+    memory = MemoryMilvus()
+    config = TapperMilvusConfig.for_schema("doc-schema-v2")
+    index = MilvusDocumentIndex(
+        config=config,
+        provisioner=MutationOnlyProvisioner(memory),
+        writer=memory,
+        reader=ReaderObserver(memory),
+        coordinator=memory.coordinator,
+    )
+    chunks = (chunk(),)
+    embeddings = EmbeddingArtifact(
+        TAPPER_EMBEDDING_MODEL,
+        1536,
+        ((1.0,) + (0.0,) * 1535,),
+        tuple(str(item.chunk_id) for item in chunks),
+    )
+    with pytest.raises(ValueError):
+        index._revision_rows(config.physical_collection, work(), chunks, embeddings, "index-v2")
+    owned = replace(
+        work(), source_id="src_" + "a" * 32, enterprise_id="local", project_id="tapper-demo"
+    )
+    row = index._revision_rows(config.physical_collection, owned, chunks, embeddings, "index-v2")[0]
+    assert row["source_id"] == owned.source_id
+    assert row["document_id"] == owned.document_id
+    assert row["enterprise_id"] == owned.enterprise_id
+    assert "tenant_id" not in row
+    with pytest.raises(ValueError):
+        index._revision_rows(
+            config.physical_collection,
+            replace(owned, enterprise_id="foreign"),
+            chunks,
+            embeddings,
+            "index-v2",
+        )

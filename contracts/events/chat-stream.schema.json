@@ -1072,6 +1072,50 @@
         {
           "properties": {
             "detail": {
+              "const": "The original Source command is still in progress; retry the same key."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 503
+            },
+            "title": {
+              "const": "Source command in progress"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-command-pending"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Source is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Source not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "Select between one and twenty unique ready documents."
             },
             "failureStage": {
@@ -1088,6 +1132,28 @@
             },
             "type": {
               "const": "https://tap.example/problems/source-selection-required"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Source is no longer available for this command."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Source state changed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/source-unavailable"
             }
           }
         },
@@ -1248,7 +1314,10 @@
             "https://tap.example/problems/scope-mismatch",
             "https://tap.example/problems/search-execution-rejected",
             "https://tap.example/problems/search-unavailable",
+            "https://tap.example/problems/source-command-pending",
+            "https://tap.example/problems/source-not-found",
             "https://tap.example/problems/source-selection-required",
+            "https://tap.example/problems/source-unavailable",
             "https://tap.example/problems/turn-not-implemented",
             "https://tap.example/problems/unsupported-answer-control",
             "https://tap.example/problems/unsupported-document"

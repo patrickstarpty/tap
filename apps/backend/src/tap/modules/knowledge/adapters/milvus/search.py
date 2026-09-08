@@ -35,6 +35,7 @@ from tap.modules.knowledge.domain.models import (
     anchor_authorization_key,
     context_snapshot_binds_query_plan,
 )
+from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository, ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import (
     SearchBoundsExceeded,
     SearchUnavailable,
@@ -51,6 +52,8 @@ class MilvusSearchAdapter(SearchPort):
         config: MilvusSearchConfig,
         reader: MilvusReader,
         audit_sink: SearchAuditSink,
+        *,
+        owners: AnswerSnapshotRepository | None = None,
     ) -> None:
         if not isinstance(config, MilvusSearchConfig):
             raise TypeError("Milvus search requires validated configuration")
@@ -61,6 +64,7 @@ class MilvusSearchAdapter(SearchPort):
         self._config = config
         self._reader = reader
         self._audit_sink = audit_sink
+        self._owners = owners
         audit_target = config.targets.get(SourceFamily.DOC)
         self._audit_target = audit_target if isinstance(audit_target, MilvusIndexTarget) else None
 
@@ -72,10 +76,13 @@ class MilvusSearchAdapter(SearchPort):
         provider_request_ids: tuple[str, ...] = ()
         try:
             target = self._validate_execution(execution)
+            owners = await self._load_owners(execution)
             filter_expression = compile_milvus_filter(
                 execution,
                 SourceFamily.DOC,
                 max_bytes=self._config.max_filter_bytes,
+                schema_version=target.schema_version,
+                owners=owners,
             )
             bound = await bind_target(self._reader, target)
             physical_collection = str(bound.physical_collection)
@@ -84,6 +91,7 @@ class MilvusSearchAdapter(SearchPort):
                 bound,
                 filter_expression,
                 min(execution.plan.candidate_limit, self._config.candidate_limit),
+                owned=owners is not None,
             )
             rows = await self._reader.hybrid_search(request)
             if not isinstance(rows, tuple):
@@ -94,7 +102,7 @@ class MilvusSearchAdapter(SearchPort):
                 raise SearchUnavailable("search provider returned too many rows")
             try:
                 hits = tuple(
-                    map_milvus_hit(row, bound, local_rank)
+                    map_milvus_hit(row, bound, local_rank, owners=owners, execution=execution)
                     for local_rank, row in enumerate(rows, start=1)
                 )
             except SearchUnavailable:
@@ -151,6 +159,30 @@ class MilvusSearchAdapter(SearchPort):
         except Exception:
             raise SearchUnavailable("search audit is unavailable") from None
         return hits
+
+    async def _load_owners(
+        self, execution: SearchExecution
+    ) -> tuple[ReadyDocumentRevision, ...] | None:
+        if self._owners is None:
+            return None
+        scope = self._owners.scope
+        if (scope.enterprise_id, scope.project_id) != (
+            execution.policy.tenant_id,
+            execution.policy.project_id,
+        ):
+            raise SearchUnavailable("SQL ownership scope does not match authorization")
+        selected = tuple(
+            (resource.source_id, resource.revision, resource.source_content_hash)
+            for resource in execution.plan.resources
+        )
+        if not selected or len(selected) > 20 or len(set(selected)) != len(selected):
+            raise SearchUnavailable("frozen ownership selection is malformed")
+        owners = await self._owners.load_current_source_revisions(selected)
+        if len(owners) != len(selected) or set(selected) != {
+            (owner.source_id, owner.revision_id, owner.source_content_hash) for owner in owners
+        }:
+            raise SearchUnavailable("SQL ownership does not match frozen selection")
+        return owners
 
     async def close(self) -> None:
         """Close the owned reader; the reader keeps closure terminal and idempotent."""
@@ -317,6 +349,8 @@ def _hybrid_request(
     bound: BoundMilvusTarget,
     filter_expression: str,
     limit: int,
+    *,
+    owned: bool = False,
 ) -> MilvusHybridRequest:
     return MilvusHybridRequest(
         collection_name=bound.physical_collection,
@@ -334,7 +368,22 @@ def _hybrid_request(
                 limit=limit,
             ),
         ),
-        output_fields=MILVUS_OUTPUT_FIELDS,
+        output_fields=MILVUS_OUTPUT_FIELDS
+        + (
+            (
+                "enterprise_id"
+                if bound.configured.schema_version == "doc-schema-v2"
+                else "tenant_id",
+                "project_id",
+                "allowed_group_ids",
+                "classification_rank",
+                "environment",
+                "deleted",
+            )
+            + (("document_id",) if bound.configured.schema_version == "doc-schema-v2" else ())
+            if owned
+            else ()
+        ),
         limit=limit,
     )
 

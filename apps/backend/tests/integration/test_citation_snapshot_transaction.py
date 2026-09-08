@@ -31,6 +31,7 @@ from tap.modules.knowledge.domain.models import (
     ResourceRef,
     SourceFamily,
 )
+from tap.modules.knowledge.domain.sources import legacy_source_id
 from tap.modules.knowledge.ports.answers import (
     AnswerSnapshot,
     AnswerSnapshotUnavailable,
@@ -172,17 +173,17 @@ async def clean(engine) -> None:  # type: ignore[no-untyped-def]
 
 async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ignore[no-untyped-def]
     document_id = f"doc_{suffix}"
+    source_id = legacy_source_id(VALIDATION_SCOPE.project_id, document_id)
     revision_id = f"rev_{suffix}"
     now = datetime(2026, 8, 28, 9, 0)
     async with engine.begin() as connection:
-        from tap.modules.access.adapters.validation import VALIDATION_SCOPE
         from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
         from tap.platform.db.project_scope import scope_values
 
         await connection.execute(
             knowledge_source.insert().values(
                 **scope_values(VALIDATION_SCOPE),
-                source_id="src_" + suffix,
+                source_id=source_id,
                 name="fixture",
                 created_at=now,
                 updated_at=now,
@@ -201,7 +202,7 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "now,:now)"
             ),
             {
-                "source_id": "src_" + suffix,
+                "source_id": source_id,
                 "document_id": document_id,
                 "filename": f"{suffix}.md",
                 "source_hash": SOURCE_HASH,
@@ -222,7 +223,7 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
             ),
             {
                 "revision_id": revision_id,
-                "source_id": "src_" + suffix,
+                "source_id": source_id,
                 "document_id": document_id,
                 "source_hash": SOURCE_HASH,
                 "normalized": f"tapper-artifacts/revisions/{revision_id}/normalized-v1.json",
@@ -251,14 +252,14 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "chunk_id": f"h_{suffix}",
                 "logical_id": f"lc_{suffix}",
                 "revision_id": revision_id,
-                "source_id": "src_" + suffix,
+                "source_id": source_id,
                 "document_id": document_id,
                 "anchor_json": ANCHOR_JSON,
                 "chunk_hash": CHUNK_HASH,
                 "now": now,
             },
         )
-    return ReadyDocumentRevision(document_id, revision_id, SOURCE_HASH)
+    return ReadyDocumentRevision(document_id, revision_id, SOURCE_HASH, source_id)
 
 
 def snapshot(
@@ -372,7 +373,7 @@ def test_ready_lookup_rejects_current_revision_owned_by_another_document() -> No
                         resource_refs=(
                             ResourceRef(
                                 SourceFamily.DOC,
-                                first.document_id,
+                                first.source_id,
                                 ResourceMode.SCOPE,
                             ),
                         ),
@@ -877,7 +878,12 @@ def test_citation_lookup_joins_answer_ownership_and_rechecks_current_document() 
 
             assert lookup is not None
             assert lookup.answer_trace_id == "trace-lookup"
-            assert lookup.selected_revisions == (selected,)
+            # Historical selected JSON stays Document-based; normalized associations own Source.
+            assert lookup.selected_revisions == (
+                ReadyDocumentRevision(
+                    selected.document_id, selected.revision_id, selected.source_content_hash
+                ),
+            )
             assert lookup.document is not None
             assert lookup.document.filename == "a.md"
             assert lookup.manifest is not None
@@ -972,7 +978,7 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
                             "trace_id": answer["trace_id"],
                             "revision_id": first.revision_id,
                             "document_id": first.document_id,
-                            "source_id": "src_a",
+                            "source_id": first.source_id,
                             "source_content_hash": SOURCE_HASH,
                             "ordinal": 0,
                         }
@@ -986,12 +992,13 @@ def test_concurrent_retention_is_globally_serialized_and_cascades_old_citations(
                         "r_id,identity_mode,identity_origin,citation_id,trace_id,document_id,re"
                         "vision_id,chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
                         "created_at) VALUES "
-                        "('src_a','local','tapper-demo','tapper-local-user','validat"
+                        "(:source_id,'local','tapper-demo','tapper-local-user','validat"
                         "ion','VALIDATION','old-citation','old-0000',:document_id,:revision_id,"
                         ":chunk_id,:source_hash,:chunk_hash,:anchor_json,:created_at)"
                     ),
                     {
                         "document_id": first.document_id,
+                        "source_id": first.source_id,
                         "revision_id": first.revision_id,
                         "chunk_id": "h_a",
                         "source_hash": SOURCE_HASH,

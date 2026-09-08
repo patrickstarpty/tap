@@ -6,7 +6,8 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from fastapi import Request
+from fastapi import Header, Request
+from fastapi.exceptions import RequestValidationError
 
 from tap.contracts.http import (
     CitationPreview,
@@ -20,6 +21,10 @@ from tap.contracts.http import (
     ReadyHealth,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
+    SourceAccepted,
+    SourceDetail,
+    SourcePage,
+    SourceRetryRequest,
 )
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -39,15 +44,31 @@ class KnowledgeHttpService(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
 
-    async def upload(self, upload: UploadInput) -> DocumentAccepted: ...
+    async def upload_source(
+        self, upload: UploadInput, key: str, correlation: str
+    ) -> SourceAccepted: ...
+    async def list_sources(self, cursor: str | None, limit: int) -> SourcePage: ...
+    async def get_source(self, source_id: str, cursor: str | None, limit: int) -> SourceDetail: ...
+    async def retry_source(
+        self, source_id: str, body: SourceRetryRequest, key: str, correlation: str
+    ) -> SourceAccepted: ...
+    async def delete_source(self, source_id: str, key: str, correlation: str) -> None: ...
+
+    async def upload(
+        self, upload: UploadInput, key: str | None = None, correlation: str | None = None
+    ) -> DocumentAccepted: ...
 
     async def list_documents(self, cursor: str | None, limit: int) -> DocumentPage: ...
 
     async def get_document(self, document_id: str) -> DocumentDetail: ...
 
-    async def retry_document(self, document_id: str) -> DocumentAccepted: ...
+    async def retry_document(
+        self, document_id: str, key: str | None = None, correlation: str | None = None
+    ) -> DocumentAccepted: ...
 
-    async def delete_document(self, document_id: str) -> None: ...
+    async def delete_document(
+        self, document_id: str, key: str | None = None, correlation: str | None = None
+    ) -> None: ...
 
     async def answer(self, request: RetrievalAnswerRequest) -> RetrievalAnswerResponse: ...
 
@@ -101,3 +122,20 @@ def readiness_service(request: Request) -> ReadinessHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.readiness if isinstance(services, HttpServices) else None
     return service or _UNCONFIGURED_READINESS
+
+
+def source_command_key(
+    request: Request, idempotency_key: str = Header(min_length=1, max_length=128)
+) -> str:
+    if len(request.headers.getlist("idempotency-key")) != 1 or not idempotency_key.strip():
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("header", "idempotency-key"),
+                    "msg": "One nonblank Idempotency-Key is required",
+                    "input": None,
+                }
+            ]
+        )
+    return idempotency_key

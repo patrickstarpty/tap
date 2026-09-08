@@ -20,6 +20,7 @@ from tap.interfaces.http.routes.citations import router as citations_router
 from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
+from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sources_router
 from tap.interfaces.http.scope import resolve_project_scope
 from tap.modules.access.domain.context import IdentityMode
 from tap.modules.access.domain.policy import AuthorizationDenied
@@ -86,7 +87,12 @@ def create_app(
     async def project_path(project_id: str = Path(min_length=1, max_length=128)) -> str:
         return project_id
 
-    for router in (knowledge_documents_router, knowledge_answers_router, citations_router):
+    for router in (
+        knowledge_sources_router,
+        knowledge_documents_router,
+        knowledge_answers_router,
+        citations_router,
+    ):
         app.include_router(
             router,
             prefix="/api/v1/projects/{project_id}",

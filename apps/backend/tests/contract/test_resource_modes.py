@@ -57,7 +57,7 @@ FIRST_VERSION_CONTENT = "Authorization uses policy version one."
 SECOND_VERSION_CONTENT = "Authorization uses policy version two."
 
 
-def policy_context() -> RetrievalPolicyContext:
+def policy_context(grants: tuple[ResourceGrant, ...] | None = None) -> RetrievalPolicyContext:
     subject = VerifiedSubjectFacts(
         tenant_id="tenant-a",
         user_id="user-1",
@@ -77,7 +77,8 @@ def policy_context() -> RetrievalPolicyContext:
         acl_digest="sha256:acl-17",
         policy_version="policy-17",
         decision_id="decision-17",
-        resource_grants=(
+        resource_grants=grants
+        or (
             ResourceGrant(
                 family="code",
                 source_id="repo:checkout:payment.py",
@@ -454,3 +455,17 @@ async def test_anchored_scope_without_server_subtree_fails_before_model_or_searc
         )
 
     assert search.executions == []
+
+
+def test_same_source_grants_resolve_by_explicit_revision_and_refuse_ambiguity():
+    from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
+
+    first = policy_context().resource_grants[0]
+    second = replace(first, revision="b" * 40, source_content_hash=OTHER_SOURCE_HASH)
+    policy = policy_context((first, second))
+    ref = ResourceRef(
+        SourceFamily.CODE, first.source_id, ResourceMode.SCOPE, requested_revision=second.revision
+    )
+    assert AuthorizedRetrieval._resolve_resource(ref, policy).revision == second.revision
+    with pytest.raises(AuthorizationDenied):
+        AuthorizedRetrieval._resolve_resource(replace(ref, requested_revision=None), policy)

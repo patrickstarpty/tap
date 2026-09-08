@@ -10,8 +10,11 @@ import {
 } from "react";
 
 import {
-  useDocumentListQuery,
-  useUploadDocumentMutation,
+  useSourceListQuery,
+  useUploadSourceMutation,
+  useSourceDetailQuery,
+  useRetrySourceMutation,
+  useDeleteSourceMutation,
 } from "../../features/knowledge/api/queries";
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
@@ -49,6 +52,8 @@ import {
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
+import { AccessibleDialog } from "./prototype/AccessibleDialog";
+import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import {
   appendTurn,
   createConversation,
@@ -420,27 +425,191 @@ function ProjectLibraryWorkspace({
   projectId,
   copy,
   sources,
+  loadState,
+  onReload,
 }: {
   projectId: string;
   copy: PrototypeCopy;
   sources: readonly LibrarySource[];
+  loadState: "loading" | "loaded" | "error";
+  onReload: () => void;
 }) {
-  const upload = useUploadDocumentMutation(projectId);
+  const upload = useUploadSourceMutation(projectId);
+  const uploadIntents = useRef(new WeakMap<File, string>());
+  const [inspected, setInspected] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const opener = useRef<HTMLElement | null>(null);
+  const detail = useSourceDetailQuery(projectId, inspected);
+  const retry = useRetrySourceMutation(projectId);
+  const deletion = useDeleteSourceMutation(projectId);
+  const mutationIntents = useRef(new Map<string, string>());
+  const intentKey = (intent: string) => {
+    const key = mutationIntents.current.get(intent) ?? crypto.randomUUID();
+    mutationIntents.current.set(intent, key);
+    return key;
+  };
+  const busy = retry.isPending || deletion.isPending;
+  const problem = retry.error ?? deletion.error ?? detail.error;
+  const close = () => {
+    if (!busy) {
+      setInspected(null);
+      setConfirmDelete(false);
+      retry.reset();
+      deletion.reset();
+    }
+  };
   return (
-    <LibraryWorkspace
-      copy={copy}
-      sources={sources}
-      onAddSource={async (file) => {
-        await upload.mutateAsync({ file, onProgress: () => undefined });
-      }}
-    />
+    <>
+      <LibraryWorkspace
+        copy={copy}
+        sources={sources}
+        loadState={loadState}
+        onReload={onReload}
+        onInspectSource={(sourceId, trigger) => {
+          opener.current = trigger;
+          setInspected(sourceId);
+        }}
+        onAddSource={async (file) => {
+          const idempotencyKey =
+            uploadIntents.current.get(file) ?? crypto.randomUUID();
+          uploadIntents.current.set(file, idempotencyKey);
+          await upload.mutateAsync({
+            file,
+            onProgress: () => undefined,
+            idempotencyKey,
+          });
+          uploadIntents.current.delete(file);
+        }}
+      />
+      {inspected !== null && (
+        <AccessibleDialog
+          ariaLabel={
+            detail.data?.name ??
+            sources.find((source) => source.id === inspected)?.name ??
+            copy.sources.heading
+          }
+          className="tap-add-source-dialog"
+          opener={opener.current}
+          onClose={close}
+        >
+          <h2>{detail.data?.name ?? copy.sources.heading}</h2>
+          <Button onClick={close} disabled={busy}>
+            {copy.sources.close}
+          </Button>
+          {detail.isPending && <p role="status">{copy.sources.loading}</p>}
+          {problem !== null && (
+            <div role="alert">
+              <p>{copy.sources.mutationFailed}</p>
+              {problem instanceof KnowledgeClientError && (
+                <small>
+                  {problem.code} · {problem.correlationId}
+                </small>
+              )}
+              <Button
+                onClick={() => {
+                  void detail.refetch();
+                }}
+                disabled={busy}
+              >
+                {copy.sources.retry}
+              </Button>
+            </div>
+          )}
+          {detail.data !== undefined && (
+            <>
+              <p>
+                {detail.data.documentCount} {copy.sources.documents} ·{" "}
+                {detail.data.readyCount} {copy.sources.ready} ·{" "}
+                {detail.data.failedCount} {copy.sources.failed}
+              </p>
+              <ul>
+                {detail.data.documents.items.map((item) => (
+                  <li key={item.documentId}>
+                    <strong>{item.filename}</strong>
+                    <p>
+                      {item.status} · {item.stage}
+                    </p>
+                    <small>{item.revisionId}</small>
+                    {item.errorCode != null && <p>{item.errorCode}</p>}
+                    {item.status === "failed" && (
+                      <Button
+                        disabled={busy}
+                        aria-label={`${copy.sources.retryDocument} ${item.filename}`}
+                        onClick={() => {
+                          const intent = `retry:${inspected}:${item.documentId}:${item.revisionId}:${item.attempt}`;
+                          void retry
+                            .mutateAsync({
+                              sourceId: inspected,
+                              request: {
+                                documentId: item.documentId,
+                                revisionId: item.revisionId,
+                                expectedAttempt: item.attempt,
+                              },
+                              idempotencyKey: intentKey(intent),
+                            })
+                            .then(() => {
+                              mutationIntents.current.delete(intent);
+                            })
+                            .catch(() => undefined);
+                        }}
+                      >
+                        {copy.sources.retryDocument}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {confirmDelete ? (
+                <div>
+                  <p>{copy.sources.deleteWarning}</p>
+                  <Button
+                    danger
+                    disabled={busy}
+                    onClick={() => {
+                      const intent = `delete:${inspected}`;
+                      void deletion
+                        .mutateAsync({
+                          sourceId: inspected,
+                          idempotencyKey: intentKey(intent),
+                        })
+                        .then(() => {
+                          mutationIntents.current.delete(intent);
+                          setInspected(null);
+                          setConfirmDelete(false);
+                        })
+                        .catch(() => undefined);
+                    }}
+                  >
+                    {copy.sources.confirmDelete}
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    {copy.sources.cancelDelete}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  danger
+                  disabled={busy}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  {copy.sources.deleteSource}
+                </Button>
+              )}
+            </>
+          )}
+        </AccessibleDialog>
+      )}
+    </>
   );
 }
 
 export function TapProductPrototype() {
   const runtime = useRuntimeModeQuery();
   const projectId = runtime.isSuccess ? runtime.data.projectId : null;
-  const documentsQuery = useDocumentListQuery(projectId);
+  const sourcesQuery = useSourceListQuery(projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
       ? null
@@ -464,6 +633,30 @@ export function TapProductPrototype() {
   const [conversations, setConversations] = useState<readonly Conversation[]>(
     () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
   );
+  const selectionProject = useRef(projectId);
+  useEffect(() => {
+    const changedProject = selectionProject.current !== projectId;
+    selectionProject.current = projectId;
+    if (!changedProject && !sourcesQuery.isSuccess) return;
+    const readyIds = new Set(
+      (sourcesQuery.data?.items ?? [])
+        .filter((source) => source.readyCount > 0)
+        .map((source) => source.sourceId),
+    );
+    setConversations((current) => {
+      let changed = false;
+      const next = current.map((conversation) => {
+        const selectedSourceIds = changedProject
+          ? []
+          : conversation.selectedSourceIds.filter((id) => readyIds.has(id));
+        if (selectedSourceIds.length === conversation.selectedSourceIds.length)
+          return conversation;
+        changed = true;
+        return { ...conversation, selectedSourceIds };
+      });
+      return changed ? next : current;
+    });
+  }, [projectId, sourcesQuery.data, sourcesQuery.isSuccess]);
   const [activeConversationId, setActiveConversationId] = useState(
     () => initialSnapshot?.activeConversationId ?? "chat-1",
   );
@@ -638,23 +831,23 @@ export function TapProductPrototype() {
     mobileTapperDrawerOpen,
   ]);
 
-  const documentSources = useMemo<readonly LibrarySource[]>(
+  const sourceItems = useMemo<readonly LibrarySource[]>(
     () =>
-      (documentsQuery.data?.items ?? []).map((document) => ({
-        id: document.documentId,
-        name: document.filename,
+      (sourcesQuery.data?.items ?? []).map((source) => ({
+        id: source.sourceId,
+        name: source.name,
         origin: "knowledge-base",
-        type: document.filename.split(".").pop()?.toUpperCase() ?? "FILE",
+        type: source.name.split(".").pop()?.toUpperCase() ?? "FILE",
         status:
-          document.status === "ready"
+          source.readyCount > 0
             ? "ready"
-            : document.status === "failed"
+            : source.failedCount === source.documentCount
               ? "failed"
               : "processing",
         description: `${copy.sources.knowledgeSource} · ${
-          document.status === "ready"
+          source.readyCount > 0
             ? copy.library.ready
-            : document.status === "failed"
+            : source.failedCount === source.documentCount
               ? copy.library.failed
               : copy.library.processing
         }`,
@@ -664,10 +857,10 @@ export function TapProductPrototype() {
       copy.library.processing,
       copy.library.ready,
       copy.sources.knowledgeSource,
-      documentsQuery.data?.items,
+      sourcesQuery.data?.items,
     ],
   );
-  const sources = documentSources;
+  const sources = sourceItems;
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -1154,7 +1347,11 @@ export function TapProductPrototype() {
             >
               <KnowledgeSourcesPanel
                 copy={copy}
-                isLoading={projectId !== null && documentsQuery.isPending}
+                isLoading={projectId !== null && sourcesQuery.isPending}
+                isError={sourcesQuery.isError}
+                onRetry={() => {
+                  void sourcesQuery.refetch();
+                }}
                 onCollapse={dismissKnowledgeSources}
                 onToggleSource={(sourceId) =>
                   updateActiveConversation((conversation) => ({
@@ -1204,6 +1401,16 @@ export function TapProductPrototype() {
               projectId={projectId}
               copy={copy}
               sources={sources}
+              loadState={
+                sourcesQuery.isPending
+                  ? "loading"
+                  : sourcesQuery.isError
+                    ? "error"
+                    : "loaded"
+              }
+              onReload={() => {
+                void sourcesQuery.refetch();
+              }}
             />
           )
         ) : null}

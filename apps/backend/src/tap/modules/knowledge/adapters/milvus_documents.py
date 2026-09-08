@@ -104,6 +104,18 @@ class TapperMilvusConfig:
     environment: str = TAPPER_ENVIRONMENT
     classification_rank: int = TAPPER_CLASSIFICATION_RANK
 
+    @classmethod
+    def for_schema(cls, schema_version: str) -> TapperMilvusConfig:
+        if schema_version == "doc-schema-v1":
+            return cls()
+        if schema_version == "doc-schema-v2":
+            return cls(
+                physical_collection="kb_doc_v2_tapper_demo",
+                schema_version=schema_version,
+                corpus_version="tapper-demo-v2",
+            )
+        raise ValueError("unsupported Tapper Milvus runtime profile")
+
     def __post_init__(self) -> None:
         if (
             self.physical_collection,
@@ -118,10 +130,14 @@ class TapperMilvusConfig:
             self.environment,
             self.classification_rank,
         ) != (
-            TAPPER_PHYSICAL_COLLECTION,
+            "kb_doc_v2_tapper_demo"
+            if self.schema_version == "doc-schema-v2"
+            else TAPPER_PHYSICAL_COLLECTION,
             TAPPER_ALIAS,
-            TAPPER_SCHEMA_VERSION,
-            TAPPER_CORPUS_VERSION,
+            self.schema_version
+            if self.schema_version in {"doc-schema-v1", "doc-schema-v2"}
+            else TAPPER_SCHEMA_VERSION,
+            "tapper-demo-v2" if self.schema_version == "doc-schema-v2" else TAPPER_CORPUS_VERSION,
             TAPPER_EMBEDDING_MODEL,
             TAPPER_VECTOR_DIMENSION,
             TAPPER_TENANT_ID,
@@ -179,6 +195,7 @@ class _IndexTargetStage(StrEnum):
     LOAD = "load"
     GRANTS = "grants"
     ALIAS = "alias"
+    MIGRATION_REQUIRED = "migration-required"
     AUTHORITY_SYNC = "authority-sync"
     CLEANUP = "cleanup"
 
@@ -265,7 +282,7 @@ class MilvusDocumentIndex:
                         tuple(str(item.chunk_id) for item in chunks),
                     )
                     raise IndexFenced("Tapper revision has a durable deletion fence")
-                await self._require_revision_parity(physical, work, chunks)
+                await self._require_revision_parity(physical, work, chunks, rows)
         except asyncio.CancelledError:
             raise
         except (IndexFenced, IndexReconciliationFailed):
@@ -302,7 +319,7 @@ class MilvusDocumentIndex:
                     {
                         "chunk_id": row["chunk_id"],
                         "source_type": "tapper_fence",
-                        "source_id": target.document_id,
+                        "source_id": row["source_id"],
                     },
                 ):
                     raise IndexReconciliationFailed("Tapper deletion fence did not persist exactly")
@@ -395,6 +412,125 @@ class MilvusDocumentIndex:
                     raise recorded_error
             raise errors[0]
 
+    async def migrate_from_snapshot(
+        self,
+        previous: MilvusDocumentIndex,
+        snapshot: Callable[[], Awaitable[tuple[ReadyRevisionArtifacts, ...]]],
+    ) -> RebuildReceipt:
+        """Explicit v1 to v2 migration under one shared durable alias lease."""
+        self._require_migration_peer(previous)
+        try:
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                old = await previous._current_target_locked(authority)
+                records = await snapshot()
+                # The destination validates canonical SQL ownership before any
+                # generation is created; old rows must match that exact corpus.
+                for record in records:
+                    self._ownership_fields(record.work)
+                await previous._require_snapshot_parity(old, records)
+                return await self._rebuild_locked(authority, records, previous=previous)
+        except RebuildRejected:
+            raise
+        except Exception as error:
+            raise RebuildRejected(("migration_preflight_rejected",)) from error
+
+    def _require_migration_peer(self, previous: MilvusDocumentIndex) -> None:
+        if (
+            not isinstance(previous, MilvusDocumentIndex)
+            or self._config.schema_version != "doc-schema-v2"
+            or previous._config.schema_version != "doc-schema-v1"
+            or self._config.alias != previous._config.alias
+            or self._coordinator is not previous._coordinator
+        ):
+            raise ValueError("migration requires explicit v1/v2 profiles and shared authority")
+
+    async def rollback_to(
+        self,
+        previous: MilvusDocumentIndex,
+        retained_physical: str,
+        snapshot: Callable[[], Awaitable[tuple[ReadyRevisionArtifacts, ...]]],
+    ) -> IndexTargetReceipt:
+        self._require_migration_peer(previous)
+        try:
+            async with self._coordinator.mutation(self._config.alias) as authority:
+                current = await self._current_target_locked(authority)
+                previous._require_target_name(retained_physical)
+                await previous._require_descriptor(retained_physical)
+                retained = await authority.ownership(retained_physical)
+                active = await authority.ownership(current)
+                if (
+                    retained is None
+                    or retained.status != "retained"
+                    or active is None
+                    or active.predecessor_collection != retained_physical
+                ):
+                    raise IndexUnavailable("rollback retention lineage changed")
+                records = await snapshot()
+                for record in records:
+                    self._ownership_fields(record.work)
+                    if await authority.is_fenced(record.work.revision_id):
+                        raise IndexFenced("rollback snapshot includes a tombstone")
+                await previous._require_loaded(retained_physical)
+                try:
+                    await previous._ensure_exact_grants(retained_physical)
+                    await previous._require_snapshot_parity(retained_physical, records)
+                except BaseException:
+                    await previous._revoke_exact_grants(retained_physical)
+                    raise
+                try:
+                    try:
+                        await self._provisioner.alter_alias(self._config.alias, retained_physical)
+                    except Exception:
+                        if (
+                            await self._reader.describe_alias(self._config.alias)
+                            != retained_physical
+                        ):
+                            raise
+                    await authority.reactivate_retained(retained, expected_current=current)
+                except BaseException:
+                    # A lost database response is resolved from durable truth.
+                    if (await authority.state())[1] != retained_physical:
+                        await self._provisioner.alter_alias(self._config.alias, current)
+                        await previous._revoke_exact_grants(retained_physical)
+                        raise
+                await self._revoke_exact_grants(current)
+                return IndexTargetReceipt(retained_physical, self._config.alias)
+        except RebuildRejected:
+            raise
+        except Exception as error:
+            raise RebuildRejected(("rollback_rejected",)) from error
+
+    async def _require_snapshot_parity(
+        self, physical: str, records: tuple[ReadyRevisionArtifacts, ...]
+    ) -> None:
+        if not isinstance(records, tuple):
+            raise ValueError("migration snapshot must be closed")
+        expected_rows = tuple(
+            row
+            for record in records
+            for row in self._revision_rows(
+                physical, record.work, record.chunks, record.embeddings, record.index_version
+            )
+        )
+        fields = tuple(
+            key
+            for key in (expected_rows[0] if expected_rows else {"chunk_id": None})
+            if key != "dense_vector"
+        )
+        actual = await self._reader.query_persisted_rows(
+            physical, 'source_type != "tapper_fence"', fields, _QUERY_LIMIT
+        )
+        expected = {row["chunk_id"]: {key: row[key] for key in fields} for row in expected_rows}
+        observed = {row.get("chunk_id"): dict(row) for row in actual}
+        if (
+            len(expected) != len(expected_rows)
+            or len(observed) != len(actual)
+            or observed != expected
+        ):
+            raise IndexReconciliationFailed(
+                "migration corpus does not match authoritative artifacts"
+            )
+
     async def _ensure_target_locked(
         self,
         authority: ProjectionMutationLease,
@@ -405,6 +541,11 @@ class MilvusDocumentIndex:
         physical = self._config.physical_collection
         stage.set(_IndexTargetStage.DISCOVERY)
         alias_target = await self._reader.describe_alias(self._config.alias)
+        if self._config.schema_version == "doc-schema-v2" and is_owned_physical_collection(
+            "kb_doc_v1_tapper_demo", alias_target, exact_generation_names=True
+        ):
+            stage.set(_IndexTargetStage.MIGRATION_REQUIRED)
+            raise IndexUnavailable("explicit v1-to-v2 migration required")
         if alias_target is None:
             if not await self._reader.collection_exists(physical):
                 stage.set(_IndexTargetStage.COLLECTION_CREATE)
@@ -534,8 +675,10 @@ class MilvusDocumentIndex:
         self,
         authority: ProjectionMutationLease,
         records: tuple[ReadyRevisionArtifacts, ...],
+        *,
+        previous: MilvusDocumentIndex | None = None,
     ) -> RebuildReceipt:
-        old = await self._current_target_locked(authority)
+        old = await (previous or self)._current_target_locked(authority)
         fresh = f"{self._config.physical_collection}_{secrets.token_hex(6)}"
         operation_id = secrets.token_hex(16)
         created = False
@@ -548,17 +691,22 @@ class MilvusDocumentIndex:
             await self._require_descriptor(fresh)
             await self._require_loaded(fresh)
 
+            fence_document_field = (
+                "document_id"
+                if (previous or self)._config.schema_version == "doc-schema-v2"
+                else "source_id"
+            )
             old_fence_rows = await self._reader.query_persisted_rows(
                 old,
                 'source_type == "tapper_fence"',
-                ("source_revision", "source_id", "source_type"),
+                ("source_revision", fence_document_field, "source_type"),
                 _QUERY_LIMIT,
             )
             if len(old_fence_rows) >= _QUERY_LIMIT:
                 raise IndexReconciliationFailed("Tapper durable fence snapshot exceeds its bound")
             for row in old_fence_rows:
                 revision = row.get("source_revision")
-                document_id = row.get("source_id")
+                document_id = row.get(fence_document_field)
                 if (
                     not isinstance(revision, str)
                     or not revision.startswith("fence:")
@@ -576,6 +724,7 @@ class MilvusDocumentIndex:
                     DeletionTarget(document_id, revision_id, (), ()),
                 )
                 for revision_id, document_id in durable_fences
+                if self._config.schema_version == "doc-schema-v1"
             )
             for fence_batch in _batches(fence_rows, _UPSERT_BATCH):
                 await self._writer.upsert(fresh, fence_batch)
@@ -603,7 +752,14 @@ class MilvusDocumentIndex:
             await self._ensure_exact_grants(fresh)
             await self._require_fence_parity(fresh, fence_rows)
             for record in active_records:
-                await self._require_revision_parity(fresh, record.work, record.chunks)
+                await self._require_revision_parity(
+                    fresh,
+                    record.work,
+                    record.chunks,
+                    self._revision_rows(
+                        fresh, record.work, record.chunks, record.embeddings, record.index_version
+                    ),
+                )
 
             try:
                 await self._provisioner.alter_alias(self._config.alias, fresh)
@@ -615,18 +771,24 @@ class MilvusDocumentIndex:
 
             old_ownership = await authority.ownership(old)
             await self._revoke_exact_grants(old)
-            await self._activate_build_resolved(authority, ownership)
+            await self._activate_build_resolved(
+                authority, ownership, retain_predecessor=previous is not None
+            )
         except asyncio.CancelledError as cancellation:
-            cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
+            cleanup = await (previous or self)._settle_rebuild_rollback(
+                authority, old, ownership, created
+            )
             cancellation.add_note("Tapper rebuild cleanup facts: " + ",".join(cleanup))
             raise
         except Exception as error:
-            cleanup = await self._settle_rebuild_rollback(authority, old, ownership, created)
+            cleanup = await (previous or self)._settle_rebuild_rollback(
+                authority, old, ownership, created
+            )
             raise RebuildRejected(cleanup) from error
 
         cleanup_fact = (
             f"cleanup_queued:{old}"
-            if old_ownership is not None and old_ownership.status == "active"
+            if previous is None and old_ownership is not None and old_ownership.status == "active"
             else f"retained_legacy_physical:{old}"
         )
         return RebuildReceipt(
@@ -640,9 +802,14 @@ class MilvusDocumentIndex:
         self,
         authority: ProjectionMutationLease,
         ownership: ProjectionOwnershipReceipt,
+        *,
+        retain_predecessor: bool = False,
     ) -> None:
         try:
-            await authority.activate_build(ownership)
+            if retain_predecessor:
+                await authority.activate_build(ownership, retain_predecessor=True)
+            else:
+                await authority.activate_build(ownership)
             return
         except BaseException:
             _, recorded = await authority.state()
@@ -664,7 +831,7 @@ class MilvusDocumentIndex:
         return build_doc_collection_schema(
             DocCollectionMetadata(
                 schema_version=self._config.schema_version,
-                schema_sha256=doc_schema_sha256(),
+                schema_sha256=doc_schema_sha256(self._config.schema_version),
                 corpus_version=self._config.corpus_version,
                 embedding_model_version=self._config.embedding_model,
                 vector_dimension=self._config.vector_dimension,
@@ -698,7 +865,7 @@ class MilvusDocumentIndex:
         expected = (
             SourceFamily.DOC,
             self._config.schema_version,
-            doc_schema_sha256(),
+            doc_schema_sha256(self._config.schema_version),
             self._config.corpus_version,
             self._config.embedding_model,
             self._config.vector_dimension,
@@ -776,6 +943,7 @@ class MilvusDocumentIndex:
             raise ValueError("Tapper revision provenance is inconsistent")
         if len({str(chunk.chunk_id) for chunk in chunks}) != len(chunks):
             raise ValueError("Tapper revision chunk identities must be unique")
+        ownership = self._ownership_fields(work)
         rows: list[Mapping[str, object]] = []
         for chunk, vector in zip(chunks, embeddings.vectors, strict=True):
             if (
@@ -827,7 +995,7 @@ class MilvusDocumentIndex:
                     "title": work.filename,
                     "content": chunk.content,
                     "content_role": "source",
-                    "tenant_id": self._config.tenant_id,
+                    **ownership,
                     "project_id": self._config.project_id,
                     "allowed_group_ids": [self._config.group_id],
                     "classification_rank": self._config.classification_rank,
@@ -838,7 +1006,6 @@ class MilvusDocumentIndex:
                     "corpus_version": self._config.corpus_version,
                     "schema_version": self._config.schema_version,
                     "embedding_model_version": self._config.embedding_model,
-                    "source_id": work.document_id,
                     "source_type": "doc",
                     "revision_kind": "blob_version",
                     "source_revision": work.revision_id,
@@ -850,6 +1017,22 @@ class MilvusDocumentIndex:
                 }
             )
         return tuple(rows)
+
+    def _ownership_fields(self, value: IngestionWork | DeletionTarget) -> dict[str, object]:
+        if self._config.schema_version == "doc-schema-v1":
+            return {"tenant_id": self._config.tenant_id, "source_id": value.document_id}
+        if (
+            value.enterprise_id != self._config.tenant_id
+            or value.project_id != self._config.project_id
+            or not isinstance(value.source_id, str)
+            or re.fullmatch(r"src_[0-9a-f]{32}", value.source_id) is None
+        ):
+            raise ValueError("canonical projection requires trusted SQL ownership")
+        return {
+            "enterprise_id": value.enterprise_id,
+            "source_id": value.source_id,
+            "document_id": value.document_id,
+        }
 
     def _fence_row(self, physical: str, target: DeletionTarget) -> Mapping[str, object]:
         digest = hashlib.sha256(target.revision_id.encode("utf-8")).hexdigest()
@@ -863,7 +1046,7 @@ class MilvusDocumentIndex:
             "title": None,
             "content": "tapper deletion fence",
             "content_role": "source",
-            "tenant_id": self._config.tenant_id,
+            **self._ownership_fields(target),
             "project_id": self._config.project_id,
             "allowed_group_ids": [self._config.group_id],
             "classification_rank": self._config.classification_rank,
@@ -874,7 +1057,6 @@ class MilvusDocumentIndex:
             "corpus_version": self._config.corpus_version,
             "schema_version": self._config.schema_version,
             "embedding_model_version": self._config.embedding_model,
-            "source_id": target.document_id,
             "source_type": "tapper_fence",
             "revision_kind": "deletion_fence",
             "source_revision": "fence:" + target.revision_id,
@@ -927,7 +1109,24 @@ class MilvusDocumentIndex:
         physical: str,
         work: IngestionWork,
         chunks: tuple[ChunkDraft, ...],
+        expected_rows: tuple[Mapping[str, object], ...] | None = None,
     ) -> None:
+        if self._config.schema_version == "doc-schema-v2":
+            if not expected_rows:
+                raise IndexReconciliationFailed(
+                    "canonical readback requires complete expected rows"
+                )
+            fields = tuple(key for key in expected_rows[0] if key != "dense_vector")
+            rows = await self._reader.query_persisted_rows(
+                physical, _eq("source_revision", work.revision_id), fields, _QUERY_LIMIT
+            )
+            owned_expected = {
+                row["chunk_id"]: {key: row[key] for key in fields} for row in expected_rows
+            }
+            owned_actual = {row.get("chunk_id"): dict(row) for row in rows}
+            if len(owned_actual) != len(rows) or owned_actual != owned_expected:
+                raise IndexReconciliationFailed("canonical readback complete row parity failed")
+            return
         rows = await self._reader.query_persisted_rows(
             physical,
             _eq("source_revision", work.revision_id),

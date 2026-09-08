@@ -811,6 +811,9 @@ def _deletion_target(work: IngestionWork) -> DeletionTarget:
         if locator is not None
     )
     return DeletionTarget(
+        source_id=work.source_id,
+        enterprise_id=work.enterprise_id,
+        project_id=work.project_id,
         document_id=work.document_id,
         revision_id=work.revision_id,
         chunk_ids=tuple(item.chunk_id for item in work.manifest),

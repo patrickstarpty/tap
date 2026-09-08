@@ -1,12 +1,19 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   document,
+  documentDetail,
   fakeKnowledgeClient,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
@@ -43,6 +50,125 @@ function renderPrototype() {
 
   return renderKnowledgeApp(<TapProductPrototype />, { api });
 }
+
+it("uses canonical Source API identities in the existing source panel", async () => {
+  const api = fakeKnowledgeClient().withDocuments([
+    document({ filename: "Legacy document only" }),
+  ]);
+  api.listSources = vi.fn().mockResolvedValue({
+    items: [
+      {
+        sourceId: "src_" + "a".repeat(32),
+        name: "Canonical policy",
+        documentCount: 2,
+        readyCount: 1,
+        failedCount: 0,
+        createdAt: "2026-09-08T00:00:00Z",
+      },
+    ],
+    nextCursor: null,
+  });
+  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const checkbox = await screen.findByRole("checkbox", {
+    name: /Canonical policy/,
+  });
+  await userEvent.click(checkbox);
+  expect(checkbox).toBeChecked();
+  expect(api.listSources).toHaveBeenCalled();
+  expect(
+    screen.queryByRole("checkbox", { name: /Legacy document only/ }),
+  ).not.toBeInTheDocument();
+  await act(async () =>
+    queryClient.setQueryData(["runtime-mode"], {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: "other-project",
+      actorId: "actor-test",
+    }),
+  );
+  await waitFor(() => expect(screen.getByText("0 selected")).toBeVisible());
+});
+
+it("shows Source documents in Library and targets retry and confirmed deletion", async () => {
+  const api = fakeKnowledgeClient();
+  const source = {
+    sourceId: "src_" + "a".repeat(32),
+    name: "Canonical policy",
+    documentCount: 2,
+    readyCount: 1,
+    failedCount: 1,
+    createdAt: "2026-09-08T00:00:00Z",
+  };
+  api.listSources = vi
+    .fn()
+    .mockResolvedValue({ items: [source], nextCursor: null });
+  api.getSource = vi.fn().mockResolvedValue({
+    ...source,
+    documents: {
+      items: [
+        {
+          ...documentDetail({
+            documentId: "doc_a",
+            filename: "failed.txt",
+            status: "failed",
+            revisionId: "rev_a",
+          }),
+          sourceId: source.sourceId,
+          attempt: 2,
+        },
+      ],
+      nextCursor: null,
+    },
+  });
+  api.retrySource = vi.fn().mockResolvedValue({
+    source,
+    accepted: {
+      document: document({ sourceId: source.sourceId }),
+      duplicate: false,
+      jobId: "job_a",
+    },
+  });
+  api.deleteSource = vi.fn().mockResolvedValue(undefined);
+  renderKnowledgeApp(<TapProductPrototype />, { api });
+  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View Canonical policy" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Canonical policy",
+  });
+  expect(await within(dialog).findByText("failed.txt")).toBeVisible();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Retry failed.txt" }),
+  );
+  await waitFor(() =>
+    expect(api.retrySource).toHaveBeenCalledWith(
+      source.sourceId,
+      { documentId: "doc_a", revisionId: "rev_a", expectedAttempt: 2 },
+      expect.any(String),
+    ),
+  );
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Delete source" }),
+  );
+  expect(api.deleteSource).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Confirm delete" }),
+  );
+  await waitFor(() =>
+    expect(api.deleteSource).toHaveBeenCalledWith(
+      source.sourceId,
+      expect.any(String),
+    ),
+  );
+});
+
+it("distinguishes Library loading from an empty Source collection", async () => {
+  const api = fakeKnowledgeClient().deferList();
+  renderKnowledgeApp(<TapProductPrototype />, { api });
+  await userEvent.click(screen.getByRole("button", { name: "Library" }));
+  expect(screen.getByRole("status", { name: "Loading sources" })).toBeVisible();
+});
 
 function installPrototypeStyles() {
   const style = window.document.createElement("style");

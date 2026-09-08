@@ -10,6 +10,7 @@ from pathlib import Path
 
 EXPECTED_TABLES = {
     "knowledge_source",
+    "knowledge_source_command",
     "knowledge_source_legacy_map",
     "knowledge_answer_source",
     "knowledge_search_audit",

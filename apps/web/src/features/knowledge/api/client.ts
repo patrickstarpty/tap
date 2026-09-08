@@ -10,6 +10,7 @@ import type {
 } from "./types";
 
 const DOCUMENT_PATH = "/api/v1/projects/{project_id}/knowledge/documents";
+const SOURCE_PATH = "/api/v1/projects/{project_id}/knowledge/sources";
 
 const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
   ".docx":
@@ -196,6 +197,71 @@ export function createKnowledgeClient(
 
   return {
     projectId,
+    async listSources({ cursor, limit, signal }) {
+      const result = await http.GET(SOURCE_PATH, {
+        params: { path: { project_id: projectId }, query: { cursor, limit } },
+        signal,
+      });
+      return result.data!;
+    },
+    async getSource(sourceId, signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/sources/{source_id}",
+        {
+          params: {
+            path: { project_id: projectId, source_id: sourceId },
+            query: { limit: 50 },
+          },
+          signal,
+        },
+      );
+      return result.data!;
+    },
+    async uploadSource(
+      file,
+      onProgress,
+      signal,
+      idempotencyKey = crypto.randomUUID(),
+    ) {
+      onProgress(0);
+      const form = new FormData();
+      form.append("upload", canonicalUploadFile(file));
+      const result = await http.POST(SOURCE_PATH, {
+        params: {
+          path: { project_id: projectId },
+          header: { "idempotency-key": idempotencyKey },
+        },
+        body: { upload: file.name },
+        bodySerializer: () => form,
+        signal,
+      });
+      onProgress(1);
+      return result.data!;
+    },
+    async retrySource(sourceId, body, idempotencyKey = crypto.randomUUID()) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/sources/{source_id}/retry",
+        {
+          params: {
+            path: { project_id: projectId, source_id: sourceId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+          body,
+        },
+      );
+      return result.data!;
+    },
+    async deleteSource(sourceId, idempotencyKey = crypto.randomUUID()) {
+      await http.DELETE(
+        "/api/v1/projects/{project_id}/knowledge/sources/{source_id}",
+        {
+          params: {
+            path: { project_id: projectId, source_id: sourceId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+        },
+      );
+    },
     async listDocuments({ cursor, limit, signal }) {
       const result = await http.GET(DOCUMENT_PATH, {
         params: { path: { project_id: projectId }, query: { cursor, limit } },
@@ -229,7 +295,12 @@ export function createKnowledgeClient(
       return result.data;
     },
 
-    uploadDocument(file, onProgress, signal) {
+    uploadDocument(
+      file,
+      onProgress,
+      signal,
+      idempotencyKey = crypto.randomUUID(),
+    ) {
       return new Promise<DocumentAccepted>((resolve, reject) => {
         const request = xhrFactory();
         let settled = false;
@@ -252,6 +323,7 @@ export function createKnowledgeClient(
             ),
           ),
         );
+        request.setRequestHeader("Idempotency-Key", idempotencyKey);
         request.upload.onprogress = (event) => {
           if (event.lengthComputable && event.total > 0) {
             onProgress(Math.min(1, Math.max(0, event.loaded / event.total)));
@@ -294,11 +366,14 @@ export function createKnowledgeClient(
       });
     },
 
-    async retryDocument(documentId) {
+    async retryDocument(documentId, idempotencyKey = crypto.randomUUID()) {
       const result = await http.POST(
         "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry",
         {
-          params: { path: { project_id: projectId, document_id: documentId } },
+          params: {
+            path: { project_id: projectId, document_id: documentId },
+            header: { "idempotency-key": idempotencyKey },
+          },
         },
       );
       if (result.error !== undefined) {
@@ -311,11 +386,14 @@ export function createKnowledgeClient(
       return result.data;
     },
 
-    async deleteDocument(documentId) {
+    async deleteDocument(documentId, idempotencyKey = crypto.randomUUID()) {
       const result = await http.DELETE(
         "/api/v1/projects/{project_id}/knowledge/documents/{document_id}",
         {
-          params: { path: { project_id: projectId, document_id: documentId } },
+          params: {
+            path: { project_id: projectId, document_id: documentId },
+            header: { "idempotency-key": idempotencyKey },
+          },
         },
       );
       if (result.error !== undefined) {

@@ -22,6 +22,8 @@ import {
   useDeleteDocumentMutation,
   useRetryDocumentMutation,
   useUploadDocumentMutation,
+  useSourceListQuery,
+  useUploadSourceMutation,
 } from "./queries";
 import type {
   DocumentPage,
@@ -48,6 +50,69 @@ function cachedDocument(
 }
 
 describe("knowledge query mutations", () => {
+  it("loads project-scoped Sources and reuses a supplied upload intent key", async () => {
+    const source = {
+      sourceId: "src_" + "a".repeat(32),
+      name: "Policy",
+      documentCount: 1,
+      readyCount: 0,
+      failedCount: 0,
+      createdAt: "2026-09-08T00:00:00Z",
+    };
+    const listSources = vi
+      .fn()
+      .mockResolvedValue({ items: [source], nextCursor: null });
+    const uploadSource = vi.fn().mockResolvedValue({
+      source,
+      accepted: {
+        document: document({ sourceId: source.sourceId }),
+        duplicate: false,
+        jobId: "job_a",
+      },
+    });
+    const api = { ...fakeKnowledgeClient(), listSources, uploadSource };
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(
+      () => ({
+        list: useSourceListQuery("project-test"),
+        upload: useUploadSourceMutation("project-test"),
+      }),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() =>
+      expect(result.current.list.data?.items[0]?.sourceId).toBe(
+        source.sourceId,
+      ),
+    );
+    const file = new File(["policy"], "policy.txt");
+    const intent = { file, onProgress: vi.fn(), idempotencyKey: "intent-a" };
+    await act(async () => {
+      await result.current.upload.mutateAsync(intent);
+      await result.current.upload.mutateAsync(intent);
+    });
+    expect(uploadSource).toHaveBeenNthCalledWith(
+      1,
+      file,
+      intent.onProgress,
+      undefined,
+      "intent-a",
+    );
+    expect(uploadSource).toHaveBeenNthCalledWith(
+      2,
+      file,
+      intent.onProgress,
+      undefined,
+      "intent-a",
+    );
+  });
   it("polls every two seconds only until a nonterminal list settles", async () => {
     vi.useFakeTimers();
     const api = fakeKnowledgeClient()

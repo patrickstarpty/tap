@@ -16,6 +16,9 @@ import type {
   KnowledgeClient,
   RetrievalAnswerRequest,
   RetrievalAnswerResponse,
+  SourceAccepted,
+  SourcePage,
+  SourceRetryRequest,
 } from "./types";
 
 const DOCUMENT_LIMIT = 50;
@@ -82,6 +85,10 @@ function useProjectKnowledgeClient(projectId: string): KnowledgeClient {
 
 export const knowledgeKeys = {
   all: ["knowledge"] as const,
+  sources: (projectId: string | null) =>
+    ["knowledge", projectId, "sources"] as const,
+  source: (projectId: string, sourceId: string) =>
+    ["knowledge", projectId, "source", sourceId] as const,
   documents: (projectId: string | null) =>
     ["knowledge", projectId, "documents"] as const,
   detail: (projectId: string, documentId: string) =>
@@ -91,6 +98,160 @@ export const knowledgeKeys = {
   citation: (projectId: string, citationId: string, generation = 0) =>
     ["knowledge", projectId, "citations", citationId, generation] as const,
 };
+
+export function useSourceListQuery(projectId: string | null) {
+  const client = useContext(KnowledgeClientContext);
+  return useQuery({
+    queryKey: knowledgeKeys.sources(projectId),
+    enabled:
+      projectId !== null && client !== null && client.projectId === projectId,
+    queryFn: ({ signal }) => {
+      if (
+        projectId === null ||
+        client === null ||
+        client.projectId !== projectId
+      )
+        throw new Error("A matching project client is required.");
+      return client.listSources({ limit: DOCUMENT_LIMIT, signal });
+    },
+    refetchInterval: (query) =>
+      query.state.data?.items.some(
+        (source) =>
+          source.readyCount + source.failedCount < source.documentCount,
+      )
+        ? POLL_INTERVAL_MS
+        : false,
+    staleTime: TERMINAL_CACHE_MS,
+  });
+}
+
+export function useSourceDetailQuery(
+  projectId: string,
+  sourceId: string | null,
+) {
+  const client = useProjectKnowledgeClient(projectId);
+  return useQuery({
+    queryKey: knowledgeKeys.source(projectId, sourceId ?? "none"),
+    enabled: sourceId !== null,
+    queryFn: ({ signal }) => client.getSource(sourceId ?? "", signal),
+    staleTime: 0,
+    refetchInterval: (query) =>
+      query.state.data?.documents.items.some((item) => isNonTerminal(item))
+        ? POLL_INTERVAL_MS
+        : false,
+  });
+}
+
+async function settleSourceReceipt(
+  queryClient: QueryClient,
+  projectId: string,
+  receipt: SourceAccepted,
+) {
+  await queryClient.cancelQueries({
+    queryKey: knowledgeKeys.sources(projectId),
+    exact: true,
+  });
+  queryClient.setQueryData<SourcePage>(
+    knowledgeKeys.sources(projectId),
+    (page) => ({
+      items: [
+        receipt.source,
+        ...(page?.items ?? []).filter(
+          (source) => source.sourceId !== receipt.source.sourceId,
+        ),
+      ],
+      nextCursor: page?.nextCursor ?? null,
+    }),
+  );
+  void queryClient.invalidateQueries({
+    queryKey: knowledgeKeys.source(projectId, receipt.source.sourceId),
+    exact: true,
+  });
+  void queryClient.invalidateQueries({
+    queryKey: knowledgeKeys.sources(projectId),
+    exact: true,
+  });
+}
+
+export function useUploadSourceMutation(projectId: string) {
+  const client = useProjectKnowledgeClient(projectId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["knowledge", projectId, "source-upload"],
+    retry: false,
+    mutationFn: ({
+      file,
+      onProgress,
+      signal,
+      idempotencyKey,
+    }: UploadDocumentCommand & { idempotencyKey: string }) =>
+      client.uploadSource(file, onProgress, signal, idempotencyKey),
+    onSuccess: (receipt) =>
+      settleSourceReceipt(queryClient, projectId, receipt),
+  });
+}
+
+export function useRetrySourceMutation(projectId: string) {
+  const client = useProjectKnowledgeClient(projectId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["knowledge", projectId, "source-retry"],
+    retry: false,
+    mutationFn: ({
+      sourceId,
+      request,
+      idempotencyKey,
+    }: {
+      sourceId: string;
+      request: SourceRetryRequest;
+      idempotencyKey: string;
+    }) => client.retrySource(sourceId, request, idempotencyKey),
+    onSuccess: (receipt) =>
+      settleSourceReceipt(queryClient, projectId, receipt),
+  });
+}
+
+export function useDeleteSourceMutation(projectId: string) {
+  const client = useProjectKnowledgeClient(projectId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["knowledge", projectId, "source-delete"],
+    retry: false,
+    mutationFn: ({
+      sourceId,
+      idempotencyKey,
+    }: {
+      sourceId: string;
+      idempotencyKey: string;
+    }) => client.deleteSource(sourceId, idempotencyKey),
+    onSuccess: async (_result, { sourceId }) => {
+      await queryClient.cancelQueries({
+        queryKey: knowledgeKeys.sources(projectId),
+        exact: true,
+      });
+      queryClient.setQueryData<SourcePage>(
+        knowledgeKeys.sources(projectId),
+        (page) =>
+          page === undefined
+            ? page
+            : {
+                ...page,
+                items: page.items.filter(
+                  (source) => source.sourceId !== sourceId,
+                ),
+              },
+      );
+      queryClient.removeQueries({
+        queryKey: knowledgeKeys.source(projectId, sourceId),
+        exact: true,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: knowledgeKeys.sources(projectId),
+        exact: true,
+      });
+    },
+  });
+}
 
 function isNonTerminal(document: DocumentSummary): boolean {
   return (

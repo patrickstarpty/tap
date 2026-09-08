@@ -205,6 +205,7 @@ def test_invalid_upload_metadata_is_a_public_problem_not_a_server_error() -> Non
         headers={"Origin": "http://127.0.0.1:15175"},
     ).post(
         "/api/v1/projects/tapper-demo/knowledge/documents",
+        headers={"Idempotency-Key": "invalid-metadata-upload"},
         files={"upload": ("../secret.txt", b"untrusted", "text/plain")},
     )
 
@@ -378,7 +379,10 @@ def test_multipart_upload_uses_streamed_file_bytes_not_total_body_length() -> No
             validation_http_services(knowledge=service),
             allowed_origins=frozenset({"http://127.0.0.1:15175"}),
         ),
-        headers={"Origin": "http://127.0.0.1:15175"},
+        headers={
+            "Origin": "http://127.0.0.1:15175",
+            "Idempotency-Key": "bounded-stream-upload",
+        },
     )
 
     exact = client.post(
@@ -440,11 +444,14 @@ class _CountingUploadService:
     def __init__(self) -> None:
         self.byte_count = 0
 
-    async def upload(self, upload: UploadInput) -> DocumentAccepted:
+    async def upload(self, upload: UploadInput, key: str, correlation_id: str) -> DocumentAccepted:
+        assert key == "bounded-stream-upload"
+        assert correlation_id
         async for chunk in upload.content:
             self.byte_count += len(chunk)
         return DocumentAccepted(
             document=DocumentSummary(
+                source_id="src_" + "a" * 32,
                 document_id="document-1",
                 filename="exact.txt",
                 media_type="text/plain",

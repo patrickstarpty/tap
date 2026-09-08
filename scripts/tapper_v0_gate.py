@@ -7,7 +7,6 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import socket
@@ -16,9 +15,10 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Iterator
 import uuid
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 PLANNING_SHA = "a54ab433eae52500683a5ff6ff9d79466a30e1ca"
@@ -453,15 +453,25 @@ def validate_schema(
         "schema cleanup missing",
     )
     if revision is None:
-        if schema_version == 2:
+        if schema_version in {2, 3}:
+            expected_revision = (
+                "0010a_source_commands"
+                if schema_version == 3
+                else "0010_knowledge_sources"
+            )
+            expected_tables = (
+                SOURCE_SCHEMA_TABLES | {"knowledge_source_command"}
+                if schema_version == 3
+                else SOURCE_SCHEMA_TABLES
+            )
             names = value.get("table_names")
             require(
                 value.get("gate") == "schema-drift"
-                and value.get("revision") == "0010_knowledge_sources"
-                and value.get("tables") == 25
+                and value.get("revision") == expected_revision
+                and value.get("tables") == len(expected_tables)
                 and isinstance(names, list)
-                and len(names) == 25
-                and set(names) == SOURCE_SCHEMA_TABLES
+                and len(names) == len(expected_tables)
+                and set(names) == expected_tables
                 and value.get("differences") == [],
                 "schema drift evidence incomplete",
             )
@@ -625,7 +635,8 @@ def source_snapshot() -> dict[str, Any]:
 
 def validate_report(output: Path, report: dict[str, Any]) -> dict[str, int]:
     require(
-        report.get("schemaVersion") in {1, 2} and report.get("cleanup") == "complete",
+        report.get("schemaVersion") in {1, 2, 3}
+        and report.get("cleanup") == "complete",
         "report or cleanup incomplete",
     )
     validate_provenance(report["sourceBefore"], report["sourceAfter"])
@@ -991,7 +1002,7 @@ def run_gate() -> int:
     output.mkdir(mode=0o700)
     print("V0 gate evidence: " + str(output), flush=True)
     report: dict[str, Any] = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "commands": [],
         "cleanup": "pending",
         "verdict": "fail",

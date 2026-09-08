@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from tap.contracts.http import DocumentAccepted, DocumentDetail, DocumentPage
-from tap.interfaces.http.dependencies import UploadInput, knowledge_service
+from tap.interfaces.http.dependencies import UploadInput, knowledge_service, source_command_key
 from tap.interfaces.http.multipart import BoundedUploadRoute
 from tap.interfaces.http.problems import InvalidDocumentUpload, problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
@@ -61,6 +61,7 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
 @router.post(
     "",
     operation_id="knowledge_upload_document",
+    deprecated=True,
     dependencies=[Depends(project_authorization("knowledge.write"))],
     response_model=DocumentAccepted,
     status_code=status.HTTP_202_ACCEPTED,
@@ -77,6 +78,7 @@ async def bounded_upload_bytes(upload: UploadFile) -> AsyncIterator[bytes]:
 async def upload_document(
     request: Request,
     upload: UploadFile = File(...),
+    key: str = Depends(source_command_key),
 ) -> DocumentAccepted:
     form = await request.form()
     if set(form) != {"upload"} or len(form.getlist("upload")) != 1:
@@ -85,7 +87,9 @@ async def upload_document(
         raise InvalidDocumentUpload("document-too-large")
     filename, media_type = sanitize_upload_metadata(upload.filename, upload.content_type)
     return await knowledge_service(request).upload(
-        UploadInput(filename=filename, media_type=media_type, content=bounded_upload_bytes(upload))
+        UploadInput(filename=filename, media_type=media_type, content=bounded_upload_bytes(upload)),
+        key,
+        request.state.correlation_id,
     )
 
 
@@ -141,8 +145,12 @@ async def get_document(request: Request, document_id: str) -> DocumentDetail:
         ),
     },
 )
-async def retry_document(request: Request, document_id: str) -> DocumentAccepted:
-    return await knowledge_service(request).retry_document(document_id)
+async def retry_document(
+    request: Request, document_id: str, key: str = Depends(source_command_key)
+) -> DocumentAccepted:
+    return await knowledge_service(request).retry_document(
+        document_id, key, request.state.correlation_id
+    )
 
 
 @router.delete(
@@ -159,6 +167,8 @@ async def retry_document(request: Request, document_id: str) -> DocumentAccepted
         ),
     },
 )
-async def delete_document(request: Request, document_id: str) -> Response:
-    await knowledge_service(request).delete_document(document_id)
+async def delete_document(
+    request: Request, document_id: str, key: str = Depends(source_command_key)
+) -> Response:
+    await knowledge_service(request).delete_document(document_id, key, request.state.correlation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

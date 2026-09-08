@@ -20,6 +20,7 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedArtifact,
     canonical_sha256,
 )
+from tap.modules.knowledge.domain.sources import SourceCommand
 
 PIPELINE_VERSION = "tapper-ingestion-v1"
 MAX_DOCUMENTS = 50
@@ -231,6 +232,7 @@ class ReserveUpload:
     chunker_version: str = CHUNKER_VERSION
     pipeline_version: str = PIPELINE_VERSION
     source_id: str | None = None
+    command: SourceCommand | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.staging_key, str) or not self.staging_key.strip():
@@ -259,6 +261,7 @@ class ReserveUpload:
 
 @dataclass(frozen=True, slots=True)
 class DocumentRecord:
+    source_id: str
     document_id: str
     revision_id: str
     filename: str
@@ -278,6 +281,7 @@ class DocumentRecord:
     def queued(
         cls,
         *,
+        source_id: str,
         document_id: str,
         revision_id: str,
         filename: str,
@@ -287,6 +291,7 @@ class DocumentRecord:
         now: datetime,
     ) -> DocumentRecord:
         return cls(
+            source_id=source_id,
             document_id=document_id,
             revision_id=revision_id,
             filename=filename,
@@ -508,6 +513,9 @@ class IngestionWork:
     manifest: tuple[ManifestChunk, ...]
     chunk_manifest_digest: str | None = None
     projection_digest: str | None = None
+    source_id: str | None = None
+    enterprise_id: str | None = None
+    project_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -516,6 +524,9 @@ class DeletionTarget:
     revision_id: str
     chunk_ids: tuple[str, ...]
     artifact_locators: tuple[ArtifactLocator, ...]
+    source_id: str | None = None
+    enterprise_id: str | None = None
+    project_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

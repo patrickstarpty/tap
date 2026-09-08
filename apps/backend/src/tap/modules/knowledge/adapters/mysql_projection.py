@@ -391,6 +391,8 @@ class _MysqlProjectionLease:
     async def activate_build(
         self,
         receipt: ProjectionOwnershipReceipt,
+        *,
+        retain_predecessor: bool = False,
     ) -> tuple[int, str]:
         _validate_receipt(receipt, expected_status="building")
         generation, recorded = await self.state()
@@ -436,7 +438,7 @@ class _MysqlProjectionLease:
             )
             if state_update.rowcount != 1:
                 raise IndexUnavailable("Tapper projection generation changed unexpectedly")
-            await self._connection.execute(
+            predecessor_update = await self._connection.execute(
                 update(knowledge_projection_lineage)
                 .where(
                     *scope_predicates(knowledge_projection_lineage, self._scope),
@@ -445,8 +447,28 @@ class _MysqlProjectionLease:
                     knowledge_projection_lineage.c.generation == generation,
                     knowledge_projection_lineage.c.status == "active",
                 )
-                .values(status="cleanup", updated_at=text("CURRENT_TIMESTAMP(6)"))
+                .values(
+                    status="retained" if retain_predecessor else "cleanup",
+                    updated_at=text("CURRENT_TIMESTAMP(6)"),
+                )
             )
+            if retain_predecessor and predecessor_update.rowcount == 0:
+                # The original collection predates generation lineage. Record its
+                # retention in the same transaction as the verified cutover.
+                await self._connection.execute(
+                    mysql_insert(knowledge_projection_lineage).values(
+                        **scope_values(self._scope),
+                        alias_name=self._alias,
+                        physical_collection=recorded,
+                        operation_id=hashlib.sha256(
+                            (receipt.operation_id + ":retained").encode()
+                        ).hexdigest()[:32],
+                        predecessor_collection=recorded,
+                        predecessor_generation=generation,
+                        generation=generation,
+                        status="retained",
+                    )
+                )
             owned_update = await self._connection.execute(
                 update(knowledge_projection_lineage)
                 .where(
@@ -468,6 +490,65 @@ class _MysqlProjectionLease:
             await self._connection.commit()
 
         await _settled_database(operation(), "activate owned projection generation")
+        return generation + 1, receipt.physical_collection
+
+    async def reactivate_retained(
+        self, receipt: ProjectionOwnershipReceipt, *, expected_current: str
+    ) -> tuple[int, str]:
+        _validate_receipt(receipt, expected_status="retained")
+        generation, recorded = await self.state()
+        if recorded != expected_current or recorded == receipt.physical_collection:
+            raise IndexUnavailable("Tapper rollback current generation changed")
+        if await self.ownership(receipt.physical_collection) != receipt:
+            raise IndexUnavailable("Tapper retained ownership changed")
+        current = await self.ownership(expected_current)
+        if (
+            current is None
+            or current.status != "active"
+            or current.predecessor_collection != receipt.physical_collection
+        ):
+            raise IndexUnavailable("Tapper rollback predecessor lineage changed")
+
+        async def operation() -> None:
+            changed = await self._connection.execute(
+                update(knowledge_projection_state)
+                .where(
+                    *scope_predicates(knowledge_projection_state, self._scope),
+                    knowledge_projection_state.c.alias_name == self._alias,
+                    knowledge_projection_state.c.generation == generation,
+                    knowledge_projection_state.c.physical_collection == expected_current,
+                )
+                .values(
+                    generation=generation + 1,
+                    physical_collection=receipt.physical_collection,
+                    updated_at=text("CURRENT_TIMESTAMP(6)"),
+                )
+            )
+            if changed.rowcount != 1:
+                raise IndexUnavailable("Tapper rollback generation changed")
+            for physical, before, after in (
+                (expected_current, "active", "retained"),
+                (receipt.physical_collection, "retained", "active"),
+            ):
+                updated = await self._connection.execute(
+                    update(knowledge_projection_lineage)
+                    .where(
+                        *scope_predicates(knowledge_projection_lineage, self._scope),
+                        knowledge_projection_lineage.c.alias_name == self._alias,
+                        knowledge_projection_lineage.c.physical_collection == physical,
+                        knowledge_projection_lineage.c.status == before,
+                    )
+                    .values(
+                        status=after,
+                        generation=generation + 1,
+                        updated_at=text("CURRENT_TIMESTAMP(6)"),
+                    )
+                )
+                if updated.rowcount != 1:
+                    raise IndexUnavailable("Tapper rollback ownership changed")
+            await self._connection.commit()
+
+        await _settled_database(operation(), "reactivate retained projection")
         return generation + 1, receipt.physical_collection
 
     async def abandon_build(self, receipt: ProjectionOwnershipReceipt) -> None:
@@ -579,7 +660,7 @@ def _validate_receipt(
         character not in "0123456789abcdef" for character in operation_id
     ):
         raise ValueError("projection operation id must be 32 lowercase hex characters")
-    if receipt.status not in {"building", "active", "cleanup"}:
+    if receipt.status not in {"building", "active", "cleanup", "retained"}:
         raise IndexUnavailable("Tapper projection ownership status is malformed")
     if receipt.status != expected_status:
         raise IndexUnavailable("Tapper projection ownership status changed")

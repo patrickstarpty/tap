@@ -43,7 +43,10 @@ export interface paths {
         /** List Documents */
         get: operations["knowledge_list_documents"];
         put?: never;
-        /** Upload Document */
+        /**
+         * Upload Document
+         * @deprecated
+         */
         post: operations["knowledge_upload_document"];
         delete?: never;
         options?: never;
@@ -80,6 +83,59 @@ export interface paths {
         put?: never;
         /** Retry Document */
         post: operations["knowledge_retry_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sources */
+        get: operations["knowledge_list_sources"];
+        put?: never;
+        /** Upload Source */
+        post: operations["knowledge_upload_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Source */
+        get: operations["knowledge_get_source"];
+        put?: never;
+        post?: never;
+        /** Delete Source */
+        delete: operations["knowledge_delete_source"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/sources/{source_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Source */
+        post: operations["knowledge_retry_source"];
         delete?: never;
         options?: never;
         head?: never;
@@ -193,6 +249,14 @@ export interface components {
         };
         /** Body_knowledge_upload_document */
         Body_knowledge_upload_document: {
+            /**
+             * Upload
+             * Format: binary
+             */
+            upload: string;
+        };
+        /** Body_knowledge_upload_source */
+        Body_knowledge_upload_source: {
             /**
              * Upload
              * Format: binary
@@ -361,6 +425,8 @@ export interface components {
             revisionId: string;
             /** Sourcecontenthash */
             sourceContentHash: string;
+            /** Sourceid */
+            sourceId: string;
             stage: components["schemas"]["IngestionStage"];
             /** Stages */
             stages: components["schemas"]["DocumentStageSnapshot"][];
@@ -426,6 +492,8 @@ export interface components {
              * @enum {string}
              */
             mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            /** Sourceid */
+            sourceId: string;
             stage: components["schemas"]["IngestionStage"];
             status: components["schemas"]["DocumentStatus"];
             /** Updatedat */
@@ -534,7 +602,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
         } & ({
             /** @constant */
             detail?: "The grounded answer could not be committed atomically.";
@@ -862,6 +930,32 @@ export interface components {
             type?: "https://tap.example/problems/search-unavailable";
         } | {
             /** @constant */
+            detail?: "The original Source command is still in progress; retry the same key.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Source command in progress";
+            /** @constant */
+            type?: "https://tap.example/problems/source-command-pending";
+        } | {
+            /** @constant */
+            detail?: "The Source is unavailable in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Source not found";
+            /** @constant */
+            type?: "https://tap.example/problems/source-not-found";
+        } | {
+            /** @constant */
             detail?: "Select between one and twenty unique ready documents.";
             /** @constant */
             failureStage?: unknown;
@@ -873,6 +967,19 @@ export interface components {
             title?: "Source selection required";
             /** @constant */
             type?: "https://tap.example/problems/source-selection-required";
+        } | {
+            /** @constant */
+            detail?: "The Source is no longer available for this command.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Source state changed";
+            /** @constant */
+            type?: "https://tap.example/problems/source-unavailable";
         } | {
             /** @constant */
             detail?: "The durable chat turn workflow is not available yet.";
@@ -1197,11 +1304,104 @@ export interface components {
             /** Projectid */
             projectId: string;
         };
+        /** SourceAccepted */
+        SourceAccepted: {
+            accepted: components["schemas"]["DocumentAccepted"];
+            source: components["schemas"]["SourceSummary"];
+        };
+        /** SourceDetail */
+        SourceDetail: {
+            /** Createdat */
+            createdAt: string;
+            /** Documentcount */
+            documentCount: number;
+            documents: components["schemas"]["SourceDocumentPage"];
+            /** Failedcount */
+            failedCount: number;
+            /** Name */
+            name: string;
+            /** Readycount */
+            readyCount: number;
+            /** Sourceid */
+            sourceId: string;
+        };
+        /** SourceDocument */
+        SourceDocument: {
+            /** Attempt */
+            attempt: number;
+            /** Chunkcount */
+            chunkCount: number;
+            /** Documentid */
+            documentId: string;
+            /** Errorcode */
+            errorCode?: string | null;
+            /** Errorsummary */
+            errorSummary?: string | null;
+            /** Filename */
+            filename: string;
+            /**
+             * Mediatype
+             * @enum {string}
+             */
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            /** Normalizedpreview */
+            normalizedPreview?: string | null;
+            /** Revisionid */
+            revisionId: string;
+            /** Sourcecontenthash */
+            sourceContentHash: string;
+            /** Sourceid */
+            sourceId: string;
+            stage: components["schemas"]["IngestionStage"];
+            /** Stages */
+            stages: components["schemas"]["DocumentStageSnapshot"][];
+            status: components["schemas"]["DocumentStatus"];
+            /** Updatedat */
+            updatedAt: string;
+        };
+        /** SourceDocumentPage */
+        SourceDocumentPage: {
+            /** Items */
+            items: components["schemas"]["SourceDocument"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+        };
         /**
          * SourceFamily
          * @enum {string}
          */
         SourceFamily: "doc" | "code" | "bdd" | "failure";
+        /** SourcePage */
+        SourcePage: {
+            /** Items */
+            items: components["schemas"]["SourceSummary"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+        };
+        /** SourceRetryRequest */
+        SourceRetryRequest: {
+            /** Documentid */
+            documentId: string;
+            /** Expectedattempt */
+            expectedAttempt: number;
+            /** Revisionid */
+            revisionId: string;
+        };
+        /** SourceSummary */
+        SourceSummary: {
+            /** Createdat */
+            createdAt: string;
+            /** Documentcount */
+            documentCount: number;
+            /** Failedcount */
+            failedCount: number;
+            /** Name */
+            name: string;
+            /** Readycount */
+            readyCount: number;
+            /** Sourceid */
+            sourceId: string;
+        };
         /**
          * StructuralAnchor
          * @description A closed, structural location inside one authorized source family.
@@ -1401,7 +1601,9 @@ export interface operations {
     knowledge_upload_document: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "idempotency-key": string;
+            };
             path: {
                 project_id: string;
             };
@@ -1540,7 +1742,9 @@ export interface operations {
     knowledge_delete_document: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "idempotency-key": string;
+            };
             path: {
                 document_id: string;
                 project_id: string;
@@ -1606,7 +1810,9 @@ export interface operations {
     knowledge_retry_document: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "idempotency-key": string;
+            };
             path: {
                 document_id: string;
                 project_id: string;
@@ -1661,6 +1867,497 @@ export interface operations {
                 };
             };
             /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_list_sources: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePage"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_upload_source: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_knowledge_upload_source"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceAccepted"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_get_source: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDetail"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_delete_source: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_retry_source: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceAccepted"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
             503: {
                 headers: {
                     [name: string]: unknown;

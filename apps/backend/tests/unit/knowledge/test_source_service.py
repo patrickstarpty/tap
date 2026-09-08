@@ -66,3 +66,27 @@ def test_source_projection_receipt_digest_ignores_physical_generation():
         "index-v1",
         (replace(chunk, chunk_content_hash="sha256:" + "b" * 64),),
     )
+
+
+def test_source_command_digest_binds_request_scope_and_not_transport_correlation():
+    from dataclasses import replace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.knowledge.domain.sources import SourceCommand
+
+    command = SourceCommand("intent-1", "source.upload", "correlation-1")
+    payload = {
+        "filename": "note.txt",
+        "mediaType": "text/plain",
+        "size": 3,
+        "contentHash": "sha256:" + "a" * 64,
+    }
+    digest = command.digest(VALIDATION_SCOPE, payload)
+    assert digest == replace(command, correlation_id="transport-retry").digest(
+        VALIDATION_SCOPE, dict(reversed(tuple(payload.items())))
+    )
+    assert digest != command.digest(VALIDATION_SCOPE, {**payload, "filename": "other.txt"})
+    assert digest != replace(command, operation="document.upload").digest(VALIDATION_SCOPE, payload)
+    assert digest != command.digest(replace(VALIDATION_SCOPE, project_id="other"), payload)
+    with pytest.raises(ValueError):
+        SourceCommand(" ", "source.upload", "correlation")

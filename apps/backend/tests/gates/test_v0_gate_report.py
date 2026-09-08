@@ -581,3 +581,23 @@ def test_schema_v2_requires_named_0010_inventory(gate):
     ):
         with pytest.raises(ValueError):
             gate.validate_schema({**value, **changes}, None, schema_version=2)
+
+
+def test_schema_v3_requires_source_command_revision_and_exact_26_tables(gate):
+    value = schema_fixture()
+    value.update(
+        tables=26,
+        revision="0010a_source_commands",
+        table_names=sorted(gate.SOURCE_SCHEMA_TABLES | {"knowledge_source_command"}),
+    )
+    gate.validate_schema(value, None, schema_version=3)
+    for changed in (
+        {"revision": "0010_knowledge_sources"},
+        {"tables": 25},
+        {"table_names": sorted(gate.SOURCE_SCHEMA_TABLES)},
+        {"table_names": [*value["table_names"][:-1], "unexpected"]},
+    ):
+        with pytest.raises(ValueError):
+            gate.validate_schema({**value, **changed}, None, schema_version=3)
+    with pytest.raises(ValueError):
+        gate.validate_schema(value, None, schema_version=2)

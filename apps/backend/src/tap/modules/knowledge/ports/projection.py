@@ -14,7 +14,7 @@ class ProjectionOwnershipReceipt:
     physical_collection: str
     operation_id: str
     predecessor_collection: str
-    status: Literal["building", "active", "cleanup"]
+    status: Literal["building", "active", "cleanup", "retained"]
 
 
 class ProjectionMutationLease(Protocol):
@@ -42,6 +42,12 @@ class ProjectionMutationLease(Protocol):
     async def activate_build(
         self,
         receipt: ProjectionOwnershipReceipt,
+        *,
+        retain_predecessor: bool = False,
+    ) -> tuple[int, str]: ...
+
+    async def reactivate_retained(
+        self, receipt: ProjectionOwnershipReceipt, *, expected_current: str
     ) -> tuple[int, str]: ...
 
     async def abandon_build(self, receipt: ProjectionOwnershipReceipt) -> None: ...

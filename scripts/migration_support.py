@@ -35,6 +35,7 @@ PROJECT_SCOPE_REVISION = "0007_project_scope_backfill"
 AUDIT_REVISION = "0008_project_audit"
 OPERATIONS_REVISION = "0009_outbox_operations"
 SOURCES_REVISION = "0010_knowledge_sources"
+SOURCE_COMMANDS_REVISION = "0010a_source_commands"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -575,6 +576,7 @@ def assert_preserved(
         AUDIT_REVISION,
         OPERATIONS_REVISION,
         SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -611,6 +613,7 @@ def assert_preserved(
         AUDIT_REVISION,
         OPERATIONS_REVISION,
         SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -618,6 +621,7 @@ def assert_preserved(
         AUDIT_REVISION,
         OPERATIONS_REVISION,
         SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1122,6 +1126,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         AUDIT_REVISION,
         OPERATIONS_REVISION,
         SOURCES_REVISION,
+        SOURCE_COMMANDS_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1136,6 +1141,29 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
+            if revision == SOURCE_COMMANDS_REVISION:
+                with engine.connect() as connection:
+                    assert_source_backfill(connection)
+                    if (
+                        connection.execute(
+                            text("SELECT COUNT(*) FROM knowledge_source_command")
+                        ).scalar_one()
+                        != 0
+                    ):
+                        raise ValueError("migration fabricated Source command facts")
+                database.downgrade(SOURCES_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCES_REVISION)
+                    if (
+                        "knowledge_source_command"
+                        in inspect(connection).get_table_names()
+                    ):
+                        raise ValueError("Source command downgrade retained its table")
+                database.upgrade(SOURCE_COMMANDS_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCE_COMMANDS_REVISION)
+                    assert_source_backfill(connection)
+                identity_result.update(source_commands_downgrade_replay="passed")
             if revision == SOURCES_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)

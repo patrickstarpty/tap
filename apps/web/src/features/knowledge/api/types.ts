@@ -9,6 +9,11 @@ export type DocumentStageSnapshot =
 export type DocumentStageState = components["schemas"]["DocumentStageState"];
 export type DocumentStatus = components["schemas"]["DocumentStatus"];
 export type DocumentSummary = components["schemas"]["DocumentSummary"];
+export type SourceSummary = components["schemas"]["SourceSummary"];
+export type SourcePage = components["schemas"]["SourcePage"];
+export type SourceDetail = components["schemas"]["SourceDetail"];
+export type SourceAccepted = components["schemas"]["SourceAccepted"];
+export type SourceRetryRequest = components["schemas"]["SourceRetryRequest"];
 export type IngestionStage = components["schemas"]["IngestionStage"];
 export type RetrievalAnswerRequest =
   components["schemas"]["RetrievalAnswerRequest"];
@@ -26,6 +31,20 @@ export interface ListDocumentsInput {
 
 export interface KnowledgeClient {
   readonly projectId: string;
+  listSources(input: ListDocumentsInput): Promise<SourcePage>;
+  getSource(sourceId: string, signal?: AbortSignal): Promise<SourceDetail>;
+  uploadSource(
+    file: File,
+    onProgress: (ratio: number) => void,
+    signal?: AbortSignal,
+    idempotencyKey?: string,
+  ): Promise<SourceAccepted>;
+  retrySource(
+    sourceId: string,
+    request: SourceRetryRequest,
+    idempotencyKey?: string,
+  ): Promise<SourceAccepted>;
+  deleteSource(sourceId: string, idempotencyKey?: string): Promise<void>;
   listDocuments(input: ListDocumentsInput): Promise<DocumentPage>;
   getDocument(
     documentId: string,
@@ -35,9 +54,13 @@ export interface KnowledgeClient {
     file: File,
     onProgress: (ratio: number) => void,
     signal?: AbortSignal,
+    idempotencyKey?: string,
   ): Promise<DocumentAccepted>;
-  retryDocument(documentId: string): Promise<DocumentAccepted>;
-  deleteDocument(documentId: string): Promise<void>;
+  retryDocument(
+    documentId: string,
+    idempotencyKey?: string,
+  ): Promise<DocumentAccepted>;
+  deleteDocument(documentId: string, idempotencyKey?: string): Promise<void>;
   createAnswer(
     request: RetrievalAnswerRequest,
     signal?: AbortSignal,

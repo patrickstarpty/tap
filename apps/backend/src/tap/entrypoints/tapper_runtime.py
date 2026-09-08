@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
+    from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.documents import JobStage
     from tap.operations.milvus.client import TapperDocumentMilvusClients
 
@@ -325,9 +326,23 @@ class TapperSettings:
             allowed_answer_labels = frozenset({_FIXED_CHAT_ALIAS})
             allowed_embedding_labels = frozenset({_FIXED_EMBEDDING_ALIAS})
 
-        collection = _fixed_value(values, "TAPPER_COLLECTION", _FIXED_COLLECTION)
+        schema_version = _fixed_choice(
+            values,
+            "TAPPER_SCHEMA_VERSION",
+            default="doc-schema-v2",
+            choices=frozenset({"doc-schema-v1", "doc-schema-v2"}),
+        )
+        collection = _fixed_value(
+            values,
+            "TAPPER_COLLECTION",
+            "kb_doc_v2_tapper_demo" if schema_version == "doc-schema-v2" else _FIXED_COLLECTION,
+        )
         alias = _fixed_value(values, "TAPPER_ALIAS", _FIXED_ALIAS)
-        corpus = _fixed_value(values, "TAPPER_CORPUS_VERSION", _FIXED_CORPUS)
+        corpus = _fixed_value(
+            values,
+            "TAPPER_CORPUS_VERSION",
+            "tapper-demo-v2" if schema_version == "doc-schema-v2" else _FIXED_CORPUS,
+        )
         chat_alias = _fixed_value(values, "TAPPER_CHAT_ALIAS", _FIXED_CHAT_ALIAS)
         embedding_alias = _fixed_value(values, "TAPPER_EMBEDDING_ALIAS", _FIXED_EMBEDDING_ALIAS)
         retrieval_profile = _fixed_value(
@@ -394,7 +409,7 @@ class TapperSettings:
             chat_alias=chat_alias,
             embedding_alias=embedding_alias,
             retrieval_profile=retrieval_profile,
-            schema_version=_FIXED_SCHEMA_VERSION,
+            schema_version=schema_version,
             index_version=_fixed_value(values, "TAPPER_INDEX_VERSION", "tapper-index-v1"),
             pipeline_version=_fixed_value(values, "TAPPER_PIPELINE_VERSION", "tapper-ingestion-v1"),
             worker_id=_identity(values, "TAPPER_WORKER_ID", "tapper-local-worker"),
@@ -701,6 +716,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         _push_if_owned(resources, answer_backend.owner)
         search, reader, target = await _create_search(
             settings,
+            owners=repository,
             audit_sink=MysqlSearchAuditSink(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=repository.scope,
@@ -732,6 +748,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             redactor=PatternEgressRedactor(),
             scope_provider=scope_provider,
             authorization_policy=authorization_policy,
+            corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
             http_services=services,
@@ -1093,6 +1110,7 @@ async def _create_search(
     settings: TapperSettings,
     *,
     audit_sink: SearchAuditSink,
+    owners: AnswerSnapshotRepository | None = None,
 ) -> tuple[MilvusSearchAdapter, PyMilvusReader, MilvusIndexTarget]:
     from pydantic import SecretStr
 
@@ -1108,7 +1126,7 @@ async def _create_search(
         alias=settings.alias,
         physical_name_prefix=settings.collection,
         schema_version=settings.schema_version,
-        schema_sha256=doc_schema_sha256(),
+        schema_sha256=doc_schema_sha256(settings.schema_version),
         corpus_version=settings.corpus_version,
         embedding_model_version=settings.embedding_alias,
         vector_dimension=settings.embedding_dimension,
@@ -1124,7 +1142,7 @@ async def _create_search(
     )
     reader = _open_search_reader(config)
     try:
-        search = _build_search_adapter(config, reader, audit_sink=audit_sink)
+        search = _build_search_adapter(config, reader, audit_sink=audit_sink, owners=owners)
     except BaseException as error:
         local = OwnedResources()
         local.push(reader)
@@ -1144,6 +1162,7 @@ def _build_search_adapter(
     reader: MilvusReader,
     *,
     audit_sink: SearchAuditSink,
+    owners: AnswerSnapshotRepository | None = None,
 ) -> MilvusSearchAdapter:
     from tap.modules.knowledge.adapters.milvus.search import MilvusSearchAdapter
 
@@ -1151,6 +1170,7 @@ def _build_search_adapter(
         config,
         reader,
         audit_sink,
+        owners=owners,
     )
 
 
@@ -1365,6 +1385,7 @@ def _assemble_http_services(
     redactor: EgressRedactionPort,
     scope_provider: ScopeProvider,
     authorization_policy: AuthorizationPolicy,
+    corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1374,12 +1395,14 @@ def _assemble_http_services(
     from tap.modules.knowledge.application.citations import CitationResolver
     from tap.modules.knowledge.application.demo_policy import DemoCurrentPolicyVerifier
     from tap.modules.knowledge.application.documents import DocumentService
+    from tap.modules.knowledge.application.sources import SourceService
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.citations import (
         CitationArtifactStore,
         CitationRepository,
     )
     from tap.modules.knowledge.ports.documents import ArtifactStore, DocumentRepository
+    from tap.modules.knowledge.ports.sources import SourceRepository
 
     document_repository = cast(DocumentRepository, repository)
     artifact_store = cast(ArtifactStore, artifacts)
@@ -1390,13 +1413,17 @@ def _assemble_http_services(
         embeddings=embeddings,
         answers=answers,
         policy_verifier=DemoCurrentPolicyVerifier(
-            repository, scope_provider=scope_provider, authorization_policy=authorization_policy
+            repository,
+            scope_provider=scope_provider,
+            authorization_policy=authorization_policy,
+            corpus_version=corpus_version,
         ),
         redactor=redactor,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
         knowledge=knowledge,
+        corpus_version=corpus_version,
     )
     search_service = answer_service
     citations = CitationResolver(
@@ -1409,6 +1436,7 @@ def _assemble_http_services(
             answers=answer_service,
             citations=citations,
             searches=search_service,
+            sources=SourceService(cast(SourceRepository, repository), documents),
         ),
         readiness=readiness,
         scope_provider=scope_provider,

@@ -31,6 +31,27 @@ PROBLEM_REGISTRY = MappingProxyType(
         definition.code: definition
         for definition in (
             ProblemDefinition(
+                "source-not-found",
+                "Source not found",
+                404,
+                "The Source is unavailable in this Project.",
+                False,
+            ),
+            ProblemDefinition(
+                "source-unavailable",
+                "Source state changed",
+                409,
+                "The Source is no longer available for this command.",
+                False,
+            ),
+            ProblemDefinition(
+                "source-command-pending",
+                "Source command in progress",
+                503,
+                "The original Source command is still in progress; retry the same key.",
+                True,
+            ),
+            ProblemDefinition(
                 "request-validation",
                 "Request validation failed",
                 422,

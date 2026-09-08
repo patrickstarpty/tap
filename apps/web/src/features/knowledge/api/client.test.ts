@@ -18,6 +18,10 @@ class TestUploadRequest {
   responseText = "";
   aborted = false;
   contentType = "application/problem+json";
+  headers: Record<string, string> = {};
+  setRequestHeader(name: string, value: string) {
+    this.headers[name.toLowerCase()] = value;
+  }
 
   getResponseHeader(): string {
     return this.contentType;
@@ -48,6 +52,76 @@ class TestUploadRequest {
 }
 
 describe("KnowledgeClient", () => {
+  it("retains the supplied idempotency key on the Document upload facade", async () => {
+    const request = new TestUploadRequest();
+    const client = createKnowledgeClient({
+      projectId: "project-a",
+      xhrFactory: () => request as unknown as XMLHttpRequest,
+    });
+    const pending = client.uploadDocument(
+      new File(["body"], "file.txt"),
+      () => undefined,
+      undefined,
+      "facade-intent",
+    );
+    expect(request.headers["idempotency-key"]).toBe("facade-intent");
+    request.respond(202, {});
+    await pending;
+  });
+  it("uses canonical Source routes and retains caller intent keys across retries", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({ items: [], nextCursor: null });
+      },
+    });
+    await client.listSources({ limit: 50 });
+    await client.getSource("src_a");
+    const file = new File(["content"], "note.txt", { type: "text/plain" });
+    await client.uploadSource(
+      file,
+      () => undefined,
+      undefined,
+      "upload-intent",
+    );
+    await client.uploadSource(
+      file,
+      () => undefined,
+      undefined,
+      "upload-intent",
+    );
+    await client.retrySource(
+      "src_a",
+      { documentId: "doc_a", revisionId: "rev_a", expectedAttempt: 1 },
+      "retry-intent",
+    );
+    await client.deleteSource("src_a", "delete-intent");
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/api/v1/projects/project%2Fa/knowledge/sources",
+      "/api/v1/projects/project%2Fa/knowledge/sources/src_a",
+      "/api/v1/projects/project%2Fa/knowledge/sources",
+      "/api/v1/projects/project%2Fa/knowledge/sources",
+      "/api/v1/projects/project%2Fa/knowledge/sources/src_a/retry",
+      "/api/v1/projects/project%2Fa/knowledge/sources/src_a",
+    ]);
+    expect(
+      requests
+        .slice(2)
+        .map((request) => request.headers.get("Idempotency-Key")),
+    ).toEqual([
+      "upload-intent",
+      "upload-intent",
+      "retry-intent",
+      "delete-intent",
+    ]);
+    expect(await requests[4]!.json()).toEqual({
+      documentId: "doc_a",
+      revisionId: "rev_a",
+      expectedAttempt: 1,
+    });
+  });
   it("uses the generated list route and returns its typed document page", async () => {
     const requests: Request[] = [];
     const fetch = async (request: Request): Promise<Response> => {

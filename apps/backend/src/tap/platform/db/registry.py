@@ -15,6 +15,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document_revision,
     knowledge_ingestion_job,
     knowledge_source,
+    knowledge_source_command,
     knowledge_source_legacy_map,
 )
 from tap.modules.knowledge.adapters.mysql_operations import knowledge_operator_operation
@@ -43,6 +44,7 @@ BUSINESS_TABLES = (
     knowledge_ingestion_job,
     knowledge_chunk_manifest,
     knowledge_source,
+    knowledge_source_command,
     knowledge_source_legacy_map,
     knowledge_answer_source,
     knowledge_answer_snapshot,

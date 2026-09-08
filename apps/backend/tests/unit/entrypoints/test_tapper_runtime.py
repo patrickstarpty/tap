@@ -50,11 +50,27 @@ from tap.modules.knowledge.domain.models import (
 def test_tapper_settings_use_the_new_namespace() -> None:
     settings = TapperSettings.from_mapping({})
 
-    assert settings.collection == "kb_doc_v1_tapper_demo"
+    assert settings.collection == "kb_doc_v2_tapper_demo"
     assert settings.alias == "kb_doc_tapper_demo_active"
-    assert settings.corpus_version == "tapper-demo-v1"
+    assert settings.corpus_version == "tapper-demo-v2"
     assert settings.chat_alias == "tapper-chat"
     assert settings.embedding_alias == "tapper-embedding"
+
+
+def test_source_projection_runtime_profile_requires_matching_explicit_rollback():
+    settings = TapperSettings.from_mapping({"TAPPER_SCHEMA_VERSION": "doc-schema-v1"})
+    assert (settings.schema_version, settings.collection, settings.corpus_version) == (
+        "doc-schema-v1",
+        "kb_doc_v1_tapper_demo",
+        "tapper-demo-v1",
+    )
+    for overrides in (
+        {"TAPPER_SCHEMA_VERSION": "doc-schema-v3"},
+        {"TAPPER_COLLECTION": "kb_doc_v1_tapper_demo"},
+        {"TAPPER_SCHEMA_VERSION": "doc-schema-v1", "TAPPER_CORPUS_VERSION": "tapper-demo-v2"},
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(overrides)
 
 
 def test_minio_settings_require_closed_explicit_credentials_and_compose_shared_port() -> None:
@@ -112,6 +128,7 @@ def _emit_provider_rpc_error(details: str) -> None:
 
 def valid_settings() -> dict[str, str]:
     return {
+        "TAPPER_SCHEMA_VERSION": "doc-schema-v1",
         "TAPPER_API_HOST": "127.0.0.1",
         "TAPPER_API_PORT": "18000",
         "TAPPER_WEB_HOST": "127.0.0.1",
@@ -1153,7 +1170,7 @@ async def test_codex_api_composes_litellm_embeddings_and_codex_answers(
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return search, object(), object()
 
     def legacy_model(_settings):  # type: ignore[no-untyped-def]
@@ -1381,7 +1398,7 @@ async def test_unavailable_codex_discovery_keeps_api_live_and_answers_closed(
     async def create_database(_settings):  # type: ignore[no-untyped-def]
         return Resource("engine"), SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return Resource("search"), object(), object()
 
     def assemble(**kwargs):  # type: ignore[no-untyped-def]
@@ -1570,7 +1587,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     async def create_database(_settings):  # type: ignore[no-untyped-def]
         return engine, repository
 
-    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return search, reader, target
 
     monkeypatch.setattr(module, "_create_database", create_database)
@@ -1624,7 +1641,7 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     async def database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def create_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         return search, object(), object()
 
     monkeypatch.setattr(module, "_create_database", database)
@@ -1709,7 +1726,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
 
-    async def fail_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
+    async def fail_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_create_search", fail_search)
@@ -1748,7 +1765,7 @@ async def test_codex_owner_closes_once_when_api_construction_fails_after_selecti
     async def create_database(_settings):  # type: ignore[no-untyped-def]
         return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
 
-    async def fail_search(_settings, *, audit_sink):  # type: ignore[no-untyped-def]
+    async def fail_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_create_database", create_database)
@@ -1782,7 +1799,9 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
     blob = module._create_blob(settings)
     redis = module._create_redis(settings)
     model = module._create_embeddings(settings)
-    search, reader, target = await module._create_search(settings, audit_sink=_UnusedSearchAudit())
+    search, reader, target = await module._create_search(
+        settings, audit_sink=_UnusedSearchAudit(), owners=repository
+    )
     models_probe = module._create_models_probe_client(settings)
     try:
         assert repository._sessions.kw["bind"] is engine
@@ -1794,6 +1813,7 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
         )
         assert model._config.allowed_answer_model_labels == settings.allowed_answer_model_labels
         assert search._reader is reader
+        assert search._owners is repository
         assert search._config.targets[target.family] is target
         assert target.alias == settings.alias
         assert target.vector_dimension == 1536
@@ -1850,7 +1870,7 @@ async def test_search_helper_closes_reader_if_adapter_construction_fails(monkeyp
     reader = Reader()
     monkeypatch.setattr(module, "_open_search_reader", lambda _config: reader)
 
-    def fail_adapter(_config, _reader, *, audit_sink):  # type: ignore[no-untyped-def]
+    def fail_adapter(_config, _reader, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_search_adapter", fail_adapter)

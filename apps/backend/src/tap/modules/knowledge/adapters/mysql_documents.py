@@ -6,7 +6,7 @@ import asyncio
 import base64
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import NoReturn, Protocol, cast
@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     ForeignKey,
     ForeignKeyConstraint,
@@ -59,6 +60,10 @@ from tap.modules.knowledge.domain.documents import (
     revision_id_for,
 )
 from tap.modules.knowledge.domain.sources import (
+    SourceCommand,
+    SourceCommandConflict,
+    SourceCommandReplay,
+    SourceCommandResult,
     SourceRecord,
     SourceUnavailable,
     chunk_manifest_digest,
@@ -336,6 +341,30 @@ knowledge_answer_source = Table(
     Column("source_content_hash", String(71), nullable=False),
     Column("ordinal", Integer, nullable=False),
     UniqueConstraint("trace_id", "ordinal", name="uq_answer_source_ordinal"),
+)
+
+
+knowledge_source_command = Table(
+    "knowledge_source_command",
+    metadata,
+    Column("command_id", String(64), primary_key=True),
+    Column("idempotency_key", String(128, collation="utf8mb4_0900_bin"), nullable=False),
+    Column("request_digest", String(71), nullable=False),
+    Column("operation", String(32), nullable=False),
+    Column("correlation_id", String(128), nullable=False),
+    Column("source_id", String(64)),
+    Column("document_id", String(64)),
+    Column("revision_id", String(128)),
+    Column("duplicate", Boolean, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("http_status", Integer),
+    Column("result", JSON),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("completed_at", DATETIME(fsp=6)),
+)
+augment_project_table(knowledge_source_command)
+knowledge_source_command.append_constraint(
+    UniqueConstraint("enterprise_id", "project_id", "idempotency_key", name="uq_source_command_key")
 )
 
 
@@ -839,18 +868,24 @@ class MysqlDocumentRepository:
             ),
         )
 
-    async def delete_source(self, source_id: str) -> None:
+    async def delete_source(self, source_id: str, *, command: SourceCommand | None = None) -> None:
         for attempt in range(3):
             try:
-                await self._delete_source_once(source_id)
+                await self._delete_source_once(source_id, command=command)
                 return
             except DBAPIError as error:
-                if _mysql_error_code(error) not in {1213, 1205} or attempt == 2:
+                if _mysql_error_code(error) not in {1062, 1213, 1205} or attempt == 2:
                     raise
                 await asyncio.sleep(0)
 
-    async def _delete_source_once(self, source_id: str) -> None:
+    async def _delete_source_once(
+        self, source_id: str, *, command: SourceCommand | None = None
+    ) -> None:
         async with self._sessions() as session, session.begin():
+            if command is not None:
+                previous = await self._source_command(session, command, {"sourceId": source_id})
+                if previous is not None:
+                    return
             # Match stage mutation's job-before-source order before taking the tombstone lock.
             await session.execute(
                 select(knowledge_ingestion_job.c.job_id)
@@ -866,7 +901,29 @@ class MysqlDocumentRepository:
                 .order_by(knowledge_ingestion_job.c.job_id)
                 .with_for_update()
             )
-            row = await self._require_source(session, source_id)
+            row = (
+                (
+                    await session.execute(
+                        select(knowledge_source)
+                        .where(
+                            *scope_predicates(knowledge_source, self._scope),
+                            knowledge_source.c.source_id == source_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise SourceUnavailable("source-unavailable")
+            if row["deleted_at"] is not None:
+                if command is not None:
+                    await self._save_source_command(
+                        session, command, {"sourceId": source_id}, source_id=source_id, status=204
+                    )
+                    return
+                raise SourceUnavailable("source-unavailable")
             now = await _database_now(session)
             documents = (
                 (
@@ -904,6 +961,78 @@ class MysqlDocumentRepository:
                 source_id + ":delete",
                 [row["source_id"], [d["document_id"] for d in documents]],
             )
+            if command is not None:
+                await self._save_source_command(
+                    session, command, {"sourceId": source_id}, source_id=source_id, status=204
+                )
+
+    async def load_source_revisions(
+        self, source_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]:
+        if (
+            not isinstance(source_ids, tuple)
+            or not 1 <= len(source_ids) <= 20
+            or len(set(source_ids)) != len(source_ids)
+        ):
+            raise DocumentStateChanged("Source selection must be unique and bounded")
+        async with self._sessions() as session:
+            ids = tuple(
+                (
+                    await session.execute(
+                        select(knowledge_document.c.document_id)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            self._active_source(),
+                            knowledge_document.c.source_id.in_(source_ids),
+                            knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .order_by(knowledge_document.c.document_id)
+                        .limit(21)
+                    )
+                ).scalars()
+            )
+        if not 1 <= len(ids) <= 20:
+            raise DocumentStateChanged("Source selection has no ready revision or exceeds capacity")
+        selected = await self.load_ready_revisions(ids)
+        if {item.source_id for item in selected} != set(source_ids) or len(selected) != len(ids):
+            raise DocumentStateChanged("Selected Source has no current ready revision")
+        return selected
+
+    async def load_current_source_revisions(
+        self, selected: tuple[tuple[str, str, str], ...]
+    ) -> tuple[ReadyDocumentRevision, ...]:
+        if (
+            not isinstance(selected, tuple)
+            or not 1 <= len(selected) <= 20
+            or len(set(selected)) != len(selected)
+        ):
+            raise DocumentStateChanged("Frozen selection must be unique and bounded")
+        async with self._sessions() as session:
+            ids = tuple(
+                (
+                    await session.execute(
+                        select(knowledge_document.c.document_id)
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            knowledge_document.c.current_revision_id.in_(
+                                [item[1] for item in selected]
+                            ),
+                        )
+                        .order_by(knowledge_document.c.document_id)
+                        .limit(21)
+                    )
+                ).scalars()
+            )
+        if not ids or len(ids) != len(selected):
+            raise DocumentStateChanged("Frozen selected revision is no longer current")
+        current = await self.load_ready_revisions(ids)
+        if {
+            (item.source_id, item.revision_id, item.source_content_hash) for item in current
+        } != set(selected):
+            raise DocumentStateChanged("Frozen selected facts changed")
+        return current
 
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
@@ -922,6 +1051,7 @@ class MysqlDocumentRepository:
                     await session.execute(
                         select(
                             knowledge_document.c.document_id,
+                            knowledge_document.c.source_id,
                             knowledge_document.c.current_revision_id,
                             knowledge_document.c.source_content_hash.label(
                                 "document_source_content_hash"
@@ -958,6 +1088,7 @@ class MysqlDocumentRepository:
             return tuple(
                 ReadyDocumentRevision(
                     document_id=cast(str, row["document_id"]),
+                    source_id=cast(str, row["source_id"]),
                     revision_id=cast(str, row["current_revision_id"]),
                     source_content_hash=cast(str, row["document_source_content_hash"]),
                 )
@@ -1151,7 +1282,10 @@ class MysqlDocumentRepository:
             )
             for item in expected
         )
-        if actual != wanted:
+        if actual != wanted or any(
+            item.source_id is not None and item.source_id != row["source_id"]
+            for item, row in zip(expected, rows, strict=False)
+        ):
             raise DocumentStateChanged("selected document state changed before snapshot commit")
         revision_rows = list(
             (
@@ -1512,6 +1646,407 @@ class MysqlDocumentRepository:
             in selected
         )
 
+    async def source_command_result(self, key: str) -> SourceCommandResult:
+        from tap.modules.knowledge.domain.sources import SourceCommandPending
+
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(knowledge_source_command).where(
+                            *scope_predicates(knowledge_source_command, self._scope),
+                            knowledge_source_command.c.idempotency_key == key,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or row["status"] != "completed":
+                raise SourceCommandPending("source-command-pending")
+            return SourceCommandResult(row["http_status"], row["result"])
+
+    def _source_cursor(self, cursor: str | None, owner: str) -> tuple[str, str] | None:
+        if cursor is None:
+            return None
+        try:
+            value = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+            if (
+                not isinstance(value, list)
+                or len(value) != 5
+                or value[:3] != ["source-page-v1", self._scope.project_id, owner]
+            ):
+                raise ValueError
+            if not all(isinstance(item, str) and len(item) <= 128 for item in value):
+                raise ValueError
+            datetime.fromisoformat(value[3])
+            return value[3], value[4]
+        except (ValueError, TypeError) as error:
+            raise InvalidDocumentCursor("invalid Source cursor") from error
+
+    def _encode_source_cursor(self, owner: str, created: datetime, identity: str) -> str:
+        return base64.urlsafe_b64encode(
+            json.dumps(
+                ["source-page-v1", self._scope.project_id, owner, created.isoformat(), identity],
+                separators=(",", ":"),
+            ).encode()
+        ).decode()
+
+    async def list_sources(self, cursor: str | None, limit: int):
+        from tap.contracts.http import SourcePage
+
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise InvalidDocumentCursor("invalid Source page size")
+        position = self._source_cursor(cursor, "sources")
+        statement = select(knowledge_source).where(
+            *scope_predicates(knowledge_source, self._scope),
+            knowledge_source.c.deleted_at.is_(None),
+        )
+        if position is not None:
+            stamp = datetime.fromisoformat(position[0])
+            statement = statement.where(
+                or_(
+                    knowledge_source.c.created_at > stamp,
+                    and_(
+                        knowledge_source.c.created_at == stamp,
+                        knowledge_source.c.source_id > position[1],
+                    ),
+                )
+            )
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        statement.order_by(
+                            knowledge_source.c.created_at, knowledge_source.c.source_id
+                        ).limit(limit + 1)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            selected = rows[:limit]
+            return SourcePage(
+                items=[await self._source_summary(session, row["source_id"]) for row in selected],
+                next_cursor=self._encode_source_cursor(
+                    "sources", selected[-1]["created_at"], selected[-1]["source_id"]
+                )
+                if len(rows) > limit
+                else None,
+            )
+
+    async def source_detail(self, source_id: str, cursor: str | None, limit: int):
+        from tap.contracts.http import SourceDetail, SourceDocument, SourceDocumentPage
+        from tap.modules.knowledge.application.documents import _detail
+
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise InvalidDocumentCursor("invalid Source page size")
+        position = self._source_cursor(cursor, source_id)
+        async with self._sessions() as session:
+            await self._require_source(session, source_id)
+            summary = await self._source_summary(session, source_id)
+            statement = select(knowledge_document).where(
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.source_id == source_id,
+                knowledge_document.c.deleted_at.is_(None),
+                knowledge_document.c.activated_at.is_not(None),
+            )
+            if position is not None:
+                stamp = datetime.fromisoformat(position[0])
+                statement = statement.where(
+                    or_(
+                        knowledge_document.c.created_at > stamp,
+                        and_(
+                            knowledge_document.c.created_at == stamp,
+                            knowledge_document.c.document_id > position[1],
+                        ),
+                    )
+                )
+            rows = (
+                (
+                    await session.execute(
+                        statement.order_by(
+                            knowledge_document.c.created_at, knowledge_document.c.document_id
+                        ).limit(limit + 1)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            items = []
+            for row in rows[:limit]:
+                record = await self._record_for_row(session, row)
+                attempt = await session.scalar(
+                    select(knowledge_ingestion_job.c.attempt).where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
+                        knowledge_ingestion_job.c.job_id == record.job_id,
+                    )
+                )
+                items.append(
+                    SourceDocument(**_detail(record).model_dump(), attempt=cast(int, attempt))
+                )
+            next_cursor = (
+                self._encode_source_cursor(
+                    source_id, rows[limit - 1]["created_at"], rows[limit - 1]["document_id"]
+                )
+                if len(rows) > limit
+                else None
+            )
+            return SourceDetail(
+                **summary.model_dump(),
+                documents=SourceDocumentPage(items=items, next_cursor=next_cursor),
+            )
+
+    async def _reject_source_command(
+        self,
+        session: AsyncSession,
+        command: SourceCommand,
+        payload: object,
+        *,
+        source_id: str | None,
+        code: str,
+        status: int,
+    ) -> NoReturn:
+        previous = await self._source_command(session, command, payload, current=True)
+        if previous is not None:
+            raise SourceCommandReplay(
+                SourceCommandResult(previous["http_status"], previous["result"])
+            )
+        result: dict[str, object] = {"code": code}
+        await self._save_source_command(
+            session, command, payload, source_id=source_id, status=status, result=result
+        )
+        # A rejected command has no business mutation; retain its terminal request result.
+        await session.commit()
+        raise SourceCommandReplay(SourceCommandResult(status, result))
+
+    async def _save_source_command(
+        self,
+        session: AsyncSession,
+        command: SourceCommand,
+        payload: object,
+        *,
+        source_id: str | None,
+        status: int,
+        result: dict[str, object] | None = None,
+        document_id: str | None = None,
+        revision_id: str | None = None,
+    ) -> None:
+        previous = await self._source_command(session, command, payload, current=True)
+        if previous is not None:
+            return
+        now = await _database_now(session)
+        await session.execute(
+            insert(knowledge_source_command).values(
+                **scope_values(self._scope),
+                command_id=uuid4().hex,
+                idempotency_key=command.key,
+                request_digest=command.digest(self._scope, payload),
+                operation=command.operation,
+                correlation_id=command.correlation_id,
+                source_id=source_id,
+                document_id=document_id,
+                revision_id=revision_id,
+                duplicate=False,
+                status="completed",
+                http_status=status,
+                result=result,
+                created_at=now,
+                completed_at=now,
+            )
+        )
+
+    @staticmethod
+    def _upload_payload(request: ReserveUpload) -> dict[str, object]:
+        return {
+            "filename": request.filename,
+            "mediaType": request.media_type,
+            "size": request.size,
+            "contentHash": request.source_content_hash,
+            "sourceId": request.source_id,
+        }
+
+    async def _source_command(
+        self,
+        session: AsyncSession,
+        command: SourceCommand,
+        payload: object,
+        *,
+        current: bool = False,
+    ):
+        statement = select(knowledge_source_command).where(
+            *scope_predicates(knowledge_source_command, self._scope),
+            knowledge_source_command.c.idempotency_key == command.key,
+        )
+        if current:
+            statement = statement.with_for_update()
+        row = (await session.execute(statement)).mappings().one_or_none()
+        if row is not None and row["request_digest"] != command.digest(self._scope, payload):
+            raise SourceCommandConflict("idempotency-conflict")
+        return row
+
+    async def _bind_upload_command(
+        self, session: AsyncSession, request: ReserveUpload, reservation: UploadReservation
+    ) -> UploadReservation:
+        command = request.command
+        if command is None:
+            return reservation
+        previous = await self._source_command(session, command, self._upload_payload(request))
+        if previous is not None:
+            if previous["status"] == "completed":
+                raise SourceCommandReplay(
+                    SourceCommandResult(previous["http_status"], previous["result"])
+                )
+            if previous["document_id"] != reservation.document_id:
+                raise SourceCommandConflict("idempotency-conflict")
+            return reservation
+        source_id = await session.scalar(
+            select(knowledge_document.c.source_id)
+            .where(
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.document_id == reservation.document_id,
+            )
+            .with_for_update()
+        )
+        await session.execute(
+            insert(knowledge_source_command).values(
+                **scope_values(self._scope),
+                command_id=uuid4().hex,
+                idempotency_key=command.key,
+                request_digest=command.digest(self._scope, self._upload_payload(request)),
+                operation=command.operation,
+                correlation_id=command.correlation_id,
+                source_id=source_id,
+                document_id=reservation.document_id,
+                revision_id=reservation.revision_id,
+                duplicate=reservation.state is not ReservationState.OWNED,
+                status="pending",
+                created_at=await _database_now(session),
+            )
+        )
+        if reservation.document is not None:
+            await self._complete_upload_commands(session, reservation.document)
+        return reservation
+
+    async def _source_summary(self, session: AsyncSession, source_id: str):
+        from tap.contracts.http import SourceSummary
+
+        row = (
+            (
+                await session.execute(
+                    select(knowledge_source).where(
+                        *scope_predicates(knowledge_source, self._scope),
+                        knowledge_source.c.source_id == source_id,
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        states = (
+            (
+                await session.execute(
+                    select(knowledge_document.c.status).where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        knowledge_document.c.source_id == source_id,
+                        knowledge_document.c.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return SourceSummary(
+            source_id=source_id,
+            name=row["name"],
+            created_at=row["created_at"]
+            .replace(tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            document_count=len(states),
+            ready_count=states.count("ready"),
+            failed_count=states.count("failed"),
+        )
+
+    async def _accepted_source_result(
+        self,
+        session: AsyncSession,
+        record: DocumentRecord,
+        source_id: str,
+        operation: str,
+        duplicate: bool,
+    ) -> dict[str, object]:
+        from tap.contracts.http import DocumentAccepted, DocumentSummary, SourceAccepted
+
+        accepted = DocumentAccepted(
+            document=DocumentSummary.model_validate(
+                dict(
+                    source_id=source_id,
+                    document_id=record.document_id,
+                    filename=record.filename,
+                    media_type=record.media_type,
+                    status=record.status.value,
+                    stage=record.stage.value,
+                    chunk_count=record.chunk_count,
+                    updated_at=record.updated_at.replace(tzinfo=timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    error_code=record.error_code,
+                    error_summary=record.error_summary,
+                )
+            ),
+            job_id=record.job_id,
+            duplicate=duplicate,
+        )
+        result = (
+            accepted
+            if operation.startswith("document.")
+            else SourceAccepted(
+                source=await self._source_summary(session, source_id), accepted=accepted
+            )
+        )
+        return result.model_dump(mode="json", by_alias=True)
+
+    async def _complete_upload_commands(
+        self, session: AsyncSession, record: DocumentRecord
+    ) -> None:
+        rows = (
+            (
+                await session.execute(
+                    select(knowledge_source_command)
+                    .where(
+                        *scope_predicates(knowledge_source_command, self._scope),
+                        knowledge_source_command.c.document_id == record.document_id,
+                        knowledge_source_command.c.status == "pending",
+                        knowledge_source_command.c.operation.in_(
+                            ("source.upload", "document.upload")
+                        ),
+                    )
+                    .order_by(knowledge_source_command.c.command_id)
+                    .with_for_update()
+                )
+            )
+            .mappings()
+            .all()
+        )
+        for row in rows:
+            result = await self._accepted_source_result(
+                session, record, row["source_id"], row["operation"], row["duplicate"]
+            )
+            await session.execute(
+                update(knowledge_source_command)
+                .where(
+                    knowledge_source_command.c.command_id == row["command_id"],
+                    *scope_predicates(knowledge_source_command, self._scope),
+                )
+                .values(
+                    status="completed",
+                    http_status=202,
+                    result=result,
+                    completed_at=await _database_now(session),
+                )
+            )
+
     async def reserve_upload(self, command: ReserveUpload) -> UploadReservation:
         for attempt in range(3):
             try:
@@ -1525,6 +2060,33 @@ class MysqlDocumentRepository:
     async def _reserve_upload_once(self, command: ReserveUpload) -> UploadReservation:
         async with self._sessions() as session, session.begin():
             now = await _database_now(session)
+            if command.command is not None:
+                previous = await self._source_command(
+                    session, command.command, self._upload_payload(command)
+                )
+                if previous is not None and previous["status"] == "completed":
+                    raise SourceCommandReplay(
+                        SourceCommandResult(previous["http_status"], previous["result"])
+                    )
+                if previous is not None:
+                    reserved_row = (
+                        (
+                            await session.execute(
+                                select(knowledge_document).where(
+                                    *scope_predicates(knowledge_document, self._scope),
+                                    knowledge_document.c.document_id == previous["document_id"],
+                                )
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    command = replace(
+                        command,
+                        parser_version=reserved_row["reservation_parser_version"],
+                        chunker_version=reserved_row["reservation_chunker_version"],
+                        pipeline_version=reserved_row["reservation_pipeline_version"],
+                    )
             if command.source_id is not None:
                 await self._require_source(session, command.source_id)
             active_rows = list(
@@ -1560,14 +2122,38 @@ class MysqlDocumentRepository:
                 )
                 if duplicate["activated_at"] is not None:
                     record = await self._record_for_row(session, duplicate)
-                    return UploadReservation(
-                        state=ReservationState.DUPLICATE_ACTIVE,
+                    return await self._bind_upload_command(
+                        session,
+                        command,
+                        UploadReservation(
+                            state=ReservationState.DUPLICATE_ACTIVE,
+                            reservation_id=document_id,
+                            owner_token="",
+                            document_id=document_id,
+                            revision_id=revision_id,
+                            dedupe_key=command.dedupe_key,
+                            document=record,
+                            parser_version=cast(str, duplicate["reservation_parser_version"]),
+                            chunker_version=cast(str, duplicate["reservation_chunker_version"]),
+                            pipeline_version=cast(str, duplicate["reservation_pipeline_version"]),
+                            staging_key=cast(str | None, duplicate["staging_blob_locator"]),
+                            promoted_locator=ArtifactLocator(duplicate["promoted_blob_locator"])
+                            if duplicate["promoted_blob_locator"] is not None
+                            else None,
+                            expires_at=cast(datetime | None, duplicate["reservation_expires_at"]),
+                        ),
+                    )
+                return await self._bind_upload_command(
+                    session,
+                    command,
+                    UploadReservation(
+                        state=ReservationState.DUPLICATE_PENDING,
                         reservation_id=document_id,
                         owner_token="",
                         document_id=document_id,
                         revision_id=revision_id,
                         dedupe_key=command.dedupe_key,
-                        document=record,
+                        document=None,
                         parser_version=cast(str, duplicate["reservation_parser_version"]),
                         chunker_version=cast(str, duplicate["reservation_chunker_version"]),
                         pipeline_version=cast(str, duplicate["reservation_pipeline_version"]),
@@ -1576,23 +2162,7 @@ class MysqlDocumentRepository:
                         if duplicate["promoted_blob_locator"] is not None
                         else None,
                         expires_at=cast(datetime | None, duplicate["reservation_expires_at"]),
-                    )
-                return UploadReservation(
-                    state=ReservationState.DUPLICATE_PENDING,
-                    reservation_id=document_id,
-                    owner_token="",
-                    document_id=document_id,
-                    revision_id=revision_id,
-                    dedupe_key=command.dedupe_key,
-                    document=None,
-                    parser_version=cast(str, duplicate["reservation_parser_version"]),
-                    chunker_version=cast(str, duplicate["reservation_chunker_version"]),
-                    pipeline_version=cast(str, duplicate["reservation_pipeline_version"]),
-                    staging_key=cast(str | None, duplicate["staging_blob_locator"]),
-                    promoted_locator=ArtifactLocator(duplicate["promoted_blob_locator"])
-                    if duplicate["promoted_blob_locator"] is not None
-                    else None,
-                    expires_at=cast(datetime | None, duplicate["reservation_expires_at"]),
+                    ),
                 )
             if len(active_rows) >= MAX_DOCUMENTS:
                 raise DocumentCapacityExceeded
@@ -1646,20 +2216,24 @@ class MysqlDocumentRepository:
                     updated_at=now,
                 )
             )
-            return UploadReservation(
-                state=ReservationState.OWNED,
-                reservation_id=document_id,
-                owner_token=owner_token,
-                document_id=document_id,
-                revision_id=revision_id,
-                dedupe_key=command.dedupe_key,
-                document=None,
-                parser_version=command.parser_version,
-                chunker_version=command.chunker_version,
-                pipeline_version=command.pipeline_version,
-                staging_key=command.staging_key,
-                promoted_locator=None,
-                expires_at=expires_at,
+            return await self._bind_upload_command(
+                session,
+                command,
+                UploadReservation(
+                    state=ReservationState.OWNED,
+                    reservation_id=document_id,
+                    owner_token=owner_token,
+                    document_id=document_id,
+                    revision_id=revision_id,
+                    dedupe_key=command.dedupe_key,
+                    document=None,
+                    parser_version=command.parser_version,
+                    chunker_version=command.chunker_version,
+                    pipeline_version=command.pipeline_version,
+                    staging_key=command.staging_key,
+                    promoted_locator=None,
+                    expires_at=expires_at,
+                ),
             )
 
     async def activate_upload(
@@ -1776,9 +2350,11 @@ class MysqlDocumentRepository:
                 .mappings()
                 .one()
             )
-            return self._record(
+            record = self._record(
                 activated_row, _job_from_values(job_id, reservation.revision_id, results)
             )
+            await self._complete_upload_commands(session, record)
+            return record
 
     async def record_upload_promotion(
         self, reservation: UploadReservation, original: ArtifactLocator
@@ -2032,6 +2608,21 @@ class MysqlDocumentRepository:
             )
             if result.rowcount != 1:
                 raise JobLeaseLost(reservation_id)
+            if cancelled:
+                await session.execute(
+                    update(knowledge_source_command)
+                    .where(
+                        *scope_predicates(knowledge_source_command, self._scope),
+                        knowledge_source_command.c.document_id == reservation_id,
+                        knowledge_source_command.c.status == "pending",
+                    )
+                    .values(
+                        status="completed",
+                        http_status=409,
+                        result={"code": "source-unavailable"},
+                        completed_at=now,
+                    )
+                )
 
     async def list_documents(self, cursor: DocumentCursor | None, limit: int) -> DocumentRecordPage:
         if type(limit) is not int or not 1 <= limit <= 50:
@@ -2097,9 +2688,30 @@ class MysqlDocumentRepository:
             row = (await session.execute(statement)).mappings().one_or_none()
             return None if row is None else await self._record_for_row(session, row)
 
-    async def retry_failed(self, document_id: DocumentId, now: datetime) -> IngestionJob:
+    async def retry_failed(
+        self,
+        document_id: DocumentId,
+        now: datetime,
+        *,
+        command: SourceCommand | None = None,
+        source_id: str | None = None,
+        revision_id: str | None = None,
+        expected_attempt: int | None = None,
+    ) -> IngestionJob:
         del now
+        payload = {
+            "documentId": str(document_id),
+            "sourceId": source_id,
+            "revisionId": revision_id,
+            "expectedAttempt": expected_attempt,
+        }
         async with self._sessions() as session, session.begin():
+            if command is not None:
+                previous = await self._source_command(session, command, payload)
+                if previous is not None:
+                    raise SourceCommandReplay(
+                        SourceCommandResult(previous["http_status"], previous["result"])
+                    )
             candidate_revision = await session.scalar(
                 select(knowledge_document.c.current_revision_id).where(
                     *scope_predicates(knowledge_document, self._scope),
@@ -2110,6 +2722,15 @@ class MysqlDocumentRepository:
                 )
             )
             if not isinstance(candidate_revision, str):
+                if command is not None:
+                    await self._reject_source_command(
+                        session,
+                        command,
+                        payload,
+                        source_id=source_id,
+                        code="document-not-retryable",
+                        status=409,
+                    )
                 raise RetryNotAllowed(str(document_id))
             job_row = (
                 (
@@ -2149,8 +2770,32 @@ class MysqlDocumentRepository:
                 or job_row["status"] != JobState.FAILED.value
                 or document_row is None
             ):
+                if command is not None:
+                    await self._reject_source_command(
+                        session,
+                        command,
+                        payload,
+                        source_id=source_id,
+                        code="document-not-retryable",
+                        status=409,
+                    )
                 raise RetryNotAllowed(str(document_id))
             await self._require_source(session, document_row["source_id"])
+            if (
+                (source_id is not None and source_id != document_row["source_id"])
+                or (revision_id is not None and revision_id != candidate_revision)
+                or (expected_attempt is not None and expected_attempt != job_row["attempt"])
+            ):
+                if command is not None:
+                    await self._reject_source_command(
+                        session,
+                        command,
+                        payload,
+                        source_id=source_id,
+                        code="document-not-retryable",
+                        status=409,
+                    )
+                raise RetryNotAllowed(str(document_id))
             database_now = await _database_now(session)
             results = list(deserialize_stage_results(job_row["stage_results_json"]))
             first_incomplete = next(
@@ -2209,6 +2854,35 @@ class MysqlDocumentRepository:
                 message_type="knowledge.ingestion_requested",
                 now=database_now,
             )
+            if command is not None:
+                updated = (
+                    (
+                        await session.execute(
+                            select(knowledge_document)
+                            .where(
+                                *scope_predicates(knowledge_document, self._scope),
+                                knowledge_document.c.document_id == document_id,
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                record = await self._record_for_row(session, updated)
+                result = await self._accepted_source_result(
+                    session, record, document_row["source_id"], command.operation, False
+                )
+                await self._save_source_command(
+                    session,
+                    command,
+                    payload,
+                    source_id=document_row["source_id"],
+                    document_id=str(document_id),
+                    revision_id=candidate_revision,
+                    status=202,
+                    result=result,
+                )
             return IngestionJob(
                 job_id=cast(str, job_row["job_id"]),
                 revision_id=cast(str, job_row["revision_id"]),
@@ -2219,10 +2893,38 @@ class MysqlDocumentRepository:
                 stages=tuple(results),
             )
 
-    async def request_delete(self, document_id: DocumentId, now: datetime) -> IngestionJob:
+    async def request_delete(
+        self, document_id: DocumentId, now: datetime, *, command: SourceCommand | None = None
+    ) -> IngestionJob:
         del now
+        payload = {"documentId": str(document_id)}
         async with self._sessions() as session, session.begin():
-            return await self._request_delete_in_session(session, document_id)
+            if command is not None:
+                previous = await self._source_command(session, command, payload)
+                if previous is not None:
+                    raise SourceCommandReplay(
+                        SourceCommandResult(previous["http_status"], previous["result"])
+                    )
+            job = await self._request_delete_in_session(session, document_id)
+            if command is not None:
+                source_id = await session.scalar(
+                    select(knowledge_document.c.source_id)
+                    .where(
+                        *scope_predicates(knowledge_document, self._scope),
+                        knowledge_document.c.document_id == document_id,
+                    )
+                    .with_for_update()
+                )
+                await self._save_source_command(
+                    session,
+                    command,
+                    payload,
+                    source_id=source_id,
+                    document_id=str(document_id),
+                    revision_id=job.revision_id,
+                    status=204,
+                )
+            return job
 
     async def _request_delete_in_session(
         self, session: AsyncSession, document_id: DocumentId
@@ -3069,6 +3771,9 @@ class MysqlDocumentRepository:
             if job["lease_until"] is None or job["lease_until"] <= await _database_now(session):
                 self._raise_lease_lost(job_id)
             return IngestionWork(
+                source_id=document["source_id"],
+                enterprise_id=self._scope.enterprise_id,
+                project_id=self._scope.project_id,
                 job_id=job_id,
                 lease_token=lease_token,
                 kind=JobKind(job["kind"]),
@@ -3260,6 +3965,7 @@ class MysqlDocumentRepository:
     @staticmethod
     def _record(row: RowMapping, job: IngestionJob) -> DocumentRecord:
         return DocumentRecord(
+            source_id=cast(str, row["source_id"]),
             document_id=cast(str, row["document_id"]),
             revision_id=cast(str, row["current_revision_id"]),
             filename=cast(str, row["filename"]),

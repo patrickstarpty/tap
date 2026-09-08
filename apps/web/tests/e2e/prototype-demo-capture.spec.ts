@@ -130,6 +130,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
   {
     chunkCount: 18,
     documentId: "doc_life_underwriting_guide",
+    sourceId: "src_11111111111111111111111111111111",
     errorCode: null,
     errorSummary: null,
     filename: "Life underwriting guide.pdf",
@@ -141,6 +142,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
   {
     chunkCount: 11,
     documentId: "doc_health_disclosure_rules",
+    sourceId: "src_22222222222222222222222222222222",
     errorCode: null,
     errorSummary: null,
     filename: "Health disclosure rules.md",
@@ -152,6 +154,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
   {
     chunkCount: 0,
     documentId: "doc_beneficiary_workflow",
+    sourceId: "src_33333333333333333333333333333333",
     errorCode: null,
     errorSummary: null,
     filename: "Beneficiary workflow.docx",
@@ -164,6 +167,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
   {
     chunkCount: 0,
     documentId: "doc_archived_product_notes",
+    sourceId: "src_44444444444444444444444444444444",
     errorCode: "document-parse-failed",
     errorSummary: "The document could not be parsed.",
     filename: "Archived product notes.txt",
@@ -177,6 +181,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
 const MOCK_UPLOAD: DocumentSummary = {
   chunkCount: 0,
   documentId: "doc_uploaded_application_notes",
+  sourceId: "src_55555555555555555555555555555555",
   errorCode: null,
   errorSummary: null,
   filename: "Application notes.txt",

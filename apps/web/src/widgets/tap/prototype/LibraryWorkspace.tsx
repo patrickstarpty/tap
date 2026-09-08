@@ -24,13 +24,19 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
   onAddSource?: (file: File) => Promise<void>;
+  onInspectSource?: (sourceId: string, opener: HTMLElement) => void;
   sources: readonly LibrarySource[];
+  loadState?: "loading" | "loaded" | "error";
+  onReload?: () => void;
 }
 
 export function LibraryWorkspace({
   copy,
   onAddSource,
+  onInspectSource,
   sources,
+  loadState = "loaded",
+  onReload,
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
@@ -241,8 +247,21 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-list-tab"
         >
-          {visibleSources.length === 0 ? (
-            <div className="tap-catalog-empty">{copy.library.noResults}</div>
+          {loadState === "loading" ? (
+            <p role="status" aria-label={copy.sources.loading}>
+              {copy.sources.loading}
+            </p>
+          ) : loadState === "error" ? (
+            <div role="alert">
+              <p>{copy.sources.error}</p>
+              <Button onClick={onReload}>{copy.sources.retry}</Button>
+            </div>
+          ) : visibleSources.length === 0 ? (
+            <div className="tap-catalog-empty">
+              {sources.length === 0
+                ? copy.sources.empty
+                : copy.library.noResults}
+            </div>
           ) : (
             <ul className="tap-library-list" aria-label={copy.library.sources}>
               {visibleSources.map((source) => (
@@ -258,6 +277,17 @@ export function LibraryWorkspace({
                   <div className="tap-library-source-copy">
                     <strong>{source.name}</strong>
                     <span>{source.description}</span>
+                    {onInspectSource !== undefined && (
+                      <button
+                        type="button"
+                        onClick={(event) =>
+                          onInspectSource(source.id, event.currentTarget)
+                        }
+                        aria-label={`${copy.sources.view} ${source.name}`}
+                      >
+                        {copy.sources.view}
+                      </button>
+                    )}
                   </div>
                   <span
                     className="tap-library-status"

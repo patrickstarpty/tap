@@ -22,6 +22,12 @@ from tap.modules.knowledge.application.answers import (
 from tap.modules.knowledge.application.citations import CitationStale, CitationUnavailable
 from tap.modules.knowledge.application.demo_policy import DocumentPolicyChanged
 from tap.modules.knowledge.domain.documents import DocumentParseRejected
+from tap.modules.knowledge.domain.sources import (
+    SourceCommandConflict,
+    SourceCommandPending,
+    SourceCommandReplay,
+    SourceUnavailable,
+)
 from tap.modules.knowledge.ports.documents import (
     DocumentCapacityExceeded,
     DocumentNotFound,
@@ -142,6 +148,32 @@ def register_problem_handlers(app: FastAPI) -> None:
         _request: Request, error: DocumentParseRejected
     ) -> JSONResponse:
         return problem_response(document_parse_problem(error), _request)
+
+    @app.exception_handler(SourceCommandConflict)
+    async def source_conflict(request: Request, error: SourceCommandConflict) -> JSONResponse:
+        return problem_response("idempotency-conflict", request)
+
+    @app.exception_handler(SourceCommandPending)
+    async def source_pending(request: Request, error: SourceCommandPending) -> JSONResponse:
+        response = problem_response("source-command-pending", request)
+        response.headers["Retry-After"] = "1"
+        return response
+
+    @app.exception_handler(SourceUnavailable)
+    async def source_unavailable(request: Request, error: SourceUnavailable) -> JSONResponse:
+        return problem_response(
+            "association-conflict"
+            if str(error) == "source-dedupe-conflict"
+            else "source-not-found",
+            request,
+        )
+
+    @app.exception_handler(SourceCommandReplay)
+    async def source_failed_replay(request: Request, error: SourceCommandReplay) -> JSONResponse:
+        code = error.result.body.get("code") if error.result.body is not None else None
+        if code not in {"source-unavailable", "source-not-found", "document-not-retryable"}:
+            return problem_response("knowledge-runtime-unavailable", request)
+        return problem_response(str(code), request)
 
     @app.exception_handler(DocumentNotFound)
     async def document_not_found_problem(
