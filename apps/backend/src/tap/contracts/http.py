@@ -48,6 +48,36 @@ class ModelCatalogPage(ContractModel):
     items: Annotated[list[ModelCatalogItem], Field(max_length=32)]
 
 
+class AiAgentRevisionSummary(ContractModel):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    content_digest: CanonicalSha256
+    tool_allowlist: Annotated[
+        list[Literal["knowledge.search", "knowledge.answer"]], Field(max_length=2)
+    ]
+    output_schema_digest: CanonicalSha256
+
+
+class AiAgentRevisionPage(ContractModel):
+    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+
+
+class SkillRevisionSummary(ContractModel):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    content_digest: CanonicalSha256
+    applicable_tasks: Annotated[
+        list[Literal["knowledge.answer", "test-plan.generate", "automation.generate"]],
+        Field(min_length=1, max_length=3),
+    ]
+
+
+class SkillRevisionPage(ContractModel):
+    items: Annotated[list[SkillRevisionSummary], Field(max_length=64)]
+
+
 class SourceFamily(str, Enum):
     DOC = "doc"
     CODE = "code"

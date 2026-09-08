@@ -22,6 +22,8 @@ from tap.contracts.chat_stream import ChatEventEnvelope  # noqa: E402
 from tap.contracts.events import project_event_schema  # noqa: E402
 from tap.contracts.problems import problem_registry_document  # noqa: E402
 from tap.contracts.http import (  # noqa: E402
+    AiAgentRevisionPage,
+    AiAgentRevisionSummary,
     CitationPreview,
     DocumentAccepted,
     DocumentDetail,
@@ -31,6 +33,8 @@ from tap.contracts.http import (  # noqa: E402
     ModelCatalogPage,
     ReadyHealth,
     RuntimeMode,
+    SkillRevisionPage,
+    SkillRevisionSummary,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
     RetrievalSearchRequest,
@@ -50,6 +54,10 @@ KNOWLEDGE_HTTP_MODELS: tuple[
     (RuntimeMode, "serialization"),
     (ModelCatalogItem, "serialization"),
     (ModelCatalogPage, "serialization"),
+    (AiAgentRevisionSummary, "serialization"),
+    (AiAgentRevisionPage, "serialization"),
+    (SkillRevisionSummary, "serialization"),
+    (SkillRevisionPage, "serialization"),
     (RetrievalSearchRequest, "validation"),
     (RetrievalSearchResponse, "serialization"),
     (RetrievalAnswerRequest, "validation"),

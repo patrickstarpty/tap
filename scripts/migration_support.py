@@ -36,6 +36,7 @@ AUDIT_REVISION = "0008_project_audit"
 OPERATIONS_REVISION = "0009_outbox_operations"
 SOURCES_REVISION = "0010_knowledge_sources"
 SOURCE_COMMANDS_REVISION = "0010a_source_commands"
+AI_ASSET_CATALOG_REVISION = "0011_ai_agent_skill_catalog"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -577,6 +578,7 @@ def assert_preserved(
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -614,6 +616,7 @@ def assert_preserved(
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -1127,6 +1130,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1141,6 +1145,48 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
+            if revision == AI_ASSET_CATALOG_REVISION:
+                with engine.connect() as connection:
+                    if {
+                        "ai_agent",
+                        "ai_agent_revision",
+                        "skill",
+                        "skill_revision",
+                    } - set(inspect(connection).get_table_names()):
+                        raise ValueError(
+                            "AI asset catalog migration tables are missing"
+                        )
+                    for table in (
+                        "ai_agent",
+                        "ai_agent_revision",
+                        "skill",
+                        "skill_revision",
+                    ):
+                        if (
+                            connection.execute(
+                                text(f"SELECT COUNT(*) FROM {table}")
+                            ).scalar_one()
+                            != 0
+                        ):
+                            raise ValueError(
+                                "migration fabricated approved AI asset facts"
+                            )
+                database.downgrade(SOURCE_COMMANDS_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCE_COMMANDS_REVISION)
+                    if {
+                        "ai_agent",
+                        "ai_agent_revision",
+                        "skill",
+                        "skill_revision",
+                    } & set(inspect(connection).get_table_names()):
+                        raise ValueError(
+                            "AI asset catalog downgrade retained owned tables"
+                        )
+                database.upgrade(AI_ASSET_CATALOG_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, AI_ASSET_CATALOG_REVISION)
+                identity_result.update(ai_asset_downgrade_replay="passed")
             if revision == SOURCE_COMMANDS_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)

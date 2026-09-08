@@ -244,6 +244,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "asset-revision-unavailable",
+                "Asset revision unavailable",
+                404,
+                "The approved asset revision is unavailable in this Project.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "automation-mapping-required",
                 "Automation mapping required",
                 409,

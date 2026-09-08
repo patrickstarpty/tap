@@ -16,6 +16,7 @@ from tap.interfaces.http.problems import (
     problem_response_metadata,
     register_problem_handlers,
 )
+from tap.interfaces.http.routes.ai_assets import router as ai_assets_router
 from tap.interfaces.http.routes.citations import router as citations_router
 from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
@@ -94,6 +95,7 @@ def create_app(
         knowledge_answers_router,
         citations_router,
         model_catalog_router,
+        ai_assets_router,
     ):
         app.include_router(
             router,

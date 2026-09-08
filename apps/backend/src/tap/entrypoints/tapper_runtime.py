@@ -668,6 +668,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             models_probe_client=models_probe_client,
         )
         scope_provider, authorization_policy = _create_validation_authority(engine)
+        asset_catalog = await _create_asset_catalog(engine, repository.scope)
         services = _assemble_http_services(
             repository=repository,
             artifacts=artifacts,
@@ -677,6 +678,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             redactor=PatternEgressRedactor(),
             scope_provider=scope_provider,
             authorization_policy=authorization_policy,
+            asset_catalog=asset_catalog,
             corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
@@ -1237,6 +1239,19 @@ def _create_validation_authority(engine: AsyncEngine) -> tuple[ScopeProvider, Au
     return ValidationScopeProvider(), ValidationAuthorizationPolicy(registry)
 
 
+async def _create_asset_catalog(engine: AsyncEngine, scope: ProjectScopeContext) -> object:
+    """Create and seed the only server-approved, project-scoped AI catalog."""
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import validation_asset_seed
+
+    catalog = MysqlAssetCatalog(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
+    await catalog.seed(validation_asset_seed(scope))
+    return catalog
+
+
 def _assemble_http_services(
     *,
     repository: MysqlDocumentRepository,
@@ -1247,6 +1262,7 @@ def _assemble_http_services(
     redactor: EgressRedactionPort,
     scope_provider: ScopeProvider,
     authorization_policy: AuthorizationPolicy,
+    asset_catalog: object | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1292,6 +1308,7 @@ def _assemble_http_services(
         artifacts=cast(CitationArtifactStore, artifacts),
     )
     return HttpServices(
+        asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
             embeddings.gateway, scope=embeddings.scope, default_alias=embeddings.chat_alias
         ),

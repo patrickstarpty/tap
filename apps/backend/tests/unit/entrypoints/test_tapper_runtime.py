@@ -1105,6 +1105,11 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
         lambda **_kwargs: readiness,
     )
 
+    async def create_asset_catalog(*_args):  # type: ignore[no-untyped-def]
+        return object()
+
+    monkeypatch.setattr(module, "_create_asset_catalog", create_asset_catalog)
+
     runtime = await module.create_api_runtime(settings)
 
     assert runtime.http_services.readiness is readiness
@@ -1154,6 +1159,11 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     monkeypatch.setattr(module, "_create_search", create_search)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
     monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
+
+    async def create_asset_catalog(*_args):  # type: ignore[no-untyped-def]
+        return object()
+
+    monkeypatch.setattr(module, "_create_asset_catalog", create_asset_catalog)
     monkeypatch.setattr(module, "_assemble_http_services", lambda **_kwargs: HttpServices())
 
     runtime = await module.create_api_runtime(settings)

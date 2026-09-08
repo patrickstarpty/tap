@@ -139,6 +139,12 @@ def test_0010a_source_command_revision_is_literal_and_registered():
     assert validate_revision("0010a_source_commands") == "0010a_source_commands"
 
 
+def test_0011_ai_agent_skill_catalog_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0011_ai_agent_skill_catalog") == "0011_ai_agent_skill_catalog"
+
+
 def test_0010a_preserves_nonempty_predecessor_and_round_trips_empty_command_ledger(monkeypatch):
     if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
         pytest.skip("requires owned isolated MySQL")

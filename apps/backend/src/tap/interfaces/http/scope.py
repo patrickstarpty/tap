@@ -88,6 +88,11 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
         and getattr(services.model_catalog, "scope", None) != services.scope
     ):
         raise AuthorizationDenied("scope-mismatch")
+    if (
+        services.asset_catalog is not None
+        and getattr(services.asset_catalog, "scope", None) != services.scope
+    ):
+        raise AuthorizationDenied("scope-mismatch")
     scope = await services.scope_provider.current(RequestFacts(project_id=project_id))
     if not isinstance(scope, ProjectScopeContext) or scope != services.scope:
         raise AuthorizationDenied("scope-mismatch")

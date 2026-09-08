@@ -28,6 +28,7 @@ from tap.contracts.http import (
 )
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
@@ -90,6 +91,16 @@ class ModelCatalogHttpService(Protocol):
     async def list_models(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]: ...
 
 
+class AssetCatalogHttpService(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]: ...
+    async def get_agent(self, scope: ProjectScopeContext, revision_id: str) -> AiAgentRevision: ...
+    async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]: ...
+    async def get_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision: ...
+
+
 class _UnconfiguredReadiness:
     async def check(self) -> ReadyHealth:
         return ReadyHealth(
@@ -120,6 +131,7 @@ class HttpServices:
     authorization_policy: AuthorizationPolicy | None = None
     scope: ProjectScopeContext | None = None
     model_catalog: ModelCatalogHttpService | None = None
+    asset_catalog: AssetCatalogHttpService | None = None
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:
@@ -139,6 +151,14 @@ def readiness_service(request: Request) -> ReadinessHttpService:
 def model_catalog_service(request: Request) -> ModelCatalogHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.model_catalog if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.asset_catalog if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

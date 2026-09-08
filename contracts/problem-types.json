@@ -28,6 +28,14 @@
       "type": "https://tap.example/problems/answer-unavailable"
     },
     {
+      "code": "asset-revision-unavailable",
+      "detail": "The approved asset revision is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Asset revision unavailable",
+      "type": "https://tap.example/problems/asset-revision-unavailable"
+    },
+    {
       "code": "association-conflict",
       "detail": "An asset is already associated with another asset.",
       "retryable": false,

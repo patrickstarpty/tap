@@ -545,6 +545,28 @@
         {
           "properties": {
             "detail": {
+              "const": "The approved asset revision is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Asset revision unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/asset-revision-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "An asset is already associated with another asset."
             },
             "failureStage": {
@@ -1291,6 +1313,7 @@
           "enum": [
             "https://tap.example/problems/answer-snapshot-unavailable",
             "https://tap.example/problems/answer-unavailable",
+            "https://tap.example/problems/asset-revision-unavailable",
             "https://tap.example/problems/association-conflict",
             "https://tap.example/problems/authorization-denied",
             "https://tap.example/problems/automation-mapping-required",

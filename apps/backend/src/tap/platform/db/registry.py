@@ -3,6 +3,7 @@
 from sqlalchemy import MetaData
 
 from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
+from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision, skill, skill_revision
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
 from tap.modules.governance.adapters.schema import project_audit
 from tap.modules.knowledge.adapters.mysql_audit import knowledge_search_audit
@@ -53,6 +54,10 @@ BUSINESS_TABLES = (
     knowledge_projection_fence,
     knowledge_projection_cleanup,
     knowledge_projection_lineage,
+    ai_agent,
+    ai_agent_revision,
+    skill,
+    skill_revision,
 )
 
 
