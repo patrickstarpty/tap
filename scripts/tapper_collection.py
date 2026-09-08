@@ -28,7 +28,9 @@ from tap.entrypoints.tapper_runtime import (
 )
 from tap.modules.knowledge.adapters.milvus_documents import (
     IndexTargetProvisioningFailed,
+    IndexTargetReceipt,
     ReadyRevisionArtifacts,
+    RebuildReceipt,
 )
 from tap.modules.knowledge.adapters.mysql_operations import MysqlOperationRepository
 from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
@@ -229,11 +231,13 @@ async def migrate_projection(
                 )
             return tuple(records)
 
-        receipt = (
-            await current.migrate_from_snapshot(old, snapshot)
-            if action == "migrate-v1-to-v2"
-            else await current.rollback_to(old, retained, snapshot)
-        )
+        receipt: RebuildReceipt | IndexTargetReceipt
+        if action == "migrate-v1-to-v2":
+            receipt = await current.migrate_from_snapshot(old, snapshot)
+        else:
+            if retained is None:
+                raise ValueError("rollback requires an explicit retained collection")
+            receipt = await current.rollback_to(old, retained, snapshot)
         result = {
             "schemaVersion": 1,
             "action": action,
