@@ -206,6 +206,25 @@ class LiteLLMModelGateway:
             await self._check_redacted(text)
         if request.prompt_digest != text_digest(request.prompt):
             raise ModelGatewayRejected()
+        governed = bool(request.governance_digests or request.tool_allowlist)
+        if (
+            type(request.tool_allowlist) is not frozenset
+            or not request.tool_allowlist <= {"knowledge.search", "knowledge.answer"}
+            or type(request.governance_digests) is not tuple
+            or any(
+                not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+                for digest in request.governance_digests
+            )
+            or (
+                governed
+                and (
+                    operation is not ModelOperation.STRUCTURED
+                    or "knowledge.answer" not in request.tool_allowlist
+                    or not request.governance_digests
+                )
+            )
+        ):
+            raise ModelGatewayRejected()
         if operation is ModelOperation.STRUCTURED:
             if not request.schema or request.schema_digest != schema_digest(request.schema):
                 raise ModelGatewayRejected()
@@ -245,6 +264,8 @@ class LiteLLMModelGateway:
                         "context_digest": text_digest(request.context),
                         "schema_digest": request.schema_digest,
                         "idempotency_key": request.idempotency_key,
+                        "tool_allowlist": sorted(request.tool_allowlist),
+                        "governance_digests": list(request.governance_digests),
                     },
                 }
                 if operation is ModelOperation.EMBED:
@@ -419,6 +440,8 @@ class LiteLLMModelGateway:
             provider,
             actual,
             normalized_usage,
+            tool_allowlist=request.tool_allowlist,
+            governance_digests=request.governance_digests,
         )
 
         def safe_header(name: str) -> str | None:

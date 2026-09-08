@@ -179,6 +179,35 @@ async def test_disabled_alias_and_schema_digest_fail_closed():
 
 
 @pytest.mark.asyncio
+async def test_governed_authority_survives_validation_transport_and_audit() -> None:
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+    authority = (digest("agent-revision"), digest("agent-instruction"), digest("skill-template"))
+    governed = replace(
+        request(ModelOperation.STRUCTURED),
+        tool_allowlist=frozenset({"knowledge.answer", "knowledge.search"}),
+        governance_digests=authority,
+    )
+
+    result = await gateway.generate_structured(governed)
+
+    metadata = json.loads(sent[0].content)["metadata"]
+    assert metadata["tool_allowlist"] == ["knowledge.answer", "knowledge.search"]
+    assert metadata["governance_digests"] == list(authority)
+    assert result.audit.tool_allowlist == governed.tool_allowlist
+    assert result.audit.governance_digests == authority
+
+    for invalid in (
+        replace(governed, tool_allowlist=frozenset({"knowledge.search"})),
+        replace(governed, tool_allowlist=frozenset({"knowledge.delete"})),
+        replace(governed, governance_digests=("not-a-digest",)),
+    ):
+        with pytest.raises(ValueError):
+            await gateway.generate_structured(invalid)
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
 async def test_retry_is_bounded_and_preserves_idempotency():
     sent = []
 

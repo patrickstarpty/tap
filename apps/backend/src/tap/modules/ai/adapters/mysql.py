@@ -69,10 +69,10 @@ ai_agent_revision = Table(
     Column("display_name", String(128), nullable=False),
     Column("content_digest", String(71), nullable=False),
     Column("system_instruction_digest", String(71), nullable=False),
-    Column("system_instruction", String(8000), nullable=False),
+    Column("system_instruction", String(8000)),
     Column("tool_allowlist", JSON, nullable=False),
     Column("output_schema_digest", String(71), nullable=False),
-    Column("output_schema_json", JSON, nullable=False),
+    Column("output_schema_json", JSON),
     Column("status", String(16), nullable=False),
     Column("adopted_from_revision_id", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
@@ -116,7 +116,7 @@ skill_revision = Table(
     Column("display_name", String(128), nullable=False),
     Column("content_digest", String(71), nullable=False),
     Column("instruction_template_digest", String(71), nullable=False),
-    Column("instruction_template", String(8000), nullable=False),
+    Column("instruction_template", String(8000)),
     Column("applicable_tasks", JSON, nullable=False),
     Column("status", String(16), nullable=False),
     Column("adopted_from_revision_id", String(64)),
@@ -374,6 +374,8 @@ class MysqlAssetCatalog:
                     .where(
                         *scope_predicates(ai_agent_revision, self._scope),
                         ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                        ai_agent_revision.c.system_instruction.is_not(None),
+                        ai_agent_revision.c.output_schema_json.is_not(None),
                     )
                     .order_by(ai_agent_revision.c.revision_id)
                 )

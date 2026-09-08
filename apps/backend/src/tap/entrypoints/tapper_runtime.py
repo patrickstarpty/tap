@@ -1329,6 +1329,7 @@ def _assemble_http_services(
             citations=citations,
             searches=search_service,
             sources=SourceService(cast(SourceRepository, repository), documents),
+            corpus_version=corpus_version,
         ),
         readiness=readiness,
         scope_provider=scope_provider,

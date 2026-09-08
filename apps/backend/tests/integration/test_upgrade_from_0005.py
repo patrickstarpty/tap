@@ -151,6 +151,180 @@ def test_0012_conversation_revision_is_literal_and_registered():
     assert validate_revision("0012_conversations") == "0012_conversations"
 
 
+def test_0012a_conversation_governance_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0012a_conversation_governance") == "0012a_conversation_governance"
+
+
+def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_authority(
+    owned_project_mysql,
+):
+    import asyncio
+
+    from scripts.migration_support import seed_baseline
+    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import resolve_skill_selection, validation_asset_seed
+    from tap.modules.ai.domain.assets import AssetRevisionRejected
+    from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+
+    owned_project_mysql.downgrade("0005_projection_lineage")
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        with sync_engine.begin() as connection:
+            seed_baseline(connection)
+        owned_project_mysql.upgrade("0012_conversations")
+        with sync_engine.begin() as connection:
+            scope = {
+                "enterprise_id": "local",
+                "project_id": "tapper-demo",
+                "actor_id": "tapper-local-user",
+                "identity_mode": "validation",
+                "identity_origin": "VALIDATION",
+            }
+            connection.execute(
+                text(
+                    "INSERT INTO ai_agent "
+                    "(agent_id,display_name,created_at,enterprise_id,project_id,actor_id,"
+                    "identity_mode,identity_origin) VALUES "
+                    "('validation-knowledge-agent','Knowledge agent',UTC_TIMESTAMP(6),"
+                    ":enterprise_id,:project_id,:actor_id,:identity_mode,:identity_origin)"
+                ),
+                scope,
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO ai_agent_revision "
+                    "(revision_id,agent_id,revision_number,display_name,content_digest,"
+                    "system_instruction_digest,tool_allowlist,output_schema_digest,status,"
+                    "created_at,enterprise_id,project_id,actor_id,identity_mode,identity_origin) "
+                    "VALUES ('validation-knowledge-agent-v1','validation-knowledge-agent',1,"
+                    "'Knowledge agent',:content_digest,:instruction_digest,"
+                    "JSON_ARRAY('knowledge.search','knowledge.answer'),:schema_digest,'enabled',"
+                    "UTC_TIMESTAMP(6),:enterprise_id,:project_id,:actor_id,:identity_mode,"
+                    ":identity_origin)"
+                ),
+                scope
+                | {
+                    "content_digest": "sha256:" + "4" * 64,
+                    "instruction_digest": (
+                        "sha256:fce11c5d9869cb393bd12b126a667e53f2e38cea27af38891c7f6f08a123bba9"
+                    ),
+                    "schema_digest": "sha256:" + "5" * 64,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO skill "
+                    "(skill_id,display_name,created_at,enterprise_id,project_id,actor_id,"
+                    "identity_mode,identity_origin) VALUES "
+                    "('validation-citation-skill','Citation skill',UTC_TIMESTAMP(6),"
+                    ":enterprise_id,:project_id,:actor_id,:identity_mode,:identity_origin)"
+                ),
+                scope,
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO skill_revision "
+                    "(revision_id,skill_id,revision_number,display_name,content_digest,"
+                    "instruction_template_digest,applicable_tasks,status,created_at,enterprise_id,"
+                    "project_id,actor_id,identity_mode,identity_origin) VALUES "
+                    "('validation-citation-skill-v1','validation-citation-skill',1,"
+                    "'Citation skill',"
+                    ":content_digest,:template_digest,JSON_ARRAY('knowledge.answer'),'enabled',"
+                    "UTC_TIMESTAMP(6),:enterprise_id,:project_id,:actor_id,:identity_mode,"
+                    ":identity_origin)"
+                ),
+                scope
+                | {
+                    "content_digest": "sha256:" + "6" * 64,
+                    "template_digest": (
+                        "sha256:a5c26513151960f626d1d756736dac11f529cabe0ea9f43da1d194ed37ef0702"
+                    ),
+                },
+            )
+        owned_project_mysql.upgrade("0012a_conversation_governance")
+        with sync_engine.connect() as connection:
+            assert {"system_instruction", "output_schema_json"} <= {
+                item["name"] for item in inspect(connection).get_columns("ai_agent_revision")
+            }
+            assert "stream_sequence" in {
+                item["name"] for item in inspect(connection).get_columns("chat_event")
+            }
+            old = connection.execute(
+                text(
+                    "SELECT system_instruction,output_schema_json,output_schema_digest "
+                    "FROM ai_agent_revision WHERE revision_id='validation-knowledge-agent-v1'"
+                )
+            ).one()
+            assert tuple(old) == (
+                "knowledge-agent-system-instruction-v1",
+                None,
+                "sha256:" + "5" * 64,
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT instruction_template FROM skill_revision "
+                        "WHERE revision_id='validation-citation-skill-v1'"
+                    )
+                ).scalar_one()
+                == "citation-skill-template-v1"
+            )
+    finally:
+        sync_engine.dispose()
+
+    async def scenario() -> None:
+        engine = create_async_engine(
+            owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+        )
+        try:
+            catalog = MysqlAssetCatalog(
+                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+            )
+            conversation = await MysqlConversationRepository(
+                async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+            ).load("legacy-chat")
+            assert [(event.sequence, event.event_id) for event in conversation.events] == [
+                (1, "legacy-event")
+            ]
+            with pytest.raises(AssetRevisionRejected):
+                await catalog.resolve_agent(
+                    VALIDATION_SCOPE,
+                    "validation-knowledge-agent-v1",
+                    tools=frozenset({"knowledge.answer"}),
+                    output_schema_digest="sha256:" + "5" * 64,
+                )
+            assert (
+                resolve_skill_selection(
+                    await catalog.resolve_skill(VALIDATION_SCOPE, "validation-citation-skill-v1"),
+                    task="knowledge.answer",
+                ).instruction_template
+                == "citation-skill-template-v1"
+            )
+            await catalog.seed(validation_asset_seed(VALIDATION_SCOPE))
+            current = validation_asset_seed(VALIDATION_SCOPE).agents[-1]
+            assert [item.revision_id for item in await catalog.list_agents(VALIDATION_SCOPE)] == [
+                "validation-knowledge-agent-v2"
+            ]
+            assert (
+                await catalog.resolve_agent(
+                    VALIDATION_SCOPE,
+                    current.revision_id,
+                    tools=frozenset({"knowledge.answer"}),
+                    output_schema_digest=current.output_schema_digest,
+                )
+            ).revision_id == "validation-knowledge-agent-v2"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
     if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
         pytest.skip("requires owned isolated MySQL")
@@ -164,7 +338,7 @@ def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
     assert result["conversation_downgrade_replay"] == "passed"
 
 
-def test_0012_legacy_conversation_is_readable_through_new_repository(owned_project_mysql):
+def test_0012a_legacy_conversation_is_readable_through_new_repository(owned_project_mysql):
     import asyncio
     from dataclasses import replace
 
@@ -215,7 +389,7 @@ def test_0012_legacy_conversation_is_readable_through_new_repository(owned_proje
             )
     finally:
         sync_engine.dispose()
-    owned_project_mysql.upgrade("0012_conversations")
+    owned_project_mysql.upgrade("0012a_conversation_governance")
 
     async def scenario():
         engine = create_async_engine(

@@ -18,6 +18,9 @@ async def test_catalog_rejects_unknown_disabled_cross_project_and_escalated_agen
         SkillRevision,
         text_digest,
     )
+    from tap.modules.ai.domain.models import schema_digest
+
+    schema = {"type": "object"}
 
     agent = AiAgentRevision(
         revision_id="agent-revision",
@@ -27,8 +30,10 @@ async def test_catalog_rejects_unknown_disabled_cross_project_and_escalated_agen
         content_digest=text_digest("agent-v1"),
         system_instruction_digest=text_digest("server-instruction"),
         tool_allowlist=frozenset({"knowledge.search"}),
-        output_schema_digest=text_digest("schema-v1"),
+        output_schema_digest=schema_digest(schema),
         status=AssetRevisionStatus.ENABLED,
+        system_instruction="server-instruction",
+        output_schema_json='{"type":"object"}',
     )
     disabled_skill = SkillRevision(
         revision_id="skill-revision",
@@ -53,18 +58,18 @@ async def test_catalog_rejects_unknown_disabled_cross_project_and_escalated_agen
             VALIDATION_SCOPE,
             "agent-revision",
             tools=frozenset({"knowledge.search"}),
-            output_schema_digest=text_digest("schema-v1"),
+            output_schema_digest=schema_digest(schema),
         )
         == agent
     )
     for scope, revision_id, tools, digest in (
-        (VALIDATION_SCOPE, "unknown", frozenset(), text_digest("schema-v1")),
-        (other, "agent-revision", frozenset(), text_digest("schema-v1")),
+        (VALIDATION_SCOPE, "unknown", frozenset(), schema_digest(schema)),
+        (other, "agent-revision", frozenset(), schema_digest(schema)),
         (
             VALIDATION_SCOPE,
             "agent-revision",
             frozenset({"knowledge.delete"}),
-            text_digest("schema-v1"),
+            schema_digest(schema),
         ),
         (VALIDATION_SCOPE, "agent-revision", frozenset(), text_digest("other-schema")),
     ):
@@ -143,3 +148,35 @@ def test_validation_revisions_carry_digest_bound_execution_content() -> None:
     assert text_digest(agent.system_instruction) == agent.system_instruction_digest
     assert schema_digest(json.loads(agent.output_schema_json)) == agent.output_schema_digest
     assert text_digest(skill.instruction_template) == skill.instruction_template_digest
+
+
+def test_answer_authority_rejects_missing_tool_wrong_task_and_unrecoverable_content() -> None:
+    from dataclasses import replace
+
+    from tap.modules.ai.application.assets import (
+        resolve_agent_selection,
+        resolve_skill_selection,
+        validation_asset_seed,
+    )
+    from tap.modules.ai.domain.assets import AssetRevisionRejected
+
+    seed = validation_asset_seed(VALIDATION_SCOPE)
+    agent = seed.agents[0]
+    skill = seed.skills[0]
+    with pytest.raises(AssetRevisionRejected):
+        resolve_agent_selection(
+            replace(agent, tool_allowlist=frozenset({"knowledge.search"})),
+            tools=frozenset({"knowledge.answer"}),
+            output_schema_digest=agent.output_schema_digest,
+        )
+    with pytest.raises(AssetRevisionRejected):
+        resolve_agent_selection(
+            replace(agent, system_instruction=None, output_schema_json=None),
+            tools=frozenset({"knowledge.answer"}),
+            output_schema_digest=agent.output_schema_digest,
+        )
+    with pytest.raises(AssetRevisionRejected):
+        resolve_skill_selection(
+            replace(skill, applicable_tasks=frozenset({"automation.generate"})),
+            task="knowledge.answer",
+        )

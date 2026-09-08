@@ -102,16 +102,16 @@ async def test_mysql_concurrent_seed_serializes_creator_and_revision_numbers(
         )
         v2_schema = {"type": "object"}
         v2 = AiAgentRevision(
-            revision_id="validation-knowledge-agent-v2",
+            revision_id="validation-knowledge-agent-v3",
             asset_id=seed.agents[0].asset_id,
             display_name="Knowledge agent v2",
             scope=VALIDATION_SCOPE,
-            content_digest=text_digest("validation-ai-agent-v2"),
-            system_instruction_digest=text_digest("knowledge-agent-system-instruction-v2"),
+            content_digest=text_digest("validation-ai-agent-v3"),
+            system_instruction_digest=text_digest("knowledge-agent-system-instruction-v3"),
             tool_allowlist=frozenset({"knowledge.search"}),
             output_schema_digest=schema_digest(v2_schema),
             adopted_from_revision_id=seed.agents[0].revision_id,
-            system_instruction="knowledge-agent-system-instruction-v2",
+            system_instruction="knowledge-agent-system-instruction-v3",
             output_schema_json='{"type":"object"}',
         )
         await asyncio.gather(

@@ -85,20 +85,17 @@ class AiAgentRevision:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
-        if bool(self.system_instruction) != bool(self.output_schema_json):
-            raise AssetRevisionRejected()
         if self.system_instruction is not None:
+            if text_digest(self.system_instruction) != self.system_instruction_digest:
+                raise AssetRevisionRejected()
+        if self.output_schema_json is not None:
             from tap.modules.ai.domain.models import schema_digest
 
             try:
-                schema = json.loads(self.output_schema_json or "")
+                schema = json.loads(self.output_schema_json)
             except (TypeError, json.JSONDecodeError) as error:
                 raise AssetRevisionRejected() from error
-            if (
-                not isinstance(schema, dict)
-                or text_digest(self.system_instruction) != self.system_instruction_digest
-                or schema_digest(schema) != self.output_schema_digest
-            ):
+            if not isinstance(schema, dict) or schema_digest(schema) != self.output_schema_digest:
                 raise AssetRevisionRejected()
 
 

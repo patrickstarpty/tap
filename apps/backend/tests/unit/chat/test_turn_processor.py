@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -136,16 +137,45 @@ async def _async_value(value):
 
 
 @pytest.mark.asyncio
-async def test_default_worker_crosses_the_production_answer_service_with_frozen_selection():
+@pytest.mark.parametrize(
+    "settings_values,expected_corpus",
+    [({}, "tapper-demo-v2"), ({"TAPPER_SCHEMA_VERSION": "doc-schema-v1"}, "tapper-demo-v1")],
+)
+async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_values, expected_corpus):
     from apps.backend.tests.unit.knowledge import test_answer_service as fixtures
 
+    from tap.entrypoints.tapper_runtime import (
+        TapperSettings,
+        _assemble_http_services,
+        _create_embeddings,
+    )
     from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.ai.application.assets import validation_asset_seed
     from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 
-    answers, repository, gateway = fixtures.service()
+    settings = TapperSettings.from_mapping(settings_values)
+    composed = _assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=_create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        corpus_version=settings.corpus_version,
+    )
+    assert composed.knowledge._corpus_version == expected_corpus
+    assert composed.knowledge._answers._corpus_version == expected_corpus
+
+    response = replace(fixtures.answer_response(), corpus_version=expected_corpus)
+    repository = fixtures.MemoryAnswerRepository((fixtures.ready(),))
+    gateway = fixtures.Gateway(response)
+    answers = fixtures.AnswerService(
+        repository=repository, knowledge=gateway, corpus_version=expected_corpus
+    )
     repository.scope = VALIDATION_SCOPE
 
     async def reject_current_reload(_ids):
@@ -156,9 +186,10 @@ async def test_default_worker_crosses_the_production_answer_service_with_frozen_
         documents=SimpleNamespace(scope=VALIDATION_SCOPE),
         answers=answers,
         citations=SimpleNamespace(scope=VALIDATION_SCOPE),
+        corpus_version=settings.corpus_version,
     )
     frozen = fixtures.ready()
-    policy = build_demo_policy_context((frozen,))
+    policy = build_demo_policy_context((frozen,), corpus_version=expected_corpus)
     assets = validation_asset_seed(VALIDATION_SCOPE)
     agent = assets.agents[0]
     skill = assets.skills[0]

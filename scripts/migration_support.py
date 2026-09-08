@@ -38,6 +38,7 @@ SOURCES_REVISION = "0010_knowledge_sources"
 SOURCE_COMMANDS_REVISION = "0010a_source_commands"
 AI_ASSET_CATALOG_REVISION = "0011_ai_agent_skill_catalog"
 CONVERSATION_REVISION = "0012_conversations"
+CONVERSATION_GOVERNANCE_REVISION = "0012a_conversation_governance"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -581,6 +582,7 @@ def assert_preserved(
         SOURCE_COMMANDS_REVISION,
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -620,6 +622,7 @@ def assert_preserved(
         SOURCE_COMMANDS_REVISION,
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -630,6 +633,7 @@ def assert_preserved(
         SOURCE_COMMANDS_REVISION,
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1137,6 +1141,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         SOURCE_COMMANDS_REVISION,
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1151,7 +1156,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
-            if revision == CONVERSATION_REVISION:
+            if revision in {CONVERSATION_REVISION, CONVERSATION_GOVERNANCE_REVISION}:
                 with engine.connect() as connection:
                     row = connection.execute(
                         text(
@@ -1169,14 +1174,22 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                         "turn_artifact_link",
                     } - set(inspect(connection).get_table_names()):
                         raise ValueError("Conversation evidence tables are missing")
-                database.downgrade(AI_ASSET_CATALOG_REVISION)
+                downgrade_target = (
+                    CONVERSATION_REVISION
+                    if revision == CONVERSATION_GOVERNANCE_REVISION
+                    else AI_ASSET_CATALOG_REVISION
+                )
+                database.downgrade(downgrade_target)
                 with engine.connect() as connection:
-                    assert_preserved(connection, before, AI_ASSET_CATALOG_REVISION)
-                    if "conversation" in inspect(connection).get_table_names():
+                    assert_preserved(connection, before, downgrade_target)
+                    if (
+                        revision == CONVERSATION_REVISION
+                        and "conversation" in inspect(connection).get_table_names()
+                    ):
                         raise ValueError("Conversation downgrade retained owned tables")
-                database.upgrade(CONVERSATION_REVISION)
+                database.upgrade(revision)
                 with engine.connect() as connection:
-                    assert_preserved(connection, before, CONVERSATION_REVISION)
+                    assert_preserved(connection, before, revision)
                 identity_result.update(
                     conversation_backfill="passed",
                     conversation_downgrade_replay="passed",

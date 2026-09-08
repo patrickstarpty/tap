@@ -110,6 +110,8 @@ class ModelCallAudit:
     actual_provider: str
     actual_model: str
     usage: ModelUsage
+    tool_allowlist: frozenset[str] = frozenset()
+    governance_digests: tuple[str, ...] = ()
 
 
 class ModelGatewayRejected(ValueError):

@@ -51,7 +51,15 @@ def resolve_agent_selection(
         type(tools) is not frozenset
         or not tools <= revision.tool_allowlist
         or output_schema_digest != revision.output_schema_digest
+        or revision.system_instruction is None
+        or revision.output_schema_json is None
     ):
+        raise AssetRevisionRejected()
+    return revision
+
+
+def resolve_skill_selection(revision: SkillRevision, *, task: str) -> SkillRevision:
+    if task not in revision.applicable_tasks or revision.instruction_template is None:
         raise AssetRevisionRejected()
     return revision
 
@@ -69,7 +77,10 @@ class ApprovedAssetCatalog:
         return tuple(
             item
             for item in self._agents
-            if _same_project(item.scope, scope) and item.status == "enabled"
+            if _same_project(item.scope, scope)
+            and item.status == "enabled"
+            and item.system_instruction is not None
+            and item.output_schema_json is not None
         )
 
     async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]:
@@ -130,14 +141,14 @@ class ValidationAssetSeed:
 def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
     """Versioned server configuration; scope is supplied by trusted composition."""
     return ValidationAssetSeed(
-        version="validation-ai-assets-v1",
+        version="validation-ai-assets-v2",
         agents=(
             AiAgentRevision(
-                revision_id="validation-knowledge-agent-v1",
+                revision_id="validation-knowledge-agent-v2",
                 asset_id="validation-knowledge-agent",
                 display_name="Knowledge agent",
                 scope=scope,
-                content_digest=text_digest("validation-ai-agent-v1"),
+                content_digest=text_digest("validation-ai-agent-v2"),
                 system_instruction_digest=text_digest(VALIDATION_SYSTEM_INSTRUCTION),
                 tool_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
                 output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
@@ -149,11 +160,11 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
         ),
         skills=(
             SkillRevision(
-                revision_id="validation-citation-skill-v1",
+                revision_id="validation-citation-skill-v2",
                 asset_id="validation-citation-skill",
                 display_name="Citation skill",
                 scope=scope,
-                content_digest=text_digest("validation-citation-skill-v1"),
+                content_digest=text_digest("validation-citation-skill-v2"),
                 instruction_template_digest=text_digest(VALIDATION_SKILL_INSTRUCTION),
                 applicable_tasks=frozenset({"knowledge.answer"}),
                 instruction_template=VALIDATION_SKILL_INSTRUCTION,

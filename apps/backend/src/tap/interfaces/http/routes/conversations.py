@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from typing import cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request
@@ -24,8 +25,9 @@ from tap.interfaces.http.dependencies import conversation_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
+from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, resolve_skill_selection
 from tap.modules.ai.domain.assets import AssetRevisionRejected
-from tap.modules.ai.domain.models import ModelGatewayRejected
+from tap.modules.ai.domain.models import ModelGatewayRejected, schema_digest
 from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
 from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
 from tap.modules.knowledge.application.answers import DocumentStateChanged
@@ -80,13 +82,21 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     if body.agent_revision_id is not None:
         if services.asset_catalog is None:
             raise KnowledgeRuntimeUnavailable
-        agent = await services.asset_catalog.get_agent(scope, body.agent_revision_id)
+        agent = await services.asset_catalog.resolve_agent(
+            scope,
+            body.agent_revision_id,
+            tools=frozenset({"knowledge.answer"}),
+            output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
+        )
         agent_digest = agent.content_digest
     skills = (
         []
         if services.asset_catalog is None
         else [
-            await services.asset_catalog.get_skill(scope, revision_id)
+            resolve_skill_selection(
+                await services.asset_catalog.get_skill(scope, revision_id),
+                task="knowledge.answer",
+            )
             for revision_id in body.skill_revision_ids
         ]
     )
@@ -132,7 +142,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         agent_output_schema_digest=None
         if body.agent_revision_id is None
         else agent.output_schema_digest,
-        skill_instruction_templates=tuple(item.instruction_template for item in skills),
+        skill_instruction_templates=tuple(cast(str, item.instruction_template) for item in skills),
         skill_instruction_template_digests=tuple(
             item.instruction_template_digest for item in skills
         ),

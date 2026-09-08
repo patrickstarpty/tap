@@ -90,12 +90,16 @@ class KnowledgeHttpService:
         citations: CitationOperations,
         searches: SearchOperations | None = None,
         sources: SourceService | None = None,
+        corpus_version: str = "tapper-demo-v1",
     ) -> None:
+        if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
+            raise ValueError("unsupported projection corpus")
         self._documents = documents
         self._answers = answers
         self._citations = citations
         self._searches = searches
         self._sources = sources
+        self._corpus_version = corpus_version
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -216,7 +220,7 @@ class KnowledgeHttpService:
                 key=lambda item: item.document_id,
             )
         )
-        policy = build_demo_policy_context(revisions)
+        policy = build_demo_policy_context(revisions, corpus_version=self._corpus_version)
         if frozen_input.acl_digest != policy.acl_digest or frozen_input.retrieval_policy_digest != (
             content_digest(
                 {

@@ -40,9 +40,15 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
         scope = VALIDATION_SCOPE
 
         async def get_agent(self, _scope, identity):
+            raise AssertionError("Conversation acceptance must use governed agent resolution")
+
+        async def resolve_agent(self, _scope, identity, *, tools, output_schema_digest):
+            from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
             from tap.modules.ai.domain.models import schema_digest, text_digest
 
-            schema = {"type": "object"}
+            schema = VALIDATION_OUTPUT_SCHEMA
+            assert tools == frozenset({"knowledge.answer"})
+            assert output_schema_digest == schema_digest(schema)
             return SimpleNamespace(
                 revision_id=identity,
                 content_digest="sha256:" + "a" * 64,
@@ -61,6 +67,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
                 content_digest="sha256:" + "b" * 64,
                 instruction_template="frozen skill instruction",
                 instruction_template_digest=text_digest("frozen skill instruction"),
+                applicable_tasks=frozenset({"knowledge.answer"}),
             )
 
     class Knowledge:
@@ -106,7 +113,9 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
     frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
     assert frozen.agent_system_instruction == "frozen agent instruction"
     assert frozen.agent_tool_allowlist == ("knowledge.answer",)
-    assert frozen.agent_output_schema_json == '{"type":"object"}'
+    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
+
+    assert json.loads(frozen.agent_output_schema_json) == VALIDATION_OUTPUT_SCHEMA
     assert frozen.skill_instruction_templates == ("frozen skill instruction",)
 
     app.state.http_services = replace(
