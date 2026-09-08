@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
@@ -20,7 +20,9 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedArtifact,
     canonical_sha256,
 )
-from tap.modules.knowledge.domain.sources import SourceCommand
+
+if TYPE_CHECKING:
+    from tap.modules.knowledge.domain.sources import SourceCommand
 
 PIPELINE_VERSION = "tapper-ingestion-v1"
 MAX_DOCUMENTS = 50
