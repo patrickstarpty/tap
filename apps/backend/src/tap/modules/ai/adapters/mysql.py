@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    func,
     select,
     update,
 )
@@ -18,7 +19,7 @@ from sqlalchemy.dialects.mysql import DATETIME, JSON
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
-from tap.modules.ai.application.assets import ValidationAssetSeed
+from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
     AssetRevisionRejected,
@@ -181,7 +182,8 @@ class MysqlAssetCatalog:
             .one_or_none()
         )
         if existing is not None:
-            if self._agent(existing) != revision:
+            existing_revision = self._agent(existing)
+            if self._agent_content(existing_revision) != self._agent_content(revision):
                 raise AssetRevisionRejected()
             return
         now = datetime.now(timezone.utc)
@@ -206,11 +208,15 @@ class MysqlAssetCatalog:
                     **scope_values(self._scope),
                 )
             )
+        revision_number = await self._next_number(
+            session, ai_agent_revision, "agent_id", revision.asset_id
+        )
+        await self._assert_adoption(session, ai_agent_revision, revision.adopted_from_revision_id)
         await session.execute(
             ai_agent_revision.insert().values(
                 revision_id=revision.revision_id,
                 agent_id=revision.asset_id,
-                revision_number=1,
+                revision_number=revision_number,
                 display_name=revision.display_name,
                 content_digest=revision.content_digest,
                 system_instruction_digest=revision.system_instruction_digest,
@@ -238,7 +244,8 @@ class MysqlAssetCatalog:
             .one_or_none()
         )
         if existing is not None:
-            if self._skill(existing) != revision:
+            existing_revision = self._skill(existing)
+            if self._skill_content(existing_revision) != self._skill_content(revision):
                 raise AssetRevisionRejected()
             return
         now = datetime.now(timezone.utc)
@@ -262,11 +269,15 @@ class MysqlAssetCatalog:
                     **scope_values(self._scope),
                 )
             )
+        revision_number = await self._next_number(
+            session, skill_revision, "skill_id", revision.asset_id
+        )
+        await self._assert_adoption(session, skill_revision, revision.adopted_from_revision_id)
         await session.execute(
             skill_revision.insert().values(
                 revision_id=revision.revision_id,
                 skill_id=revision.asset_id,
-                revision_number=1,
+                revision_number=revision_number,
                 display_name=revision.display_name,
                 content_digest=revision.content_digest,
                 instruction_template_digest=revision.instruction_template_digest,
@@ -316,19 +327,74 @@ class MysqlAssetCatalog:
     ) -> AiAgentRevision:
         return await self._get_agent(scope, revision_id, enabled=False)
 
+    async def resolve_historical_agent(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> AiAgentRevision:
+        return await self.get_historical_agent(scope, revision_id)
+
     async def get_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision:
+        return await self._get_skill(scope, revision_id, enabled=True)
+
+    async def resolve_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision:
+        return await self.get_skill(scope, revision_id)
+
+    async def get_historical_skill(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> SkillRevision:
+        return await self._get_skill(scope, revision_id, enabled=False)
+
+    async def resolve_historical_skill(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> SkillRevision:
+        return await self.get_historical_skill(scope, revision_id)
+
+    async def resolve_agent(
+        self,
+        scope: ProjectScopeContext,
+        revision_id: str,
+        *,
+        tools: frozenset[str],
+        output_schema_digest: str,
+    ) -> AiAgentRevision:
+        return resolve_agent_selection(
+            await self.get_agent(scope, revision_id),
+            tools=tools,
+            output_schema_digest=output_schema_digest,
+        )
+
+    async def disable_agent(self, revision_id: str) -> None:
+        await self._disable(ai_agent_revision, revision_id)
+
+    async def disable_skill(self, revision_id: str) -> None:
+        await self._disable(skill_revision, revision_id)
+
+    async def _disable(self, table: Table, revision_id: str) -> None:
+        async with self._sessions.begin() as session:
+            result = await session.execute(
+                update(table)
+                .where(
+                    *scope_predicates(table, self._scope),
+                    table.c.revision_id == revision_id,
+                    table.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+                .values(status=AssetRevisionStatus.DISABLED.value)
+            )
+        if result.rowcount != 1:
+            raise AssetRevisionRejected()
+
+    async def _get_skill(
+        self, scope: ProjectScopeContext, revision_id: str, *, enabled: bool
+    ) -> SkillRevision:
         self._assert_scope(scope)
+        conditions = [
+            *scope_predicates(skill_revision, self._scope),
+            skill_revision.c.revision_id == revision_id,
+        ]
+        if enabled:
+            conditions.append(skill_revision.c.status == AssetRevisionStatus.ENABLED.value)
         async with self._sessions() as session:
             row = (
-                (
-                    await session.execute(
-                        select(skill_revision).where(
-                            *scope_predicates(skill_revision, self._scope),
-                            skill_revision.c.revision_id == revision_id,
-                            skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                        )
-                    )
-                )
+                (await session.execute(select(skill_revision).where(*conditions)))
                 .mappings()
                 .one_or_none()
             )
@@ -336,19 +402,55 @@ class MysqlAssetCatalog:
             raise AssetRevisionRejected()
         return self._skill(row)
 
-    async def disable_agent(self, revision_id: str) -> None:
-        async with self._sessions.begin() as session:
-            result = await session.execute(
-                update(ai_agent_revision)
-                .where(
-                    *scope_predicates(ai_agent_revision, self._scope),
-                    ai_agent_revision.c.revision_id == revision_id,
-                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                )
-                .values(status=AssetRevisionStatus.DISABLED.value)
+    async def _next_number(
+        self, session: AsyncSession, table: Table, asset_column: str, asset_id: str
+    ) -> int:
+        value = await session.scalar(
+            select(func.max(table.c.revision_number)).where(
+                *scope_predicates(table, self._scope), table.c[asset_column] == asset_id
             )
-        if result.rowcount != 1:
+        )
+        return int(value or 0) + 1
+
+    async def _assert_adoption(
+        self, session: AsyncSession, table: Table, predecessor_id: str | None
+    ) -> None:
+        if predecessor_id is None:
+            return
+        row = (
+            await session.execute(
+                select(table.c.revision_id).where(
+                    *scope_predicates(table, self._scope), table.c.revision_id == predecessor_id
+                )
+            )
+        ).one_or_none()
+        if row is None:
             raise AssetRevisionRejected()
+
+    @staticmethod
+    def _agent_content(value: AiAgentRevision) -> tuple[object, ...]:
+        return (
+            value.revision_id,
+            value.asset_id,
+            value.display_name,
+            value.content_digest,
+            value.system_instruction_digest,
+            value.tool_allowlist,
+            value.output_schema_digest,
+            value.adopted_from_revision_id,
+        )
+
+    @staticmethod
+    def _skill_content(value: SkillRevision) -> tuple[object, ...]:
+        return (
+            value.revision_id,
+            value.asset_id,
+            value.display_name,
+            value.content_digest,
+            value.instruction_template_digest,
+            value.applicable_tasks,
+            value.adopted_from_revision_id,
+        )
 
     async def _get_agent(
         self, scope: ProjectScopeContext, revision_id: str, *, enabled: bool
@@ -371,10 +473,7 @@ class MysqlAssetCatalog:
         return self._agent(row)
 
     def _assert_scope(self, scope: ProjectScopeContext) -> None:
-        if type(scope) is not ProjectScopeContext or (scope.enterprise_id, scope.project_id) != (
-            self._scope.enterprise_id,
-            self._scope.project_id,
-        ):
+        if type(scope) is not ProjectScopeContext or scope != self._scope:
             raise AssetRevisionRejected()
 
     @staticmethod

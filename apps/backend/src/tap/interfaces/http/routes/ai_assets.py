@@ -43,7 +43,10 @@ def _skill(value) -> SkillRevisionSummary:
     operation_id="ai_list_agent_revisions",
     response_model=AiAgentRevisionPage,
     dependencies=[Depends(project_authorization("ai.agents.read"))],
-    responses={422: problem_response_metadata("Request validation failed")},
+    responses={
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Knowledge runtime unavailable"),
+    },
 )
 async def list_agents(request: Request) -> AiAgentRevisionPage:
     return AiAgentRevisionPage(
@@ -61,7 +64,11 @@ async def list_agents(request: Request) -> AiAgentRevisionPage:
     operation_id="ai_get_agent_revision",
     response_model=AiAgentRevisionSummary,
     dependencies=[Depends(project_authorization("ai.agents.read"))],
-    responses={404: problem_response_metadata("Agent revision unavailable")},
+    responses={
+        404: problem_response_metadata("Agent revision unavailable"),
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Knowledge runtime unavailable"),
+    },
 )
 async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionSummary:
     return _agent(
@@ -74,7 +81,10 @@ async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionSummar
     operation_id="ai_list_skill_revisions",
     response_model=SkillRevisionPage,
     dependencies=[Depends(project_authorization("ai.skills.read"))],
-    responses={422: problem_response_metadata("Request validation failed")},
+    responses={
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Knowledge runtime unavailable"),
+    },
 )
 async def list_skills(request: Request) -> SkillRevisionPage:
     return SkillRevisionPage(
@@ -92,7 +102,11 @@ async def list_skills(request: Request) -> SkillRevisionPage:
     operation_id="ai_get_skill_revision",
     response_model=SkillRevisionSummary,
     dependencies=[Depends(project_authorization("ai.skills.read"))],
-    responses={404: problem_response_metadata("Skill revision unavailable")},
+    responses={
+        404: problem_response_metadata("Skill revision unavailable"),
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Knowledge runtime unavailable"),
+    },
 )
 async def get_skill(request: Request, revision_id: str) -> SkillRevisionSummary:
     return _skill(

@@ -76,7 +76,9 @@ class AiAgentRevision:
             self.output_schema_digest,
         ):
             _digest(value)
-        if not self.tool_allowlist <= _DOMAIN_TOOLS:
+        if type(self.tool_allowlist) is not frozenset or not self.tool_allowlist <= _DOMAIN_TOOLS:
+            raise AssetRevisionRejected()
+        if self.adopted_from_revision_id == self.revision_id:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
@@ -109,7 +111,13 @@ class SkillRevision:
             raise AssetRevisionRejected()
         _digest(self.content_digest)
         _digest(self.instruction_template_digest)
-        if not self.applicable_tasks or not self.applicable_tasks <= _TASKS:
+        if (
+            type(self.applicable_tasks) is not frozenset
+            or not self.applicable_tasks
+            or not self.applicable_tasks <= _TASKS
+        ):
+            raise AssetRevisionRejected()
+        if self.adopted_from_revision_id == self.revision_id:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")

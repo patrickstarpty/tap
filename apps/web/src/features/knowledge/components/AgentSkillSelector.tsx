@@ -1,5 +1,5 @@
 import { Button } from "antd";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export interface ApprovedAiAsset {
   readonly revisionId: string;
@@ -18,11 +18,24 @@ export function AgentSkillSelector({
   skills: readonly ApprovedAiAsset[];
   agentRevisionId: string | null;
   skillRevisionIds: readonly string[];
-  onAgentChange: (revisionId: string) => void;
+  onAgentChange: (revisionId: string | null) => void;
   onSkillsChange: (revisionIds: string[]) => void;
 }) {
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [retiredSkillsRemoved, setRetiredSkillsRemoved] = useState(false);
   const selected = agents.find((item) => item.revisionId === agentRevisionId);
+  const enabledSkillIds = useMemo(
+    () => new Set(skills.map((item) => item.revisionId)),
+    [skills],
+  );
+  const activeSkills = skillRevisionIds.filter((id) => enabledSkillIds.has(id));
+  const retiredSkills = activeSkills.length !== skillRevisionIds.length;
+  useEffect(() => {
+    if (retiredSkills) {
+      onSkillsChange(activeSkills);
+      setRetiredSkillsRemoved(true);
+    }
+  }, [activeSkills, onSkillsChange, retiredSkills]);
   if (agentRevisionId !== null && selected === undefined)
     return <span role="status">Agent unavailable</span>;
   return (
@@ -32,8 +45,9 @@ export function AgentSkillSelector({
         <select
           aria-label="Agent"
           value={agentRevisionId ?? ""}
-          onChange={(event) => onAgentChange(event.target.value)}
+          onChange={(event) => onAgentChange(event.target.value || null)}
         >
+          <option value="">Select an agent</option>
           {agents.map((item) => (
             <option key={item.revisionId} value={item.revisionId}>
               {item.displayName}
@@ -41,6 +55,7 @@ export function AgentSkillSelector({
           ))}
         </select>
       </label>
+      {retiredSkillsRemoved && <span role="status">Retired skills were removed</span>}
       <Button
         aria-expanded={skillsOpen}
         onClick={() => setSkillsOpen((open) => !open)}
@@ -50,7 +65,7 @@ export function AgentSkillSelector({
       {skillsOpen && (
         <fieldset aria-label="Skills">
           {skills.map((item) => {
-            const checked = skillRevisionIds.includes(item.revisionId);
+            const checked = activeSkills.includes(item.revisionId);
             return (
               <label key={item.revisionId}>
                 <input
@@ -59,10 +74,10 @@ export function AgentSkillSelector({
                   onChange={() =>
                     onSkillsChange(
                       checked
-                        ? skillRevisionIds.filter(
+                        ? activeSkills.filter(
                             (id) => id !== item.revisionId,
                           )
-                        : [...skillRevisionIds, item.revisionId],
+                        : [...activeSkills, item.revisionId],
                     )
                   }
                 />

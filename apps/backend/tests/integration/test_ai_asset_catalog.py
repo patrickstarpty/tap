@@ -35,6 +35,48 @@ async def test_mysql_seed_is_idempotent_and_retired_revisions_remain_historicall
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_mysql_seed_preserves_retirement_and_resolves_historical_agent_and_skill(
+    owned_project_mysql,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import validation_asset_seed
+    from tap.modules.ai.domain.assets import AssetRevisionRejected
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        seed = validation_asset_seed(VALIDATION_SCOPE)
+        await catalog.seed(seed)
+        await catalog.disable_agent(seed.agents[0].revision_id)
+        await catalog.disable_skill(seed.skills[0].revision_id)
+        await catalog.seed(seed)
+        for resolve in (
+            catalog.resolve_agent(
+                VALIDATION_SCOPE,
+                seed.agents[0].revision_id,
+                tools=frozenset({"knowledge.search"}),
+                output_schema_digest=seed.agents[0].output_schema_digest,
+            ),
+            catalog.resolve_skill(VALIDATION_SCOPE, seed.skills[0].revision_id),
+        ):
+            with pytest.raises(AssetRevisionRejected):
+                await resolve
+        assert (
+            await catalog.resolve_historical_agent(VALIDATION_SCOPE, seed.agents[0].revision_id)
+        ).status.value == "disabled"
+        assert (
+            await catalog.resolve_historical_skill(VALIDATION_SCOPE, seed.skills[0].revision_id)
+        ).status.value == "disabled"
+    finally:
+        await engine.dispose()
+
+
 def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

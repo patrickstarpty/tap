@@ -107,3 +107,24 @@ def test_revisions_are_immutable_and_reject_executable_or_unapproved_content() -
     )
     with pytest.raises(FrozenInstanceError):
         revision.content_digest = text_digest("changed")  # type: ignore[misc]
+
+
+def test_revisions_reject_mutable_collections_and_adoption_self_links() -> None:
+    from tap.modules.ai.domain.assets import AiAgentRevision, AssetRevisionRejected, text_digest
+
+    for tools, adopted_from_revision_id in (
+        ({"knowledge.search"}, None),
+        (frozenset({"knowledge.search"}), "agent-v1"),
+    ):
+        with pytest.raises(AssetRevisionRejected):
+            AiAgentRevision(
+                revision_id="agent-v1",
+                asset_id="agent",
+                display_name="Agent",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest("agent"),
+                system_instruction_digest=text_digest("instruction"),
+                tool_allowlist=tools,  # type: ignore[arg-type]
+                output_schema_digest=text_digest("schema"),
+                adopted_from_revision_id=adopted_from_revision_id,
+            )

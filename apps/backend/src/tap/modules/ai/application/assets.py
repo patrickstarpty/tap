@@ -17,6 +17,18 @@ def _same_project(left: ProjectScopeContext, right: ProjectScopeContext) -> bool
     return (left.enterprise_id, left.project_id) == (right.enterprise_id, right.project_id)
 
 
+def resolve_agent_selection(
+    revision: AiAgentRevision, *, tools: frozenset[str], output_schema_digest: str
+) -> AiAgentRevision:
+    if (
+        type(tools) is not frozenset
+        or not tools <= revision.tool_allowlist
+        or output_schema_digest != revision.output_schema_digest
+    ):
+        raise AssetRevisionRejected()
+    return revision
+
+
 class ApprovedAssetCatalog:
     """A closed catalog: callers can select approved identities, never content."""
 
@@ -65,12 +77,9 @@ class ApprovedAssetCatalog:
         output_schema_digest: str,
     ) -> AiAgentRevision:
         revision = await self.get_agent(scope, revision_id)
-        if (
-            not tools <= revision.tool_allowlist
-            or output_schema_digest != revision.output_schema_digest
-        ):
-            raise AssetRevisionRejected()
-        return revision
+        return resolve_agent_selection(
+            revision, tools=tools, output_schema_digest=output_schema_digest
+        )
 
     async def resolve_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision:
         return await self.get_skill(scope, revision_id)

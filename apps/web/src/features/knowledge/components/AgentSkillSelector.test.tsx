@@ -7,7 +7,7 @@ import { AgentSkillSelector } from "./AgentSkillSelector";
 describe("AgentSkillSelector", () => {
   it("selects only server-returned enabled agent and skill revisions", async () => {
     function Harness() {
-      const [agent, setAgent] = useState("agent-v1");
+      const [agent, setAgent] = useState<string | null>("agent-v1");
       const [skills, setSkills] = useState<string[]>([]);
       return (
         <AgentSkillSelector
@@ -44,5 +44,19 @@ describe("AgentSkillSelector", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Agent unavailable");
+  });
+
+  it("clears retired skills and keeps a null agent controlled", async () => {
+    function Harness() {
+      const [agent, setAgent] = useState<string | null>(null);
+      const [skills, setSkills] = useState<string[]>(["retired"]);
+      return <AgentSkillSelector agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]} skills={[]} agentRevisionId={agent} skillRevisionIds={skills} onAgentChange={setAgent} onSkillsChange={setSkills} />;
+    }
+    render(<Harness />);
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent("Retired skills were removed");
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Agent" }), "agent-v1");
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveValue("agent-v1");
   });
 });
