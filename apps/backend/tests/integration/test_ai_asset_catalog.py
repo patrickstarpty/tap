@@ -140,3 +140,5 @@ def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
     assert result["status"] == "passed"
     assert set(result["preserved_rows"]) == set(BASELINE_ROWS)
     assert result["ai_asset_downgrade_replay"] == "passed"
+    assert result["source_backfill"] == "passed"
+    assert result["ai_asset_nonempty_downgrade"] == "rejected"

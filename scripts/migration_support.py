@@ -1147,6 +1147,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             identity_result: dict[str, Any] = {}
             if revision == AI_ASSET_CATALOG_REVISION:
                 with engine.connect() as connection:
+                    assert_source_backfill(connection)
                     if {
                         "ai_agent",
                         "ai_agent_revision",
@@ -1171,6 +1172,29 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                             raise ValueError(
                                 "migration fabricated approved AI asset facts"
                             )
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "INSERT INTO ai_agent (agent_id, display_name, created_at, "
+                            "enterprise_id, project_id, actor_id, identity_mode, identity_origin) "
+                            "VALUES ('migration-downgrade-guard', 'Guard', UTC_TIMESTAMP(6), "
+                            "'local', 'tapper-demo', 'tapper-local-user', 'validation', 'VALIDATION')"
+                        )
+                    )
+                try:
+                    database.downgrade(SOURCE_COMMANDS_REVISION)
+                except RuntimeError as error:
+                    if "local gate command failed" not in str(error):
+                        raise
+                    identity_result["ai_asset_nonempty_downgrade"] = "rejected"
+                else:
+                    raise ValueError("nonempty AI asset downgrade was accepted")
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "DELETE FROM ai_agent WHERE agent_id='migration-downgrade-guard'"
+                        )
+                    )
                 database.downgrade(SOURCE_COMMANDS_REVISION)
                 with engine.connect() as connection:
                     assert_preserved(connection, before, SOURCE_COMMANDS_REVISION)
@@ -1186,7 +1210,10 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                 database.upgrade(AI_ASSET_CATALOG_REVISION)
                 with engine.connect() as connection:
                     assert_preserved(connection, before, AI_ASSET_CATALOG_REVISION)
-                identity_result.update(ai_asset_downgrade_replay="passed")
+                    assert_source_backfill(connection)
+                identity_result.update(
+                    source_backfill="passed", ai_asset_downgrade_replay="passed"
+                )
             if revision == SOURCE_COMMANDS_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)
