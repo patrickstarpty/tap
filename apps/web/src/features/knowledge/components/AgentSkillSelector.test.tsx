@@ -50,27 +50,73 @@ describe("AgentSkillSelector", () => {
     function Harness() {
       const [agent, setAgent] = useState<string | null>(null);
       const [skills, setSkills] = useState<string[]>(["retired"]);
-      return <AgentSkillSelector agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]} skills={[]} agentRevisionId={agent} skillRevisionIds={skills} onAgentChange={setAgent} onSkillsChange={setSkills} />;
+      return (
+        <AgentSkillSelector
+          agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+          skills={[]}
+          agentRevisionId={agent}
+          skillRevisionIds={skills}
+          onAgentChange={setAgent}
+          onSkillsChange={setSkills}
+        />
+      );
     }
     render(<Harness />);
     expect(screen.getByRole("combobox", { name: "Agent" })).toHaveValue("");
-    expect(screen.getByRole("status")).toHaveTextContent("Retired skills were removed");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Retired skills were removed",
+    );
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Agent" }), "agent-v1");
-    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveValue("agent-v1");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Agent" }),
+      "agent-v1",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveValue(
+      "agent-v1",
+    );
   });
 
   it("keeps selections while loading and offers error and stale-agent recovery", async () => {
     const user = userEvent.setup();
     const retry = vi.fn();
     const change = vi.fn();
-    const { rerender } = render(<AgentSkillSelector agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]} skills={[]} agentRevisionId="agent-v1" skillRevisionIds={["skill-v1"]} onAgentChange={change} onSkillsChange={() => {}} loading />);
+    const { rerender } = render(
+      <AgentSkillSelector
+        agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+        skills={[]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={change}
+        onSkillsChange={() => {}}
+        loading
+      />,
+    );
     expect(screen.getByText("Loading approved revisions")).toBeInTheDocument();
     expect(change).not.toHaveBeenCalled();
-    rerender(<AgentSkillSelector agents={[]} skills={[]} agentRevisionId={null} skillRevisionIds={[]} onAgentChange={change} onSkillsChange={() => {}} error="Catalog unavailable" onRetry={retry} />);
+    rerender(
+      <AgentSkillSelector
+        agents={[]}
+        skills={[]}
+        agentRevisionId={null}
+        skillRevisionIds={[]}
+        onAgentChange={change}
+        onSkillsChange={() => {}}
+        error="Catalog unavailable"
+        onRetry={retry}
+      />,
+    );
     await user.click(screen.getByRole("button", { name: "Retry catalog" }));
     expect(retry).toHaveBeenCalledOnce();
-    rerender(<AgentSkillSelector agents={[]} skills={[]} agentRevisionId="retired" skillRevisionIds={[]} onAgentChange={change} onSkillsChange={() => {}} />);
+    rerender(
+      <AgentSkillSelector
+        agents={[]}
+        skills={[]}
+        agentRevisionId="retired"
+        skillRevisionIds={[]}
+        onAgentChange={change}
+        onSkillsChange={() => {}}
+      />,
+    );
     await user.click(screen.getByRole("button", { name: "Clear agent" }));
     expect(change).toHaveBeenLastCalledWith(null);
   });

@@ -35,7 +35,8 @@ export function AgentSkillSelector({
     [skills],
   );
   const activeSkills = skillRevisionIds.filter((id) => enabledSkillIds.has(id));
-  const retiredSkills = !loading && activeSkills.length !== skillRevisionIds.length;
+  const retiredSkills =
+    !loading && activeSkills.length !== skillRevisionIds.length;
   useEffect(() => {
     if (retiredSkills) {
       onSkillsChange(activeSkills);
@@ -43,9 +44,19 @@ export function AgentSkillSelector({
     }
   }, [activeSkills, onSkillsChange, retiredSkills]);
   if (error)
-    return <div role="alert">{error}{onRetry && <Button onClick={onRetry}>Retry catalog</Button>}</div>;
+    return (
+      <div role="alert">
+        {error}
+        {onRetry && <Button onClick={onRetry}>Retry catalog</Button>}
+      </div>
+    );
   if (agentRevisionId !== null && selected === undefined)
-    return <div role="status">Agent unavailable <Button onClick={() => onAgentChange(null)}>Clear agent</Button></div>;
+    return (
+      <div role="status">
+        Agent unavailable{" "}
+        <Button onClick={() => onAgentChange(null)}>Clear agent</Button>
+      </div>
+    );
   return (
     <div className="tap-agent-skill-selector">
       <label>
@@ -65,8 +76,12 @@ export function AgentSkillSelector({
         </select>
       </label>
       {loading && <span role="status">Loading approved revisions</span>}
-      {!loading && agents.length === 0 && <span role="status">No approved agents available</span>}
-      {retiredSkillsRemoved && <span role="status">Retired skills were removed</span>}
+      {!loading && agents.length === 0 && (
+        <span role="status">No approved agents available</span>
+      )}
+      {retiredSkillsRemoved && (
+        <span role="status">Retired skills were removed</span>
+      )}
       <Button
         aria-expanded={skillsOpen}
         disabled={loading || skills.length === 0}
@@ -86,9 +101,7 @@ export function AgentSkillSelector({
                   onChange={() =>
                     onSkillsChange(
                       checked
-                        ? activeSkills.filter(
-                            (id) => id !== item.revisionId,
-                          )
+                        ? activeSkills.filter((id) => id !== item.revisionId)
                         : [...activeSkills, item.revisionId],
                     )
                   }
