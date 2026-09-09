@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "quality-kb-profile-v1",
+  "schemaVersion": "quality-kb-dataset-v1",
   "profileId": "QUALITY-KB-01",
   "dataset": {
     "version": "not-provided",
@@ -9,21 +9,10 @@
   "bindings": {
     "policyDigest": null,
     "modelAlias": "tapper-chat",
-    "actualProvider": null,
-    "actualModel": null,
-    "actualModelApproval": "not-provided",
-    "actualModelApprovalDigest": null,
     "promptDigest": null,
     "agentRevisionDigest": null,
     "skillRevisionDigests": [],
     "schemaDigest": null
-  },
-  "execution": {
-    "providerCallBudget": 0,
-    "providerCalls": 0,
-    "cacheHits": 0,
-    "retryCount": 0,
-    "maxRetriesPerCase": 0
   },
   "cases": []
 }

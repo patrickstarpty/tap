@@ -11,9 +11,9 @@ bootstrap: ## install frozen Python and Node dependencies
 	corepack pnpm install --frozen-lockfile
 
 check: ## lint, format-check, typecheck, architecture checks
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/backend mypy --explicit-package-bases --follow-imports=silent scripts/tapper_v0_gate.py
 	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/backend python scripts/export_contracts.py --check
@@ -34,6 +34,7 @@ contracts: ## export OpenAPI/SSE schema and generate TypeScript
 
 TAP_QUALITY_KB_PROFILE ?= apps/backend/tests/fixtures/quality/kb/profile-v1.json
 TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json
+TAP_QUALITY_KB_OBSERVATIONS ?= .local/quality-kb/observations.json
 
 quality-kb: ## deterministically evaluate the committed QUALITY-KB-01 profile offline
 	uv run --project apps/backend python scripts/evaluate-quality-kb.py "$(TAP_QUALITY_KB_PROFILE)" --report "$(TAP_QUALITY_KB_REPORT)"
@@ -48,8 +49,7 @@ quality-kb-real: ## require an opted-in real, human-labeled QUALITY-KB-01 run
 		exit 2; \
 	fi
 	@mkdir -p .local/quality-kb
-	TAP_QUALITY_KB_PROFILE="$(TAP_QUALITY_KB_PROFILE)" TAP_QUALITY_KB_REPORT="$(TAP_QUALITY_KB_REPORT)" uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py::test_captured_real_response_profile_meets_quality_kb_01 -v --junitxml=.local/quality-kb/pytest.xml
-	uv run --project apps/backend python scripts/evaluate-quality-kb.py "$(TAP_QUALITY_KB_PROFILE)" --report "$(TAP_QUALITY_KB_REPORT)" --require-real --pytest-report .local/quality-kb/pytest.xml
+	uv run --project apps/backend python scripts/run-quality-kb-real.py "$(TAP_QUALITY_KB_PROFILE)" --observations "$(TAP_QUALITY_KB_OBSERVATIONS)" --report "$(TAP_QUALITY_KB_REPORT)"
 
 milvus-preflight: ## require Docker with at least 2 vCPU and 8 GiB memory
 	@set -eu; \

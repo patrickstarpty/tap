@@ -1,70 +1,110 @@
 {
-  "schemaVersion": "quality-kb-profile-v1",
-  "profileId": "QUALITY-KB-01",
   "dataset": {
-    "version": "red-cross-source-v1",
-    "labelingMethod": "human",
-    "provenance": "test-fixture:independently-reviewed-red-case"
-  },
-  "bindings": {
-    "policyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-    "modelAlias": "tapper-chat",
-    "actualProvider": "approved-provider",
-    "actualModel": "approved-model",
-    "actualModelApproval": "approved",
-    "actualModelApprovalDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
-    "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-    "agentRevisionDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-    "skillRevisionDigests": [
-      "sha256:4444444444444444444444444444444444444444444444444444444444444444"
-    ],
-    "schemaDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
-  },
-  "execution": {
-    "providerCallBudget": 2,
-    "providerCalls": 1,
-    "cacheHits": 0,
-    "retryCount": 0,
-    "maxRetriesPerCase": 1
-  },
-  "cases": [
-    {
-      "caseId": "cross-source-red",
-      "caseType": "answerable",
-      "question": "Which approval is required?",
-      "projectId": "project-a",
-      "selectedSourceIds": ["source-a"],
-      "expectedRelevantChunkIds": ["chunk-a"],
-      "shouldAbstain": false,
-      "labelProvenance": "human-label:red-cross-source",
-      "observed": {
-        "actualProvider": "approved-provider",
-        "actualModel": "approved-model",
-        "retrieved": [
+    "schemaVersion": "quality-kb-dataset-v1",
+    "profileId": "QUALITY-KB-01",
+    "dataset": {
+      "version": "red-cross-source-v2",
+      "labelingMethod": "human",
+      "provenance": "test-fixture:independently-reviewed-red-case"
+    },
+    "bindings": {
+      "policyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "modelAlias": "tapper-chat",
+      "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "agentRevisionDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "skillRevisionDigests": ["sha256:4444444444444444444444444444444444444444444444444444444444444444"],
+      "schemaDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "cases": [
+      {
+        "caseId": "cross-source-red",
+        "caseType": "answerable",
+        "question": "Which approval is required?",
+        "projectId": "project-a",
+        "authorizedSourceIds": ["source-a"],
+        "selectedSourceIds": ["source-a"],
+        "authorizationExpected": "allow",
+        "shouldAbstain": false,
+        "conflictLabel": null,
+        "expectedEvidence": [
           {
-            "rank": 1,
-            "chunkId": "chunk-foreign",
-            "sourceId": "source-b",
-            "projectId": "project-a"
+            "evidenceId": "evidence-a",
+            "sourceId": "source-a",
+            "documentRevisionId": "revision-a",
+            "chunkId": "chunk-a",
+            "locator": {"type": "document", "page": 1},
+            "evidenceDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
         ],
+        "expectedClaims": [
+          {
+            "claimId": "expected-claim-a",
+            "textDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "supportedEvidenceIds": ["evidence-a"]
+          }
+        ],
+        "labelProvenance": "human-label:red-cross-source"
+      }
+    ]
+  },
+  "observations": {
+    "schemaVersion": "quality-kb-observations-v1",
+    "datasetDigest": "sha256:1a643b26a96085f9c18e26e92a43cc3c4ad29175dfa101b56bb54a1a75ba96b3",
+    "runId": "red-run-v2",
+    "execution": {
+      "providerCallBudget": 1000,
+      "providerCalls": 1,
+      "cacheHits": 0,
+      "retryCount": 0,
+      "maxRetriesPerCase": 2
+    },
+    "cases": [
+      {
+        "caseId": "cross-source-red",
+        "retrieved": [
+          {"rank": 1, "projectId": "project-a", "sourceId": "source-b", "documentRevisionId": "revision-b", "chunkId": "chunk-foreign"}
+        ],
         "abstained": false,
+        "claims": [
+          {"claimId": "observed-claim-a", "textDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "citationIds": ["citation-foreign"]}
+        ],
         "citations": [
           {
             "citationId": "citation-foreign",
-            "sourceId": "source-b",
             "projectId": "project-a",
-            "anchorResolvable": true
+            "sourceId": "source-b",
+            "documentRevisionId": "revision-b",
+            "chunkId": "chunk-foreign",
+            "locator": {"type": "document", "page": 1},
+            "resolvedEvidenceDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
           }
         ],
-        "claims": [
-          {
-            "claimId": "claim-a",
-            "citationIds": ["citation-foreign"],
-            "humanSupportedCitationIds": ["citation-foreign"]
-          }
-        ]
+        "execution": {
+          "timeoutMs": 1000,
+          "startedAtUtc": "2026-09-09T00:00:00Z",
+          "durationMs": 5,
+          "cacheKey": "sha256:87e3bd766ec4c72b949aa5f458a4d132f1cfeb6448d65ae1dc4670bf52ad814b",
+          "cacheHit": false,
+          "attempts": [
+            {
+              "attempt": 1,
+              "retryReason": null,
+              "startedAtUtc": "2026-09-09T00:00:00Z",
+              "durationMs": 4,
+              "providerCalls": [
+                {
+                  "operation": "structured",
+                  "actualProvider": "approved-provider",
+                  "actualModel": "approved-model",
+                  "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                  "providerRequestId": "provider-red-1",
+                  "gatewayCallId": "gateway-red-1"
+                }
+              ]
+            }
+          ]
+        }
       }
-    }
-  ]
+    ]
+  }
 }

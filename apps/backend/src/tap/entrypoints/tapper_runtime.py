@@ -618,6 +618,7 @@ class TapperApiRuntime:
     """One API process graph with a single outer ownership boundary."""
 
     http_services: HttpServices
+    quality_models: KnowledgeModelGateway
     _resources: OwnedResources
     failure_controller: TapperFailureController | None = None
 
@@ -684,6 +685,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         )
         return TapperApiRuntime(
             http_services=services,
+            quality_models=embeddings,
             _resources=resources,
             failure_controller=failure_controller,
         )

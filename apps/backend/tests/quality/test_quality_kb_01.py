@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
 
@@ -12,121 +12,274 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
+RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
-APPROVED_MAPPING = (
-    "approved-provider",
-    "approved-model-v1",
-    "sha256:" + "6" * 64,
-)
+APPROVED = ("approved-provider", "approved-model", "sha256:" + "6" * 64)
 
 
-def _evaluator() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("evaluate_quality_kb", SCRIPT)
+def _module(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def _passing_profile() -> dict[str, object]:
+def _evaluator() -> ModuleType:
+    return _module(SCRIPT, "evaluate_quality_kb")
+
+
+def _runner() -> ModuleType:
+    return _module(RUNNER, "run_quality_kb_real")
+
+
+def _sha(character: str) -> str:
+    return "sha256:" + character * 64
+
+
+def _anchor(*, suffix: str = "a", source: str = "source-a") -> dict[str, object]:
     return {
-        "schemaVersion": "quality-kb-profile-v1",
+        "evidenceId": f"evidence-{suffix}",
+        "sourceId": source,
+        "documentRevisionId": "revision-a",
+        "chunkId": f"chunk-{suffix}",
+        "locator": {"type": "document", "page": 1, "startOffset": 0, "endOffset": 12},
+        "evidenceDigest": _sha(suffix),
+    }
+
+
+def _dataset() -> dict[str, object]:
+    answer_anchor = _anchor()
+    return {
+        "schemaVersion": "quality-kb-dataset-v1",
         "profileId": "QUALITY-KB-01",
         "dataset": {
-            "version": "human-labeled-unit-v1",
+            "version": "human-unit-v2",
             "labelingMethod": "human",
-            "provenance": "review-record:unit-v1",
+            "provenance": "review-record:unit-v2",
         },
         "bindings": {
-            "policyDigest": "sha256:" + "1" * 64,
+            "policyDigest": _sha("1"),
             "modelAlias": "tapper-chat",
-            "actualProvider": "approved-provider",
-            "actualModel": "approved-model-v1",
-            "actualModelApproval": "approved",
-            "actualModelApprovalDigest": "sha256:" + "6" * 64,
-            "promptDigest": "sha256:" + "2" * 64,
-            "agentRevisionDigest": "sha256:" + "3" * 64,
-            "skillRevisionDigests": ["sha256:" + "4" * 64],
-            "schemaDigest": "sha256:" + "5" * 64,
-        },
-        "execution": {
-            "providerCallBudget": 4,
-            "providerCalls": 2,
-            "cacheHits": 0,
-            "retryCount": 0,
-            "maxRetriesPerCase": 1,
+            "promptDigest": _sha("2"),
+            "agentRevisionDigest": _sha("3"),
+            "skillRevisionDigests": [_sha("4")],
+            "schemaDigest": _sha("5"),
         },
         "cases": [
             {
                 "caseId": "answerable-a",
                 "caseType": "answerable",
-                "question": "Who approves the request?",
+                "question": "Which reviewer approves request alpha?",
                 "projectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
                 "selectedSourceIds": ["source-a"],
-                "expectedRelevantChunkIds": ["chunk-a"],
+                "authorizationExpected": "allow",
                 "shouldAbstain": False,
-                "labelProvenance": "review-record:unit-v1#answerable-a",
-                "observed": {
-                    "actualProvider": "approved-provider",
-                    "actualModel": "approved-model-v1",
-                    "retrieved": [
-                        {
-                            "rank": 1,
-                            "chunkId": "chunk-a",
-                            "sourceId": "source-a",
-                            "projectId": "project-a",
-                        }
-                    ],
-                    "abstained": False,
-                    "citations": [
-                        {
-                            "citationId": "citation-a",
-                            "sourceId": "source-a",
-                            "projectId": "project-a",
-                            "anchorResolvable": True,
-                        }
-                    ],
-                    "claims": [
-                        {
-                            "claimId": "claim-a",
-                            "citationIds": ["citation-a"],
-                            "humanSupportedCitationIds": ["citation-a"],
-                        }
-                    ],
-                },
+                "conflictLabel": None,
+                "expectedEvidence": [answer_anchor],
+                "expectedClaims": [
+                    {
+                        "claimId": "claim-label-a",
+                        "textDigest": _sha("b"),
+                        "supportedEvidenceIds": ["evidence-a"],
+                    }
+                ],
+                "labelProvenance": "review-record:unit-v2#answerable-a",
+            },
+            {
+                "caseId": "conflict-a",
+                "caseType": "conflict",
+                "question": "Do the alpha policies conflict?",
+                "projectId": "project-a",
+                "authorizedSourceIds": ["source-a", "source-b"],
+                "selectedSourceIds": ["source-a", "source-b"],
+                "authorizationExpected": "allow",
+                "shouldAbstain": True,
+                "conflictLabel": "material-conflict",
+                "expectedEvidence": [answer_anchor, _anchor(suffix="c", source="source-b")],
+                "expectedClaims": [],
+                "labelProvenance": "review-record:unit-v2#conflict-a",
+            },
+            {
+                "caseId": "unauthorized-a",
+                "caseType": "unauthorized",
+                "question": "Can alpha read the restricted source?",
+                "projectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+                "selectedSourceIds": ["source-b"],
+                "authorizationExpected": "deny",
+                "shouldAbstain": True,
+                "conflictLabel": None,
+                "expectedEvidence": [],
+                "expectedClaims": [],
+                "labelProvenance": "review-record:unit-v2#unauthorized-a",
             },
             {
                 "caseId": "abstain-a",
                 "caseType": "abstain",
-                "question": "What is not in the selected source?",
+                "question": "What does alpha omit about retention?",
                 "projectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
                 "selectedSourceIds": ["source-a"],
-                "expectedRelevantChunkIds": [],
+                "authorizationExpected": "allow",
                 "shouldAbstain": True,
-                "labelProvenance": "review-record:unit-v1#abstain-a",
-                "observed": {
-                    "actualProvider": "approved-provider",
-                    "actualModel": "approved-model-v1",
-                    "retrieved": [],
-                    "abstained": True,
-                    "citations": [],
-                    "claims": [],
-                },
+                "conflictLabel": None,
+                "expectedEvidence": [],
+                "expectedClaims": [],
+                "labelProvenance": "review-record:unit-v2#abstain-a",
             },
         ],
     }
 
 
+def _execution(
+    module: ModuleType, dataset: dict[str, object], case_id: str, call: int
+) -> dict[str, object]:
+    return {
+        "timeoutMs": 1000,
+        "startedAtUtc": "2026-09-09T00:00:00Z",
+        "durationMs": 5,
+        "cacheKey": module.expected_cache_key(dataset, case_id),
+        "cacheHit": False,
+        "attempts": [
+            {
+                "attempt": 1,
+                "retryReason": None,
+                "startedAtUtc": "2026-09-09T00:00:00Z",
+                "durationMs": 4,
+                "providerCalls": [
+                    {
+                        "operation": "structured",
+                        "actualProvider": "approved-provider",
+                        "actualModel": "approved-model",
+                        "promptDigest": _sha("2"),
+                        "providerRequestId": f"provider-{call}",
+                        "gatewayCallId": f"gateway-{call}",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _observations(dataset: dict[str, object]) -> dict[str, object]:
+    module = _evaluator()
+    answer_anchor = dataset["cases"][0]["expectedEvidence"][0]
+    citation = {
+        "citationId": "citation-a",
+        "projectId": "project-a",
+        "sourceId": answer_anchor["sourceId"],
+        "documentRevisionId": answer_anchor["documentRevisionId"],
+        "chunkId": answer_anchor["chunkId"],
+        "locator": answer_anchor["locator"],
+        "resolvedEvidenceDigest": answer_anchor["evidenceDigest"],
+    }
+    cases = []
+    for index, case in enumerate(dataset["cases"], 1):
+        answerable = case["caseType"] == "answerable"
+        conflict = case["caseType"] == "conflict"
+        retrieved = []
+        if answerable:
+            retrieved = [
+                {
+                    "rank": 1,
+                    "projectId": "project-a",
+                    "sourceId": "source-a",
+                    "documentRevisionId": "revision-a",
+                    "chunkId": "chunk-a",
+                }
+            ]
+        elif conflict:
+            retrieved = [
+                {
+                    "rank": 1,
+                    "projectId": "project-a",
+                    "sourceId": "source-a",
+                    "documentRevisionId": "revision-a",
+                    "chunkId": "chunk-a",
+                },
+                {
+                    "rank": 2,
+                    "projectId": "project-a",
+                    "sourceId": "source-b",
+                    "documentRevisionId": "revision-a",
+                    "chunkId": "chunk-c",
+                },
+            ]
+        cases.append(
+            {
+                "caseId": case["caseId"],
+                "retrieved": retrieved,
+                "abstained": not answerable,
+                "claims": (
+                    [
+                        {
+                            "claimId": "claim-observed-a",
+                            "textDigest": _sha("b"),
+                            "citationIds": ["citation-a"],
+                        }
+                    ]
+                    if answerable
+                    else []
+                ),
+                "citations": ([citation] if answerable else []),
+                "execution": _execution(module, dataset, case["caseId"], index),
+            }
+        )
+    return {
+        "schemaVersion": "quality-kb-observations-v1",
+        "datasetDigest": module.dataset_digest(dataset),
+        "runId": "run-unit-v2",
+        "execution": {
+            "providerCallBudget": 1000,
+            "providerCalls": 4,
+            "cacheHits": 0,
+            "retryCount": 0,
+            "maxRetriesPerCase": 2,
+        },
+        "cases": cases,
+    }
+
+
+def test_report_is_deterministic_and_binds_dataset_config_and_governance() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    first = module.evaluate_run(
+        dataset, observations, min_cases=4, require_real=True, approved_mapping=APPROVED
+    )
+    second = module.evaluate_run(
+        dataset, observations, min_cases=4, require_real=True, approved_mapping=APPROVED
+    )
+
+    assert first == second
+    assert first["status"] == "pass"
+    assert first["datasetDigest"].startswith("sha256:")
+    assert first["configDigest"].startswith("sha256:")
+    assert first["evaluatorDigest"].startswith("sha256:")
+    assert first["bindings"] == dataset["bindings"]
+
+
 def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Path) -> None:
-    report = tmp_path / "report.json"
+    fixture = json.loads((FIXTURES / "failing-cross-source-v1.json").read_text())
+    dataset = fixture["dataset"]
+    observations = fixture["observations"]
+    dataset_path = tmp_path / "dataset.json"
+    observations_path = tmp_path / "observations.json"
+    report_path = tmp_path / "report.json"
+    dataset_path.write_text(json.dumps(dataset))
+    observations_path.write_text(json.dumps(observations))
     completed = subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
-            str(FIXTURES / "failing-cross-source-v1.json"),
+            str(dataset_path),
+            "--observations",
+            str(observations_path),
             "--report",
-            str(report),
+            str(report_path),
             "--min-cases",
             "1",
         ],
@@ -137,282 +290,297 @@ def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Pat
 
     assert completed.returncode == 1
     assert "leakage=2 (required 0)" in completed.stderr
-    payload = json.loads(report.read_text())
-    assert payload["status"] == "fail"
-    assert payload["metrics"]["leakageCount"] == 2
-    assert payload["cases"][0]["leakage"] == [
+    report = json.loads(report_path.read_text())
+    assert report["metrics"]["leakageCount"] == 2
+    assert report["cases"][0]["leakage"] == [
         "citation:citation-foreign:unselected-source:source-b",
         "retrieval:chunk-foreign:unselected-source:source-b",
     ]
 
 
-def test_report_is_deterministic_and_binds_all_governance_digests() -> None:
+def test_dataset_digest_covers_every_human_support_anchor_and_closed_label() -> None:
     module = _evaluator()
-    first = module.evaluate_profile(
-        _passing_profile(), min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
-    second = module.evaluate_profile(
-        _passing_profile(), min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
+    original = _dataset()
+    mutations = []
+    for field, value in (
+        ("shouldAbstain", True),
+        ("authorizationExpected", "deny"),
+        ("conflictLabel", "different"),
+    ):
+        changed = deepcopy(original)
+        changed["cases"][0][field] = value
+        mutations.append(changed)
+    support = deepcopy(original)
+    support["cases"][0]["expectedClaims"][0]["supportedEvidenceIds"] = []
+    mutations.append(support)
+    locator = deepcopy(original)
+    locator["cases"][0]["expectedEvidence"][0]["locator"]["page"] = 2
+    mutations.append(locator)
+    baseline = module.dataset_digest(original)
 
-    assert first == second
-    assert first["status"] == "pass"
-    assert first["datasetDigest"].startswith("sha256:")
-    assert first["evaluatorDigest"].startswith("sha256:")
-    assert first["bindings"] == {
-        "policyDigest": "sha256:" + "1" * 64,
-        "modelAlias": "tapper-chat",
-        "actualProvider": "approved-provider",
-        "actualModel": "approved-model-v1",
-        "actualModelApproval": "approved",
-        "actualModelApprovalDigest": "sha256:" + "6" * 64,
-        "promptDigest": "sha256:" + "2" * 64,
-        "agentRevisionDigest": "sha256:" + "3" * 64,
-        "skillRevisionDigests": ["sha256:" + "4" * 64],
-        "schemaDigest": "sha256:" + "5" * 64,
+    assert all(module.dataset_digest(item) != baseline for item in mutations)
+
+
+def test_schema_rejects_100_renamed_copies_and_inconsistent_semantics() -> None:
+    module = _evaluator()
+    copied = _dataset()
+    copied["cases"] = [
+        {**deepcopy(copied["cases"][0]), "caseId": f"copy-{index}"} for index in range(100)
+    ]
+    with pytest.raises(ValueError, match="duplicate case content"):
+        module.validate_dataset(copied, min_cases=100)
+
+    inconsistent = _dataset()
+    inconsistent["cases"][0]["shouldAbstain"] = True
+    with pytest.raises(ValueError, match="answerable.*shouldAbstain"):
+        module.validate_dataset(inconsistent, min_cases=1)
+
+
+def test_empty_anchor_precision_and_abstain_denominators_fail_closed() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][3]]
+    observations = {
+        "schemaVersion": "quality-kb-observations-v1",
+        "datasetDigest": module.dataset_digest(dataset),
+        "runId": "empty",
+        "execution": {
+            "providerCallBudget": 1000,
+            "providerCalls": 0,
+            "cacheHits": 0,
+            "retryCount": 0,
+            "maxRetriesPerCase": 2,
+        },
+        "cases": [],
     }
-
-
-def test_thresholds_and_each_case_evidence_are_reported_without_rounding() -> None:
-    module = _evaluator()
-    profile = _passing_profile()
-    cases = profile["cases"]
-    assert isinstance(cases, list)
-    cases[0]["observed"]["retrieved"] = []
-    cases[0]["observed"]["citations"][0]["anchorResolvable"] = False
-    cases[0]["observed"]["claims"][0]["humanSupportedCitationIds"] = []
-    cases[1]["observed"]["abstained"] = False
-
-    report = module.evaluate_profile(
-        profile, min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
+    report = module.evaluate_run(dataset, observations, min_cases=1)
 
     assert report["status"] == "fail"
-    assert report["metrics"] == {
-        "actualCaseCount": 2,
-        "skippedCaseCount": 0,
-        "leakageCount": 0,
-        "anchorResolved": 0,
-        "anchorTotal": 1,
-        "groundedSupported": 0,
-        "groundedTotal": 1,
-        "retrievalRelevantAt10": 0,
-        "retrievalRelevantTotal": 1,
-        "abstainCorrect": 0,
-        "abstainTotal": 1,
-    }
-    assert report["thresholds"]["anchorResolution"]["actual"] == "0/1"
-    assert report["thresholds"]["groundedClaimCitationPrecision"]["actual"] == "0/1"
-    assert report["thresholds"]["retrievalRecallAt10"]["actual"] == "0/1"
-    assert report["thresholds"]["abstainAccuracy"]["actual"] == "0/1"
-    answerable = next(item for item in report["cases"] if item["caseId"] == "answerable-a")
-    assert answerable["missedRelevantChunkIds"] == ["chunk-a"]
+    assert report["thresholds"]["anchorResolution"]["passed"] is False
+    assert report["thresholds"]["groundedClaimCitationPrecision"]["passed"] is False
+    assert report["thresholds"]["abstainAccuracy"]["passed"] is False
 
 
-@pytest.mark.parametrize(
-    ("mutation", "expected_failure"),
-    [
-        (("dataset", "labelingMethod", "model"), "dataset must be human-labeled"),
-        (("bindings", "actualModelApproval", "unapproved"), "actual model is not approved"),
-        (("bindings", "actualProvider", ""), "actual provider/model binding is missing"),
-        (("bindings", "actualModel", "tapper-chat"), "actual model cannot equal logical alias"),
-    ],
-)
-def test_real_gate_rejects_untruthful_dataset_or_model_binding(
-    mutation: tuple[str, str, str], expected_failure: str
-) -> None:
+def test_anchor_digest_and_identity_are_resolved_not_boolean_self_reports() -> None:
     module = _evaluator()
-    profile = _passing_profile()
-    section, key, value = mutation
-    profile[section][key] = value
+    dataset = _dataset()
+    observations = _observations(dataset)
+    observations["cases"][0]["citations"][0]["resolvedEvidenceDigest"] = _sha("f")
+    observations["cases"][0]["citations"][0]["anchorResolvable"] = True
+    report = module.evaluate_run(dataset, observations, min_cases=4)
 
-    report = module.evaluate_profile(
-        profile, min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
+    assert report["metrics"]["anchorResolved"] == 0
+    assert report["thresholds"]["anchorResolution"]["passed"] is False
+    assert report["status"] == "fail"
+
+
+def test_execution_aggregate_tampering_and_duplicate_call_ids_fail() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    tampered = _observations(dataset)
+    tampered["execution"]["providerCalls"] = 1
+    report = module.evaluate_run(dataset, tampered, min_cases=4)
+    assert "runner execution aggregate does not match immutable case evidence" in report["failures"]
+
+    duplicated = _observations(dataset)
+    duplicated["cases"][1]["execution"]["attempts"][0]["providerCalls"][0]["providerRequestId"] = (
+        "provider-1"
+    )
+    duplicated["cases"][1]["execution"]["attempts"][0]["providerCalls"][0]["gatewayCallId"] = (
+        "gateway-1"
+    )
+    with pytest.raises(ValueError, match="globally unique"):
+        module.evaluate_run(dataset, duplicated, min_cases=4)
+
+
+@pytest.mark.asyncio
+async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit() -> None:
+    from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelRequest,
+        ModelResult,
+        ModelUsage,
     )
 
-    assert report["status"] == "fail"
-    assert expected_failure in report["failures"]
+    module = _runner()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][0]]
+    scope = ProjectScopeContext(
+        enterprise_id="tenant",
+        project_id="project-a",
+        actor_id="actor",
+        identity_mode=IdentityMode.VALIDATION,
+    )
+    calls = []
+
+    class FakeGateway:
+        async def generate_structured(self, request):
+            calls.append(request)
+            audit = ModelCallAudit(
+                scope=scope,
+                alias=request.alias,
+                operation=ModelOperation.STRUCTURED,
+                prompt_digest=request.prompt_digest,
+                schema_digest=request.schema_digest,
+                context_digest=_sha("9"),
+                idempotency_key=request.idempotency_key,
+                actual_provider="provider-from-audit",
+                actual_model="model-from-audit",
+                usage=ModelUsage(10, 5),
+            )
+            return ModelResult(
+                {"answer": "Approved.", "claims": []},
+                "model-from-audit",
+                ModelUsage(10, 5),
+                "provider-from-audit",
+                audit,
+                "provider-call-1",
+                "gateway-call-1",
+            )
+
+    class FakePath:
+        def __init__(self, gateway):
+            self.gateway = gateway
+
+        async def run_case(self, case):
+            await self.gateway.generate_structured(
+                ModelRequest(
+                    scope,
+                    "tapper-chat",
+                    ModelOperation.STRUCTURED,
+                    "prompt",
+                    _sha("2"),
+                    "context",
+                    1.0,
+                    case["caseId"],
+                    {},
+                    _sha("5"),
+                )
+            )
+            return {"retrieved": [], "abstained": False, "claims": [], "citations": []}
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    observations = await module.run_dataset(
+        dataset,
+        gateway=FakeGateway(),
+        path_factory=FakePath,
+        timeout_ms=1000,
+        provider_call_budget=2,
+        cache={},
+    )
+    provider_call = observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]
+
+    assert len(calls) == 1
+    assert (provider_call["actualProvider"], provider_call["actualModel"]) == (
+        "provider-from-audit",
+        "model-from-audit",
+    )
+    assert (provider_call["providerRequestId"], provider_call["gatewayCallId"]) == (
+        "provider-call-1",
+        "gateway-call-1",
+    )
 
 
-def test_real_cli_requires_explicit_opt_in_before_reading_a_profile(tmp_path: Path) -> None:
-    absent = tmp_path / "absent.json"
-    completed = subprocess.run(
-        [sys.executable, str(SCRIPT), str(absent), "--require-real"],
+@pytest.mark.asyncio
+async def test_runner_rejects_a_cache_miss_that_bypasses_model_gateway() -> None:
+    module = _runner()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][0]]
+
+    class BypassPath:
+        def __init__(self, gateway):
+            self.gateway = gateway
+
+        async def run_case(self, case):
+            return {"retrieved": [], "abstained": True, "claims": [], "citations": []}
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    with pytest.raises(RuntimeError, match="cache miss made no ModelGateway call"):
+        await module.run_dataset(
+            dataset,
+            gateway=object(),
+            path_factory=BypassPath,
+            timeout_ms=1000,
+            provider_call_budget=2,
+            cache={},
+        )
+
+
+def test_real_runner_preflight_requires_opt_in_and_mapping_before_io(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.json"
+    no_opt_in = subprocess.run(
+        [sys.executable, str(RUNNER), str(missing), "--observations", str(tmp_path / "o.json")],
         check=False,
         capture_output=True,
         text=True,
         env={},
     )
+    assert no_opt_in.returncode == 2
+    assert "TAP_RUN_QUALITY_KB_01=1" in no_opt_in.stderr
+    assert "provider I/O was not started" in no_opt_in.stderr
 
-    assert completed.returncode == 2
-    assert completed.stderr.strip() == "quality-kb-real requires TAP_RUN_QUALITY_KB_01=1"
-
-
-def test_real_cli_requires_external_approved_model_mapping_before_profile(
-    tmp_path: Path,
-) -> None:
-    completed = subprocess.run(
-        [sys.executable, str(SCRIPT), str(tmp_path / "absent.json"), "--require-real"],
+    no_mapping = subprocess.run(
+        [sys.executable, str(RUNNER), str(missing), "--observations", str(tmp_path / "o.json")],
         check=False,
         capture_output=True,
         text=True,
         env={"TAP_RUN_QUALITY_KB_01": "1"},
     )
+    assert no_mapping.returncode == 2
+    assert "approved actual provider/model mapping" in no_mapping.stderr
+    assert "provider I/O was not started" in no_mapping.stderr
 
-    assert completed.returncode == 2
-    assert completed.stderr.strip() == (
-        "quality-kb-real requires an explicit approved actual provider/model mapping"
+    malformed_mapping = subprocess.run(
+        [
+            sys.executable,
+            str(RUNNER),
+            str(missing),
+            "--observations",
+            str(tmp_path / "o.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "TAP_RUN_QUALITY_KB_01": "1",
+            "TAP_QUALITY_KB_APPROVED_PROVIDER": "provider",
+            "TAP_QUALITY_KB_APPROVED_MODEL": "model",
+            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": "sha256:" + "g" * 64,
+        },
     )
+    assert malformed_mapping.returncode == 2
+    assert "approved actual provider/model mapping" in malformed_mapping.stderr
+    assert "dataset invalid" not in malformed_mapping.stderr
 
 
-def test_dataset_digest_changes_when_a_label_changes() -> None:
-    module = _evaluator()
-    original = _passing_profile()
-    changed = _passing_profile()
-    changed["cases"][0]["shouldAbstain"] = True
-
-    first = module.evaluate_profile(
-        original, min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
-    second = module.evaluate_profile(
-        changed, min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
-
-    assert first["datasetDigest"] != second["datasetDigest"]
-
-
-def test_real_gate_binds_response_identity_and_bounded_provider_execution() -> None:
-    module = _evaluator()
-    wrong_identity = _passing_profile()
-    wrong_identity["cases"][0]["observed"]["actualModel"] = "different-model"
-    over_budget = _passing_profile()
-    over_budget["execution"]["providerCalls"] = 5
-
-    identity_report = module.evaluate_profile(
-        wrong_identity, min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
-    budget_report = module.evaluate_profile(
-        over_budget, min_cases=2, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
-
-    assert identity_report["status"] == "fail"
-    answerable = next(item for item in identity_report["cases"] if item["caseId"] == "answerable-a")
-    assert answerable["modelIdentityMatchesBinding"] is False
-    assert (
-        "case answerable-a actual response model identity mismatches binding"
-        in identity_report["failures"]
-    )
-    assert budget_report["status"] == "fail"
-    assert "provider call count exceeds bounded budget" in budget_report["failures"]
-    assert budget_report["execution"] == {
-        "providerCallBudget": 4,
-        "providerCalls": 5,
-        "cacheHits": 0,
-        "retryCount": 0,
-        "maxRetriesPerCase": 1,
-    }
-
-
-def test_offline_evaluation_still_rejects_missing_real_run_provenance() -> None:
-    module = _evaluator()
-    profile = _passing_profile()
-    profile["bindings"]["actualModelApprovalDigest"] = None
-    profile["cases"][0]["observed"]["actualProvider"] = "different-provider"
-
-    report = module.evaluate_profile(profile, min_cases=2, require_real=False)
-
-    assert report["status"] == "fail"
-    assert "actual model approval digest is missing" in report["failures"]
-    assert (
-        "case answerable-a actual response model identity mismatches binding" in report["failures"]
-    )
-
-
-def test_full_gate_requires_all_representative_question_types() -> None:
-    module = _evaluator()
-
-    report = module.evaluate_profile(
-        _passing_profile(), min_cases=100, require_real=True, approved_mapping=APPROVED_MAPPING
-    )
-
-    assert (
-        "dataset is missing representative case types: conflict, unauthorized" in report["failures"]
-    )
-
-
-def test_real_evaluator_requires_and_compares_external_approval_authority() -> None:
-    module = _evaluator()
-    missing = module.evaluate_profile(_passing_profile(), min_cases=2, require_real=True)
-    mismatched = module.evaluate_profile(
-        _passing_profile(),
-        min_cases=2,
-        require_real=True,
-        approved_mapping=("approved-provider", "other-model", "sha256:" + "6" * 64),
-    )
-
-    assert "external approved model mapping is required" in missing["failures"]
-    assert missing["externalApprovalMatched"] is None
-    assert (
-        "profile model identity does not match the external approved mapping"
-        in mismatched["failures"]
-    )
-    assert mismatched["externalApprovalMatched"] is False
-
-
-def test_claim_citation_precision_is_judged_per_relationship() -> None:
-    module = _evaluator()
-    profile = _passing_profile()
-    observed = profile["cases"][0]["observed"]
-    observed["citations"].append(
-        {
-            "citationId": "citation-b",
-            "sourceId": "source-a",
-            "projectId": "project-a",
-            "anchorResolvable": True,
-        }
-    )
-    observed["claims"][0]["citationIds"].append("citation-b")
-
-    report = module.evaluate_profile(profile, min_cases=2)
-
-    assert report["metrics"]["groundedSupported"] == 1
-    assert report["metrics"]["groundedTotal"] == 2
-    assert report["status"] == "fail"
-
-
-def test_answerable_case_cannot_pass_by_abstaining_without_claims() -> None:
-    module = _evaluator()
-    profile = _passing_profile()
-    observed = profile["cases"][0]["observed"]
-    observed["abstained"] = True
-    observed["citations"] = []
-    observed["claims"] = []
-
-    report = module.evaluate_profile(profile, min_cases=2)
-
-    assert report["status"] == "fail"
-    assert "case answerable-a did not produce a grounded answer" in report["failures"]
-    answerable = next(item for item in report["cases"] if item["caseId"] == "answerable-a")
-    assert answerable["responseShapeValid"] is False
-
-
-def test_real_cli_rejects_a_pytest_run_with_skips(tmp_path: Path) -> None:
-    profile = tmp_path / "profile.json"
-    profile.write_text(json.dumps(_passing_profile()))
-    pytest_report = tmp_path / "pytest.xml"
-    pytest_report.write_text(
-        '<testsuites tests="1" failures="0" errors="0" skipped="1"></testsuites>'
-    )
+def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
+    tmp_path: Path,
+) -> None:
+    dataset = _dataset()
+    dataset["dataset"]["labelingMethod"] = "model-generated"
+    generated = []
+    for repetition in range(25):
+        for original in dataset["cases"]:
+            case = deepcopy(original)
+            case["caseId"] = f"{original['caseId']}-{repetition}"
+            case["question"] = f"{original['question']} Synthetic variant {repetition}."
+            generated.append(case)
+    dataset["cases"] = generated
+    dataset_path = tmp_path / "synthetic-100.json"
+    dataset_path.write_text(json.dumps(dataset))
     completed = subprocess.run(
         [
             sys.executable,
-            str(SCRIPT),
-            str(profile),
-            "--min-cases",
-            "2",
-            "--require-real",
-            "--pytest-report",
-            str(pytest_report),
+            str(RUNNER),
+            str(dataset_path),
+            "--observations",
+            str(tmp_path / "observations.json"),
         ],
         check=False,
         capture_output=True,
@@ -420,45 +588,25 @@ def test_real_cli_rejects_a_pytest_run_with_skips(tmp_path: Path) -> None:
         env={
             "TAP_RUN_QUALITY_KB_01": "1",
             "TAP_QUALITY_KB_APPROVED_PROVIDER": "approved-provider",
-            "TAP_QUALITY_KB_APPROVED_MODEL": "approved-model-v1",
-            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": "sha256:" + "6" * 64,
+            "TAP_QUALITY_KB_APPROVED_MODEL": "approved-model",
+            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": _sha("6"),
         },
     )
 
     assert completed.returncode == 2
-    assert (
-        "quality-kb pytest evidence must have tests and zero failures/errors/skips"
-        in completed.stderr
-    )
+    assert "traceable human labels are required" in completed.stderr
+    assert "provider I/O was not started" in completed.stderr
 
 
-@pytest.mark.skipif(
-    os.environ.get("TAP_RUN_QUALITY_KB_01") != "1",
-    reason="QUALITY-KB-01 captured real-response gate requires explicit opt-in",
-)
-def test_captured_real_response_profile_meets_quality_kb_01() -> None:
-    module = _evaluator()
-    profile_path = Path(
-        os.environ.get(
-            "TAP_QUALITY_KB_PROFILE",
-            FIXTURES / "profile-v1.json",
-        )
+def test_offline_evaluator_never_needs_provider_configuration(tmp_path: Path) -> None:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), str(FIXTURES / "profile-v1.json")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={},
     )
-    report_path = Path(os.environ.get("TAP_QUALITY_KB_REPORT", ".local/quality-kb/report.json"))
-    approved_mapping = (
-        os.environ["TAP_QUALITY_KB_APPROVED_PROVIDER"],
-        os.environ["TAP_QUALITY_KB_APPROVED_MODEL"],
-        os.environ["TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST"],
-    )
-    report = module.evaluate_profile(
-        module._load_json(profile_path),
-        min_cases=100,
-        require_real=True,
-        approved_mapping=approved_mapping,
-    )
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
 
-    assert report["metrics"]["actualCaseCount"] >= 100, report["failures"]
-    assert report["metrics"]["skippedCaseCount"] == 0, report["failures"]
-    assert report["status"] == "pass", report["failures"]
+    assert completed.returncode == 1
+    assert "cases=0 (required 100)" in completed.stderr
+    assert "provider" not in completed.stderr.casefold()
