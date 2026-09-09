@@ -902,6 +902,23 @@ def test_execution_time_evidence_is_parsed_and_bounded(mutation: str) -> None:
         module.evaluate_run(dataset, observations, min_cases=4)
 
 
+def test_case_execution_must_be_nested_in_declared_run_window() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    observations["execution"]["startedAtUtc"] = "2026-09-29T00:00:00Z"
+    observations["execution"]["finishedAtUtc"] = "2026-09-29T00:00:01Z"
+
+    with pytest.raises(ValueError, match="outside run window"):
+        module.evaluate_run(
+            dataset,
+            observations,
+            min_cases=4,
+            require_real=True,
+            approved_mapping=APPROVED,
+        )
+
+
 def test_retry_configuration_tampering_fails() -> None:
     module = _evaluator()
     dataset = _dataset()

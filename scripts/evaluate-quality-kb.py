@@ -667,6 +667,7 @@ def evaluate_run(
     provider_calls = cache_hits = retry_count = 0
     actual_identities: set[tuple[str, str]] = set()
     case_reports: list[dict[str, object]] = []
+    case_windows: list[tuple[str, datetime, datetime]] = []
     for case in cases:
         case_id = str(case["caseId"])
         case_observation = observed_by_id.get(case_id)
@@ -733,6 +734,13 @@ def evaluate_run(
             if reason != "source-not-authorized":
                 failures.append(f"case {case_id} Source rejection reason mismatch")
         execution = _mapping(case_observation.get("execution"), "case execution")
+        case_windows.append(
+            (
+                case_id,
+                _utc(execution.get("startedAtUtc"), f"case {case_id} start"),
+                _utc(execution.get("finishedAtUtc"), f"case {case_id} finish"),
+            )
+        )
         cache_key = _digest_text(execution.get("cacheKey"), "cacheKey")
         if cache_key in cache_keys:
             raise ValueError("cache keys must be unique per case")
@@ -889,6 +897,9 @@ def evaluate_run(
         run_finished = _utc(declared_execution.get("finishedAtUtc"), "run finish")
         if run_finished < run_started:
             raise ValueError("run finish evidence is invalid")
+        for case_id, case_started, case_finished in case_windows:
+            if case_started < run_started or case_finished > run_finished:
+                raise ValueError(f"case {case_id} execution is outside run window")
         if approved_mapping is not None:
             approval_expiry = _utc(approved_mapping["expiresAtUtc"], "approval expiry")
             if run_started >= approval_expiry or run_finished > approval_expiry:
