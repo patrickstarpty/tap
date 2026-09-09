@@ -187,6 +187,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/citations/{citation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Citation */
+        get: operations["conversation_get_citation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/answers": {
         parameters: {
             query?: never;
@@ -762,6 +779,19 @@ export interface components {
             /** Nextcursor */
             nextCursor?: string | null;
         };
+        /** ConversationResolvedResourceView */
+        ConversationResolvedResourceView: {
+            /** Documentid */
+            documentId: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Label */
+            label: string;
+            /** Sourceid */
+            sourceId: string;
+            /** Sourcerevisionid */
+            sourceRevisionId?: string | null;
+        };
         /** ConversationSummary */
         ConversationSummary: {
             /** Conversationid */
@@ -801,6 +831,8 @@ export interface components {
          * @description Browser-safe immutable input facts; excludes instructions and policy internals.
          */
         ConversationTurnInputView: {
+            /** Agentlabel */
+            agentLabel?: string | null;
             /** Agentrevisionid */
             agentRevisionId?: string | null;
             /** Documentrevisionids */
@@ -809,6 +841,10 @@ export interface components {
             message: string;
             /** Modelalias */
             modelAlias: string;
+            /** Resolvedresources */
+            resolvedResources: components["schemas"]["ConversationResolvedResourceView"][];
+            /** Skilllabels */
+            skillLabels: string[];
             /** Skillrevisionids */
             skillRevisionIds: string[];
             /** Sourcerevisionids */
@@ -3070,6 +3106,76 @@ export interface operations {
             };
             /** @description Request validation failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_get_citation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                citation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationPreview"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation Turn citation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Citation evidence is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Citation evidence unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

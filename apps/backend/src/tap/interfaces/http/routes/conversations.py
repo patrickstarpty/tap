@@ -12,17 +12,19 @@ from fastapi.responses import StreamingResponse
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import (
+    CitationPreview,
     ConversationAccepted,
     ConversationCreateRequest,
     ConversationDetail,
     ConversationEventItem,
     ConversationEventPage,
     ConversationPage,
+    ConversationResolvedResourceView,
     ConversationSummary,
     ConversationTurnInputView,
     ConversationTurnSummary,
 )
-from tap.interfaces.http.dependencies import conversation_service
+from tap.interfaces.http.dependencies import conversation_service, knowledge_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
@@ -121,13 +123,32 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
                 document_id=item.document_id,
                 revision_id=item.revision_id,
                 source_content_hash=item.source_content_hash,
+                source_revision_id=(
+                    item.revision_id if item.revision_id in body.source_revision_ids else None
+                ),
+                document_revision_id=item.revision_id,
+                label=(
+                    getattr(item, "source_name", None)
+                    or getattr(item, "filename", None)
+                    or item.source_id
+                    or item.document_id
+                ),
             )
             for item in revisions
         ),
         agent_revision_id=body.agent_revision_id,
         agent_revision_digest=agent_digest,
+        agent_label=(
+            None
+            if body.agent_revision_id is None
+            else getattr(agent, "display_name", body.agent_revision_id)
+        ),
         skill_revision_ids=tuple(body.skill_revision_ids),
         skill_revision_digests=tuple(item.content_digest for item in skills),
+        skill_labels=tuple(
+            getattr(item, "display_name", revision_id)
+            for item, revision_id in zip(skills, body.skill_revision_ids, strict=True)
+        ),
         agent_system_instruction=(
             None if body.agent_revision_id is None else agent.system_instruction
         ),
@@ -176,8 +197,20 @@ def _turn(value):
             model_alias=frozen.model_alias,
             source_revision_ids=list(frozen.source_revision_ids),
             document_revision_ids=list(frozen.document_revision_ids),
+            resolved_resources=[
+                ConversationResolvedResourceView(
+                    source_id=item.source_id,
+                    document_id=item.document_id,
+                    source_revision_id=item.source_revision_id,
+                    document_revision_id=item.document_revision_id or item.revision_id,
+                    label=item.label or item.source_id,
+                )
+                for item in frozen.resolved_resources
+            ],
             agent_revision_id=frozen.agent_revision_id,
+            agent_label=frozen.agent_label or frozen.agent_revision_id,
             skill_revision_ids=list(frozen.skill_revision_ids),
+            skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
         ),
     )
 
@@ -311,6 +344,27 @@ async def cancel(
     conversation_id: str, turn_id: str, service: ConversationService = Depends(conversation_service)
 ):
     return _turn(await service.cancel(conversation_id, turn_id))
+
+
+@router.get(
+    "/{conversation_id}/turns/{turn_id}/citations/{citation_id}",
+    response_model=CitationPreview,
+    operation_id="conversation_get_citation",
+    responses={
+        404: problem_response_metadata("Conversation Turn citation not found"),
+        409: problem_response_metadata("Citation evidence is stale"),
+        503: problem_response_metadata("Citation evidence unavailable"),
+    },
+)
+async def citation(
+    request: Request,
+    conversation_id: str,
+    turn_id: str,
+    citation_id: str,
+    service: ConversationService = Depends(conversation_service),
+):
+    await service.authorize_citation(conversation_id, turn_id, citation_id)
+    return await knowledge_service(request).historical_citation(citation_id)
 
 
 @router.get(

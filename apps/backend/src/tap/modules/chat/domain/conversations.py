@@ -60,12 +60,18 @@ class FrozenResource:
     document_id: str
     revision_id: str
     source_content_hash: str
+    source_revision_id: str | None = None
+    document_revision_id: str | None = None
+    label: str | None = None
 
     def __post_init__(self) -> None:
         if not all((self.source_id, self.document_id, self.revision_id)):
             raise ValueError("resolved resource identity must be complete")
         if _DIGEST.fullmatch(self.source_content_hash) is None:
             raise ValueError("resolved resource content hash must be canonical SHA-256")
+        for value in (self.source_revision_id, self.document_revision_id, self.label):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError("resolved resource display facts must be nonblank")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,8 +85,10 @@ class TurnInput:
     resolved_resources: tuple[FrozenResource, ...] = ()
     agent_revision_id: str | None = None
     agent_revision_digest: str | None = None
+    agent_label: str | None = None
     skill_revision_ids: tuple[str, ...] = ()
     skill_revision_digests: tuple[str, ...] = ()
+    skill_labels: tuple[str, ...] = ()
     agent_system_instruction: str | None = None
     agent_system_instruction_digest: str | None = None
     agent_tool_allowlist: tuple[str, ...] = ()
@@ -102,6 +110,10 @@ class TurnInput:
             raise ValueError("agent revision identity and digest must be paired")
         if len(self.skill_revision_ids) != len(self.skill_revision_digests):
             raise ValueError("skill revision identities and digests must be paired")
+        if self.agent_label is not None and self.agent_revision_id is None:
+            raise ValueError("agent label requires revision identity")
+        if self.skill_labels and len(self.skill_labels) != len(self.skill_revision_ids):
+            raise ValueError("skill labels must match revision identities")
         agent_content = (
             self.agent_system_instruction,
             self.agent_system_instruction_digest,
@@ -175,7 +187,16 @@ class TurnInput:
             raise ValueError("agent tool authority is outside the closed allowlist")
 
     def material(self, *, project_id: str, turn_id: str) -> dict[str, object]:
-        return {"projectId": project_id, "turnId": turn_id, **asdict(self)}
+        value = asdict(self)
+        if self.agent_label is None:
+            value.pop("agent_label")
+        if not self.skill_labels:
+            value.pop("skill_labels")
+        resources = []
+        for item in value["resolved_resources"]:
+            resources.append({key: fact for key, fact in item.items() if fact is not None})
+        value["resolved_resources"] = resources
+        return {"projectId": project_id, "turnId": turn_id, **value}
 
 
 @dataclass(frozen=True, slots=True)

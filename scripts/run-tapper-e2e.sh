@@ -437,7 +437,7 @@ run_playwright() {
   [ "${#specs[@]}" -gt 0 ] || return 1
   if TAPPER_E2E_PHASE="$phase" \
     corepack pnpm --filter @tap/web exec playwright test "${specs[@]}" \
-      --config=playwright.config.ts --reporter=json >"$report_file" 2>"$error_file"; then
+      --config=playwright.config.ts --reporter=json --workers=1 >"$report_file" 2>"$error_file"; then
     :
   else
     phase_status=$?
@@ -454,6 +454,8 @@ run_journey() {
   bootstrap_middleware
   start_apps
   run_playwright tests/e2e/tapper.spec.ts journey
+
+  uv run --project apps/backend python scripts/disable-tapper-e2e-assets.py
 
   stop_apps
   start_apps

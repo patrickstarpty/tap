@@ -622,6 +622,7 @@ def _e2e_runner_fixture(
         "tapper_e2e_report.py",
         "tapper-e2e-specs.json",
         "build-hostile-document-fixtures.py",
+        "disable-tapper-e2e-assets.py",
     ):
         (scripts / filename).write_bytes((ROOT / "scripts" / filename).read_bytes())
     runner.write_text(runner_source, encoding="utf-8")
@@ -759,6 +760,10 @@ case " $* " in
   *" build-hostile-document-fixtures.py "*|*"/build-hostile-document-fixtures.py "*)
     shift 4
     exec "$TAPPER_TEST_PYTHON" "$@"
+    ;;
+  *" scripts/disable-tapper-e2e-assets.py "*)
+    [ "$TAP_DEMO_MODE:$TAP_TAPPER_COMPOSE_PROJECT" = e2e:tap-tapper-e2e ] || exit 80
+    printf 'uv|disable-assets\n' >> "$TAPPER_E2E_STUB_LOG"
     ;;
   *" alembic "*) printf 'uv|alembic\n' >> "$TAPPER_E2E_STUB_LOG" ;;
   *" scripts/milvus_bootstrap.py "*)

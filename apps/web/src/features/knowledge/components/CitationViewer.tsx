@@ -108,6 +108,7 @@ function exactPreview(
 
 export function CitationViewer({
   active,
+  historicalQuery,
   onClose,
 }: {
   active: {
@@ -115,14 +116,22 @@ export function CitationViewer({
     generation: number;
     id: string;
   } | null;
+  historicalQuery?: {
+    data?: CitationPreview;
+    error: unknown;
+    isError: boolean;
+    isFetching: boolean;
+    refetch: () => Promise<unknown>;
+  };
   onClose: () => void;
 }) {
   const { projectId } = useKnowledgeClient();
-  const citationQuery = useCitationQuery(
+  const currentCitationQuery = useCitationQuery(
     projectId,
-    active?.id ?? null,
+    historicalQuery === undefined ? (active?.id ?? null) : null,
     active?.generation ?? 0,
   );
+  const citationQuery = historicalQuery ?? currentCitationQuery;
   const preview =
     active !== null &&
     !citationQuery.isFetching &&

@@ -1052,6 +1052,8 @@ class MysqlDocumentRepository:
                         select(
                             knowledge_document.c.document_id,
                             knowledge_document.c.source_id,
+                            knowledge_document.c.filename,
+                            knowledge_source.c.name.label("source_name"),
                             knowledge_document.c.current_revision_id,
                             knowledge_document.c.source_content_hash.label(
                                 "document_source_content_hash"
@@ -1069,11 +1071,17 @@ class MysqlDocumentRepository:
                                     knowledge_document_revision.c.document_id
                                     == knowledge_document.c.document_id,
                                 ),
+                            ).join(
+                                knowledge_source,
+                                and_(
+                                    knowledge_source.c.source_id == knowledge_document.c.source_id,
+                                    *scope_predicates(knowledge_source, self._scope),
+                                ),
                             )
                         )
                         .where(
                             *scope_predicates(knowledge_document, self._scope),
-                            self._active_source(),
+                            knowledge_source.c.deleted_at.is_(None),
                             *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_document.c.document_id.in_(ordered_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
@@ -1091,6 +1099,8 @@ class MysqlDocumentRepository:
                     source_id=cast(str, row["source_id"]),
                     revision_id=cast(str, row["current_revision_id"]),
                     source_content_hash=cast(str, row["document_source_content_hash"]),
+                    source_name=cast(str, row["source_name"]),
+                    filename=cast(str, row["filename"]),
                 )
                 for row in rows
                 if row["document_source_content_hash"] == row["revision_source_content_hash"]
@@ -1499,7 +1509,9 @@ class MysqlDocumentRepository:
                     )
                 )
 
-    async def load_citation(self, citation_id: str) -> CitationLookup | None:
+    async def load_citation(
+        self, citation_id: str, *, historical: bool = False
+    ) -> CitationLookup | None:
         if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:
             return None
         citation = knowledge_citation_snapshot
@@ -1610,7 +1622,7 @@ class MysqlDocumentRepository:
                     knowledge_document.c.document_id == row["citation_document_id"],
                 )
             )
-        if row is None or source_active is None:
+        if row is None or (source_active is None and not historical):
             return None
         try:
             citation_anchor = _canonical_json_object(row["citation_anchor"])
@@ -3639,12 +3651,13 @@ class MysqlDocumentRepository:
                 )
             )
             if row["kind"] == JobKind.DELETION.value and is_complete:
-                await session.execute(
-                    delete(knowledge_chunk_manifest).where(
-                        *scope_predicates(knowledge_chunk_manifest, self._scope),
-                        knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                if not await self._revision_has_turn_evidence(session, row["revision_id"]):
+                    await session.execute(
+                        delete(knowledge_chunk_manifest).where(
+                            *scope_predicates(knowledge_chunk_manifest, self._scope),
+                            knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                        )
                     )
-                )
                 await session.execute(
                     update(knowledge_document)
                     .where(
@@ -3827,6 +3840,9 @@ class MysqlDocumentRepository:
                     )
                 ).mappings()
             )
+            preserve_evidence_artifacts = await self._revision_has_turn_evidence(
+                session, revision["revision_id"]
+            )
             if job["lease_until"] is None or job["lease_until"] <= await _database_now(session):
                 self._raise_lease_lost(job_id)
             return IngestionWork(
@@ -3852,7 +3868,30 @@ class MysqlDocumentRepository:
                 manifest=_manifest_from_rows(manifest_rows),
                 chunk_manifest_digest=revision["chunk_manifest_digest"],
                 projection_digest=revision["projection_digest"],
+                preserve_evidence_artifacts=preserve_evidence_artifacts,
             )
+
+    async def _revision_has_turn_evidence(self, session, revision_id: str) -> bool:
+        return bool(
+            await session.scalar(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM turn_artifact_link AS link "
+                    "JOIN knowledge_citation_snapshot AS citation "
+                    "ON citation.enterprise_id=link.enterprise_id "
+                    "AND citation.project_id=link.project_id "
+                    "AND citation.citation_id=link.artifact_id "
+                    "WHERE link.enterprise_id=:enterprise_id "
+                    "AND link.project_id=:project_id "
+                    "AND link.artifact_kind='citation' "
+                    "AND citation.revision_id=:revision_id)"
+                ),
+                {
+                    "enterprise_id": self._scope.enterprise_id,
+                    "project_id": self._scope.project_id,
+                    "revision_id": revision_id,
+                },
+            )
+        )
 
     async def retry_job(self, retry: JobRetry) -> None:
         async with self._sessions() as session, session.begin():

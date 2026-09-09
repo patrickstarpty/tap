@@ -517,16 +517,17 @@ class IngestionWorker:
             await self._commit(job, stage)
             return
         if stage is JobStage.PARSING:
-            try:
-                await self._artifact_write(
-                    job,
-                    stage,
-                    lambda: self._artifacts.delete_revision_artifacts(target),
-                )
-            except _SafeStageError as error:
-                raise _SafeStageError(
-                    stage, error.code, "deletion-call-failed", "provider-error"
-                ) from None
+            if not work.preserve_evidence_artifacts:
+                try:
+                    await self._artifact_write(
+                        job,
+                        stage,
+                        lambda: self._artifacts.delete_revision_artifacts(target),
+                    )
+                except _SafeStageError as error:
+                    raise _SafeStageError(
+                        stage, error.code, "deletion-call-failed", "provider-error"
+                    ) from None
             await self._commit(job, stage)
             return
         if stage is JobStage.READY:

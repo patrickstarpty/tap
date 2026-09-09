@@ -71,6 +71,8 @@ class CitationOperations(Protocol):
 
     async def resolve(self, citation_id: str) -> CitationPreviewResult: ...
 
+    async def resolve_historical(self, citation_id: str) -> CitationPreviewResult: ...
+
 
 class SearchOperations(Protocol):
     @property
@@ -279,6 +281,14 @@ class KnowledgeHttpService:
 
     async def citation(self, citation_id: str) -> CitationPreview:
         preview = await self._citations.resolve(citation_id)
+        return self._citation_preview(preview)
+
+    async def historical_citation(self, citation_id: str) -> CitationPreview:
+        preview = await self._citations.resolve_historical(citation_id)
+        return self._citation_preview(preview)
+
+    @staticmethod
+    def _citation_preview(preview) -> CitationPreview:  # type: ignore[no-untyped-def]
         anchor = preview.anchor
         return CitationPreview(
             citation_id=preview.citation_id,

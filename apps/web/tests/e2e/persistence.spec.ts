@@ -8,6 +8,7 @@ import {
   canonicalAnchorHash,
   canonicalTextHash,
   policyQuestion,
+  readConversationState,
   readState,
   type SafeDocumentState,
 } from "./fixtureBuilder";
@@ -68,6 +69,10 @@ test("Tapper durable state survives the selected restart boundary", async ({
   expect(
     list.items.some((item) => item.documentId === state.deleted.documentId),
   ).toBe(false);
+  const policyFilename = list.items.find(
+    (item) => item.documentId === state.policy.documentId,
+  )?.filename;
+  expect(policyFilename).toBeDefined();
   for (const document of survivors)
     await assertCurrentDocument(page, document, knowledgePath);
 
@@ -119,6 +124,86 @@ test("Tapper durable state survives the selected restart boundary", async ({
   });
 
   await page.goto("/");
+  const conversationState = await readConversationState();
+  const history = page.getByRole("navigation", { name: "Chat history" });
+  await history
+    .getByRole("button", { name: new RegExp(conversationState.prompt, "u") })
+    .click();
+  const transcript = page.getByRole("log", { name: "Conversation" });
+  await expect(
+    transcript.getByText(conversationState.prompt, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    transcript
+      .getByText(conversationState.sourceLabel, { exact: true })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    transcript.getByText(conversationState.agentLabel, { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    transcript.getByText(conversationState.skillLabel, { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: /Select model, current model GPT-5\.6 Sol/u,
+    }),
+  ).toBeVisible();
+  await transcript.getByRole("button", { name: "引用 1" }).first().click();
+  await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
+  await expect(
+    page
+      .getByLabel("原文", { exact: true })
+      .getByText("verified identity evidence", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "关闭原文" }).click();
+
+  await page
+    .getByRole("checkbox", { name: new RegExp(policyFilename!, "u") })
+    .check();
+  const futureRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname ===
+        `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/conversations/${conversationState.conversationId}/turns`,
+  );
+  const futureResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/conversations/${conversationState.conversationId}/turns`,
+  );
+  await page
+    .getByRole("textbox", { name: "Message Tapper" })
+    .fill(`Future context ${phase}`);
+  await page.getByRole("button", { name: "Send" }).click();
+  const futureInput = (await futureRequest).postDataJSON() as {
+    agentRevisionId: string | null;
+    skillRevisionIds: string[];
+    sourceRevisionIds: string[];
+  };
+  expect(futureInput.sourceRevisionIds).toEqual([state.policy.revisionId]);
+  expect(futureInput.agentRevisionId).toBeNull();
+  expect(futureInput.skillRevisionIds).toEqual([]);
+  const acceptedResponse = await futureResponse;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as { turnId: string };
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/conversations/${conversationState.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string; turnId: string }>;
+        };
+        return body.turns.find((turn) => turn.turnId === accepted.turnId)
+          ?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toMatch(/completed|abstained|failed/u);
+
   await page.getByRole("button", { name: "Library", exact: true }).click();
   for (const survivor of survivors) {
     const listed = list.items.find(

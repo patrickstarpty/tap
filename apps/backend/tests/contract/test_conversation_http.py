@@ -12,6 +12,12 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
 )
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    CitationEvidence,
+    GraphContextStatus,
+    RetrievalSummary,
+)
 
 
 def test_conversation_routes_are_registered_and_blank_first_message_is_rejected():
@@ -19,6 +25,10 @@ def test_conversation_routes_are_registered_and_blank_first_message_is_rejected(
     paths = client.app.openapi()["paths"]
     assert "/api/v1/projects/{project_id}/conversations" in paths
     assert "/api/v1/projects/{project_id}/conversations/{conversation_id}/events" in paths
+    assert (
+        "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/citations/{citation_id}"
+        in paths
+    )
     schema = client.app.openapi()["components"]["schemas"]["ConversationCreateRequest"]
     assert schema["properties"]["message"]["minLength"] == 1
     stream = paths["/api/v1/projects/{project_id}/conversations/{conversation_id}/stream"]["get"]
@@ -80,6 +90,8 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
                 document_id="document-1",
                 revision_id="revision-1",
                 source_content_hash="sha256:" + "c" * 64,
+                source_name="Product handbook",
+                filename="handbook.md",
             )
             policy = SimpleNamespace(
                 acl_digest="sha256:" + "d" * 64,
@@ -154,6 +166,8 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
                     document_id=f"document-{index}",
                     revision_id=revision,
                     source_content_hash="sha256:" + str(index) * 64,
+                    source_name=f"Source {index}",
+                    filename=f"document-{index}.md",
                 )
                 for index, revision in enumerate(revision_ids, 1)
             )
@@ -198,8 +212,26 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         "modelAlias": "tapper-chat",
         "sourceRevisionIds": ["source-revision-1"],
         "documentRevisionIds": ["document-revision-1"],
+        "resolvedResources": [
+            {
+                "sourceId": "src_" + "1" * 32,
+                "documentId": "document-1",
+                "sourceRevisionId": "source-revision-1",
+                "documentRevisionId": "source-revision-1",
+                "label": "Source 1",
+            },
+            {
+                "sourceId": "src_" + "2" * 32,
+                "documentId": "document-2",
+                "sourceRevisionId": None,
+                "documentRevisionId": "document-revision-1",
+                "label": "Source 2",
+            },
+        ],
         "agentRevisionId": None,
+        "agentLabel": None,
         "skillRevisionIds": [],
+        "skillLabels": [],
     }
     serialized = json.dumps(detail.json())
     for forbidden in ("acl", "instruction", "credential", "provider", "system"):
@@ -209,3 +241,72 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         f"/api/v1/projects/other-project/conversations/{accepted.json()['conversationId']}"
     )
     assert wrong_project.status_code == 403
+
+
+def test_conversation_citation_requires_the_turn_immutable_evidence_link():
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def historical_citation(self, citation_id):
+            assert citation_id == "citation-1"
+            from tap.contracts.http import CitationPreview, DocumentAnchor, StructuralAnchor
+
+            return CitationPreview(
+                citation_id=citation_id,
+                document_id="document-1",
+                revision_id="revision-1",
+                filename="deleted-source.md",
+                source_content_hash="sha256:" + "c" * 64,
+                chunk_content_hash="sha256:" + "d" * 64,
+                anchor=StructuralAnchor(
+                    root=DocumentAnchor(
+                        type="document", heading_path=["History"], start_offset=0, end_offset=5
+                    )
+                ),
+                quote="proof",
+            )
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        authorization_policy=Allow(),
+    )
+    client = TestClient(create_app(services))
+    value = __import__("tap.modules.chat.domain.conversations", fromlist=["TurnInput"]).TurnInput(
+        message="question",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode=VALIDATION_SCOPE.identity_mode.value,
+        model_alias="tapper-chat",
+    )
+    import asyncio
+
+    asyncio.run(conversations.create("conversation-1", "turn-1", "request-1", value))
+    asyncio.run(
+        conversations.complete_evidence(
+            "conversation-1",
+            "turn-1",
+            AnswerEvidence(
+                "answer",
+                "completed",
+                RetrievalSummary("completed", trace_id="trace-1"),
+                GraphContextStatus.NOT_REQUESTED,
+                citations=(CitationEvidence("citation-1", "sha256:" + "e" * 64),),
+            ),
+        )
+    )
+    base = "/api/v1/projects/tapper-demo/conversations/conversation-1/turns/turn-1/citations"
+    response = client.get(f"{base}/citation-1")
+    assert response.status_code == 200, response.text
+    assert response.json()["quote"] == "proof"
+    assert client.get(f"{base}/citation-not-linked").status_code == 404
+    assert (
+        client.get(
+            "/api/v1/projects/tapper-demo/conversations/conversation-1/turns/missing/citations/citation-1"
+        ).status_code
+        == 404
+    )

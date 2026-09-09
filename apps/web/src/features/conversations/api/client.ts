@@ -11,6 +11,8 @@ export type ConversationEventPage =
 export type ConversationPage = components["schemas"]["ConversationPage"];
 export type ConversationTurnSummary =
   components["schemas"]["ConversationTurnSummary"];
+export type ConversationCitationPreview =
+  components["schemas"]["CitationPreview"];
 
 export class ConversationClientError extends Error {
   constructor(
@@ -53,6 +55,12 @@ export interface ConversationClient {
     turnId: string,
     signal?: AbortSignal,
   ): Promise<ConversationTurnSummary>;
+  citation(
+    conversationId: string,
+    turnId: string,
+    citationId: string,
+    signal?: AbortSignal,
+  ): Promise<ConversationCitationPreview>;
   stream(
     conversationId: string,
     lastSequence: number,
@@ -150,6 +158,11 @@ export function createConversationClient({
       request<ConversationTurnSummary>(
         `/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/cancel`,
         { method: "POST", signal },
+      ),
+    citation: (id, turnId, citationId, signal) =>
+      request<ConversationCitationPreview>(
+        `/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/citations/${encodeURIComponent(citationId)}`,
+        { signal },
       ),
     async *stream(id, lastSequence, signal) {
       const response = await fetcher(

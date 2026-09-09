@@ -1078,6 +1078,46 @@
         "title": "ConversationPage",
         "type": "object"
       },
+      "ConversationResolvedResourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "title": "Documentid",
+            "type": "string"
+          },
+          "documentRevisionId": {
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcerevisionid"
+          }
+        },
+        "required": [
+          "sourceId",
+          "documentId",
+          "documentRevisionId",
+          "label"
+        ],
+        "title": "ConversationResolvedResourceView",
+        "type": "object"
+      },
       "ConversationSummary": {
         "additionalProperties": false,
         "properties": {
@@ -1172,6 +1212,17 @@
         "additionalProperties": false,
         "description": "Browser-safe immutable input facts; excludes instructions and policy internals.",
         "properties": {
+          "agentLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentlabel"
+          },
           "agentRevisionId": {
             "anyOf": [
               {
@@ -1198,6 +1249,20 @@
             "title": "Modelalias",
             "type": "string"
           },
+          "resolvedResources": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationResolvedResourceView"
+            },
+            "title": "Resolvedresources",
+            "type": "array"
+          },
+          "skillLabels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skilllabels",
+            "type": "array"
+          },
           "skillRevisionIds": {
             "items": {
               "type": "string"
@@ -1218,7 +1283,9 @@
           "modelAlias",
           "sourceRevisionIds",
           "documentRevisionIds",
-          "skillRevisionIds"
+          "resolvedResources",
+          "skillRevisionIds",
+          "skillLabels"
         ],
         "title": "ConversationTurnInputView",
         "type": "object"
@@ -6610,6 +6677,117 @@
           }
         },
         "summary": "Cancel",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/citations/{citation_id}": {
+      "get": {
+        "operationId": "conversation_get_citation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "citation_id",
+            "required": true,
+            "schema": {
+              "title": "Citation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation Turn citation not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Citation evidence is stale"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Citation evidence unavailable"
+          }
+        },
+        "summary": "Citation",
         "tags": [
           "conversations"
         ]

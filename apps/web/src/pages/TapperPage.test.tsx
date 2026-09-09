@@ -168,6 +168,156 @@ describe("Tapper product prototype", () => {
     );
   });
 
+  it("never substitutes prototype copy when a completed API Turn has no answer evidence event", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (/\/ai\/(agents|skills)$/u.test(request.url))
+        return Response.json({ items: [] });
+      if (request.url.endsWith("/conversations?limit=20")) {
+        return Response.json({
+          items: [
+            {
+              conversationId: "conversation-1",
+              title: "No evidence",
+              createdAt: "2026-09-09T00:00:00Z",
+              updatedAt: "2026-09-09T00:00:01Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (request.url.endsWith("/conversation-1/events")) {
+        return Response.json({ items: [] });
+      }
+      if (request.url.endsWith("/conversation-1/stream")) {
+        return new Response("", {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      if (request.url.endsWith("/conversation-1")) {
+        return Response.json({
+          conversationId: "conversation-1",
+          title: "No evidence",
+          createdAt: "2026-09-09T00:00:00Z",
+          updatedAt: "2026-09-09T00:00:01Z",
+          turns: [
+            {
+              turnId: "turn-1",
+              state: "completed",
+              attempt: 1,
+              inputSnapshotDigest: `sha256:${"1".repeat(64)}`,
+              answerEvidenceSnapshotId: "answer-1",
+              answerEvidenceSnapshotDigest: `sha256:${"2".repeat(64)}`,
+              input: {
+                message: "No evidence",
+                modelAlias: "tapper-chat",
+                sourceRevisionIds: [],
+                documentRevisionIds: [],
+                resolvedResources: [],
+                agentRevisionId: null,
+                agentLabel: null,
+                skillRevisionIds: [],
+                skillLabels: [],
+              },
+            },
+          ],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+
+    renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Answer evidence is unavailable",
+    );
+    expect(
+      screen.queryByText(/This prototype response says/u),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("renders a canceled durable Turn as stopped even when partial evidence arrived", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (/\/ai\/(agents|skills)$/u.test(request.url))
+        return Response.json({ items: [] });
+      if (request.url.endsWith("/conversations?limit=20")) {
+        return Response.json({
+          items: [
+            {
+              conversationId: "conversation-1",
+              title: "Canceled prompt",
+              createdAt: "2026-09-09T00:00:00Z",
+              updatedAt: "2026-09-09T00:00:01Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (request.url.endsWith("/conversation-1/events")) {
+        return Response.json({
+          items: [
+            {
+              eventId: "event-1",
+              sequence: 1,
+              turnId: "turn-1",
+              eventType: "citation.resolved",
+              payload: {
+                citation: {
+                  citationId: "citation-1",
+                  sourceId: "source-1",
+                  documentId: "document-1",
+                  revisionId: "revision-1",
+                },
+              },
+              occurredAt: "2026-09-09T00:00:01Z",
+            },
+          ],
+        });
+      }
+      if (request.url.endsWith("/conversation-1")) {
+        return Response.json({
+          conversationId: "conversation-1",
+          title: "Canceled prompt",
+          createdAt: "2026-09-09T00:00:00Z",
+          updatedAt: "2026-09-09T00:00:01Z",
+          turns: [
+            {
+              turnId: "turn-1",
+              state: "canceled",
+              attempt: 1,
+              inputSnapshotDigest: `sha256:${"1".repeat(64)}`,
+              answerEvidenceSnapshotId: null,
+              answerEvidenceSnapshotDigest: null,
+              input: {
+                message: "Canceled prompt",
+                modelAlias: "tapper-chat",
+                sourceRevisionIds: [],
+                documentRevisionIds: [],
+                resolvedResources: [],
+                agentRevisionId: null,
+                agentLabel: null,
+                skillRevisionIds: [],
+                skillLabels: [],
+              },
+            },
+          ],
+        });
+      }
+      return new Response("", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+
+    renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
+
+    expect(await screen.findByText("Generation stopped.")).toBeVisible();
+    expect(
+      screen.queryByText("回答格式无法核验，请重新提问。"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps Validation Mode visible across product navigation", async () => {
     const user = userEvent.setup();
     renderPrototype();

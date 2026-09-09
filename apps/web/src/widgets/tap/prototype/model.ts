@@ -52,6 +52,8 @@ export interface AssistantTurn {
   status?:
     "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
   error?: string | null;
+  evidenceStatus?: "loading" | "ready" | "missing" | "error";
+  contextLabels?: readonly string[];
   automationSteps?: readonly AutomationStepSnapshot[];
   automationWorkflow?: {
     stage:

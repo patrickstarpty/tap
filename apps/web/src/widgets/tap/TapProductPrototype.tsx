@@ -59,6 +59,7 @@ import { useAiAssetCatalog } from "../../features/knowledge/api/aiAssets";
 import {
   useAppendConversation,
   useCancelTurn,
+  useConversationCitation,
   useConversationDetail,
   useConversationEvents,
   useConversationList,
@@ -128,7 +129,9 @@ function TurnContext({
   copy: PrototypeCopy;
   turn: AssistantTurn;
 }) {
-  if (turn.sourceReferences.length === 0) {
+  const labels =
+    turn.contextLabels ?? turn.sourceReferences.map((item) => item.name);
+  if (labels.length === 0) {
     return <p className="tap-context-notice">{copy.chat.noContextNotice}</p>;
   }
 
@@ -136,16 +139,11 @@ function TurnContext({
     <div className="tap-turn-context">
       <p className="tap-context-notice">{copy.chat.selectedContextNotice}</p>
       <ol className="tap-citation-list" aria-label={copy.chat.selectedContext}>
-        {turn.sourceReferences.map((source, index) => (
-          <li key={source.id}>
+        {labels.map((label, index) => (
+          <li key={`${label}-${index}`}>
             <span className="tap-citation-reference">[{index + 1}]</span>
             <span>
-              <strong>{source.name}</strong>
-              <small>
-                {source.origin === "knowledge-base"
-                  ? copy.sources.knowledgeBaseDocument
-                  : copy.sources.pageLocalSource}
-              </small>
+              <strong>{label}</strong>
             </span>
           </li>
         ))}
@@ -166,6 +164,7 @@ function AssistantResponse({
   onOpenTestPlan,
   onOpenAutomation,
   onOpenCitation,
+  onRetryConversation,
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
@@ -178,28 +177,61 @@ function AssistantResponse({
   onOpenTestPlan: () => void;
   onOpenAutomation: () => void;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  onRetryConversation: () => void;
 }) {
   if (turn.intent === "answer") {
+    if (turn.status === "canceled") {
+      return <p role="status">Generation stopped.</p>;
+    }
+    if (turn.status === "failed") {
+      return (
+        <div role="alert">
+          <p>{turn.error ?? "The answer could not be generated. Try again."}</p>
+          <Button size="small" onClick={onRetryConversation}>
+            Retry
+          </Button>
+        </div>
+      );
+    }
     if (turn.response !== undefined && turn.response !== null) {
       return (
-        <GroundedAnswer
-          response={turn.response}
-          onOpenCitation={onOpenCitation}
-        />
+        <>
+          <GroundedAnswer
+            response={turn.response}
+            onOpenCitation={onOpenCitation}
+          />
+          <TurnContext copy={contentCopy} turn={turn} />
+        </>
+      );
+    }
+    if (turn.error !== null && turn.error !== undefined) {
+      return (
+        <div role="alert">
+          <p>{turn.error}</p>
+          <Button size="small" onClick={onRetryConversation}>
+            Retry
+          </Button>
+        </div>
       );
     }
     if (turn.status === "queued" || turn.status === "running") {
       return <p role="status">Tapper is grounding the answer…</p>;
     }
-    if (turn.status === "failed") {
+    if (turn.response === null) {
+      if (turn.evidenceStatus === "loading") {
+        return <p role="status">Loading answer evidence…</p>;
+      }
       return (
-        <p role="alert">
-          {turn.error ?? "The answer could not be generated. Try again."}
-        </p>
+        <div role="alert">
+          <p>
+            {turn.error ??
+              "Answer evidence is unavailable. Try loading the conversation again."}
+          </p>
+          <Button size="small" onClick={onRetryConversation}>
+            Retry
+          </Button>
+        </div>
       );
-    }
-    if (turn.status === "canceled") {
-      return <p role="status">Generation stopped.</p>;
     }
     return (
       <div className="tap-answer-copy">
@@ -717,13 +749,28 @@ export function TapProductPrototype({
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
   );
+  const detailHasActiveConversationTurn =
+    conversationDetail.data?.turns.some((turn) =>
+      ["queued", "running"].includes(turn.state),
+    ) ?? true;
+  const conversationStream = useConversationStream(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+    detailHasActiveConversationTurn,
+  );
+  const streamState = conversationStream.state;
+  const hasActiveConversationTurn =
+    conversationDetail.data?.turns.some(
+      (turn) =>
+        ["queued", "running"].includes(turn.state) &&
+        !["completed", "abstained", "failed", "canceled"].includes(
+          streamState.turns[turn.turnId]?.status ?? turn.state,
+        ),
+    ) ?? true;
   const conversationEvents = useConversationEvents(
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
-  );
-  const streamState = useConversationStream(
-    durable ? projectId : null,
-    durable && activeConversationId !== "draft" ? activeConversationId : null,
+    hasActiveConversationTurn,
   );
   const createConversationMutation = useCreateConversation(
     durable ? projectId : null,
@@ -757,9 +804,18 @@ export function TapProductPrototype({
   const [sendPending, setSendPending] = useState(false);
   const [activeCitation, setActiveCitation] = useState<{
     citation: NonNullable<AssistantTurn["response"]>["citations"][number];
+    conversationId: string | null;
     generation: number;
     id: string;
+    turnId: string | null;
   } | null>(null);
+  const historicalCitationQuery = useConversationCitation(
+    durable ? projectId : null,
+    activeCitation?.conversationId ?? null,
+    activeCitation?.turnId ?? null,
+    activeCitation?.id ?? null,
+    activeCitation?.generation ?? 0,
+  );
   const nextConversationId = useRef(
     nextNumericId(
       (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
@@ -906,6 +962,7 @@ export function TapProductPrototype({
       });
     }
     const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
+      const resolvedResources = turn.input.resolvedResources ?? [];
       const streamed =
         recovered.lastSequence > streamState.lastSequence
           ? recovered.turns[turn.turnId]
@@ -916,9 +973,9 @@ export function TapProductPrototype({
         locale: "en",
         modelId: turn.input.modelAlias,
         prompt: turn.input.message,
-        sourceReferences: turn.input.sourceRevisionIds.map((id) => ({
-          id,
-          name: id,
+        sourceReferences: resolvedResources.map((item) => ({
+          id: item.sourceId,
+          name: item.label,
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
@@ -927,17 +984,69 @@ export function TapProductPrototype({
         )
           ? turn.state
           : (streamed?.status ?? turn.state),
-        error: streamed?.error ?? null,
+        error:
+          streamed?.error ??
+          (conversationEvents.isError || conversationStream.error !== null
+            ? "Conversation updates are unavailable. Check access or connection, then try again."
+            : null),
+        evidenceStatus:
+          conversationEvents.isLoading || conversationEvents.isFetching
+            ? "loading"
+            : conversationEvents.isError
+              ? "error"
+              : streamed?.response === undefined
+                ? "missing"
+                : "ready",
+        contextLabels: [
+          ...resolvedResources.map((item) => item.label),
+          ...(turn.input.agentLabel == null ? [] : [turn.input.agentLabel]),
+          ...(turn.input.skillLabels ?? []),
+        ].filter((label): label is string => typeof label === "string"),
       };
     });
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.data.conversationId
-          ? { ...conversation, turns }
+          ? {
+              ...conversation,
+              turns,
+              ...(conversationDetail.data.turns.at(-1) === undefined
+                ? {}
+                : {
+                    modelId:
+                      conversationDetail.data.turns.at(-1)!.input.modelAlias,
+                    selectedSourceIds:
+                      conversationDetail.data.turns
+                        .at(-1)!
+                        .input.resolvedResources?.map(
+                          (item) => item.sourceId,
+                        ) ?? [],
+                    selectedAgentIds:
+                      conversationDetail.data.turns.at(-1)!.input
+                        .agentRevisionId === null
+                        ? []
+                        : [
+                            conversationDetail.data.turns.at(-1)!.input
+                              .agentRevisionId!,
+                          ],
+                    selectedSkillIds:
+                      conversationDetail.data.turns.at(-1)!.input
+                        .skillRevisionIds,
+                  }),
+            }
           : conversation,
       ),
     );
-  }, [conversationDetail.data, conversationEvents.data, durable, streamState]);
+  }, [
+    conversationDetail.data,
+    conversationEvents.data,
+    conversationEvents.isError,
+    conversationEvents.isFetching,
+    conversationEvents.isLoading,
+    conversationStream.error,
+    durable,
+    streamState,
+  ]);
   const tapperWorkspaceActive = [
     "tapper",
     "agents",
@@ -1177,8 +1286,18 @@ export function TapProductPrototype({
       try {
         if (knowledgeClient === null) return false;
         const api = knowledgeClient;
+        const readySourceIds = new Set(
+          sourceItems
+            .filter((item) => item.status === "ready")
+            .map((item) => item.id),
+        );
+        const allowedAgentIds = new Set(agents.map((item) => item.id));
+        const allowedSkillIds = new Set(skills.map((item) => item.id));
+        const futureSourceIds = activeConversation.selectedSourceIds.filter(
+          (id) => readySourceIds.has(id),
+        );
         const selectedDetails = await Promise.all(
-          activeConversation.selectedSourceIds.map((id) => api.getSource(id)),
+          futureSourceIds.map((id) => api.getSource(id)),
         );
         const input = {
           message: prompt,
@@ -1189,8 +1308,13 @@ export function TapProductPrototype({
               .map((item) => item.revisionId),
           ),
           documentRevisionIds: [],
-          agentRevisionId: activeConversation.selectedAgentIds[0] ?? null,
-          skillRevisionIds: [...activeConversation.selectedSkillIds],
+          agentRevisionId:
+            activeConversation.selectedAgentIds.find((id) =>
+              allowedAgentIds.has(id),
+            ) ?? null,
+          skillRevisionIds: activeConversation.selectedSkillIds.filter((id) =>
+            allowedSkillIds.has(id),
+          ),
         };
         const key = crypto.randomUUID();
         const accepted =
@@ -1212,6 +1336,19 @@ export function TapProductPrototype({
             modelId: activeConversation.modelId,
             prompt,
             sourceReferences,
+            contextLabels: [
+              ...sourceReferences.map((item) => item.name),
+              ...agents
+                .filter((item) =>
+                  activeConversation.selectedAgentIds.includes(item.id),
+                )
+                .map((item) => item.name),
+              ...skills
+                .filter((item) =>
+                  activeConversation.selectedSkillIds.includes(item.id),
+                )
+                .map((item) => item.name),
+            ],
             status: "queued",
           },
         );
@@ -1664,10 +1801,17 @@ export function TapProductPrototype({
                       setSourcesCollapsed(false);
                       setActiveCitation((current) => ({
                         citation,
+                        conversationId: durable ? activeConversation.id : null,
                         generation: (current?.generation ?? 0) + 1,
                         id: citationId,
+                        turnId: durable ? turn.id : null,
                       }));
                     }
+                  }}
+                  onRetryConversation={() => {
+                    conversationStream.retry();
+                    void conversationEvents.refetch();
+                    void conversationDetail.refetch();
                   }}
                 />
               )}
@@ -1692,6 +1836,9 @@ export function TapProductPrototype({
               {activeCitation !== null ? (
                 <CitationViewer
                   active={activeCitation}
+                  historicalQuery={
+                    durable ? historicalCitationQuery : undefined
+                  }
                   onClose={() => setActiveCitation(null)}
                 />
               ) : (

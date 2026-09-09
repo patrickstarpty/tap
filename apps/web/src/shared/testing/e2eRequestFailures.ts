@@ -25,6 +25,7 @@ interface ClassifiedRequest {
   exactDocumentDetail: boolean;
   exactDocumentList: boolean;
   exactRuntimeDiscovery: boolean;
+  exactTask9Read: boolean;
   label: ClosedPathLabel;
   method: string;
 }
@@ -62,6 +63,7 @@ function classifyRequest(
       exactDocumentDetail: false,
       exactDocumentList: false,
       exactRuntimeDiscovery: false,
+      exactTask9Read: false,
       label: "outside-allowlist",
       method,
     };
@@ -74,10 +76,27 @@ function classifyRequest(
       parsed.pathname.slice(documentListPath.length + 1),
     );
   const runtimePath = parsed.pathname === "/api/v1/runtime-mode";
+  const projectPath = `/api/v1/projects/${encodeURIComponent(projectId)}`;
+  const conversationPath = `${projectPath}/conversations`;
+  const conversationSuffix = parsed.pathname.slice(conversationPath.length + 1);
+  const exactConversationRead =
+    parsed.pathname.startsWith(`${conversationPath}/`) &&
+    /^(?:[0-9a-f]{32})(?:\/(?:events|stream))?$/u.test(conversationSuffix) &&
+    parsed.search === "";
+  const exactTask9Read =
+    (parsed.pathname === `${projectPath}/knowledge/sources` &&
+      parsed.search === "?limit=50") ||
+    ([`${projectPath}/ai/agents`, `${projectPath}/ai/skills`].includes(
+      parsed.pathname,
+    ) &&
+      parsed.search === "") ||
+    (parsed.pathname === conversationPath && parsed.search === "?limit=20") ||
+    exactConversationRead;
   return {
     exactRuntimeDiscovery: runtimePath && parsed.search === "",
     exactDocumentDetail: detailPath && parsed.search === "",
     exactDocumentList: listPath && parsed.search === "?limit=50",
+    exactTask9Read,
     label: listPath
       ? "document-list"
       : detailPath
@@ -124,7 +143,8 @@ export class E2ERequestFailureAudit<RequestIdentity extends object> {
       classified.method === "GET" &&
       (classified.exactDocumentList ||
         classified.exactDocumentDetail ||
-        classified.exactRuntimeDiscovery);
+        classified.exactRuntimeDiscovery ||
+        classified.exactTask9Read);
     const approvedDeleteCancellation =
       classified.method === "DELETE" &&
       classified.exactDocumentDetail &&

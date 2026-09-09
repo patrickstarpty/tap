@@ -699,6 +699,14 @@ class ConversationCreateRequest(ContractModel):
         return value
 
 
+class ConversationResolvedResourceView(ContractModel):
+    source_id: str
+    document_id: str
+    source_revision_id: str | None = None
+    document_revision_id: str
+    label: str
+
+
 class ConversationTurnInputView(ContractModel):
     """Browser-safe immutable input facts; excludes instructions and policy internals."""
 
@@ -706,8 +714,11 @@ class ConversationTurnInputView(ContractModel):
     model_alias: str
     source_revision_ids: list[str]
     document_revision_ids: list[str]
+    resolved_resources: list[ConversationResolvedResourceView]
     agent_revision_id: str | None = None
+    agent_label: str | None = None
     skill_revision_ids: list[str]
+    skill_labels: list[str]
 
 
 class ConversationTurnSummary(ContractModel):

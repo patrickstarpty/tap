@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    and_,
     insert,
     or_,
     select,
@@ -463,8 +464,10 @@ class MysqlConversationRepository:
                 ),
                 agent_revision_id=raw["agent_revision_id"],
                 agent_revision_digest=raw["agent_revision_digest"],
+                agent_label=raw.get("agent_label"),
                 skill_revision_ids=tuple(raw["skill_revision_ids"]),
                 skill_revision_digests=tuple(raw["skill_revision_digests"]),
+                skill_labels=tuple(raw.get("skill_labels", [])),
                 agent_system_instruction=raw.get("agent_system_instruction"),
                 agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
                 agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
@@ -975,3 +978,25 @@ class MysqlConversationRepository:
                 .values(last_sequence=event.sequence)
             )
         return event
+
+    async def citation_linked(self, conversation_id, turn_id, citation_id, citation_digest):
+        async with self.sessions() as session:
+            identity = await session.scalar(
+                select(turn_artifact_link.c.link_id)
+                .join(
+                    chat_turn,
+                    and_(
+                        chat_turn.c.turn_id == turn_artifact_link.c.turn_id,
+                        *scope_predicates(chat_turn, self.scope),
+                    ),
+                )
+                .where(
+                    *scope_predicates(turn_artifact_link, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    turn_artifact_link.c.turn_id == turn_id,
+                    turn_artifact_link.c.artifact_kind == "citation",
+                    turn_artifact_link.c.artifact_id == citation_id,
+                    turn_artifact_link.c.artifact_digest == citation_digest,
+                )
+            )
+        return identity is not None

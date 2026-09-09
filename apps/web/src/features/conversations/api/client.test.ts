@@ -128,4 +128,22 @@ describe("ConversationClient", () => {
     });
     await expect(client.get("hidden")).rejects.toMatchObject({ status: 403 });
   });
+
+  it("loads citation evidence only through its immutable Conversation Turn link", async () => {
+    const fetcher = vi.fn(async (request: Request) => {
+      void request;
+      return new Response(JSON.stringify({ citationId: "citation-1" }));
+    });
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: fetcher,
+    });
+
+    await client.citation("conversation-1", "turn-1", "citation-1");
+
+    const request = fetcher.mock.calls[0]?.[0] as Request;
+    expect(request.url).toContain(
+      "/conversations/conversation-1/turns/turn-1/citations/citation-1",
+    );
+  });
 });

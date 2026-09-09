@@ -57,6 +57,13 @@ class ConversationRepository(Protocol):
         event: ConversationEvent,
         lease_token: str | None = None,
     ) -> ConversationEvent: ...
+    async def citation_linked(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        citation_id: str,
+        citation_digest: str,
+    ) -> bool: ...
 
 
 class InMemoryConversationRepository:
@@ -175,6 +182,18 @@ class InMemoryConversationRepository:
         )
         return event
 
+    async def citation_linked(self, conversation_id, turn_id, citation_id, citation_digest):
+        conversation = await self.load(conversation_id)
+        turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
+        return bool(
+            turn is not None
+            and turn.answer_snapshot is not None
+            and any(
+                item.citation_snapshot_id == citation_id and item.citation_digest == citation_digest
+                for item in turn.answer_snapshot.value.citations
+            )
+        )
+
 
 class ConversationService:
     def __init__(self, repository: ConversationRepository, *, scope: ProjectScopeContext):
@@ -259,6 +278,25 @@ class ConversationService:
             turn for turn in (await self.load(conversation_id)).turns if turn.turn_id == turn_id
         )
         return await self.append(conversation_id, new_turn_id, request_id, old.input_snapshot.value)
+
+    async def authorize_citation(self, conversation_id, turn_id, citation_id):
+        conversation = await self.load(conversation_id)
+        turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
+        if turn is None or turn.answer_snapshot is None:
+            raise ConversationNotFound
+        evidence = next(
+            (
+                item
+                for item in turn.answer_snapshot.value.citations
+                if item.citation_snapshot_id == citation_id
+            ),
+            None,
+        )
+        if evidence is None or not await self.repository.citation_linked(
+            conversation_id, turn_id, citation_id, evidence.citation_digest
+        ):
+            raise ConversationNotFound
+        return evidence
 
     async def complete_for_test(self, conversation_id, turn_id, *, answer, graph_status):
         conversation = await self.load(conversation_id)

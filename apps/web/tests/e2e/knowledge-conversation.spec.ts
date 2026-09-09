@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { writeConversationState } from "./fixtureBuilder";
+
 const ORIGIN = "http://127.0.0.1:15173";
 
 test("durable Conversation uses approved context, resumes SSE, and restores in Tapper", async ({
@@ -87,6 +89,10 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   await page
     .getByRole("option", { name: skills.items[0]!.displayName })
     .click();
+  await page
+    .getByRole("button", { name: /Select model, current model GPT-5\.6 Sol/u })
+    .click();
+  await page.getByRole("menuitemradio", { name: "GPT-5.6 Sol" }).click();
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
   const acceptedResponsePromise = page.waitForResponse(
     (response) =>
@@ -121,7 +127,11 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   );
   expect(eventsResponse.status()).toBe(200);
   const eventPage = (await eventsResponse.json()) as {
-    items: Array<{ sequence: number; eventType: string }>;
+    items: Array<{
+      sequence: number;
+      eventType: string;
+      payload: { answer?: { citations?: Array<{ citationId: string }> } };
+    }>;
   };
   expect(eventPage.items.map((item) => item.eventType)).toEqual(
     expect.arrayContaining([
@@ -134,6 +144,10 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   const resumeFrom = eventPage.items.find(
     (item) => item.eventType === "answer.delta",
   )!.sequence;
+  const citationId = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  )?.payload.answer?.citations?.[0]?.citationId;
+  expect(citationId).toBeTruthy();
   const resumed = await page.evaluate(
     async ({ path, sequence }) => {
       const controller = new AbortController();
@@ -212,7 +226,7 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
 
   await page
     .getByRole("textbox", { name: "Message Tapper" })
-    .fill(`${prompt} cancel`);
+    .fill(`${prompt} [e2e-cancel]`);
   const cancelAcceptedResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -272,6 +286,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     })
     .toBe(false);
 
+  await page.getByRole("button", { name: "引用 1" }).first().click();
+  await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
+  await expect(
+    page
+      .getByLabel("原文", { exact: true })
+      .getByText("verified identity evidence", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "关闭原文" }).click();
+
   const history = page.getByRole("navigation", { name: "Chat history" });
   await expect(
     history.getByRole("button", { name: new RegExp(prompt, "u") }),
@@ -296,4 +319,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       .getByRole("log", { name: "Conversation" })
       .getByText(prompt, { exact: true }),
   ).toBeVisible();
+  await writeConversationState({
+    agentLabel: agents.items[0]!.displayName,
+    citationId: citationId!,
+    conversationId: accepted.conversationId,
+    modelAlias: "tapper-chat",
+    prompt,
+    skillLabel: skills.items[0]!.displayName,
+    sourceId: createdSourceId,
+    sourceLabel: sourceFilename,
+    turnId: accepted.turnId,
+  });
 });

@@ -47,6 +47,8 @@ class ReadyDocumentRevision:
     revision_id: str
     source_content_hash: str
     source_id: str | None = None
+    source_name: str | None = None
+    filename: str | None = None
 
     def __post_init__(self) -> None:
         _bounded("ready document ID", self.document_id, maximum=64)
