@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -14,13 +15,22 @@ ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
 RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
-APPROVED = (
-    "approved-provider",
-    "approved-model",
-    "structured",
-    "sha256:" + "6" * 64,
-    "approval-record:unit-v2",
-)
+APPROVAL_CONTENT = {
+    "schemaVersion": "quality-kb-model-approval-v1",
+    "approvalId": "unit-v3",
+    "modelAlias": "tapper-chat",
+    "actualProvider": "approved-provider",
+    "actualModel": "approved-model",
+    "operation": "structured",
+    "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
+}
+APPROVAL_BYTES = json.dumps(APPROVAL_CONTENT, sort_keys=True, separators=(",", ":")).encode()
+APPROVAL_DIGEST = "sha256:" + hashlib.sha256(APPROVAL_BYTES).hexdigest()
+APPROVED = {
+    **APPROVAL_CONTENT,
+    "digest": APPROVAL_DIGEST,
+    "artifact": "approval-record:unit-v3",
+}
 
 
 def _module(path: Path, name: str) -> ModuleType:
@@ -42,6 +52,14 @@ def _runner() -> ModuleType:
 
 def _sha(character: str) -> str:
     return "sha256:" + character * 64
+
+
+def _approval_artifact(tmp_path: Path, content: dict[str, object] | None = None) -> Path:
+    path = tmp_path / "approval.json"
+    path.write_bytes(
+        json.dumps(content or APPROVAL_CONTENT, sort_keys=True, separators=(",", ":")).encode()
+    )
+    return path
 
 
 def _anchor(*, suffix: str = "a", source: str = "source-a") -> dict[str, object]:
@@ -67,6 +85,7 @@ def _dataset() -> dict[str, object]:
         },
         "bindings": {
             "policyDigest": _sha("1"),
+            "approvalDigest": APPROVAL_DIGEST,
             "modelAlias": "tapper-chat",
             "promptDigest": _sha("2"),
             "agentRevisionDigest": _sha("3"),
@@ -160,6 +179,14 @@ def _execution(
                 "durationMs": 4,
                 "providerCalls": [
                     {
+                        "runnerCallId": f"runner-{call}",
+                        "requestedAlias": "tapper-chat",
+                        "requestedOperation": "structured",
+                        "requestedProvider": "approved-provider",
+                        "requestedModel": "approved-model",
+                        "startedAtUtc": "2026-09-09T00:00:00Z",
+                        "status": "success",
+                        "retryable": False,
                         "operation": "structured",
                         "alias": "tapper-chat",
                         "actualProvider": "approved-provider",
@@ -229,7 +256,9 @@ def _observations(dataset: dict[str, object]) -> dict[str, object]:
         observation = {
             "caseId": case["caseId"],
             "authority": {
+                "actualEnterpriseId": "tenant",
                 "actualProjectId": "project-a",
+                "actualPolicyDigest": (None if case["caseType"] == "unauthorized" else _sha("1")),
                 "authorizedSourceIds": case["authorizedSourceIds"],
                 "decision": "deny" if case["caseType"] == "unauthorized" else "allow",
                 "reason": ("source-not-authorized" if case["caseType"] == "unauthorized" else None),
@@ -473,6 +502,7 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
 
         async def resolve_authority(self, case):
             return {
+                "actualEnterpriseId": "tenant",
                 "actualProjectId": "project-a",
                 "authorizedSourceIds": ["source-a"],
             }
@@ -492,7 +522,13 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
                     _sha("5"),
                 )
             )
-            return {"retrieved": [], "abstained": False, "claims": [], "citations": []}
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": False,
+                "claims": [],
+                "citations": [],
+            }
 
         async def resolve_citation(self, citation):
             raise AssertionError("no citations")
@@ -506,14 +542,15 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
         provider_call_budget=2,
         cache=cache,
     )
-    cached_observations = await module.run_dataset(
-        dataset,
-        gateway=FakeGateway(),
-        path_factory=FakePath,
-        timeout_ms=1000,
-        provider_call_budget=2,
-        cache=cache,
-    )
+    with pytest.raises(ValueError, match="pre-populated cache"):
+        await module.run_dataset(
+            dataset,
+            gateway=FakeGateway(),
+            path_factory=FakePath,
+            timeout_ms=1000,
+            provider_call_budget=2,
+            cache=cache,
+        )
     provider_call = observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]
 
     assert len(calls) == 1
@@ -525,13 +562,7 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
         "provider-call-1",
         "gateway-call-1",
     )
-    assert len(calls) == 1
-    assert cached_observations["execution"]["providerCalls"] == 0
-    assert cached_observations["cases"][0]["execution"]["cacheHit"] is True
-    assert (
-        cached_observations["cases"][0]["execution"]["cacheEvidenceDigest"]
-        == observations["cases"][0]["execution"]["cacheEvidenceDigest"]
-    )
+    assert observations["execution"]["cacheHits"] == 0
 
 
 @pytest.mark.asyncio
@@ -546,12 +577,19 @@ async def test_runner_rejects_a_cache_miss_that_bypasses_model_gateway() -> None
 
         async def resolve_authority(self, case):
             return {
+                "actualEnterpriseId": "tenant",
                 "actualProjectId": "project-a",
                 "authorizedSourceIds": ["source-a"],
             }
 
         async def run_case(self, case):
-            return {"retrieved": [], "abstained": True, "claims": [], "citations": []}
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": True,
+                "claims": [],
+                "citations": [],
+            }
 
         async def resolve_citation(self, citation):
             raise AssertionError("no citations")
@@ -585,7 +623,12 @@ def test_real_runner_preflight_requires_opt_in_and_mapping_before_io(tmp_path: P
         check=False,
         capture_output=True,
         text=True,
-        env={"TAP_RUN_QUALITY_KB_01": "1"},
+        env={
+            "TAP_RUN_QUALITY_KB_01": "1",
+            "TAP_QUALITY_KB_APPROVED_PROVIDER": "self-reported-provider",
+            "TAP_QUALITY_KB_APPROVED_MODEL": "self-reported-model",
+            "TAP_QUALITY_KB_APPROVED_OPERATION": "structured",
+        },
     )
     assert no_mapping.returncode == 2
     assert "approved actual provider/model/operation mapping" in no_mapping.stderr
@@ -604,9 +647,8 @@ def test_real_runner_preflight_requires_opt_in_and_mapping_before_io(tmp_path: P
         text=True,
         env={
             "TAP_RUN_QUALITY_KB_01": "1",
-            "TAP_QUALITY_KB_APPROVED_PROVIDER": "provider",
-            "TAP_QUALITY_KB_APPROVED_MODEL": "model",
             "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": "sha256:" + "g" * 64,
+            "TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT": str(tmp_path / "missing.json"),
         },
     )
     assert malformed_mapping.returncode == 2
@@ -629,6 +671,7 @@ def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
     dataset["cases"] = generated
     dataset_path = tmp_path / "synthetic-100.json"
     dataset_path.write_text(json.dumps(dataset))
+    approval_path = _approval_artifact(tmp_path)
     completed = subprocess.run(
         [
             sys.executable,
@@ -642,11 +685,8 @@ def test_100_synthetic_self_described_cases_cannot_zero_io_pass_real_gate(
         text=True,
         env={
             "TAP_RUN_QUALITY_KB_01": "1",
-            "TAP_QUALITY_KB_APPROVED_PROVIDER": "approved-provider",
-            "TAP_QUALITY_KB_APPROVED_MODEL": "approved-model",
-            "TAP_QUALITY_KB_APPROVED_OPERATION": "structured",
-            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": _sha("6"),
-            "TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT": "approval-record:unit-v2",
+            "TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST": APPROVAL_DIGEST,
+            "TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT": str(approval_path),
         },
     )
 
@@ -666,6 +706,9 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
         "f"
     )
     observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0]["operation"] = "chat"
+    observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0][
+        "requestedOperation"
+    ] = "chat"
 
     report = module.evaluate_run(
         dataset,
@@ -685,6 +728,7 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     ("binding", "value"),
     [
         ("policyDigest", None),
+        ("approvalDigest", None),
         ("promptDigest", None),
         ("agentRevisionDigest", None),
         ("skillRevisionDigests", []),
@@ -707,21 +751,64 @@ def test_missing_dataset_governance_binding_fails(binding: str, value: object) -
         assert binding in " ".join(report["failures"])
 
 
-def test_model_alias_and_approval_artifact_formats_are_locked() -> None:
+def test_model_alias_format_is_locked() -> None:
     module = _evaluator()
     dataset = _dataset()
     dataset["bindings"]["modelAlias"] = "alias with spaces"
     with pytest.raises(ValueError, match="modelAlias"):
         module.evaluate_run(dataset, None, min_cases=4)
 
-    dataset = _dataset()
-    with pytest.raises(ValueError, match="approval artifact"):
-        module.evaluate_run(
-            dataset,
-            _observations(dataset),
-            min_cases=4,
-            approved_mapping=(APPROVED[0], APPROVED[1], APPROVED[2], APPROVED[3], "free text"),
+
+def test_approval_artifact_requires_canonical_bytes_digest_and_unexpired_scope(
+    tmp_path: Path,
+) -> None:
+    from datetime import UTC, datetime
+
+    module = _runner()
+    valid = _approval_artifact(tmp_path)
+    approved = module._load_approval_artifact(
+        valid, APPROVAL_DIGEST, now=datetime(2026, 9, 9, tzinfo=UTC)
+    )
+    module._require_approval_scope(approved, "tenant", "project-a")
+    assert approved["actualProvider"] == "approved-provider"
+
+    with pytest.raises(ValueError, match="digest"):
+        module._load_approval_artifact(valid, _sha("f"), now=datetime(2026, 9, 9, tzinfo=UTC))
+    noncanonical = tmp_path / "noncanonical.json"
+    noncanonical.write_text(json.dumps(APPROVAL_CONTENT, indent=2))
+    noncanonical_digest = "sha256:" + hashlib.sha256(noncanonical.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="canonical"):
+        module._load_approval_artifact(
+            noncanonical, noncanonical_digest, now=datetime(2026, 9, 9, tzinfo=UTC)
         )
+    expired_content = {**APPROVAL_CONTENT, "expiresAtUtc": "2026-09-08T00:00:00Z"}
+    expired = _approval_artifact(tmp_path, expired_content)
+    expired_digest = "sha256:" + hashlib.sha256(expired.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="expired"):
+        module._load_approval_artifact(
+            expired, expired_digest, now=datetime(2026, 9, 9, tzinfo=UTC)
+        )
+    with pytest.raises(ValueError, match="scope"):
+        module._require_approval_scope(approved, "tenant", "project-b")
+
+
+def test_dataset_and_observed_scope_must_match_approval_artifact() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    wrong_scope = deepcopy(APPROVED)
+    wrong_scope["scope"] = {"enterpriseId": "tenant", "projectId": "project-b"}
+
+    report = module.evaluate_run(
+        dataset,
+        observations,
+        min_cases=4,
+        require_real=True,
+        approved_mapping=wrong_scope,
+    )
+
+    assert report["status"] == "fail"
+    assert "approval scope" in " ".join(report["failures"])
 
 
 def test_full_governance_list_must_bind_agent_and_every_skill_revision() -> None:
@@ -784,6 +871,67 @@ def test_cached_runtime_evidence_digest_rejects_observation_tampering() -> None:
         module.evaluate_run(dataset, observations, min_cases=4)
 
 
+def test_evaluator_requires_zero_cache_hits_and_actual_policy_binding() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    observations["cases"][0]["authority"]["actualPolicyDigest"] = _sha("f")
+    observations["cases"][0]["execution"]["cacheEvidenceDigest"] = module.runtime_evidence_digest(
+        observations["cases"][0]
+    )
+    observations["cases"][1]["execution"]["cacheHit"] = True
+    observations["cases"][1]["execution"]["attempts"] = []
+    observations["execution"]["providerCalls"] = 2
+    observations["execution"]["cacheHits"] = 1
+
+    report = module.evaluate_run(dataset, observations, min_cases=4)
+
+    assert report["status"] == "fail"
+    failures = " ".join(report["failures"])
+    assert "policy digest" in failures
+    assert "cache hits" in failures
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_rebuilt_policy_mismatch_before_accepting_answer() -> None:
+    module = _runner()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][0]]
+
+    class PolicyMismatchPath:
+        def __init__(self, gateway):
+            self.gateway = gateway
+
+        async def resolve_authority(self, case):
+            return {
+                "actualEnterpriseId": "tenant",
+                "actualProjectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+            }
+
+        async def run_case(self, case):
+            return {
+                "actualPolicyDigest": _sha("f"),
+                "retrieved": [],
+                "abstained": False,
+                "claims": [],
+                "citations": [],
+            }
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    with pytest.raises(ValueError, match="policy digest mismatch"):
+        await module.run_dataset(
+            dataset,
+            gateway=object(),
+            path_factory=PolicyMismatchPath,
+            timeout_ms=1000,
+            provider_call_budget=1,
+            cache={},
+        )
+
+
 def test_denied_case_with_retrieval_or_model_evidence_fails_closed() -> None:
     module = _evaluator()
     dataset = _dataset()
@@ -804,6 +952,139 @@ def test_denied_case_with_retrieval_or_model_evidence_fails_closed() -> None:
 
     assert report["status"] == "fail"
     assert "denied case produced retrieval/model evidence" in " ".join(report["failures"])
+
+
+@pytest.mark.asyncio
+async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() -> None:
+    from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelGatewayUnavailable,
+        ModelOperation,
+        ModelRequest,
+        ModelResult,
+        ModelUsage,
+    )
+
+    module = _runner()
+    evaluator = _evaluator()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][0]]
+    scope = ProjectScopeContext(
+        enterprise_id="tenant",
+        project_id="project-a",
+        actor_id="actor",
+        identity_mode=IdentityMode.VALIDATION,
+    )
+    delegate_calls = 0
+
+    class FlakyGateway:
+        async def generate_structured(self, request):
+            nonlocal delegate_calls
+            delegate_calls += 1
+            if delegate_calls == 1:
+                raise ModelGatewayUnavailable()
+            audit = ModelCallAudit(
+                scope=scope,
+                alias=request.alias,
+                operation=ModelOperation.STRUCTURED,
+                prompt_digest=request.prompt_digest,
+                schema_digest=request.schema_digest,
+                context_digest=_sha("9"),
+                idempotency_key=request.idempotency_key,
+                actual_provider="approved-provider",
+                actual_model="approved-model",
+                usage=ModelUsage(2, 1),
+                governance_digests=(_sha("3"), _sha("4")),
+            )
+            return ModelResult(
+                {},
+                "approved-model",
+                ModelUsage(2, 1),
+                "approved-provider",
+                audit,
+                "provider-success",
+                "gateway-success",
+            )
+
+    class FlakyPath:
+        def __init__(self, gateway):
+            self.gateway = gateway
+
+        async def resolve_authority(self, case):
+            return {
+                "actualEnterpriseId": "tenant",
+                "actualProjectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+            }
+
+        async def run_case(self, case):
+            await self.gateway.generate_structured(
+                ModelRequest(
+                    scope,
+                    "tapper-chat",
+                    ModelOperation.STRUCTURED,
+                    "prompt",
+                    _sha("2"),
+                    "context",
+                    1.0,
+                    case["caseId"],
+                    {},
+                    _sha("5"),
+                    governance_digests=(_sha("3"), _sha("4")),
+                )
+            )
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": False,
+                "claims": [],
+                "citations": [],
+            }
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    observations = await module.run_dataset(
+        dataset,
+        gateway=FlakyGateway(),
+        path_factory=FlakyPath,
+        timeout_ms=1000,
+        provider_call_budget=2,
+        cache={},
+        max_retries_per_case=1,
+        approved_mapping=APPROVED,
+    )
+
+    attempts = observations["cases"][0]["execution"]["attempts"]
+    assert delegate_calls == 2
+    assert observations["execution"]["providerCalls"] == 2
+    assert observations["execution"]["retryCount"] == 1
+    assert attempts[0]["providerCalls"][0]["status"] == "error"
+    assert attempts[0]["providerCalls"][0]["errorCode"] == "ModelGatewayUnavailable"
+    assert attempts[0]["providerCalls"][0]["retryable"] is True
+    assert attempts[1]["retryReason"] == "ModelGatewayUnavailable"
+    assert attempts[1]["providerCalls"][0]["status"] == "success"
+
+    evaluator.evaluate_run(
+        dataset,
+        observations,
+        min_cases=1,
+        require_real=True,
+        approved_mapping=APPROVED,
+        provider_call_budget=2,
+        max_retries_per_case=1,
+    )
+    attempts[1]["retryReason"] = "ForgedRetryReason"
+    with pytest.raises(ValueError, match="retry reason"):
+        evaluator.evaluate_run(
+            dataset,
+            observations,
+            min_cases=1,
+            approved_mapping=APPROVED,
+            provider_call_budget=2,
+            max_retries_per_case=1,
+        )
 
 
 @pytest.mark.asyncio
@@ -860,7 +1141,11 @@ async def test_provider_budget_stops_n_plus_one_before_delegate_io() -> None:
             self.gateway = gateway
 
         async def resolve_authority(self, case):
-            return {"actualProjectId": "project-a", "authorizedSourceIds": ["source-a"]}
+            return {
+                "actualEnterpriseId": "tenant",
+                "actualProjectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+            }
 
         async def run_case(self, case):
             request = ModelRequest(
@@ -878,7 +1163,13 @@ async def test_provider_budget_stops_n_plus_one_before_delegate_io() -> None:
             )
             await self.gateway.generate_structured(request)
             await self.gateway.generate_structured(request)
-            return {"retrieved": [], "abstained": False, "claims": [], "citations": []}
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": False,
+                "claims": [],
+                "citations": [],
+            }
 
         async def resolve_citation(self, citation):
             raise AssertionError("no citations")
@@ -949,6 +1240,7 @@ async def test_scope_aware_service_rejects_wrong_project_and_unauthorized_source
 
         async def resolve_authority(self, case):
             return {
+                "actualEnterpriseId": "tenant",
                 "actualProjectId": service.scope.project_id,
                 "authorizedSourceIds": [allowed],
             }
@@ -1007,6 +1299,7 @@ async def test_runner_fails_stale_authorization_labels_before_model_io() -> None
 
         async def resolve_authority(self, case):
             return {
+                "actualEnterpriseId": "tenant",
                 "actualProjectId": "project-a",
                 "authorizedSourceIds": ["source-a", "source-b"],
             }

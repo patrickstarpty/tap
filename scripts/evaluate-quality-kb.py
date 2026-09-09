@@ -24,6 +24,7 @@ _THRESHOLDS = {
     "minimumCases": 100,
     "maximumSkippedCases": 0,
     "maximumLeakage": 0,
+    "maximumCacheHits": 0,
     "anchorResolution": "100%",
     "groundedClaimCitationPrecision": "100%",
     "retrievalRecallAt10": ">=90%",
@@ -136,7 +137,13 @@ def validate_dataset(
     model_alias = _text(bindings.get("modelAlias"), "modelAlias", 256)
     if _ALIAS.fullmatch(model_alias) is None:
         raise ValueError("modelAlias format is invalid")
-    for name in ("policyDigest", "promptDigest", "agentRevisionDigest", "schemaDigest"):
+    for name in (
+        "policyDigest",
+        "approvalDigest",
+        "promptDigest",
+        "agentRevisionDigest",
+        "schemaDigest",
+    ):
         if bindings.get(name) is not None:
             _digest_text(bindings[name], name)
     skill_digests = [
@@ -342,7 +349,7 @@ def _validate_execution(
     call_ids: set[str],
     *,
     max_retries_per_case: int,
-    approved_mapping: tuple[str, str, str, str, str] | None,
+    approved_mapping: dict[str, Any] | None,
     require_real: bool,
     failures: list[str],
 ) -> tuple[int, int, int, set[tuple[str, str]]]:
@@ -385,12 +392,19 @@ def _validate_execution(
         _mapping(observation.get("authority"), "authority").get("decision") == "deny"
     )
     attempt_duration_total = 0
+    previous_error_code: str | None = None
+    previous_retryable = False
     for index, attempt in enumerate(attempts, 1):
         if attempt.get("attempt") != index:
             raise ValueError(f"case {case_id} attempt order is invalid")
         retry_reason = attempt.get("retryReason")
         if (index == 1 and retry_reason is not None) or (
-            index > 1 and not isinstance(retry_reason, str)
+            index > 1
+            and (
+                retry_reason != previous_error_code
+                or not previous_retryable
+                or not isinstance(retry_reason, str)
+            )
         ):
             raise ValueError(f"case {case_id} retry reason evidence is invalid")
         attempt_started = _utc(
@@ -399,7 +413,7 @@ def _validate_execution(
         attempt_duration = attempt.get("durationMs")
         if (
             attempt_started < case_started
-            or attempt_started > case_started + timedelta(milliseconds=duration_ms)
+            or attempt_started > case_started + timedelta(milliseconds=duration_ms + 1)
             or type(attempt_duration) is not int
             or not 0 <= attempt_duration <= duration_ms
             or attempt_duration > timeout_ms
@@ -418,23 +432,42 @@ def _validate_execution(
             raise ValueError(
                 f"case {case_id} attempt has no captured ModelGateway call"
             )
+        attempt_error_code: str | None = None
+        attempt_retryable = False
         for call in calls:
-            provider = _text(call.get("actualProvider"), "actualProvider", 256)
-            model = _text(call.get("actualModel"), "actualModel", 256)
-            identities.add((provider, model))
+            runner_call_id = _text(call.get("runnerCallId"), "runnerCallId", 128)
+            if runner_call_id in call_ids:
+                raise ValueError("provider call IDs must be globally unique")
+            call_ids.add(runner_call_id)
+            requested_alias = _text(call.get("requestedAlias"), "requestedAlias", 256)
+            requested_operation = _text(
+                call.get("requestedOperation"), "requestedOperation", 32
+            )
             operation = _text(call.get("operation"), "operation", 32)
-            if operation not in {"embed", "chat", "structured"}:
+            if (
+                operation not in {"embed", "chat", "structured"}
+                or requested_operation != operation
+            ):
                 raise ValueError(f"case {case_id} provider operation is invalid")
             alias = _text(call.get("alias"), "alias", 256)
+            if requested_alias != alias:
+                raise ValueError(f"case {case_id} requested alias evidence is invalid")
             prompt_digest = _digest_text(call.get("promptDigest"), "promptDigest")
+            call_started = _utc(call.get("startedAtUtc"), "provider call start")
             call_duration = call.get("durationMs")
             if (
-                type(call_duration) is not int
+                call_started < attempt_started
+                or call_started
+                > attempt_started + timedelta(milliseconds=attempt_duration + 1)
+                or type(call_duration) is not int
                 or not 0 <= call_duration <= attempt_duration
             ):
                 raise ValueError(f"case {case_id} provider call duration is invalid")
+            status = call.get("status")
+            retryable = call.get("retryable")
+            if status not in {"success", "error"} or type(retryable) is not bool:
+                raise ValueError(f"case {case_id} provider call status is invalid")
             if operation in {"chat", "structured"}:
-                answer_calls += 1
                 if alias != root["bindings"].get("modelAlias"):
                     failures.append(f"case {case_id} logical model alias mismatch")
                 if prompt_digest != root["bindings"].get("promptDigest"):
@@ -449,22 +482,58 @@ def _validate_execution(
                     failures.append(f"case {case_id} Agent/Skill governance mismatch")
                 if require_real and (
                     approved_mapping is None
-                    or (provider, model) != approved_mapping[:2]
-                ):
-                    failures.append(f"case {case_id} unapproved answer identity")
-                if require_real and (
-                    approved_mapping is None or operation != approved_mapping[2]
+                    or operation != approved_mapping["operation"]
                 ):
                     failures.append(f"case {case_id} unapproved answer operation")
-            provider_id = call.get("providerRequestId")
-            gateway_id = call.get("gatewayCallId")
-            if not isinstance(provider_id, str) and not isinstance(gateway_id, str):
-                raise ValueError(f"case {case_id} provider call has no call ID")
-            unique_id = f"{provider_id}:{gateway_id}"
-            if unique_id in call_ids:
-                raise ValueError("provider call IDs must be globally unique")
-            call_ids.add(unique_id)
+                if require_real and (
+                    approved_mapping is None
+                    or call.get("requestedProvider")
+                    != approved_mapping["actualProvider"]
+                    or call.get("requestedModel") != approved_mapping["actualModel"]
+                ):
+                    failures.append(f"case {case_id} unapproved requested answer route")
+            if status == "error":
+                attempt_error_code = _text(
+                    call.get("errorCode"), "provider errorCode", 64
+                )
+                attempt_retryable = retryable
+                actual_provider = call.get("actualProvider")
+                actual_model = call.get("actualModel")
+                if (actual_provider is None) != (actual_model is None):
+                    raise ValueError(f"case {case_id} partial failed-call identity")
+            else:
+                if retryable:
+                    raise ValueError(
+                        f"case {case_id} successful call cannot be retryable"
+                    )
+                provider = _text(call.get("actualProvider"), "actualProvider", 256)
+                model = _text(call.get("actualModel"), "actualModel", 256)
+                identities.add((provider, model))
+                if operation in {"chat", "structured"}:
+                    answer_calls += 1
+                    if require_real and (
+                        approved_mapping is None
+                        or provider != approved_mapping["actualProvider"]
+                        or model != approved_mapping["actualModel"]
+                    ):
+                        failures.append(f"case {case_id} unapproved answer identity")
+                provider_id = call.get("providerRequestId")
+                gateway_id = call.get("gatewayCallId")
+                if not isinstance(provider_id, str) and not isinstance(gateway_id, str):
+                    raise ValueError(f"case {case_id} provider call has no call ID")
+                actual_call_id = f"actual:{provider_id}:{gateway_id}"
+                if actual_call_id in call_ids:
+                    raise ValueError("provider call IDs must be globally unique")
+                call_ids.add(actual_call_id)
             provider_calls += 1
+        if index < len(attempts) and (
+            attempt_error_code is None or not attempt_retryable
+        ):
+            raise ValueError(f"case {case_id} retry has no retryable failure cause")
+        if index == len(attempts) and attempt_error_code is not None:
+            raise ValueError(f"case {case_id} final attempt did not succeed")
+        previous_error_code = attempt_error_code
+        previous_retryable = attempt_retryable
     if attempt_duration_total > duration_ms:
         raise ValueError(f"case {case_id} attempt duration exceeds case duration")
     if case["caseType"] == "answerable" and not cache_hit and answer_calls == 0:
@@ -478,7 +547,7 @@ def evaluate_run(
     *,
     min_cases: int = 100,
     require_real: bool = False,
-    approved_mapping: tuple[str, str, str, str, str] | None = None,
+    approved_mapping: dict[str, Any] | None = None,
     provider_call_budget: int = 1000,
     max_retries_per_case: int = 2,
 ) -> dict[str, object]:
@@ -496,21 +565,36 @@ def evaluate_run(
         failures.append("dataset human-label provenance is missing")
     if len(cases) < min_cases:
         failures.append(f"actual case count {len(cases)} is below required {min_cases}")
-    for name in ("policyDigest", "promptDigest", "agentRevisionDigest", "schemaDigest"):
+    for name in (
+        "policyDigest",
+        "approvalDigest",
+        "promptDigest",
+        "agentRevisionDigest",
+        "schemaDigest",
+    ):
         if bindings.get(name) is None:
             failures.append(f"{name} governance binding is missing")
     for name in ("skillRevisionDigests", "governanceDigests"):
         if not bindings.get(name):
             failures.append(f"{name} governance binding is missing")
     if approved_mapping is not None:
-        _text(approved_mapping[0], "approved provider", 256)
-        _text(approved_mapping[1], "approved model", 256)
-        if approved_mapping[2] != "structured":
+        approved_mapping = _mapping(approved_mapping, "approved mapping")
+        _text(approved_mapping.get("modelAlias"), "approved alias", 256)
+        _text(approved_mapping.get("actualProvider"), "approved provider", 256)
+        _text(approved_mapping.get("actualModel"), "approved model", 256)
+        if approved_mapping.get("operation") != "structured":
             raise ValueError("approved operation must be structured")
-        _digest_text(approved_mapping[3], "approval digest")
-        artifact = _text(approved_mapping[4], "approval artifact", 1024)
-        if _APPROVAL_ARTIFACT.fullmatch(artifact) is None:
+        _digest_text(approved_mapping.get("digest"), "approval digest")
+        artifact = _text(approved_mapping.get("artifact"), "approval artifact", 1024)
+        if _APPROVAL_ARTIFACT.fullmatch("approval-record:" + artifact) is None:
             raise ValueError("approval artifact format is invalid")
+        scope = _mapping(approved_mapping.get("scope"), "approval scope")
+        _text(scope.get("enterpriseId"), "approval enterprise", 128)
+        _text(scope.get("projectId"), "approval project", 128)
+        if bindings.get("approvalDigest") != approved_mapping["digest"]:
+            failures.append("dataset approval digest mismatch")
+        if bindings.get("modelAlias") != approved_mapping["modelAlias"]:
+            failures.append("dataset model alias differs from approval")
 
     observed_by_id: dict[str, dict[str, Any]] = {}
     declared_execution: dict[str, Any] | None = None
@@ -554,6 +638,9 @@ def evaluate_run(
             )
             continue
         authority = _mapping(case_observation.get("authority"), "authority")
+        actual_enterprise = _text(
+            authority.get("actualEnterpriseId"), "actualEnterpriseId", 128
+        )
         actual_project = _text(authority.get("actualProjectId"), "actualProjectId", 128)
         actual_authorized = set(
             _strings(authority.get("authorizedSourceIds"), "authorizedSourceIds")
@@ -564,6 +651,22 @@ def evaluate_run(
             raise ValueError(f"case {case_id} authority decision is invalid")
         if reason is not None:
             _text(reason, "authority reason", 64)
+        actual_policy_digest = authority.get("actualPolicyDigest")
+        if decision == "allow":
+            actual_policy_digest = _digest_text(
+                actual_policy_digest, "actualPolicyDigest"
+            )
+            if actual_policy_digest != bindings.get("policyDigest"):
+                failures.append(f"case {case_id} actual policy digest mismatch")
+        elif actual_policy_digest is not None:
+            failures.append(f"case {case_id} denied path rebuilt a retrieval policy")
+        if require_real and approved_mapping is not None:
+            approved_scope = _mapping(approved_mapping["scope"], "approval scope")
+            if (
+                actual_enterprise != approved_scope["enterpriseId"]
+                or actual_project != approved_scope["projectId"]
+            ):
+                failures.append(f"case {case_id} approval scope mismatch")
         selected = set(case["selectedSourceIds"])
         project_mismatch = case["projectId"] != actual_project
         source_mismatch = not selected <= actual_authorized
@@ -741,6 +844,8 @@ def evaluate_run(
         )
     if provider_calls > provider_call_budget:
         failures.append("provider call count exceeds bounded budget")
+    if cache_hits:
+        failures.append(f"cache hits {cache_hits} exceed required 0")
     if totals["skipped"]:
         failures.append(f"skipped case count {totals['skipped']} exceeds required 0")
     if totals["leakage"]:
@@ -749,11 +854,8 @@ def evaluate_run(
         if approved_mapping is None:
             failures.append("external approved model mapping is required")
         else:
-            provider, model, operation, approval_digest, approval_artifact = (
-                approved_mapping
-            )
-            _digest_text(approval_digest, "approval digest")
-            _text(approval_artifact, "approval artifact", 1024)
+            provider = str(approved_mapping["actualProvider"])
+            model = str(approved_mapping["actualModel"])
             if (provider, model) not in actual_identities:
                 failures.append(
                     "captured response/audit identity does not match approved mapping"
@@ -780,6 +882,11 @@ def evaluate_run(
             "actual": totals["leakage"],
             "required": 0,
             "passed": totals["leakage"] == 0,
+        },
+        "zeroCacheHits": {
+            "actual": cache_hits,
+            "required": 0,
+            "passed": cache_hits == 0,
         },
         "anchorResolution": _ratio(
             "anchorResolution", totals["resolved"], totals["anchors"], 100
@@ -833,9 +940,15 @@ def evaluate_run(
             }
         ),
         "bindings": bindings,
-        "approvedMappingOperation": approved_mapping[2] if approved_mapping else None,
-        "approvedMappingDigest": approved_mapping[3] if approved_mapping else None,
-        "approvedMappingArtifact": approved_mapping[4] if approved_mapping else None,
+        "approvedMappingOperation": approved_mapping["operation"]
+        if approved_mapping
+        else None,
+        "approvedMappingDigest": approved_mapping["digest"]
+        if approved_mapping
+        else None,
+        "approvedMappingArtifact": approved_mapping["artifact"]
+        if approved_mapping
+        else None,
         "capturedActualIdentities": [
             {"provider": p, "model": m} for p, m in sorted(actual_identities)
         ],

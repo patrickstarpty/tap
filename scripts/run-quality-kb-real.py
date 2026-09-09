@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -23,7 +24,12 @@ from tap.entrypoints.tapper_runtime import TapperApiRuntime
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.domain.models import ModelDescriptor, ModelRequest, ModelResult
+from tap.modules.ai.domain.models import (
+    ModelDescriptor,
+    ModelGatewayUnavailable,
+    ModelRequest,
+    ModelResult,
+)
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
@@ -51,6 +57,10 @@ class QualityKnowledgePath(Protocol):
     async def resolve_citation(self, citation: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class PolicyDigestMismatch(ValueError):
+    """The server-rebuilt retrieval policy differs from the dataset binding."""
+
+
 class ProviderCallBudget:
     """Reserve each provider call atomically before delegate I/O."""
 
@@ -69,9 +79,15 @@ class ProviderCallBudget:
 class CapturingModelGateway:
     """Delegate to ModelGateway while deriving immutable identity from ModelResult.audit."""
 
-    def __init__(self, delegate: ModelGateway, budget: ProviderCallBudget) -> None:
+    def __init__(
+        self,
+        delegate: ModelGateway,
+        budget: ProviderCallBudget,
+        approved_mapping: dict[str, Any] | None = None,
+    ) -> None:
         self._delegate = delegate
         self._budget = budget
+        self._approved = approved_mapping
         self._active: list[dict[str, object]] | None = None
 
     def begin_attempt(self) -> None:
@@ -101,37 +117,83 @@ class CapturingModelGateway:
     async def _capture(self, method: str, request: ModelRequest) -> ModelResult:
         if self._active is None:
             raise RuntimeError("ModelGateway call occurred outside a quality attempt")
+        receipt: dict[str, object] = {
+            "runnerCallId": str(uuid4()),
+            "requestedAlias": request.alias,
+            "requestedOperation": request.operation.value,
+            "requestedProvider": (
+                None if self._approved is None else self._approved["actualProvider"]
+            ),
+            "requestedModel": (
+                None if self._approved is None else self._approved["actualModel"]
+            ),
+            "startedAtUtc": _now(),
+            "status": "started",
+            "operation": request.operation.value,
+            "alias": request.alias,
+            "promptDigest": request.prompt_digest,
+            "schemaDigest": request.schema_digest,
+            "governanceDigests": list(request.governance_digests),
+        }
         await self._budget.reserve()
+        self._active.append(receipt)
         started = time.monotonic_ns()
-        result: ModelResult = await getattr(self._delegate, method)(request)
-        elapsed_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
-        audit = getattr(result, "audit", None)
-        if audit is None or (
-            getattr(result, "actual_provider", None)
-            != getattr(audit, "actual_provider", None)
-            or getattr(result, "actual_model", None)
-            != getattr(audit, "actual_model", None)
-        ):
-            raise ValueError("ModelGateway result/audit identity mismatch")
-        usage = getattr(audit, "usage", None)
-        self._active.append(
-            {
-                "operation": str(getattr(audit, "operation", "")),
-                "alias": getattr(audit, "alias", None),
-                "actualProvider": audit.actual_provider,
-                "actualModel": audit.actual_model,
-                "promptDigest": audit.prompt_digest,
-                "schemaDigest": audit.schema_digest,
-                "contextDigest": audit.context_digest,
-                "governanceDigests": list(audit.governance_digests),
-                "providerRequestId": getattr(result, "provider_request_id", None),
-                "gatewayCallId": getattr(result, "gateway_call_id", None),
-                "inputTokens": getattr(usage, "input_tokens", None),
-                "outputTokens": getattr(usage, "output_tokens", None),
-                "durationMs": elapsed_ms,
-            }
-        )
-        return result
+        result: ModelResult | None = None
+        try:
+            result = await getattr(self._delegate, method)(request)
+            audit = getattr(result, "audit", None)
+            if audit is None or (
+                getattr(result, "actual_provider", None)
+                != getattr(audit, "actual_provider", None)
+                or getattr(result, "actual_model", None)
+                != getattr(audit, "actual_model", None)
+            ):
+                raise ValueError("ModelGateway result/audit identity mismatch")
+            usage = getattr(audit, "usage", None)
+            receipt.update(
+                {
+                    "status": "success",
+                    "retryable": False,
+                    "operation": str(getattr(audit, "operation", "")),
+                    "alias": getattr(audit, "alias", None),
+                    "actualProvider": audit.actual_provider,
+                    "actualModel": audit.actual_model,
+                    "promptDigest": audit.prompt_digest,
+                    "schemaDigest": audit.schema_digest,
+                    "contextDigest": audit.context_digest,
+                    "governanceDigests": list(audit.governance_digests),
+                    "providerRequestId": getattr(result, "provider_request_id", None),
+                    "gatewayCallId": getattr(result, "gateway_call_id", None),
+                    "inputTokens": getattr(usage, "input_tokens", None),
+                    "outputTokens": getattr(usage, "output_tokens", None),
+                }
+            )
+            return result
+        except BaseException as error:
+            receipt.update(
+                {
+                    "status": "error",
+                    "retryable": isinstance(
+                        error,
+                        (ModelGatewayUnavailable, TimeoutError, ConnectionError),
+                    ),
+                    "errorCode": type(error).__name__[:64],
+                }
+            )
+            if result is not None:
+                receipt.update(
+                    {
+                        "actualProvider": getattr(result, "actual_provider", None),
+                        "actualModel": getattr(result, "actual_model", None),
+                        "providerRequestId": getattr(
+                            result, "provider_request_id", None
+                        ),
+                        "gatewayCallId": getattr(result, "gateway_call_id", None),
+                    }
+                )
+            raise
+        finally:
+            receipt["durationMs"] = max(0, (time.monotonic_ns() - started) // 1_000_000)
 
 
 def _now() -> str:
@@ -147,6 +209,7 @@ async def run_dataset(
     provider_call_budget: int,
     cache: MutableMapping[str, dict[str, Any]],
     max_retries_per_case: int = 2,
+    approved_mapping: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Run each cache miss once through Knowledge; no observation fields come from labels."""
     cases = _EVALUATOR.validate_dataset(dataset, min_cases=1)
@@ -156,6 +219,8 @@ async def run_dataset(
         raise ValueError("provider_call_budget must be positive")
     if type(max_retries_per_case) is not int or not 0 <= max_retries_per_case <= 2:
         raise ValueError("max_retries_per_case must be between 0 and 2")
+    if cache:
+        raise ValueError("pre-populated cache is forbidden for the V1 real gate")
     minimum_provider_calls = sum(
         case["authorizationExpected"] == "allow" for case in cases
     )
@@ -164,7 +229,7 @@ async def run_dataset(
             "provider call budget is below the minimum eligible-case call bound"
         )
     budget = ProviderCallBudget(provider_call_budget)
-    capture = CapturingModelGateway(gateway, budget)
+    capture = CapturingModelGateway(gateway, budget, approved_mapping)
     path = path_factory(capture)
     output_cases: list[dict[str, Any]] = []
     provider_calls = cache_hits = retries = 0
@@ -172,9 +237,12 @@ async def run_dataset(
         case_id = str(case["caseId"])
         authority = await path.resolve_authority(case)
         actual_project = authority.get("actualProjectId")
+        actual_enterprise = authority.get("actualEnterpriseId")
         authorized_sources = authority.get("authorizedSourceIds")
-        if not isinstance(actual_project, str) or not isinstance(
-            authorized_sources, list
+        if (
+            not isinstance(actual_enterprise, str)
+            or not isinstance(actual_project, str)
+            or not isinstance(authorized_sources, list)
         ):
             raise ValueError(f"case {case_id} server authority evidence is invalid")
         selected = set(case["selectedSourceIds"])
@@ -189,7 +257,9 @@ async def run_dataset(
             else None
         )
         authority_observation = {
+            "actualEnterpriseId": actual_enterprise,
             "actualProjectId": actual_project,
+            "actualPolicyDigest": None,
             "authorizedSourceIds": sorted(actual_authorized),
             "decision": "deny" if denied_reason else "allow",
             "reason": denied_reason,
@@ -247,10 +317,34 @@ async def run_dataset(
                 try:
                     async with asyncio.timeout(timeout_ms / 1000):
                         body = await path.run_case(case)
+                        actual_policy_digest = body.pop("actualPolicyDigest", None)
+                        if actual_policy_digest != dataset["bindings"]["policyDigest"]:
+                            raise PolicyDigestMismatch(
+                                f"case {case_id} actual policy digest mismatch"
+                            )
+                        authority_observation["actualPolicyDigest"] = (
+                            actual_policy_digest
+                        )
                         resolved = []
                         for citation in body.get("citations", []):
                             resolved.append(await path.resolve_citation(citation))
                         body["citations"] = resolved
+                except PolicyDigestMismatch:
+                    calls = capture.end_attempt()
+                    provider_calls += len(calls)
+                    attempts.append(
+                        {
+                            "attempt": attempt_number,
+                            "retryReason": retry_reason,
+                            "startedAtUtc": attempt_started_at,
+                            "durationMs": max(
+                                0,
+                                (time.monotonic_ns() - attempt_started) // 1_000_000,
+                            ),
+                            "providerCalls": calls,
+                        }
+                    )
+                    raise
                 except (
                     AuthorizationDenied,
                     AnswerSelectionRejected,
@@ -294,6 +388,13 @@ async def run_dataset(
                             "providerCalls": calls,
                         }
                     )
+                    retryable_provider_failure = bool(
+                        calls
+                        and calls[-1].get("status") == "error"
+                        and calls[-1].get("retryable") is True
+                    )
+                    if not retryable_provider_failure:
+                        raise
                     if attempt_number > max_retries_per_case:
                         raise
                     retry_reason = type(error).__name__
@@ -394,6 +495,7 @@ class RuntimeKnowledgePath:
                     "server Source authority exceeds quality-runner bound"
                 )
         return {
+            "actualEnterpriseId": self._knowledge.scope.enterprise_id,
             "actualProjectId": self._knowledge.scope.project_id,
             "authorizedSourceIds": sorted(source_ids),
         }
@@ -486,6 +588,8 @@ class RuntimeKnowledgePath:
                 "corpusVersion": policy.active_corpus_version,
             }
         )
+        if retrieval_policy_digest != self._bindings["policyDigest"]:
+            raise PolicyDigestMismatch("actual retrieval policy digest mismatch")
         frozen_input = TurnInput(
             message=case["question"],
             actor_id=scope.actor_id,
@@ -525,6 +629,7 @@ class RuntimeKnowledgePath:
             frozen_input,
         )
         return {
+            "actualPolicyDigest": retrieval_policy_digest,
             "retrieved": [
                 {
                     "rank": rank,
@@ -567,24 +672,99 @@ class RuntimeKnowledgePath:
         return result
 
 
-def _approved_mapping_from_env() -> tuple[str, str, str, str, str]:
-    provider = os.environ.get("TAP_QUALITY_KB_APPROVED_PROVIDER", "")
-    model = os.environ.get("TAP_QUALITY_KB_APPROVED_MODEL", "")
-    operation = os.environ.get("TAP_QUALITY_KB_APPROVED_OPERATION", "")
+def _load_approval_artifact(
+    path: Path, expected_digest: str, *, now: datetime | None = None
+) -> dict[str, Any]:
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest) is None:
+        raise ValueError("approval digest is invalid")
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ValueError("approval artifact cannot be read") from error
+    if not raw or len(raw) > 65_536:
+        raise ValueError("approval artifact size is invalid")
+    actual_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if actual_digest != expected_digest:
+        raise ValueError("approval artifact digest mismatch")
+
+    def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("approval artifact has duplicate fields")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(raw, object_pairs_hook=unique)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("approval artifact is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise ValueError("approval artifact must be an object")
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    if raw != canonical:
+        raise ValueError("approval artifact bytes are not canonical JSON")
+    allowed = {
+        "schemaVersion",
+        "approvalId",
+        "modelAlias",
+        "actualProvider",
+        "actualModel",
+        "operation",
+        "scope",
+        "expiresAtUtc",
+    }
+    required = allowed - {"expiresAtUtc"}
+    if set(value) - allowed or not required <= set(value):
+        raise ValueError("approval artifact fields are invalid")
+    if value.get("schemaVersion") != "quality-kb-model-approval-v1":
+        raise ValueError("approval artifact schema is invalid")
+    for name in ("approvalId", "modelAlias", "actualProvider", "actualModel"):
+        item = value.get(name)
+        if (
+            not isinstance(item, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", item) is None
+        ):
+            raise ValueError(f"approval artifact {name} is invalid")
+    if value.get("operation") != "structured":
+        raise ValueError("approval artifact operation is invalid")
+    scope = value.get("scope")
+    if not isinstance(scope, dict) or set(scope) != {"enterpriseId", "projectId"}:
+        raise ValueError("approval artifact scope is invalid")
+    for item in scope.values():
+        if not isinstance(item, str) or not item.strip() or len(item) > 128:
+            raise ValueError("approval artifact scope is invalid")
+    expires = value.get("expiresAtUtc")
+    if expires is not None:
+        expiry = _EVALUATOR._utc(expires, "approval expiry")
+        if expiry <= (now or datetime.now(UTC)):
+            raise ValueError("approval artifact is expired")
+    return {**value, "digest": actual_digest, "artifact": value["approvalId"]}
+
+
+def _require_approval_scope(
+    approved: dict[str, Any], enterprise_id: str, project_id: str
+) -> None:
+    scope = approved.get("scope")
+    if not isinstance(scope, dict) or scope != {
+        "enterpriseId": enterprise_id,
+        "projectId": project_id,
+    }:
+        raise ValueError("approval artifact scope does not match actual runtime scope")
+
+
+def _approved_mapping_from_env() -> dict[str, Any]:
     digest = os.environ.get("TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST", "")
     artifact = os.environ.get("TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT", "")
-    if (
-        not provider
-        or not model
-        or operation != "structured"
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-        or re.fullmatch(
-            r"approval-record:[A-Za-z0-9][A-Za-z0-9._:/-]{0,1007}", artifact
-        )
-        is None
-    ):
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None or not artifact:
         raise ValueError("approved actual provider/model/operation mapping")
-    return provider, model, operation, digest, artifact
+    return _load_approval_artifact(Path(artifact), digest)
 
 
 def _require_governance_bindings(dataset: dict[str, Any]) -> None:
@@ -593,6 +773,7 @@ def _require_governance_bindings(dataset: dict[str, Any]) -> None:
         raise ValueError("governance bindings are required")
     for name in (
         "policyDigest",
+        "approvalDigest",
         "promptDigest",
         "agentRevisionDigest",
         "schemaDigest",
@@ -647,6 +828,10 @@ async def _main_async(args: argparse.Namespace) -> int:
         ].get("provenance"):
             raise ValueError("traceable human labels are required")
         _require_governance_bindings(dataset)
+        if dataset["bindings"]["approvalDigest"] != approved["digest"]:
+            raise ValueError("dataset approval digest does not match approval artifact")
+        if dataset["bindings"]["modelAlias"] != approved["modelAlias"]:
+            raise ValueError("dataset model alias does not match approval artifact")
     except (OSError, TypeError, ValueError) as error:
         print(
             f"quality-kb-real dataset invalid: {error}; provider I/O was not started",
@@ -665,6 +850,12 @@ async def _main_async(args: argparse.Namespace) -> int:
         return 2
     runtime = await create_api_runtime(settings)
     try:
+        knowledge = runtime.http_services.knowledge
+        if knowledge is None:
+            raise RuntimeError("production Knowledge service is unavailable")
+        _require_approval_scope(
+            approved, knowledge.scope.enterprise_id, knowledge.scope.project_id
+        )
         original_gateway = runtime.quality_models.gateway
 
         def path_factory(capture: CapturingModelGateway) -> RuntimeKnowledgePath:
@@ -679,6 +870,7 @@ async def _main_async(args: argparse.Namespace) -> int:
             provider_call_budget=args.provider_call_budget,
             cache={},
             max_retries_per_case=args.max_retries_per_case,
+            approved_mapping=approved,
         )
         report = _EVALUATOR.evaluate_run(
             dataset,

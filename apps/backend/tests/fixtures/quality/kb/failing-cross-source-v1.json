@@ -9,6 +9,7 @@
     },
     "bindings": {
       "policyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approvalDigest": "sha256:af2a4682299656a52f08dd172f1f325154277fac85d8cd96a1492421a8b3536b",
       "modelAlias": "tapper-chat",
       "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "agentRevisionDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
@@ -50,7 +51,7 @@
   },
   "observations": {
     "schemaVersion": "quality-kb-observations-v1",
-    "datasetDigest": "sha256:af166ccddd85235df66551843692ef12020b6ce3b5e4ab5a589362f800e30227",
+    "datasetDigest": "sha256:ae440b63c8e08aa2b2d9ebba9e1361269884c918c15f1ce467a7db4827c41043",
     "runId": "red-run-v2",
     "execution": {
       "providerCallBudget": 1000,
@@ -63,7 +64,9 @@
       {
         "caseId": "cross-source-red",
         "authority": {
+          "actualEnterpriseId": "tenant",
           "actualProjectId": "project-a",
+          "actualPolicyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
           "authorizedSourceIds": ["source-a"],
           "decision": "allow",
           "reason": null
@@ -90,8 +93,8 @@
           "timeoutMs": 1000,
           "startedAtUtc": "2026-09-09T00:00:00Z",
           "durationMs": 5,
-          "cacheKey": "sha256:9f5c37a1e92d40633b77b9381c23d03290d044446fc251072937ca754e0130ec",
-          "cacheEvidenceDigest": "sha256:f6e206865ae6bf526c6cd8c00c5c2327e996c08c9e722e0b2fecede58c726661",
+          "cacheKey": "sha256:7c7213397e9fb23b507c1fe71cc8fe2c4819105e5ddc8f0f530f34f529a9011d",
+          "cacheEvidenceDigest": "sha256:dc0c1656db399299e216c0c01df5318d2b8617f9f76c5f42e366ee7d48c5e381",
           "cacheHit": false,
           "maxRetriesPerCase": 2,
           "attempts": [
@@ -102,6 +105,14 @@
               "durationMs": 4,
               "providerCalls": [
                 {
+                  "runnerCallId": "runner-red-1",
+                  "requestedAlias": "tapper-chat",
+                  "requestedOperation": "structured",
+                  "requestedProvider": "approved-provider",
+                  "requestedModel": "approved-model",
+                  "startedAtUtc": "2026-09-09T00:00:00Z",
+                  "status": "success",
+                  "retryable": false,
                   "operation": "structured",
                   "alias": "tapper-chat",
                   "actualProvider": "approved-provider",
