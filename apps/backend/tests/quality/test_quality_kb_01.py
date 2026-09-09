@@ -23,6 +23,7 @@ APPROVAL_CONTENT = {
     "actualModel": "approved-model",
     "operation": "structured",
     "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
+    "expiresAtUtc": "2026-09-30T00:00:00Z",
 }
 APPROVAL_BYTES = json.dumps(APPROVAL_CONTENT, sort_keys=True, separators=(",", ":")).encode()
 APPROVAL_DIGEST = "sha256:" + hashlib.sha256(APPROVAL_BYTES).hexdigest()
@@ -313,6 +314,8 @@ def test_report_is_deterministic_and_binds_dataset_config_and_governance() -> No
     assert first["configDigest"].startswith("sha256:")
     assert first["evaluatorDigest"].startswith("sha256:")
     assert first["bindings"] == dataset["bindings"]
+    assert first["approvedMappingDigest"] == APPROVAL_DIGEST
+    assert first["approvedMappingExpiresAtUtc"] == "2026-09-30T00:00:00Z"
 
 
 def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Path) -> None:
@@ -788,6 +791,28 @@ def test_approval_artifact_requires_canonical_bytes_digest_and_unexpired_scope(
         module._load_approval_artifact(
             expired, expired_digest, now=datetime(2026, 9, 9, tzinfo=UTC)
         )
+    missing_expiry_content = dict(APPROVAL_CONTENT)
+    missing_expiry_content.pop("expiresAtUtc")
+    missing_expiry = _approval_artifact(tmp_path, missing_expiry_content)
+    missing_expiry_digest = "sha256:" + hashlib.sha256(missing_expiry.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="expiry"):
+        module._load_approval_artifact(
+            missing_expiry, missing_expiry_digest, now=datetime(2026, 9, 9, tzinfo=UTC)
+        )
+    null_expiry = _approval_artifact(tmp_path, {**APPROVAL_CONTENT, "expiresAtUtc": None})
+    null_expiry_digest = "sha256:" + hashlib.sha256(null_expiry.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="expiry"):
+        module._load_approval_artifact(
+            null_expiry, null_expiry_digest, now=datetime(2026, 9, 9, tzinfo=UTC)
+        )
+    far_expiry = _approval_artifact(
+        tmp_path, {**APPROVAL_CONTENT, "expiresAtUtc": "2026-10-10T00:00:01Z"}
+    )
+    far_expiry_digest = "sha256:" + hashlib.sha256(far_expiry.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="validity window"):
+        module._load_approval_artifact(
+            far_expiry, far_expiry_digest, now=datetime(2026, 9, 9, tzinfo=UTC)
+        )
     with pytest.raises(ValueError, match="scope"):
         module._require_approval_scope(approved, "tenant", "project-b")
 
@@ -930,6 +955,104 @@ async def test_runner_rejects_rebuilt_policy_mismatch_before_accepting_answer() 
             provider_call_budget=1,
             cache={},
         )
+
+
+@pytest.mark.asyncio
+async def test_runtime_policy_mismatch_precedes_every_model_operation() -> None:
+    from types import SimpleNamespace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelRequest,
+        ModelResult,
+        ModelUsage,
+        text_digest,
+    )
+
+    module = _runner()
+    dataset = _dataset()
+    operations: list[str] = []
+
+    class Delegate:
+        async def embed(self, request):
+            operations.append("embed")
+            audit = ModelCallAudit(
+                scope=VALIDATION_SCOPE,
+                alias=request.alias,
+                operation=ModelOperation.EMBED,
+                prompt_digest=request.prompt_digest,
+                schema_digest=None,
+                context_digest=_sha("9"),
+                idempotency_key=request.idempotency_key,
+                actual_provider="approved-provider",
+                actual_model="approved-embedding",
+                usage=ModelUsage(2, 0),
+            )
+            return ModelResult(
+                (0.6, 0.8),
+                "approved-embedding",
+                ModelUsage(2, 0),
+                "approved-provider",
+                audit,
+                "provider-embed",
+                "gateway-embed",
+            )
+
+    captured = module.CapturingModelGateway(Delegate(), module.ProviderCallBudget(1), APPROVED)
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def search(self, request):
+            prompt = "Embed the supplied text."
+            await captured.embed(
+                ModelRequest(
+                    VALIDATION_SCOPE,
+                    "tapper-embedding",
+                    ModelOperation.EMBED,
+                    prompt,
+                    text_digest(prompt),
+                    request.query,
+                    1.0,
+                    "policy-order",
+                )
+            )
+            return SimpleNamespace(hits=())
+
+        async def get_source(self, source_id, cursor, limit):
+            return SimpleNamespace(
+                documents=SimpleNamespace(
+                    items=(
+                        SimpleNamespace(
+                            revision_id="revision-a",
+                            status=SimpleNamespace(value="ready"),
+                        ),
+                    ),
+                    next_cursor=None,
+                )
+            )
+
+        async def resolve_conversation_selection(self, revision_ids):
+            return (), SimpleNamespace(
+                decision_id="different-decision",
+                policy_version="different-policy",
+                active_corpus_version="different-corpus",
+                acl_digest=_sha("e"),
+            )
+
+    runtime = SimpleNamespace(
+        http_services=SimpleNamespace(knowledge=Knowledge(), asset_catalog=SimpleNamespace())
+    )
+    path = module.RuntimeKnowledgePath(runtime, dataset)
+    captured.begin_attempt()
+    with pytest.raises(Exception) as captured_error:
+        await path.run_case(dataset["cases"][0])
+
+    assert isinstance(captured_error.value, module.PolicyDigestMismatch)
+    assert captured.end_attempt() == []
+    assert operations == []
 
 
 def test_denied_case_with_retrieval_or_model_evidence_fails_closed() -> None:
@@ -1085,6 +1208,188 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
             provider_call_budget=2,
             max_retries_per_case=1,
         )
+
+
+def _production_litellm_gateway(handler, *, max_retries: int):
+    import httpx
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.litellm import (
+        LiteLLMModelGateway,
+        LiteLLMModelGatewayConfig,
+        ProviderModelMapping,
+    )
+
+    async def redact(text: str) -> str:
+        return text
+
+    return LiteLLMModelGateway(
+        LiteLLMModelGatewayConfig(
+            base_url="https://litellm.example",
+            api_key="not-a-real-key",
+            chat_alias="tapper-chat",
+            embedding_alias="tapper-embedding",
+            chat_model=ProviderModelMapping("approved-provider", "approved-model"),
+            embedding_model=ProviderModelMapping("approved-provider", "approved-embedding"),
+            embedding_dimension=2,
+            max_retries=max_retries,
+        ),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def test_quality_runner_rejects_litellm_internal_retries() -> None:
+    module = _runner()
+
+    async def unused(_request):
+        raise AssertionError("startup validation must not perform HTTP")
+
+    retrying = _production_litellm_gateway(unused, max_retries=1)
+    single_attempt = _production_litellm_gateway(unused, max_retries=0)
+
+    with pytest.raises(ValueError, match="internal retries"):
+        module._require_single_http_attempt_gateway(retrying)
+    assert module._require_single_http_attempt_gateway(single_attempt) is single_attempt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["embed", "chat", "structured"])
+async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
+    operation: str,
+) -> None:
+    import httpx
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.domain.models import (
+        ModelOperation,
+        ModelRequest,
+        schema_digest,
+        text_digest,
+    )
+
+    module = _runner()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][0]]
+    posts: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(request)
+        if len(posts) == 1:
+            return httpx.Response(503)
+        if operation == "embed":
+            return httpx.Response(
+                200,
+                json={
+                    "model": "approved-provider/approved-embedding",
+                    "data": [{"index": 0, "embedding": [0.6, 0.8]}],
+                    "usage": {"prompt_tokens": 2, "total_tokens": 2},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "approved-provider/approved-model",
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"answer":"ok"}' if operation == "structured" else "ok"
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    gateway = _production_litellm_gateway(handler, max_retries=0)
+    output_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["answer"],
+        "properties": {"answer": {"type": "string"}},
+    }
+
+    class TransportPath:
+        def __init__(self, captured):
+            self.gateway = captured
+
+        async def resolve_authority(self, case):
+            return {
+                "actualEnterpriseId": "tenant",
+                "actualProjectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+            }
+
+        async def run_case(self, case):
+            model_operation = ModelOperation(operation)
+            prompt = "quality transport probe"
+            request = ModelRequest(
+                VALIDATION_SCOPE,
+                "tapper-embedding" if operation == "embed" else "tapper-chat",
+                model_operation,
+                prompt,
+                text_digest(prompt),
+                "safe context",
+                1.0,
+                f"quality-{operation}",
+                output_schema if operation == "structured" else None,
+                schema_digest(output_schema) if operation == "structured" else None,
+            )
+            method = {
+                "embed": "embed",
+                "chat": "chat",
+                "structured": "generate_structured",
+            }[operation]
+            await getattr(self.gateway, method)(request)
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": True,
+                "claims": [],
+                "citations": [],
+            }
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    observations = await module.run_dataset(
+        dataset,
+        gateway=gateway,
+        path_factory=TransportPath,
+        timeout_ms=1000,
+        provider_call_budget=2,
+        cache={},
+        max_retries_per_case=1,
+        approved_mapping=APPROVED,
+    )
+    attempts = observations["cases"][0]["execution"]["attempts"]
+    receipts = [attempt["providerCalls"] for attempt in attempts]
+    assert len(posts) == 2
+    assert [len(items) for items in receipts] == [1, 1]
+    assert receipts[0][0]["status"] == "error"
+    assert attempts[1]["retryReason"] == "ModelGatewayUnavailable"
+    assert receipts[1][0]["status"] == "success"
+
+    budget_posts: list[httpx.Request] = []
+
+    async def budget_handler(request: httpx.Request) -> httpx.Response:
+        budget_posts.append(request)
+        return httpx.Response(503)
+
+    budget_gateway = _production_litellm_gateway(budget_handler, max_retries=0)
+    with pytest.raises(RuntimeError, match="budget exhausted"):
+        await module.run_dataset(
+            dataset,
+            gateway=budget_gateway,
+            path_factory=TransportPath,
+            timeout_ms=1000,
+            provider_call_budget=1,
+            cache={},
+            max_retries_per_case=1,
+            approved_mapping=APPROVED,
+        )
+    assert len(budget_posts) == 1
 
 
 @pytest.mark.asyncio

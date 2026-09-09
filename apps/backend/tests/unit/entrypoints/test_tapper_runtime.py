@@ -1096,7 +1096,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_search", create_search)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: models_probe)
     monkeypatch.setattr(
@@ -1155,7 +1155,7 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: artifacts)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_search", create_search)
     monkeypatch.setattr(module, "_create_models_probe_client", lambda _settings: None)
     monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
@@ -1237,7 +1237,7 @@ async def test_create_api_runtime_settles_partial_construction_without_masking_p
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    monkeypatch.setattr(module, "_create_embeddings", lambda _settings: model)
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
 
     async def fail_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
         raise primary

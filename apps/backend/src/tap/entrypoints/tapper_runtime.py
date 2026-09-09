@@ -626,7 +626,9 @@ class TapperApiRuntime:
         await self._resources.aclose()
 
 
-async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
+async def create_api_runtime(
+    settings: TapperSettings, *, model_gateway_max_retries: int = 1
+) -> TapperApiRuntime:
     """Construct the API graph only after one complete settings snapshot validates."""
 
     if not isinstance(settings, TapperSettings):
@@ -644,7 +646,7 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         redis = _create_redis(settings)
         resources.push(redis)
         failure_controller = _create_stage_controller(settings, redis)
-        embeddings = _create_embeddings(settings)
+        embeddings = _create_embeddings(settings, max_retries=model_gateway_max_retries)
         _push_if_owned(resources, embeddings)
         search, reader, target = await _create_search(
             settings,
@@ -850,7 +852,7 @@ async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
-def _create_embeddings(settings: TapperSettings) -> KnowledgeModelGateway:
+def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> KnowledgeModelGateway:
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
@@ -868,6 +870,7 @@ def _create_embeddings(settings: TapperSettings) -> KnowledgeModelGateway:
         ),
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
+        max_retries=max_retries,
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:

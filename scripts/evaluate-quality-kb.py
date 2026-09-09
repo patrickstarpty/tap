@@ -591,6 +591,7 @@ def evaluate_run(
         scope = _mapping(approved_mapping.get("scope"), "approval scope")
         _text(scope.get("enterpriseId"), "approval enterprise", 128)
         _text(scope.get("projectId"), "approval project", 128)
+        _utc(approved_mapping.get("expiresAtUtc"), "approval expiry")
         if bindings.get("approvalDigest") != approved_mapping["digest"]:
             failures.append("dataset approval digest mismatch")
         if bindings.get("modelAlias") != approved_mapping["modelAlias"]:
@@ -947,6 +948,9 @@ def evaluate_run(
         if approved_mapping
         else None,
         "approvedMappingArtifact": approved_mapping["artifact"]
+        if approved_mapping
+        else None,
+        "approvedMappingExpiresAtUtc": approved_mapping["expiresAtUtc"]
         if approved_mapping
         else None,
         "capturedActualIdentities": [

@@ -14,7 +14,7 @@ import sys
 import time
 from collections.abc import Callable, MutableMapping
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, cast
@@ -49,6 +49,8 @@ def _load_evaluator() -> ModuleType:
 
 
 _EVALUATOR = _load_evaluator()
+
+_MAX_APPROVAL_VALIDITY = timedelta(days=30)
 
 
 class QualityKnowledgePath(Protocol):
@@ -374,7 +376,7 @@ async def run_dataset(
                         }
                     )
                     break
-                except Exception as error:
+                except Exception:
                     calls = capture.end_attempt()
                     provider_calls += len(calls)
                     attempts.append(
@@ -397,7 +399,7 @@ async def run_dataset(
                         raise
                     if attempt_number > max_retries_per_case:
                         raise
-                    retry_reason = type(error).__name__
+                    retry_reason = str(calls[-1]["errorCode"])
                     retries += 1
                 else:
                     calls = capture.end_attempt()
@@ -505,7 +507,6 @@ class RuntimeKnowledgePath:
             ResourceMode,
             ResourceRef,
             RetrievalAnswerRequest,
-            RetrievalSearchRequest,
             SourceFamily,
         )
         from tap.modules.ai.domain.models import text_digest
@@ -529,8 +530,7 @@ class RuntimeKnowledgePath:
             )
             for source_id in case["selectedSourceIds"]
         ]
-        request = RetrievalSearchRequest(query=case["question"], resource_refs=refs)
-        search = await self._knowledge.search(request)
+        request = RetrievalAnswerRequest(query=case["question"], resource_refs=refs)
         revision_ids: list[str] = []
         for source_id in case["selectedSourceIds"]:
             cursor: str | None = None
@@ -554,6 +554,32 @@ class RuntimeKnowledgePath:
             )
         revisions, policy = await self._knowledge.resolve_conversation_selection(
             tuple(revision_ids)
+        )
+        retrieval_policy_digest = content_digest(
+            {
+                "aclDigest": policy.acl_digest,
+                "decisionId": policy.decision_id,
+                "policyVersion": policy.policy_version,
+                "corpusVersion": policy.active_corpus_version,
+                "resolvedRevisions": [
+                    {
+                        "documentId": item.document_id,
+                        "revisionId": item.revision_id,
+                        "sourceContentHash": item.source_content_hash,
+                        "sourceId": item.source_id,
+                    }
+                    for item in revisions
+                ],
+            }
+        )
+        if retrieval_policy_digest != self._bindings["policyDigest"]:
+            raise PolicyDigestMismatch("actual retrieval policy digest mismatch")
+        conversation_policy_digest = content_digest(
+            {
+                "decisionId": policy.decision_id,
+                "policyVersion": policy.policy_version,
+                "corpusVersion": policy.active_corpus_version,
+            }
         )
         scope = self._knowledge.scope
         agents = [
@@ -581,15 +607,6 @@ class RuntimeKnowledgePath:
                     "dataset Skill digest does not resolve uniquely in server catalog"
                 )
             skills.append(resolve_skill_selection(matches[0], task="knowledge.answer"))
-        retrieval_policy_digest = content_digest(
-            {
-                "decisionId": policy.decision_id,
-                "policyVersion": policy.policy_version,
-                "corpusVersion": policy.active_corpus_version,
-            }
-        )
-        if retrieval_policy_digest != self._bindings["policyDigest"]:
-            raise PolicyDigestMismatch("actual retrieval policy digest mismatch")
         frozen_input = TurnInput(
             message=case["question"],
             actor_id=scope.actor_id,
@@ -622,10 +639,10 @@ class RuntimeKnowledgePath:
                 item.instruction_template_digest for item in skills
             ),
             acl_digest=policy.acl_digest,
-            retrieval_policy_digest=retrieval_policy_digest,
+            retrieval_policy_digest=conversation_policy_digest,
         )
         answer = await self._knowledge.answer_conversation(
-            RetrievalAnswerRequest.model_validate(request.model_dump(by_alias=True)),
+            request,
             frozen_input,
         )
         return {
@@ -638,7 +655,7 @@ class RuntimeKnowledgePath:
                     "documentRevisionId": hit.source.revision,
                     "chunkId": hit.chunk_id,
                 }
-                for rank, hit in enumerate(search.hits, 1)
+                for rank, hit in enumerate(answer.citations, 1)
             ],
             "abstained": answer.abstained,
             "claims": [
@@ -720,7 +737,9 @@ def _load_approval_artifact(
         "scope",
         "expiresAtUtc",
     }
-    required = allowed - {"expiresAtUtc"}
+    required = allowed
+    if "expiresAtUtc" not in value:
+        raise ValueError("approval artifact expiry is required")
     if set(value) - allowed or not required <= set(value):
         raise ValueError("approval artifact fields are invalid")
     if value.get("schemaVersion") != "quality-kb-model-approval-v1":
@@ -741,10 +760,14 @@ def _load_approval_artifact(
         if not isinstance(item, str) or not item.strip() or len(item) > 128:
             raise ValueError("approval artifact scope is invalid")
     expires = value.get("expiresAtUtc")
-    if expires is not None:
-        expiry = _EVALUATOR._utc(expires, "approval expiry")
-        if expiry <= (now or datetime.now(UTC)):
-            raise ValueError("approval artifact is expired")
+    if not isinstance(expires, str):
+        raise ValueError("approval artifact expiry is required")
+    expiry = _EVALUATOR._utc(expires, "approval expiry")
+    run_started = now or datetime.now(UTC)
+    if expiry <= run_started:
+        raise ValueError("approval artifact is expired")
+    if expiry > run_started + _MAX_APPROVAL_VALIDITY:
+        raise ValueError("approval artifact validity window exceeds 30 days")
     return {**value, "digest": actual_digest, "artifact": value["approvalId"]}
 
 
@@ -759,12 +782,20 @@ def _require_approval_scope(
         raise ValueError("approval artifact scope does not match actual runtime scope")
 
 
-def _approved_mapping_from_env() -> dict[str, Any]:
+def _require_single_http_attempt_gateway(gateway: ModelGateway) -> ModelGateway:
+    from tap.modules.ai.adapters.litellm import LiteLLMModelGateway
+
+    if type(gateway) is not LiteLLMModelGateway or gateway._config.max_retries != 0:
+        raise ValueError("quality ModelGateway internal retries must equal zero")
+    return gateway
+
+
+def _approved_mapping_from_env(*, now: datetime | None = None) -> dict[str, Any]:
     digest = os.environ.get("TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST", "")
     artifact = os.environ.get("TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT", "")
     if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None or not artifact:
         raise ValueError("approved actual provider/model/operation mapping")
-    return _load_approval_artifact(Path(artifact), digest)
+    return _load_approval_artifact(Path(artifact), digest, now=now)
 
 
 def _require_governance_bindings(dataset: dict[str, Any]) -> None:
@@ -804,6 +835,7 @@ def _require_governance_bindings(dataset: dict[str, Any]) -> None:
 
 
 async def _main_async(args: argparse.Namespace) -> int:
+    run_started_at = datetime.now(UTC)
     if os.environ.get("TAP_RUN_QUALITY_KB_01") != "1":
         print(
             "quality-kb-real requires TAP_RUN_QUALITY_KB_01=1; provider I/O was not started",
@@ -811,7 +843,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        approved = _approved_mapping_from_env()
+        approved = _approved_mapping_from_env(now=run_started_at)
     except ValueError:
         print(
             "quality-kb-real requires an approved actual provider/model/operation mapping; provider I/O was not started",
@@ -848,7 +880,7 @@ async def _main_async(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    runtime = await create_api_runtime(settings)
+    runtime = await create_api_runtime(settings, model_gateway_max_retries=0)
     try:
         knowledge = runtime.http_services.knowledge
         if knowledge is None:
@@ -856,7 +888,9 @@ async def _main_async(args: argparse.Namespace) -> int:
         _require_approval_scope(
             approved, knowledge.scope.enterprise_id, knowledge.scope.project_id
         )
-        original_gateway = runtime.quality_models.gateway
+        original_gateway = _require_single_http_attempt_gateway(
+            runtime.quality_models.gateway
+        )
 
         def path_factory(capture: CapturingModelGateway) -> RuntimeKnowledgePath:
             runtime.quality_models.gateway = capture
