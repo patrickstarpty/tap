@@ -1016,11 +1016,16 @@
           "sequence": {
             "title": "Sequence",
             "type": "integer"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
           }
         },
         "required": [
           "eventId",
           "sequence",
+          "turnId",
           "eventType",
           "payload",
           "occurredAt"
@@ -1163,6 +1168,61 @@
         "title": "ConversationTurnCompletedPayload",
         "type": "object"
       },
+      "ConversationTurnInputView": {
+        "additionalProperties": false,
+        "description": "Browser-safe immutable input facts; excludes instructions and policy internals.",
+        "properties": {
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "documentRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "modelAlias": {
+            "title": "Modelalias",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "sourceRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourcerevisionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message",
+          "modelAlias",
+          "sourceRevisionIds",
+          "documentRevisionIds",
+          "skillRevisionIds"
+        ],
+        "title": "ConversationTurnInputView",
+        "type": "object"
+      },
       "ConversationTurnRequestedEvent": {
         "additionalProperties": false,
         "properties": {
@@ -1241,6 +1301,9 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "input": {
+            "$ref": "#/components/schemas/ConversationTurnInputView"
+          },
           "inputSnapshotDigest": {
             "maxLength": 71,
             "minLength": 71,
@@ -1269,7 +1332,8 @@
           "turnId",
           "state",
           "attempt",
-          "inputSnapshotDigest"
+          "inputSnapshotDigest",
+          "input"
         ],
         "title": "ConversationTurnSummary",
         "type": "object"

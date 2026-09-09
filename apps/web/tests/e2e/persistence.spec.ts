@@ -144,7 +144,7 @@ test("Tapper durable state survives the selected restart boundary", async ({
       query: policyQuestion(state.runId),
       sources: ["doc"],
       resourceRefs: [
-        { family: "doc", sourceId: state.policy.documentId, mode: "scope" },
+        { family: "doc", sourceId: state.policy.sourceId, mode: "scope" },
       ],
     },
   });
@@ -155,12 +155,12 @@ test("Tapper durable state survives the selected restart boundary", async ({
   expect(answer.claims.length).toBeGreaterThan(0);
   expect(
     answer.citations.every(
-      (citation) => citation.source.sourceId === state.policy.documentId,
+      (citation) => citation.source.sourceId === state.policy.sourceId,
     ),
   ).toBe(true);
   expect(
     answer.citations.some(
-      (citation) => citation.source.sourceId === state.deleted.documentId,
+      (citation) => citation.source.sourceId === state.deleted.sourceId,
     ),
   ).toBe(false);
   for (const claim of answer.claims)

@@ -130,3 +130,82 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
         headers=headers,
     )
     assert conflict.status_code == 409
+
+
+def test_conversation_detail_exposes_only_authorized_immutable_input_view():
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [SimpleNamespace(alias="tapper-chat")]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, revision_ids):
+            assert revision_ids == ("source-revision-1", "document-revision-1")
+            values = tuple(
+                SimpleNamespace(
+                    source_id="src_" + str(index) * 32,
+                    document_id=f"document-{index}",
+                    revision_id=revision,
+                    source_content_hash="sha256:" + str(index) * 64,
+                )
+                for index, revision in enumerate(revision_ids, 1)
+            )
+            policy = SimpleNamespace(
+                acl_digest="sha256:" + "d" * 64,
+                decision_id="decision-1",
+                policy_version="policy-1",
+                active_corpus_version="tapper-demo-v1",
+            )
+            return values, policy
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+    body = {
+        "message": "  retain the exact user message  ",
+        "modelAlias": "tapper-chat",
+        "sourceRevisionIds": ["source-revision-1"],
+        "documentRevisionIds": ["document-revision-1"],
+    }
+    accepted = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json=body,
+        headers={"Idempotency-Key": "immutable-view"},
+    )
+    assert accepted.status_code == 202, accepted.text
+
+    detail = client.get(
+        f"/api/v1/projects/tapper-demo/conversations/{accepted.json()['conversationId']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["turns"][0]["input"] == {
+        "message": "  retain the exact user message  ",
+        "modelAlias": "tapper-chat",
+        "sourceRevisionIds": ["source-revision-1"],
+        "documentRevisionIds": ["document-revision-1"],
+        "agentRevisionId": None,
+        "skillRevisionIds": [],
+    }
+    serialized = json.dumps(detail.json())
+    for forbidden in ("acl", "instruction", "credential", "provider", "system"):
+        assert forbidden not in serialized.lower()
+
+    wrong_project = client.get(
+        f"/api/v1/projects/other-project/conversations/{accepted.json()['conversationId']}"
+    )
+    assert wrong_project.status_code == 403

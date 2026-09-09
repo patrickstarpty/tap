@@ -30,6 +30,7 @@ interface CatalogWorkspaceProps {
   onCreate: (draft: CatalogDraft) => void;
   onUpdate: (itemId: string, draft: CatalogDraft) => void;
   onUse: (itemId: string) => void;
+  readOnly?: boolean;
 }
 
 const EMPTY_DRAFT: CatalogDraft = {
@@ -45,6 +46,7 @@ export function CatalogWorkspace({
   onCreate,
   onUpdate,
   onUse,
+  readOnly = false,
 }: CatalogWorkspaceProps) {
   const [query, setQuery] = useState("");
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -127,13 +129,15 @@ export function CatalogWorkspace({
               : copy.catalog.skillsDescription}
           </p>
         </div>
-        <Button
-          type="primary"
-          icon={<PlusOutlined aria-hidden="true" />}
-          onClick={openCreateDialog}
-        >
-          {createLabel}
-        </Button>
+        {readOnly ? null : (
+          <Button
+            type="primary"
+            icon={<PlusOutlined aria-hidden="true" />}
+            onClick={openCreateDialog}
+          >
+            {createLabel}
+          </Button>
+        )}
       </header>
 
       <div className="tap-catalog-toolbar">
@@ -173,17 +177,19 @@ export function CatalogWorkspace({
                 ) : null}
               </article>
               <div className="tap-catalog-actions">
-                <Button
-                  icon={<EditOutlined aria-hidden="true" />}
-                  aria-label={
-                    editLabel.startsWith("Edit")
-                      ? `Edit ${item.name}`
-                      : `${editLabel} ${item.name}`
-                  }
-                  onClick={(event) => openEditDialog(item, event)}
-                >
-                  {editLabel}
-                </Button>
+                {readOnly ? null : (
+                  <Button
+                    icon={<EditOutlined aria-hidden="true" />}
+                    aria-label={
+                      editLabel.startsWith("Edit")
+                        ? `Edit ${item.name}`
+                        : `${editLabel} ${item.name}`
+                    }
+                    onClick={(event) => openEditDialog(item, event)}
+                  >
+                    {editLabel}
+                  </Button>
+                )}
                 <Button
                   type="primary"
                   ghost

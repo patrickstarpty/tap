@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
 
@@ -67,7 +69,23 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         async def answer(self, request):
             self.requests.append(request)
             return SimpleNamespace(
-                answer="grounded", citations=[], abstained=False, trace_id="trace-1"
+                answer="grounded",
+                citations=[],
+                abstained=False,
+                trace_id="trace-1",
+                model_dump=lambda **_: {
+                    "traceId": "trace-1",
+                    "queryPlanId": "plan-1",
+                    "contextSnapshotId": "context-1",
+                    "corpusVersion": "v1",
+                    "retrievalProfileId": "quick",
+                    "degradedMode": False,
+                    "answer": "grounded",
+                    "abstained": False,
+                    "abstentionReason": None,
+                    "claims": [],
+                    "citations": [],
+                },
             )
 
     conversations = Conversations()
@@ -125,11 +143,175 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(answer="delta", citations=(), abstained=False, trace_id="t")
+            return SimpleNamespace(
+                answer="delta",
+                citations=(),
+                abstained=False,
+                trace_id="t",
+                model_dump=lambda **_: {
+                    "traceId": "t",
+                    "queryPlanId": "p",
+                    "contextSnapshotId": "c",
+                    "corpusVersion": "v1",
+                    "retrievalProfileId": "quick",
+                    "degradedMode": False,
+                    "answer": "delta",
+                    "abstained": False,
+                    "claims": [],
+                    "citations": [],
+                },
+            )
 
     conversations = Conversations()
     await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
     assert conversations.emitted[0][1] == {"lease_token": "lease-1"}
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_emits_public_failure_and_closes_evidence():
+    frozen = SimpleNamespace(message="question", resolved_resources=())
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(value=frozen),
+                    ),
+                ),
+            )
+
+    class Conversations:
+        repository = Repository()
+        emitted = []
+        completed = []
+
+        async def emit(self, *args, **kwargs):
+            self.emitted.append((args, kwargs))
+
+        async def complete_evidence(self, *args, **kwargs):
+            self.completed.append((args, kwargs))
+
+    class Knowledge:
+        async def answer(self, _request):
+            raise RuntimeError("provider credential must stay private")
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+    assert conversations.emitted == []
+    completion_args, completion_kwargs = conversations.completed[0]
+    assert completion_args[2].outcome == "failed"
+    event_type, payload = completion_kwargs["terminal_event"]
+    assert event_type == "turn.failed"
+    ChatEventEnvelope.model_validate(
+        {
+            "eventId": "event-1",
+            "sequence": 1,
+            "chatId": "conversation-1",
+            "turnId": "turn-1",
+            "occurredAt": "2026-09-09T00:00:00Z",
+            "schemaVersion": 1,
+            "event": {"type": event_type, "payload": payload},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_continues_after_cancel_wins_completion_race():
+    turns = tuple(
+        (
+            "conversation-1",
+            SimpleNamespace(
+                turn_id=f"turn-{number}",
+                lease_token=f"lease-{number}",
+                input_snapshot=SimpleNamespace(
+                    value=SimpleNamespace(message="question", resolved_resources=())
+                ),
+            ),
+        )
+        for number in (1, 2)
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return turns
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+
+        async def emit(self, _conversation_id, turn_id, *_args, **_kwargs):
+            if turn_id == "turn-1":
+                raise ConversationConflict("terminal Turn cannot accept stream events")
+
+        async def complete_evidence(self, _conversation_id, turn_id, *_args, **_kwargs):
+            self.completed.append(turn_id)
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=2) == 2
+    assert conversations.completed == ["turn-2"]
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_commits_terminal_stream_event_with_evidence_atomically():
+    frozen = SimpleNamespace(message="question", resolved_resources=())
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(value=frozen),
+                    ),
+                ),
+            )
+
+    class Conversations:
+        repository = Repository()
+        emitted = []
+        terminal_event = None
+
+        async def emit(self, _conversation_id, _turn_id, event_type, *_args, **_kwargs):
+            if event_type in {"turn.completed", "turn.abstained", "turn.failed"}:
+                raise AssertionError("terminal stream event must not precede evidence completion")
+            self.emitted.append(event_type)
+
+        async def complete_evidence(self, *_args, terminal_event=None, **_kwargs):
+            self.terminal_event = terminal_event
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
+    assert conversations.emitted == ["answer.delta"]
+    assert conversations.terminal_event == (
+        "turn.completed",
+        {"answer": {"answer": "grounded", "citations": []}},
+    )
 
 
 async def _async_value(value):

@@ -747,6 +747,8 @@ export interface components {
             };
             /** Sequence */
             sequence: number;
+            /** Turnid */
+            turnId: string;
         };
         /** ConversationEventPage */
         ConversationEventPage: {
@@ -794,6 +796,24 @@ export interface components {
             /** Turnid */
             turnId: string;
         };
+        /**
+         * ConversationTurnInputView
+         * @description Browser-safe immutable input facts; excludes instructions and policy internals.
+         */
+        ConversationTurnInputView: {
+            /** Agentrevisionid */
+            agentRevisionId?: string | null;
+            /** Documentrevisionids */
+            documentRevisionIds: string[];
+            /** Message */
+            message: string;
+            /** Modelalias */
+            modelAlias: string;
+            /** Skillrevisionids */
+            skillRevisionIds: string[];
+            /** Sourcerevisionids */
+            sourceRevisionIds: string[];
+        };
         /** ConversationTurnRequestedEvent */
         ConversationTurnRequestedEvent: {
             payload: components["schemas"]["ConversationTurnRequestedPayload"];
@@ -820,6 +840,7 @@ export interface components {
             answerEvidenceSnapshotId?: string | null;
             /** Attempt */
             attempt: number;
+            input: components["schemas"]["ConversationTurnInputView"];
             /** Inputsnapshotdigest */
             inputSnapshotDigest: string;
             /**

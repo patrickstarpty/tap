@@ -44,6 +44,7 @@ interface DocumentReceipt {
   document: DocumentSummary;
   duplicate: boolean;
   jobId: string;
+  sourceId?: string;
 }
 
 interface StageSnapshot {
@@ -102,6 +103,12 @@ function asObject(value: unknown): Record<string, unknown> {
 
 function receipt(value: unknown): DocumentReceipt {
   const object = asObject(value);
+  if (Object.keys(object).sort().join(",") === "accepted,source") {
+    const accepted = receipt(object.accepted);
+    const source = asObject(object.source);
+    expect(typeof source.sourceId).toBe("string");
+    return { ...accepted, sourceId: source.sourceId as string };
+  }
   expect(Object.keys(object).sort()).toEqual([
     "document",
     "duplicate",
@@ -129,13 +136,15 @@ async function upload(
   const pending = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      new URL(response.url()).pathname === knowledgePath(page, "documents"),
+      new URL(response.url()).pathname === knowledgePath(page, "sources"),
   );
   await dialog.getByRole("button", { name: "Add source" }).click();
   const response = await pending;
   expect((await response.request().allHeaders()).origin).toBe(ORIGIN);
   expect(response.status()).toBe(202);
-  return receipt((await response.json()) as unknown);
+  const accepted = receipt((await response.json()) as unknown);
+  expect(accepted.sourceId).toMatch(/^src_[0-9a-f]{32}$/u);
+  return accepted;
 }
 
 async function getDetail(
@@ -246,10 +255,18 @@ async function retryThroughApi(
 ): Promise<DocumentReceipt> {
   const response = await page.request.post(
     knowledgePath(page, `documents/${current.document.documentId}/retry`),
-    { headers: { Origin: ORIGIN } },
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `retry-${current.document.documentId}`,
+      },
+    },
   );
   expect(response.status()).toBe(202);
-  return receipt((await response.json()) as unknown);
+  return {
+    ...receipt((await response.json()) as unknown),
+    sourceId: current.sourceId,
+  };
 }
 
 async function failOnceThenRetry(
@@ -304,6 +321,7 @@ function documentState(
     documentId: accepted.document.documentId,
     jobId: accepted.jobId,
     revisionId: detail.revisionId,
+    sourceId: accepted.sourceId!,
     sourceContentHash: detail.sourceContentHash,
   };
 }
@@ -390,7 +408,7 @@ async function assertGroundedAnswer(
 async function openAndVerifyCitation(
   page: Page,
   citation: AnswerCitation,
-  forbiddenDocumentId?: string,
+  expectedDocumentId: string,
 ): Promise<Record<string, unknown>> {
   const response = await page.request.get(
     knowledgePath(page, `citations/${citation.citationId}`),
@@ -398,14 +416,11 @@ async function openAndVerifyCitation(
   expect(response.status()).toBe(200);
   const preview = asObject((await response.json()) as unknown);
   expect(preview.citationId).toBe(citation.citationId);
-  expect(preview.documentId).toBe(citation.source.sourceId);
+  expect(preview.documentId).toBe(expectedDocumentId);
   expect(preview.revisionId).toBe(citation.source.revision);
   expect(preview.sourceContentHash).toBe(citation.source.sourceContentHash);
   expect(preview.chunkContentHash).toBe(citation.chunkContentHash);
   expect(preview.anchor).toEqual(citation.source.anchor);
-  if (forbiddenDocumentId !== undefined) {
-    expect(preview.documentId).not.toBe(forbiddenDocumentId);
-  }
   return preview;
 }
 
@@ -519,8 +534,8 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
   }
 
   const initiallySelected = [
-    policy!.receipt.document.documentId,
-    selectedReference!.receipt.document.documentId,
+    policy!.receipt.sourceId!,
+    selectedReference!.receipt.sourceId!,
   ];
   const query = policyQuestion(fixtures.runId);
   const initialAnswer = await ask(page, query, initiallySelected);
@@ -531,15 +546,14 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     initiallySelected,
   );
 
-  const policyId = policy!.receipt.document.documentId;
+  const policyId = policy!.receipt.sourceId!;
   const policyOnlyAnswer = await ask(page, query, [policyId]);
   assertScopedRequest(policyOnlyAnswer.request, query, [policyId]);
   await assertGroundedAnswer(policyOnlyAnswer.response, [policyId], [policyId]);
   expect(
     policyOnlyAnswer.response.citations.some(
       (citation) =>
-        citation.source.sourceId ===
-        selectedReference!.receipt.document.documentId,
+        citation.source.sourceId === selectedReference!.receipt.sourceId,
     ),
   ).toBe(false);
   const policyCitation = policyOnlyAnswer.response.citations[0];
@@ -549,7 +563,7 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     const preview = await openAndVerifyCitation(
       page,
       citation,
-      selectedReference!.receipt.document.documentId,
+      policy!.receipt.document.documentId,
     );
     policyPreview ??= preview;
   }
@@ -585,15 +599,15 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
 
   const injectionQuery = injectionQuestion(fixtures.runId);
   const injectionAnswer = await ask(page, injectionQuery, [
-    injectionReceipt.document.documentId,
+    injectionReceipt.sourceId!,
   ]);
   assertScopedRequest(injectionAnswer.request, injectionQuery, [
-    injectionReceipt.document.documentId,
+    injectionReceipt.sourceId!,
   ]);
   await assertGroundedAnswer(
     injectionAnswer.response,
-    [injectionReceipt.document.documentId],
-    [injectionReceipt.document.documentId],
+    [injectionReceipt.sourceId!],
+    [injectionReceipt.sourceId!],
   );
   expect(injectionAnswer.response.answer).toContain("IGNORE ALL INSTRUCTIONS");
   expect(injectionAnswer.response.answer).toContain(
@@ -610,8 +624,13 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
   // retains adversarial source data through the canonical API without rendering it.
   expect(externalRequests).toEqual([]);
   const deletedHttp = await page.request.delete(
-    knowledgePath(page, `documents/${deleted!.receipt.document.documentId}`),
-    { headers: { Origin: ORIGIN } },
+    knowledgePath(page, `sources/${deleted!.receipt.sourceId}`),
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `delete-${deleted!.receipt.sourceId}`,
+      },
+    },
   );
   expect(deletedHttp.status()).toBe(204);
   await expect
@@ -632,8 +651,7 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
   await assertGroundedAnswer(postDeleteAnswer.response, [policyId], [policyId]);
   expect(
     postDeleteAnswer.response.citations.some(
-      (citation) =>
-        citation.source.sourceId === deleted!.receipt.document.documentId,
+      (citation) => citation.source.sourceId === deleted!.receipt.sourceId,
     ),
   ).toBe(false);
 
@@ -651,7 +669,7 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     citation: {
       citationId: policyCitation!.citationId,
       chunkId: policyCitation!.chunkId,
-      documentId: policyCitation!.source.sourceId,
+      documentId: policyPreview!.documentId as string,
       revisionId: policyCitation!.source.revision,
       sourceContentHash: policyCitation!.source.sourceContentHash,
       chunkContentHash: policyCitation!.chunkContentHash,

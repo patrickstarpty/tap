@@ -24,6 +24,7 @@ _VALIDATION_ACTIONS = frozenset(
         ("knowledge.answer", "knowledge"),
         ("knowledge.operate", "knowledge"),
         ("ai.agents.read", "ai"),
+        ("ai.models.read", "ai"),
         ("ai.skills.read", "ai"),
     }
 )

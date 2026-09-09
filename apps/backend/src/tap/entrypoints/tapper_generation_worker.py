@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest, SourceFamily
+from tap.contracts.problems import build_problem
+from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
@@ -24,8 +26,10 @@ class GenerationWorker:
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
         for conversation_id, turn in claimed:
+            answer_response = None
 
             async def provider(_snapshot, value=turn.input_snapshot.value):
+                nonlocal answer_response
                 request = RetrievalAnswerRequest(
                     query=value.message,
                     sources=[SourceFamily.DOC],
@@ -44,6 +48,7 @@ class GenerationWorker:
                     if answer_boundary is not None
                     else await self.knowledge.answer(request)
                 )
+                answer_response = answer
                 citations = (
                     await self.conversations.repository.resolve_citations(
                         answer.trace_id, tuple(item.citation_id for item in answer.citations)
@@ -64,6 +69,22 @@ class GenerationWorker:
                 )
 
             async def complete(evidence, chat=conversation_id, identity=turn.turn_id):
+                if evidence.outcome == "failed":
+                    await self.conversations.complete_evidence(
+                        chat,
+                        identity,
+                        evidence,
+                        lease_token=turn.lease_token,
+                        terminal_event=(
+                            "turn.failed",
+                            {
+                                "problem": build_problem(
+                                    "answer-unavailable", correlation_id=identity
+                                ).model_dump(mode="json", by_alias=True)
+                            },
+                        ),
+                    )
+                    return
                 if evidence.answer:
                     await self.conversations.emit(
                         chat,
@@ -72,11 +93,37 @@ class GenerationWorker:
                         {"text": evidence.answer},
                         lease_token=turn.lease_token,
                     )
+                if answer_response is None:
+                    await self.conversations.complete_evidence(
+                        chat, identity, evidence, lease_token=turn.lease_token
+                    )
+                    return
+                for citation in answer_response.citations:
+                    await self.conversations.emit(
+                        chat,
+                        identity,
+                        "citation.resolved",
+                        {"citation": citation.model_dump(mode="json", by_alias=True)},
+                        lease_token=turn.lease_token,
+                    )
                 await self.conversations.complete_evidence(
-                    chat, identity, evidence, lease_token=turn.lease_token
+                    chat,
+                    identity,
+                    evidence,
+                    lease_token=turn.lease_token,
+                    terminal_event=(
+                        "turn.abstained" if answer_response.abstained else "turn.completed",
+                        {"answer": answer_response.model_dump(mode="json", by_alias=True)},
+                    ),
                 )
 
-            await TurnProcessor(provider=provider, complete=complete).process(turn.input_snapshot)
+            try:
+                await TurnProcessor(provider=provider, complete=complete).process(
+                    turn.input_snapshot
+                )
+            except ConversationConflict:
+                # Cancellation or lease reclaim won the terminal-state race.
+                continue
         return len(claimed)
 
 

@@ -54,6 +54,23 @@ import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import { AccessibleDialog } from "./prototype/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
+import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
+import { useAiAssetCatalog } from "../../features/knowledge/api/aiAssets";
+import {
+  useAppendConversation,
+  useCancelTurn,
+  useConversationDetail,
+  useConversationEvents,
+  useConversationList,
+  useConversationStream,
+  useCreateConversation,
+} from "../../features/conversations/api/queries";
+import {
+  createStreamState,
+  reduceStreamEvent,
+} from "../../features/conversations/model/stream";
+import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
+import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import {
   appendTurn,
   createConversation,
@@ -148,6 +165,7 @@ function AssistantResponse({
   onChooseAutomationType,
   onOpenTestPlan,
   onOpenAutomation,
+  onOpenCitation,
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
@@ -159,8 +177,30 @@ function AssistantResponse({
   onChooseAutomationType: (type: AutomationType) => void;
   onOpenTestPlan: () => void;
   onOpenAutomation: () => void;
+  onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
 }) {
   if (turn.intent === "answer") {
+    if (turn.response !== undefined && turn.response !== null) {
+      return (
+        <GroundedAnswer
+          response={turn.response}
+          onOpenCitation={onOpenCitation}
+        />
+      );
+    }
+    if (turn.status === "queued" || turn.status === "running") {
+      return <p role="status">Tapper is grounding the answer…</p>;
+    }
+    if (turn.status === "failed") {
+      return (
+        <p role="alert">
+          {turn.error ?? "The answer could not be generated. Try again."}
+        </p>
+      );
+    }
+    if (turn.status === "canceled") {
+      return <p role="status">Generation stopped.</p>;
+    }
     return (
       <div className="tap-answer-copy">
         <p>{contentCopy.chat.answer}</p>
@@ -606,14 +646,22 @@ function ProjectLibraryWorkspace({
   );
 }
 
-export function TapProductPrototype() {
+export function TapProductPrototype({
+  conversationSource = "fixture",
+}: {
+  conversationSource?: "api" | "fixture";
+}) {
   const runtime = useRuntimeModeQuery();
   const projectId = runtime.isSuccess ? runtime.data.projectId : null;
+  const durable = conversationSource === "api";
+  const knowledgeClient = useOptionalKnowledgeClient();
   const sourcesQuery = useSourceListQuery(projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
       ? null
-      : loadPrototypeSnapshot(window.localStorage),
+      : durable
+        ? null
+        : loadPrototypeSnapshot(window.localStorage),
   );
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>("tapper");
@@ -631,7 +679,10 @@ export function TapProductPrototype() {
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [conversations, setConversations] = useState<readonly Conversation[]>(
-    () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
+    () =>
+      initialSnapshot?.conversations ?? [
+        createConversation(durable ? "draft" : "chat-1"),
+      ],
   );
   const selectionProject = useRef(projectId);
   useEffect(() => {
@@ -658,8 +709,36 @@ export function TapProductPrototype() {
     });
   }, [projectId, sourcesQuery.data, sourcesQuery.isSuccess]);
   const [activeConversationId, setActiveConversationId] = useState(
-    () => initialSnapshot?.activeConversationId ?? "chat-1",
+    () =>
+      initialSnapshot?.activeConversationId ?? (durable ? "draft" : "chat-1"),
   );
+  const conversationList = useConversationList(durable ? projectId : null);
+  const conversationDetail = useConversationDetail(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const conversationEvents = useConversationEvents(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const streamState = useConversationStream(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const createConversationMutation = useCreateConversation(
+    durable ? projectId : null,
+  );
+  const appendConversationMutation = useAppendConversation(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const cancelTurnMutation = useCancelTurn(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const resetCancelTurn = cancelTurnMutation.reset;
+  const aiAssets = useAiAssetCatalog(durable ? projectId : null);
+  const initialDurableSelection = useRef(false);
   const [artifactState, dispatchArtifact] = useReducer(
     artifactReducer,
     initialSnapshot?.artifacts ?? createInitialArtifactState(),
@@ -668,8 +747,19 @@ export function TapProductPrototype() {
     { kind: "library" },
   );
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
-  const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
+  const [agents, setAgents] = useState<readonly CatalogItem[]>(() =>
+    durable ? [] : BUILT_IN_AGENTS,
+  );
+  const [skills, setSkills] = useState<readonly CatalogItem[]>(() =>
+    durable ? [] : BUILT_IN_SKILLS,
+  );
+  const sendInFlight = useRef(false);
+  const [sendPending, setSendPending] = useState(false);
+  const [activeCitation, setActiveCitation] = useState<{
+    citation: NonNullable<AssistantTurn["response"]>["citations"][number];
+    generation: number;
+    id: string;
+  } | null>(null);
   const nextConversationId = useRef(
     nextNumericId(
       (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
@@ -714,6 +804,140 @@ export function TapProductPrototype() {
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
   const copy = PROTOTYPE_COPY[locale];
+
+  useEffect(() => {
+    resetCancelTurn();
+  }, [activeConversationId, resetCancelTurn]);
+
+  useEffect(() => {
+    if (!durable) return;
+    if (aiAssets.agents.isError) setAgents([]);
+    if (aiAssets.skills.isError) setSkills([]);
+    if (aiAssets.agents.data !== undefined) {
+      setAgents(
+        aiAssets.agents.data.map((item) => ({
+          id: item.revisionId,
+          kind: "agent",
+          origin: "built-in",
+          name: item.displayName,
+          description: item.contentDigest,
+          instructions: "Server-approved immutable revision",
+        })),
+      );
+    }
+    if (aiAssets.skills.data !== undefined) {
+      setSkills(
+        aiAssets.skills.data.map((item) => ({
+          id: item.revisionId,
+          kind: "skill",
+          origin: "built-in",
+          name: item.displayName,
+          description: item.contentDigest,
+          instructions: "Server-approved immutable revision",
+        })),
+      );
+    }
+    if (
+      aiAssets.agents.data !== undefined ||
+      aiAssets.skills.data !== undefined
+    ) {
+      const allowedAgents = new Set(
+        (aiAssets.agents.data ?? []).map((item) => item.revisionId),
+      );
+      const allowedSkills = new Set(
+        (aiAssets.skills.data ?? []).map((item) => item.revisionId),
+      );
+      setConversations((current) =>
+        current.map((conversation) => ({
+          ...conversation,
+          selectedAgentIds: conversation.selectedAgentIds.filter((id) =>
+            allowedAgents.has(id),
+          ),
+          selectedSkillIds: conversation.selectedSkillIds.filter((id) =>
+            allowedSkills.has(id),
+          ),
+        })),
+      );
+    }
+  }, [
+    aiAssets.agents.data,
+    aiAssets.agents.isError,
+    aiAssets.skills.data,
+    aiAssets.skills.isError,
+    durable,
+  ]);
+
+  useEffect(() => {
+    if (!durable || conversationList.data === undefined) return;
+    const summaries = conversationList.data.pages.flatMap((page) => page.items);
+    setConversations((current) => {
+      const restored = summaries.map((summary) => {
+        const existing = current.find(
+          (item) => item.id === summary.conversationId,
+        );
+        return existing === undefined
+          ? createConversation(summary.conversationId, { title: summary.title })
+          : { ...existing, title: summary.title };
+      });
+      const draft = current.find((item) => item.id === "draft");
+      return (activeConversationId === "draft" || summaries.length === 0) &&
+        draft !== undefined
+        ? [draft, ...restored]
+        : restored;
+    });
+    if (!initialDurableSelection.current && summaries.length > 0) {
+      setActiveConversationId(summaries[0]!.conversationId);
+    }
+    initialDurableSelection.current = true;
+  }, [activeConversationId, conversationList.data, durable]);
+
+  useEffect(() => {
+    if (!durable || conversationDetail.data === undefined) return;
+    let recovered = createStreamState();
+    for (const event of conversationEvents.data?.items ?? []) {
+      recovered = reduceStreamEvent(recovered, {
+        eventId: event.eventId,
+        sequence: event.sequence,
+        chatId: conversationDetail.data.conversationId,
+        turnId: event.turnId,
+        occurredAt: event.occurredAt,
+        schemaVersion: 1,
+        event: { type: event.eventType, payload: event.payload },
+      });
+    }
+    const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
+      const streamed =
+        recovered.lastSequence > streamState.lastSequence
+          ? recovered.turns[turn.turnId]
+          : (streamState.turns[turn.turnId] ?? recovered.turns[turn.turnId]);
+      return {
+        id: turn.turnId,
+        intent: "answer",
+        locale: "en",
+        modelId: turn.input.modelAlias,
+        prompt: turn.input.message,
+        sourceReferences: turn.input.sourceRevisionIds.map((id) => ({
+          id,
+          name: id,
+          origin: "knowledge-base" as const,
+        })),
+        response: streamed?.response ?? null,
+        status: ["completed", "abstained", "canceled", "failed"].includes(
+          turn.state,
+        )
+          ? turn.state
+          : (streamed?.status ?? turn.state),
+        error: streamed?.error ?? null,
+      };
+    });
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationDetail.data.conversationId
+          ? { ...conversation, turns }
+          : conversation,
+      ),
+    );
+  }, [conversationDetail.data, conversationEvents.data, durable, streamState]);
   const tapperWorkspaceActive = [
     "tapper",
     "agents",
@@ -760,14 +984,14 @@ export function TapProductPrototype() {
   }, [locale]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || durable) return;
     writePrototypeSnapshot(window.localStorage, {
       version: PROTOTYPE_SNAPSHOT_VERSION,
       activeConversationId,
       conversations,
       artifacts: artifactState,
     });
-  }, [activeConversationId, artifactState, conversations]);
+  }, [activeConversationId, artifactState, conversations, durable]);
 
   useEffect(
     () => () => {
@@ -879,12 +1103,16 @@ export function TapProductPrototype() {
   };
 
   const createNewChat = () => {
-    const id = `chat-${nextConversationId.current++}`;
+    const id = durable ? "draft" : `chat-${nextConversationId.current++}`;
     pendingFocusTarget.current = {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    setConversations((current) => [...current, createConversation(id)]);
+    setConversations((current) =>
+      durable
+        ? [createConversation(id), ...current.filter((item) => item.id !== id)]
+        : [...current, createConversation(id)],
+    );
     setActiveConversationId(id);
     lastTapperModule.current = "tapper";
     setActiveModule("tapper");
@@ -928,13 +1156,81 @@ export function TapProductPrototype() {
     setSidebarCollapsed(true);
   };
 
-  const sendMessage = (prompt: string) => {
+  const sendMessage = async (prompt: string): Promise<boolean> => {
+    if (
+      durable &&
+      (knowledgeClient === null ||
+        createConversationMutation.isPending ||
+        appendConversationMutation.isPending ||
+        sendInFlight.current)
+    )
+      return false;
     const intent = detectIntent(prompt);
     const sourceReferences = sources
       .filter((source) =>
         activeConversation.selectedSourceIds.includes(source.id),
       )
       .map(({ id, name, origin }) => ({ id, name, origin }));
+    if (durable) {
+      sendInFlight.current = true;
+      setSendPending(true);
+      try {
+        if (knowledgeClient === null) return false;
+        const api = knowledgeClient;
+        const selectedDetails = await Promise.all(
+          activeConversation.selectedSourceIds.map((id) => api.getSource(id)),
+        );
+        const input = {
+          message: prompt,
+          modelAlias: activeConversation.modelId,
+          sourceRevisionIds: selectedDetails.flatMap((detail) =>
+            detail.documents.items
+              .filter((item) => item.status === "ready")
+              .map((item) => item.revisionId),
+          ),
+          documentRevisionIds: [],
+          agentRevisionId: activeConversation.selectedAgentIds[0] ?? null,
+          skillRevisionIds: [...activeConversation.selectedSkillIds],
+        };
+        const key = crypto.randomUUID();
+        const accepted =
+          activeConversation.id === "draft"
+            ? await createConversationMutation.mutateAsync({
+                input,
+                idempotencyKey: key,
+              })
+            : await appendConversationMutation.mutateAsync({
+                input,
+                idempotencyKey: key,
+              });
+        const optimistic = appendTurn(
+          { ...activeConversation, id: accepted.conversationId },
+          {
+            id: accepted.turnId,
+            intent: "answer",
+            locale,
+            modelId: activeConversation.modelId,
+            prompt,
+            sourceReferences,
+            status: "queued",
+          },
+        );
+        setConversations((current) => [
+          optimistic,
+          ...current.filter(
+            (item) =>
+              item.id !== "draft" && item.id !== accepted.conversationId,
+          ),
+        ]);
+        setActiveConversationId(accepted.conversationId);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        sendInFlight.current = false;
+        setSendPending(false);
+      }
+    }
     updateActiveConversation((conversation) =>
       appendTurn(conversation, {
         id: `turn-${nextTurnId.current++}`,
@@ -954,6 +1250,7 @@ export function TapProductPrototype() {
             : undefined,
       }),
     );
+    return true;
   };
 
   const updateAutomationTurn = (
@@ -1222,6 +1519,25 @@ export function TapProductPrototype() {
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
         onToggleCollapsed={dismissTapperSidebar}
+        historyState={
+          durable
+            ? {
+                ...(conversationList.isError
+                  ? { error: "Conversation history is unavailable." }
+                  : {}),
+                hasMore: conversationList.hasNextPage,
+                isLoading: conversationList.isPending,
+                isLoadingMore: conversationList.isFetchingNextPage,
+                onLoadMore: () => {
+                  if (conversationList.hasNextPage)
+                    void conversationList.fetchNextPage();
+                },
+                onRetry: () => {
+                  void conversationList.refetch();
+                },
+              }
+            : undefined
+        }
       />
       {mobileTapperDrawerOpen ? (
         <button
@@ -1278,6 +1594,20 @@ export function TapProductPrototype() {
                 }))
               }
               onSend={sendMessage}
+              sending={
+                sendPending ||
+                createConversationMutation.isPending ||
+                appendConversationMutation.isPending
+              }
+              cancelError={cancelTurnMutation.isError}
+              onCancel={
+                durable
+                  ? (turnId) => {
+                      if (!cancelTurnMutation.isPending)
+                        cancelTurnMutation.mutate(turnId);
+                    }
+                  : undefined
+              }
               onToggleAgent={(agentId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -1326,6 +1656,19 @@ export function TapProductPrototype() {
                     }
                   }}
                   onOpenAutomation={() => openAutomation(turn)}
+                  onOpenCitation={(citationId) => {
+                    const citation = turn.response?.citations.find(
+                      (item) => item.citationId === citationId,
+                    );
+                    if (citation !== undefined) {
+                      setSourcesCollapsed(false);
+                      setActiveCitation((current) => ({
+                        citation,
+                        generation: (current?.generation ?? 0) + 1,
+                        id: citationId,
+                      }));
+                    }
+                  }}
                 />
               )}
               skills={skills}
@@ -1346,26 +1689,33 @@ export function TapProductPrototype() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              <KnowledgeSourcesPanel
-                copy={copy}
-                isLoading={projectId !== null && sourcesQuery.isPending}
-                isError={sourcesQuery.isError}
-                onRetry={() => {
-                  void sourcesQuery.refetch();
-                }}
-                onCollapse={dismissKnowledgeSources}
-                onToggleSource={(sourceId) =>
-                  updateActiveConversation((conversation) => ({
-                    ...conversation,
-                    selectedSourceIds: toggleSelection(
-                      conversation.selectedSourceIds,
-                      sourceId,
-                    ),
-                  }))
-                }
-                selectedSourceIds={activeConversation.selectedSourceIds}
-                sources={sources}
-              />
+              {activeCitation !== null ? (
+                <CitationViewer
+                  active={activeCitation}
+                  onClose={() => setActiveCitation(null)}
+                />
+              ) : (
+                <KnowledgeSourcesPanel
+                  copy={copy}
+                  isLoading={projectId !== null && sourcesQuery.isPending}
+                  isError={sourcesQuery.isError}
+                  onRetry={() => {
+                    void sourcesQuery.refetch();
+                  }}
+                  onCollapse={dismissKnowledgeSources}
+                  onToggleSource={(sourceId) =>
+                    updateActiveConversation((conversation) => ({
+                      ...conversation,
+                      selectedSourceIds: toggleSelection(
+                        conversation.selectedSourceIds,
+                        sourceId,
+                      ),
+                    }))
+                  }
+                  selectedSourceIds={activeConversation.selectedSourceIds}
+                  sources={sources}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1379,6 +1729,7 @@ export function TapProductPrototype() {
               updateCatalogItem("agent", itemId, draft)
             }
             onUse={(itemId) => useCatalogItem("agent", itemId)}
+            readOnly={durable}
           />
         ) : null}
         {activeModule === "skills" ? (
@@ -1391,6 +1742,7 @@ export function TapProductPrototype() {
               updateCatalogItem("skill", itemId, draft)
             }
             onUse={(itemId) => useCatalogItem("skill", itemId)}
+            readOnly={durable}
           />
         ) : null}
         {activeModule === "library" ? (

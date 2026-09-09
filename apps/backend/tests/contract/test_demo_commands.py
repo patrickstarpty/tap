@@ -382,6 +382,15 @@ def _make_dry_run(target: str, *assignments: str) -> subprocess.CompletedProcess
     )
 
 
+def test_e2e_manifest_registers_durable_conversation_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/knowledge-conversation.spec.ts" in manifest["journey"]
+    source = (ROOT / "apps/web/tests/e2e/knowledge-conversation.spec.ts").read_text(
+        encoding="utf-8"
+    )
+    assert source.count("test(") > 0
+
+
 def _load_yaml_as_json(path: Path) -> dict[str, object]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)
@@ -704,7 +713,7 @@ case " $* " in
 import json, os
 names=['persistence.spec.ts']
 if os.environ['TAPPER_E2E_PHASE']=='journey':
-    names=['tapper.spec.ts','knowledge-upload-security.spec.ts']
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts']
 print(json.dumps({
     'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
     'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{

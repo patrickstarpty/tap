@@ -1,3 +1,5 @@
+import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
+
 export type Locale = "en" | "zh";
 
 export type CodexModelId = string;
@@ -46,6 +48,10 @@ export interface AssistantTurn {
   modelId: CodexModelId;
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
+  response?: RetrievalAnswerResponse | null;
+  status?:
+    "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+  error?: string | null;
   automationSteps?: readonly AutomationStepSnapshot[];
   automationWorkflow?: {
     stage:

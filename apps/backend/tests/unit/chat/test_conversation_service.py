@@ -7,7 +7,12 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
 )
-from tap.modules.chat.domain.conversations import TurnInput
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    GraphContextStatus,
+    RetrievalSummary,
+    TurnInput,
+)
 
 
 def _input(message: str = "What changed?") -> TurnInput:
@@ -85,6 +90,40 @@ async def test_completed_turn_cannot_be_canceled_and_retry_creates_a_new_attempt
     assert retry.attempt == 0
     assert retry.input_snapshot.digest != completed.input_snapshot.digest
     assert retry.input_snapshot.value == completed.input_snapshot.value
+
+
+@pytest.mark.asyncio
+async def test_in_memory_completion_binds_terminal_event_and_cannot_reverse_cancellation():
+    service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded",
+        "completed",
+        RetrievalSummary("completed"),
+        GraphContextStatus.NOT_REQUESTED,
+    )
+    completed = await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+    )
+    detail = await service.load("conversation-1")
+    assert completed.state == "completed"
+    assert detail.events[-2].turn_id == "turn-1"
+
+    await service.create("conversation-2", "turn-2", "request-2", _input())
+    canceled = await service.cancel("conversation-2", "turn-2")
+    before = await service.load("conversation-2")
+    late = await service.complete_evidence(
+        "conversation-2",
+        "turn-2",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "late"}}),
+    )
+    after = await service.load("conversation-2")
+    assert canceled.state == late.state == "canceled"
+    assert after.events == before.events
 
 
 def test_snapshot_digest_is_bound_to_project_turn_and_immutable_input():

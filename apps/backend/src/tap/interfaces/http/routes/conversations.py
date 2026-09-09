@@ -19,6 +19,7 @@ from tap.contracts.http import (
     ConversationEventPage,
     ConversationPage,
     ConversationSummary,
+    ConversationTurnInputView,
     ConversationTurnSummary,
 )
 from tap.interfaces.http.dependencies import conversation_service
@@ -158,6 +159,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
 
 
 def _turn(value):
+    frozen = value.input_snapshot.value
     return ConversationTurnSummary(
         turn_id=value.turn_id,
         state=value.state,
@@ -169,6 +171,14 @@ def _turn(value):
         answer_evidence_snapshot_digest=None
         if value.answer_snapshot is None
         else value.answer_snapshot.digest,
+        input=ConversationTurnInputView(
+            message=frozen.message,
+            model_alias=frozen.model_alias,
+            source_revision_ids=list(frozen.source_revision_ids),
+            document_revision_ids=list(frozen.document_revision_ids),
+            agent_revision_id=frozen.agent_revision_id,
+            skill_revision_ids=list(frozen.skill_revision_ids),
+        ),
     )
 
 
@@ -318,6 +328,7 @@ async def events(
             ConversationEventItem(
                 event_id=e.event_id,
                 sequence=e.sequence,
+                turn_id=e.turn_id or str(e.payload.get("turnId") or ""),
                 event_type=e.event_type,
                 payload=dict(e.payload),
                 occurred_at=e.occurred_at.isoformat(),

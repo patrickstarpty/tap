@@ -278,6 +278,21 @@ class MysqlConversationRepository:
             resource_id=turn_id,
         )
 
+    async def _stream_event(self, session, event, turn_id):
+        await session.execute(
+            insert(chat_event).values(
+                **scope_values(self.scope),
+                event_id=event.event_id,
+                turn_id=turn_id,
+                sequence=event.sequence,
+                stream_sequence=event.sequence,
+                event_type=event.event_type,
+                payload=dict(event.payload),
+                schema_version=1,
+                occurred_at=_naive(event.occurred_at),
+            )
+        )
+
     async def _insert_turn(self, session, conversation_id, turn, event):
         if (
             turn.input_snapshot.project_id != self.scope.project_id
@@ -622,7 +637,15 @@ class MysqlConversationRepository:
             else None
         )
 
-    async def complete(self, conversation_id, turn_id, snapshot, event, lease_token=None):
+    async def complete(
+        self,
+        conversation_id,
+        turn_id,
+        snapshot,
+        event,
+        lease_token=None,
+        terminal_event=None,
+    ):
         async with self.sessions() as session, session.begin():
             parent = await session.scalar(
                 select(conversation.c.conversation_id)
@@ -757,6 +780,15 @@ class MysqlConversationRepository:
                         created_at=_naive(snapshot.created_at),
                     )
                 )
+            if terminal_event is not None:
+                if terminal_event.event_type not in {
+                    "turn.completed",
+                    "turn.abstained",
+                    "turn.failed",
+                }:
+                    raise ValueError("completion terminal event is invalid")
+                terminal_event = await self._next_event(session, conversation_id, terminal_event)
+                await self._stream_event(session, terminal_event, turn_id)
             event = await self._next_event(session, conversation_id, event)
             raw = asdict(snapshot.value)
             raw["graph_context_status"] = snapshot.value.graph_context_status.value
@@ -933,19 +965,7 @@ class MysqlConversationRepository:
             ):
                 raise ConversationConflict("generation lease lost")
             event = await self._next_event(session, conversation_id, event)
-            await session.execute(
-                insert(chat_event).values(
-                    **scope_values(self.scope),
-                    event_id=event.event_id,
-                    turn_id=turn_id,
-                    sequence=event.sequence,
-                    stream_sequence=event.sequence,
-                    event_type=event.event_type,
-                    payload=dict(event.payload),
-                    schema_version=1,
-                    occurred_at=_naive(event.occurred_at),
-                )
-            )
+            await self._stream_event(session, event, turn_id)
             await session.execute(
                 update(chat_turn)
                 .where(

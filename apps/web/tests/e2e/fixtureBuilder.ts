@@ -12,6 +12,7 @@ export interface SafeDocumentState {
   documentId: string;
   jobId: string;
   revisionId: string;
+  sourceId: string;
   sourceContentHash: string;
 }
 
@@ -192,11 +193,13 @@ function isDocumentState(value: unknown): value is SafeDocumentState {
       "documentId",
       "jobId",
       "revisionId",
+      "sourceId",
       "sourceContentHash",
     ]) &&
     isIdentity((value as SafeDocumentState).documentId) &&
     isIdentity((value as SafeDocumentState).jobId) &&
     isIdentity((value as SafeDocumentState).revisionId) &&
+    isIdentity((value as SafeDocumentState).sourceId) &&
     SHA256.test((value as SafeDocumentState).sourceContentHash)
   );
 }

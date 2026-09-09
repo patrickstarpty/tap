@@ -1,6 +1,6 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   document,
@@ -8,6 +8,7 @@ import {
 } from "../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../features/knowledge/testing/renderKnowledgeApp";
 import { TapperPage } from "./TapperPage";
+import { TapProductPrototype } from "../widgets/tap/TapProductPrototype";
 
 function renderPrototype() {
   const api = fakeKnowledgeClient().withDocuments([
@@ -24,7 +25,10 @@ function renderPrototype() {
       stage: "ready",
     }),
   ]);
-  return renderKnowledgeApp(<TapperPage />, { api });
+  return renderKnowledgeApp(
+    <TapProductPrototype conversationSource="fixture" />,
+    { api },
+  );
 }
 
 async function sendMessage(
@@ -40,6 +44,128 @@ async function sendMessage(
 describe("Tapper product prototype", () => {
   beforeEach(() => {
     window.localStorage.clear();
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("restores the default Tapper page from durable Conversation APIs, not localStorage", async () => {
+    window.localStorage.setItem(
+      "tap.prototype.workspace.v2",
+      JSON.stringify({
+        version: 2,
+        activeConversationId: "local-only",
+        conversations: [
+          {
+            id: "local-only",
+            title: "Local-only prompt",
+            turns: [],
+            modelId: "tapper-chat",
+            selectedSourceIds: [],
+            selectedAgentIds: [],
+            selectedSkillIds: [],
+          },
+        ],
+        artifacts: { automations: [], testPlans: [], runs: [] },
+      }),
+    );
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (/\/ai\/(agents|skills)$/u.test(request.url)) {
+        return Response.json({ items: [] });
+      }
+      if (request.url.endsWith("/conversations?limit=20")) {
+        return Response.json({
+          items: [
+            {
+              conversationId: "conversation-1",
+              title: "Durable prompt",
+              createdAt: "2026-09-09T00:00:00Z",
+              updatedAt: "2026-09-09T00:00:01Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (request.url.endsWith("/conversation-1/events")) {
+        return Response.json({
+          items: [
+            {
+              eventId: "event-1",
+              sequence: 1,
+              turnId: "turn-1",
+              eventType: "turn.abstained",
+              payload: {
+                answer: {
+                  traceId: "trace-1",
+                  queryPlanId: "plan-1",
+                  contextSnapshotId: "context-1",
+                  corpusVersion: "v1",
+                  retrievalProfileId: "quick",
+                  degradedMode: false,
+                  answer: "",
+                  abstained: true,
+                  abstentionReason: "insufficient_evidence",
+                  claims: [],
+                  citations: [],
+                },
+              },
+              occurredAt: "2026-09-09T00:00:01Z",
+            },
+          ],
+        });
+      }
+      if (request.url.endsWith("/conversation-1/stream")) {
+        return new Response("", {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      if (request.url.endsWith("/conversation-1")) {
+        return Response.json({
+          conversationId: "conversation-1",
+          title: "Durable prompt",
+          createdAt: "2026-09-09T00:00:00Z",
+          updatedAt: "2026-09-09T00:00:01Z",
+          turns: [
+            {
+              turnId: "turn-1",
+              state: "abstained",
+              attempt: 1,
+              inputSnapshotDigest: `sha256:${"1".repeat(64)}`,
+              answerEvidenceSnapshotId: "answer-1",
+              answerEvidenceSnapshotDigest: `sha256:${"2".repeat(64)}`,
+              input: {
+                message: "Durable prompt",
+                modelAlias: "tapper-chat",
+                sourceRevisionIds: [],
+                documentRevisionIds: [],
+                agentRevisionId: null,
+                skillRevisionIds: [],
+              },
+            },
+          ],
+        });
+      }
+      return Response.json({ items: [] });
+    });
+
+    const first = renderKnowledgeApp(<TapperPage />, {
+      api: fakeKnowledgeClient(),
+    });
+    expect(
+      within(
+        await screen.findByRole("log", { name: "Conversation" }),
+      ).getByText("Durable prompt"),
+    ).toBeVisible();
+    expect(screen.queryByText("Local-only prompt")).not.toBeInTheDocument();
+    first.unmount();
+    renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("log", { name: "Conversation" })).getByText(
+          "Durable prompt",
+        ),
+      ).toBeVisible(),
+    );
   });
 
   it("keeps Validation Mode visible across product navigation", async () => {
@@ -107,7 +233,7 @@ describe("Tapper product prototype", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the active Conversation in history across modules and page remounts", async () => {
+  it("keeps the explicit demo fixture Conversation across modules and remounts", async () => {
     const user = userEvent.setup();
     const firstRender = renderPrototype();
     const message = "Create a browser automation for policy submission";

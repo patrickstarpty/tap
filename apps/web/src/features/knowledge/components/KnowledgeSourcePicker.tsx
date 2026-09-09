@@ -85,18 +85,19 @@ export function KnowledgeSourcePicker({
       ) : (
         <div className="tap-source-list">
           {visible.map((source) => (
-            <Checkbox
-              key={source.id}
-              checked={selectedSourceIds.includes(source.id)}
-              onChange={() => onToggleSource(source.id)}
-            >
-              <span className="tap-source-name">
-                <strong>{source.name}</strong>
-                <small>
-                  {labels.ready} · {labels.immutableRevision}
-                </small>
-              </span>
-            </Checkbox>
+            <div id={`source-${source.id}`} key={source.id}>
+              <Checkbox
+                checked={selectedSourceIds.includes(source.id)}
+                onChange={() => onToggleSource(source.id)}
+              >
+                <span className="tap-source-name">
+                  <strong>{source.name}</strong>
+                  <small>
+                    {labels.ready} · {labels.immutableRevision}
+                  </small>
+                </span>
+              </Checkbox>
+            </div>
           ))}
         </div>
       )}

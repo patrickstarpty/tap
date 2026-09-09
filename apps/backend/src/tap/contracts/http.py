@@ -699,6 +699,17 @@ class ConversationCreateRequest(ContractModel):
         return value
 
 
+class ConversationTurnInputView(ContractModel):
+    """Browser-safe immutable input facts; excludes instructions and policy internals."""
+
+    message: str
+    model_alias: str
+    source_revision_ids: list[str]
+    document_revision_ids: list[str]
+    agent_revision_id: str | None = None
+    skill_revision_ids: list[str]
+
+
 class ConversationTurnSummary(ContractModel):
     turn_id: str
     state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
@@ -706,6 +717,7 @@ class ConversationTurnSummary(ContractModel):
     input_snapshot_digest: CanonicalSha256
     answer_evidence_snapshot_id: str | None = None
     answer_evidence_snapshot_digest: CanonicalSha256 | None = None
+    input: ConversationTurnInputView
 
 
 class ConversationSummary(ContractModel):
@@ -733,6 +745,7 @@ class ConversationAccepted(ContractModel):
 class ConversationEventItem(ContractModel):
     event_id: str
     sequence: StrictInt
+    turn_id: str
     event_type: Literal[
         "turn.started",
         "context.assembled",

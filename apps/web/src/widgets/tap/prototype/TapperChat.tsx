@@ -40,7 +40,10 @@ interface TapperChatProps {
   copy: PrototypeCopy;
   isInert?: boolean;
   onModelChange: (modelId: CodexModelId) => void;
-  onSend: (prompt: string) => void;
+  onSend: (prompt: string) => boolean | Promise<boolean>;
+  onCancel?: (turnId: string) => void;
+  cancelError?: boolean;
+  sending?: boolean;
   onToggleAgent: (agentId: string) => void;
   onToggleSkill: (skillId: string) => void;
   onToggleSource: (sourceId: string) => void;
@@ -103,6 +106,9 @@ export function TapperChat({
   isInert = false,
   onModelChange,
   onSend,
+  onCancel,
+  cancelError = false,
+  sending = false,
   onToggleAgent,
   onToggleSkill,
   onToggleSource,
@@ -119,6 +125,7 @@ export function TapperChat({
     (model) => model.alias === conversation.modelId,
   );
   const [message, setMessage] = useState("");
+  const [submitError, setSubmitError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [picker, setPicker] = useState<PickerKind | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
@@ -331,12 +338,14 @@ export function TapperChat({
     );
   }, [pickerConfig, pickerQuery]);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0 || !modelAvailable) return;
-    onSend(prompt);
-    setMessage("");
+    if (prompt.length === 0 || !modelAvailable || sending) return;
+    setSubmitError(false);
+    const accepted = await onSend(prompt);
+    if (accepted) setMessage("");
+    else setSubmitError(true);
     composerRef.current?.focus();
   };
 
@@ -628,10 +637,34 @@ export function TapperChat({
           shape="circle"
           htmlType="submit"
           aria-label={copy.chat.send}
-          disabled={message.trim().length === 0 || !modelAvailable}
+          disabled={message.trim().length === 0 || !modelAvailable || sending}
           icon={<SendOutlined aria-hidden="true" />}
         />
+        {onCancel !== undefined &&
+        ["queued", "running"].includes(
+          conversation.turns[conversation.turns.length - 1]?.status ?? "",
+        ) ? (
+          <Button
+            danger
+            type="text"
+            onClick={() =>
+              onCancel(conversation.turns[conversation.turns.length - 1]!.id)
+            }
+          >
+            Stop
+          </Button>
+        ) : null}
       </div>
+      {submitError ? (
+        <p className="tap-context-notice" role="alert">
+          Message was not sent. Check the connection and try again.
+        </p>
+      ) : null}
+      {cancelError ? (
+        <p className="tap-context-notice" role="alert">
+          Generation could not be stopped. Check the connection and try again.
+        </p>
+      ) : null}
     </form>
   );
 
