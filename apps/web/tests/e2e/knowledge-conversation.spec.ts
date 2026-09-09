@@ -199,30 +199,30 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       new URL(response.url()).pathname ===
         `${root}/conversations/${accepted.conversationId}/turns`,
   );
+  const resumedAppendStream = page.waitForRequest(
+    (request) =>
+      request.method() === "GET" &&
+      new URL(request.url()).pathname ===
+        `${root}/conversations/${accepted.conversationId}/stream` &&
+      Number(request.headers()["last-event-id"] ?? 0) > 0,
+  );
   await page.locator("form.tap-composer").evaluate((form: HTMLFormElement) => {
     form.requestSubmit();
     form.requestSubmit();
   });
   expect((await appendResponse).status()).toBe(202);
   expect(appendRequests).toBe(1);
-
-  await expect
-    .poll(
-      async () => {
-        const response = await page.request.get(
-          `${root}/conversations/${accepted.conversationId}`,
-        );
-        const body = (await response.json()) as {
-          turns: Array<{ state: string }>;
-        };
-        return body.turns.length === 2 &&
-          /completed|abstained/u.test(body.turns[1]!.state)
-          ? body.turns.length
-          : 0;
-      },
-      { timeout: 45_000 },
-    )
-    .toBe(2);
+  expect(Number((await resumedAppendStream).headers()["last-event-id"])).toBe(
+    eventPage.items.at(-1)!.sequence,
+  );
+  const appendedTurn = page.locator(".tap-turn").filter({ hasText: followUp });
+  await expect(appendedTurn).toHaveCount(1);
+  await expect(
+    appendedTurn.getByRole("button", { name: "引用 1" }),
+  ).toBeVisible({ timeout: 45_000 });
+  await expect(
+    appendedTurn.getByText("Tapper is grounding the answer…", { exact: true }),
+  ).toHaveCount(0);
 
   await page
     .getByRole("textbox", { name: "Message Tapper" })

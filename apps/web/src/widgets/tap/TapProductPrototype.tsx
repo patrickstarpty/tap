@@ -68,6 +68,8 @@ import {
 } from "../../features/conversations/api/queries";
 import {
   createStreamState,
+  isTargetTurnActive,
+  latestTurnState,
   reduceStreamEvent,
 } from "../../features/conversations/model/stream";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
@@ -749,29 +751,71 @@ export function TapProductPrototype({
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
   );
-  const detailHasActiveConversationTurn =
-    conversationDetail.data?.turns.some((turn) =>
-      ["queued", "running"].includes(turn.state),
-    ) ?? true;
-  const conversationStream = useConversationStream(
-    durable ? projectId : null,
-    durable && activeConversationId !== "draft" ? activeConversationId : null,
-    detailHasActiveConversationTurn,
-  );
-  const streamState = conversationStream.state;
-  const hasActiveConversationTurn =
-    conversationDetail.data?.turns.some(
-      (turn) =>
-        ["queued", "running"].includes(turn.state) &&
-        !["completed", "abstained", "failed", "canceled"].includes(
-          streamState.turns[turn.turnId]?.status ?? turn.state,
-        ),
-    ) ?? true;
+  const [requestedStreamTarget, setRequestedStreamTarget] = useState<{
+    conversationId: string;
+    turnId: string;
+  } | null>(null);
+  const [pollConversationEvents, setPollConversationEvents] = useState(true);
   const conversationEvents = useConversationEvents(
     durable ? projectId : null,
     durable && activeConversationId !== "draft" ? activeConversationId : null,
-    hasActiveConversationTurn,
+    pollConversationEvents,
   );
+  const recoveredStreamState = useMemo(() => {
+    let recovered = createStreamState();
+    for (const event of conversationEvents.data?.items ?? []) {
+      recovered = reduceStreamEvent(recovered, {
+        eventId: event.eventId,
+        sequence: event.sequence,
+        chatId: activeConversationId,
+        turnId: event.turnId,
+        occurredAt: event.occurredAt,
+        schemaVersion: 1,
+        event: { type: event.eventType, payload: event.payload },
+      });
+    }
+    return recovered;
+  }, [activeConversationId, conversationEvents.data?.items]);
+  const requestedTarget =
+    requestedStreamTarget?.conversationId === activeConversationId
+      ? requestedStreamTarget.turnId
+      : null;
+  const latestDetailTurn = conversationDetail.data?.turns.at(-1) ?? null;
+  const streamTargetTurnId =
+    requestedTarget ?? latestDetailTurn?.turnId ?? null;
+  const detailTargetStatus =
+    conversationDetail.data?.turns.find(
+      (turn) => turn.turnId === streamTargetTurnId,
+    )?.state ?? null;
+  const shouldStartConversationStream =
+    requestedTarget !== null ||
+    isTargetTurnActive({
+      detailStatus: detailTargetStatus,
+      recoveredState: recoveredStreamState,
+      streamState: createStreamState(),
+      targetTurnId: streamTargetTurnId,
+    });
+  const conversationStream = useConversationStream(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+    streamTargetTurnId,
+    recoveredStreamState.lastSequence,
+    shouldStartConversationStream,
+  );
+  const streamState = conversationStream.state;
+  const hasActiveConversationTurn = isTargetTurnActive({
+    detailStatus: detailTargetStatus,
+    recoveredState: recoveredStreamState,
+    streamState,
+    targetTurnId: streamTargetTurnId,
+  });
+  useEffect(() => {
+    setPollConversationEvents(hasActiveConversationTurn);
+  }, [hasActiveConversationTurn]);
+  useEffect(() => {
+    if (requestedTarget !== null && !hasActiveConversationTurn)
+      setRequestedStreamTarget(null);
+  }, [hasActiveConversationTurn, requestedTarget]);
   const createConversationMutation = useCreateConversation(
     durable ? projectId : null,
   );
@@ -949,24 +993,13 @@ export function TapProductPrototype({
 
   useEffect(() => {
     if (!durable || conversationDetail.data === undefined) return;
-    let recovered = createStreamState();
-    for (const event of conversationEvents.data?.items ?? []) {
-      recovered = reduceStreamEvent(recovered, {
-        eventId: event.eventId,
-        sequence: event.sequence,
-        chatId: conversationDetail.data.conversationId,
-        turnId: event.turnId,
-        occurredAt: event.occurredAt,
-        schemaVersion: 1,
-        event: { type: event.eventType, payload: event.payload },
-      });
-    }
     const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
       const resolvedResources = turn.input.resolvedResources ?? [];
-      const streamed =
-        recovered.lastSequence > streamState.lastSequence
-          ? recovered.turns[turn.turnId]
-          : (streamState.turns[turn.turnId] ?? recovered.turns[turn.turnId]);
+      const streamed = latestTurnState(
+        turn.turnId,
+        recoveredStreamState,
+        streamState,
+      );
       return {
         id: turn.turnId,
         intent: "answer",
@@ -1045,6 +1078,7 @@ export function TapProductPrototype({
     conversationEvents.isLoading,
     conversationStream.error,
     durable,
+    recoveredStreamState,
     streamState,
   ]);
   const tapperWorkspaceActive = [
@@ -1327,6 +1361,11 @@ export function TapProductPrototype({
                 input,
                 idempotencyKey: key,
               });
+        setRequestedStreamTarget({
+          conversationId: accepted.conversationId,
+          turnId: accepted.turnId,
+        });
+        setPollConversationEvents(true);
         const optimistic = appendTurn(
           { ...activeConversation, id: accepted.conversationId },
           {

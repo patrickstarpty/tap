@@ -186,17 +186,32 @@ export function useCancelTurn(
 export function useConversationStream(
   projectId: string | null,
   conversationId: string | null,
+  targetTurnId: string | null,
+  initialCursor: number,
   active = true,
 ) {
   const client = useConversationClient(projectId);
   const [state, setState] = useState(createStreamState);
   const resume = useRef(0);
+  const initialCursorRef = useRef(initialCursor);
+  const streamIdentity = useRef<string | null>(null);
   const [error, setError] = useState<ConversationClientError | null>(null);
   const [generation, setGeneration] = useState(0);
+  initialCursorRef.current = initialCursor;
   useEffect(() => {
-    if (client === null || conversationId === null || !active) return;
-    resume.current = 0;
-    setState(createStreamState());
+    if (
+      client === null ||
+      conversationId === null ||
+      targetTurnId === null ||
+      !active
+    )
+      return;
+    const identity = `${conversationId}:${targetTurnId}`;
+    if (streamIdentity.current !== identity) {
+      streamIdentity.current = identity;
+      resume.current = initialCursorRef.current;
+      setState({ lastSequence: initialCursorRef.current, turns: {} });
+    }
     setError(null);
     const controller = new AbortController();
     let stopped = false;
@@ -204,6 +219,7 @@ export function useConversationStream(
       let attempts = 0;
       while (!stopped) {
         try {
+          let targetTerminal = false;
           for await (const event of client.stream(
             conversationId,
             resume.current,
@@ -212,8 +228,13 @@ export function useConversationStream(
             attempts = 0;
             resume.current = Math.max(resume.current, event.sequence);
             setState((current) => reduceStreamEvent(current, event));
-            if (isTerminalEvent(event.event.type)) return;
+            if (
+              event.turnId === targetTurnId &&
+              isTerminalEvent(event.event.type)
+            )
+              targetTerminal = true;
           }
+          if (targetTerminal) return;
           attempts += 1;
           if (attempts > 4) {
             setError(new ConversationClientError(503, true));
@@ -241,7 +262,7 @@ export function useConversationStream(
       stopped = true;
       controller.abort();
     };
-  }, [active, client, conversationId, generation]);
+  }, [active, client, conversationId, generation, targetTurnId]);
   return {
     error,
     retry: () => setGeneration((current) => current + 1),

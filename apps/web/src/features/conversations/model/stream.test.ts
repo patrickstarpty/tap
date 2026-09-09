@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { createStreamState, reduceStreamEvent } from "./stream";
+import {
+  createStreamState,
+  isTargetTurnActive,
+  latestTurnState,
+  reduceStreamEvent,
+} from "./stream";
 
 const envelope = (
   sequence: number,
@@ -134,5 +139,56 @@ describe("conversation stream reducer", () => {
 
     expect(state.turns["turn-1"]?.response?.citations).toHaveLength(1);
     expect(state.turns["turn-1"]?.status).toBe("completed");
+  });
+
+  it("stops an active target when newer stream facts supersede stale queued detail", () => {
+    const streamState = reduceStreamEvent(
+      createStreamState(),
+      envelope(8, "turn-2", "conversation.turn.completed", {
+        outcome: "completed",
+      }),
+    );
+
+    expect(
+      isTargetTurnActive({
+        detailStatus: "queued",
+        recoveredState: createStreamState(),
+        streamState,
+        targetTurnId: "turn-2",
+      }),
+    ).toBe(false);
+  });
+
+  it("uses recovered terminal facts before stale detail and keeps a genuinely running target active", () => {
+    const recoveredState = reduceStreamEvent(
+      createStreamState(),
+      envelope(7, "turn-2", "turn.completed", {
+        answer: { answer: "done", citations: [] },
+      }),
+    );
+    const staleStreamState = reduceStreamEvent(
+      createStreamState(),
+      envelope(4, "turn-2", "answer.delta", { text: "partial" }),
+    );
+
+    expect(
+      isTargetTurnActive({
+        detailStatus: "running",
+        recoveredState,
+        streamState: staleStreamState,
+        targetTurnId: "turn-2",
+      }),
+    ).toBe(false);
+    expect(
+      latestTurnState("turn-2", recoveredState, staleStreamState)?.answer,
+    ).toBe("done");
+    expect(
+      isTargetTurnActive({
+        detailStatus: "running",
+        recoveredState: createStreamState(),
+        streamState: createStreamState(),
+        targetTurnId: "turn-3",
+      }),
+    ).toBe(true);
   });
 });

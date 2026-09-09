@@ -6,6 +6,7 @@ export type ChatEventEnvelope = components["schemas"]["ChatEventEnvelope"];
 export interface StreamTurnState {
   answer: string;
   error: string | null;
+  lastSequence: number;
   response: RetrievalAnswerResponse | null;
   status:
     "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
@@ -19,12 +20,51 @@ export interface ConversationStreamState {
 const emptyTurn = (): StreamTurnState => ({
   answer: "",
   error: null,
+  lastSequence: 0,
   response: null,
   status: "queued",
 });
 
 export function createStreamState(): ConversationStreamState {
   return { lastSequence: 0, turns: {} };
+}
+
+const terminalStatuses: readonly StreamTurnState["status"][] = [
+  "completed",
+  "abstained",
+  "canceled",
+  "failed",
+];
+
+export function isTargetTurnActive({
+  detailStatus,
+  recoveredState,
+  streamState,
+  targetTurnId,
+}: {
+  detailStatus: string | null;
+  recoveredState: ConversationStreamState;
+  streamState: ConversationStreamState;
+  targetTurnId: string | null;
+}): boolean {
+  if (targetTurnId === null) return false;
+  const status =
+    latestTurnState(targetTurnId, recoveredState, streamState)?.status ??
+    detailStatus ??
+    "queued";
+  return !terminalStatuses.includes(status as StreamTurnState["status"]);
+}
+
+export function latestTurnState(
+  turnId: string,
+  recoveredState: ConversationStreamState,
+  streamState: ConversationStreamState,
+): StreamTurnState | undefined {
+  const recovered = recoveredState.turns[turnId];
+  const streamed = streamState.turns[turnId];
+  if (recovered === undefined) return streamed;
+  if (streamed === undefined) return recovered;
+  return streamed.lastSequence >= recovered.lastSequence ? streamed : recovered;
 }
 
 function problemTitle(payload: Record<string, unknown>): string {
@@ -129,6 +169,9 @@ export function reduceStreamEvent(
 
   return {
     lastSequence: sequence,
-    turns: { ...state.turns, [turnId]: next },
+    turns: {
+      ...state.turns,
+      [turnId]: { ...next, lastSequence: sequence },
+    },
   };
 }
