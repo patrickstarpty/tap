@@ -54,6 +54,8 @@
     "datasetDigest": "sha256:ae440b63c8e08aa2b2d9ebba9e1361269884c918c15f1ce467a7db4827c41043",
     "runId": "red-run-v2",
     "execution": {
+      "startedAtUtc": "2026-09-09T00:00:00Z",
+      "finishedAtUtc": "2026-09-09T00:00:00.005Z",
       "providerCallBudget": 1000,
       "providerCalls": 1,
       "cacheHits": 0,
@@ -92,6 +94,7 @@
         "execution": {
           "timeoutMs": 1000,
           "startedAtUtc": "2026-09-09T00:00:00Z",
+          "finishedAtUtc": "2026-09-09T00:00:00.005Z",
           "durationMs": 5,
           "cacheKey": "sha256:7c7213397e9fb23b507c1fe71cc8fe2c4819105e5ddc8f0f530f34f529a9011d",
           "cacheEvidenceDigest": "sha256:dc0c1656db399299e216c0c01df5318d2b8617f9f76c5f42e366ee7d48c5e381",
@@ -111,6 +114,7 @@
                   "requestedProvider": "approved-provider",
                   "requestedModel": "approved-model",
                   "startedAtUtc": "2026-09-09T00:00:00Z",
+                  "endedAtUtc": "2026-09-09T00:00:00.002Z",
                   "status": "success",
                   "retryable": false,
                   "operation": "structured",

@@ -362,6 +362,20 @@ def _validate_execution(
     if type(duration_ms) is not int or not 0 <= duration_ms <= timeout_ms:
         raise ValueError(f"case {case_id} duration evidence is invalid")
     case_started = _utc(execution.get("startedAtUtc"), f"case {case_id} start")
+    case_finished = _utc(execution.get("finishedAtUtc"), f"case {case_id} finish")
+    approval_expiry = (
+        _utc(approved_mapping["expiresAtUtc"], "approval expiry")
+        if approved_mapping is not None
+        else None
+    )
+    if approval_expiry is not None and (
+        case_started >= approval_expiry or case_finished > approval_expiry
+    ):
+        raise ValueError(f"case {case_id} crosses approval expiry")
+    if case_finished < case_started or case_finished > case_started + timedelta(
+        milliseconds=duration_ms + 1
+    ):
+        raise ValueError(f"case {case_id} finish evidence is invalid")
     if execution.get("maxRetriesPerCase") != max_retries_per_case:
         failures.append(f"case {case_id} retry configuration mismatch")
     if _digest_text(execution.get("cacheKey"), "cacheKey") != expected_cache_key(
@@ -394,6 +408,11 @@ def _validate_execution(
     attempt_duration_total = 0
     previous_error_code: str | None = None
     previous_retryable = False
+    approved_routes = (
+        {route["operation"]: route for route in approved_mapping["routes"]}
+        if approved_mapping is not None
+        else {}
+    )
     for index, attempt in enumerate(attempts, 1):
         if attempt.get("attempt") != index:
             raise ValueError(f"case {case_id} attempt order is invalid")
@@ -454,10 +473,20 @@ def _validate_execution(
                 raise ValueError(f"case {case_id} requested alias evidence is invalid")
             prompt_digest = _digest_text(call.get("promptDigest"), "promptDigest")
             call_started = _utc(call.get("startedAtUtc"), "provider call start")
+            call_ended = _utc(call.get("endedAtUtc"), "provider call end")
             call_duration = call.get("durationMs")
+            if approval_expiry is not None and (
+                call_started >= approval_expiry or call_ended > approval_expiry
+            ):
+                raise ValueError(
+                    f"case {case_id} provider call crosses approval expiry"
+                )
             if (
                 call_started < attempt_started
                 or call_started
+                > attempt_started + timedelta(milliseconds=attempt_duration + 1)
+                or call_ended < call_started
+                or call_ended
                 > attempt_started + timedelta(milliseconds=attempt_duration + 1)
                 or type(call_duration) is not int
                 or not 0 <= call_duration <= attempt_duration
@@ -467,6 +496,14 @@ def _validate_execution(
             retryable = call.get("retryable")
             if status not in {"success", "error"} or type(retryable) is not bool:
                 raise ValueError(f"case {case_id} provider call status is invalid")
+            approved_route = approved_routes.get(operation)
+            if require_real and (
+                approved_route is None
+                or requested_alias != approved_route["logicalAlias"]
+                or call.get("requestedProvider") != approved_route["actualProvider"]
+                or call.get("requestedModel") != approved_route["actualModel"]
+            ):
+                failures.append(f"case {case_id} unapproved requested provider route")
             if operation in {"chat", "structured"}:
                 if alias != root["bindings"].get("modelAlias"):
                     failures.append(f"case {case_id} logical model alias mismatch")
@@ -480,18 +517,8 @@ def _validate_execution(
                 )
                 if call.get("governanceDigests") != expected_governance:
                     failures.append(f"case {case_id} Agent/Skill governance mismatch")
-                if require_real and (
-                    approved_mapping is None
-                    or operation != approved_mapping["operation"]
-                ):
+                if require_real and approved_route is None:
                     failures.append(f"case {case_id} unapproved answer operation")
-                if require_real and (
-                    approved_mapping is None
-                    or call.get("requestedProvider")
-                    != approved_mapping["actualProvider"]
-                    or call.get("requestedModel") != approved_mapping["actualModel"]
-                ):
-                    failures.append(f"case {case_id} unapproved requested answer route")
             if status == "error":
                 attempt_error_code = _text(
                     call.get("errorCode"), "provider errorCode", 64
@@ -509,14 +536,19 @@ def _validate_execution(
                 provider = _text(call.get("actualProvider"), "actualProvider", 256)
                 model = _text(call.get("actualModel"), "actualModel", 256)
                 identities.add((provider, model))
+                if require_real and (
+                    approved_route is None
+                    or provider != approved_route["actualProvider"]
+                    or model != approved_route["actualModel"]
+                ):
+                    identity_kind = (
+                        "answer identity"
+                        if operation in {"chat", "structured"}
+                        else "provider identity"
+                    )
+                    failures.append(f"case {case_id} unapproved {identity_kind}")
                 if operation in {"chat", "structured"}:
                     answer_calls += 1
-                    if require_real and (
-                        approved_mapping is None
-                        or provider != approved_mapping["actualProvider"]
-                        or model != approved_mapping["actualModel"]
-                    ):
-                        failures.append(f"case {case_id} unapproved answer identity")
                 provider_id = call.get("providerRequestId")
                 gateway_id = call.get("gatewayCallId")
                 if not isinstance(provider_id, str) and not isinstance(gateway_id, str):
@@ -579,22 +611,33 @@ def evaluate_run(
             failures.append(f"{name} governance binding is missing")
     if approved_mapping is not None:
         approved_mapping = _mapping(approved_mapping, "approved mapping")
-        _text(approved_mapping.get("modelAlias"), "approved alias", 256)
-        _text(approved_mapping.get("actualProvider"), "approved provider", 256)
-        _text(approved_mapping.get("actualModel"), "approved model", 256)
-        if approved_mapping.get("operation") != "structured":
-            raise ValueError("approved operation must be structured")
+        if approved_mapping.get("schemaVersion") != "quality-kb-model-approval-v2":
+            raise ValueError("approved mapping schema is invalid")
+        approved_routes_list = [
+            _mapping(route, "approved route")
+            for route in _sequence(approved_mapping.get("routes"), "approved routes")
+        ]
+        if [route.get("operation") for route in approved_routes_list] != [
+            "embed",
+            "chat",
+            "structured",
+        ]:
+            raise ValueError("approved routes are invalid")
+        for route in approved_routes_list:
+            _text(route.get("logicalAlias"), "approved alias", 256)
+            _text(route.get("actualProvider"), "approved provider", 256)
+            _text(route.get("actualModel"), "approved model", 256)
+            route_scope = _mapping(route.get("scope"), "approved route scope")
+            _text(route_scope.get("enterpriseId"), "approval enterprise", 128)
+            _text(route_scope.get("projectId"), "approval project", 128)
         _digest_text(approved_mapping.get("digest"), "approval digest")
         artifact = _text(approved_mapping.get("artifact"), "approval artifact", 1024)
         if _APPROVAL_ARTIFACT.fullmatch("approval-record:" + artifact) is None:
             raise ValueError("approval artifact format is invalid")
-        scope = _mapping(approved_mapping.get("scope"), "approval scope")
-        _text(scope.get("enterpriseId"), "approval enterprise", 128)
-        _text(scope.get("projectId"), "approval project", 128)
         _utc(approved_mapping.get("expiresAtUtc"), "approval expiry")
         if bindings.get("approvalDigest") != approved_mapping["digest"]:
             failures.append("dataset approval digest mismatch")
-        if bindings.get("modelAlias") != approved_mapping["modelAlias"]:
+        if bindings.get("modelAlias") != approved_routes_list[2]["logicalAlias"]:
             failures.append("dataset model alias differs from approval")
 
     observed_by_id: dict[str, dict[str, Any]] = {}
@@ -662,7 +705,9 @@ def evaluate_run(
         elif actual_policy_digest is not None:
             failures.append(f"case {case_id} denied path rebuilt a retrieval policy")
         if require_real and approved_mapping is not None:
-            approved_scope = _mapping(approved_mapping["scope"], "approval scope")
+            approved_scope = _mapping(
+                approved_mapping["routes"][2]["scope"], "approval scope"
+            )
             if (
                 actual_enterprise != approved_scope["enterpriseId"]
                 or actual_project != approved_scope["projectId"]
@@ -839,10 +884,22 @@ def evaluate_run(
         "retryCount": retry_count,
         "maxRetriesPerCase": max_retries_per_case,
     }
-    if declared_execution is not None and declared_execution != derived_execution:
-        failures.append(
-            "runner execution aggregate does not match immutable case evidence"
-        )
+    if declared_execution is not None:
+        run_started = _utc(declared_execution.get("startedAtUtc"), "run start")
+        run_finished = _utc(declared_execution.get("finishedAtUtc"), "run finish")
+        if run_finished < run_started:
+            raise ValueError("run finish evidence is invalid")
+        if approved_mapping is not None:
+            approval_expiry = _utc(approved_mapping["expiresAtUtc"], "approval expiry")
+            if run_started >= approval_expiry or run_finished > approval_expiry:
+                raise ValueError("run crosses approval expiry")
+        declared_counts = {
+            name: declared_execution.get(name) for name in derived_execution
+        }
+        if declared_counts != derived_execution:
+            failures.append(
+                "runner execution aggregate does not match immutable case evidence"
+            )
     if provider_calls > provider_call_budget:
         failures.append("provider call count exceeds bounded budget")
     if cache_hits:
@@ -855,8 +912,9 @@ def evaluate_run(
         if approved_mapping is None:
             failures.append("external approved model mapping is required")
         else:
-            provider = str(approved_mapping["actualProvider"])
-            model = str(approved_mapping["actualModel"])
+            structured_route = approved_mapping["routes"][2]
+            provider = str(structured_route["actualProvider"])
+            model = str(structured_route["actualModel"])
             if (provider, model) not in actual_identities:
                 failures.append(
                     "captured response/audit identity does not match approved mapping"
@@ -941,9 +999,7 @@ def evaluate_run(
             }
         ),
         "bindings": bindings,
-        "approvedMappingOperation": approved_mapping["operation"]
-        if approved_mapping
-        else None,
+        "approvedRoutes": approved_mapping["routes"] if approved_mapping else None,
         "approvedMappingDigest": approved_mapping["digest"]
         if approved_mapping
         else None,

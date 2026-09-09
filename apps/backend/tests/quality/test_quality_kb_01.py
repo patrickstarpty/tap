@@ -16,13 +16,31 @@ SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
 RUNNER = ROOT / "scripts" / "run-quality-kb-real.py"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "quality" / "kb"
 APPROVAL_CONTENT = {
-    "schemaVersion": "quality-kb-model-approval-v1",
+    "schemaVersion": "quality-kb-model-approval-v2",
     "approvalId": "unit-v3",
-    "modelAlias": "tapper-chat",
-    "actualProvider": "approved-provider",
-    "actualModel": "approved-model",
-    "operation": "structured",
-    "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
+    "routes": [
+        {
+            "logicalAlias": "tapper-embedding",
+            "actualProvider": "approved-provider",
+            "actualModel": "approved-provider/approved-embedding",
+            "operation": "embed",
+            "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
+        },
+        {
+            "logicalAlias": "tapper-chat",
+            "actualProvider": "approved-provider",
+            "actualModel": "approved-provider/approved-model",
+            "operation": "chat",
+            "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
+        },
+        {
+            "logicalAlias": "tapper-chat",
+            "actualProvider": "approved-provider",
+            "actualModel": "approved-provider/approved-model",
+            "operation": "structured",
+            "scope": {"enterpriseId": "tenant", "projectId": "project-a"},
+        },
+    ],
     "expiresAtUtc": "2026-09-30T00:00:00Z",
 }
 APPROVAL_BYTES = json.dumps(APPROVAL_CONTENT, sort_keys=True, separators=(",", ":")).encode()
@@ -32,6 +50,7 @@ APPROVED = {
     "digest": APPROVAL_DIGEST,
     "artifact": "approval-record:unit-v3",
 }
+PRODUCTION_ROUTES = {item["operation"]: item for item in APPROVAL_CONTENT["routes"]}
 
 
 def _module(path: Path, name: str) -> ModuleType:
@@ -168,6 +187,7 @@ def _execution(
     return {
         "timeoutMs": 1000,
         "startedAtUtc": "2026-09-09T00:00:00Z",
+        "finishedAtUtc": "2026-09-09T00:00:00.005Z",
         "durationMs": 5,
         "cacheKey": module.expected_cache_key(dataset, case_id),
         "cacheHit": False,
@@ -184,14 +204,15 @@ def _execution(
                         "requestedAlias": "tapper-chat",
                         "requestedOperation": "structured",
                         "requestedProvider": "approved-provider",
-                        "requestedModel": "approved-model",
+                        "requestedModel": "approved-provider/approved-model",
                         "startedAtUtc": "2026-09-09T00:00:00Z",
+                        "endedAtUtc": "2026-09-09T00:00:00.002Z",
                         "status": "success",
                         "retryable": False,
                         "operation": "structured",
                         "alias": "tapper-chat",
                         "actualProvider": "approved-provider",
-                        "actualModel": "approved-model",
+                        "actualModel": "approved-provider/approved-model",
                         "promptDigest": _sha("2"),
                         "schemaDigest": _sha("5"),
                         "governanceDigests": [_sha("3"), _sha("4")],
@@ -287,6 +308,8 @@ def _observations(dataset: dict[str, object]) -> dict[str, object]:
         "datasetDigest": module.dataset_digest(dataset),
         "runId": "run-unit-v2",
         "execution": {
+            "startedAtUtc": "2026-09-09T00:00:00Z",
+            "finishedAtUtc": "2026-09-09T00:00:00.005Z",
             "providerCallBudget": 1000,
             "providerCalls": 3,
             "cacheHits": 0,
@@ -316,6 +339,7 @@ def test_report_is_deterministic_and_binds_dataset_config_and_governance() -> No
     assert first["bindings"] == dataset["bindings"]
     assert first["approvedMappingDigest"] == APPROVAL_DIGEST
     assert first["approvedMappingExpiresAtUtc"] == "2026-09-30T00:00:00Z"
+    assert first["approvedRoutes"] == APPROVAL_CONTENT["routes"]
 
 
 def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Path) -> None:
@@ -401,6 +425,8 @@ def test_empty_anchor_precision_and_abstain_denominators_fail_closed() -> None:
         "datasetDigest": module.dataset_digest(dataset),
         "runId": "empty",
         "execution": {
+            "startedAtUtc": "2026-09-09T00:00:00Z",
+            "finishedAtUtc": "2026-09-09T00:00:00Z",
             "providerCallBudget": 1000,
             "providerCalls": 0,
             "cacheHits": 0,
@@ -544,6 +570,7 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
         timeout_ms=1000,
         provider_call_budget=2,
         cache=cache,
+        production_routes=PRODUCTION_ROUTES,
     )
     with pytest.raises(ValueError, match="pre-populated cache"):
         await module.run_dataset(
@@ -553,6 +580,7 @@ async def test_runner_calls_gateway_on_cache_miss_and_identity_comes_from_audit(
             timeout_ms=1000,
             provider_call_budget=2,
             cache=cache,
+            production_routes=PRODUCTION_ROUTES,
         )
     provider_call = observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]
 
@@ -605,6 +633,7 @@ async def test_runner_rejects_a_cache_miss_that_bypasses_model_gateway() -> None
             timeout_ms=1000,
             provider_call_budget=2,
             cache={},
+            production_routes=PRODUCTION_ROUTES,
         )
 
 
@@ -708,10 +737,9 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]["promptDigest"] = _sha(
         "f"
     )
-    observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0]["operation"] = "chat"
     observations["cases"][1]["execution"]["attempts"][0]["providerCalls"][0][
-        "requestedOperation"
-    ] = "chat"
+        "requestedProvider"
+    ] = "unapproved-provider"
 
     report = module.evaluate_run(
         dataset,
@@ -724,7 +752,7 @@ def test_every_answer_call_must_match_approval_and_dataset_governance() -> None:
     assert report["status"] == "fail"
     assert "unapproved answer identity" in " ".join(report["failures"])
     assert "prompt governance mismatch" in " ".join(report["failures"])
-    assert "unapproved answer operation" in " ".join(report["failures"])
+    assert "unapproved requested provider route" in " ".join(report["failures"])
 
 
 @pytest.mark.parametrize(
@@ -773,7 +801,7 @@ def test_approval_artifact_requires_canonical_bytes_digest_and_unexpired_scope(
         valid, APPROVAL_DIGEST, now=datetime(2026, 9, 9, tzinfo=UTC)
     )
     module._require_approval_scope(approved, "tenant", "project-a")
-    assert approved["actualProvider"] == "approved-provider"
+    assert approved["routes"][2]["actualProvider"] == "approved-provider"
 
     with pytest.raises(ValueError, match="digest"):
         module._load_approval_artifact(valid, _sha("f"), now=datetime(2026, 9, 9, tzinfo=UTC))
@@ -822,7 +850,8 @@ def test_dataset_and_observed_scope_must_match_approval_artifact() -> None:
     dataset = _dataset()
     observations = _observations(dataset)
     wrong_scope = deepcopy(APPROVED)
-    wrong_scope["scope"] = {"enterpriseId": "tenant", "projectId": "project-b"}
+    for route in wrong_scope["routes"]:
+        route["scope"] = {"enterpriseId": "tenant", "projectId": "project-b"}
 
     report = module.evaluate_run(
         dataset,
@@ -954,6 +983,7 @@ async def test_runner_rejects_rebuilt_policy_mismatch_before_accepting_answer() 
             timeout_ms=1000,
             provider_call_budget=1,
             cache={},
+            production_routes=PRODUCTION_ROUTES,
         )
 
 
@@ -987,12 +1017,12 @@ async def test_runtime_policy_mismatch_precedes_every_model_operation() -> None:
                 context_digest=_sha("9"),
                 idempotency_key=request.idempotency_key,
                 actual_provider="approved-provider",
-                actual_model="approved-embedding",
+                actual_model="approved-provider/approved-embedding",
                 usage=ModelUsage(2, 0),
             )
             return ModelResult(
                 (0.6, 0.8),
-                "approved-embedding",
+                "approved-provider/approved-embedding",
                 ModelUsage(2, 0),
                 "approved-provider",
                 audit,
@@ -1000,7 +1030,9 @@ async def test_runtime_policy_mismatch_precedes_every_model_operation() -> None:
                 "gateway-embed",
             )
 
-    captured = module.CapturingModelGateway(Delegate(), module.ProviderCallBudget(1), APPROVED)
+    captured = module.CapturingModelGateway(
+        Delegate(), module.ProviderCallBudget(1), PRODUCTION_ROUTES
+    )
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -1116,13 +1148,13 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
                 context_digest=_sha("9"),
                 idempotency_key=request.idempotency_key,
                 actual_provider="approved-provider",
-                actual_model="approved-model",
+                actual_model="approved-provider/approved-model",
                 usage=ModelUsage(2, 1),
                 governance_digests=(_sha("3"), _sha("4")),
             )
             return ModelResult(
                 {},
-                "approved-model",
+                "approved-provider/approved-model",
                 ModelUsage(2, 1),
                 "approved-provider",
                 audit,
@@ -1177,6 +1209,7 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
         cache={},
         max_retries_per_case=1,
         approved_mapping=APPROVED,
+        production_routes=PRODUCTION_ROUTES,
     )
 
     attempts = observations["cases"][0]["execution"]["attempts"]
@@ -1213,7 +1246,7 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
 def _production_litellm_gateway(handler, *, max_retries: int):
     import httpx
 
-    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
     from tap.modules.ai.adapters.litellm import (
         LiteLLMModelGateway,
         LiteLLMModelGatewayConfig,
@@ -1222,6 +1255,13 @@ def _production_litellm_gateway(handler, *, max_retries: int):
 
     async def redact(text: str) -> str:
         return text
+
+    scope = ProjectScopeContext(
+        enterprise_id="tenant",
+        project_id="project-a",
+        actor_id="actor",
+        identity_mode=IdentityMode.VALIDATION,
+    )
 
     return LiteLLMModelGateway(
         LiteLLMModelGatewayConfig(
@@ -1234,7 +1274,7 @@ def _production_litellm_gateway(handler, *, max_retries: int):
             embedding_dimension=2,
             max_retries=max_retries,
         ),
-        scope=VALIDATION_SCOPE,
+        scope=scope,
         redact=redact,
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
@@ -1254,6 +1294,34 @@ def test_quality_runner_rejects_litellm_internal_retries() -> None:
     assert module._require_single_http_attempt_gateway(single_attempt) is single_attempt
 
 
+def test_approval_routes_must_exactly_match_production_litellm_before_http() -> None:
+    module = _runner()
+    posts = 0
+
+    async def handler(_request):
+        nonlocal posts
+        posts += 1
+        raise AssertionError("route mismatch must stop before HTTP")
+
+    gateway = _production_litellm_gateway(handler, max_retries=0)
+    production_routes = module._production_routes_from_gateway(gateway)
+    mismatched = deepcopy(APPROVED)
+    mismatched["routes"] = deepcopy(APPROVED["routes"])
+    mismatched["routes"][2]["actualModel"] = "configured-model-b"
+    with pytest.raises(ValueError, match="routes do not match"):
+        module._require_approved_production_routes(mismatched, production_routes)
+
+    missing_embedding = deepcopy(APPROVED)
+    missing_embedding["routes"] = [
+        item for item in missing_embedding["routes"] if item["operation"] != "embed"
+    ]
+    with pytest.raises(ValueError, match="routes do not match"):
+        module._require_approved_production_routes(missing_embedding, production_routes)
+
+    module._require_approved_production_routes(APPROVED, production_routes)
+    assert posts == 0
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["embed", "chat", "structured"])
 async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
@@ -1261,7 +1329,6 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
 ) -> None:
     import httpx
 
-    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.ai.domain.models import (
         ModelOperation,
         ModelRequest,
@@ -1325,7 +1392,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
             model_operation = ModelOperation(operation)
             prompt = "quality transport probe"
             request = ModelRequest(
-                VALIDATION_SCOPE,
+                gateway.scope,
                 "tapper-embedding" if operation == "embed" else "tapper-chat",
                 model_operation,
                 prompt,
@@ -1362,6 +1429,7 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
         cache={},
         max_retries_per_case=1,
         approved_mapping=APPROVED,
+        production_routes=PRODUCTION_ROUTES,
     )
     attempts = observations["cases"][0]["execution"]["attempts"]
     receipts = [attempt["providerCalls"] for attempt in attempts]
@@ -1370,6 +1438,9 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
     assert receipts[0][0]["status"] == "error"
     assert attempts[1]["retryReason"] == "ModelGatewayUnavailable"
     assert receipts[1][0]["status"] == "success"
+    assert receipts[1][0]["requestedAlias"] == PRODUCTION_ROUTES[operation]["logicalAlias"]
+    assert receipts[1][0]["requestedProvider"] == PRODUCTION_ROUTES[operation]["actualProvider"]
+    assert receipts[1][0]["requestedModel"] == PRODUCTION_ROUTES[operation]["actualModel"]
 
     budget_posts: list[httpx.Request] = []
 
@@ -1388,8 +1459,171 @@ async def test_runner_outer_retry_receipts_match_real_litellm_http_attempts(
             cache={},
             max_retries_per_case=1,
             approved_mapping=APPROVED,
+            production_routes=PRODUCTION_ROUTES,
         )
     assert len(budget_posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_approval_expiry_stops_next_case_before_reserve_and_http() -> None:
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from tap.modules.ai.domain.models import (
+        ModelOperation,
+        ModelRequest,
+        schema_digest,
+        text_digest,
+    )
+
+    module = _runner()
+    posts = 0
+
+    async def handler(_request):
+        nonlocal posts
+        posts += 1
+        return httpx.Response(
+            200,
+            json={
+                "model": "approved-provider/approved-model",
+                "choices": [{"message": {"content": '{"answer":"ok"}'}}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    class Clock:
+        current = datetime(2026, 9, 9, tzinfo=UTC)
+
+        def __call__(self):
+            return self.current
+
+    clock = Clock()
+    expiry = datetime(2026, 9, 10, tzinfo=UTC)
+    gateway = _production_litellm_gateway(handler, max_retries=0)
+    budget = module.ProviderCallBudget(2, expires_at=expiry, clock=clock)
+    captured = module.CapturingModelGateway(
+        gateway, budget, PRODUCTION_ROUTES, clock=clock, expires_at=expiry
+    )
+    output_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["answer"],
+        "properties": {"answer": {"type": "string"}},
+    }
+    prompt = "quality expiry probe"
+    request = ModelRequest(
+        gateway.scope,
+        "tapper-chat",
+        ModelOperation.STRUCTURED,
+        prompt,
+        text_digest(prompt),
+        "safe context",
+        1.0,
+        "expiry-case",
+        output_schema,
+        schema_digest(output_schema),
+    )
+
+    captured.begin_attempt()
+    await captured.generate_structured(request)
+    assert len(captured.end_attempt()) == 1
+    clock.current = expiry
+    captured.begin_attempt()
+    with pytest.raises(module.ApprovalExpired):
+        await captured.generate_structured(request)
+
+    assert captured.end_attempt() == []
+    assert posts == 1
+    assert budget.count == 1
+
+    dataset = _dataset()
+    first_case = deepcopy(dataset["cases"][0])
+    second_case = deepcopy(first_case)
+    second_case["caseId"] = "answerable-after-expiry"
+    second_case["question"] = "What is alpha after the approval expires?"
+    dataset["cases"] = [first_case, second_case]
+    posts = 0
+    run_gateway = _production_litellm_gateway(handler, max_retries=0)
+
+    class RunClock:
+        calls = 0
+
+        def __call__(self):
+            self.calls += 1
+            # Run start, case 1 start, attempt start, reserve, call end, case 1 end.
+            # The next read is case 2 start and must fail before authority/model work.
+            return datetime(2026, 9, 9, tzinfo=UTC) if self.calls <= 6 else expiry
+
+    run_clock = RunClock()
+
+    class TwoCasePath:
+        def __init__(self, gateway):
+            self.gateway = gateway
+
+        async def resolve_authority(self, case):
+            return {
+                "actualEnterpriseId": "tenant",
+                "actualProjectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+            }
+
+        async def run_case(self, case):
+            await self.gateway.generate_structured(request)
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": True,
+                "claims": [],
+                "citations": [],
+            }
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    run_approval = {**APPROVED, "expiresAtUtc": "2026-09-10T00:00:00Z"}
+    with pytest.raises(module.ApprovalExpired):
+        await module.run_dataset(
+            dataset,
+            gateway=run_gateway,
+            path_factory=TwoCasePath,
+            timeout_ms=1000,
+            provider_call_budget=2,
+            cache={},
+            max_retries_per_case=0,
+            approved_mapping=run_approval,
+            production_routes=PRODUCTION_ROUTES,
+            clock=run_clock,
+        )
+
+    assert posts == 1
+    assert run_clock.calls == 7
+
+
+@pytest.mark.parametrize("mutation", ["call", "case", "run"])
+def test_evaluator_rejects_execution_finishing_after_approval_expiry(
+    mutation: str,
+) -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    if mutation == "call":
+        observations["cases"][0]["execution"]["attempts"][0]["providerCalls"][0]["endedAtUtc"] = (
+            "2026-09-30T00:00:00.001Z"
+        )
+    elif mutation == "case":
+        observations["cases"][0]["execution"]["finishedAtUtc"] = "2026-09-30T00:00:00.001Z"
+    else:
+        observations["execution"]["finishedAtUtc"] = "2026-09-30T00:00:00.001Z"
+
+    with pytest.raises(ValueError, match="approval expiry"):
+        module.evaluate_run(
+            dataset,
+            observations,
+            min_cases=4,
+            require_real=True,
+            approved_mapping=APPROVED,
+        )
 
 
 @pytest.mark.asyncio
@@ -1427,13 +1661,13 @@ async def test_provider_budget_stops_n_plus_one_before_delegate_io() -> None:
                 context_digest=_sha("9"),
                 idempotency_key=request.idempotency_key,
                 actual_provider="approved-provider",
-                actual_model="approved-model",
+                actual_model="approved-provider/approved-model",
                 usage=ModelUsage(1, 1),
                 governance_digests=(_sha("3"), _sha("4")),
             )
             return ModelResult(
                 {},
-                "approved-model",
+                "approved-provider/approved-model",
                 ModelUsage(1, 1),
                 "approved-provider",
                 audit,
@@ -1487,6 +1721,7 @@ async def test_provider_budget_stops_n_plus_one_before_delegate_io() -> None:
             timeout_ms=1000,
             provider_call_budget=1,
             cache={},
+            production_routes=PRODUCTION_ROUTES,
         )
 
     assert delegate_calls == 1
@@ -1577,6 +1812,7 @@ async def test_scope_aware_service_rejects_wrong_project_and_unauthorized_source
         timeout_ms=1000,
         provider_call_budget=1,
         cache={},
+        production_routes=PRODUCTION_ROUTES,
     )
 
     assert repository.loads == 1
@@ -1625,6 +1861,7 @@ async def test_runner_fails_stale_authorization_labels_before_model_io() -> None
             timeout_ms=1000,
             provider_call_budget=1,
             cache={},
+            production_routes=PRODUCTION_ROUTES,
         )
 
     assert run_calls == 0

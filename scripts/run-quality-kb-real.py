@@ -63,19 +63,41 @@ class PolicyDigestMismatch(ValueError):
     """The server-rebuilt retrieval policy differs from the dataset binding."""
 
 
+class ApprovalExpired(RuntimeError):
+    """The immutable approval expired before the next provider attempt."""
+
+
+def _system_clock() -> datetime:
+    return datetime.now(UTC)
+
+
 class ProviderCallBudget:
     """Reserve each provider call atomically before delegate I/O."""
 
-    def __init__(self, maximum: int) -> None:
+    def __init__(
+        self,
+        maximum: int,
+        *,
+        expires_at: datetime | None = None,
+        clock: Callable[[], datetime] = _system_clock,
+    ) -> None:
         self.maximum = maximum
         self.count = 0
         self._lock = asyncio.Lock()
+        self.expires_at = expires_at or datetime.max.replace(tzinfo=UTC)
+        self._clock = clock
 
-    async def reserve(self) -> None:
+    async def reserve(self) -> datetime:
         async with self._lock:
+            started_at = self._clock()
+            if started_at.tzinfo != UTC:
+                raise ValueError("quality clock must return UTC")
+            if started_at >= self.expires_at:
+                raise ApprovalExpired("quality approval expired before provider I/O")
             if self.count >= self.maximum:
                 raise RuntimeError("provider call budget exhausted before provider I/O")
             self.count += 1
+            return started_at
 
 
 class CapturingModelGateway:
@@ -85,12 +107,17 @@ class CapturingModelGateway:
         self,
         delegate: ModelGateway,
         budget: ProviderCallBudget,
-        approved_mapping: dict[str, Any] | None = None,
+        production_routes: dict[str, dict[str, Any]] | None = None,
+        *,
+        clock: Callable[[], datetime] = _system_clock,
+        expires_at: datetime | None = None,
     ) -> None:
         self._delegate = delegate
         self._budget = budget
-        self._approved = approved_mapping
+        self._routes = production_routes or {}
         self._active: list[dict[str, object]] | None = None
+        self._clock = clock
+        self._expires_at = expires_at or datetime.max.replace(tzinfo=UTC)
 
     def begin_attempt(self) -> None:
         if self._active is not None:
@@ -119,17 +146,17 @@ class CapturingModelGateway:
     async def _capture(self, method: str, request: ModelRequest) -> ModelResult:
         if self._active is None:
             raise RuntimeError("ModelGateway call occurred outside a quality attempt")
+        route = self._routes.get(request.operation.value)
+        if route is None or route.get("logicalAlias") != request.alias:
+            raise ValueError("production ModelGateway route is not captured")
+        call_started_at = await self._budget.reserve()
         receipt: dict[str, object] = {
             "runnerCallId": str(uuid4()),
             "requestedAlias": request.alias,
             "requestedOperation": request.operation.value,
-            "requestedProvider": (
-                None if self._approved is None else self._approved["actualProvider"]
-            ),
-            "requestedModel": (
-                None if self._approved is None else self._approved["actualModel"]
-            ),
-            "startedAtUtc": _now(),
+            "requestedProvider": route["actualProvider"],
+            "requestedModel": route["actualModel"],
+            "startedAtUtc": _utc_text(call_started_at),
             "status": "started",
             "operation": request.operation.value,
             "alias": request.alias,
@@ -137,7 +164,6 @@ class CapturingModelGateway:
             "schemaDigest": request.schema_digest,
             "governanceDigests": list(request.governance_digests),
         }
-        await self._budget.reserve()
         self._active.append(receipt)
         started = time.monotonic_ns()
         result: ModelResult | None = None
@@ -196,10 +222,20 @@ class CapturingModelGateway:
             raise
         finally:
             receipt["durationMs"] = max(0, (time.monotonic_ns() - started) // 1_000_000)
+            ended_at = self._clock()
+            receipt["endedAtUtc"] = _utc_text(ended_at)
+            if ended_at > self._expires_at:
+                raise ApprovalExpired("quality approval expired during provider I/O")
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+def _utc_text(value: datetime) -> str:
+    if value.tzinfo != UTC:
+        raise ValueError("quality clock must return UTC")
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _now(clock: Callable[[], datetime] = _system_clock) -> str:
+    return _utc_text(clock())
 
 
 async def run_dataset(
@@ -212,6 +248,8 @@ async def run_dataset(
     cache: MutableMapping[str, dict[str, Any]],
     max_retries_per_case: int = 2,
     approved_mapping: dict[str, Any] | None = None,
+    production_routes: dict[str, dict[str, Any]] | None = None,
+    clock: Callable[[], datetime] = _system_clock,
 ) -> dict[str, object]:
     """Run each cache miss once through Knowledge; no observation fields come from labels."""
     cases = _EVALUATOR.validate_dataset(dataset, min_cases=1)
@@ -223,6 +261,10 @@ async def run_dataset(
         raise ValueError("max_retries_per_case must be between 0 and 2")
     if cache:
         raise ValueError("pre-populated cache is forbidden for the V1 real gate")
+    if approved_mapping is not None:
+        if production_routes is None:
+            raise ValueError("production ModelGateway routes are required")
+        _require_approved_production_routes(approved_mapping, production_routes)
     minimum_provider_calls = sum(
         case["authorizationExpected"] == "allow" for case in cases
     )
@@ -230,13 +272,34 @@ async def run_dataset(
         raise ValueError(
             "provider call budget is below the minimum eligible-case call bound"
         )
-    budget = ProviderCallBudget(provider_call_budget)
-    capture = CapturingModelGateway(gateway, budget, approved_mapping)
+    expires_at = (
+        _EVALUATOR._utc(approved_mapping["expiresAtUtc"], "approval expiry")
+        if approved_mapping is not None
+        else datetime.max.replace(tzinfo=UTC)
+    )
+    run_started_at = clock()
+    if run_started_at >= expires_at:
+        raise ApprovalExpired("quality approval expired before run")
+    budget = ProviderCallBudget(
+        provider_call_budget, expires_at=expires_at, clock=clock
+    )
+    capture = CapturingModelGateway(
+        gateway,
+        budget,
+        production_routes,
+        clock=clock,
+        expires_at=expires_at,
+    )
     path = path_factory(capture)
     output_cases: list[dict[str, Any]] = []
     provider_calls = cache_hits = retries = 0
     for case in cases:
         case_id = str(case["caseId"])
+        case_started_at = clock()
+        if case_started_at >= expires_at:
+            raise ApprovalExpired(f"case {case_id} started after approval expiry")
+        started_at = _utc_text(case_started_at)
+        case_started = time.monotonic_ns()
         authority = await path.resolve_authority(case)
         actual_project = authority.get("actualProjectId")
         actual_enterprise = authority.get("actualEnterpriseId")
@@ -271,8 +334,6 @@ async def run_dataset(
                 f"case {case_id} authorization label contradicts server authority"
             )
         cache_key = _EVALUATOR.expected_cache_key(dataset, case_id)
-        started_at = _now()
-        case_started = time.monotonic_ns()
         cached = cache.get(cache_key)
         if cached is not None:
             if (
@@ -302,7 +363,7 @@ async def run_dataset(
                     {
                         "attempt": 1,
                         "retryReason": None,
-                        "startedAtUtc": _now(),
+                        "startedAtUtc": _now(clock),
                         "durationMs": 0,
                         "outcome": "authorization-denied",
                         "providerCalls": [],
@@ -313,7 +374,7 @@ async def run_dataset(
             for attempt_number in (
                 () if project_mismatch else range(1, max_retries_per_case + 2)
             ):
-                attempt_started_at = _now()
+                attempt_started_at = _now(clock)
                 attempt_started = time.monotonic_ns()
                 capture.begin_attempt()
                 try:
@@ -420,9 +481,6 @@ async def run_dataset(
                         }
                     )
                     break
-        duration_ms = max(0, (time.monotonic_ns() - case_started) // 1_000_000)
-        if duration_ms > timeout_ms:
-            raise TimeoutError(f"case {case_id} exceeded its total timeout")
         observation = {
             "caseId": case_id,
             "authority": authority_observation,
@@ -441,9 +499,16 @@ async def run_dataset(
                 "evidenceDigest": evidence_digest,
                 "body": deepcopy(body),
             }
+        case_finished_at = clock()
+        if case_finished_at > expires_at:
+            raise ApprovalExpired(f"case {case_id} finished after approval expiry")
+        duration_ms = max(0, (time.monotonic_ns() - case_started) // 1_000_000)
+        if duration_ms > timeout_ms:
+            raise TimeoutError(f"case {case_id} exceeded its total timeout")
         observation["execution"] = {
             "timeoutMs": timeout_ms,
             "startedAtUtc": started_at,
+            "finishedAtUtc": _utc_text(case_finished_at),
             "durationMs": duration_ms,
             "cacheKey": cache_key,
             "cacheEvidenceDigest": evidence_digest,
@@ -454,11 +519,16 @@ async def run_dataset(
         output_cases.append(observation)
     if provider_calls != budget.count:
         raise RuntimeError("captured provider calls do not match reserved budget calls")
+    run_finished_at = clock()
+    if run_finished_at > expires_at:
+        raise ApprovalExpired("quality run finished after approval expiry")
     return {
         "schemaVersion": "quality-kb-observations-v1",
         "datasetDigest": _EVALUATOR.dataset_digest(dataset),
         "runId": str(uuid4()),
         "execution": {
+            "startedAtUtc": _utc_text(run_started_at),
+            "finishedAtUtc": _utc_text(run_finished_at),
             "providerCallBudget": provider_call_budget,
             "providerCalls": provider_calls,
             "cacheHits": cache_hits,
@@ -730,11 +800,7 @@ def _load_approval_artifact(
     allowed = {
         "schemaVersion",
         "approvalId",
-        "modelAlias",
-        "actualProvider",
-        "actualModel",
-        "operation",
-        "scope",
+        "routes",
         "expiresAtUtc",
     }
     required = allowed
@@ -742,23 +808,46 @@ def _load_approval_artifact(
         raise ValueError("approval artifact expiry is required")
     if set(value) - allowed or not required <= set(value):
         raise ValueError("approval artifact fields are invalid")
-    if value.get("schemaVersion") != "quality-kb-model-approval-v1":
+    if value.get("schemaVersion") != "quality-kb-model-approval-v2":
         raise ValueError("approval artifact schema is invalid")
-    for name in ("approvalId", "modelAlias", "actualProvider", "actualModel"):
+    for name in ("approvalId",):
         item = value.get(name)
         if (
             not isinstance(item, str)
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", item) is None
         ):
             raise ValueError(f"approval artifact {name} is invalid")
-    if value.get("operation") != "structured":
-        raise ValueError("approval artifact operation is invalid")
-    scope = value.get("scope")
-    if not isinstance(scope, dict) or set(scope) != {"enterpriseId", "projectId"}:
-        raise ValueError("approval artifact scope is invalid")
-    for item in scope.values():
-        if not isinstance(item, str) or not item.strip() or len(item) > 128:
-            raise ValueError("approval artifact scope is invalid")
+    routes = value.get("routes")
+    if not isinstance(routes, list) or len(routes) != 3:
+        raise ValueError("approval artifact routes are invalid")
+    expected_operations = ("embed", "chat", "structured")
+    for expected_operation, route in zip(expected_operations, routes, strict=True):
+        if not isinstance(route, dict) or set(route) != {
+            "logicalAlias",
+            "actualProvider",
+            "actualModel",
+            "operation",
+            "scope",
+        }:
+            raise ValueError("approval artifact routes are invalid")
+        if route.get("operation") != expected_operation:
+            raise ValueError("approval artifact routes are invalid")
+        for name in ("logicalAlias", "actualProvider", "actualModel"):
+            item = route.get(name)
+            if (
+                not isinstance(item, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", item) is None
+            ):
+                raise ValueError("approval artifact routes are invalid")
+        scope = route.get("scope")
+        if not isinstance(scope, dict) or set(scope) != {
+            "enterpriseId",
+            "projectId",
+        }:
+            raise ValueError("approval artifact route scope is invalid")
+        for item in scope.values():
+            if not isinstance(item, str) or not item.strip() or len(item) > 128:
+                raise ValueError("approval artifact route scope is invalid")
     expires = value.get("expiresAtUtc")
     if not isinstance(expires, str):
         raise ValueError("approval artifact expiry is required")
@@ -774,11 +863,12 @@ def _load_approval_artifact(
 def _require_approval_scope(
     approved: dict[str, Any], enterprise_id: str, project_id: str
 ) -> None:
-    scope = approved.get("scope")
-    if not isinstance(scope, dict) or scope != {
-        "enterpriseId": enterprise_id,
-        "projectId": project_id,
-    }:
+    expected = {"enterpriseId": enterprise_id, "projectId": project_id}
+    routes = approved.get("routes")
+    if not isinstance(routes, list) or any(
+        not isinstance(route, dict) or route.get("scope") != expected
+        for route in routes
+    ):
         raise ValueError("approval artifact scope does not match actual runtime scope")
 
 
@@ -788,6 +878,61 @@ def _require_single_http_attempt_gateway(gateway: ModelGateway) -> ModelGateway:
     if type(gateway) is not LiteLLMModelGateway or gateway._config.max_retries != 0:
         raise ValueError("quality ModelGateway internal retries must equal zero")
     return gateway
+
+
+def _production_routes_from_gateway(
+    gateway: ModelGateway,
+) -> dict[str, dict[str, Any]]:
+    from tap.modules.ai.adapters.litellm import LiteLLMModelGateway
+
+    if type(gateway) is not LiteLLMModelGateway:
+        raise ValueError("quality ModelGateway must be production LiteLLM")
+    config = gateway._config
+    return {
+        "embed": {
+            "logicalAlias": config.embedding_alias,
+            "actualProvider": config.embedding_model.provider,
+            "actualModel": config.embedding_model.route,
+            "operation": "embed",
+            "scope": {
+                "enterpriseId": gateway.scope.enterprise_id,
+                "projectId": gateway.scope.project_id,
+            },
+        },
+        "chat": {
+            "logicalAlias": config.chat_alias,
+            "actualProvider": config.chat_model.provider,
+            "actualModel": config.chat_model.route,
+            "operation": "chat",
+            "scope": {
+                "enterpriseId": gateway.scope.enterprise_id,
+                "projectId": gateway.scope.project_id,
+            },
+        },
+        "structured": {
+            "logicalAlias": config.chat_alias,
+            "actualProvider": config.chat_model.provider,
+            "actualModel": config.chat_model.route,
+            "operation": "structured",
+            "scope": {
+                "enterpriseId": gateway.scope.enterprise_id,
+                "projectId": gateway.scope.project_id,
+            },
+        },
+    }
+
+
+def _require_approved_production_routes(
+    approved: dict[str, Any], production_routes: dict[str, dict[str, Any]]
+) -> None:
+    routes = approved.get("routes")
+    approved_routes = (
+        {str(route.get("operation")): route for route in routes}
+        if isinstance(routes, list) and all(isinstance(route, dict) for route in routes)
+        else {}
+    )
+    if approved_routes != production_routes:
+        raise ValueError("approval routes do not match production ModelGateway routes")
 
 
 def _approved_mapping_from_env(*, now: datetime | None = None) -> dict[str, Any]:
@@ -862,7 +1007,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         _require_governance_bindings(dataset)
         if dataset["bindings"]["approvalDigest"] != approved["digest"]:
             raise ValueError("dataset approval digest does not match approval artifact")
-        if dataset["bindings"]["modelAlias"] != approved["modelAlias"]:
+        if dataset["bindings"]["modelAlias"] != approved["routes"][2]["logicalAlias"]:
             raise ValueError("dataset model alias does not match approval artifact")
     except (OSError, TypeError, ValueError) as error:
         print(
@@ -891,6 +1036,8 @@ async def _main_async(args: argparse.Namespace) -> int:
         original_gateway = _require_single_http_attempt_gateway(
             runtime.quality_models.gateway
         )
+        production_routes = _production_routes_from_gateway(original_gateway)
+        _require_approved_production_routes(approved, production_routes)
 
         def path_factory(capture: CapturingModelGateway) -> RuntimeKnowledgePath:
             runtime.quality_models.gateway = capture
@@ -905,6 +1052,7 @@ async def _main_async(args: argparse.Namespace) -> int:
             cache={},
             max_retries_per_case=args.max_retries_per_case,
             approved_mapping=approved,
+            production_routes=production_routes,
         )
         report = _EVALUATOR.evaluate_run(
             dataset,
