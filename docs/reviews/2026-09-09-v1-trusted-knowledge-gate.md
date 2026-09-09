@@ -16,15 +16,15 @@
 - canonical approval v2 对 embed/chat/structured 的 alias、provider、model、operation、scope、digest 与有界 expiry 逐路由校验；production config 不匹配时 zero provider I/O。
 - LiteLLM quality runtime 禁止内部隐藏重试；runner 在每次 HTTP attempt 前执行原子预算与 expiry 检查，并记录成功/失败、时长、重试因果与 actual identity。V1 gate 禁止预置 cache 并要求 zero cache hit。
 
-## 未关闭的实现问题
+## 实现复核状态
 
-第五轮独立复审仍有 1 项 Important：evaluator 分别验证 case 与 run 的时间格式、顺序和 expiry，却未验证 `run.start <= case.start <= case.finish <= run.finish`。只要各自局部合法，把声明的 run 时间整体移动到所有 case 之后仍可能得到 `status=pass`。该问题可离线修复，但本任务已达到执行计划允许的五轮修正上限，不能继续把同一实现循环当作通过。
+第五轮独立复审曾发现 1 项 chronology Important：evaluator 分别验证 case 与 run 的时间格式、顺序和 expiry，却未验证两者嵌套。后续恢复修正以稳定 RED 证明整体移动 run 时间仍会伪通过，再要求每个实际 observation 满足 `run.start <= case.start <= case.finish <= run.finish`；缺 observation 仍计为 skipped，不伪造 execution。独立复核最终确认 Task 10 implementation 为 Critical 0、Important 0、Minor 0。
 
 ## 验证证据
 
 | 检查                                              | 实际结果                                                                                        |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 最终 quality focused                              | 48 passed                                                                                       |
+| 最终 quality focused                              | 49 passed                                                                                       |
 | LiteLLM contract                                  | 41 passed                                                                                       |
 | 最近相关 runtime/composition/Conversation/quality | 234 passed；3 条既有 Alembic warnings                                                           |
 | 最近完整 Backend                                  | 2992 passed、140 skipped；后续一次环境受扰运行有 59 项 supervisor/live-service 失败，未计为通过 |
@@ -33,4 +33,4 @@
 | `make check` / diff                               | passed                                                                                          |
 | Gate                                              | offline exit 1；real exit 2 before provider I/O；0/100 labeled cases                            |
 
-只有在补齐人工数据、合法语料、批准 artifact/route/凭据，修复 chronology 嵌套校验，并由独立审查确认 Critical/Important 为 0 后，才可运行真实 QUALITY-KB-01 并将本结论改为 `pass`。任何阈值下调、synthetic 数据冒充人工标注、逻辑模型标签冒充实际身份或 skip 都不能解除门禁。
+只有在补齐人工数据、合法语料、批准 artifact/route/凭据，并真实运行全部 case 通过硬阈值与 zero-skip 后，才可将本结论改为 `pass`。任何阈值下调、synthetic 数据冒充人工标注、逻辑模型标签冒充实际身份或 skip 都不能解除门禁。
