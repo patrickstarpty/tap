@@ -30,3 +30,4 @@
 - [Tapper V1 统一 ModelGateway 与模型目录验收](2026-09-08-tapper-v1-model-gateway-review.md)：Task 7 通过；记录唯一 LiteLLM Gateway、Project 模型目录、legacy Codex 隔离、一轮审查修正和完整隔离回归。
 - [Tapper V1 AI Agent 与 Skill Revision 验收](2026-09-09-tapper-v1-ai-agent-skill-catalog-review.md)：Task 7A 通过；记录不可变 Catalog Revision、并发幂等 Validation seed、只读 API、选择器恢复态、四轮审查修正与隔离回归。
 - [Tapper V1 Conversation 持久化与可恢复流验收](2026-09-09-tapper-v1-conversation-streaming-review.md)：Task 8 通过；记录不可变双快照、generation worker、lease/fencing、Evidence、可恢复 SSE、0012a 兼容迁移与五轮审查修正。
+- [Tapper V1 真实 Conversation Web 接线验收](2026-09-09-tapper-v1-durable-conversation-web-review.md)：Task 9 通过；记录默认 API 模式、历史 Context/Citation、可恢复多轮 SSE、页面级重启旅程、两轮审查修正和完整隔离回归。
