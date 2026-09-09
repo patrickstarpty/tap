@@ -12,6 +12,7 @@
     "promptDigest": null,
     "agentRevisionDigest": null,
     "skillRevisionDigests": [],
+    "governanceDigests": [],
     "schemaDigest": null
   },
   "cases": []

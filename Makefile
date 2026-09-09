@@ -44,8 +44,8 @@ quality-kb-real: ## require an opted-in real, human-labeled QUALITY-KB-01 run
 		echo "quality-kb-real requires TAP_RUN_QUALITY_KB_01=1" >&2; \
 		exit 2; \
 	fi
-	@if [ -z "$${TAP_QUALITY_KB_APPROVED_PROVIDER:-}" ] || [ -z "$${TAP_QUALITY_KB_APPROVED_MODEL:-}" ] || [ -z "$${TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST:-}" ]; then \
-		echo "quality-kb-real requires an explicit approved actual provider/model mapping" >&2; \
+	@if [ -z "$${TAP_QUALITY_KB_APPROVED_PROVIDER:-}" ] || [ "$${TAP_QUALITY_KB_APPROVED_OPERATION:-}" != "structured" ] || [ -z "$${TAP_QUALITY_KB_APPROVED_MODEL:-}" ] || [ -z "$${TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST:-}" ] || [ -z "$${TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT:-}" ]; then \
+		echo "quality-kb-real requires an explicit approved actual provider/model/operation mapping and approval artifact" >&2; \
 		exit 2; \
 	fi
 	@mkdir -p .local/quality-kb

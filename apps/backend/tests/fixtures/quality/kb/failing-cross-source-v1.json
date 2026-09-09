@@ -13,6 +13,7 @@
       "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "agentRevisionDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "skillRevisionDigests": ["sha256:4444444444444444444444444444444444444444444444444444444444444444"],
+      "governanceDigests": ["sha256:3333333333333333333333333333333333333333333333333333333333333333", "sha256:4444444444444444444444444444444444444444444444444444444444444444"],
       "schemaDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
     },
     "cases": [
@@ -49,7 +50,7 @@
   },
   "observations": {
     "schemaVersion": "quality-kb-observations-v1",
-    "datasetDigest": "sha256:1a643b26a96085f9c18e26e92a43cc3c4ad29175dfa101b56bb54a1a75ba96b3",
+    "datasetDigest": "sha256:af166ccddd85235df66551843692ef12020b6ce3b5e4ab5a589362f800e30227",
     "runId": "red-run-v2",
     "execution": {
       "providerCallBudget": 1000,
@@ -61,6 +62,12 @@
     "cases": [
       {
         "caseId": "cross-source-red",
+        "authority": {
+          "actualProjectId": "project-a",
+          "authorizedSourceIds": ["source-a"],
+          "decision": "allow",
+          "reason": null
+        },
         "retrieved": [
           {"rank": 1, "projectId": "project-a", "sourceId": "source-b", "documentRevisionId": "revision-b", "chunkId": "chunk-foreign"}
         ],
@@ -83,8 +90,10 @@
           "timeoutMs": 1000,
           "startedAtUtc": "2026-09-09T00:00:00Z",
           "durationMs": 5,
-          "cacheKey": "sha256:87e3bd766ec4c72b949aa5f458a4d132f1cfeb6448d65ae1dc4670bf52ad814b",
+          "cacheKey": "sha256:9f5c37a1e92d40633b77b9381c23d03290d044446fc251072937ca754e0130ec",
+          "cacheEvidenceDigest": "sha256:f6e206865ae6bf526c6cd8c00c5c2327e996c08c9e722e0b2fecede58c726661",
           "cacheHit": false,
+          "maxRetriesPerCase": 2,
           "attempts": [
             {
               "attempt": 1,
@@ -94,11 +103,18 @@
               "providerCalls": [
                 {
                   "operation": "structured",
+                  "alias": "tapper-chat",
                   "actualProvider": "approved-provider",
                   "actualModel": "approved-model",
                   "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                  "schemaDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+                  "governanceDigests": [
+                    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                    "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+                  ],
                   "providerRequestId": "provider-red-1",
-                  "gatewayCallId": "gateway-red-1"
+                  "gatewayCallId": "gateway-red-1",
+                  "durationMs": 2
                 }
               ]
             }

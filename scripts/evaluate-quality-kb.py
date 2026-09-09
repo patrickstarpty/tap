@@ -9,11 +9,16 @@ import json
 import re
 import sys
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\Z")
+_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
+_APPROVAL_ARTIFACT = re.compile(
+    r"approval-record:[A-Za-z0-9][A-Za-z0-9._:/-]{0,1007}\Z"
+)
 _CASE_TYPES = frozenset({"answerable", "conflict", "unauthorized", "abstain"})
 _THRESHOLDS = {
     "minimumCases": 100,
@@ -83,6 +88,21 @@ def expected_cache_key(dataset_value: object, case_id: str) -> str:
     return _digest({"datasetDigest": dataset_digest(dataset_value), "caseId": case_id})
 
 
+def runtime_evidence_digest(observation_value: object) -> str:
+    """Bind server-derived case evidence independently of human labels."""
+    observation = _mapping(observation_value, "observation case")
+    return _digest(
+        {
+            "caseId": observation.get("caseId"),
+            "authority": observation.get("authority"),
+            "retrieved": observation.get("retrieved"),
+            "abstained": observation.get("abstained"),
+            "claims": observation.get("claims"),
+            "citations": observation.get("citations"),
+        }
+    )
+
+
 def _evaluator_digest() -> str:
     return "sha256:" + hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
@@ -113,14 +133,27 @@ def validate_dataset(
     if metadata.get("provenance") is not None:
         _text(metadata["provenance"], "dataset provenance", 1024)
     bindings = _mapping(root.get("bindings"), "bindings")
-    _text(bindings.get("modelAlias"), "modelAlias", 256)
+    model_alias = _text(bindings.get("modelAlias"), "modelAlias", 256)
+    if _ALIAS.fullmatch(model_alias) is None:
+        raise ValueError("modelAlias format is invalid")
     for name in ("policyDigest", "promptDigest", "agentRevisionDigest", "schemaDigest"):
         if bindings.get(name) is not None:
             _digest_text(bindings[name], name)
-    for value in _sequence(
-        bindings.get("skillRevisionDigests"), "skillRevisionDigests"
-    ):
+    skill_digests = [
         _digest_text(value, "skillRevisionDigest")
+        for value in _sequence(
+            bindings.get("skillRevisionDigests"), "skillRevisionDigests"
+        )
+    ]
+    governance_digests = [
+        _digest_text(value, "governanceDigest")
+        for value in _sequence(bindings.get("governanceDigests"), "governanceDigests")
+    ]
+    agent_digest = bindings.get("agentRevisionDigest")
+    if agent_digest is not None and agent_digest not in governance_digests:
+        raise ValueError("governanceDigests must bind the Agent Revision")
+    if any(value not in governance_digests for value in skill_digests):
+        raise ValueError("governanceDigests must bind every Skill Revision")
 
     cases = [_mapping(item, "case") for item in _sequence(root.get("cases"), "cases")]
     ids: set[str] = set()
@@ -152,10 +185,16 @@ def validate_dataset(
         authorization = case.get("authorizationExpected")
         should_abstain = case.get("shouldAbstain")
         conflict = case.get("conflictLabel")
+        authorization_failure = case.get("authorizationFailure")
         if authorization not in {"allow", "deny"} or type(should_abstain) is not bool:
             raise ValueError(f"case {case_id} has invalid authorization/abstain labels")
         if conflict is not None:
             _text(conflict, "conflictLabel", 256)
+        if authorization_failure is not None and authorization_failure not in {
+            "project",
+            "source",
+        }:
+            raise ValueError(f"case {case_id} has invalid authorizationFailure")
         evidence = [
             _validate_evidence(item, case_id)
             for item in _sequence(case.get("expectedEvidence"), "expectedEvidence")
@@ -212,12 +251,22 @@ def validate_dataset(
         if case_type == "unauthorized" and (
             not should_abstain
             or authorization != "deny"
-            or selected <= authorized
             or evidence
             or claims
             or conflict is not None
+            or authorization_failure not in {"project", "source"}
         ):
             raise ValueError(f"unauthorized case {case_id} has inconsistent labels")
+        if (
+            case_type == "unauthorized"
+            and authorization_failure == "source"
+            and selected <= authorized
+        ):
+            raise ValueError(
+                f"unauthorized case {case_id} has inconsistent source labels"
+            )
+        if case_type != "unauthorized" and authorization_failure is not None:
+            raise ValueError(f"case {case_id} has unexpected authorizationFailure")
         if case_type == "abstain" and (
             not should_abstain
             or authorization != "allow"
@@ -273,9 +322,31 @@ def _anchor_key(value: dict[str, Any], *, resolved: bool) -> tuple[object, ...]:
     )
 
 
+def _utc(value: object, name: str) -> datetime:
+    text = _text(value, name, 64)
+    if _UTC.fullmatch(text) is None:
+        raise ValueError(f"{name} time is invalid")
+    try:
+        parsed = datetime.fromisoformat(text.removesuffix("Z") + "+00:00")
+    except ValueError as error:
+        raise ValueError(f"{name} time is invalid") from error
+    if parsed.tzinfo != UTC:
+        raise ValueError(f"{name} time is invalid")
+    return parsed
+
+
 def _validate_execution(
-    root: dict[str, Any], case_id: str, observation: dict[str, Any], call_ids: set[str]
+    root: dict[str, Any],
+    case: dict[str, Any],
+    observation: dict[str, Any],
+    call_ids: set[str],
+    *,
+    max_retries_per_case: int,
+    approved_mapping: tuple[str, str, str, str, str] | None,
+    require_real: bool,
+    failures: list[str],
 ) -> tuple[int, int, int, set[tuple[str, str]]]:
+    case_id = str(case["caseId"])
     execution = _mapping(observation.get("execution"), f"case {case_id} execution")
     timeout_ms = execution.get("timeoutMs")
     duration_ms = execution.get("durationMs")
@@ -283,12 +354,17 @@ def _validate_execution(
         raise ValueError(f"case {case_id} timeout evidence is invalid")
     if type(duration_ms) is not int or not 0 <= duration_ms <= timeout_ms:
         raise ValueError(f"case {case_id} duration evidence is invalid")
-    if _UTC.fullmatch(_text(execution.get("startedAtUtc"), "startedAtUtc", 64)) is None:
-        raise ValueError(f"case {case_id} start time is invalid")
+    case_started = _utc(execution.get("startedAtUtc"), f"case {case_id} start")
+    if execution.get("maxRetriesPerCase") != max_retries_per_case:
+        failures.append(f"case {case_id} retry configuration mismatch")
     if _digest_text(execution.get("cacheKey"), "cacheKey") != expected_cache_key(
         root, case_id
     ):
         raise ValueError(f"case {case_id} cache key is invalid")
+    if _digest_text(
+        execution.get("cacheEvidenceDigest"), "cacheEvidenceDigest"
+    ) != runtime_evidence_digest(observation):
+        raise ValueError(f"case {case_id} cache evidence digest mismatch")
     cache_hit = execution.get("cacheHit")
     if type(cache_hit) is not bool:
         raise ValueError(f"case {case_id} cacheHit must be boolean")
@@ -300,8 +376,15 @@ def _validate_execution(
         raise ValueError(f"case {case_id} cache hit cannot claim provider attempts")
     if not cache_hit and not attempts:
         raise ValueError(f"case {case_id} cache miss has no provider attempt")
+    if len(attempts) > max_retries_per_case + 1:
+        raise ValueError(f"case {case_id} attempts exceed retry configuration")
     identities: set[tuple[str, str]] = set()
     provider_calls = 0
+    answer_calls = 0
+    denied = (
+        _mapping(observation.get("authority"), "authority").get("decision") == "deny"
+    )
+    attempt_duration_total = 0
     for index, attempt in enumerate(attempts, 1):
         if attempt.get("attempt") != index:
             raise ValueError(f"case {case_id} attempt order is invalid")
@@ -310,11 +393,28 @@ def _validate_execution(
             index > 1 and not isinstance(retry_reason, str)
         ):
             raise ValueError(f"case {case_id} retry reason evidence is invalid")
+        attempt_started = _utc(
+            attempt.get("startedAtUtc"), f"case {case_id} attempt {index} start"
+        )
+        attempt_duration = attempt.get("durationMs")
+        if (
+            attempt_started < case_started
+            or attempt_started > case_started + timedelta(milliseconds=duration_ms)
+            or type(attempt_duration) is not int
+            or not 0 <= attempt_duration <= duration_ms
+            or attempt_duration > timeout_ms
+        ):
+            raise ValueError(f"case {case_id} attempt duration/time is invalid")
+        attempt_duration_total += attempt_duration
         calls = [
             _mapping(item, "provider call")
             for item in _sequence(attempt.get("providerCalls"), "providerCalls")
         ]
-        if not calls:
+        if not calls and not (
+            denied
+            and len(attempts) == 1
+            and attempt.get("outcome") == "authorization-denied"
+        ):
             raise ValueError(
                 f"case {case_id} attempt has no captured ModelGateway call"
             )
@@ -322,8 +422,40 @@ def _validate_execution(
             provider = _text(call.get("actualProvider"), "actualProvider", 256)
             model = _text(call.get("actualModel"), "actualModel", 256)
             identities.add((provider, model))
-            _text(call.get("operation"), "operation", 32)
-            _digest_text(call.get("promptDigest"), "promptDigest")
+            operation = _text(call.get("operation"), "operation", 32)
+            if operation not in {"embed", "chat", "structured"}:
+                raise ValueError(f"case {case_id} provider operation is invalid")
+            alias = _text(call.get("alias"), "alias", 256)
+            prompt_digest = _digest_text(call.get("promptDigest"), "promptDigest")
+            call_duration = call.get("durationMs")
+            if (
+                type(call_duration) is not int
+                or not 0 <= call_duration <= attempt_duration
+            ):
+                raise ValueError(f"case {case_id} provider call duration is invalid")
+            if operation in {"chat", "structured"}:
+                answer_calls += 1
+                if alias != root["bindings"].get("modelAlias"):
+                    failures.append(f"case {case_id} logical model alias mismatch")
+                if prompt_digest != root["bindings"].get("promptDigest"):
+                    failures.append(f"case {case_id} prompt governance mismatch")
+                if call.get("schemaDigest") != root["bindings"].get("schemaDigest"):
+                    failures.append(f"case {case_id} schema governance mismatch")
+                expected_governance = _sequence(
+                    root["bindings"].get("governanceDigests"),
+                    "governanceDigests",
+                )
+                if call.get("governanceDigests") != expected_governance:
+                    failures.append(f"case {case_id} Agent/Skill governance mismatch")
+                if require_real and (
+                    approved_mapping is None
+                    or (provider, model) != approved_mapping[:2]
+                ):
+                    failures.append(f"case {case_id} unapproved answer identity")
+                if require_real and (
+                    approved_mapping is None or operation != approved_mapping[2]
+                ):
+                    failures.append(f"case {case_id} unapproved answer operation")
             provider_id = call.get("providerRequestId")
             gateway_id = call.get("gatewayCallId")
             if not isinstance(provider_id, str) and not isinstance(gateway_id, str):
@@ -333,6 +465,10 @@ def _validate_execution(
                 raise ValueError("provider call IDs must be globally unique")
             call_ids.add(unique_id)
             provider_calls += 1
+    if attempt_duration_total > duration_ms:
+        raise ValueError(f"case {case_id} attempt duration exceeds case duration")
+    if case["caseType"] == "answerable" and not cache_hit and answer_calls == 0:
+        failures.append(f"case {case_id} has no captured answer call")
     return provider_calls, int(cache_hit), max(0, len(attempts) - 1), identities
 
 
@@ -342,9 +478,12 @@ def evaluate_run(
     *,
     min_cases: int = 100,
     require_real: bool = False,
-    approved_mapping: tuple[str, str, str] | None = None,
+    approved_mapping: tuple[str, str, str, str, str] | None = None,
     provider_call_budget: int = 1000,
+    max_retries_per_case: int = 2,
 ) -> dict[str, object]:
+    if type(max_retries_per_case) is not int or not 0 <= max_retries_per_case <= 2:
+        raise ValueError("max_retries_per_case must be between 0 and 2")
     cases = validate_dataset(dataset_value, min_cases=min_cases)
     root = _mapping(dataset_value, "dataset document")
     metadata = _mapping(root["dataset"], "dataset metadata")
@@ -357,6 +496,21 @@ def evaluate_run(
         failures.append("dataset human-label provenance is missing")
     if len(cases) < min_cases:
         failures.append(f"actual case count {len(cases)} is below required {min_cases}")
+    for name in ("policyDigest", "promptDigest", "agentRevisionDigest", "schemaDigest"):
+        if bindings.get(name) is None:
+            failures.append(f"{name} governance binding is missing")
+    for name in ("skillRevisionDigests", "governanceDigests"):
+        if not bindings.get(name):
+            failures.append(f"{name} governance binding is missing")
+    if approved_mapping is not None:
+        _text(approved_mapping[0], "approved provider", 256)
+        _text(approved_mapping[1], "approved model", 256)
+        if approved_mapping[2] != "structured":
+            raise ValueError("approved operation must be structured")
+        _digest_text(approved_mapping[3], "approval digest")
+        artifact = _text(approved_mapping[4], "approval artifact", 1024)
+        if _APPROVAL_ARTIFACT.fullmatch(artifact) is None:
+            raise ValueError("approval artifact format is invalid")
 
     observed_by_id: dict[str, dict[str, Any]] = {}
     declared_execution: dict[str, Any] | None = None
@@ -399,24 +553,61 @@ def evaluate_run(
                 }
             )
             continue
+        authority = _mapping(case_observation.get("authority"), "authority")
+        actual_project = _text(authority.get("actualProjectId"), "actualProjectId", 128)
+        actual_authorized = set(
+            _strings(authority.get("authorizedSourceIds"), "authorizedSourceIds")
+        )
+        decision = authority.get("decision")
+        reason = authority.get("reason")
+        if decision not in {"allow", "deny"}:
+            raise ValueError(f"case {case_id} authority decision is invalid")
+        if reason is not None:
+            _text(reason, "authority reason", 64)
+        selected = set(case["selectedSourceIds"])
+        project_mismatch = case["projectId"] != actual_project
+        source_mismatch = not selected <= actual_authorized
+        expected_decision = "deny" if project_mismatch or source_mismatch else "allow"
+        if decision != expected_decision or decision != case["authorizationExpected"]:
+            failures.append(f"case {case_id} server authorization decision mismatch")
+        if (
+            not project_mismatch
+            and set(case["authorizedSourceIds"]) != actual_authorized
+        ):
+            failures.append(f"case {case_id} server authorized Source set mismatch")
+        if project_mismatch:
+            totals["projectNegative"] += 1
+            if reason != "project-mismatch":
+                failures.append(f"case {case_id} Project rejection reason mismatch")
+        elif source_mismatch:
+            totals["sourceNegative"] += 1
+            if reason != "source-not-authorized":
+                failures.append(f"case {case_id} Source rejection reason mismatch")
         execution = _mapping(case_observation.get("execution"), "case execution")
         cache_key = _digest_text(execution.get("cacheKey"), "cacheKey")
         if cache_key in cache_keys:
             raise ValueError("cache keys must be unique per case")
         cache_keys.add(cache_key)
         calls, hits, retries, identities = _validate_execution(
-            root, case_id, case_observation, call_ids
+            root,
+            case,
+            case_observation,
+            call_ids,
+            max_retries_per_case=max_retries_per_case,
+            approved_mapping=approved_mapping,
+            require_real=require_real,
+            failures=failures,
         )
         provider_calls += calls
         cache_hits += hits
         retry_count += retries
         actual_identities |= identities
 
-        selected = set(case["selectedSourceIds"])
-        project = case["projectId"]
+        project = actual_project
         leakage: list[str] = []
         retrieved_keys: set[tuple[str, str, str]] = set()
-        for raw_hit in _sequence(case_observation.get("retrieved"), "retrieved"):
+        retrieved = _sequence(case_observation.get("retrieved"), "retrieved")
+        for raw_hit in retrieved:
             hit = _mapping(raw_hit, "retrieval hit")
             rank = hit.get("rank")
             if type(rank) is not int or not 1 <= rank <= 100:
@@ -435,6 +626,10 @@ def evaluate_run(
             if identity[0] not in selected:
                 leakage.append(
                     f"retrieval:{identity[2]}:unselected-source:{identity[0]}"
+                )
+            elif identity[0] not in actual_authorized:
+                leakage.append(
+                    f"retrieval:{identity[2]}:unauthorized-source:{identity[0]}"
                 )
         expected = [
             _mapping(item, "expected evidence") for item in case["expectedEvidence"]
@@ -472,6 +667,10 @@ def evaluate_run(
                 )
             if source_id not in selected:
                 leakage.append(f"citation:{citation_id}:unselected-source:{source_id}")
+            elif source_id not in actual_authorized:
+                leakage.append(
+                    f"citation:{citation_id}:unauthorized-source:{source_id}"
+                )
             totals["anchors"] += 1
             totals["resolved"] += int(
                 _anchor_key(citation, resolved=True) in expected_anchor_keys
@@ -513,12 +712,17 @@ def evaluate_run(
         )
         if not response_valid:
             failures.append(f"case {case_id} response shape contradicts human labels")
+        if decision == "deny" and (retrieved or citations or claims or calls):
+            failures.append(
+                f"case {case_id} denied case produced retrieval/model evidence"
+            )
         totals["leakage"] += len(leakage)
         case_reports.append(
             {
                 "caseId": case_id,
                 "caseType": case["caseType"],
                 "status": "evaluated",
+                "authority": authority,
                 "leakage": sorted(leakage),
                 "responseShapeValid": response_valid,
             }
@@ -529,7 +733,7 @@ def evaluate_run(
         "providerCalls": provider_calls,
         "cacheHits": cache_hits,
         "retryCount": retry_count,
-        "maxRetriesPerCase": 2,
+        "maxRetriesPerCase": max_retries_per_case,
     }
     if declared_execution is not None and declared_execution != derived_execution:
         failures.append(
@@ -545,12 +749,21 @@ def evaluate_run(
         if approved_mapping is None:
             failures.append("external approved model mapping is required")
         else:
-            provider, model, approval_digest = approved_mapping
+            provider, model, operation, approval_digest, approval_artifact = (
+                approved_mapping
+            )
             _digest_text(approval_digest, "approval digest")
+            _text(approval_artifact, "approval artifact", 1024)
             if (provider, model) not in actual_identities:
                 failures.append(
                     "captured response/audit identity does not match approved mapping"
                 )
+        if min_cases >= 100 and (
+            totals["projectNegative"] < 2 or totals["sourceNegative"] < 2
+        ):
+            failures.append(
+                "real authorization matrix requires at least two Project and two Source negatives"
+            )
 
     thresholds: dict[str, dict[str, object]] = {
         "minimumCases": {
@@ -601,6 +814,8 @@ def evaluate_run(
         "retrievalRelevantTotal": totals["relevant"],
         "abstainCorrect": totals["abstainCorrect"],
         "abstainTotal": totals["abstain"],
+        "projectNegativeCount": totals["projectNegative"],
+        "sourceNegativeCount": totals["sourceNegative"],
     }
     return {
         "schemaVersion": "quality-kb-report-v2",
@@ -614,10 +829,13 @@ def evaluate_run(
                 "minCases": min_cases,
                 "thresholds": _THRESHOLDS,
                 "providerCallBudget": provider_call_budget,
+                "maxRetriesPerCase": max_retries_per_case,
             }
         ),
         "bindings": bindings,
-        "approvedMappingDigest": approved_mapping[2] if approved_mapping else None,
+        "approvedMappingOperation": approved_mapping[2] if approved_mapping else None,
+        "approvedMappingDigest": approved_mapping[3] if approved_mapping else None,
+        "approvedMappingArtifact": approved_mapping[4] if approved_mapping else None,
         "capturedActualIdentities": [
             {"provider": p, "model": m} for p, m in sorted(actual_identities)
         ],
