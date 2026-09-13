@@ -287,6 +287,44 @@ def search_hit() -> SearchHit:
     )
 
 
+def test_conflict_detection_matches_same_document_heading_across_sources() -> None:
+    def item(source_id: str, content_hash: str, logical_id: str) -> Evidence:
+        return Evidence(
+            family=SourceFamily.DOC,
+            chunk_id="h_" + logical_id * 64,
+            logical_chunk_id="h_" + logical_id * 64,
+            title="policy.md",
+            content="Policy statement.",
+            source=SourceRevisionRef(
+                source_id=source_id,
+                source_type="doc",
+                revision_kind=RevisionKind.BLOB_VERSION,
+                revision=f"rev-{source_id}",
+                source_content_hash=SOURCE_HASH,
+                anchor=DocumentAnchor(heading_path=("Policy", "AG-01 Joiner access")),
+            ),
+            chunk_content_hash=content_hash,
+            content_role=ContentRole.SOURCE,
+            citation_id=f"citation-{source_id}",
+            evidence_label=f"S{logical_id}",
+            index_revision=IndexRevision(
+                physical_index="kb-doc-v1-20260828",
+                schema_version="search-schema-v1",
+                corpus_version="tapper-demo-v1",
+            ),
+            embedding_model_version="tap-embedding-v1",
+            acl_decision_id="decision-17",
+            score=1 / 61,
+        )
+
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            item("current", "sha256:" + "1" * 64, "1"),
+            item("legacy", "sha256:" + "2" * 64, "2"),
+        )
+    )
+
+
 class FakeSearchPort:
     def __init__(
         self,
@@ -500,6 +538,29 @@ async def test_knowledge_answer_cites_each_claim_and_abstains_without_evidence()
     assert no_evidence.abstained is True
     assert no_evidence.abstention_reason is AbstentionReason.INSUFFICIENT_EVIDENCE
     assert no_evidence_model.answer_evidence == []
+
+
+@pytest.mark.asyncio
+async def test_knowledge_answer_maps_closed_empty_generation_to_abstention() -> None:
+    class AbstainingModel(FakeModelPort):
+        async def answer(self, query, evidence, profile_id):
+            del query, evidence, profile_id
+            return AnswerGeneration(
+                text="",
+                claims=(),
+                model_id="tap-answer-v1",
+                profile_id="grounded-answer-v1",
+                provider_request_id="answer-request-1",
+            )
+
+    response = await api(FakeSearchPort((search_hit(),)), AbstainingModel()).answer(
+        AnswerRequest(query="Unknown fact"), policy_context()
+    )
+
+    assert response.abstained is True
+    assert response.abstention_reason is AbstentionReason.INSUFFICIENT_EVIDENCE
+    assert response.answer == ""
+    assert response.claims == ()
 
 
 @pytest.mark.asyncio

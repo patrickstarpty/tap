@@ -886,12 +886,12 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 
 **Profile:** 至少 100 个经人工标注问题；报告绑定 dataset、policy、model alias/actual model、prompt/agent/skill/schema/evaluator digest。硬阈值：Project/未选 Source 泄漏 `0`，anchor 解析 `100%`，grounded Claim–Citation precision `100%`，recall@10 `≥90%`，abstain accuracy `≥90%`。
 
-- [ ] 先写 evaluator 单元测试和一个故意含跨 Source 命中的 failing fixture；运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v`，预期 FAIL 且明确报告 leakage/threshold，不以缺环境通过。
-- [ ] 实现 deterministic report generator、dataset digest、逐 case evidence 和非零退出；默认命令只跑离线 evaluator，不调用真实模型。
-- [ ] 在 `Makefile` 增加离线 `quality-kb` 与 gate `quality-kb-real`；后者要求 `TAP_RUN_QUALITY_KB_01=1`，并解析 pytest/report 断言实际 case 数 ≥100 且 zero skipped。缺授权可在普通 `make test` 中 skip，但 `quality-kb-real` 必须非零退出。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v && make quality-kb && TAP_RUN_QUALITY_KB_01=1 make quality-kb-real && make test-milvus && make demo-e2e`；预期 PASS：字面量 RED 测试已转绿，所有阈值、真实模型回答 smoke、Source/Project 负矩阵与 zero-skip 证据通过。用实际日期替换 `<review-date>` 并在 Review 中记录 dataset/config/digest/命令/退出码；只有 Review `pass` 才进入 V2。
-- [ ] 运行 `make check && make test && git diff --check`。
-- [ ] Commit: `test(knowledge): add v1 trusted knowledge gate`
+- [x] 先写 evaluator 单元测试和一个故意含跨 Source 命中的 failing fixture；运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v`，预期 FAIL 且明确报告 leakage/threshold，不以缺环境通过。
+- [x] 实现 deterministic report generator、dataset digest、逐 case evidence 和非零退出；默认命令只跑离线 evaluator，不调用真实模型。
+- [x] 在 `Makefile` 增加离线 `quality-kb` 与 gate `quality-kb-real`；后者要求 `TAP_RUN_QUALITY_KB_01=1`，并解析 pytest/report 断言实际 case 数 ≥100 且 zero skipped。缺授权可在普通 `make test` 中 skip，但 `quality-kb-real` 必须非零退出。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v && make quality-kb && TAP_RUN_QUALITY_KB_01=1 make quality-kb-real && make test-milvus && make demo-e2e`；预期 PASS：字面量 RED 测试已转绿，所有阈值、真实模型回答 smoke、Source/Project 负矩阵与 zero-skip 证据通过。用实际日期替换 `<review-date>` 并在 Review 中记录 dataset/config/digest/命令/退出码；只有 Review `pass` 才进入 V2。
+- [x] 运行 `make check && make test && git diff --check`。
+- [x] Commit: `test(knowledge): add v1 trusted knowledge gate`
 
 ## V2 — Grounded Knowledge Graph
 

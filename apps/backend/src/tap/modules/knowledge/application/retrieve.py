@@ -237,6 +237,8 @@ class AuthorizedRetrieval:
         )
         if claims is None:
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+        if not generation.text and not claims:
+            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
 
         return AnswerResponse(
             trace_id=run.response.trace_id,
@@ -692,12 +694,15 @@ class AuthorizedRetrieval:
 
     @staticmethod
     def _has_conflicting_sources(evidence: tuple[Evidence, ...]) -> bool:
-        hashes_by_logical_chunk: dict[str, set[str]] = {}
+        hashes_by_identity: dict[tuple[str, str], set[str]] = {}
         for item in evidence:
-            hashes_by_logical_chunk.setdefault(item.logical_chunk_id, set()).add(
-                item.chunk_content_hash
-            )
-        return any(len(hashes) > 1 for hashes in hashes_by_logical_chunk.values())
+            identities = [("logical-chunk", item.logical_chunk_id)]
+            anchor = item.source.anchor
+            if isinstance(anchor, DocumentAnchor) and anchor.heading_path:
+                identities.append(("document-heading", anchor.heading_path[-1].casefold()))
+            for identity in identities:
+                hashes_by_identity.setdefault(identity, set()).add(item.chunk_content_hash)
+        return any(len(hashes) > 1 for hashes in hashes_by_identity.values())
 
     @staticmethod
     def _embedding_provenance(embedding: Embedding) -> ModelCallProvenance:

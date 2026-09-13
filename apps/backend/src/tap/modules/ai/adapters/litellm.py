@@ -283,6 +283,7 @@ class LiteLLMModelGateway:
                         max_tokens=2048,
                     )
                     if operation is ModelOperation.STRUCTURED:
+                        payload["temperature"] = 0
                         payload["response_format"] = {
                             "type": "json_schema",
                             "json_schema": {
@@ -366,11 +367,15 @@ class LiteLLMModelGateway:
             else self._config.chat_model
         )
         returned_model = body["model"]
-        # An echoed logical alias is not evidence of an actual upstream model.
-        if returned_model in {
+        aliases = {
             self._config.chat_alias,
             self._config.embedding_alias,
-        } or returned_model not in {mapping.route, mapping.model}:
+        }
+        deployment_id = headers.get("x-litellm-model-id")
+        if returned_model in aliases:
+            if returned_model != request.alias or deployment_id != mapping.route:
+                raise ModelGatewayUnavailable()
+        elif returned_model not in {mapping.route, mapping.model}:
             raise ModelGatewayUnavailable()
         actual = mapping.route
         group = headers.get("x-litellm-model-group")

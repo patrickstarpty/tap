@@ -1425,6 +1425,16 @@ async def test_makefile_scopes_real_milvus_gate_and_uses_committed_snapshot() ->
         "--vectors apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json"
     ) in makefile
     assert "TAP_RUN_MILVUS_INTEGRATION=1" in makefile
+    health_index = makefile.index("$(MAKE) milvus-health", makefile.index("test-milvus:"))
+    rebootstrap_index = makefile.index(
+        "$(MAKE) milvus-bootstrap",
+        health_index,
+    )
+    fixture_index = makefile.index(
+        "python scripts/milvus_fixture.py publish",
+        health_index,
+    )
+    assert health_index < rebootstrap_index < fixture_index
     for setting in (
         'MILVUS_URI="$${MILVUS_URI:-http://127.0.0.1:19530}"',
         'MILVUS_DATABASE="$${MILVUS_DATABASE:-default}"',

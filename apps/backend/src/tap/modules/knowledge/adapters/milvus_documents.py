@@ -1031,7 +1031,8 @@ class MilvusDocumentIndex:
             anchor = json.loads(chunk.anchor_json)
             if (
                 not isinstance(anchor, dict)
-                or json.dumps(anchor, sort_keys=True, separators=(",", ":")) != chunk.anchor_json
+                or json.dumps(anchor, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                != chunk.anchor_json
                 or anchor.get("type") != "document"
             ):
                 raise ValueError("Tapper chunk anchor must be canonical JSON")

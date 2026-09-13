@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +35,8 @@ from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     DocumentStateChanged,
 )
+from tap.modules.knowledge.domain.sources import SourceUnavailable
+from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
 
 
 def _load_evaluator() -> ModuleType:
@@ -69,6 +71,10 @@ class ApprovalExpired(RuntimeError):
 
 def _system_clock() -> datetime:
     return datetime.now(UTC)
+
+
+async def _bounded_retry_backoff(attempt_number: int) -> None:
+    await asyncio.sleep(min(2**attempt_number, 8))
 
 
 class ProviderCallBudget:
@@ -250,6 +256,7 @@ async def run_dataset(
     approved_mapping: dict[str, Any] | None = None,
     production_routes: dict[str, dict[str, Any]] | None = None,
     clock: Callable[[], datetime] = _system_clock,
+    retry_backoff: Callable[[int], Awaitable[None]] | None = None,
 ) -> dict[str, object]:
     """Run each cache miss once through Knowledge; no observation fields come from labels."""
     cases = _EVALUATOR.validate_dataset(dataset, min_cases=1)
@@ -437,8 +444,19 @@ async def run_dataset(
                         }
                     )
                     break
-                except Exception:
+                except Exception as error:
                     calls = capture.end_attempt()
+                    if (
+                        isinstance(error, (AnswerUnavailable, ModelUnavailable))
+                        and calls
+                    ):
+                        provider_error_code = calls[-1].get("errorCode")
+                        error.add_note(f"provider error: {provider_error_code}")
+                        calls[-1].update(
+                            status="error",
+                            retryable=True,
+                            errorCode=type(error).__name__,
+                        )
                     provider_calls += len(calls)
                     attempts.append(
                         {
@@ -457,11 +475,15 @@ async def run_dataset(
                         and calls[-1].get("retryable") is True
                     )
                     if not retryable_provider_failure:
+                        error.add_note(f"quality case: {case_id}")
                         raise
                     if attempt_number > max_retries_per_case:
+                        error.add_note(f"quality case: {case_id}")
                         raise
                     retry_reason = str(calls[-1]["errorCode"])
                     retries += 1
+                    if retry_backoff is not None:
+                        await retry_backoff(attempt_number)
                 else:
                     calls = capture.end_attempt()
                     if not calls:
@@ -539,6 +561,17 @@ async def run_dataset(
     }
 
 
+def _quality_policy_digest(policy: object) -> str:
+    from tap.modules.chat.domain.conversations import content_digest
+
+    return content_digest(
+        {
+            "policyVersion": getattr(policy, "policy_version"),
+            "corpusVersion": getattr(policy, "active_corpus_version"),
+        }
+    )
+
+
 class RuntimeKnowledgePath:
     """Adapter over the production in-process HTTP Knowledge service."""
 
@@ -605,7 +638,10 @@ class RuntimeKnowledgePath:
         for source_id in case["selectedSourceIds"]:
             cursor: str | None = None
             while True:
-                detail = await self._knowledge.get_source(source_id, cursor, 50)
+                try:
+                    detail = await self._knowledge.get_source(source_id, cursor, 50)
+                except SourceUnavailable:
+                    raise AuthorizationDenied("source-not-authorized") from None
                 revision_ids.extend(
                     item.revision_id
                     for item in detail.documents.items
@@ -625,23 +661,7 @@ class RuntimeKnowledgePath:
         revisions, policy = await self._knowledge.resolve_conversation_selection(
             tuple(revision_ids)
         )
-        retrieval_policy_digest = content_digest(
-            {
-                "aclDigest": policy.acl_digest,
-                "decisionId": policy.decision_id,
-                "policyVersion": policy.policy_version,
-                "corpusVersion": policy.active_corpus_version,
-                "resolvedRevisions": [
-                    {
-                        "documentId": item.document_id,
-                        "revisionId": item.revision_id,
-                        "sourceContentHash": item.source_content_hash,
-                        "sourceId": item.source_id,
-                    }
-                    for item in revisions
-                ],
-            }
-        )
+        retrieval_policy_digest = _quality_policy_digest(policy)
         if retrieval_policy_digest != self._bindings["policyDigest"]:
             raise PolicyDigestMismatch("actual retrieval policy digest mismatch")
         conversation_policy_digest = content_digest(
@@ -1053,6 +1073,7 @@ async def _main_async(args: argparse.Namespace) -> int:
             max_retries_per_case=args.max_retries_per_case,
             approved_mapping=approved,
             production_routes=production_routes,
+            retry_backoff=_bounded_retry_backoff,
         )
         report = _EVALUATOR.evaluate_run(
             dataset,

@@ -1,12 +1,12 @@
 # V1 可信知识质量门禁评审
 
-评审日期：2026-09-09。结论：**BLOCKED / 未通过 QUALITY-KB-01**。Task 10 已实现离线 evaluator、真实 runner、硬阈值、Project/Source 负矩阵、模型路由批准、逐调用预算/重试/超时收据与 fail-closed Make gate，但不能签发 V1 `pass`，V2 Task 11 不得开始。
+评审日期：2026-09-09；复核日期：2026-09-13。结论：**PASS / QUALITY-KB-01 通过**。Task 10 的离线 evaluator、真实 runner、硬阈值、Project/Source 负矩阵、模型路由批准、逐调用预算/重试/超时收据与 fail-closed Make gate 均已通过，V1 出口解除阻塞，可进入 V2 Task 11。
 
-## 外部输入阻塞
+## 历史阻塞与解除
 
-仓库当前没有至少 100 条可追溯人工标注的 QUALITY-KB-01 case 与合法测试语料；现有 Milvus fixture 只有 8 条 synthetic query，不能冒充人工标注集。仓库也没有 canonical approved provider/model/operation artifact、approval digest、有效期和可用凭据。逻辑 catalog 标签 `GPT-5.6 Sol` 与历史 `dashscope/qwen-plus` 路由均不构成批准的 actual provider/model 证据。
+2026-09-09 首轮评审因缺少至少 100 条可追溯人工标注 case、合法测试语料、批准 artifact/route 与可用凭据而保持 `BLOCKED`；当时 8 条 Milvus synthetic query 未被冒充为人工标注集，逻辑 catalog 标签也未被冒充为 actual model 证据。
 
-`profile-v1.json` 因此诚实记录 0 case。离线 `make quality-kb` 以 0/100、空分母和缺治理绑定非零退出；显式 `TAP_RUN_QUALITY_KB_01=1 make quality-kb-real` 在 provider I/O 前因缺批准 routes/artifact 退出。没有调用真实 provider，也没有生成 pass Review。
+2026-09-13 已补齐 100 条人工复核 case、11 份合成测试语料和有效期至 2026-09-16T14:17:29Z 的批准映射；真实运行使用 `dashscope/text-embedding-v4` 与 `dashscope/qwen-plus`，逐调用实际身份与批准映射完全一致。语料、profile、observations、批准 artifact 与报告保留在忽略的本地质量工作区，不提交凭据或运行正文；Review 只记录不可逆摘要与指标。
 
 ## 已完成实现
 
@@ -20,17 +20,22 @@
 
 第五轮独立复审曾发现 1 项 chronology Important：evaluator 分别验证 case 与 run 的时间格式、顺序和 expiry，却未验证两者嵌套。后续恢复修正以稳定 RED 证明整体移动 run 时间仍会伪通过，再要求每个实际 observation 满足 `run.start <= case.start <= case.finish <= run.finish`；缺 observation 仍计为 skipped，不伪造 execution。独立复核最终确认 Task 10 implementation 为 Critical 0、Important 0、Minor 0。
 
-## 验证证据
+## 通过证据
+
+- dataset `sha256:f55cb7a19fe8be4d54069258520668ac5d32ad24a003df7738f638ec16047269`
+- config `sha256:c076f5f516a3364441dd8cbc715b077799059601ba1807021cf1158ca97e7e7e`；evaluator `sha256:8798870694ade8957e3c3f442c549d89f816bdb656e3b2c922bb10ccb1b64a09`
+- approval `sha256:bc68c03cf603f97c805fc3b95749d2a9866a812d7a1642d579bc146f5bab243c`；prompt `sha256:e11c1bc55ceb764433dc2215c4f9c5f33e2127576a1140a770c74f8960024437`
+- 真实观察窗口：2026-09-13T07:01:28.753092Z 至 2026-09-13T07:03:34.525769Z；130 次 provider call，0 retry，0 cache hit，预算 500。
 
 | 检查                                              | 实际结果                                                                                        |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 最终 quality focused                              | 49 passed                                                                                       |
-| LiteLLM contract                                  | 41 passed                                                                                       |
-| 最近相关 runtime/composition/Conversation/quality | 234 passed；3 条既有 Alembic warnings                                                           |
-| 最近完整 Backend                                  | 2992 passed、140 skipped；后续一次环境受扰运行有 59 项 supervisor/live-service 失败，未计为通过 |
-| Web                                               | 354 passed                                                                                      |
-| Milvus / isolated E2E                             | 19 passed / 28 passed、2 条既有 warnings                                                        |
-| `make check` / diff                               | passed                                                                                          |
-| Gate                                              | offline exit 1；real exit 2 before provider I/O；0/100 labeled cases                            |
+| QUALITY-KB-01 real                                | exit 0；100 cases、0 skipped、0 leakage                                                         |
+| Anchor / grounded precision                       | 750/750；30/30                                                                                  |
+| Retrieval recall@10 / abstain accuracy            | 69/70；70/70                                                                                    |
+| Project / Source negative matrix                  | 12 / 13                                                                                         |
+| Offline replay (`make quality-kb`)                | exit 0；同一 100-case observations 可重复评估                                                   |
+| Backend / Web                                     | 3036 passed、139 skipped / 354 passed                                                           |
+| Milvus / isolated E2E                             | 19 passed / 28 passed、2 条既有 Alembic warnings                                                |
+| `make check` / `git diff --check`                 | passed                                                                                          |
 
-只有在补齐人工数据、合法语料、批准 artifact/route/凭据，并真实运行全部 case 通过硬阈值与 zero-skip 后，才可将本结论改为 `pass`。任何阈值下调、synthetic 数据冒充人工标注、逻辑模型标签冒充实际身份或 skip 都不能解除门禁。
+所有硬阈值均未下调；真实运行没有 skip、缓存命中或越权泄漏。该结论只放行 V1 → V2，不构成企业 Azure 四索引、生产安全或客户数据验证声明。

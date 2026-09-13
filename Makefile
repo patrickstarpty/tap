@@ -35,9 +35,11 @@ contracts: ## export OpenAPI/SSE schema and generate TypeScript
 TAP_QUALITY_KB_PROFILE ?= apps/backend/tests/fixtures/quality/kb/profile-v1.json
 TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json
 TAP_QUALITY_KB_OBSERVATIONS ?= .local/quality-kb/observations.json
+TAP_QUALITY_KB_PROVIDER_CALL_BUDGET ?= 500
+TAP_QUALITY_KB_MAX_RETRIES_PER_CASE ?= 2
 
 quality-kb: ## deterministically evaluate the committed QUALITY-KB-01 profile offline
-	uv run --project apps/backend python scripts/evaluate-quality-kb.py "$(TAP_QUALITY_KB_PROFILE)" --report "$(TAP_QUALITY_KB_REPORT)"
+	uv run --project apps/backend python scripts/evaluate-quality-kb.py "$(TAP_QUALITY_KB_PROFILE)" --observations "$(TAP_QUALITY_KB_OBSERVATIONS)" --report "$(TAP_QUALITY_KB_REPORT)" --provider-call-budget "$(TAP_QUALITY_KB_PROVIDER_CALL_BUDGET)" --max-retries-per-case "$(TAP_QUALITY_KB_MAX_RETRIES_PER_CASE)"
 
 quality-kb-real: ## require an opted-in real, human-labeled QUALITY-KB-01 run
 	@if [ "$${TAP_RUN_QUALITY_KB_01:-}" != "1" ]; then \
@@ -87,6 +89,7 @@ test-milvus: ## run the non-skippable real Milvus correctness gate with committe
 	$(MAKE) milvus-up TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	$(MAKE) milvus-bootstrap TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	$(MAKE) milvus-health TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
+	$(MAKE) milvus-bootstrap TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	uv run --project apps/backend python scripts/milvus_fixture.py publish --fixture apps/backend/tests/fixtures/milvus/doc-fixture-v1.json --queries apps/backend/tests/fixtures/milvus/query-cases-v1.json --vectors apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json
 	MILVUS_URI="$${MILVUS_URI:-http://127.0.0.1:19530}" \
 	MILVUS_DATABASE="$${MILVUS_DATABASE:-default}" \

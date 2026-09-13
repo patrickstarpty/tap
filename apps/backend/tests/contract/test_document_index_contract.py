@@ -287,6 +287,53 @@ async def test_canonical_rebuild_preserves_document_fence_without_fabricating_so
 
 
 @pytest.mark.asyncio
+async def test_v2_upsert_accepts_the_chunkers_unicode_canonical_anchor():
+    memory = MemoryMilvus()
+    config = TapperMilvusConfig.for_schema("doc-schema-v2")
+    index = MilvusDocumentIndex(
+        config=config,
+        provisioner=MutationOnlyProvisioner(memory),
+        writer=memory,
+        reader=ReaderObserver(memory),
+        coordinator=memory.coordinator,
+    )
+    await index.ensure_target()
+    current = replace(
+        work(),
+        enterprise_id="local",
+        project_id="tapper-demo",
+        source_id="src_" + "a" * 32,
+    )
+    content = "Current access policy."
+    anchor = json.dumps(
+        {"headingPath": ["Access Governance Policy — Current"], "type": "document"},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    content_hash = canonical_sha256(content.encode())
+    item = ChunkDraft(
+        chunk_id=chunk_id_for(RevisionId(current.revision_id), anchor, content_hash),
+        logical_chunk_id=logical_chunk_id_for(DocumentId(current.document_id), anchor),
+        root_id=DocumentId(current.document_id),
+        parent_id=None,
+        content=content,
+        anchor_json=anchor,
+        source_content_hash=current.source_content_hash,
+        chunk_content_hash=content_hash,
+    )
+
+    receipt = await index.upsert_revision(
+        current,
+        (item,),
+        EmbeddingArtifact("tapper-embedding", 1536, ((0.0,) * 1536,), (str(item.chunk_id),)),
+        index_version="tapper-index-v1",
+    )
+
+    assert receipt.indexed_count == 1
+
+
+@pytest.mark.asyncio
 async def test_operator_rebuild_loads_snapshot_inside_global_alias_lock():
     memory = MemoryMilvus()
     index = index_for(memory)

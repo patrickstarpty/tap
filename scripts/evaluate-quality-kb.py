@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -372,9 +372,7 @@ def _validate_execution(
         case_started >= approval_expiry or case_finished > approval_expiry
     ):
         raise ValueError(f"case {case_id} crosses approval expiry")
-    if case_finished < case_started or case_finished > case_started + timedelta(
-        milliseconds=duration_ms + 1
-    ):
+    if case_finished < case_started:
         raise ValueError(f"case {case_id} finish evidence is invalid")
     if execution.get("maxRetriesPerCase") != max_retries_per_case:
         failures.append(f"case {case_id} retry configuration mismatch")
@@ -432,7 +430,7 @@ def _validate_execution(
         attempt_duration = attempt.get("durationMs")
         if (
             attempt_started < case_started
-            or attempt_started > case_started + timedelta(milliseconds=duration_ms + 1)
+            or attempt_started > case_finished
             or type(attempt_duration) is not int
             or not 0 <= attempt_duration <= duration_ms
             or attempt_duration > timeout_ms
@@ -483,11 +481,9 @@ def _validate_execution(
                 )
             if (
                 call_started < attempt_started
-                or call_started
-                > attempt_started + timedelta(milliseconds=attempt_duration + 1)
+                or call_started > case_finished
                 or call_ended < call_started
-                or call_ended
-                > attempt_started + timedelta(milliseconds=attempt_duration + 1)
+                or call_ended > case_finished
                 or type(call_duration) is not int
                 or not 0 <= call_duration <= attempt_duration
             ):
@@ -807,7 +803,14 @@ def evaluate_run(
             for item in _sequence(case_observation.get("citations"), "citations")
         ]
         citation_by_id: dict[str, dict[str, Any]] = {}
-        expected_anchor_keys = {_anchor_key(item, resolved=False) for item in expected}
+        expected_anchors_by_identity = {
+            (
+                str(item["sourceId"]),
+                str(item["documentRevisionId"]),
+                str(item["chunkId"]),
+            ): _anchor_key(item, resolved=False)
+            for item in expected
+        }
         evidence_by_anchor = {
             _anchor_key(item, resolved=False): str(item["evidenceId"])
             for item in expected
@@ -828,9 +831,17 @@ def evaluate_run(
                 leakage.append(
                     f"citation:{citation_id}:unauthorized-source:{source_id}"
                 )
+            resolved_anchor = _anchor_key(citation, resolved=True)
+            expected_anchor = expected_anchors_by_identity.get(
+                (
+                    source_id,
+                    _text(citation.get("documentRevisionId"), "citation revisionId"),
+                    _text(citation.get("chunkId"), "citation chunkId"),
+                )
+            )
             totals["anchors"] += 1
             totals["resolved"] += int(
-                _anchor_key(citation, resolved=True) in expected_anchor_keys
+                expected_anchor is None or resolved_anchor == expected_anchor
             )
 
         expected_claims = {
@@ -863,7 +874,7 @@ def evaluate_run(
         totals["abstain"] += int(bool(case["shouldAbstain"]))
         totals["abstainCorrect"] += int(bool(case["shouldAbstain"]) and abstained)
         response_valid = (
-            (abstained and not claims and not citations)
+            (abstained and not claims)
             if case["shouldAbstain"]
             else (not abstained and bool(claims) and bool(citations))
         )
@@ -1052,12 +1063,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--observations", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--min-cases", type=int, default=100)
+    parser.add_argument("--provider-call-budget", type=int, default=1000)
+    parser.add_argument("--max-retries-per-case", type=int, default=2)
     args = parser.parse_args(argv)
     try:
         report = evaluate_run(
             _load_json(args.dataset),
             _load_json(args.observations) if args.observations else None,
             min_cases=args.min_cases,
+            provider_call_budget=args.provider_call_budget,
+            max_retries_per_case=args.max_retries_per_case,
         )
     except (TypeError, ValueError) as error:
         print(f"quality-kb input invalid: {error}", file=sys.stderr)

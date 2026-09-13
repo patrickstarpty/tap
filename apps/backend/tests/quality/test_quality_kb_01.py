@@ -7,9 +7,11 @@ import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
+
+from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts" / "evaluate-quality-kb.py"
@@ -72,6 +74,36 @@ def _runner() -> ModuleType:
 
 def _sha(character: str) -> str:
     return "sha256:" + character * 64
+
+
+@pytest.mark.asyncio
+async def test_runtime_path_maps_missing_selected_source_to_closed_authorization_denial() -> None:
+    from tap.modules.access.domain.policy import AuthorizationDenied
+    from tap.modules.knowledge.domain.sources import SourceUnavailable
+
+    module = _runner()
+
+    class MissingSourceKnowledge:
+        scope = SimpleNamespace(project_id="project-a")
+
+        async def get_source(self, source_id, cursor, limit):
+            raise SourceUnavailable("source-unavailable")
+
+    runtime = SimpleNamespace(
+        http_services=SimpleNamespace(
+            knowledge=MissingSourceKnowledge(),
+            asset_catalog=object(),
+        )
+    )
+    path = module.RuntimeKnowledgePath(runtime, _dataset())
+
+    with pytest.raises(AuthorizationDenied, match="source-not-authorized"):
+        await path.run_case(
+            {
+                "question": "Unauthorized source request",
+                "selectedSourceIds": ["source-not-authorized-01"],
+            }
+        )
 
 
 def _approval_artifact(tmp_path: Path, content: dict[str, object] | None = None) -> Path:
@@ -342,6 +374,21 @@ def test_report_is_deterministic_and_binds_dataset_config_and_governance() -> No
     assert first["approvedRoutes"] == APPROVAL_CONTENT["routes"]
 
 
+def test_allowed_abstention_may_retain_resolved_audit_citations() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    conflict = observations["cases"][1]
+    conflict["citations"] = deepcopy(observations["cases"][0]["citations"])
+    conflict["execution"]["cacheEvidenceDigest"] = module.runtime_evidence_digest(conflict)
+
+    report = module.evaluate_run(
+        dataset, observations, min_cases=4, require_real=True, approved_mapping=APPROVED
+    )
+
+    assert report["status"] == "pass"
+
+
 def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Path) -> None:
     fixture = json.loads((FIXTURES / "failing-cross-source-v1.json").read_text())
     dataset = fixture["dataset"]
@@ -362,6 +409,10 @@ def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Pat
             str(report_path),
             "--min-cases",
             "1",
+            "--provider-call-budget",
+            "500",
+            "--max-retries-per-case",
+            "2",
         ],
         check=False,
         capture_output=True,
@@ -371,6 +422,7 @@ def test_cross_source_fixture_fails_with_explicit_leakage_evidence(tmp_path: Pat
     assert completed.returncode == 1
     assert "leakage=2 (required 0)" in completed.stderr
     report = json.loads(report_path.read_text())
+    assert report["execution"]["providerCallBudget"] == 500
     assert report["metrics"]["leakageCount"] == 2
     assert report["cases"][0]["leakage"] == [
         "citation:citation-foreign:unselected-source:source-b",
@@ -919,6 +971,38 @@ def test_case_execution_must_be_nested_in_declared_run_window() -> None:
         )
 
 
+def test_case_wall_clock_window_may_exceed_monotonic_duration() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    observations["cases"][0]["execution"]["finishedAtUtc"] = "2026-09-09T00:00:00.010Z"
+    observations["execution"]["finishedAtUtc"] = "2026-09-09T00:00:00.010Z"
+
+    report = module.evaluate_run(dataset, observations, min_cases=4)
+
+    assert report["metrics"]["actualCaseCount"] == 4
+
+
+def test_anchor_resolution_counts_valid_unclaimed_retrieval_citations() -> None:
+    module = _evaluator()
+    dataset = _dataset()
+    observations = _observations(dataset)
+    extra = deepcopy(observations["cases"][0]["citations"][0])
+    extra.update(
+        citationId="citation-extra",
+        chunkId="chunk-extra",
+        locator={"type": "document", "startOffset": 20, "endOffset": 30},
+        resolvedEvidenceDigest=_sha("e"),
+    )
+    observations["cases"][0]["citations"].append(extra)
+    execution = observations["cases"][0]["execution"]
+    execution["cacheEvidenceDigest"] = module.runtime_evidence_digest(observations["cases"][0])
+
+    report = module.evaluate_run(dataset, observations, min_cases=4)
+
+    assert report["metrics"]["anchorResolved"] == report["metrics"]["anchorTotal"]
+
+
 def test_retry_configuration_tampering_fails() -> None:
     module = _evaluator()
     dataset = _dataset()
@@ -1104,6 +1188,26 @@ async def test_runtime_policy_mismatch_precedes_every_model_operation() -> None:
     assert operations == []
 
 
+def test_quality_policy_binding_is_stable_across_authorized_source_selections() -> None:
+    from types import SimpleNamespace
+
+    module = _runner()
+    first = SimpleNamespace(
+        decision_id="decision-a",
+        acl_digest=_sha("a"),
+        policy_version="policy-v1",
+        active_corpus_version="corpus-v1",
+    )
+    second = SimpleNamespace(
+        decision_id="decision-b",
+        acl_digest=_sha("b"),
+        policy_version="policy-v1",
+        active_corpus_version="corpus-v1",
+    )
+
+    assert module._quality_policy_digest(first) == module._quality_policy_digest(second)
+
+
 def test_denied_case_with_retrieval_or_model_evidence_fails_closed() -> None:
     module = _evaluator()
     dataset = _dataset()
@@ -1258,6 +1362,111 @@ async def test_failed_provider_io_receipt_drives_bounded_retry_then_success() ->
             provider_call_budget=2,
             max_retries_per_case=1,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", [AnswerUnavailable, ModelUnavailable])
+async def test_runner_retries_a_successful_provider_call_with_unusable_grounded_output(
+    unavailable,
+) -> None:
+    from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelRequest,
+        ModelResult,
+        ModelUsage,
+    )
+
+    module = _runner()
+    dataset = _dataset()
+    dataset["cases"] = [dataset["cases"][0]]
+    scope = ProjectScopeContext(
+        enterprise_id="tenant",
+        project_id="project-a",
+        actor_id="actor",
+        identity_mode=IdentityMode.VALIDATION,
+    )
+
+    class Gateway:
+        async def generate_structured(self, request):
+            audit = ModelCallAudit(
+                scope,
+                request.alias,
+                request.operation,
+                request.prompt_digest,
+                request.schema_digest,
+                _sha("9"),
+                request.idempotency_key,
+                "approved-provider",
+                "approved-provider/approved-model",
+                ModelUsage(),
+            )
+            return ModelResult(
+                {},
+                "approved-provider/approved-model",
+                ModelUsage(),
+                "approved-provider",
+                audit,
+            )
+
+    class Path:
+        def __init__(self, gateway):
+            self.gateway = gateway
+            self.calls = 0
+
+        async def resolve_authority(self, case):
+            return {
+                "actualEnterpriseId": "tenant",
+                "actualProjectId": "project-a",
+                "authorizedSourceIds": ["source-a"],
+            }
+
+        async def run_case(self, case):
+            self.calls += 1
+            await self.gateway.generate_structured(
+                ModelRequest(
+                    scope,
+                    "tapper-chat",
+                    ModelOperation.STRUCTURED,
+                    "prompt",
+                    _sha("2"),
+                    "context",
+                    1.0,
+                    f"attempt-{self.calls}",
+                    {},
+                    _sha("5"),
+                )
+            )
+            if self.calls == 1:
+                raise unavailable("model-unavailable")
+            return {
+                "actualPolicyDigest": _sha("1"),
+                "retrieved": [],
+                "abstained": False,
+                "claims": [],
+                "citations": [],
+            }
+
+        async def resolve_citation(self, citation):
+            raise AssertionError("no citations")
+
+    observations = await module.run_dataset(
+        dataset,
+        gateway=Gateway(),
+        path_factory=Path,
+        timeout_ms=1000,
+        provider_call_budget=2,
+        cache={},
+        max_retries_per_case=1,
+        approved_mapping=APPROVED,
+        production_routes=PRODUCTION_ROUTES,
+    )
+
+    attempts = observations["cases"][0]["execution"]["attempts"]
+    assert attempts[0]["providerCalls"][0]["status"] == "error"
+    assert attempts[0]["providerCalls"][0]["errorCode"] == unavailable.__name__
+    assert attempts[1]["retryReason"] == unavailable.__name__
 
 
 def _production_litellm_gateway(handler, *, max_retries: int):

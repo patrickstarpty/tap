@@ -31,4 +31,4 @@
 - [Tapper V1 AI Agent 与 Skill Revision 验收](2026-09-09-tapper-v1-ai-agent-skill-catalog-review.md)：Task 7A 通过；记录不可变 Catalog Revision、并发幂等 Validation seed、只读 API、选择器恢复态、四轮审查修正与隔离回归。
 - [Tapper V1 Conversation 持久化与可恢复流验收](2026-09-09-tapper-v1-conversation-streaming-review.md)：Task 8 通过；记录不可变双快照、generation worker、lease/fencing、Evidence、可恢复 SSE、0012a 兼容迁移与五轮审查修正。
 - [Tapper V1 真实 Conversation Web 接线验收](2026-09-09-tapper-v1-durable-conversation-web-review.md)：Task 9 通过；记录默认 API 模式、历史 Context/Citation、可恢复多轮 SSE、页面级重启旅程、两轮审查修正和完整隔离回归。
-- [V1 可信知识质量门禁评审](2026-09-09-v1-trusted-knowledge-gate.md)：Task 10 implementation 已通过独立复核，但 QUALITY-KB-01 仍因 0/100 人工标注集、合法语料和批准真实模型路由/凭据而 `BLOCKED`，因此 V2 未放行。
+- [V1 可信知识质量门禁评审](2026-09-09-v1-trusted-knowledge-gate.md)：`pass`；100 条人工复核 case、11 份合成语料与批准的百炼实际路由通过全部硬阈值、zero-skip、真实 Milvus、隔离 E2E 和完整回归，V2 已放行。
