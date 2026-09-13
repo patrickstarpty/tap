@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from tap.contracts.chat_stream import ChatEventEnvelope
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
 
 
@@ -37,6 +38,8 @@ class CreateTurnCommand:
 class DispatchMessage:
     """Non-authoritative Redis notification containing lookup identities only."""
 
+    enterprise_id: str
+    project_id: str
     command_id: CommandId
     outbox_id: str
     aggregate_type: str
@@ -52,6 +55,9 @@ class ClaimedOutbox:
 
 
 class TurnRepository(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def create_with_outbox(self, command: CreateTurnCommand) -> Turn: ...
 
     async def append_events(
@@ -63,6 +69,9 @@ class TurnRepository(Protocol):
 
 
 class OutboxRepository(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
     async def reconcile_expired(self, now: datetime, limit: int) -> int: ...
 
     async def claim_pending(

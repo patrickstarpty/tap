@@ -6,7 +6,8 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from fastapi import Request
+from fastapi import Header, Request
+from fastapi.exceptions import RequestValidationError
 
 from tap.contracts.http import (
     CitationPreview,
@@ -20,8 +21,19 @@ from tap.contracts.http import (
     ReadyHealth,
     RetrievalAnswerRequest,
     RetrievalAnswerResponse,
+    SourceAccepted,
+    SourceDetail,
+    SourcePage,
+    SourceRetryRequest,
 )
+from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
+from tap.modules.ai.domain.models import ModelDescriptor
+from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.modules.test_management.application.plans import TestPlanApplication
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,23 +46,64 @@ class UploadInput:
 
 
 class KnowledgeHttpService(Protocol):
-    async def upload(self, upload: UploadInput) -> DocumentAccepted: ...
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def upload_source(
+        self, upload: UploadInput, key: str, correlation: str
+    ) -> SourceAccepted: ...
+    async def list_sources(self, cursor: str | None, limit: int) -> SourcePage: ...
+    async def get_source(self, source_id: str, cursor: str | None, limit: int) -> SourceDetail: ...
+    async def retry_source(
+        self, source_id: str, body: SourceRetryRequest, key: str, correlation: str
+    ) -> SourceAccepted: ...
+    async def delete_source(self, source_id: str, key: str, correlation: str) -> None: ...
+
+    async def upload(
+        self, upload: UploadInput, key: str | None = None, correlation: str | None = None
+    ) -> DocumentAccepted: ...
 
     async def list_documents(self, cursor: str | None, limit: int) -> DocumentPage: ...
 
     async def get_document(self, document_id: str) -> DocumentDetail: ...
 
-    async def retry_document(self, document_id: str) -> DocumentAccepted: ...
+    async def retry_document(
+        self, document_id: str, key: str | None = None, correlation: str | None = None
+    ) -> DocumentAccepted: ...
 
-    async def delete_document(self, document_id: str) -> None: ...
+    async def delete_document(
+        self, document_id: str, key: str | None = None, correlation: str | None = None
+    ) -> None: ...
 
     async def answer(self, request: RetrievalAnswerRequest) -> RetrievalAnswerResponse: ...
+    async def resolve_conversation_selection(self, revision_ids: tuple[str, ...]): ...
 
     async def citation(self, citation_id: str) -> CitationPreview: ...
+    async def historical_citation(self, citation_id: str) -> CitationPreview: ...
 
 
 class ReadinessHttpService(Protocol):
     async def check(self) -> ReadyHealth: ...
+
+
+class ModelCatalogHttpService(Protocol):
+    @property
+    def default_alias(self) -> str: ...
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def list_models(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]: ...
+
+
+class AssetCatalogHttpService(Protocol):
+    @property
+    def scope(self) -> ProjectScopeContext: ...
+
+    async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]: ...
+    async def get_agent(self, scope: ProjectScopeContext, revision_id: str) -> AiAgentRevision: ...
+    async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]: ...
+    async def get_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision: ...
 
 
 class _UnconfiguredReadiness:
@@ -79,6 +132,34 @@ class HttpServices:
 
     knowledge: KnowledgeHttpService | None = None
     readiness: ReadinessHttpService | None = None
+    scope_provider: ScopeProvider | None = None
+    authorization_policy: AuthorizationPolicy | None = None
+    scope: ProjectScopeContext | None = None
+    model_catalog: ModelCatalogHttpService | None = None
+    asset_catalog: AssetCatalogHttpService | None = None
+    conversations: ConversationService | None = None
+    graph: GraphStorePort | None = None
+    test_plans: TestPlanApplication | None = None
+
+
+class GraphUnavailable(Exception):
+    """The dedicated Graph runtime is unavailable; never represent this as an empty graph."""
+
+
+def graph_service(request: Request) -> GraphStorePort:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.graph if isinstance(services, HttpServices) else None
+    if service is None:
+        raise GraphUnavailable
+    return service
+
+
+def test_plan_service(request: Request) -> TestPlanApplication:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.test_plans if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:
@@ -93,3 +174,44 @@ def readiness_service(request: Request) -> ReadinessHttpService:
     services = getattr(request.app.state, "http_services", None)
     service = services.readiness if isinstance(services, HttpServices) else None
     return service or _UNCONFIGURED_READINESS
+
+
+def model_catalog_service(request: Request) -> ModelCatalogHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.model_catalog if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.asset_catalog if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def conversation_service(request: Request) -> ConversationService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.conversations if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def source_command_key(
+    request: Request, idempotency_key: str = Header(min_length=1, max_length=128)
+) -> str:
+    if len(request.headers.getlist("idempotency-key")) != 1 or not idempotency_key.strip():
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("header", "idempotency-key"),
+                    "msg": "One nonblank Idempotency-Key is required",
+                    "input": None,
+                }
+            ]
+        )
+    return idempotency_key

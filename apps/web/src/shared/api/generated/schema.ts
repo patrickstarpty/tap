@@ -1,4 +1,557 @@
 export interface paths {
+    "/api/v1/projects/{project_id}/ai/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agents */
+        get: operations["ai_list_agent_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent */
+        get: operations["ai_get_agent_revision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Models */
+        get: operations["ai_list_models"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Skills */
+        get: operations["ai_list_skill_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Skill */
+        get: operations["ai_get_skill_revision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Conversations */
+        get: operations["conversation_list"];
+        put?: never;
+        /** Create */
+        post: operations["conversation_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get */
+        get: operations["conversation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Events */
+        get: operations["conversation_list_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream */
+        get: operations["conversation_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append */
+        post: operations["conversation_append_turn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel */
+        post: operations["conversation_cancel_turn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/citations/{citation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Citation */
+        get: operations["conversation_get_citation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Answer */
+        post: operations["knowledge_create_answer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/citations/{citation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Citation */
+        get: operations["citation_get_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Documents */
+        get: operations["knowledge_list_documents"];
+        put?: never;
+        /**
+         * Upload Document
+         * @deprecated
+         */
+        post: operations["knowledge_upload_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document */
+        get: operations["knowledge_get_document"];
+        put?: never;
+        post?: never;
+        /** Delete Document */
+        delete: operations["knowledge_delete_document"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Document */
+        post: operations["knowledge_retry_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/evidence/{evidence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Detail */
+        get: operations["graph_get_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Node Detail */
+        get: operations["graph_get_node"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}/neighbors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Neighbors */
+        post: operations["graph_get_neighbors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bounded Path */
+        post: operations["graph_bounded_path"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search Graph */
+        post: operations["graph_search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Active Snapshots */
+        get: operations["graph_list_active_snapshots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sources */
+        get: operations["knowledge_list_sources"];
+        put?: never;
+        /** Upload Source */
+        post: operations["knowledge_upload_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Source */
+        get: operations["knowledge_get_source"];
+        put?: never;
+        post?: never;
+        /** Delete Source */
+        delete: operations["knowledge_delete_source"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/sources/{source_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Source */
+        post: operations["knowledge_retry_source"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Revisions */
+        get: operations["test_plan_list_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Generation */
+        post: operations["test_plan_request_generation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/generations/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Generation */
+        get: operations["test_plan_get_generation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Revision */
+        get: operations["test_plan_get_revision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Replace Draft */
+        patch: operations["test_plan_replace_draft"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Revision */
+        post: operations["test_plan_publish_revision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runtime-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime Mode */
+        get: operations["runtime_get_mode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -53,93 +606,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/citations/{citation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Citation */
-        get: operations["citation_get_preview"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/knowledge/answers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Answer */
-        post: operations["knowledge_create_answer"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/knowledge/documents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Documents */
-        get: operations["knowledge_list_documents"];
-        put?: never;
-        /** Upload Document */
-        post: operations["knowledge_upload_document"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/knowledge/documents/{document_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Document */
-        get: operations["knowledge_get_document"];
-        put?: never;
-        post?: never;
-        /** Delete Document */
-        delete: operations["knowledge_delete_document"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/knowledge/documents/{document_id}/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Retry Document */
-        post: operations["knowledge_retry_document"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -149,6 +615,53 @@ export interface components {
          * @enum {string}
          */
         AbstentionReason: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
+        /** AiAgentRevisionPage */
+        AiAgentRevisionPage: {
+            /** Items */
+            items: components["schemas"]["AiAgentRevisionSummary"][];
+        };
+        /** AiAgentRevisionSummary */
+        AiAgentRevisionSummary: {
+            /** Assetid */
+            assetId: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Displayname */
+            displayName: string;
+            /** Outputschemadigest */
+            outputSchemaDigest: string;
+            /** Revisionid */
+            revisionId: string;
+            /** Toolallowlist */
+            toolAllowlist: ("knowledge.search" | "knowledge.answer")[];
+        };
+        /** AnswerClaim */
+        AnswerClaim: {
+            /** Answerend */
+            answerEnd: number;
+            /** Answerstart */
+            answerStart: number;
+            /** Citationids */
+            citationIds: string[];
+            /** Claimid */
+            claimId: string;
+            /** Text */
+            text: string;
+        };
+        /** AnswerDeltaEvent */
+        AnswerDeltaEvent: {
+            payload: components["schemas"]["AnswerDeltaPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "answer.delta";
+        };
+        /** AnswerDeltaPayload */
+        AnswerDeltaPayload: {
+            /** Text */
+            text: string;
+        };
         /**
          * AnswerMode
          * @enum {string}
@@ -174,6 +687,20 @@ export interface components {
              */
             type: "bdd";
         };
+        /** BddAnchor */
+        "BddAnchor-Input": {
+            /** Featureid */
+            featureId: string;
+            /** Scenarioid */
+            scenarioId?: string | null;
+            /** Stepid */
+            stepId?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bdd";
+        };
         /** Body_knowledge_upload_document */
         Body_knowledge_upload_document: {
             /**
@@ -181,6 +708,34 @@ export interface components {
              * Format: binary
              */
             upload: string;
+        };
+        /** Body_knowledge_upload_source */
+        Body_knowledge_upload_source: {
+            /**
+             * Upload
+             * Format: binary
+             */
+            upload: string;
+        };
+        /**
+         * ChatEventEnvelope
+         * @description A recoverable, ordered event persisted for one chat turn.
+         */
+        ChatEventEnvelope: {
+            /** Chatid */
+            chatId: string;
+            /** Event */
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"];
+            /** Eventid */
+            eventId: string;
+            /** Occurredat */
+            occurredAt: string;
+            /** Schemaversion */
+            schemaVersion: number;
+            /** Sequence */
+            sequence: number;
+            /** Turnid */
+            turnId: string;
         };
         /**
          * ChatTurnAccepted
@@ -217,6 +772,23 @@ export interface components {
             /** Sourcescope */
             sourceScope?: components["schemas"]["SourceFamily"][] | null;
         };
+        /** Citation */
+        Citation: {
+            /** Chunkcontenthash */
+            chunkContentHash: string;
+            /** Chunkid */
+            chunkId: string;
+            /** Citationid */
+            citationId: string;
+            contentRole: components["schemas"]["ContentRole"];
+            /** Derivedfromchunkids */
+            derivedFromChunkIds?: string[] | null;
+            /** Evidencelabel */
+            evidenceLabel: string;
+            /** Logicalchunkid */
+            logicalChunkId: string;
+            source: components["schemas"]["SourceRevisionRef"];
+        };
         /** CitationPreview */
         CitationPreview: {
             anchor: components["schemas"]["StructuralAnchor"];
@@ -245,6 +817,19 @@ export interface components {
              */
             suffix?: string;
         };
+        /** CitationResolvedEvent */
+        CitationResolvedEvent: {
+            payload: components["schemas"]["CitationResolvedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "citation.resolved";
+        };
+        /** CitationResolvedPayload */
+        CitationResolvedPayload: {
+            citation: components["schemas"]["Citation"];
+        };
         /** CodeAnchor */
         CodeAnchor: {
             /** Lineend */
@@ -266,11 +851,238 @@ export interface components {
              */
             type: "code";
         };
+        /** CodeAnchor */
+        "CodeAnchor-Input": {
+            /** Lineend */
+            lineEnd: number;
+            /** Linestart */
+            lineStart: number;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Symbol */
+            symbol?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "code";
+        };
         /**
          * ContentRole
          * @enum {string}
          */
         ContentRole: "source" | "generated_summary";
+        /** ContextAssembledEvent */
+        ContextAssembledEvent: {
+            payload: components["schemas"]["ContextAssembledPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "context.assembled";
+        };
+        /** ContextAssembledPayload */
+        ContextAssembledPayload: {
+            /** Contextsnapshotid */
+            contextSnapshotId: string;
+            /** Tokencount */
+            tokenCount: number;
+        };
+        /** ConversationAccepted */
+        ConversationAccepted: {
+            /** Conversationid */
+            conversationId: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "queued";
+            /** Turnid */
+            turnId: string;
+        };
+        /** ConversationCreateRequest */
+        ConversationCreateRequest: {
+            /** Agentrevisionid */
+            agentRevisionId?: string | null;
+            /**
+             * Documentrevisionids
+             * @default []
+             */
+            documentRevisionIds?: string[];
+            /** Message */
+            message: string;
+            /** Modelalias */
+            modelAlias: string;
+            /**
+             * Skillrevisionids
+             * @default []
+             */
+            skillRevisionIds?: string[];
+            /**
+             * Sourcerevisionids
+             * @default []
+             */
+            sourceRevisionIds?: string[];
+        };
+        /** ConversationDetail */
+        ConversationDetail: {
+            /** Conversationid */
+            conversationId: string;
+            /** Createdat */
+            createdAt: string;
+            /** Title */
+            title: string;
+            /** Turns */
+            turns: components["schemas"]["ConversationTurnSummary"][];
+            /** Updatedat */
+            updatedAt: string;
+        };
+        /** ConversationEventItem */
+        ConversationEventItem: {
+            /** Eventid */
+            eventId: string;
+            /**
+             * Eventtype
+             * @enum {string}
+             */
+            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "rerank.completed" | "answer.delta" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed";
+            /** Occurredat */
+            occurredAt: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Sequence */
+            sequence: number;
+            /** Turnid */
+            turnId: string;
+        };
+        /** ConversationEventPage */
+        ConversationEventPage: {
+            /** Items */
+            items: components["schemas"]["ConversationEventItem"][];
+        };
+        /** ConversationPage */
+        ConversationPage: {
+            /** Items */
+            items: components["schemas"]["ConversationSummary"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+        };
+        /** ConversationResolvedResourceView */
+        ConversationResolvedResourceView: {
+            /** Documentid */
+            documentId: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Label */
+            label: string;
+            /** Sourceid */
+            sourceId: string;
+            /** Sourcerevisionid */
+            sourceRevisionId?: string | null;
+        };
+        /** ConversationSummary */
+        ConversationSummary: {
+            /** Conversationid */
+            conversationId: string;
+            /** Createdat */
+            createdAt: string;
+            /** Title */
+            title: string;
+            /** Updatedat */
+            updatedAt: string;
+        };
+        /** ConversationTurnCompletedEvent */
+        ConversationTurnCompletedEvent: {
+            payload: components["schemas"]["ConversationTurnCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "conversation.turn.completed";
+        };
+        /** ConversationTurnCompletedPayload */
+        ConversationTurnCompletedPayload: {
+            /** Answerevidencesnapshotdigest */
+            answerEvidenceSnapshotDigest: string;
+            /** Answerevidencesnapshotid */
+            answerEvidenceSnapshotId: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "completed" | "abstained" | "canceled" | "failed";
+            /** Turnid */
+            turnId: string;
+        };
+        /**
+         * ConversationTurnInputView
+         * @description Browser-safe immutable input facts; excludes instructions and policy internals.
+         */
+        ConversationTurnInputView: {
+            /** Agentlabel */
+            agentLabel?: string | null;
+            /** Agentrevisionid */
+            agentRevisionId?: string | null;
+            /** Documentrevisionids */
+            documentRevisionIds: string[];
+            /** Message */
+            message: string;
+            /** Modelalias */
+            modelAlias: string;
+            /** Resolvedresources */
+            resolvedResources: components["schemas"]["ConversationResolvedResourceView"][];
+            /** Skilllabels */
+            skillLabels: string[];
+            /** Skillrevisionids */
+            skillRevisionIds: string[];
+            /** Sourcerevisionids */
+            sourceRevisionIds: string[];
+        };
+        /** ConversationTurnRequestedEvent */
+        ConversationTurnRequestedEvent: {
+            payload: components["schemas"]["ConversationTurnRequestedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "conversation.turn.requested";
+        };
+        /** ConversationTurnRequestedPayload */
+        ConversationTurnRequestedPayload: {
+            /** Conversationid */
+            conversationId: string;
+            /** Inputsnapshotdigest */
+            inputSnapshotDigest: string;
+            /** Turnid */
+            turnId: string;
+        };
+        /** ConversationTurnSummary */
+        ConversationTurnSummary: {
+            /** Answerevidencesnapshotdigest */
+            answerEvidenceSnapshotDigest?: string | null;
+            /** Answerevidencesnapshotid */
+            answerEvidenceSnapshotId?: string | null;
+            /** Attempt */
+            attempt: number;
+            /** Graphcontextstatus */
+            graphContextStatus?: ("APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED") | null;
+            /** Graphsnapshotid */
+            graphSnapshotId?: string | null;
+            input: components["schemas"]["ConversationTurnInputView"];
+            /** Inputsnapshotdigest */
+            inputSnapshotDigest: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+            /** Turnid */
+            turnId: string;
+        };
         /** DocumentAccepted */
         DocumentAccepted: {
             document: components["schemas"]["DocumentSummary"];
@@ -312,6 +1124,24 @@ export interface components {
              */
             type: "document";
         };
+        /** DocumentAnchor */
+        "DocumentAnchor-Input": {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Endoffset */
+            endOffset?: number | null;
+            /** Headingpath */
+            headingPath?: string[] | null;
+            /** Page */
+            page?: number | null;
+            /** Startoffset */
+            startOffset?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+        };
         /** DocumentDetail */
         DocumentDetail: {
             /** Chunkcount */
@@ -344,6 +1174,8 @@ export interface components {
             revisionId: string;
             /** Sourcecontenthash */
             sourceContentHash: string;
+            /** Sourceid */
+            sourceId: string;
             stage: components["schemas"]["IngestionStage"];
             /** Stages */
             stages: components["schemas"]["DocumentStageSnapshot"][];
@@ -409,6 +1241,8 @@ export interface components {
              * @enum {string}
              */
             mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            /** Sourceid */
+            sourceId: string;
             stage: components["schemas"]["IngestionStage"];
             status: components["schemas"]["DocumentStatus"];
             /** Updatedat */
@@ -438,6 +1272,159 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /** FailureAnchor */
+        "FailureAnchor-Input": {
+            /** Incidentid */
+            incidentId: string;
+            /** Runid */
+            runId?: string | null;
+            /** Timeend */
+            timeEnd?: string | null;
+            /** Timestart */
+            timeStart?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "failure";
+        };
+        /** GraphEdgeView */
+        GraphEdgeView: {
+            /** Confidence */
+            confidence: number;
+            /** Edgeid */
+            edgeId: string;
+            /**
+             * Evidenceids
+             * @default []
+             */
+            evidenceIds?: string[];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "EXTRACTED" | "INFERRED";
+            /** Relationtype */
+            relationType: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
+        /** GraphEvidenceView */
+        GraphEvidenceView: {
+            /** Anchor */
+            anchor: {
+                [key: string]: unknown;
+            };
+            /** Chunkid */
+            chunkId: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Evidenceid */
+            evidenceId: string;
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** GraphNeighborRequest */
+        GraphNeighborRequest: {
+            /**
+             * Depth
+             * @default 1
+             */
+            depth?: number;
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /** Snapshotid */
+            snapshotId: string;
+        };
+        /** GraphNodeView */
+        GraphNodeView: {
+            /** Canonicalkey */
+            canonicalKey: string;
+            /**
+             * Evidenceids
+             * @default []
+             */
+            evidenceIds?: string[];
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
+            /** Nodetype */
+            nodeType: string;
+        };
+        /** GraphPathRequest */
+        GraphPathRequest: {
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
+        /** GraphSearchRequest */
+        GraphSearchRequest: {
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /** Query */
+            query: string;
+            /** Snapshotid */
+            snapshotId: string;
+        };
+        /** GraphSnapshotPage */
+        GraphSnapshotPage: {
+            /** Items */
+            items: components["schemas"]["GraphSnapshotView"][];
+        };
+        /** GraphSnapshotView */
+        GraphSnapshotView: {
+            /** Documentrevisionids */
+            documentRevisionIds: string[];
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourcerevisionids */
+            sourceRevisionIds: string[];
+            /** Sourcesetdigest */
+            sourceSetDigest: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "CANDIDATE" | "READY" | "FAILED";
+        };
+        /** GraphSubgraphView */
+        GraphSubgraphView: {
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeView"][];
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence?: components["schemas"]["GraphEvidenceView"][];
+            /** Nodes */
+            nodes: components["schemas"]["GraphNodeView"][];
+            /** Snapshotid */
+            snapshotId: string;
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
         };
         /** HealthComponent */
         HealthComponent: {
@@ -474,6 +1461,22 @@ export interface components {
              */
             status: "ok";
         };
+        /** ModelCatalogItem */
+        ModelCatalogItem: {
+            /** Alias */
+            alias: string;
+            /** Capabilities */
+            capabilities: ("chat" | "embed" | "structured")[];
+            /** Displayname */
+            displayName: string;
+        };
+        /** ModelCatalogPage */
+        ModelCatalogPage: {
+            /** Defaultalias */
+            defaultAlias: string;
+            /** Items */
+            items: components["schemas"]["ModelCatalogItem"][];
+        };
         /** OpenApiAnchor */
         OpenApiAnchor: {
             /** Jsonpointer */
@@ -488,6 +1491,523 @@ export interface components {
              */
             type: "openapi";
         };
+        /** OpenApiAnchor */
+        "OpenApiAnchor-Input": {
+            /** Jsonpointer */
+            jsonPointer: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "openapi";
+        };
+        /**
+         * ProblemDetails
+         * @description Closed RFC 9457 error projection; only registered safe text is accepted.
+         */
+        ProblemDetails: {
+            /** Correlationid */
+            correlationId: string;
+            /** Detail */
+            detail: string;
+            /**
+             * Failurestage
+             * @default null
+             */
+            failureStage?: ("search" | "embedding" | "answer" | "graph" | "model" | "recorder" | "execution") | null;
+            /**
+             * Instance
+             * @default null
+             */
+            instance?: string | null;
+            /** Retryable */
+            retryable: boolean;
+            /** Status */
+            status: number;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+        } & ({
+            /** @constant */
+            detail?: "The grounded answer could not be committed atomically.";
+            /** @constant */
+            failureStage: "answer";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Answer snapshot unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/answer-snapshot-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The answer service is currently unavailable.";
+            /** @constant */
+            failureStage: "answer";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Answer unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/answer-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The approved asset revision is unavailable in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Asset revision unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/asset-revision-unavailable";
+        } | {
+            /** @constant */
+            detail?: "An asset is already associated with another asset.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Association conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/association-conflict";
+        } | {
+            /** @constant */
+            detail?: "The current actor and scope do not allow this operation.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 403;
+            /** @constant */
+            title?: "Authorization denied";
+            /** @constant */
+            type?: "https://tap.example/problems/authorization-denied";
+        } | {
+            /** @constant */
+            detail?: "The published revision requires a compatible step mapping.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Automation mapping required";
+            /** @constant */
+            type?: "https://tap.example/problems/automation-mapping-required";
+        } | {
+            /** @constant */
+            detail?: "The citation no longer resolves to its exact source revision.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Citation stale";
+            /** @constant */
+            type?: "https://tap.example/problems/citation-stale";
+        } | {
+            /** @constant */
+            detail?: "The citation provider is currently unavailable.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Citation unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/citation-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The Conversation is unavailable in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Conversation not found";
+            /** @constant */
+            type?: "https://tap.example/problems/conversation-not-found";
+        } | {
+            /** @constant */
+            detail?: "The local knowledge space has reached its document limit.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 429;
+            /** @constant */
+            title?: "Document limit reached";
+            /** @constant */
+            type?: "https://tap.example/problems/document-limit-reached";
+        } | {
+            /** @constant */
+            detail?: "The requested document does not exist.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Document not found";
+            /** @constant */
+            type?: "https://tap.example/problems/document-not-found";
+        } | {
+            /** @constant */
+            detail?: "Only a failed document can be retried.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Document is not retryable";
+            /** @constant */
+            type?: "https://tap.example/problems/document-not-retryable";
+        } | {
+            /** @constant */
+            detail?: "A selected document is no longer ready at its selected revision.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Document state changed";
+            /** @constant */
+            type?: "https://tap.example/problems/document-state-changed";
+        } | {
+            /** @constant */
+            detail?: "The document exceeds the 25 MiB upload limit.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 413;
+            /** @constant */
+            title?: "Document too large";
+            /** @constant */
+            type?: "https://tap.example/problems/document-too-large";
+        } | {
+            /** @constant */
+            detail?: "The embedding service is currently unavailable.";
+            /** @constant */
+            failureStage: "embedding";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Embedding unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/embedding-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The document contains no processable content.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Empty document";
+            /** @constant */
+            type?: "https://tap.example/problems/empty-document";
+        } | {
+            /** @constant */
+            detail?: "The execution provider is currently unavailable.";
+            /** @constant */
+            failureStage: "execution";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Execution provider unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/execution-provider-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The graph fact is unavailable in this Project snapshot.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Graph fact not found";
+            /** @constant */
+            type?: "https://tap.example/problems/graph-fact-not-found";
+        } | {
+            /** @constant */
+            detail?: "The graph service is currently unavailable.";
+            /** @constant */
+            failureStage: "graph";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Graph unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/graph-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The idempotency key already identifies a different request.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Idempotency conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/idempotency-conflict";
+        } | {
+            /** @constant */
+            detail?: "The knowledge runtime is not configured.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Knowledge runtime unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/knowledge-runtime-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The model service is currently unavailable.";
+            /** @constant */
+            failureStage: "model";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Model unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/model-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The recorder service is currently unavailable.";
+            /** @constant */
+            failureStage: "recorder";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Recorder unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/recorder-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The request body does not match the public API contract.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Request validation failed";
+            /** @constant */
+            type?: "https://tap.example/problems/request-validation";
+        } | {
+            /** @constant */
+            detail?: "The requested revision conflicts with the current revision.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Revision conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/revision-conflict";
+        } | {
+            /** @constant */
+            detail?: "The requested project does not match the current scope.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 403;
+            /** @constant */
+            title?: "Scope mismatch";
+            /** @constant */
+            type?: "https://tap.example/problems/scope-mismatch";
+        } | {
+            /** @constant */
+            detail?: "The search execution exceeded a safety bound.";
+            /** @constant */
+            failureStage: "search";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Search execution rejected";
+            /** @constant */
+            type?: "https://tap.example/problems/search-execution-rejected";
+        } | {
+            /** @constant */
+            detail?: "The search provider is currently unavailable.";
+            /** @constant */
+            failureStage: "search";
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Search unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/search-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The original Source command is still in progress; retry the same key.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: true;
+            /** @constant */
+            status?: 503;
+            /** @constant */
+            title?: "Source command in progress";
+            /** @constant */
+            type?: "https://tap.example/problems/source-command-pending";
+        } | {
+            /** @constant */
+            detail?: "The Source is unavailable in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Source not found";
+            /** @constant */
+            type?: "https://tap.example/problems/source-not-found";
+        } | {
+            /** @constant */
+            detail?: "Select between one and twenty unique ready documents.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Source selection required";
+            /** @constant */
+            type?: "https://tap.example/problems/source-selection-required";
+        } | {
+            /** @constant */
+            detail?: "The Source is no longer available for this command.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "Source state changed";
+            /** @constant */
+            type?: "https://tap.example/problems/source-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The durable chat turn workflow is not available yet.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 501;
+            /** @constant */
+            title?: "Turn workflow not implemented";
+            /** @constant */
+            type?: "https://tap.example/problems/turn-not-implemented";
+        } | {
+            /** @constant */
+            detail?: "The answer request contains a control unavailable in this demo.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Unsupported answer control";
+            /** @constant */
+            type?: "https://tap.example/problems/unsupported-answer-control";
+        } | {
+            /** @constant */
+            detail?: "The document filename, media type, or content is not supported.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            title?: "Unsupported document";
+            /** @constant */
+            type?: "https://tap.example/problems/unsupported-document";
+        });
+        /** QueryPlanReadyEvent */
+        QueryPlanReadyEvent: {
+            payload: components["schemas"]["QueryPlanReadyPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "query.plan_ready";
+        };
+        /** QueryPlanReadyPayload */
+        QueryPlanReadyPayload: {
+            answerMode: components["schemas"]["AnswerMode"];
+            /** Queryplanid */
+            queryPlanId: string;
+            /** Sourcefamilies */
+            sourceFamilies: components["schemas"]["SourceFamily"][];
+        };
         /** ReadyHealth */
         ReadyHealth: {
             /** Components */
@@ -497,6 +2017,22 @@ export interface components {
              * @enum {string}
              */
             status: "ready" | "unready";
+        };
+        /** RerankCompletedEvent */
+        RerankCompletedEvent: {
+            payload: components["schemas"]["RerankCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "rerank.completed";
+        };
+        /** RerankCompletedPayload */
+        RerankCompletedPayload: {
+            /** Candidatecount */
+            candidateCount: number;
+            /** Durationms */
+            durationMs: number;
         };
         /**
          * ResourceMode
@@ -579,6 +2115,17 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            /**
+             * Graphcontextstatus
+             * @default NOT_SELECTED
+             * @enum {string}
+             */
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            /**
+             * Graphsnapshotid
+             * @default null
+             */
+            graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -648,6 +2195,22 @@ export interface components {
              * @default null
              */
             title?: string | null;
+        };
+        /** RetrievalHitsReadyEvent */
+        RetrievalHitsReadyEvent: {
+            payload: components["schemas"]["RetrievalHitsReadyPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "retrieval.hits_ready";
+        };
+        /** RetrievalHitsReadyPayload */
+        RetrievalHitsReadyPayload: {
+            /** Authorizedhitcount */
+            authorizedHitCount: number;
+            /** Traceid */
+            traceId: string;
         };
         /** RetrievalScores */
         RetrievalScores: {
@@ -753,15 +2316,743 @@ export interface components {
          */
         RevisionKind: "git_commit" | "blob_version" | "mysql_version";
         /**
+         * RuntimeMode
+         * @description Server-owned validation context; never a personal authentication claim.
+         */
+        RuntimeMode: {
+            /** Actorid */
+            actorId: string;
+            /**
+             * Identitymode
+             * @constant
+             */
+            identityMode: "validation";
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "validation";
+            /** Projectid */
+            projectId: string;
+        };
+        /** SkillRevisionPage */
+        SkillRevisionPage: {
+            /** Items */
+            items: components["schemas"]["SkillRevisionSummary"][];
+        };
+        /** SkillRevisionSummary */
+        SkillRevisionSummary: {
+            /** Applicabletasks */
+            applicableTasks: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[];
+            /** Assetid */
+            assetId: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Displayname */
+            displayName: string;
+            /** Revisionid */
+            revisionId: string;
+        };
+        /** SourceAccepted */
+        SourceAccepted: {
+            accepted: components["schemas"]["DocumentAccepted"];
+            source: components["schemas"]["SourceSummary"];
+        };
+        /** SourceDetail */
+        SourceDetail: {
+            /** Createdat */
+            createdAt: string;
+            /** Documentcount */
+            documentCount: number;
+            documents: components["schemas"]["SourceDocumentPage"];
+            /** Failedcount */
+            failedCount: number;
+            /** Name */
+            name: string;
+            /** Readycount */
+            readyCount: number;
+            /** Sourceid */
+            sourceId: string;
+        };
+        /** SourceDocument */
+        SourceDocument: {
+            /** Attempt */
+            attempt: number;
+            /** Chunkcount */
+            chunkCount: number;
+            /** Documentid */
+            documentId: string;
+            /** Errorcode */
+            errorCode?: string | null;
+            /** Errorsummary */
+            errorSummary?: string | null;
+            /** Filename */
+            filename: string;
+            /**
+             * Mediatype
+             * @enum {string}
+             */
+            mediaType: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/markdown" | "text/plain";
+            /** Normalizedpreview */
+            normalizedPreview?: string | null;
+            /** Revisionid */
+            revisionId: string;
+            /** Sourcecontenthash */
+            sourceContentHash: string;
+            /** Sourceid */
+            sourceId: string;
+            stage: components["schemas"]["IngestionStage"];
+            /** Stages */
+            stages: components["schemas"]["DocumentStageSnapshot"][];
+            status: components["schemas"]["DocumentStatus"];
+            /** Updatedat */
+            updatedAt: string;
+        };
+        /** SourceDocumentPage */
+        SourceDocumentPage: {
+            /** Items */
+            items: components["schemas"]["SourceDocument"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+        };
+        /**
          * SourceFamily
          * @enum {string}
          */
         SourceFamily: "doc" | "code" | "bdd" | "failure";
+        /** SourcePage */
+        SourcePage: {
+            /** Items */
+            items: components["schemas"]["SourceSummary"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+        };
+        /** SourceRetryRequest */
+        SourceRetryRequest: {
+            /** Documentid */
+            documentId: string;
+            /** Expectedattempt */
+            expectedAttempt: number;
+            /** Revisionid */
+            revisionId: string;
+        };
+        /** SourceRevisionRef */
+        SourceRevisionRef: {
+            anchor: components["schemas"]["tap__contracts__chat_stream__StructuralAnchor"];
+            /** Revision */
+            revision: string;
+            revisionKind: components["schemas"]["RevisionKind"];
+            /** Sourcecontenthash */
+            sourceContentHash: string;
+            /** Sourceid */
+            sourceId: string;
+            /** Sourcetype */
+            sourceType: string;
+        };
+        /** SourceSummary */
+        SourceSummary: {
+            /** Createdat */
+            createdAt: string;
+            /** Documentcount */
+            documentCount: number;
+            /** Failedcount */
+            failedCount: number;
+            /** Name */
+            name: string;
+            /** Readycount */
+            readyCount: number;
+            /** Sourceid */
+            sourceId: string;
+        };
+        /** StageCompletedEvent */
+        StageCompletedEvent: {
+            payload: components["schemas"]["StageCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage.completed";
+        };
+        /** StageCompletedPayload */
+        StageCompletedPayload: {
+            /** Durationms */
+            durationMs: number;
+            /** Stage */
+            stage: string;
+        };
+        /** StageStartedEvent */
+        StageStartedEvent: {
+            payload: components["schemas"]["StageStartedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage.started";
+        };
+        /** StageStartedPayload */
+        StageStartedPayload: {
+            /** Stage */
+            stage: string;
+        };
         /**
          * StructuralAnchor
          * @description A closed, structural location inside one authorized source family.
          */
         StructuralAnchor: components["schemas"]["DocumentAnchor"] | components["schemas"]["CodeAnchor"] | components["schemas"]["BddAnchor"] | components["schemas"]["OpenApiAnchor"] | components["schemas"]["FailureAnchor"];
+        /**
+         * StructuralAnchor
+         * @description A closed, structural location inside one authorized source family.
+         */
+        "StructuralAnchor-Input": components["schemas"]["DocumentAnchor-Input"] | components["schemas"]["CodeAnchor-Input"] | components["schemas"]["BddAnchor-Input"] | components["schemas"]["OpenApiAnchor-Input"] | components["schemas"]["FailureAnchor-Input"];
+        /** TestPlanCaseView */
+        "TestPlanCaseView-Input": {
+            /** Caseid */
+            caseId: string;
+            /** Critical */
+            critical: boolean;
+            /** Objective */
+            objective: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Scenarios */
+            scenarios: components["schemas"]["TestPlanScenarioView"][];
+            /** Title */
+            title: string;
+        };
+        /** TestPlanCaseView */
+        "TestPlanCaseView-Output": {
+            /** Caseid */
+            caseId: string;
+            /** Critical */
+            critical: boolean;
+            /** Objective */
+            objective: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Scenarios */
+            scenarios: components["schemas"]["TestPlanScenarioView"][];
+            /** Title */
+            title: string;
+        };
+        /** TestPlanCitationView */
+        TestPlanCitationView: {
+            /** Chunkid */
+            chunkId: string;
+            /** Citationid */
+            citationId: string;
+            /** Claimtext */
+            claimText: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "SOURCE" | "GRAPH_EXTRACTED";
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** TestPlanCoverageGapView */
+        TestPlanCoverageGapView: {
+            /** Gapid */
+            gapId: string;
+            /** Reason */
+            reason: string;
+            /** Requirementref */
+            requirementRef: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+        };
+        /** TestPlanGenerationAccepted */
+        TestPlanGenerationAccepted: {
+            /** Deeplink */
+            deepLink: string;
+            /** Jobid */
+            jobId: string;
+            /** Revisionid */
+            revisionId: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PENDING" | "RUNNING" | "DRAFT_READY" | "FAILED";
+            /** Testplanid */
+            testPlanId: string;
+        };
+        /** TestPlanGenerationRequestBody */
+        TestPlanGenerationRequestBody: {
+            /** Agentrevisionid */
+            agentRevisionId: string;
+            /** Answerevidencesnapshotdigest */
+            answerEvidenceSnapshotDigest: string;
+            /** Conversationid */
+            conversationId: string;
+            /** Inputsnapshotdigest */
+            inputSnapshotDigest: string;
+            /** Modelalias */
+            modelAlias: string;
+            /** Objective */
+            objective: string;
+            /** Skillrevisionids */
+            skillRevisionIds: string[];
+            /** Turnid */
+            turnId: string;
+        };
+        /** TestPlanRevisionPage */
+        TestPlanRevisionPage: {
+            /** Items */
+            items: components["schemas"]["TestPlanRevisionView"][];
+        };
+        /** TestPlanRevisionUpdate */
+        TestPlanRevisionUpdate: {
+            /** Assumptions */
+            assumptions: components["schemas"]["TestPlanTextFactView"][];
+            /** Cases */
+            cases: components["schemas"]["TestPlanCaseView-Input"][];
+            /** Citations */
+            citations: components["schemas"]["TestPlanCitationView"][];
+            /** Coveragegaps */
+            coverageGaps: components["schemas"]["TestPlanCoverageGapView"][];
+            /** Objective */
+            objective: string;
+            /** Prerequisites */
+            prerequisites: string[];
+            /** Risks */
+            risks: string[];
+            /** Scopeitems */
+            scopeItems: string[];
+            /** Title */
+            title: string;
+            /** Unknowns */
+            unknowns: components["schemas"]["TestPlanTextFactView"][];
+        };
+        /** TestPlanRevisionView */
+        TestPlanRevisionView: {
+            /** Adoptedfromrevisionid */
+            adoptedFromRevisionId?: string | null;
+            /** Assumptions */
+            assumptions: components["schemas"]["TestPlanTextFactView"][];
+            /** Cases */
+            cases: components["schemas"]["TestPlanCaseView-Output"][];
+            /** Citations */
+            citations: components["schemas"]["TestPlanCitationView"][];
+            /** Contentdigest */
+            contentDigest: string;
+            /** Coveragegaps */
+            coverageGaps: components["schemas"]["TestPlanCoverageGapView"][];
+            /** Deeplink */
+            deepLink: string;
+            /** Objective */
+            objective: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "VALIDATION" | "PRODUCT";
+            /** Prerequisites */
+            prerequisites: string[];
+            /** Revisionid */
+            revisionId: string;
+            /** Risks */
+            risks: string[];
+            /** Rowversion */
+            rowVersion: number;
+            /** Scopeitems */
+            scopeItems: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "DRAFT" | "VALIDATING" | "PUBLISHED" | "SUPERSEDED";
+            /** Testplanid */
+            testPlanId: string;
+            /** Title */
+            title: string;
+            /** Unknowns */
+            unknowns: components["schemas"]["TestPlanTextFactView"][];
+            /** Validationdigest */
+            validationDigest?: string | null;
+            /** Version */
+            version: number;
+        };
+        /** TestPlanScenarioView */
+        TestPlanScenarioView: {
+            /** Ordinal */
+            ordinal: number;
+            /** Scenarioid */
+            scenarioId: string;
+            /** Steps */
+            steps: components["schemas"]["TestPlanStepView"][];
+            /** Title */
+            title: string;
+        };
+        /** TestPlanStepView */
+        TestPlanStepView: {
+            /** Critical */
+            critical: boolean;
+            /** Expectedresult */
+            expectedResult?: string | null;
+            /**
+             * Keyword
+             * @enum {string}
+             */
+            keyword: "Given" | "When" | "Then" | "And" | "But";
+            /** Ordinal */
+            ordinal: number;
+            /** Stepid */
+            stepId: string;
+            /** Text */
+            text: string;
+        };
+        /** TestPlanTextFactView */
+        TestPlanTextFactView: {
+            /** Factid */
+            factId: string;
+            /** Graphedgeid */
+            graphEdgeId?: string | null;
+            /** Text */
+            text: string;
+        };
+        /** TurnAbstainedEvent */
+        TurnAbstainedEvent: {
+            payload: components["schemas"]["TurnAbstainedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.abstained";
+        };
+        /** TurnAbstainedPayload */
+        TurnAbstainedPayload: {
+            answer: components["schemas"]["tap__contracts__chat_stream__RetrievalAnswerResponse"];
+        };
+        /** TurnCanceledEvent */
+        TurnCanceledEvent: {
+            payload: components["schemas"]["TurnCanceledPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.canceled";
+        };
+        /** TurnCanceledPayload */
+        TurnCanceledPayload: {
+            /** Partialanswerretained */
+            partialAnswerRetained: boolean;
+        };
+        /** TurnCompletedEvent */
+        TurnCompletedEvent: {
+            payload: components["schemas"]["TurnCompletedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.completed";
+        };
+        /** TurnCompletedPayload */
+        TurnCompletedPayload: {
+            answer?: components["schemas"]["tap__contracts__chat_stream__RetrievalAnswerResponse"] | null;
+            /** State */
+            state?: "completed" | null;
+        };
+        /** TurnDegradedEvent */
+        TurnDegradedEvent: {
+            payload: components["schemas"]["TurnDegradedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.degraded";
+        };
+        /** TurnDegradedPayload */
+        TurnDegradedPayload: {
+            /** Availablestages */
+            availableStages: string[];
+            /** Reason */
+            reason: string;
+        };
+        /** TurnFailedEvent */
+        TurnFailedEvent: {
+            payload: components["schemas"]["TurnFailedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.failed";
+        };
+        /** TurnFailedPayload */
+        TurnFailedPayload: {
+            problem: components["schemas"]["ProblemDetails"];
+        };
+        /** TurnStartedEvent */
+        TurnStartedEvent: {
+            payload: components["schemas"]["TurnStartedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "turn.started";
+        };
+        /** TurnStartedPayload */
+        TurnStartedPayload: {
+            /**
+             * State
+             * @constant
+             */
+            state: "running";
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
+        /** BddAnchor */
+        tap__contracts__chat_stream__BddAnchor: {
+            /** Featureid */
+            featureId: string;
+            /** Scenarioid */
+            scenarioId?: string | null;
+            /** Stepid */
+            stepId?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bdd";
+        };
+        /** CodeAnchor */
+        tap__contracts__chat_stream__CodeAnchor: {
+            /** Lineend */
+            lineEnd: number;
+            /** Linestart */
+            lineStart: number;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Symbol */
+            symbol?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "code";
+        };
+        /** DocumentAnchor */
+        tap__contracts__chat_stream__DocumentAnchor: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Endoffset */
+            endOffset?: number | null;
+            /** Headingpath */
+            headingPath?: string[] | null;
+            /** Page */
+            page?: number | null;
+            /** Startoffset */
+            startOffset?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+        };
+        /** FailureAnchor */
+        tap__contracts__chat_stream__FailureAnchor: {
+            /** Incidentid */
+            incidentId: string;
+            /** Runid */
+            runId?: string | null;
+            /** Timeend */
+            timeEnd?: string | null;
+            /** Timestart */
+            timeStart?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "failure";
+        };
+        /** OpenApiAnchor */
+        tap__contracts__chat_stream__OpenApiAnchor: {
+            /** Jsonpointer */
+            jsonPointer: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "openapi";
+        };
+        /** RetrievalAnswerResponse */
+        tap__contracts__chat_stream__RetrievalAnswerResponse: {
+            /** Abstained */
+            abstained: boolean;
+            abstentionReason?: components["schemas"]["AbstentionReason"] | null;
+            /** Answer */
+            answer: string;
+            /** Citations */
+            citations: components["schemas"]["Citation"][];
+            /** Claims */
+            claims: components["schemas"]["AnswerClaim"][];
+            /** Contextsnapshotid */
+            contextSnapshotId: string;
+            /** Corpusversion */
+            corpusVersion: string;
+            /** Degradationreasons */
+            degradationReasons?: string[] | null;
+            /** Degradedmode */
+            degradedMode: boolean;
+            /**
+             * Graphcontextstatus
+             * @default NOT_SELECTED
+             * @enum {string}
+             */
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            /** Graphsnapshotid */
+            graphSnapshotId?: string | null;
+            /** Queryplanid */
+            queryPlanId: string;
+            /** Retrievalprofileid */
+            retrievalProfileId: string;
+            /** Traceid */
+            traceId: string;
+        };
+        /**
+         * StructuralAnchor
+         * @description A closed source location retained in a browser-visible citation.
+         */
+        tap__contracts__chat_stream__StructuralAnchor: components["schemas"]["tap__contracts__chat_stream__DocumentAnchor"] | components["schemas"]["tap__contracts__chat_stream__CodeAnchor"] | components["schemas"]["tap__contracts__chat_stream__BddAnchor"] | components["schemas"]["tap__contracts__chat_stream__OpenApiAnchor"] | components["schemas"]["tap__contracts__chat_stream__FailureAnchor"];
+        /** BddAnchor */
+        tap__contracts__http__BddAnchor: {
+            /** Featureid */
+            featureId: string;
+            /** Scenarioid */
+            scenarioId?: string | null;
+            /** Stepid */
+            stepId?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "bdd";
+        };
+        /** CodeAnchor */
+        tap__contracts__http__CodeAnchor: {
+            /** Lineend */
+            lineEnd: number;
+            /** Linestart */
+            lineStart: number;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Symbol */
+            symbol?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "code";
+        };
+        /** DocumentAnchor */
+        tap__contracts__http__DocumentAnchor: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Endoffset */
+            endOffset?: number | null;
+            /** Headingpath */
+            headingPath?: string[] | null;
+            /** Page */
+            page?: number | null;
+            /** Startoffset */
+            startOffset?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document";
+        };
+        /** FailureAnchor */
+        tap__contracts__http__FailureAnchor: {
+            /** Incidentid */
+            incidentId: string;
+            /** Runid */
+            runId?: string | null;
+            /** Timeend */
+            timeEnd?: string | null;
+            /** Timestart */
+            timeStart?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "failure";
+        };
+        /** OpenApiAnchor */
+        tap__contracts__http__OpenApiAnchor: {
+            /** Jsonpointer */
+            jsonPointer: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "openapi";
+        };
+        /** RetrievalAnswerResponse */
+        tap__contracts__http__RetrievalAnswerResponse: {
+            /** Abstained */
+            abstained: boolean;
+            abstentionReason?: components["schemas"]["AbstentionReason"] | null;
+            /** Answer */
+            answer: string;
+            /** Citations */
+            citations: components["schemas"]["RetrievalCitation"][];
+            /** Claims */
+            claims: components["schemas"]["RetrievalClaim"][];
+            /** Contextsnapshotid */
+            contextSnapshotId: string;
+            /** Corpusversion */
+            corpusVersion: string;
+            /** Degradationreasons */
+            degradationReasons?: string[] | null;
+            /** Degradedmode */
+            degradedMode: boolean;
+            /**
+             * Graphcontextstatus
+             * @default NOT_SELECTED
+             * @enum {string}
+             */
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            /** Graphsnapshotid */
+            graphSnapshotId?: string | null;
+            /** Queryplanid */
+            queryPlanId: string;
+            /** Retrievalprofileid */
+            retrievalProfileId: string;
+            /** Traceid */
+            traceId: string;
+        };
+        /**
+         * StructuralAnchor
+         * @description A closed, structural location inside one authorized source family.
+         */
+        "tap__contracts__http__StructuralAnchor-Output": components["schemas"]["tap__contracts__http__DocumentAnchor"] | components["schemas"]["tap__contracts__http__CodeAnchor"] | components["schemas"]["tap__contracts__http__BddAnchor"] | components["schemas"]["tap__contracts__http__OpenApiAnchor"] | components["schemas"]["tap__contracts__http__FailureAnchor"];
     };
     responses: never;
     parameters: never;
@@ -771,6 +3062,2247 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    ai_list_agent_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_get_agent_revision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent revision unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_models: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalogPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Model catalog unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_skill_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_get_skill_revision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill revision unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_list: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid cursor */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_create: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Approved revision unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDetail"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_list_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationEventPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_stream: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                conversation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recoverable conversation event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["ChatEventEnvelope"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid Last-Event-ID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_append_turn: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                conversation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation or approved revision not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_cancel_turn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationTurnSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation or Turn not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    conversation_get_citation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                turn_id: string;
+                citation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationPreview"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conversation Turn citation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Citation evidence is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Citation evidence unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_create_answer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetrievalAnswerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["tap__contracts__http__RetrievalAnswerResponse"];
+                };
+            };
+            /** @description Invalid answer selection */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document state changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid answer request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    citation_get_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                citation_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationPreview"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Citation stale */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid citation ID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_list_documents: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid list request */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_upload_document: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_knowledge_upload_document"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentAccepted"];
+                };
+            };
+            /** @description Unsupported document */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid document upload */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document limit reached */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_get_document: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentDetail"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid document ID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_delete_document: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document state changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid document ID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_retry_document: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                document_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Document is not retryable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Invalid document ID */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    graph_get_evidence: {
+        parameters: {
+            query: {
+                snapshotId: string;
+            };
+            header?: never;
+            path: {
+                evidence_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEvidenceView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_get_node: {
+        parameters: {
+            query: {
+                snapshotId: string;
+            };
+            header?: never;
+            path: {
+                node_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_get_neighbors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphNeighborRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_bounded_path: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphPathRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_search: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_list_active_snapshots: {
+        parameters: {
+            query: {
+                sourceRevisionId: string[];
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSnapshotPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Graph unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_list_sources: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePage"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_upload_source: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_knowledge_upload_source"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceAccepted"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_get_source: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDetail"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_delete_source: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    knowledge_retry_source: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceAccepted"];
+                };
+            };
+            /** @description Source request failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Source request failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_plan_list_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_request_generation: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestPlanGenerationRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanGenerationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_plan_get_generation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanGenerationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_get_revision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_replace_draft: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": number;
+            };
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestPlanRevisionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_publish_revision: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": number;
+                "idempotency-key": string;
+            };
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runtime_get_mode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeMode"];
+                };
+            };
+            /** @description Authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     health_get_live: {
         parameters: {
             query?: never;
@@ -841,18 +5373,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Turn workflow not implemented */
@@ -861,675 +5382,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    citation_get_preview: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                citation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CitationPreview"];
-                };
-            };
-            /** @description Citation stale */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Invalid citation ID */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    knowledge_create_answer: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RetrievalAnswerRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RetrievalAnswerResponse"];
-                };
-            };
-            /** @description Invalid answer selection */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Document state changed */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Invalid answer request */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    knowledge_list_documents: {
-        parameters: {
-            query?: {
-                cursor?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DocumentPage"];
-                };
-            };
-            /** @description Invalid list request */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    knowledge_upload_document: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_knowledge_upload_document"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DocumentAccepted"];
-                };
-            };
-            /** @description Unsupported document */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Document too large */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Invalid document upload */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Document limit reached */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    knowledge_get_document: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DocumentDetail"];
-                };
-            };
-            /** @description Document not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Invalid document ID */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    knowledge_delete_document: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Document not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Document state changed */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Invalid document ID */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-        };
-    };
-    knowledge_retry_document: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DocumentAccepted"];
-                };
-            };
-            /** @description Document not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Document is not retryable */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Invalid document ID */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
-                };
-            };
-            /** @description Knowledge runtime unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        /** Detail */
-                        detail: string;
-                        /** Instance */
-                        instance?: string | null;
-                        /** Status */
-                        status: number;
-                        /** Title */
-                        title: string;
-                        /** Type */
-                        type: string;
-                    };
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

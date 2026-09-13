@@ -35,6 +35,46 @@ from tap.modules.knowledge.ports.errors import SearchBoundsExceeded
 from tap.modules.knowledge.ports.models import SearchExecution
 
 
+@pytest.mark.parametrize("version", ("doc-schema-v1", "doc-schema-v2"))
+def test_owned_filter_binds_canonical_source_to_exact_document_revision(version):
+    from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
+
+    execution = doc_execution()
+    owner = ReadyDocumentRevision(
+        "doc_" + "1" * 32, "rev_" + "2" * 64, "sha256:" + "3" * 64, "src_" + "4" * 32
+    )
+    resource = ResolvedResourceRef(
+        family=SourceFamily.DOC,
+        source_id=owner.source_id,
+        mode=ResourceMode.SCOPE,
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision=owner.revision_id,
+        source_content_hash=owner.source_content_hash,
+        anchor=None,
+    )
+    execution = replace(execution, plan=replace(execution.plan, resources=(resource,)))
+    expression = compile_milvus_filter(
+        execution, SourceFamily.DOC, max_bytes=32768, schema_version=version, owners=(owner,)
+    )
+    assert ('enterprise_id == "tenant-a"' in expression) == (version == "doc-schema-v2")
+    assert ('tenant_id == "tenant-a"' in expression) == (version == "doc-schema-v1")
+    if version == "doc-schema-v2":
+        assert 'source_id == "src_44444444444444444444444444444444"' in expression
+        assert 'document_id == "doc_11111111111111111111111111111111"' in expression
+    else:
+        assert 'source_id == "doc_11111111111111111111111111111111"' in expression
+        assert owner.source_id not in expression
+    assert 'source_revision == "rev_' + "2" * 64 + '"' in expression
+    with pytest.raises(SearchBoundsExceeded):
+        compile_milvus_filter(
+            execution,
+            SourceFamily.DOC,
+            max_bytes=32768,
+            schema_version=version,
+            owners=(replace(owner, revision_id="other"),),
+        )
+
+
 def doc_execution() -> SearchExecution:
     query = "How does the payment policy work?"
     query_hash = "sha256:" + hashlib.sha256(query.encode()).hexdigest()

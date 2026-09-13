@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "python_version": "3.13.12",
+  "repository": "docker.io/library/python",
+  "index_digest": "sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6",
+  "platforms": {
+    "linux/arm64": {"manifest_digest": "sha256:34b27ac66ecf318887b55ea3c71f0db9307895efe631210231a66cc3fa130cf9", "wheel_tag": "manylinux2014_aarch64"},
+    "linux/amd64": {"manifest_digest": "sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6", "wheel_tag": "manylinux2014_x86_64"}
+  },
+  "packages": ["pypdf", "python-docx", "lxml", "typing-extensions"],
+  "sources": [
+    "apps/backend/src/tap/__init__.py",
+    "apps/backend/src/tap/modules/access/domain/context.py",
+    "apps/backend/src/tap/modules/knowledge/domain/documents.py",
+    "apps/backend/src/tap/modules/knowledge/ports/documents.py",
+    "apps/backend/src/tap/modules/knowledge/ports/errors.py",
+    "apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py",
+    "apps/backend/src/tap/modules/knowledge/adapters/artifact_codecs.py",
+    "apps/backend/src/tap/modules/knowledge/adapters/parser_protocol.py"
+  ]
+}

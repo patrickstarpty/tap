@@ -290,3 +290,19 @@ def test_query_digest_rejects_changed_policy_expectations(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="trusted policy cases"):
         load_query_cases(candidate)
+
+
+def test_canonical_v2_schema_has_explicit_ownership_without_reinterpreting_v1():
+    legacy = doc_schema_sha256()
+    canonical = doc_schema_sha256("doc-schema-v2")
+    assert canonical != legacy
+    metadata = DocCollectionMetadata(
+        "doc-schema-v2", canonical, "tapper-demo-v2", "tapper-embedding", 1536
+    )
+    schema = build_doc_collection_schema(metadata)
+    names = {field["name"] for field in schema["fields"]}
+    assert {"enterprise_id", "project_id", "source_id", "document_id"} <= names
+    assert "tenant_id" not in names
+    assert doc_schema_sha256("doc-schema-v1") == legacy
+    with pytest.raises(ValueError):
+        doc_schema_sha256("doc-schema-v3")

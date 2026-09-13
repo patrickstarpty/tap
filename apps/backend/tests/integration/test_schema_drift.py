@@ -131,3 +131,107 @@ def test_cli_refuses_caller_database_urls_before_invoking_docker() -> None:
     assert result.returncode != 0
     assert json.loads(result.stdout)["error"] == "ValueError"
     assert "do-not-expose" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("actual_literal", ["'`OBJECT`'", "'OB  JECT'"])
+def test_check_drift_preserves_literal_backticks_and_whitespace(actual_literal: str) -> None:
+    from scripts.migration_support import schema_differences
+    from sqlalchemy import CheckConstraint
+
+    expected_literal = "'OBJECT'" if "`" in actual_literal else "'OB JECT'"
+    expected = MetaData()
+    Table(
+        "sample",
+        expected,
+        Column("id", Integer, primary_key=True),
+        Column("name", String(30)),
+        CheckConstraint(f"name = {expected_literal}", name="ck_sample_name"),
+    )
+    actual = MetaData()
+    Table(
+        "sample",
+        actual,
+        Column("id", Integer, primary_key=True),
+        Column("name", String(30)),
+        CheckConstraint(f"name = {actual_literal}", name="ck_sample_name"),
+    )
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            actual.create_all(connection)
+            assert {"kind": "check_constraints", "table": "sample"} in schema_differences(
+                connection, expected
+            )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "reflected,expected",
+    [
+        (" (json_type(`envelope`)  = _utf8mb4'OBJECT') ", "json_type(envelope) = 'OBJECT'"),
+        ("((`name` = _utf8mb4'('))", "name = '('"),
+        ("((`name` = _utf8mb4')'))", "name = ')'"),
+        ("((`name` = _utf8mb4'a''(b'))", "name = 'a''(b'"),
+        (r"((`name` = _utf8mb4'a\'(b'))", r"name = 'a\'(b'"),
+        ('((`name` = "(quoted  `text`)"))', 'name = "(quoted  `text`)"'),
+    ],
+)
+def test_check_normalization_accepts_mysql_syntax_without_touching_literals(
+    reflected: str, expected: str
+) -> None:
+    from scripts.migration_support import _normalize_check_sql
+
+    assert _normalize_check_sql(reflected) == expected
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "name = '_utf8mb4''OBJECT'",
+        r"name = 'a\'`(  b'",
+        'name = "a\\"`(  b"',
+        "`name with  spaces` = 'OBJECT'",
+    ],
+)
+def test_check_normalization_preserves_quoted_text_and_escapes(expression: str) -> None:
+    from scripts.migration_support import _normalize_check_sql
+
+    assert _normalize_check_sql(expression) == expression
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_owned_mysql_native_evidence_waits_for_checked_cleanup(monkeypatch, capsys, cleanup_fails):
+    import json
+
+    from scripts import migration_support as support
+
+    monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TAP_ALEMBIC_DATABASE_URL", raising=False)
+
+    def docker_boundary(args, **kwargs):
+        if args[1:3] == ["context", "show"]:
+            return "desktop-linux"
+        if args[1:3] == ["context", "inspect"]:
+            return "unix:///local/docker.sock"
+        if "down" in args and cleanup_fails:
+            raise RuntimeError("simulated owned cleanup failure")
+        if "port" in args:
+            return "127.0.0.1:23306"
+        return ""
+
+    monkeypatch.setattr(support, "_run", docker_boundary)
+    if cleanup_fails:
+        with pytest.raises(RuntimeError, match="simulated owned cleanup"):
+            with support.isolated_mysql():
+                pass
+    else:
+        with support.isolated_mysql():
+            pass
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [event["state"] for event in events] == [
+        "started",
+        "failed" if cleanup_fails else "complete",
+    ]
+    assert events[0]["identity"] == events[1]["identity"]
+    assert set(events[0]) == {"event", "identity", "state"}

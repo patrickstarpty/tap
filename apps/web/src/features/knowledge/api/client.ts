@@ -1,5 +1,7 @@
 import createOpenApiClient from "openapi-fetch";
 
+import problemRegistry from "../../../../../../contracts/problem-types.json";
+
 import type { paths } from "../../../shared/api/generated/schema";
 import type {
   DocumentAccepted,
@@ -7,7 +9,8 @@ import type {
   ProblemDetails,
 } from "./types";
 
-const DOCUMENT_PATH = "/v1/knowledge/documents";
+const DOCUMENT_PATH = "/api/v1/projects/{project_id}/knowledge/documents";
+const SOURCE_PATH = "/api/v1/projects/{project_id}/knowledge/sources";
 
 const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
   ".docx":
@@ -19,54 +22,92 @@ const MEDIA_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 interface KnowledgeClientOptions {
+  projectId: string;
   baseUrl?: string;
   fetch?: (input: Request) => Promise<Response>;
   xhrFactory?: () => XMLHttpRequest;
 }
 
-function problemCode(type: string): string {
-  const withoutQuery = type.split(/[?#]/u, 1)[0] ?? "";
-  const segments = withoutQuery.split("/").filter(Boolean);
-  const code = segments.at(-1);
-  return code === undefined || code.includes(":") ? "request-failed" : code;
-}
-
 export class KnowledgeClientError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly correlationId: string;
+  readonly retryable: boolean;
+  readonly failureStage: ProblemDetails["failureStage"];
 
   constructor(problem: ProblemDetails) {
-    const code = problemCode(problem.type);
+    const code = problem.type.slice(problem.type.lastIndexOf("/") + 1);
     super(`Knowledge request failed (${code}).`);
     this.name = "KnowledgeClientError";
     this.code = code;
     this.status = problem.status;
+    this.correlationId = problem.correlationId;
+    this.retryable = problem.retryable;
+    this.failureStage = problem.failureStage;
   }
 }
 
-function fallbackProblem(status: number): ProblemDetails {
-  return {
-    detail: "",
-    status,
-    title: "Request failed",
-    type: "about:blank",
-  };
+export class KnowledgeTransportError extends Error {
+  readonly code: "invalid-problem" | "network-failure";
+  declare readonly status?: number;
+
+  constructor(code: "invalid-problem" | "network-failure", status?: number) {
+    super(`Knowledge request failed (${code}).`);
+    this.name = "KnowledgeTransportError";
+    this.code = code;
+    if (status !== undefined) this.status = status;
+  }
 }
 
-function asProblemDetails(value: unknown, status: number): ProblemDetails {
-  if (typeof value !== "object" || value === null)
-    return fallbackProblem(status);
-  const candidate = value as Partial<ProblemDetails>;
+function responseError(
+  value: unknown,
+  status: number,
+  mediaType: string | null,
+): Error {
+  const invalid = () => new KnowledgeTransportError("invalid-problem", status);
   if (
-    typeof candidate.type !== "string" ||
-    typeof candidate.title !== "string" ||
-    typeof candidate.status !== "number" ||
+    mediaType?.split(";", 1)[0]?.trim().toLowerCase() !==
+      "application/problem+json" ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  )
+    return invalid();
+  const candidate = value as Record<string, unknown>;
+  const definition = problemRegistry.problems.find(
+    (item) => item.type === candidate.type,
+  );
+  if (
+    definition === undefined ||
     candidate.status !== status ||
-    typeof candidate.detail !== "string"
-  ) {
-    return fallbackProblem(status);
-  }
-  return candidate as ProblemDetails;
+    definition.status !== status ||
+    candidate.title !== definition.title ||
+    candidate.detail !== definition.detail ||
+    candidate.retryable !== definition.retryable ||
+    (candidate.failureStage ?? undefined) !== definition.failureStage ||
+    typeof candidate.correlationId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(candidate.correlationId) ||
+    (candidate.instance !== undefined &&
+      candidate.instance !== null &&
+      (typeof candidate.instance !== "string" ||
+        candidate.instance.length === 0 ||
+        candidate.instance.length > 2048)) ||
+    Object.keys(candidate).some(
+      (key) =>
+        ![
+          "type",
+          "title",
+          "status",
+          "detail",
+          "instance",
+          "correlationId",
+          "retryable",
+          "failureStage",
+        ].includes(key),
+    )
+  )
+    return invalid();
+  return new KnowledgeClientError(candidate as unknown as ProblemDetails);
 }
 
 function origin(): string {
@@ -111,43 +152,155 @@ function parseJson(text: string): unknown {
 }
 
 export function createKnowledgeClient(
-  options: KnowledgeClientOptions = {},
+  options: KnowledgeClientOptions,
 ): KnowledgeClient {
+  const projectId = options.projectId;
+  if (typeof projectId !== "string" || projectId.trim().length === 0) {
+    throw new Error("A project ID is required for Knowledge requests.");
+  }
   const baseUrl = resolveApiBaseUrl(options.baseUrl);
   const http = createOpenApiClient<paths>({
     baseUrl,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   });
+  http.use({
+    async onResponse({ response }) {
+      if (!response.ok) {
+        let body: unknown;
+        try {
+          body = parseJson(await response.text());
+        } catch (error) {
+          if (
+            (error instanceof DOMException || error instanceof Error) &&
+            error.name === "AbortError"
+          )
+            throw error;
+          throw new KnowledgeTransportError("network-failure");
+        }
+        throw responseError(
+          body,
+          response.status,
+          response.headers.get("content-type"),
+        );
+      }
+    },
+    onError({ error }) {
+      if (
+        (error instanceof DOMException || error instanceof Error) &&
+        error.name === "AbortError"
+      )
+        throw error;
+      return new KnowledgeTransportError("network-failure");
+    },
+  });
   const xhrFactory = options.xhrFactory ?? (() => new XMLHttpRequest());
 
   return {
+    projectId,
+    async listSources({ cursor, limit, signal }) {
+      const result = await http.GET(SOURCE_PATH, {
+        params: { path: { project_id: projectId }, query: { cursor, limit } },
+        signal,
+      });
+      return result.data!;
+    },
+    async getSource(sourceId, signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/sources/{source_id}",
+        {
+          params: {
+            path: { project_id: projectId, source_id: sourceId },
+            query: { limit: 50 },
+          },
+          signal,
+        },
+      );
+      return result.data!;
+    },
+    async uploadSource(
+      file,
+      onProgress,
+      signal,
+      idempotencyKey = crypto.randomUUID(),
+    ) {
+      onProgress(0);
+      const form = new FormData();
+      form.append("upload", canonicalUploadFile(file));
+      const result = await http.POST(SOURCE_PATH, {
+        params: {
+          path: { project_id: projectId },
+          header: { "idempotency-key": idempotencyKey },
+        },
+        body: { upload: file.name },
+        bodySerializer: () => form,
+        signal,
+      });
+      onProgress(1);
+      return result.data!;
+    },
+    async retrySource(sourceId, body, idempotencyKey = crypto.randomUUID()) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/sources/{source_id}/retry",
+        {
+          params: {
+            path: { project_id: projectId, source_id: sourceId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+          body,
+        },
+      );
+      return result.data!;
+    },
+    async deleteSource(sourceId, idempotencyKey = crypto.randomUUID()) {
+      await http.DELETE(
+        "/api/v1/projects/{project_id}/knowledge/sources/{source_id}",
+        {
+          params: {
+            path: { project_id: projectId, source_id: sourceId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+        },
+      );
+    },
     async listDocuments({ cursor, limit, signal }) {
       const result = await http.GET(DOCUMENT_PATH, {
-        params: { query: { cursor, limit } },
+        params: { path: { project_id: projectId }, query: { cursor, limit } },
         signal,
       });
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
     },
 
     async getDocument(documentId, signal) {
-      const result = await http.GET("/v1/knowledge/documents/{document_id}", {
-        params: { path: { document_id: documentId } },
-        signal,
-      });
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}",
+        {
+          params: { path: { project_id: projectId, document_id: documentId } },
+          signal,
+        },
+      );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
     },
 
-    uploadDocument(file, onProgress, signal) {
+    uploadDocument(
+      file,
+      onProgress,
+      signal,
+      idempotencyKey = crypto.randomUUID(),
+    ) {
       return new Promise<DocumentAccepted>((resolve, reject) => {
         const request = xhrFactory();
         let settled = false;
@@ -160,7 +313,17 @@ export function createKnowledgeClient(
         };
         const abort = () => request.abort();
 
-        request.open("POST", requestUrl(baseUrl, DOCUMENT_PATH));
+        request.open(
+          "POST",
+          requestUrl(
+            baseUrl,
+            DOCUMENT_PATH.replace(
+              "{project_id}",
+              encodeURIComponent(projectId),
+            ),
+          ),
+        );
+        request.setRequestHeader("Idempotency-Key", idempotencyKey);
         request.upload.onprogress = (event) => {
           if (event.lengthComputable && event.total > 0) {
             onProgress(Math.min(1, Math.max(0, event.loaded / event.total)));
@@ -174,14 +337,16 @@ export function createKnowledgeClient(
           }
           finish(() =>
             reject(
-              new KnowledgeClientError(
-                asProblemDetails(body, request.status || 500),
+              responseError(
+                body,
+                request.status,
+                request.getResponseHeader("content-type"),
               ),
             ),
           );
         };
         request.onerror = () => {
-          finish(() => reject(new KnowledgeClientError(fallbackProblem(503))));
+          finish(() => reject(new KnowledgeTransportError("network-failure")));
         };
         request.onabort = () => {
           finish(() =>
@@ -201,52 +366,77 @@ export function createKnowledgeClient(
       });
     },
 
-    async retryDocument(documentId) {
+    async retryDocument(documentId, idempotencyKey = crypto.randomUUID()) {
       const result = await http.POST(
-        "/v1/knowledge/documents/{document_id}/retry",
-        { params: { path: { document_id: documentId } } },
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}/retry",
+        {
+          params: {
+            path: { project_id: projectId, document_id: documentId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+        },
       );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
     },
 
-    async deleteDocument(documentId) {
+    async deleteDocument(documentId, idempotencyKey = crypto.randomUUID()) {
       const result = await http.DELETE(
-        "/v1/knowledge/documents/{document_id}",
-        { params: { path: { document_id: documentId } } },
+        "/api/v1/projects/{project_id}/knowledge/documents/{document_id}",
+        {
+          params: {
+            path: { project_id: projectId, document_id: documentId },
+            header: { "idempotency-key": idempotencyKey },
+          },
+        },
       );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
     },
 
     async createAnswer(request, signal) {
-      const result = await http.POST("/v1/knowledge/answers", {
-        body: request,
-        signal,
-      });
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/answers",
+        {
+          params: { path: { project_id: projectId } },
+          body: request,
+          signal,
+        },
+      );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;
     },
 
     async getCitation(citationId, signal) {
-      const result = await http.GET("/v1/citations/{citation_id}", {
-        params: { path: { citation_id: citationId } },
-        signal,
-      });
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/citations/{citation_id}",
+        {
+          params: { path: { project_id: projectId, citation_id: citationId } },
+          signal,
+        },
+      );
       if (result.error !== undefined) {
-        throw new KnowledgeClientError(
-          asProblemDetails(result.error, result.response.status),
+        throw responseError(
+          result.error,
+          result.response.status,
+          result.response.headers.get("content-type"),
         );
       }
       return result.data;

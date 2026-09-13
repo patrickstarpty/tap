@@ -15,7 +15,6 @@ from sqlalchemy import text
 from tap.entrypoints.tapper_runtime import (
     TapperSettings,
     OwnedResources,
-    _create_answer_backend,
     _create_blob,
     _create_database,
     _create_embeddings,
@@ -23,6 +22,7 @@ from tap.entrypoints.tapper_runtime import (
     _create_redis,
     _discover_alembic_head,
     _is_private_blob_container,
+    _artifacts_private,
     _push_if_owned,
     _read_models_labels,
 )
@@ -82,6 +82,28 @@ async def _check_redis(settings: TapperSettings, _values: Mapping[str, str]) -> 
 async def _blob_canary(settings: TapperSettings) -> bool:
     artifacts = _create_blob(settings)
     try:
+        from tap.modules.knowledge.adapters.object_artifacts import (
+            KnowledgeArtifactStore,
+        )
+        from tap.platform.storage.objects import PutObjectRequest
+
+        if isinstance(artifacts, KnowledgeArtifactStore):
+            if not await _artifacts_private(artifacts):
+                return False
+            payload = secrets.token_bytes(32)
+
+            async def content():
+                yield payload
+
+            staged = await artifacts.objects.put_staged(
+                PutObjectRequest(content(), 32, "application/octet-stream")
+            )
+            try:
+                return (
+                    await artifacts.objects.open_verified(staged.ref)
+                ).data == payload
+            finally:
+                await artifacts.objects.delete(staged.ref)
         for container in (ORIGINALS_CONTAINER, ARTIFACTS_CONTAINER):
             properties = await artifacts.container_properties(container)
             if not _is_private_blob_container(properties):
@@ -151,9 +173,7 @@ async def _check_milvus(settings: TapperSettings, _values: Mapping[str, str]) ->
 
 async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> bool:
     if settings.e2e_mode:
-        from tap.testing.deterministic_model import DeterministicTapperModel
-
-        model = DeterministicTapperModel(dimension=settings.embedding_dimension)
+        model = _create_embeddings(settings)
         embedding = await model.embed("Tapper deterministic readiness")
         vector = embedding.vector
         return (
@@ -173,20 +193,14 @@ async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> 
     try:
         embeddings = _create_embeddings(settings)
         _push_if_owned(resources, embeddings)
-        answer_backend = _create_answer_backend(settings, embeddings=embeddings)
-        _push_if_owned(resources, answer_backend.owner)
         client = _create_models_probe_client(settings)
         _push_if_owned(resources, client)
         if client is None:
             healthy = False
         else:
             labels = await _read_models_labels(client)
-            required_labels = {settings.embedding_alias}
-            if settings.answer_backend == "litellm":
-                required_labels.add(settings.chat_alias)
+            required_labels = {settings.embedding_alias, settings.chat_alias}
             healthy = labels is not None and required_labels <= labels
-            if healthy and answer_backend.readiness is not None:
-                await answer_backend.readiness()
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("model check settlement unexpectedly returned")

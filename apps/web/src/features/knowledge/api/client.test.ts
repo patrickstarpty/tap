@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createKnowledgeClient, KnowledgeClientError } from "./client";
+import {
+  createKnowledgeClient,
+  KnowledgeClientError,
+  KnowledgeTransportError,
+} from "./client";
 import type { RetrievalAnswerRequest } from "./types";
 
 class TestUploadRequest {
@@ -13,6 +17,15 @@ class TestUploadRequest {
   status = 0;
   responseText = "";
   aborted = false;
+  contentType = "application/problem+json";
+  headers: Record<string, string> = {};
+  setRequestHeader(name: string, value: string) {
+    this.headers[name.toLowerCase()] = value;
+  }
+
+  getResponseHeader(): string {
+    return this.contentType;
+  }
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
@@ -39,13 +52,87 @@ class TestUploadRequest {
 }
 
 describe("KnowledgeClient", () => {
+  it("retains the supplied idempotency key on the Document upload facade", async () => {
+    const request = new TestUploadRequest();
+    const client = createKnowledgeClient({
+      projectId: "project-a",
+      xhrFactory: () => request as unknown as XMLHttpRequest,
+    });
+    const pending = client.uploadDocument(
+      new File(["body"], "file.txt"),
+      () => undefined,
+      undefined,
+      "facade-intent",
+    );
+    expect(request.headers["idempotency-key"]).toBe("facade-intent");
+    request.respond(202, {});
+    await pending;
+  });
+  it("uses canonical Source routes and retains caller intent keys across retries", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({ items: [], nextCursor: null });
+      },
+    });
+    await client.listSources({ limit: 50 });
+    await client.getSource("src_a");
+    const file = new File(["content"], "note.txt", { type: "text/plain" });
+    await client.uploadSource(
+      file,
+      () => undefined,
+      undefined,
+      "upload-intent",
+    );
+    await client.uploadSource(
+      file,
+      () => undefined,
+      undefined,
+      "upload-intent",
+    );
+    await client.retrySource(
+      "src_a",
+      { documentId: "doc_a", revisionId: "rev_a", expectedAttempt: 1 },
+      "retry-intent",
+    );
+    await client.deleteSource("src_a", "delete-intent");
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/api/v1/projects/project%2Fa/knowledge/sources",
+      "/api/v1/projects/project%2Fa/knowledge/sources/src_a",
+      "/api/v1/projects/project%2Fa/knowledge/sources",
+      "/api/v1/projects/project%2Fa/knowledge/sources",
+      "/api/v1/projects/project%2Fa/knowledge/sources/src_a/retry",
+      "/api/v1/projects/project%2Fa/knowledge/sources/src_a",
+    ]);
+    expect(
+      requests
+        .slice(2)
+        .map((request) => request.headers.get("Idempotency-Key")),
+    ).toEqual([
+      "upload-intent",
+      "upload-intent",
+      "retry-intent",
+      "delete-intent",
+    ]);
+    expect(await requests[4]!.json()).toEqual({
+      documentId: "doc_a",
+      revisionId: "rev_a",
+      expectedAttempt: 1,
+    });
+  });
   it("uses the generated list route and returns its typed document page", async () => {
     const requests: Request[] = [];
     const fetch = async (request: Request): Promise<Response> => {
       requests.push(request);
       return Response.json({ items: [], nextCursor: null });
     };
-    const client = createKnowledgeClient({ baseUrl: "/api", fetch });
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      baseUrl: "/gateway",
+      fetch,
+    });
 
     await expect(client.listDocuments({ limit: 25 })).resolves.toEqual({
       items: [],
@@ -54,25 +141,67 @@ describe("KnowledgeClient", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe("GET");
     expect(
-      requests[0]?.url.endsWith("/api/v1/knowledge/documents?limit=25"),
+      requests[0]?.url.endsWith(
+        "/gateway/api/v1/projects/project-test/knowledge/documents?limit=25",
+      ),
     ).toBe(true);
+  });
+
+  it("scopes and encodes every fetch operation to the bound project", async () => {
+    const requests: Request[] = [];
+    const client = createKnowledgeClient({
+      projectId: "project/a",
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({});
+      },
+    });
+    await client.getDocument("doc-a");
+    await client.retryDocument("doc-a");
+    await client.deleteDocument("doc-a");
+    await client.createAnswer({
+      query: "Question",
+      answerMode: "quick",
+      sources: ["doc"],
+      resourceRefs: [],
+    });
+    await client.getCitation("citation-a");
+    expect(
+      requests.map((request) => [
+        request.method,
+        new URL(request.url).pathname,
+      ]),
+    ).toEqual([
+      ["GET", "/api/v1/projects/project%2Fa/knowledge/documents/doc-a"],
+      ["POST", "/api/v1/projects/project%2Fa/knowledge/documents/doc-a/retry"],
+      ["DELETE", "/api/v1/projects/project%2Fa/knowledge/documents/doc-a"],
+      ["POST", "/api/v1/projects/project%2Fa/knowledge/answers"],
+      ["GET", "/api/v1/projects/project%2Fa/knowledge/citations/citation-a"],
+    ]);
+  });
+
+  it("rejects a missing or blank project before transport starts", () => {
+    expect(() => createKnowledgeClient({ projectId: "" })).toThrow();
+    expect(() => createKnowledgeClient({ projectId: "  " })).toThrow();
   });
 
   it("maps Problem Details to a safe client error without exposing detail", async () => {
     const fetch = async (): Promise<Response> =>
       Response.json(
         {
-          type: "https://tap.local/problems/document-too-large",
-          title: "Provider said /srv/private/key",
+          type: "https://tap.example/problems/document-too-large",
+          title: "Document too large",
           status: 413,
-          detail: "secret=sk-live-internal at /srv/private/key",
+          detail: "The document exceeds the 25 MiB upload limit.",
+          correlationId: "request-123",
+          retryable: false,
         },
         {
           status: 413,
           headers: { "content-type": "application/problem+json" },
         },
       );
-    const client = createKnowledgeClient({ fetch });
+    const client = createKnowledgeClient({ projectId: "project-test", fetch });
 
     const error = await client
       .listDocuments({ limit: 25 })
@@ -87,7 +216,8 @@ describe("KnowledgeClient", () => {
   it("reports XHR progress and resolves the typed 202 upload receipt", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
-      baseUrl: "/api",
+      projectId: "project-test",
+      baseUrl: "/gateway",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const progress: number[] = [];
@@ -125,7 +255,11 @@ describe("KnowledgeClient", () => {
     });
     expect(progress).toEqual([0.5]);
     expect(request.method).toBe("POST");
-    expect(request.url.endsWith("/api/v1/knowledge/documents")).toBe(true);
+    expect(
+      request.url.endsWith(
+        "/gateway/api/v1/projects/project-test/knowledge/documents",
+      ),
+    ).toBe(true);
     expect(request.body).toBeInstanceOf(FormData);
     expect((request.body as FormData).get("upload")).toMatchObject({
       name: "notes.md",
@@ -136,6 +270,7 @@ describe("KnowledgeClient", () => {
   it("maps a non-202 XHR Problem Details response without exposing provider text", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
+      projectId: "project-test",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const upload = client.uploadDocument(
@@ -144,10 +279,12 @@ describe("KnowledgeClient", () => {
     );
 
     request.respond(413, {
-      type: "https://tap.local/problems/document-too-large",
-      title: "Provider failed at /srv/private/key",
+      type: "https://tap.example/problems/document-too-large",
+      title: "Document too large",
       status: 413,
-      detail: "secret=sk-live-internal at /srv/private/key",
+      detail: "The document exceeds the 25 MiB upload limit.",
+      correlationId: "request-123",
+      retryable: false,
       instance: "/internal/jobs/provider-secret",
     });
     const error = await upload.catch((caught: unknown) => caught);
@@ -162,6 +299,7 @@ describe("KnowledgeClient", () => {
   it("aborts the active XHR when its signal is aborted", async () => {
     const request = new TestUploadRequest();
     const client = createKnowledgeClient({
+      projectId: "project-test",
       xhrFactory: () => request as unknown as XMLHttpRequest,
     });
     const controller = new AbortController();
@@ -181,7 +319,7 @@ describe("KnowledgeClient", () => {
     const requests: Request[] = [];
     const fetch = async (request: Request): Promise<Response> => {
       requests.push(request);
-      if (request.url.includes("/v1/knowledge/answers")) {
+      if (request.url.includes("/knowledge/answers")) {
         return Response.json({
           traceId: "trace-a",
           queryPlanId: "plan-a",
@@ -217,7 +355,7 @@ describe("KnowledgeClient", () => {
         suffix: "",
       });
     };
-    const client = createKnowledgeClient({ fetch });
+    const client = createKnowledgeClient({ projectId: "project-test", fetch });
     const controller = new AbortController();
     const answerRequest: RetrievalAnswerRequest = {
       query: "退款需要几人审批？",
@@ -249,14 +387,206 @@ describe("KnowledgeClient", () => {
           headers: { "content-type": "application/problem+json" },
         },
       );
-    const client = createKnowledgeClient({ fetch });
+    const client = createKnowledgeClient({ projectId: "project-test", fetch });
 
     const error = await client
       .getCitation("citation-a")
       .catch((caught: unknown) => caught);
 
-    expect(error).toBeInstanceOf(KnowledgeClientError);
-    expect(error).toMatchObject({ code: "request-failed", status: 503 });
+    expect(error).toBeInstanceOf(KnowledgeTransportError);
+    expect(error).not.toBeInstanceOf(KnowledgeClientError);
+    expect(error).toMatchObject({ code: "invalid-problem", status: 503 });
     expect(String(error)).not.toContain("provider secret");
   });
+});
+
+describe("strict failure boundary", () => {
+  const problem = {
+    type: "https://tap.example/problems/answer-unavailable",
+    title: "Answer unavailable",
+    status: 503,
+    detail: "The answer service is currently unavailable.",
+    correlationId: "request-123",
+    retryable: true,
+    failureStage: "answer",
+  };
+
+  it.each([
+    { ...problem, type: "https://evil.example/problems/answer-unavailable" },
+    { ...problem, detail: "provider-secret" },
+    { ...problem, correlationId: undefined },
+    { ...problem, retryable: undefined },
+    { ...problem, failureStage: undefined },
+    { ...problem, failureStage: "unknown" },
+    { ...problem, retryable: false },
+    { ...problem, secret: "provider-secret" },
+  ])("rejects unregistered or malformed server Problems", async (body) => {
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      fetch: async () =>
+        Response.json(body, {
+          status: 503,
+          headers: { "content-type": "application/problem+json" },
+        }),
+    });
+    const error = await client
+      .listDocuments({ limit: 25 })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KnowledgeTransportError);
+    expect(error).not.toBeInstanceOf(KnowledgeClientError);
+    expect(error).toMatchObject({ code: "invalid-problem", status: 503 });
+    expect(error).not.toHaveProperty("correlationId");
+    expect(String(error)).not.toContain("provider-secret");
+  });
+
+  it.each(["text/html", "application/json"])(
+    "rejects non-Problem media %s",
+    async (media) => {
+      const client = createKnowledgeClient({
+        projectId: "project-test",
+        fetch: async () =>
+          new Response("provider-secret", {
+            status: 503,
+            headers: { "content-type": media },
+          }),
+      });
+      await expect(client.listDocuments({ limit: 25 })).rejects.toMatchObject({
+        name: "KnowledgeTransportError",
+        code: "invalid-problem",
+        status: 503,
+      });
+    },
+  );
+
+  it("keeps fetch network failures separate without a forged status or correlation", async () => {
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      fetch: async () => {
+        throw new TypeError("provider-secret");
+      },
+    });
+    const error = await client
+      .listDocuments({ limit: 25 })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: "KnowledgeTransportError",
+      code: "network-failure",
+    });
+    expect(error).not.toHaveProperty("correlationId");
+    expect(error).not.toHaveProperty("status");
+    expect(String(error)).not.toContain("provider-secret");
+  });
+
+  it("keeps XHR network failure separate", async () => {
+    const request = new TestUploadRequest();
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      xhrFactory: () => request as unknown as XMLHttpRequest,
+    });
+    const upload = client.uploadDocument(
+      new File(["notes"], "notes.txt"),
+      () => undefined,
+    );
+    request.onerror?.();
+    await expect(upload).rejects.toMatchObject({
+      name: "KnowledgeTransportError",
+      code: "network-failure",
+    });
+  });
+});
+
+describe("failure stream boundaries", () => {
+  it("accepts explicit null stage on a non-workflow registered Problem", async () => {
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      fetch: async () =>
+        Response.json(
+          {
+            type: "https://tap.example/problems/document-too-large",
+            title: "Document too large",
+            status: 413,
+            detail: "The document exceeds the 25 MiB upload limit.",
+            correlationId: "request-test",
+            retryable: false,
+            failureStage: null,
+          },
+          {
+            status: 413,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+    await expect(client.listDocuments({ limit: 25 })).rejects.toMatchObject({
+      name: "KnowledgeClientError",
+      correlationId: "request-test",
+      code: "document-too-large",
+    });
+  });
+
+  it("redacts failures reading an error response body", async () => {
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("provider-secret"));
+            },
+          }),
+          {
+            status: 503,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+    const error = await client
+      .listDocuments({ limit: 25 })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      name: "KnowledgeTransportError",
+      code: "network-failure",
+    });
+    expect(String(error)).not.toContain("provider-secret");
+  });
+
+  it("preserves fetch cancellation as AbortError", async () => {
+    const client = createKnowledgeClient({
+      projectId: "project-test",
+      fetch: async () => {
+        throw new DOMException("Aborted", "AbortError");
+      },
+    });
+    await expect(client.listDocuments({ limit: 25 })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
+
+  it.each(["application/json", "text/html"])(
+    "rejects XHR errors with media %s",
+    async (media) => {
+      const request = new TestUploadRequest();
+      request.contentType = media;
+      const client = createKnowledgeClient({
+        projectId: "project-test",
+        xhrFactory: () => request as unknown as XMLHttpRequest,
+      });
+      const upload = client.uploadDocument(
+        new File(["notes"], "notes.txt"),
+        () => undefined,
+      );
+      request.respond(413, {
+        type: "https://tap.example/problems/document-too-large",
+        title: "Document too large",
+        status: 413,
+        detail: "The document exceeds the 25 MiB upload limit.",
+        correlationId: "request-test",
+        retryable: false,
+      });
+      await expect(upload).rejects.toMatchObject({
+        name: "KnowledgeTransportError",
+        code: "invalid-problem",
+        status: 413,
+      });
+    },
+  );
 });

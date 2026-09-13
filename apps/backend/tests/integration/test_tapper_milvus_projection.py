@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
 from pydantic import SecretStr
-from sqlalchemy import text
+from sqlalchemy import delete, insert, text
 
 if os.getenv("TAP_RUN_MILVUS_INTEGRATION") != "1":
     pytest.skip("real Milvus suite requires TAP_RUN_MILVUS_INTEGRATION=1", allow_module_level=True)
@@ -25,12 +26,17 @@ from pymilvus import (  # type: ignore[import-untyped]  # noqa: E402
 from pymilvus.exceptions import MilvusException  # type: ignore[import-untyped]  # noqa: E402
 
 from tap.entrypoints.tapper_runtime import OwnedResources  # noqa: E402
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE  # noqa: E402
 from tap.modules.knowledge.adapters.milvus_documents import (  # noqa: E402
     TAPPER_ALIAS,
     TAPPER_PHYSICAL_COLLECTION,
     IndexFenced,
     MilvusDocumentIndex,
     TapperMilvusConfig,
+)
+from tap.modules.knowledge.adapters.mysql_documents import (  # noqa: E402
+    knowledge_document,
+    knowledge_document_revision,
 )
 from tap.modules.knowledge.adapters.mysql_projection import (  # noqa: E402
     MysqlProjectionCoordinator,
@@ -61,6 +67,7 @@ from tap.operations.milvus.contracts import (  # noqa: E402
     READER_TARGET_PRIVILEGES,
     WRITER_PRIVILEGES,
 )
+from tap.platform.db.project_scope import scope_predicates, scope_values  # noqa: E402
 from tap.platform.db.session import create_engine_and_session_factory  # noqa: E402
 
 
@@ -146,12 +153,16 @@ async def _real_index():  # type: ignore[no-untyped-def]
             "real Tapper tests require TAP_MILVUS_OWNED_INSTANCE=task5-tapper-owned "
             "for a dedicated empty instance"
         )
+    database_url = os.getenv("TAP_DATABASE_URL")
+    if not database_url:
+        pytest.fail("real Tapper tests require an explicit isolated TAP_DATABASE_URL")
     uri = os.getenv("MILVUS_URI", "http://127.0.0.1:19530")
     database = os.getenv("MILVUS_DATABASE", "default")
     resources = OwnedResources()
     pending_roles: OwnedResources | None = None
     pending_coordinator: OwnedResources | None = None
     owns_middleware = False
+    owns_document_facts = False
     cleanup_milvus = None
     cleanup_authority = None
     primary: BaseException | None = None
@@ -167,10 +178,6 @@ async def _real_index():  # type: ignore[no-untyped-def]
             await asyncio.to_thread(admin_client.close)
 
         resources.callback(close_admin)
-        database_url = os.getenv(
-            "TAP_DATABASE_URL",
-            "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-        )
         engine, _ = create_engine_and_session_factory(database_url)
         resources.push(engine)
         clients = await create_tapper_document_clients(
@@ -197,6 +204,7 @@ async def _real_index():  # type: ignore[no-untyped-def]
         authority_key = f"{authority_namespace}:{TAPPER_ALIAS}"
         coordinator = MysqlProjectionCoordinator(
             engine,
+            scope=VALIDATION_SCOPE,
             authority_namespace=authority_namespace,
         )
         pending_coordinator = OwnedResources()
@@ -212,6 +220,8 @@ async def _real_index():  # type: ignore[no-untyped-def]
         pending_roles = None
         pending_coordinator = None
 
+        from tap.modules.knowledge.adapters.mysql_documents import knowledge_source
+
         async def clean_authority() -> None:
             async with engine.begin() as connection:
                 for table_name in (
@@ -223,6 +233,26 @@ async def _real_index():  # type: ignore[no-untyped-def]
                     await connection.execute(
                         text(f"DELETE FROM {table_name} WHERE alias_name=:alias"),
                         {"alias": authority_key},
+                    )
+                if owns_document_facts:
+                    await connection.execute(
+                        delete(knowledge_document_revision).where(
+                            *scope_predicates(knowledge_document_revision, VALIDATION_SCOPE),
+                            knowledge_document_revision.c.revision_id == work().revision_id,
+                        )
+                    )
+                    await connection.execute(
+                        delete(knowledge_document).where(
+                            *scope_predicates(knowledge_document, VALIDATION_SCOPE),
+                            knowledge_document.c.document_id == work().document_id,
+                        )
+                    )
+
+                    await connection.execute(
+                        delete(knowledge_source).where(
+                            *scope_predicates(knowledge_source, VALIDATION_SCOPE),
+                            knowledge_source.c.source_id == "src_projection_fixture",
+                        )
                     )
 
         async def admin_collections() -> tuple[str, ...]:
@@ -292,6 +322,52 @@ async def _real_index():  # type: ignore[no-untyped-def]
             )
         owns_middleware = True
         await clean_authority()
+        # Durable fences now reference the factual Project document/revision.
+        # A conflicting pre-existing row fails the inserts without claiming cleanup.
+        item = work()
+        now = datetime(2026, 9, 5)
+        async with engine.begin() as connection:
+            await connection.execute(
+                insert(knowledge_source).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    source_id="src_projection_fixture",
+                    name="fixture",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await connection.execute(
+                insert(knowledge_document).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    document_id=item.document_id,
+                    source_id="src_projection_fixture",
+                    filename=item.filename,
+                    media_type=item.media_type,
+                    source_content_hash=item.source_content_hash,
+                    reservation_parser_version=item.parser_version,
+                    reservation_chunker_version=item.chunker_version,
+                    reservation_pipeline_version=item.pipeline_version,
+                    status="processing",
+                    stage="publishing",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await connection.execute(
+                insert(knowledge_document_revision).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    revision_id=item.revision_id,
+                    document_id=item.document_id,
+                    source_id="src_projection_fixture",
+                    source_content_hash=item.source_content_hash,
+                    original_blob_locator=str(item.original_locator),
+                    parser_version=item.parser_version,
+                    chunker_version=item.chunker_version,
+                    pipeline_version=item.pipeline_version,
+                    created_at=now,
+                )
+            )
+        owns_document_facts = True
         yield index, provisioner, reader
     except BaseException as error:
         primary = error

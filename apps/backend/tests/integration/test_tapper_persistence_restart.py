@@ -20,8 +20,8 @@ import pytest
 from azure.core.exceptions import ResourceNotFoundError
 from pymilvus.decorators import _log_rpc_error  # type: ignore[import-untyped]
 from sqlalchemy import select
-from sqlalchemy.engine import RowMapping
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy.engine import RowMapping, make_url
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionmaker
 
 from tap.contracts.http import (
     RetrievalAnswerRequest,
@@ -37,6 +37,7 @@ from tap.entrypoints.tapper_runtime import (
     create_api_runtime,
 )
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.blob_artifacts import (
     ARTIFACTS_CONTAINER,
     ORIGINALS_CONTAINER,
@@ -47,12 +48,14 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
     MilvusReader,
 )
+from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_chunk_manifest,
     knowledge_document,
     knowledge_document_revision,
     knowledge_ingestion_job,
 )
+from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore, _parse
 from tap.modules.knowledge.domain.documents import (
     CHUNKER_VERSION,
     PARSER_VERSION,
@@ -62,6 +65,8 @@ from tap.modules.knowledge.domain.documents import (
 )
 from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
+from tap.platform.db.project_scope import scope_predicates
+from tap.platform.storage.objects import ObjectMissingError
 
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _RUN_ID = re.compile(r"tapper-[a-f0-9]{16}\Z")
@@ -106,6 +111,7 @@ class DocumentState:
     document_id: str
     job_id: str
     revision_id: str
+    source_id: str
     source_content_hash: str
 
 
@@ -183,13 +189,14 @@ def _digest(value: object, code: str) -> str:
 def _document_state(value: object) -> DocumentState:
     item = _exact_mapping(
         value,
-        {"documentId", "jobId", "revisionId", "sourceContentHash"},
+        {"documentId", "jobId", "revisionId", "sourceId", "sourceContentHash"},
         "state-document-shape",
     )
     return DocumentState(
         document_id=_identity(item["documentId"], "state-document-id"),
         job_id=_identity(item["jobId"], "state-job-id"),
         revision_id=_identity(item["revisionId"], "state-revision-id"),
+        source_id=_identity(item["sourceId"], "state-source-id"),
         source_content_hash=_digest(item["sourceContentHash"], "state-source-hash"),
     )
 
@@ -300,6 +307,53 @@ def _expected_locators(
     )
 
 
+def _persisted_locators(
+    revision: Mapping[Any, Any], document: DocumentState, settings: TapperSettings
+) -> tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator]:
+    if settings.object_store_provider == "azure":
+        return _expected_locators(document, settings)
+    _require(settings.object_store_provider == "minio", "object-provider")
+    locators = []
+    for kind in ("original", "normalized", "chunks", "embeddings"):
+        value = revision[f"{kind}_blob_locator"]
+        _require(isinstance(value, str), "object-locator-binding")
+        locator = ArtifactLocator(value)
+        actual_revision, actual_kind, _ref = _parse(locator)
+        _require(
+            actual_revision == document.revision_id and actual_kind == kind,
+            "object-locator-binding",
+        )
+        locators.append(locator)
+    return cast(
+        tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator], tuple(locators)
+    )
+
+
+async def _verify_object_binding(
+    artifacts: KnowledgeArtifactStore,
+    locators: tuple[ArtifactLocator, ArtifactLocator, ArtifactLocator, ArtifactLocator],
+    document: DocumentState,
+    settings: TapperSettings,
+) -> None:
+    for kind, locator in zip(
+        ("original", "normalized", "chunks", "embeddings"), locators, strict=True
+    ):
+        revision, actual_kind, ref = _parse(locator)
+        _require(revision == document.revision_id and actual_kind == kind, "object-locator-binding")
+        value = await artifacts.objects.open_verified(ref)
+        identity = f"{revision}/{kind}"
+        if kind == "embeddings":
+            identity += f"/{settings.embedding_alias}/{settings.embedding_dimension}"
+        _require(
+            value.identity == identity
+            and value.attributes == tuple(sorted({"kind": kind, "revision": revision}.items()))
+            and len(value.data) == value.size
+            and canonical_sha256(value.data) == value.sha256
+            and (kind != "original" or value.sha256 == document.source_content_hash),
+            "object-manifest-binding",
+        )
+
+
 def _require_revision_binding(
     revision: Mapping[Any, Any],
     document: DocumentState,
@@ -337,7 +391,8 @@ async def _verify_database(
             row = await _one(
                 connection,
                 select(knowledge_document).where(
-                    knowledge_document.c.document_id == document.document_id
+                    *scope_predicates(knowledge_document, VALIDATION_SCOPE),
+                    knowledge_document.c.document_id == document.document_id,
                 ),
                 "mysql-document",
             )
@@ -368,11 +423,12 @@ async def _verify_database(
             revision = await _one(
                 connection,
                 select(knowledge_document_revision).where(
-                    knowledge_document_revision.c.revision_id == document.revision_id
+                    *scope_predicates(knowledge_document_revision, VALIDATION_SCOPE),
+                    knowledge_document_revision.c.revision_id == document.revision_id,
                 ),
                 "mysql-revision",
             )
-            locators = _expected_locators(document, settings)
+            locators = _persisted_locators(revision, document, settings)
             _require_revision_binding(
                 revision,
                 document,
@@ -383,7 +439,8 @@ async def _verify_database(
             ingestion_job = await _one(
                 connection,
                 select(knowledge_ingestion_job).where(
-                    knowledge_ingestion_job.c.job_id == document.job_id
+                    *scope_predicates(knowledge_ingestion_job, VALIDATION_SCOPE),
+                    knowledge_ingestion_job.c.job_id == document.job_id,
                 ),
                 "mysql-ingestion-job",
             )
@@ -397,7 +454,8 @@ async def _verify_database(
                 (
                     await connection.execute(
                         select(knowledge_document_revision.c.revision_id).where(
-                            knowledge_document_revision.c.document_id == document.document_id
+                            *scope_predicates(knowledge_document_revision, VALIDATION_SCOPE),
+                            knowledge_document_revision.c.document_id == document.document_id,
                         )
                     )
                 )
@@ -415,7 +473,10 @@ async def _verify_database(
                             knowledge_ingestion_job.c.job_id,
                             knowledge_ingestion_job.c.kind,
                             knowledge_ingestion_job.c.status,
-                        ).where(knowledge_ingestion_job.c.revision_id == document.revision_id)
+                        ).where(
+                            *scope_predicates(knowledge_ingestion_job, VALIDATION_SCOPE),
+                            knowledge_ingestion_job.c.revision_id == document.revision_id,
+                        )
                     )
                 )
                 .mappings()
@@ -446,7 +507,10 @@ async def _verify_database(
                 (
                     await connection.execute(
                         select(knowledge_chunk_manifest)
-                        .where(knowledge_chunk_manifest.c.revision_id == document.revision_id)
+                        .where(
+                            *scope_predicates(knowledge_chunk_manifest, VALIDATION_SCOPE),
+                            knowledge_chunk_manifest.c.revision_id == document.revision_id,
+                        )
                         .order_by(knowledge_chunk_manifest.c.ordinal)
                     )
                 )
@@ -502,6 +566,7 @@ async def _verify_database(
             (
                 await connection.execute(
                     select(knowledge_ingestion_job).where(
+                        *scope_predicates(knowledge_ingestion_job, VALIDATION_SCOPE),
                         knowledge_ingestion_job.c.revision_id == state.deleted.revision_id,
                         knowledge_ingestion_job.c.kind == "deletion",
                     )
@@ -525,7 +590,16 @@ async def _verify_database(
     return evidence
 
 
-async def _blob_missing(artifacts: AzureBlobArtifactStore, locator: ArtifactLocator) -> bool:
+async def _blob_missing(
+    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore, locator: ArtifactLocator
+) -> bool:
+    if isinstance(artifacts, KnowledgeArtifactStore):
+        _revision, _kind, ref = _parse(locator)
+        try:
+            await artifacts.objects.open_verified(ref)
+        except ObjectMissingError:
+            return True
+        return False
     container, blob_name = str(locator).split("/", 1)
     client = artifacts._service.get_blob_client(container, blob_name)  # noqa: SLF001
     try:
@@ -539,13 +613,15 @@ async def _blob_missing(artifacts: AzureBlobArtifactStore, locator: ArtifactLoca
 
 
 async def _verify_blobs(
-    artifacts: AzureBlobArtifactStore,
+    artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     settings: TapperSettings,
     state: JourneyState,
     evidence: Mapping[str, RevisionEvidence],
 ) -> None:
     for document in state.survivors:
         revision = evidence[document.document_id]
+        if isinstance(artifacts, KnowledgeArtifactStore):
+            await _verify_object_binding(artifacts, revision.locators, document, settings)
         original = await artifacts.read_original(revision.locators[0])
         normalized = await artifacts.read_normalized(revision.locators[1])
         chunks = await artifacts.read_chunks(revision.locators[2])
@@ -852,6 +928,7 @@ async def _verify_composed_runtime(
     service = getattr(services, "knowledge", None)
     _require(isinstance(service, KnowledgeHttpService), "runtime-knowledge-service")
     service = cast(KnowledgeHttpService, service)
+    _require(service.scope == VALIDATION_SCOPE, "runtime-project-scope")
     for document in state.survivors:
         detail = await service.get_document(document.document_id)
         _require(
@@ -872,11 +949,12 @@ async def _verify_composed_runtime(
         "runtime-citation-binding",
     )
 
-    dual_ids = (state.policy.document_id, state.reference.document_id)
-    dual_documents = {
-        document.document_id: document for document in (state.policy, state.reference)
+    dual_ids = (state.policy.source_id, state.reference.source_id)
+    dual_documents = {document.source_id: document for document in (state.policy, state.reference)}
+    dual_manifests = {
+        document.source_id: evidence[document.document_id].manifest
+        for document in (state.policy, state.reference)
     }
-    dual_manifests = {document_id: evidence[document_id].manifest for document_id in dual_ids}
     dual_request = _scope_request(state, dual_ids)
     dual_search = await service.search(dual_request)
     _require(
@@ -896,9 +974,9 @@ async def _verify_composed_runtime(
         "answer-dual-scope",
     )
 
-    policy_request = _scope_request(state, (state.policy.document_id,))
-    policy_documents = {state.policy.document_id: state.policy}
-    policy_manifests = {state.policy.document_id: evidence[state.policy.document_id].manifest}
+    policy_request = _scope_request(state, (state.policy.source_id,))
+    policy_documents = {state.policy.source_id: state.policy}
+    policy_manifests = {state.policy.source_id: evidence[state.policy.document_id].manifest}
     policy_search = await service.search(policy_request)
     _require(
         _require_hit_provenance(
@@ -907,14 +985,14 @@ async def _verify_composed_runtime(
             policy_manifests,
             "search-policy-provenance",
         )
-        == {state.policy.document_id},
+        == {state.policy.source_id},
         "search-policy-scope",
     )
     policy_answer = await service.answer(_answer_request(policy_request))
     _require(
         not policy_answer.abstained
         and _answer_contributors(policy_answer, policy_documents, policy_manifests)
-        == {state.policy.document_id},
+        == {state.policy.source_id},
         "answer-policy-scope",
     )
 
@@ -942,31 +1020,68 @@ def _text_hash(value: str) -> str:
     return "sha256:" + sha256(value.encode()).hexdigest()
 
 
-def _exact_e2e_settings() -> TapperSettings:
-    settings = TapperSettings.from_mapping(os.environ)
+def _verify_owned_environment(settings: TapperSettings) -> None:
+    database = make_url(settings.database_url)
+    redis = make_url(settings.redis_url)
     _require(
         settings.e2e_mode
+        and settings.model_backend == "fake"
         and settings.compose_project == "tap-tapper-e2e"
+        and settings.api_host == "127.0.0.1"
         and settings.api_port == 18000
+        and settings.web_host == "127.0.0.1"
         and settings.web_port == 15173
-        and ":13306/" in settings.database_url
-        and ":16379/0" in settings.redis_url
-        and settings.milvus_uri == "http://127.0.0.1:29530"
-        and "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1"
-        in settings.blob_connection_string,
+        and database.host == "127.0.0.1"
+        and database.port == 13306
+        and database.database == "tap"
+        and redis.host == "127.0.0.1"
+        and redis.port == 16379
+        and redis.database == "0"
+        and settings.milvus_uri == "http://127.0.0.1:29530",
         "settings-isolation",
     )
+    if settings.object_store_provider == "minio":
+        _require(
+            settings.s3_endpoint == "http://127.0.0.1:29000"
+            and settings.s3_bucket == "tapper-e2e-objects"
+            and settings.s3_store_id == "tapper-e2e"
+            and settings.s3_region == "us-east-1"
+            and bool(settings.s3_access_key)
+            and bool(settings.s3_secret_key)
+            and not settings.legacy_azure_enabled,
+            "settings-isolation",
+        )
+    else:
+        _require(
+            settings.object_store_provider == "azure"
+            and "BlobEndpoint=http://127.0.0.1:11000/devstoreaccount1"
+            in settings.blob_connection_string,
+            "settings-isolation",
+        )
+
+
+def _exact_e2e_settings() -> TapperSettings:
+    settings = TapperSettings.from_mapping(os.environ)
+    _verify_owned_environment(settings)
     return settings
 
 
 async def _run_verifier(settings: TapperSettings, state: JourneyState) -> None:
     resources = OwnedResources()
     try:
-        engine, _repository = await _create_database(settings)
+        engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
         resources.push(artifacts)
-        search, reader, target = await _create_search(settings)
+        search, reader, target = await _create_search(
+            settings,
+            owners=repository,
+            audit_sink=MysqlSearchAuditSink(
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=repository.scope,
+                policy_version="tapper-demo-policy-v1",
+            ),
+        )
         resources.push(search)
         evidence = await _verify_database(engine, settings, state)
         await _verify_blobs(artifacts, settings, state, evidence)
@@ -1008,6 +1123,7 @@ def _closed_state_payload() -> dict[str, object]:
             "documentId": f"doc-{index}",
             "jobId": f"job-{index}",
             "revisionId": f"rev-{index}",
+            "sourceId": "src_" + f"{index:x}" * 32,
             "sourceContentHash": "sha256:" + f"{index:x}" * 64,
         }
 
@@ -1084,6 +1200,7 @@ def test_verifier_rejects_revision_version_drift(drifted_field: str) -> None:
         document_id="doc-1",
         job_id="job-1",
         revision_id="rev-1",
+        source_id="src_" + "1" * 32,
         source_content_hash="sha256:" + "1" * 64,
     )
 
@@ -1106,6 +1223,7 @@ def test_verifier_rejects_unlinked_answer_citations() -> None:
         document_id="doc-1",
         job_id="job-1",
         revision_id="rev-1",
+        source_id="src_" + "1" * 32,
         source_content_hash="sha256:" + "1" * 64,
     )
     manifest = ManifestEvidence(
@@ -1231,3 +1349,209 @@ async def test_selected_verifier_suppresses_worker_thread_rpc_details_and_restor
     rendered = output.getvalue()
     assert "verifier-provider-secret-rpc-detail" not in rendered
     assert "verifier-filter-removed-after-operation" in rendered
+
+
+def _minio_verifier_fixture() -> tuple[DocumentState, TapperSettings, dict[str, str]]:
+    import base64
+
+    document = DocumentState(
+        "doc-1", "job-1", "rev-1", "src_" + "1" * 32, canonical_sha256(b"source")
+    )
+    settings = cast(
+        TapperSettings,
+        SimpleNamespace(
+            object_store_provider="minio",
+            s3_store_id="tapper-e2e",
+            embedding_alias="embed",
+            embedding_dimension=3,
+        ),
+    )
+    row = {}
+    for kind in ("original", "normalized", "chunks", "embeddings"):
+        payload = json.dumps(["rev-1", kind, "obj1." + "a" * 64], separators=(",", ":")).encode()
+        row[f"{kind}_blob_locator"] = "art1." + base64.urlsafe_b64encode(payload).decode().rstrip(
+            "="
+        )
+    return document, settings, row
+
+
+def test_minio_verifier_uses_persisted_opaque_locators_and_rejects_slot_swap() -> None:
+    document, settings, row = _minio_verifier_fixture()
+    locators = _persisted_locators(row, document, settings)
+    assert tuple(locators) == tuple(row.values())
+    row["original_blob_locator"] = row["chunks_blob_locator"]
+    with pytest.raises(VerificationFailure, match="object-locator-binding"):
+        _persisted_locators(row, document, settings)
+
+
+def test_minio_verifier_rejects_cross_revision_wrapper() -> None:
+    import base64
+
+    document, settings, row = _minio_verifier_fixture()
+    payload = json.dumps(
+        ["rev-foreign", "original", "obj1." + "a" * 64], separators=(",", ":")
+    ).encode()
+    row["original_blob_locator"] = "art1." + base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    with pytest.raises(VerificationFailure, match="object-locator-binding"):
+        _persisted_locators(row, document, settings)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["identity", "attributes", "size", "digest", "source"])
+async def test_minio_verifier_rejects_manifest_body_binding_drift(drift: str) -> None:
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+    from tap.platform.storage.objects import ManagedObjectStore, VerifiedObject
+
+    document, settings, row = _minio_verifier_fixture()
+    value = dict(
+        data=b"source",
+        sha256=canonical_sha256(b"source"),
+        size=6,
+        content_type="text/plain",
+        identity="rev-1/original",
+        attributes=(("kind", "original"), ("revision", "rev-1")),
+    )
+    if drift == "identity":
+        value["identity"] = "rev-1/original-extra"
+    elif drift == "attributes":
+        value["attributes"] = (("kind", "original"), ("revision", "other"))
+    elif drift == "size":
+        value["size"] = 7
+    elif drift == "digest":
+        value["sha256"] = "sha256:" + "0" * 64
+    else:
+        value.update(data=b"forged", sha256=canonical_sha256(b"forged"))
+
+    async def opened(_ref: object) -> VerifiedObject:
+        return VerifiedObject(**value)  # type: ignore[arg-type]
+
+    artifacts = KnowledgeArtifactStore(
+        cast(ManagedObjectStore, SimpleNamespace(open_verified=opened))
+    )
+    with pytest.raises(VerificationFailure, match="object-manifest-binding"):
+        await _verify_object_binding(
+            artifacts, _persisted_locators(row, document, settings), document, settings
+        )
+
+
+@pytest.mark.asyncio
+async def test_minio_deleted_check_accepts_only_explicit_object_missing() -> None:
+    from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+    from tap.platform.storage.objects import (
+        ManagedObjectStore,
+        ObjectIntegrityError,
+        ObjectMissingError,
+    )
+
+    document, settings, row = _minio_verifier_fixture()
+    locator = ArtifactLocator(row["original_blob_locator"])
+
+    async def missing(_ref: object) -> object:
+        raise ObjectMissingError("absent")
+
+    artifacts = KnowledgeArtifactStore(
+        cast(ManagedObjectStore, SimpleNamespace(open_verified=missing))
+    )
+    assert await _blob_missing(artifacts, locator)
+
+    async def corrupt(_ref: object) -> object:
+        raise ObjectIntegrityError("corrupt")
+
+    artifacts = KnowledgeArtifactStore(
+        cast(ManagedObjectStore, SimpleNamespace(open_verified=corrupt))
+    )
+    with pytest.raises(ObjectIntegrityError):
+        await _blob_missing(artifacts, locator)
+
+
+@pytest.mark.parametrize("drift", [None, "endpoint", "bucket", "store", "project", "model"])
+def test_minio_verifier_enforces_owned_environment(drift: str | None) -> None:
+    settings = SimpleNamespace(
+        e2e_mode=True,
+        compose_project="tap-tapper-e2e",
+        api_host="127.0.0.1",
+        api_port=18000,
+        web_host="127.0.0.1",
+        web_port=15173,
+        model_backend="fake",
+        database_url="mysql+asyncmy://tap:tap-e2e@127.0.0.1:13306/tap?charset=utf8mb4",
+        redis_url="redis://127.0.0.1:16379/0",
+        milvus_uri="http://127.0.0.1:29530",
+        object_store_provider="minio",
+        s3_endpoint="http://127.0.0.1:29000",
+        s3_bucket="tapper-e2e-objects",
+        s3_store_id="tapper-e2e",
+        s3_region="us-east-1",
+        s3_access_key="tap-e2e-objects",
+        s3_secret_key="tap-e2e-objects-password",
+        legacy_azure_enabled=False,
+        blob_connection_string="",
+    )
+    names = {
+        "endpoint": "s3_endpoint",
+        "bucket": "s3_bucket",
+        "store": "s3_store_id",
+        "project": "compose_project",
+        "model": "model_backend",
+    }
+    if drift is not None:
+        setattr(settings, names[drift], "shared")
+        with pytest.raises(VerificationFailure, match="settings-isolation"):
+            _verify_owned_environment(cast(TapperSettings, settings))
+    else:
+        _verify_owned_environment(cast(TapperSettings, settings))
+
+
+@pytest.mark.asyncio
+async def test_minio_verifier_accepts_all_four_bound_manifests() -> None:
+    from tap.platform.storage.objects import ManagedObjectStore, VerifiedObject
+
+    document, settings, row = _minio_verifier_fixture()
+    kinds = iter(("original", "normalized", "chunks", "embeddings"))
+
+    async def opened(_ref: object) -> VerifiedObject:
+        kind = next(kinds)
+        identity = f"rev-1/{kind}" + ("/embed/3" if kind == "embeddings" else "")
+        return VerifiedObject(
+            b"source",
+            canonical_sha256(b"source"),
+            6,
+            "text/plain",
+            identity,
+            (("kind", kind), ("revision", "rev-1")),
+        )
+
+    artifacts = KnowledgeArtifactStore(
+        cast(ManagedObjectStore, SimpleNamespace(open_verified=opened))
+    )
+    await _verify_object_binding(
+        artifacts, _persisted_locators(row, document, settings), document, settings
+    )
+
+
+@pytest.mark.asyncio
+async def test_verifier_sql_evidence_is_bound_to_validation_project(tmp_path: Path) -> None:
+    class StopAfterScopeCheck(Exception):
+        pass
+
+    class Connection:
+        async def execute(self, statement: Any) -> None:
+            parameters = statement.compile().params
+            assert parameters["enterprise_id_1"] == "local"
+            assert parameters["project_id_1"] == "tapper-demo"
+            raise StopAfterScopeCheck
+
+        async def __aenter__(self) -> Connection:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    path = tmp_path / "state.json"
+    _write_closed_state(path, _closed_state_payload())
+    with pytest.raises(StopAfterScopeCheck):
+        await _verify_database(
+            cast(AsyncEngine, SimpleNamespace(connect=Connection)),
+            cast(TapperSettings, object()),
+            _load_state(str(path)),
+        )

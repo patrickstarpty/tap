@@ -37,6 +37,8 @@ def build_runtime_app(
 ) -> FastAPI:
     if not isinstance(settings, TapperSettings):
         raise TypeError("Tapper API requires validated settings")
+    if settings.answer_backend != "litellm":
+        raise ValueError("Tapper V1 requires the governed model gateway")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -61,7 +63,11 @@ def build_runtime_app(
                 app.state._tapper_lifecycle_failure = _ApiLifecycleFailure.SHUTDOWN
                 raise RuntimeError("Tapper API runtime shutdown failed.") from None
 
-    runtime_app = create_app(lifespan=lifespan)
+    runtime_app = create_app(
+        lifespan=lifespan,
+        validation_mode=False,
+        allowed_origins=frozenset({f"http://{settings.web_host}:{settings.web_port}"}),
+    )
     runtime_app.state._tapper_lifecycle_failure = None
     if settings.e2e_mode:
         _register_e2e_failure_route(runtime_app)

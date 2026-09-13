@@ -1,23 +1,13 @@
+import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
+
 export type Locale = "en" | "zh";
 
-export type CodexModelId =
-  "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.5" | "gpt-5.4";
+export type CodexModelId = string;
 
-export const CODEX_MODELS: readonly {
-  id: CodexModelId;
-  label: string;
-}[] = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
-] as const;
-
-export const DEFAULT_CODEX_MODEL_ID: CodexModelId = "gpt-5.6-sol";
+export const DEFAULT_CODEX_MODEL_ID: CodexModelId = "tapper-chat";
 
 export function isCodexModelId(value: unknown): value is CodexModelId {
-  return CODEX_MODELS.some((model) => model.id === value);
+  return typeof value === "string" && /^[a-z][a-z0-9._-]{0,127}$/.test(value);
 }
 
 export type ProductModule =
@@ -58,6 +48,16 @@ export interface AssistantTurn {
   modelId: CodexModelId;
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
+  response?: RetrievalAnswerResponse | null;
+  status?:
+    "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+  error?: string | null;
+  evidenceStatus?: "loading" | "ready" | "missing" | "error";
+  contextLabels?: readonly string[];
+  inputSnapshotDigest?: string;
+  answerEvidenceSnapshotDigest?: string | null;
+  agentRevisionId?: string | null;
+  skillRevisionIds?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
   pageContext?: {
     label: string;

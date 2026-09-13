@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from tap.entrypoints import tapper_ingestion_worker
+from tap.entrypoints.tapper_runtime import create_project_audit
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application import ingestion
@@ -20,6 +22,7 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.sources import projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     EmbeddingArtifact,
@@ -38,18 +41,24 @@ DATABASE_URL = os.getenv(
 )
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
+    "knowledge_answer_source",
     "knowledge_answer_snapshot",
     "knowledge_chunk_manifest",
     "knowledge_ingestion_job",
     "knowledge_document_revision",
+    "knowledge_source_legacy_map",
     "knowledge_document",
+    "knowledge_source",
 )
 
 
 async def _clean(engine) -> None:  # type: ignore[no-untyped-def]
     async with engine.begin() as connection:
         await connection.execute(
-            text("DELETE FROM outbox WHERE aggregate_type = 'knowledge_document'")
+            text(
+                "DELETE FROM outbox WHERE aggregate_type IN "
+                "('knowledge_document', 'DocumentRevision')"
+            )
         )
         await connection.execute(text("UPDATE knowledge_document SET current_revision_id = NULL"))
         for table in KNOWLEDGE_TABLES:
@@ -77,7 +86,7 @@ class NeverCalled:
     def __init__(self) -> None:
         self.calls = 0
 
-    def parse(self, source):  # type: ignore[no-untyped-def]
+    async def parse(self, source):  # type: ignore[no-untyped-def]
         self.calls += 1
         raise AssertionError("completed parse stage was repeated")
 
@@ -108,7 +117,13 @@ class RecordingIndex:
 
     async def upsert_revision(self, work, chunks, embeddings, *, index_version):  # type: ignore[no-untyped-def]
         self.rows = {str(chunk.chunk_id) for chunk in chunks}
-        return IndexReceipt(work.revision_id, index_version, len(self.rows))
+        return IndexReceipt(
+            work.revision_id,
+            index_version,
+            len(self.rows),
+            projection_digest(work.revision_id, "schema-v1", index_version, work.manifest),
+            "schema-v1",
+        )
 
 
 class BlockingIndex(RecordingIndex):
@@ -130,7 +145,13 @@ class BlockingIndex(RecordingIndex):
                     self.cancel_seen.set()
             if work.revision_id not in self.fenced_revisions:
                 self.rows = {str(chunk.chunk_id) for chunk in chunks}
-            return IndexReceipt(work.revision_id, index_version, len(chunks))
+            return IndexReceipt(
+                work.revision_id,
+                index_version,
+                len(chunks),
+                projection_digest(work.revision_id, "schema-v1", index_version, work.manifest),
+                "schema-v1",
+            )
         finally:
             self.settled.set()
 
@@ -199,7 +220,9 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="source.md",
@@ -306,7 +329,9 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
             completed_stage = NeverCalled()
             index = RecordingIndex()
             restarted = IngestionWorker(
-                repository=MysqlDocumentRepository(sessions),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,  # type: ignore[arg-type]
                 parser=completed_stage,
                 chunker=completed_stage,
@@ -362,7 +387,9 @@ def test_real_mysql_ordinary_list_excludes_deleting_document_immediately() -> No
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="delete.md",
@@ -393,7 +420,9 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="race.md",
@@ -517,7 +546,9 @@ def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="crashed-owner.md",
@@ -585,6 +616,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
 ) -> None:  # type: ignore[no-untyped-def]
     """Delete may finish only after the old publisher settles, then fencing keeps zero durable."""
 
+    cleanup_lease = ingestion.LEASE_DURATION
     short_lease = timedelta(milliseconds=180)
     monkeypatch.setattr(ingestion, "LEASE_DURATION", short_lease)
     monkeypatch.setattr(ingestion, "HEARTBEAT_SECONDS", 0.03)
@@ -598,7 +630,9 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
         await _clean(engine)
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="blocked.md",
@@ -731,7 +765,9 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                 index_version="tapper-index-v1",
             )
             deleting_worker = IngestionWorker(
-                repository=MysqlDocumentRepository(sessions),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,  # type: ignore[arg-type]
                 parser=completed_stage,
                 chunker=completed_stage,
@@ -773,6 +809,9 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
             assert index.settled.is_set()
             assert index.rows == {chunk_identity}
 
+            # The short lease stresses cancellation until the old owner settles.
+            # Final cleanup keeps the normal lease for its sequential SQL stages.
+            monkeypatch.setattr(ingestion, "LEASE_DURATION", cleanup_lease)
             delete_result = await deleting_worker.run_once(limit=1)
             assert delete_result.deleted == 1
             assert index.rows == set()
@@ -796,6 +835,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
 ) -> None:  # type: ignore[no-untyped-def]
     """A late chunks write must stay fenced past its original lease and be cleaned after settle."""
 
+    cleanup_lease = ingestion.LEASE_DURATION
     short_lease = timedelta(milliseconds=180)
     monkeypatch.setattr(ingestion, "LEASE_DURATION", short_lease)
     monkeypatch.setattr(ingestion, "HEARTBEAT_SECONDS", 0.03)
@@ -812,7 +852,9 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
         old_task: asyncio.Task | None = None
         artifacts = BlockingChunkArtifacts()
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="blocked-artifact.md",
@@ -877,7 +919,9 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                 index_version="tapper-index-v1",
             )
             deletion_owner = IngestionWorker(
-                repository=MysqlDocumentRepository(sessions),
+                repository=MysqlDocumentRepository(
+                    sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                ),
                 artifacts=artifacts,  # type: ignore[arg-type]
                 parser=completed,
                 chunker=chunker,
@@ -921,6 +965,9 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
             assert artifacts.settled.is_set()
             assert artifacts.revision_artifacts == {reservation.revision_id}
 
+            # The short lease stresses cancellation until the old owner settles.
+            # Final cleanup keeps the normal lease for its sequential SQL stages.
+            monkeypatch.setattr(ingestion, "LEASE_DURATION", cleanup_lease)
             delete_result = await deletion_owner.run_once(limit=1)
             assert delete_result.deleted == 1
             assert artifacts.revision_artifacts == set()

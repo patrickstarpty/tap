@@ -18,9 +18,12 @@ import {
   useCitationQuery,
   useCreateAnswerMutation,
   useDocumentListQuery,
+  useDocumentDetailQuery,
   useDeleteDocumentMutation,
   useRetryDocumentMutation,
   useUploadDocumentMutation,
+  useSourceListQuery,
+  useUploadSourceMutation,
 } from "./queries";
 import type {
   DocumentPage,
@@ -42,18 +45,81 @@ function cachedDocument(
   documentId: string,
 ) {
   return queryClient
-    .getQueryData<DocumentPage>(knowledgeKeys.documents())
+    .getQueryData<DocumentPage>(knowledgeKeys.documents("project-test"))
     ?.items.find((item) => item.documentId === documentId);
 }
 
 describe("knowledge query mutations", () => {
+  it("loads project-scoped Sources and reuses a supplied upload intent key", async () => {
+    const source = {
+      sourceId: "src_" + "a".repeat(32),
+      name: "Policy",
+      documentCount: 1,
+      readyCount: 0,
+      failedCount: 0,
+      createdAt: "2026-09-08T00:00:00Z",
+    };
+    const listSources = vi
+      .fn()
+      .mockResolvedValue({ items: [source], nextCursor: null });
+    const uploadSource = vi.fn().mockResolvedValue({
+      source,
+      accepted: {
+        document: document({ sourceId: source.sourceId }),
+        duplicate: false,
+        jobId: "job_a",
+      },
+    });
+    const api = { ...fakeKnowledgeClient(), listSources, uploadSource };
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(
+      () => ({
+        list: useSourceListQuery("project-test"),
+        upload: useUploadSourceMutation("project-test"),
+      }),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() =>
+      expect(result.current.list.data?.items[0]?.sourceId).toBe(
+        source.sourceId,
+      ),
+    );
+    const file = new File(["policy"], "policy.txt");
+    const intent = { file, onProgress: vi.fn(), idempotencyKey: "intent-a" };
+    await act(async () => {
+      await result.current.upload.mutateAsync(intent);
+      await result.current.upload.mutateAsync(intent);
+    });
+    expect(uploadSource).toHaveBeenNthCalledWith(
+      1,
+      file,
+      intent.onProgress,
+      undefined,
+      "intent-a",
+    );
+    expect(uploadSource).toHaveBeenNthCalledWith(
+      2,
+      file,
+      intent.onProgress,
+      undefined,
+      "intent-a",
+    );
+  });
   it("polls every two seconds only until a nonterminal list settles", async () => {
     vi.useFakeTimers();
     const api = fakeKnowledgeClient()
       .listOnce([document({ status: "processing", stage: "embedding" })])
       .listOnce([document({ status: "failed", stage: "embedding" })]);
     const queryClient = createTestQueryClient();
-    const { result } = renderHook(() => useDocumentListQuery(), {
+    const { result } = renderHook(() => useDocumentListQuery("project-test"), {
       wrapper: ({ children }) => (
         <QueryClientProvider client={queryClient}>
           <KnowledgeClientProvider client={api}>
@@ -72,7 +138,7 @@ describe("knowledge query mutations", () => {
     expect(api.listCalls).toBe(2);
     expect(
       queryClient.getQueryData<{ items: Array<{ status: string }> }>(
-        knowledgeKeys.documents(),
+        knowledgeKeys.documents("project-test"),
       )?.items[0]?.status,
     ).toBe("failed");
     expect(result.current.data?.items[0]?.status).toBe("failed");
@@ -84,7 +150,7 @@ describe("knowledge query mutations", () => {
   it("passes TanStack cancellation through to an in-flight list request", async () => {
     const api = fakeKnowledgeClient().deferList();
     const queryClient = createTestQueryClient();
-    const { unmount } = renderHook(() => useDocumentListQuery(), {
+    const { unmount } = renderHook(() => useDocumentListQuery("project-test"), {
       wrapper: ({ children }) => (
         <QueryClientProvider client={queryClient}>
           <KnowledgeClientProvider client={api}>
@@ -116,15 +182,15 @@ describe("knowledge query mutations", () => {
       }),
     ]);
     const queryClient = createTestQueryClient();
-    queryClient.setQueryData(knowledgeKeys.documents(), {
+    queryClient.setQueryData(knowledgeKeys.documents("project-test"), {
       items: [existing],
       nextCursor: null,
     });
     queryClient.setQueryData(
-      knowledgeKeys.detail("doc-detail"),
+      knowledgeKeys.detail("project-test", "doc-detail"),
       documentDetail(existing),
     );
-    const { result } = renderHook(() => useDocumentListQuery(), {
+    const { result } = renderHook(() => useDocumentListQuery("project-test"), {
       wrapper: ({ children }) => (
         <QueryClientProvider client={queryClient}>
           <KnowledgeClientProvider client={api}>
@@ -137,8 +203,9 @@ describe("knowledge query mutations", () => {
     await act(async () => result.current.refetch());
 
     expect(
-      queryClient.getQueryState(knowledgeKeys.detail("doc-detail"))
-        ?.isInvalidated,
+      queryClient.getQueryState(
+        knowledgeKeys.detail("project-test", "doc-detail"),
+      )?.isInvalidated,
     ).toBe(true);
   });
 
@@ -154,7 +221,7 @@ describe("knowledge query mutations", () => {
       ])
       .withDuplicateUpload();
     const queryClient = createTestQueryClient();
-    queryClient.setQueryData(knowledgeKeys.documents(), {
+    queryClient.setQueryData(knowledgeKeys.documents("project-test"), {
       items: [
         document({
           documentId: "doc-existing",
@@ -166,18 +233,21 @@ describe("knowledge query mutations", () => {
       nextCursor: null,
     });
     queryClient.setQueryData(
-      knowledgeKeys.detail("doc-existing"),
+      knowledgeKeys.detail("project-test", "doc-existing"),
       documentDetail({ documentId: "doc-existing", filename: "old-name.md" }),
     );
-    const { result } = renderHook(() => useUploadDocumentMutation(), {
-      wrapper: ({ children }) => (
-        <QueryClientProvider client={queryClient}>
-          <KnowledgeClientProvider client={api}>
-            {children}
-          </KnowledgeClientProvider>
-        </QueryClientProvider>
-      ),
-    });
+    const { result } = renderHook(
+      () => useUploadDocumentMutation("project-test"),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
 
     await act(async () =>
       result.current.mutateAsync({
@@ -189,13 +259,14 @@ describe("knowledge query mutations", () => {
     expect(
       queryClient.getQueryData<{
         items: Array<{ documentId: string; filename: string }>;
-      }>(knowledgeKeys.documents()),
+      }>(knowledgeKeys.documents("project-test")),
     ).toMatchObject({
       items: [{ documentId: "doc-existing", filename: "handbook.md" }],
     });
     expect(
-      queryClient.getQueryState(knowledgeKeys.detail("doc-existing"))
-        ?.isInvalidated,
+      queryClient.getQueryState(
+        knowledgeKeys.detail("project-test", "doc-existing"),
+      )?.isInvalidated,
     ).toBe(true);
   });
 
@@ -204,8 +275,8 @@ describe("knowledge query mutations", () => {
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
-        list: useDocumentListQuery(),
-        upload: useUploadDocumentMutation(),
+        list: useDocumentListQuery("project-test"),
+        upload: useUploadDocumentMutation("project-test"),
       }),
       {
         wrapper: ({ children }) => (
@@ -227,7 +298,7 @@ describe("knowledge query mutations", () => {
     );
     expect(
       queryClient.getQueryData<{ items: Array<{ filename: string }> }>(
-        knowledgeKeys.documents(),
+        knowledgeKeys.documents("project-test"),
       ),
     ).toMatchObject({ items: [{ filename: "new.md" }] });
 
@@ -235,7 +306,7 @@ describe("knowledge query mutations", () => {
     await act(async () => Promise.resolve());
     expect(
       queryClient.getQueryData<{ items: Array<{ filename: string }> }>(
-        knowledgeKeys.documents(),
+        knowledgeKeys.documents("project-test"),
       ),
     ).toMatchObject({ items: [{ filename: "new.md" }] });
   });
@@ -275,8 +346,8 @@ describe("knowledge query mutations", () => {
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
-        list: useDocumentListQuery(),
-        upload: useUploadDocumentMutation(),
+        list: useDocumentListQuery("project-test"),
+        upload: useUploadDocumentMutation("project-test"),
       }),
       {
         wrapper: ({ children }) => (
@@ -361,8 +432,8 @@ describe("knowledge query mutations", () => {
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
-        list: useDocumentListQuery(),
-        upload: useUploadDocumentMutation(),
+        list: useDocumentListQuery("project-test"),
+        upload: useUploadDocumentMutation("project-test"),
       }),
       {
         wrapper: ({ children }) => (
@@ -445,8 +516,8 @@ describe("knowledge query mutations", () => {
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
-        list: useDocumentListQuery(),
-        retry: useRetryDocumentMutation(),
+        list: useDocumentListQuery("project-test"),
+        retry: useRetryDocumentMutation("project-test"),
       }),
       {
         wrapper: ({ children }) => (
@@ -497,7 +568,7 @@ describe("knowledge query mutations", () => {
       ])
       .deferDelete();
     const queryClient = createTestQueryClient();
-    queryClient.setQueryData(knowledgeKeys.documents(), {
+    queryClient.setQueryData(knowledgeKeys.documents("project-test"), {
       items: [
         document({
           documentId: "doc-delete",
@@ -510,20 +581,23 @@ describe("knowledge query mutations", () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <KnowledgeClientProvider client={api}>{children}</KnowledgeClientProvider>
     );
-    const { result } = renderHook(() => useDeleteDocumentMutation(), {
-      wrapper: ({ children }) => (
-        <QueryClientProvider client={queryClient}>
-          {wrapper({ children })}
-        </QueryClientProvider>
-      ),
-    });
+    const { result } = renderHook(
+      () => useDeleteDocumentMutation("project-test"),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            {wrapper({ children })}
+          </QueryClientProvider>
+        ),
+      },
+    );
 
     act(() => result.current.mutate("doc-delete"));
 
     await waitFor(() => {
       expect(
         queryClient.getQueryData<{ items: Array<{ status: string }> }>(
-          knowledgeKeys.documents(),
+          knowledgeKeys.documents("project-test"),
         ),
       ).toMatchObject({ items: [{ status: "deleting" }] });
     });
@@ -531,7 +605,9 @@ describe("knowledge query mutations", () => {
     api.finishDelete();
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(
-      queryClient.getQueryData<{ items: unknown[] }>(knowledgeKeys.documents()),
+      queryClient.getQueryData<{ items: unknown[] }>(
+        knowledgeKeys.documents("project-test"),
+      ),
     ).toMatchObject({ items: [] });
   });
 
@@ -549,8 +625,8 @@ describe("knowledge query mutations", () => {
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
-        list: useDocumentListQuery(),
-        remove: useDeleteDocumentMutation(),
+        list: useDocumentListQuery("project-test"),
+        remove: useDeleteDocumentMutation("project-test"),
       }),
       {
         wrapper: ({ children }) => (
@@ -568,19 +644,21 @@ describe("knowledge query mutations", () => {
       act(() => result.current.remove.mutate("doc-delete"));
       await waitFor(() =>
         expect(
-          queryClient.getQueryData<DocumentPage>(knowledgeKeys.documents())
-            ?.items[0]?.status,
+          queryClient.getQueryData<DocumentPage>(
+            knowledgeKeys.documents("project-test"),
+          )?.items[0]?.status,
         ).toBe("deleting"),
       );
       now.mockReturnValue(6 * 60_000);
       await queryClient.refetchQueries({
-        queryKey: knowledgeKeys.documents(),
+        queryKey: knowledgeKeys.documents("project-test"),
         exact: true,
       });
 
       expect(
-        queryClient.getQueryData<DocumentPage>(knowledgeKeys.documents())
-          ?.items[0]?.status,
+        queryClient.getQueryData<DocumentPage>(
+          knowledgeKeys.documents("project-test"),
+        )?.items[0]?.status,
       ).toBe("deleting");
     } finally {
       now.mockRestore();
@@ -613,8 +691,8 @@ describe("knowledge query mutations", () => {
     const queryClient = createTestQueryClient();
     const { result } = renderHook(
       () => ({
-        list: useDocumentListQuery(),
-        remove: useDeleteDocumentMutation(),
+        list: useDocumentListQuery("project-test"),
+        remove: useDeleteDocumentMutation("project-test"),
       }),
       {
         wrapper: ({ children }) => (
@@ -659,7 +737,7 @@ describe("knowledge query mutations", () => {
       ])
       .withDeleteProblem(new Error("503 provider detail"));
     const queryClient = createTestQueryClient();
-    queryClient.setQueryData(knowledgeKeys.documents(), {
+    queryClient.setQueryData(knowledgeKeys.documents("project-test"), {
       items: [
         document({
           documentId: "doc-delete",
@@ -670,15 +748,18 @@ describe("knowledge query mutations", () => {
       ],
       nextCursor: null,
     });
-    const { result } = renderHook(() => useDeleteDocumentMutation(), {
-      wrapper: ({ children }) => (
-        <QueryClientProvider client={queryClient}>
-          <KnowledgeClientProvider client={api}>
-            {children}
-          </KnowledgeClientProvider>
-        </QueryClientProvider>
-      ),
-    });
+    const { result } = renderHook(
+      () => useDeleteDocumentMutation("project-test"),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
 
     await act(async () => {
       await result.current.mutateAsync("doc-delete").catch(() => undefined);
@@ -686,11 +767,12 @@ describe("knowledge query mutations", () => {
 
     expect(
       queryClient.getQueryData<{ items: Array<{ status: string }> }>(
-        knowledgeKeys.documents(),
+        knowledgeKeys.documents("project-test"),
       ),
     ).toMatchObject({ items: [{ status: "ready" }] });
     expect(
-      queryClient.getQueryState(knowledgeKeys.documents())?.isInvalidated,
+      queryClient.getQueryState(knowledgeKeys.documents("project-test"))
+        ?.isInvalidated,
     ).toBe(true);
   });
 });
@@ -714,15 +796,18 @@ describe("grounded answer queries", () => {
       },
     };
     const queryClient = createTestQueryClient();
-    const { result } = renderHook(() => useCreateAnswerMutation(), {
-      wrapper: ({ children }) => (
-        <QueryClientProvider client={queryClient}>
-          <KnowledgeClientProvider client={api}>
-            {children}
-          </KnowledgeClientProvider>
-        </QueryClientProvider>
-      ),
-    });
+    const { result } = renderHook(
+      () => useCreateAnswerMutation("project-test"),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
     const controller = new AbortController();
 
     await act(async () =>
@@ -738,34 +823,41 @@ describe("grounded answer queries", () => {
       ...base,
       async createAnswer() {
         throw new KnowledgeClientError({
+          correlationId: "request-test",
+          retryable: false,
           type: "https://tap.example/problems/document-state-changed",
-          title: "provider secret",
+          title: "Document state changed",
           status: 409,
-          detail: "provider secret",
+          detail:
+            "A selected document is no longer ready at its selected revision.",
         });
       },
     };
     const queryClient = createTestQueryClient();
-    queryClient.setQueryData(knowledgeKeys.documents(), {
+    queryClient.setQueryData(knowledgeKeys.documents("project-test"), {
       items: [document({ documentId: "doc-a", status: "ready" })],
       nextCursor: null,
     });
-    const { result } = renderHook(() => useCreateAnswerMutation(), {
-      wrapper: ({ children }) => (
-        <QueryClientProvider client={queryClient}>
-          <KnowledgeClientProvider client={api}>
-            {children}
-          </KnowledgeClientProvider>
-        </QueryClientProvider>
-      ),
-    });
+    const { result } = renderHook(
+      () => useCreateAnswerMutation("project-test"),
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={queryClient}>
+            <KnowledgeClientProvider client={api}>
+              {children}
+            </KnowledgeClientProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
 
     await act(async () => {
       await result.current.mutateAsync({ request }).catch(() => undefined);
     });
 
     expect(
-      queryClient.getQueryState(knowledgeKeys.documents())?.isInvalidated,
+      queryClient.getQueryState(knowledgeKeys.documents("project-test"))
+        ?.isInvalidated,
     ).toBe(true);
   });
 
@@ -787,11 +879,11 @@ describe("grounded answer queries", () => {
     };
     const queryClient = createTestQueryClient();
     queryClient.setQueryData(
-      knowledgeKeys.citation("citation-a"),
+      knowledgeKeys.citation("project-test", "citation-a"),
       citationPreview({ citationId: "citation-a" }),
     );
     const { result, unmount } = renderHook(
-      () => useCitationQuery("citation-a"),
+      () => useCitationQuery("project-test", "citation-a"),
       {
         wrapper: ({ children }) => (
           <QueryClientProvider client={queryClient}>
@@ -808,5 +900,222 @@ describe("grounded answer queries", () => {
     unmount();
 
     expect(signals[0]?.aborted).toBe(true);
+  });
+});
+
+describe("project boundaries", () => {
+  it("keeps the list disabled until a trusted project exists", async () => {
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(() => useDocumentListQuery(null), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          <KnowledgeClientProvider client={null}>
+            {children}
+          </KnowledgeClientProvider>
+        </QueryClientProvider>
+      ),
+    });
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(result.current.data).toBeUndefined();
+    await expect(result.current.refetch()).resolves.toMatchObject({
+      isError: true,
+    });
+  });
+
+  it("isolates receipt overlays and document caches when switching projects", async () => {
+    const queryClient = createTestQueryClient();
+    const first = {
+      ...fakeKnowledgeClient().withDuplicateUpload(),
+      projectId: "project-a",
+    };
+    const second = { ...fakeKnowledgeClient(), projectId: "project-b" };
+    let api: KnowledgeClient = first;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <KnowledgeClientProvider client={api}>
+          {children}
+        </KnowledgeClientProvider>
+      </QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ projectId }) => ({
+        list: useDocumentListQuery(projectId),
+        upload: useUploadDocumentMutation(projectId),
+      }),
+      { initialProps: { projectId: "project-a" }, wrapper },
+    );
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    await act(async () => {
+      await result.current.upload.mutateAsync({
+        file: new File(["# notes"], "notes.md"),
+        onProgress: () => undefined,
+      });
+    });
+    await waitFor(() =>
+      expect(result.current.list.data?.items[0]?.documentId).toBe(
+        "doc-existing",
+      ),
+    );
+    api = second;
+    rerender({ projectId: "project-b" });
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    expect(result.current.list.data?.items).toEqual([]);
+    expect(
+      queryClient.getQueryData<DocumentPage>([
+        "knowledge",
+        "project-a",
+        "documents",
+      ])?.items[0]?.documentId,
+    ).toBe("doc-existing");
+  });
+
+  it("settles an in-flight retry only into its originating project after a switch", async () => {
+    const queryClient = createTestQueryClient();
+    const first = fakeKnowledgeClient("project-a")
+      .withDocuments([document({ documentId: "same-doc", status: "failed" })])
+      .deferRetry();
+    const second = fakeKnowledgeClient("project-b").withDocuments([
+      document({
+        documentId: "same-doc",
+        filename: "project-b.md",
+        status: "ready",
+      }),
+    ]);
+    let api: KnowledgeClient = first;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <KnowledgeClientProvider client={api}>
+          {children}
+        </KnowledgeClientProvider>
+      </QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ projectId }) => ({
+        list: useDocumentListQuery(projectId),
+        retry: useRetryDocumentMutation(projectId),
+      }),
+      { initialProps: { projectId: "project-a" }, wrapper },
+    );
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = result.current.retry.mutateAsync("same-doc");
+    });
+    await waitFor(() => expect(first.retryCalls).toEqual(["same-doc"]));
+    api = second;
+    rerender({ projectId: "project-b" });
+    await waitFor(() =>
+      expect(result.current.list.data?.items[0]?.filename).toBe("project-b.md"),
+    );
+    await act(async () => {
+      first.finishRetry();
+      await pending;
+    });
+    expect(result.current.list.data?.items[0]).toMatchObject({
+      filename: "project-b.md",
+      status: "ready",
+    });
+    expect(
+      queryClient.getQueryData<DocumentPage>([
+        "knowledge",
+        "project-a",
+        "documents",
+      ])?.items[0]?.status,
+    ).toBe("queued");
+  });
+
+  it("does not apply a committed delete overlay to another project's identical document ID", async () => {
+    const queryClient = createTestQueryClient();
+    const source = document({
+      documentId: "same-doc",
+      status: "ready",
+      stage: "ready",
+    });
+    const first = fakeKnowledgeClient("project-a")
+      .withDocuments([source])
+      .listOnce([source])
+      .listOnce([source]);
+    const second = fakeKnowledgeClient("project-b").withDocuments([
+      { ...source, filename: "project-b.md" },
+    ]);
+    let api: KnowledgeClient = first;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <KnowledgeClientProvider client={api}>
+          {children}
+        </KnowledgeClientProvider>
+      </QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ projectId }) => ({
+        list: useDocumentListQuery(projectId),
+        remove: useDeleteDocumentMutation(projectId),
+      }),
+      { initialProps: { projectId: "project-a" }, wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.list.data?.items).toHaveLength(1),
+    );
+    await act(async () => {
+      await result.current.remove.mutateAsync("same-doc");
+    });
+    await waitFor(() => expect(result.current.list.data?.items).toEqual([]));
+    api = second;
+    rerender({ projectId: "project-b" });
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    expect(result.current.list.data?.items[0]).toMatchObject({
+      documentId: "same-doc",
+      filename: "project-b.md",
+      status: "ready",
+    });
+  });
+
+  it("separates detail and citation results for identical IDs across projects", async () => {
+    const queryClient = createTestQueryClient();
+    const first = fakeKnowledgeClient("project-a")
+      .withDetail(
+        documentDetail({ documentId: "same-doc", filename: "project-a.md" }),
+      )
+      .withCitation(
+        citationPreview({
+          citationId: "same-citation",
+          filename: "project-a.md",
+        }),
+      );
+    const second = fakeKnowledgeClient("project-b")
+      .withDetail(
+        documentDetail({ documentId: "same-doc", filename: "project-b.md" }),
+      )
+      .withCitation(
+        citationPreview({
+          citationId: "same-citation",
+          filename: "project-b.md",
+        }),
+      );
+    let api: KnowledgeClient = first;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <KnowledgeClientProvider client={api}>
+          {children}
+        </KnowledgeClientProvider>
+      </QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ projectId }) => ({
+        detail: useDocumentDetailQuery(projectId, "same-doc"),
+        citation: useCitationQuery(projectId, "same-citation"),
+      }),
+      { initialProps: { projectId: "project-a" }, wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.citation.data?.filename).toBe("project-a.md"),
+    );
+    expect(result.current.detail.data?.filename).toBe("project-a.md");
+    api = second;
+    rerender({ projectId: "project-b" });
+    await waitFor(() =>
+      expect(result.current.citation.data?.filename).toBe("project-b.md"),
+    );
+    expect(result.current.detail.data?.filename).toBe("project-b.md");
   });
 });

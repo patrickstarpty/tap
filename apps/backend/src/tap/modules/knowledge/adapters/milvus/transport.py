@@ -93,6 +93,13 @@ def create_operations_milvus_sdk() -> object:
 
 
 _OUTPUT_FIELD_SET = frozenset(MILVUS_OUTPUT_FIELDS)
+_OWNED_OUTPUT_FIELDS = {
+    "project_id",
+    "allowed_group_ids",
+    "classification_rank",
+    "environment",
+    "deleted",
+}
 _INDEX_FIELDS = (
     "dense_vector",
     "bm25_sparse",
@@ -104,6 +111,17 @@ _INDEX_FIELDS = (
     "corpus_version",
     "deleted",
 )
+
+
+def _index_fields(schema_version: str) -> tuple[str, ...]:
+    if schema_version not in {"doc-schema-v1", "doc-schema-v2"}:
+        raise ValueError("unsupported collection index profile")
+    return tuple(
+        "enterprise_id" if name == "tenant_id" and schema_version == "doc-schema-v2" else name
+        for name in _INDEX_FIELDS
+    )
+
+
 _SAFE_COLLECTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}\Z")
 _JSON_NUMBER_STRING = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 _METADATA_PREFIX = "tap-collection-metadata-v1:"
@@ -479,7 +497,7 @@ class PyMilvusReader:
             )
         )
         raw_indexes = []
-        for index_name in _INDEX_FIELDS:
+        for index_name in _index_fields(target.schema_version):
 
             def describe_index(index_name: str = index_name) -> Coroutine[Any, Any, object]:
                 return self._async_client().describe_index(
@@ -940,7 +958,9 @@ def _collection_descriptor(
     metadata = _collection_metadata(collection.get("description"))
     fields = _canonical_fields(collection.get("fields"))
     functions = _canonical_functions(collection.get("functions"))
-    indexes = _canonical_indexes(raw_indexes)
+    indexes = _canonical_indexes(
+        raw_indexes, index_fields=_index_fields(str(metadata["schemaVersion"]))
+    )
     canonical_schema = {
         "consistency_level": consistency_level,
         "fields": fields,
@@ -1112,7 +1132,10 @@ def validate_collection_indexes(
     """Validate exact index details without requiring collection-observer authority."""
 
     configured = expected_schema.get("indexes")
-    if not isinstance(configured, Mapping) or set(configured) != set(_INDEX_FIELDS):
+    if not isinstance(configured, Mapping) or set(configured) not in (
+        set(_INDEX_FIELDS),
+        set(_index_fields("doc-schema-v2")),
+    ):
         raise ValueError("expected index schema is outside the closed doc family")
     expected: list[dict[str, object]] = []
     for field_name, raw_definition in configured.items():
@@ -1140,7 +1163,7 @@ def validate_collection_indexes(
             }
         )
     expected.sort(key=lambda item: cast(str, item["field_name"]))
-    if _canonical_indexes(raw_indexes) != expected:
+    if _canonical_indexes(raw_indexes, index_fields=tuple(configured)) != expected:
         raise ValueError("collection indexes do not match the canonical schema")
 
 
@@ -1231,8 +1254,10 @@ def _canonical_functions(raw: object) -> list[dict[str, object]]:
     return sorted(canonical, key=lambda item: cast(str, item["name"]))
 
 
-def _canonical_indexes(raw: tuple[object, ...]) -> list[dict[str, object]]:
-    if len(raw) != len(_INDEX_FIELDS):
+def _canonical_indexes(
+    raw: tuple[object, ...], *, index_fields: tuple[str, ...] = _INDEX_FIELDS
+) -> list[dict[str, object]]:
+    if len(raw) != len(index_fields):
         raise ValueError("index descriptions are incomplete")
     canonical: list[dict[str, object]] = []
     for item in raw:
@@ -1241,7 +1266,7 @@ def _canonical_indexes(raw: tuple[object, ...]) -> list[dict[str, object]]:
             raise ValueError("index description is widened")
         field_name = _description_name(value, "field_name")
         index_name = _description_name(value, "index_name")
-        if field_name != index_name or field_name not in _INDEX_FIELDS:
+        if field_name != index_name or field_name not in index_fields:
             raise ValueError("index identity is outside the closed schema")
         index_type = _description_name(value, "index_type")
         metric_type = _optional_description_name(value.get("metric_type"))
@@ -1259,7 +1284,7 @@ def _canonical_indexes(raw: tuple[object, ...]) -> list[dict[str, object]]:
                 ),
             }
         )
-    if {index["field_name"] for index in canonical} != set(_INDEX_FIELDS):
+    if {index["field_name"] for index in canonical} != set(index_fields):
         raise ValueError("index descriptions are incomplete")
     return sorted(canonical, key=lambda item: cast(str, item["field_name"]))
 
@@ -1613,7 +1638,14 @@ def _output_fields(value: object) -> None:
         or not value
         or len(set(value)) != len(value)
         or any(not isinstance(item, str) for item in value)
-        or not set(value) <= _OUTPUT_FIELD_SET
+        or not (
+            set(value) <= _OUTPUT_FIELD_SET
+            or set(value)
+            in (
+                _OUTPUT_FIELD_SET | _OWNED_OUTPUT_FIELDS | {"tenant_id"},
+                _OUTPUT_FIELD_SET | _OWNED_OUTPUT_FIELDS | {"enterprise_id", "document_id"},
+            )
+        )
     ):
         raise ValueError("output fields must be a closed safe subset")
 

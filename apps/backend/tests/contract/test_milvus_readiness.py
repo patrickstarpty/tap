@@ -5,12 +5,14 @@ from collections.abc import Mapping
 from typing import Never, cast
 
 import pytest
+from conftest import validation_http_services
 from fastapi.testclient import TestClient
 from test_milvus_mapping import doc_target
 from test_milvus_search_strict import descriptor
 
 from tap.interfaces.http.app import create_app
-from tap.interfaces.http.dependencies import HttpServices, KnowledgeHttpService
+from tap.interfaces.http.dependencies import KnowledgeHttpService
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.milvus.readiness import (
     MilvusReadinessCanary,
     MilvusReadinessProbe,
@@ -153,6 +155,8 @@ async def test_readiness_timeout_is_bounded_and_provider_neutral() -> None:
 
 
 class UnavailableKnowledgeService:
+    scope = VALIDATION_SCOPE
+
     """Fail if an unrelated route reaches the deferred knowledge dependency."""
 
     def __init__(self) -> None:
@@ -167,7 +171,9 @@ class UnavailableKnowledgeService:
 def test_http_liveness_does_not_access_search_or_knowledge_readiness() -> None:
     """Resolving search readiness from liveness would make process health depend on Milvus."""
     service = UnavailableKnowledgeService()
-    client = TestClient(create_app(HttpServices(knowledge=cast(KnowledgeHttpService, service))))
+    client = TestClient(
+        create_app(validation_http_services(knowledge=cast(KnowledgeHttpService, service)))
+    )
 
     response = client.get("/health/live")
 

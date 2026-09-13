@@ -118,13 +118,14 @@ describe("KnowledgeLibrary", () => {
 
   it("shows upload progress, closes after 202, and keeps the receipt visible", async () => {
     const user = userEvent.setup();
-    const api = fakeKnowledgeClient();
+    const api = fakeKnowledgeClient().deferUpload();
     renderKnowledgeApp(<KnowledgeLibrary />, { api });
     await user.click(await screen.findByRole("button", { name: "添加来源" }));
     await user.upload(screen.getByLabelText("选择文档"), markdownFile());
     await user.click(screen.getByRole("button", { name: "开始添加" }));
 
     expect(await screen.findByText("上传 52%")).toBeVisible();
+    api.finishUpload();
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
@@ -204,7 +205,7 @@ describe("KnowledgeLibrary", () => {
 
   it("aborts an in-flight upload when the library unmounts", async () => {
     const user = userEvent.setup();
-    const api = fakeKnowledgeClient();
+    const api = fakeKnowledgeClient().deferUpload();
     const { unmount } = renderKnowledgeApp(<KnowledgeLibrary />, { api });
     await user.click(await screen.findByRole("button", { name: "添加来源" }));
     await user.upload(screen.getByLabelText("选择文档"), markdownFile());

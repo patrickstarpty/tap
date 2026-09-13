@@ -931,8 +931,13 @@ async def test_sdk_admin_preserves_active_reader_target_across_repeated_bootstra
     } == {(physical, "Query"), (physical, "Search")}
 
 
-async def test_sdk_admin_preserves_temporary_writer_target_across_repeated_bootstrap() -> None:
-    physical = "kb_doc_v1_corpus_fixture_v1"
+@pytest.mark.parametrize(
+    "physical",
+    ["kb_doc_v1_corpus_fixture_v1", "kb_doc_v2_tapper_demo", "kb_doc_v2_tapper_demo_123456abcdef"],
+)
+async def test_sdk_admin_preserves_temporary_writer_target_across_repeated_bootstrap(
+    physical: str,
+) -> None:
     client = RoleGrantInventoryClient(
         "tap_writer",
         [
@@ -1070,6 +1075,30 @@ async def test_sdk_admin_invalid_reader_concrete_fails_before_any_base_mutation(
     with pytest.raises(RuntimeError, match="concrete grant metadata"):
         await admin.replace_role_grants("tap_reader", expected)
 
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "physical",
+    [
+        "kb_doc_v2_other",
+        "kb_doc_v3_tapper_demo",
+        "kb_doc_v2_tapper_demo_extra",
+        "kb_doc_v2_tapper_demo_123456abcdeF",
+    ],
+)
+async def test_sdk_admin_rejects_unknown_versioned_names_before_mutation(physical: str) -> None:
+    client = RoleGrantInventoryClient(
+        "tap_reader", [role_grant("tap_reader", "Collection", physical, "Query")]
+    )
+    expected = frozenset(
+        {
+            MilvusGrant("instance", "*", "DescribeAlias"),
+            MilvusGrant("instance", "*", "DescribeCollection"),
+        }
+    )
+    with pytest.raises(RuntimeError, match="concrete grant metadata"):
+        await sdk_admin(client).replace_role_grants("tap_reader", expected)
     assert client.calls == []
 
 

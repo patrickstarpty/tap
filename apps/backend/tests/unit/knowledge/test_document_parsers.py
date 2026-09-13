@@ -225,7 +225,7 @@ def test_docx_zip_bomb_is_rejected_before_document_library_opens_it() -> None:
     with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("word/document.xml", b"x" * (100 * 1024 * 1024 + 1))
 
-    with pytest.raises(DocumentParseRejected, match="^invalid-document$"):
+    with pytest.raises(DocumentParseRejected, match="^document-too-complex$"):
         ParserRegistry().parse(DocumentSource("bomb.docx", MediaType.DOCX, payload.getvalue()))
 
 
@@ -247,7 +247,7 @@ def test_docx_rejects_more_than_ten_thousand_zip_members_before_opening_document
         for index in range(10_001):
             archive.writestr(f"word/parts/{index}.xml", b"")
 
-    with pytest.raises(DocumentParseRejected, match="^invalid-document$"):
+    with pytest.raises(DocumentParseRejected, match="^document-too-complex$"):
         ParserRegistry().parse(
             DocumentSource("many-parts.docx", MediaType.DOCX, payload.getvalue())
         )

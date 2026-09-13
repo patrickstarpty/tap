@@ -1,3 +1,4 @@
+import { useKnowledgeClient } from "../api/queries";
 import { PlusOutlined } from "@ant-design/icons";
 import {
   Alert,
@@ -30,6 +31,7 @@ interface DeleteTarget {
 export function KnowledgeLibrary({
   pollIntervalMs,
 }: { pollIntervalMs?: number } = {}) {
+  const { projectId } = useKnowledgeClient();
   const addSourceRef = useRef<HTMLButtonElement>(null);
   const detailTriggerRef = useRef<HTMLTableRowElement | null>(null);
   const deleteTriggerRef = useRef<HTMLElement | null>(null);
@@ -42,9 +44,9 @@ export function KnowledgeLibrary({
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [receiptNotice, setReceiptNotice] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const documentsQuery = useDocumentListQuery({ pollIntervalMs });
-  const retryMutation = useRetryDocumentMutation();
-  const deleteMutation = useDeleteDocumentMutation();
+  const documentsQuery = useDocumentListQuery(projectId, { pollIntervalMs });
+  const retryMutation = useRetryDocumentMutation(projectId);
+  const deleteMutation = useDeleteDocumentMutation(projectId);
   const documents = documentsQuery.data?.items ?? [];
 
   useEffect(() => {

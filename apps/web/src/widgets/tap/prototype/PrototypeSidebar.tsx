@@ -11,6 +11,7 @@ import {
 import type { PrototypeCopy } from "./copy";
 import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
+import { ConversationHistory } from "../../../features/conversations/components/ConversationHistory";
 
 const tapperListeningAvatar = new URL(
   "../../../../assets/brand/tapper/listening/svg/avatar/tapper-listening-avatar-color.svg?no-inline",
@@ -33,6 +34,14 @@ interface PrototypeSidebarProps {
   onNewChat: () => void;
   onSelectConversation: (conversationId: string) => void;
   onToggleCollapsed: () => void;
+  historyState?: {
+    error?: string;
+    hasMore: boolean;
+    isLoading: boolean;
+    isLoadingMore: boolean;
+    onLoadMore: () => void;
+    onRetry: () => void;
+  };
 }
 
 export function PrototypeSidebar({
@@ -47,6 +56,7 @@ export function PrototypeSidebar({
   onNewChat,
   onSelectConversation,
   onToggleCollapsed,
+  historyState,
 }: PrototypeSidebarProps) {
   const tapperWorkspaceActive = [
     "tapper",
@@ -100,14 +110,18 @@ export function PrototypeSidebar({
     },
   ];
 
-  const conversationHistory = conversations.filter((conversation) => {
-    const contextCount =
-      conversation.selectedSourceIds.length +
-      conversation.selectedAgentIds.length +
-      conversation.selectedSkillIds.length;
-
-    return conversation.turns.length > 0 || contextCount > 0;
-  });
+  const conversationHistory = conversations
+    .map((conversation, index) => ({ conversation, index }))
+    .filter(({ conversation }) => {
+      if (historyState !== undefined && conversation.id !== "draft") {
+        return true;
+      }
+      const contextCount =
+        conversation.selectedSourceIds.length +
+        conversation.selectedAgentIds.length +
+        conversation.selectedSkillIds.length;
+      return conversation.turns.length > 0 || contextCount > 0;
+    });
 
   const getConversationLabel = (conversation: Conversation) => {
     const contextCount =
@@ -115,7 +129,8 @@ export function PrototypeSidebar({
       conversation.selectedAgentIds.length +
       conversation.selectedSkillIds.length;
     const title =
-      conversation.turns.length > 0
+      conversation.turns.length > 0 ||
+      (historyState !== undefined && conversation.id !== "draft")
         ? conversation.title
         : copy.navigation.newChat;
     const contextLabel =
@@ -255,36 +270,26 @@ export function PrototypeSidebar({
           {tapperModules.map((module) => moduleButton(module, "tapper"))}
         </nav>
 
-        {!collapsed && conversationHistory.length > 0 ? (
-          <nav
-            className="tap-chat-history"
-            aria-label={copy.navigation.chatHistory}
-          >
-            <span className="tap-sidebar-section-title">
-              {copy.navigation.chatHistory}
-            </span>
-            {conversationHistory.map((conversation) => {
-              const label = getConversationLabel(conversation);
-
-              return (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  aria-label={label}
-                  aria-current={
-                    conversation.id === activeConversationId
-                      ? "page"
-                      : undefined
-                  }
-                  title={label}
-                  onClick={() => onSelectConversation(conversation.id)}
-                >
-                  <MessageOutlined aria-hidden="true" />
-                  <span>{label}</span>
-                </button>
-              );
-            })}
-          </nav>
+        {conversationHistory.length > 0 || historyState !== undefined ? (
+          <ConversationHistory
+            activeId={activeConversationId}
+            ariaLabel={copy.navigation.chatHistory}
+            conversations={conversationHistory.map(({ conversation }) => ({
+              conversationId: conversation.id,
+              title: getConversationLabel(conversation),
+              createdAt: "1970-01-01T00:00:00Z",
+              updatedAt: "1970-01-01T00:00:00Z",
+            }))}
+            error={historyState?.error}
+            hasMore={historyState?.hasMore}
+            icon={<MessageOutlined aria-hidden="true" />}
+            isLoading={historyState?.isLoading}
+            isLoadingMore={historyState?.isLoadingMore}
+            onLoadMore={historyState?.onLoadMore ?? (() => undefined)}
+            onRetry={historyState?.onRetry ?? (() => undefined)}
+            onSelect={onSelectConversation}
+            sectionTitle={copy.navigation.chatHistory}
+          />
         ) : null}
       </aside>
     </>

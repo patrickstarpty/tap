@@ -18,7 +18,185 @@ import yaml
 from pymilvus.decorators import _log_rpc_error
 
 ROOT = Path(__file__).resolve().parents[4]
-E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173)
+
+
+def task6a_collection_module():
+    spec = importlib.util.spec_from_file_location(
+        "task6a_collection", ROOT / "scripts/tapper_collection.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "action,profile,retained,valid",
+    [
+        ("migrate-v1-to-v2", "doc-schema-v2", None, True),
+        ("migrate-v1-to-v2", "doc-schema-v1", None, False),
+        ("rollback-v2-to-v1", "doc-schema-v1", "kb_doc_v1_tapper_demo_123456abcdef", True),
+        ("rollback-v2-to-v1", "doc-schema-v2", "kb_doc_v1_tapper_demo", False),
+        ("rollback-v2-to-v1", "doc-schema-v1", None, False),
+        ("rollback-v2-to-v1", "doc-schema-v1", "kb_doc_v1_other", False),
+    ],
+)
+def test_task6a_collection_actions_bind_explicit_profiles(action, profile, retained, valid):
+    module = task6a_collection_module()
+    settings = SimpleNamespace(schema_version=profile)
+    if valid:
+        module.validate_migration_profile(settings, action, retained)
+    else:
+        with pytest.raises(ValueError):
+            module.validate_migration_profile(settings, action, retained)
+
+
+def test_task6a_collection_refuses_default_project_before_docker_or_providers(
+    tmp_path, monkeypatch
+):
+    module = task6a_collection_module()
+    monkeypatch.setattr(module, "_docker", lambda *_: pytest.fail("default project reached Docker"))
+    with pytest.raises(ValueError, match="owned"):
+        module.verify_owned_migration(SimpleNamespace(compose_project="tap-tapper-demo"), tmp_path)
+
+
+@pytest.mark.parametrize(
+    "changed", [None, "database_url", "milvus_uri", "s3_endpoint", "legacy_azure_enabled"]
+)
+@pytest.mark.parametrize("mysql_service", ["mysql-cli", "mysql-cli-final"])
+def test_task6a_collection_owned_guard_binds_every_provider_endpoint(
+    tmp_path, monkeypatch, changed, mysql_service
+):
+    module = task6a_collection_module()
+    project = "tap-task6a-123456abcdef"
+    (tmp_path / "ownership.json").write_text(
+        json.dumps({"project": project, "migration_mysql_service": mysql_service})
+    )
+    inventory = {
+        "container": ["mysql-cli-id", "milvus-id", "objects-id"],
+        "volume": [project + "_data"],
+        "network": ["network-id"],
+    }
+    for kind, ids in inventory.items():
+        (tmp_path / f"{kind}-ids.json").write_text(json.dumps(ids))
+    containers = [
+        {
+            "Config": {
+                "Labels": {
+                    "com.docker.compose.project": project,
+                    "com.docker.compose.service": service,
+                }
+            },
+            "NetworkSettings": {"Ports": {port: [{"HostIp": "127.0.0.1", "HostPort": host}]}},
+        }
+        for service, port, host in [
+            (mysql_service, "3306/tcp", "35306"),
+            ("milvus", "19530/tcp", "40530"),
+            ("tap-minio", "9000/tcp", "41000"),
+        ]
+    ]
+
+    def docker(kind, operation, *args):
+        if operation == "ls":
+            return "\n".join(inventory[kind])
+        assert operation == "inspect" and list(args) == inventory[kind]
+        return json.dumps(
+            containers
+            if kind == "container"
+            else [{"Labels": {"com.docker.compose.project": project}}]
+        )
+
+    monkeypatch.setattr(module, "_docker", docker)
+    settings = SimpleNamespace(
+        compose_project=project,
+        database_url="mysql+asyncmy://tap:test@127.0.0.1:35306/tap",
+        alembic_database_url="mysql+pymysql://tap:test@127.0.0.1:35306/tap",
+        milvus_uri="http://127.0.0.1:40530",
+        object_store_provider="minio",
+        legacy_azure_enabled=False,
+        s3_endpoint="http://127.0.0.1:41000",
+    )
+    if changed is not None:
+        setattr(
+            settings,
+            changed,
+            True if changed == "legacy_azure_enabled" else "http://127.0.0.1:9999",
+        )
+        with pytest.raises(ValueError):
+            module.verify_owned_migration(settings, tmp_path)
+    else:
+        module.verify_owned_migration(settings, tmp_path)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_task6a_collection_closes_only_opened_clients_on_migration_settlement(monkeypatch, fail):
+    from tap.entrypoints.tapper_runtime import TapperSettings
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    module = task6a_collection_module()
+    events = []
+
+    class Resource:
+        def __init__(self, name):
+            self.name = name
+
+        async def aclose(self):
+            events.append(self.name)
+
+    async def database(_settings):
+        return Resource("database"), SimpleNamespace(scope=VALIDATION_SCOPE)
+
+    async def clients(_settings):
+        return SimpleNamespace(
+            provisioner=Resource("provisioner"),
+            writer=Resource("writer"),
+            reader=Resource("reader"),
+        )
+
+    async def ready_work(_limit):
+        return ()
+
+    class Index:
+        async def migrate_from_snapshot(self, previous, snapshot):
+            assert await snapshot() == ()
+            if fail:
+                raise RuntimeError("injected migration refusal")
+            return SimpleNamespace(
+                physical_collection="kb_doc_v2_tapper_demo_123456abcdef",
+                alias="kb_doc_tapper_demo_active",
+            )
+
+    monkeypatch.setattr(module, "_create_database", database)
+    monkeypatch.setattr(module, "_open_document_clients", clients)
+    monkeypatch.setattr(
+        module, "_create_projection_coordinator", lambda *args, **kwargs: Resource("coordinator")
+    )
+    monkeypatch.setattr(module, "_build_document_index", lambda *args: Index())
+    monkeypatch.setattr(module, "_create_blob", lambda *args: Resource("artifacts"))
+    monkeypatch.setattr(
+        module,
+        "MysqlOperationRepository",
+        lambda *args, **kwargs: SimpleNamespace(ready_work=ready_work),
+    )
+    settings = TapperSettings.from_mapping(
+        {
+            "LITELLM_MODEL": "openai/test-chat",
+            "LITELLM_TAPPER_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
+        }
+    )
+    if fail:
+        with pytest.raises(RuntimeError, match="injected"):
+            asyncio.run(module.migrate_projection(settings, "migrate-v1-to-v2", None, 20))
+    else:
+        assert (
+            asyncio.run(module.migrate_projection(settings, "migrate-v1-to-v2", None, 20))[
+                "physicalCollection"
+            ]
+            == "kb_doc_v2_tapper_demo_123456abcdef"
+        )
+    assert events == ["artifacts", "reader", "writer", "provisioner", "coordinator", "database"]
+
+
+E2E_FIXED_PORTS = (13306, 16379, 11000, 14000, 29530, 19091, 18000, 15173, 29000)
 EXPECTED_ENV = {
     "TAP_TAPPER_COMPOSE_PROJECT",
     "TAPPER_API_HOST",
@@ -204,6 +382,27 @@ def _make_dry_run(target: str, *assignments: str) -> subprocess.CompletedProcess
     )
 
 
+def test_e2e_manifest_registers_durable_conversation_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/knowledge-conversation.spec.ts" in manifest["journey"]
+
+
+def test_e2e_manifest_registers_grounded_graph_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/knowledge-graph.spec.ts" in manifest["journey"]
+    source = (ROOT / "apps/web/tests/e2e/knowledge-conversation.spec.ts").read_text(
+        encoding="utf-8"
+    )
+    assert source.count("test(") > 0
+
+
+def test_e2e_manifest_registers_test_plan_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/tapper-test-plan.spec.ts" in manifest["journey"]
+    source = (ROOT / "apps/web/tests/e2e/tapper-test-plan.spec.ts").read_text(encoding="utf-8")
+    assert source.count("test(") > 0
+
+
 def _load_yaml_as_json(path: Path) -> dict[str, object]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)
@@ -235,6 +434,34 @@ def _supervisor_fixture(
     supervisor.chmod(supervisor.stat().st_mode | stat.S_IXUSR)
     log = root / "children.log"
     log.touch()
+    parser_stub = root / ".venv/bin/python"
+    parser_stub.parent.mkdir(parents=True)
+    parser_stub.write_text(f"""#!{sys.executable}
+import os, signal, socket, sys, time
+from pathlib import Path
+state=Path(sys.argv[sys.argv.index('--state-dir')+1])
+socket_path=Path('/tmp')/('tap-stub-'+__import__('hashlib').sha256(str(state).encode()).hexdigest()[:20]+'.sock')
+if len(str(state/'parser.sock').encode()) < 100: socket_path=state/'parser.sock'
+if '--socket-path' in sys.argv:
+    print(socket_path); sys.exit(0)
+state.mkdir(parents=True,exist_ok=True,mode=0o700)
+if '--cleanup-only' in sys.argv:
+    (state/'cleanup.json').write_text('verified'); sys.exit(0)
+log=Path({str(log)!r})
+def record(event):
+    with log.open('a') as output: output.write(event+' parser '+str(os.getpid())+'\\n')
+record('start')
+with log.open('a') as output: output.write('env parser PATH,HOME\\n')
+socket_path.unlink(missing_ok=True)
+server=socket.socket(socket.AF_UNIX); server.bind(str(socket_path))
+(state/'ready-pid').write_text(str(os.getpid()))
+def stop(*_):
+    record('term'); server.close(); socket_path.unlink(missing_ok=True)
+    (state/'ready-pid').unlink(missing_ok=True); sys.exit(0)
+signal.signal(signal.SIGTERM,stop)
+while True: time.sleep(0.05)
+""")
+    parser_stub.chmod(0o700)
     temp_directory = root / "tmp"
     temp_directory.mkdir()
     child = """#!/bin/sh
@@ -287,6 +514,9 @@ case " $* " in
   *" tap.entrypoints.tapper_api "*) exec tapper-child api ;;
   *" tap.entrypoints.relay_reconciler "*) exec tapper-child relay ;;
   *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
+  *" tap.entrypoints.tapper_graph_worker "*) exec tapper-child graph ;;
+  *" tap.entrypoints.tapper_test_design_worker "*) exec tapper-child test-design ;;
+  *" tap.entrypoints.tapper_generation_worker "*) exec tapper-child generation ;;
 esac
 exit 99
 """,
@@ -402,8 +632,23 @@ def _e2e_runner_fixture(
             "ready_deadline=$(( SECONDS + 1 ))",
             1,
         )
+    for filename in (
+        "tapper_e2e_report.py",
+        "tapper-e2e-specs.json",
+        "build-hostile-document-fixtures.py",
+        "disable-tapper-e2e-assets.py",
+    ):
+        (scripts / filename).write_bytes((ROOT / "scripts" / filename).read_bytes())
     runner.write_text(runner_source, encoding="utf-8")
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
+    helper = scripts / "build-tapper-object-store.sh"
+    helper.write_text(
+        '#!/bin/sh\nif [ "$1" = verify ]; then printf \'sha256:'
+        + "a" * 64
+        + '\\n\'; else [ "$1" = verify-container ] && [ "$2" = owned-object-container ]; fi\n',
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
     (root / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     (root / ".env").write_text(
         """TAP_TAPPER_COMPOSE_PROJECT=shared-project
@@ -479,7 +724,17 @@ case " $* " in
       printf '%s\n' '{"stats":{"expected":1,"unexpected":0,"flaky":0,"skipped":1}}'
       exit 0
     fi
-    printf '%s\n' '{"stats":{"expected":1,"unexpected":0,"flaky":0,"skipped":0}}'
+    "$TAPPER_TEST_PYTHON" - <<'NATIVE'
+import json, os
+names=['persistence.spec.ts']
+if os.environ['TAPPER_E2E_PHASE']=='journey':
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts']
+print(json.dumps({
+    'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
+    'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{
+        'projectName':'chromium','expectedStatus':'passed','status':'expected',
+        'results':[{'status':'passed','retry':0}]}]}]} for name in names]}))
+NATIVE
     ;;
   *) exit 98 ;;
 esac
@@ -497,6 +752,11 @@ case " $* " in
     environment_names="$(tapper-env-names)"
     printf 'env|settings|%s\n' "$environment_names" >> "$TAPPER_E2E_STUB_LOG"
     [ "$TAP_DEMO_MODE:$TAPPER_MODEL_BACKEND:$TAPPER_ANSWER_BACKEND" = e2e:fake:litellm ] || exit 71
+    [ "${TAPPER_OBJECT_STORE_PROVIDER:-}" = minio ] || exit 79
+    [ "${TAPPER_S3_ENDPOINT:-}" = http://127.0.0.1:29000 ] || exit 79
+    [ "${TAPPER_S3_BUCKET:-}" = tapper-e2e-objects ] || exit 79
+    [ "${TAPPER_S3_SECRET_KEY:-}" = tap-e2e-object-password ] || exit 79
+    [ "${TAPPER_LEGACY_AZURE_ENABLED:-}" = 0 ] || exit 79
     [ "$LITELLM_MODEL" = dashscope/e2e-chat-unused ] || exit 72
     [ "$LITELLM_TAPPER_EMBEDDING_MODEL" = dashscope/text-embedding-v4 ] || exit 72
     [ "$LITELLM_EMBEDDING_MODEL" = text-embedding-v4 ] || exit 73
@@ -510,6 +770,14 @@ case " $* " in
     printf 'uv|probe\n' >> "$TAPPER_E2E_STUB_LOG"
     shift 4
     exec "$TAPPER_TEST_PYTHON" "$@"
+    ;;
+  *" build-hostile-document-fixtures.py "*|*"/build-hostile-document-fixtures.py "*)
+    shift 4
+    exec "$TAPPER_TEST_PYTHON" "$@"
+    ;;
+  *" scripts/disable-tapper-e2e-assets.py "*)
+    [ "$TAP_DEMO_MODE:$TAP_TAPPER_COMPOSE_PROJECT" = e2e:tap-tapper-e2e ] || exit 80
+    printf 'uv|disable-assets\n' >> "$TAPPER_E2E_STUB_LOG"
     ;;
   *" alembic "*) printf 'uv|alembic\n' >> "$TAPPER_E2E_STUB_LOG" ;;
   *" scripts/milvus_bootstrap.py "*)
@@ -540,6 +808,7 @@ case " $* " in
     printf 'context|inspect\n' >> "$TAPPER_E2E_STUB_LOG"
     printf 'unix:///tmp/docker.sock\n'
     ;;
+  *" ps --filter "*) printf 'owned-object-container\n' ;;
   *" compose "*)
     [ "$TAP_TAPPER_COMPOSE_PROJECT" = tap-tapper-e2e ] || exit 81
     middleware_ports="$MYSQL_PORT:$REDIS_PORT:$AZURITE_BLOB_PORT:$LITELLM_PORT"
@@ -1041,7 +1310,7 @@ def test_tapper_ensure_creates_and_verifies_both_private_containers_before_index
             events.append("close:blob")
 
     class Receipt:
-        physical_collection = "kb_doc_v1_tapper_demo"
+        physical_collection = "kb_doc_v2_tapper_demo"
         alias = "kb_doc_tapper_demo_active"
 
     class Index:
@@ -1284,7 +1553,7 @@ def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_sta
     assert "provider-secret-invalid-host" not in output.err
 
 
-def test_tapper_ensure_parses_codex_selection_without_discovery(
+def test_tapper_ensure_rejects_codex_selection_without_discovery(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1318,10 +1587,12 @@ def test_tapper_ensure_parses_codex_selection_without_discovery(
     )
 
     output = capsys.readouterr()
-    assert result == 0
-    assert seen == ["codex"]
-    assert output.out == "Tapper resources ready.\n"
-    assert output.err == ""
+    assert result == 1
+    assert seen == []
+    assert output.out == ""
+    assert output.err == (
+        "Tapper resource ensure failed at configuration; check local middleware configuration.\n"
+    )
 
 
 def test_tapper_ensure_cli_redacts_provider_failures(
@@ -1631,6 +1902,7 @@ def test_owned_milvus_fixture_settles_coordinator_and_role_clients_if_index_cons
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("TAP_RUN_MILVUS_INTEGRATION", "1")
     monkeypatch.setenv("TAP_MILVUS_OWNED_INSTANCE", "task5-tapper-owned")
+    monkeypatch.setenv("TAP_DATABASE_URL", "mysql+asyncmy://unused:unused@127.0.0.1:1/unused")
     spec = importlib.util.spec_from_file_location(
         "tapper_projection_fixture_ownership_contract",
         ROOT / "apps/backend/tests/integration/test_tapper_milvus_projection.py",
@@ -1942,6 +2214,10 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
+    if answer_backend == "codex":
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping({"TAPPER_ANSWER_BACKEND": answer_backend})
+        return
     settings = TapperSettings.from_mapping(
         {
             "TAPPER_ANSWER_BACKEND": answer_backend,
@@ -1961,181 +2237,82 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
 
 
 @pytest.mark.parametrize(
-    ("labels", "expected", "readiness_calls"),
+    ("labels", "expected"),
     [
-        (("tapper-embedding",), True, 1),
-        (("tapper-chat",), False, 0),
+        (("tapper-embedding", "tapper-chat"), True),
+        (("tapper-embedding",), False),
+        (("tapper-chat",), False),
     ],
 )
-def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
-    monkeypatch,
-    labels: tuple[str, ...],
-    expected: bool,
-    readiness_calls: int,
-) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
+def test_safe_models_probe_requires_both_aliases_and_closes_all_owners(
+    monkeypatch, labels, expected
+):
+    import httpx
+
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
-    events: list[str] = []
-
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": label,
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    }
-                    for label in labels
-                ],
-            }
-        ).encode()
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            events.append("models")
-            yield self.content
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class ModelsClient:
-        def stream(self, method: str, path: str) -> ResponseContext:
-            assert (method, path) == ("GET", "v1/models")
-            return ResponseContext()
-
-        async def aclose(self) -> None:
-            events.append("close:models")
+    settings = TapperSettings.from_mapping({})
+    closed = []
 
     class Embeddings:
-        async def aclose(self) -> None:
-            events.append("close:embeddings")
+        async def aclose(self):
+            closed.append("embeddings")
 
-    class Codex:
-        async def check_ready(self) -> None:
-            events.append("codex-ready")
+    def handler(request):
+        assert request.method == "GET" and request.url.path == "/v1/models"
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": alias, "object": "model", "created": 0, "owned_by": "tap"}
+                    for alias in labels
+                ],
+            },
+        )
 
-        async def aclose(self) -> None:
-            events.append("close:codex")
-
-    embeddings = Embeddings()
-    codex = Codex()
-    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
-    monkeypatch.setattr(
-        safe_check,
-        "_create_answer_backend",
-        lambda _settings, *, embeddings: TapperAnswerBackend(
-            generator=codex,
-            readiness=codex.check_ready,
-            owner=codex,
-        ),
+    client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(handler)
     )
-    monkeypatch.setattr(
-        safe_check,
-        "_create_models_probe_client",
-        lambda _settings: ModelsClient(),
-    )
-
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
     assert (
         asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
         is expected
     )
-    assert events.count("codex-ready") == readiness_calls
-    assert events[-3:] == ["close:models", "close:codex", "close:embeddings"]
+    assert client.is_closed
+    assert closed == ["embeddings"]
 
 
-def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
+def test_safe_models_probe_closes_all_owners_when_transport_fails(monkeypatch):
+    import httpx
+
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
+    events = []
+
+    class Embeddings:
+        async def aclose(self):
+            events.append("embeddings")
+
+    def fail(request):
+        raise RuntimeError("private provider detail")
+
+    client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(fail)
     )
-    events: list[str] = []
-
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": "tapper-embedding",
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    }
-                ],
-            }
-        ).encode()
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            yield self.content
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class Owner:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        async def aclose(self) -> None:
-            events.append(f"close:{self.name}")
-
-    class ModelsClient(Owner):
-        def stream(self, _method: str, _path: str) -> ResponseContext:
-            return ResponseContext()
-
-    class Codex(Owner):
-        async def check_ready(self) -> None:
-            raise RuntimeError("login=/private/auth.json provider-secret")
-
-    embeddings = Owner("embeddings")
-    codex = Codex("codex")
-    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
-    monkeypatch.setattr(
-        safe_check,
-        "_create_answer_backend",
-        lambda _settings, *, embeddings: TapperAnswerBackend(
-            generator=codex,
-            readiness=codex.check_ready,
-            owner=codex,
-        ),
-    )
-    monkeypatch.setattr(
-        safe_check,
-        "_create_models_probe_client",
-        lambda _settings: ModelsClient("models"),
-    )
-
-    with pytest.raises(RuntimeError, match="provider-secret"):
-        asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
-
-    assert events == ["close:models", "close:codex", "close:embeddings"]
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
+    with pytest.raises(RuntimeError, match="private provider detail"):
+        asyncio.run(
+            safe_check._check_models(
+                TapperSettings.from_mapping({}), {"DASHSCOPE_API_KEY": "configured"}
+            )
+        )
+    assert client.is_closed
+    assert events == ["embeddings"]
 
 
 def test_litellm_exposes_exactly_the_two_fixed_tapper_aliases() -> None:
@@ -2167,6 +2344,7 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
         assert all(str(item).startswith("127.0.0.1:") for item in service.get("ports", []))
     assert set(config["volumes"]) == {
         "azurite-data",
+        "tapper-object-data",
         "milvus-data",
         "milvus-etcd-data",
         "milvus-minio-data",
@@ -2248,7 +2426,8 @@ console.log(JSON.stringify(value.server));
     assert server["host"] == "127.0.0.1"
     assert server["port"] == 5173
     assert server["strictPort"] is True
-    assert set(server["proxy"]) == {"/health", "/v1"}
+    assert set(server["proxy"]) == {"/health", "/v1", "/api"}
+    assert all(value["changeOrigin"] is False for value in server["proxy"].values())
     assert {value["target"] for value in server["proxy"].values()} == {"http://127.0.0.1:8000"}
 
 
@@ -2467,7 +2646,8 @@ def test_env_example_covers_the_strict_runtime_without_enabling_destructive_or_f
                 "uv run --project apps/backend python -c 'import os; "
                 "from tap.entrypoints.tapper_runtime import TapperSettings; "
                 "settings=TapperSettings.from_mapping(dict(os.environ)); "
-                'assert settings.blob_connection_string.count(";") == 4\''
+                'assert settings.object_store_provider == "minio" '
+                'and settings.s3_bucket == "tapper-objects"\''
             ),
         ],
         cwd=ROOT,
@@ -2530,14 +2710,22 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
     assert completed.returncode == 17, completed.stderr
     events = log.read_text(encoding="utf-8").splitlines()
     assert {line.split()[1] for line in events if line.startswith("start ")} == {
+        "parser",
         "api",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
+        "parser",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -2582,7 +2770,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 4
+    assert len(_started_child_pids(log)) == 8
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2603,14 +2791,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 4 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 8 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all four children")
+        raise AssertionError("supervisor did not start all eight children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2628,9 +2816,13 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         f"config {supervisor.parents[1] / 'apps/web/vite.config.ts'}"
     ) in events
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
+        "parser",
         "api",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -2686,7 +2878,18 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    expected_roles = {"api", "relay", "worker", "web", "validation", "readiness", "curl"}
+    expected_roles = {
+        "api",
+        "relay",
+        "worker",
+        "graph",
+        "test-design",
+        "generation",
+        "web",
+        "validation",
+        "readiness",
+        "curl",
+    }
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if log.exists():
@@ -2723,7 +2926,7 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "DASHSCOPE_API_BASE",
         "CODEX_API_BASE",
     }
-    assert "CODEX_HOME" in environment_names["api"]
+    assert "CODEX_HOME" not in environment_names["api"]
     for role, names in environment_names.items():
         assert not forbidden_provider_names & names
         if role != "api":
@@ -2743,24 +2946,52 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "LITELLM_MASTER_KEY",
         "MILVUS_WRITER_PASSWORD",
     } <= environment_names["worker"]
+    assert {
+        "TAP_DATABASE_URL",
+        "TAP_REDIS_URL",
+        "AZURE_STORAGE_CONNECTION_STRING",
+    } <= environment_names["graph"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["test-design"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["generation"]
     output = stdout + stderr + log.read_text(encoding="utf-8")
     assert "caller-" not in output
     assert "provider-secret" not in output
     _assert_processes_are_gone(_started_child_pids(log))
 
 
+@pytest.mark.parametrize("startup_delay", [0, 3])
 def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     tmp_path: Path,
+    startup_delay: int,
 ) -> None:
     supervisor, environment, log = _supervisor_fixture(
         tmp_path,
         ready_status="unready",
     )
+    child = supervisor.parents[1] / "fake-bin/tapper-child"
+    child.write_text(
+        child.read_text(encoding="utf-8")
+        .replace('role="$1"', f'sleep {startup_delay}\nrole="$1"', 1)
+        .replace(
+            "' TERM INT\n",
+            '\' TERM INT\nprintf \'trap-ready %s\\n\' "$role" >> "$TAPPER_CHILD_LOG"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    # Start the shortened readiness window only after the stubs can record TERM.
+    # This barrier is bounded separately and remains inside the 10-second cap.
+    stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 7 ]; do
+  [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
+  sleep 0.05
+done
+ready_deadline=$(( SECONDS + 2 ))"""
     code = supervisor.read_text(encoding="utf-8")
     supervisor.write_text(
         code.replace(
             "ready_deadline=$(( SECONDS + 90 ))",
-            "ready_deadline=$(( SECONDS + 2 ))",
+            stub_barrier,
         ),
         encoding="utf-8",
     )
@@ -2777,11 +3008,17 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
 
     assert completed.returncode == 1
     assert "Tapper local applications ready." not in completed.stdout
+    assert "Tapper applications did not become ready." in completed.stderr
     events = log.read_text(encoding="utf-8").splitlines()
+    assert any(line.startswith("env readiness ") for line in events)
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
+        "parser",
         "api",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -3193,7 +3430,7 @@ def test_e2e_preflight_is_read_only_and_skipped_results_fail_closed(
     calls = log.read_text(encoding="utf-8").splitlines()
     compose_calls = [line for line in calls if line.startswith("docker|")]
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
-    assert "returned an invalid result" in rejected.stderr
+    assert "native evidence validation failed" in rejected.stderr
 
 
 def test_e2e_runner_rejects_malformed_playwright_report_and_cleans_owned_state(
@@ -3218,5 +3455,102 @@ def test_e2e_runner_rejects_malformed_playwright_report_and_cleans_owned_state(
     calls = log.read_text(encoding="utf-8").splitlines()
     compose_calls = [line for line in calls if line.startswith("docker|")]
     assert compose_calls[-1].endswith("down --volumes --remove-orphans")
-    assert "returned an invalid result" in rejected.stderr
+    assert "native evidence validation failed" in rejected.stderr
     assert list((runner.parents[1] / "tmp").glob("tap-tapper-e2e.*")) == []
+
+
+def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    (root / "scripts").mkdir(parents=True)
+    (root / "Makefile").write_text((ROOT / "Makefile").read_text())
+    (root / "compose.yaml").write_text("services: {}\n")
+    log = root / "order.log"
+    image = "sha256:" + "a" * 64
+    container = "b" * 64
+    helper = root / "scripts/build-tapper-object-store.sh"
+    helper.write_text(
+        "#!/bin/bash\nset -eu\n"
+        f'printf "helper %s\\n" "$*" >> "{log}"\n'
+        f'if [ "$1" = verify ]; then printf "%s\\n" "{image}"; '
+        f'else [ "$1:$2" = "verify-container:{container}" ]; fi\n'
+    )
+    stubs = root / "bin"
+    stubs.mkdir()
+    for command in ("docker", "uv"):
+        script = stubs / command
+        script.write_text(
+            "#!/bin/sh\nset -eu\n"
+            f'printf "{command} %s\\n" "$*" >> "{log}"\n'
+            + (
+                f'[ "$TAPPER_OBJECT_STORE_IMAGE" = "{image}" ]\n'
+                f'case " $* " in *" ps -q tap-minio "*) printf "%s\\n" "{container}";; esac\n'
+                if command == "docker"
+                else ""
+            )
+        )
+        script.chmod(0o755)
+    result = subprocess.run(
+        ["make", "--no-print-directory", "demo-up"],
+        cwd=root,
+        env=os.environ
+        | {"PATH": f"{stubs}:{os.environ['PATH']}", "TAPPER_OBJECT_STORE_PROVIDER": "minio"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text().splitlines()
+    assert calls[0] == "helper verify"
+    assert "--profile tapper-objects up" in calls[1]
+    assert calls[2].endswith("ps -q tap-minio")
+    assert calls[3] == "helper verify-container " + container
+    assert "alembic" in calls[4]
+
+
+def test_minio_dev_missing_receipt_stops_before_children(tmp_path: Path) -> None:
+    supervisor, environment, log = _supervisor_fixture(tmp_path, api_exit="17")
+    helper = supervisor.parent / "build-tapper-object-store.sh"
+    helper.write_text((ROOT / "scripts/build-tapper-object-store.sh").read_text())
+    environment["TAPPER_OBJECT_STORE_PROVIDER"] = "minio"
+    result = subprocess.run(
+        ["/bin/bash", str(supervisor)],
+        cwd=supervisor.parents[1],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "object-store build receipt is missing or invalid" in result.stderr
+    assert not log.exists() or not any(
+        line.startswith("start ") for line in log.read_text().splitlines()
+    )
+
+
+def test_compose_minio_is_a_separate_nonroot_store_with_no_image_pull() -> None:
+    config = _load_yaml_as_json(ROOT / "compose.yaml")
+    assert "tap-minio" in config["services"]
+    service = config["services"]["tap-minio"]
+    assert service["pull_policy"] == "never"
+    assert service["profiles"] == ["tapper-objects"]
+    assert service["ports"] == ["127.0.0.1:${TAPPER_S3_PORT:-19000}:9000"]
+    assert service["volumes"] == ["tapper-object-data:/data"]
+    assert service["user"] == "65532:65532"
+    assert service["environment"]["MINIO_ROOT_USER"] == "${TAPPER_S3_ACCESS_KEY:-tap-object-user}"
+    assert "MILVUS" not in json.dumps(service)
+
+
+def test_dev_launcher_keeps_stable_parser_state_after_child_exit(tmp_path):
+    supervisor, environment, _log = _supervisor_fixture(tmp_path, api_exit="17")
+    result = subprocess.run(
+        ["bash", str(supervisor)],
+        cwd=supervisor.parents[1],
+        env=environment,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 17
+    state = supervisor.parents[1] / ".tapper/parser-runtime/tap-tapper-demo"
+    assert state.is_dir(), "deployment ownership state was discarded"
+    assert (state / "cleanup.json").read_text() == "verified"

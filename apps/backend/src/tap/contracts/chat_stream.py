@@ -5,8 +5,10 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from pydantic.alias_generators import to_camel
+
+from tap.contracts.problems import ProblemDetails
 
 
 class StreamContractModel(BaseModel):
@@ -117,7 +119,15 @@ class Citation(StreamContractModel):
 class AnswerClaim(StreamContractModel):
     claim_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    answer_start: Annotated[int, Field(ge=0, strict=True)]
+    answer_end: Annotated[int, Field(ge=0, strict=True)]
     citation_ids: list[str]
+
+    @model_validator(mode="after")
+    def ordered_answer_span(self):
+        if self.answer_end < self.answer_start:
+            raise ValueError("answer claim end must not precede start")
+        return self
 
 
 class RetrievalAnswerResponse(StreamContractModel):
@@ -133,6 +143,10 @@ class RetrievalAnswerResponse(StreamContractModel):
     abstention_reason: AbstentionReason | None = None
     claims: list[AnswerClaim]
     citations: list[Citation]
+    graph_context_status: Literal[
+        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+    ] = "NOT_SELECTED"
+    graph_snapshot_id: str | None = None
 
 
 class TurnStartedPayload(StreamContractModel):
@@ -223,7 +237,14 @@ class CitationResolvedEvent(StreamContractModel):
 
 
 class TurnCompletedPayload(StreamContractModel):
-    answer: RetrievalAnswerResponse
+    answer: RetrievalAnswerResponse | None = None
+    state: Literal["completed"] | None = None
+
+    @model_validator(mode="after")
+    def one_current_or_legacy_fact(self):
+        if (self.answer is None) == (self.state is None):
+            raise ValueError("turn completion must contain one current or legacy fact")
+        return self
 
 
 class TurnCompletedEvent(StreamContractModel):
@@ -260,13 +281,35 @@ class TurnCanceledEvent(StreamContractModel):
 
 
 class TurnFailedPayload(StreamContractModel):
-    code: str = Field(min_length=1)
-    retryable: bool
+    problem: ProblemDetails
 
 
 class TurnFailedEvent(StreamContractModel):
     type: Literal["turn.failed"]
     payload: TurnFailedPayload
+
+
+class ConversationTurnRequestedPayload(StreamContractModel):
+    conversation_id: str = Field(min_length=1)
+    turn_id: str = Field(min_length=1)
+    input_snapshot_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class ConversationTurnRequestedEvent(StreamContractModel):
+    type: Literal["conversation.turn.requested"]
+    payload: ConversationTurnRequestedPayload
+
+
+class ConversationTurnCompletedPayload(StreamContractModel):
+    turn_id: str = Field(min_length=1)
+    answer_evidence_snapshot_id: str = Field(min_length=1)
+    answer_evidence_snapshot_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    outcome: Literal["completed", "abstained", "canceled", "failed"]
+
+
+class ConversationTurnCompletedEvent(StreamContractModel):
+    type: Literal["conversation.turn.completed"]
+    payload: ConversationTurnCompletedPayload
 
 
 ChatStreamEvent = Annotated[
@@ -283,7 +326,9 @@ ChatStreamEvent = Annotated[
     | TurnAbstainedEvent
     | TurnDegradedEvent
     | TurnCanceledEvent
-    | TurnFailedEvent,
+    | TurnFailedEvent
+    | ConversationTurnRequestedEvent
+    | ConversationTurnCompletedEvent,
     Field(discriminator="type"),
 ]
 

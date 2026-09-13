@@ -17,11 +17,65 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
+from tap.contracts.problems import ProblemDetails as ProblemDetails
+
 
 class ContractModel(BaseModel):
     """Base model that exposes camelCase JSON without accepting unknown fields."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
+class RuntimeMode(ContractModel):
+    """Server-owned validation context; never a personal authentication claim."""
+
+    mode: Literal["validation"]
+    project_id: str = Field(min_length=1, max_length=128)
+    actor_id: str = Field(min_length=1, max_length=128)
+    identity_mode: Literal["validation"]
+
+
+class ModelCatalogItem(ContractModel):
+    alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    capabilities: Annotated[
+        list[Literal["chat", "embed", "structured"]], Field(min_length=1, max_length=3)
+    ]
+
+
+class ModelCatalogPage(ContractModel):
+    default_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    items: Annotated[list[ModelCatalogItem], Field(max_length=32)]
+
+
+class AiAgentRevisionSummary(ContractModel):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    content_digest: CanonicalSha256
+    tool_allowlist: Annotated[
+        list[Literal["knowledge.search", "knowledge.answer"]], Field(max_length=2)
+    ]
+    output_schema_digest: CanonicalSha256
+
+
+class AiAgentRevisionPage(ContractModel):
+    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+
+
+class SkillRevisionSummary(ContractModel):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    content_digest: CanonicalSha256
+    applicable_tasks: Annotated[
+        list[Literal["knowledge.answer", "test-plan.generate", "automation.generate"]],
+        Field(min_length=1, max_length=3),
+    ]
+
+
+class SkillRevisionPage(ContractModel):
+    items: Annotated[list[SkillRevisionSummary], Field(max_length=64)]
 
 
 class SourceFamily(str, Enum):
@@ -162,6 +216,7 @@ class DocumentStageSnapshot(ContractModel):
 
 
 class DocumentSummary(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
     document_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     filename: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
     media_type: Literal[
@@ -205,6 +260,45 @@ class DocumentDetail(DocumentSummary):
         if self.status is not DocumentStatus.FAILED and fields_present:
             raise ValueError("only failed documents may expose public error fields")
         return self
+
+
+class SourceSummary(ContractModel):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=255)]
+    created_at: TimestampValue
+    document_count: Annotated[StrictInt, Field(ge=0, le=50)]
+    ready_count: Annotated[StrictInt, Field(ge=0, le=50)]
+    failed_count: Annotated[StrictInt, Field(ge=0, le=50)]
+
+
+class SourcePage(ContractModel):
+    items: Annotated[list[SourceSummary], Field(max_length=50)]
+    next_cursor: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
+
+
+class SourceDocument(DocumentDetail):
+    source_id: Annotated[str, Field(strict=True, pattern=r"^src_[0-9a-f]{32}$")]
+    attempt: Annotated[StrictInt, Field(ge=1)]
+
+
+class SourceDocumentPage(ContractModel):
+    items: Annotated[list[SourceDocument], Field(max_length=50)]
+    next_cursor: Annotated[str, Field(strict=True, min_length=1, max_length=512)] | None = None
+
+
+class SourceDetail(SourceSummary):
+    documents: SourceDocumentPage
+
+
+class SourceAccepted(ContractModel):
+    source: SourceSummary
+    accepted: DocumentAccepted
+
+
+class SourceRetryRequest(ContractModel):
+    document_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    expected_attempt: Annotated[StrictInt, Field(ge=1)]
 
 
 class CitationPreview(ContractModel):
@@ -536,6 +630,16 @@ class RetrievalAnswerResponse(ContractModel):
     abstention_reason: AbstentionReason | None = None
     claims: list[RetrievalClaim]
     citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
+    graph_context_status: Literal[
+        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+    ] = "NOT_SELECTED"
+    graph_snapshot_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_graph_context(self) -> Self:
+        if (self.graph_context_status == "APPLIED") != bool(self.graph_snapshot_id):
+            raise ValueError("only applied Graph context can identify a snapshot")
+        return self
 
     @model_validator(mode="after")
     def validate_claim_spans(self) -> Self:
@@ -589,11 +693,277 @@ class ChatTurnAccepted(ContractModel):
     state: Literal["queued"]
 
 
-class ProblemDetails(ContractModel):
-    """RFC 9457 problem details returned by the public HTTP interface."""
+class ConversationCreateRequest(ContractModel):
+    message: Annotated[str, Field(strict=True, min_length=1, max_length=20_000)]
+    model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_revision_ids: Annotated[list[str], Field(max_length=50)] = []
+    document_revision_ids: Annotated[list[str], Field(max_length=50)] = []
+    agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+    skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
 
-    type: str = Field(pattern=r"^https://")
-    title: str = Field(min_length=1)
-    status: int = Field(ge=100, le=599)
-    detail: str = Field(min_length=1)
-    instance: str | None = None
+    @field_validator("message")
+    @classmethod
+    def message_is_trimmed(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must be nonblank")
+        return value
+
+
+class ConversationResolvedResourceView(ContractModel):
+    source_id: str
+    document_id: str
+    source_revision_id: str | None = None
+    document_revision_id: str
+    label: str
+
+
+class ConversationTurnInputView(ContractModel):
+    """Browser-safe immutable input facts; excludes instructions and policy internals."""
+
+    message: str
+    model_alias: str
+    source_revision_ids: list[str]
+    document_revision_ids: list[str]
+    resolved_resources: list[ConversationResolvedResourceView]
+    agent_revision_id: str | None = None
+    agent_label: str | None = None
+    skill_revision_ids: list[str]
+    skill_labels: list[str]
+
+
+class ConversationTurnSummary(ContractModel):
+    turn_id: str
+    state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
+    attempt: StrictInt
+    input_snapshot_digest: CanonicalSha256
+    answer_evidence_snapshot_id: str | None = None
+    answer_evidence_snapshot_digest: CanonicalSha256 | None = None
+    graph_context_status: (
+        Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"] | None
+    ) = None
+    graph_snapshot_id: str | None = None
+    input: ConversationTurnInputView
+
+
+class ConversationSummary(ContractModel):
+    conversation_id: str
+    title: str
+    created_at: TimestampValue
+    updated_at: TimestampValue
+
+
+class ConversationPage(ContractModel):
+    items: list[ConversationSummary]
+    next_cursor: str | None = None
+
+
+class ConversationDetail(ConversationSummary):
+    turns: list[ConversationTurnSummary]
+
+
+class ConversationAccepted(ContractModel):
+    conversation_id: str
+    turn_id: str
+    state: Literal["queued"]
+
+
+class ConversationEventItem(ContractModel):
+    event_id: str
+    sequence: StrictInt
+    turn_id: str
+    event_type: Literal[
+        "turn.started",
+        "context.assembled",
+        "query.plan_ready",
+        "stage.started",
+        "stage.completed",
+        "retrieval.hits_ready",
+        "rerank.completed",
+        "answer.delta",
+        "citation.resolved",
+        "turn.completed",
+        "turn.abstained",
+        "turn.degraded",
+        "turn.canceled",
+        "turn.failed",
+        "conversation.turn.requested",
+        "conversation.turn.completed",
+    ]
+    payload: dict[str, object]
+    occurred_at: TimestampValue
+
+
+class ConversationEventPage(ContractModel):
+    items: list[ConversationEventItem]
+
+
+class GraphSnapshotView(ContractModel):
+    snapshot_id: str
+    source_set_digest: CanonicalSha256
+    source_revision_ids: list[str]
+    document_revision_ids: list[str]
+    status: Literal["CANDIDATE", "READY", "FAILED"]
+
+
+class GraphSnapshotPage(ContractModel):
+    items: list[GraphSnapshotView]
+
+
+class GraphNodeView(ContractModel):
+    node_id: str
+    label: str
+    node_type: str
+    canonical_key: str
+    evidence_ids: list[str] = []
+
+
+class GraphEdgeView(ContractModel):
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    relation_type: str
+    origin: Literal["EXTRACTED", "INFERRED"]
+    confidence: float
+    evidence_ids: list[str] = []
+
+
+class GraphEvidenceView(ContractModel):
+    evidence_id: str
+    source_revision_id: str
+    document_revision_id: str
+    chunk_id: str
+    anchor: dict[str, object]
+    content_digest: CanonicalSha256
+
+
+class GraphSubgraphView(ContractModel):
+    snapshot_id: str
+    nodes: list[GraphNodeView]
+    edges: list[GraphEdgeView]
+    evidence: list[GraphEvidenceView] = []
+
+
+class GraphSearchRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    query: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class GraphNeighborRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class GraphPathRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class TestPlanGenerationRequestBody(ContractModel):
+    conversation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    turn_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    input_snapshot_digest: CanonicalSha256
+    answer_evidence_snapshot_digest: CanonicalSha256
+    model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    skill_revision_ids: Annotated[list[str], Field(min_length=1, max_length=16)]
+    objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+
+
+class TestPlanGenerationAccepted(ContractModel):
+    job_id: str
+    test_plan_id: str
+    revision_id: str
+    status: Literal["PENDING", "RUNNING", "DRAFT_READY", "FAILED"]
+    deep_link: str
+
+
+class TestPlanStepView(ContractModel):
+    step_id: str
+    ordinal: StrictInt
+    keyword: Literal["Given", "When", "Then", "And", "But"]
+    text: str
+    expected_result: str | None = None
+    critical: bool
+
+
+class TestPlanScenarioView(ContractModel):
+    scenario_id: str
+    ordinal: StrictInt
+    title: str
+    steps: list[TestPlanStepView]
+
+
+class TestPlanCaseView(ContractModel):
+    case_id: str
+    ordinal: StrictInt
+    title: str
+    objective: str
+    critical: bool
+    scenarios: list[TestPlanScenarioView]
+
+
+class TestPlanCitationView(ContractModel):
+    citation_id: str
+    source_revision_id: str
+    document_revision_id: str
+    chunk_id: str
+    content_digest: CanonicalSha256
+    claim_text: str
+    origin: Literal["SOURCE", "GRAPH_EXTRACTED"]
+
+
+class TestPlanTextFactView(ContractModel):
+    fact_id: str
+    text: str
+    graph_edge_id: str | None = None
+
+
+class TestPlanCoverageGapView(ContractModel):
+    gap_id: str
+    requirement_ref: str
+    reason: str
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
+class TestPlanRevisionView(ContractModel):
+    test_plan_id: str
+    revision_id: str
+    version: StrictInt
+    row_version: StrictInt
+    title: str
+    objective: str
+    scope_items: list[str]
+    prerequisites: list[str]
+    risks: list[str]
+    status: Literal["DRAFT", "VALIDATING", "PUBLISHED", "SUPERSEDED"]
+    origin: Literal["VALIDATION", "PRODUCT"]
+    adopted_from_revision_id: str | None = None
+    content_digest: CanonicalSha256
+    validation_digest: CanonicalSha256 | None = None
+    cases: list[TestPlanCaseView]
+    citations: list[TestPlanCitationView]
+    assumptions: list[TestPlanTextFactView]
+    unknowns: list[TestPlanTextFactView]
+    coverage_gaps: list[TestPlanCoverageGapView]
+    deep_link: str
+
+
+class TestPlanRevisionPage(ContractModel):
+    items: list[TestPlanRevisionView]
+
+
+class TestPlanRevisionUpdate(ContractModel):
+    title: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+    scope_items: list[str]
+    prerequisites: list[str]
+    risks: list[str]
+    cases: list[TestPlanCaseView]
+    citations: list[TestPlanCitationView]
+    assumptions: list[TestPlanTextFactView]
+    unknowns: list[TestPlanTextFactView]
+    coverage_gaps: list[TestPlanCoverageGapView]

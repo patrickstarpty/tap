@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Literal, TypeVar, cast
 
@@ -17,6 +18,7 @@ from tap.contracts.http import (
     DocumentSummary,
     IngestionStage,
 )
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     MAX_UPLOAD_BYTES,
     DocumentId,
@@ -24,8 +26,16 @@ from tap.modules.knowledge.domain.documents import (
     MediaType,
     validate_filename_media_type,
 )
+from tap.modules.knowledge.domain.sources import (
+    SourceCommand,
+    SourceCommandConflict,
+    SourceCommandPending,
+    SourceCommandReplay,
+    SourceUnavailable,
+)
 from tap.modules.knowledge.ports.documents import (
     ArtifactStore,
+    DeletionTarget,
     DocumentCapacityExceeded,
     DocumentCursor,
     DocumentNotFound,
@@ -63,10 +73,19 @@ class DocumentService:
         self._artifacts = artifacts
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
-    async def upload(self, upload: UploadStream) -> DocumentAccepted:
-        return await _document_runtime_boundary(self._upload(upload))
+    @property
+    def scope(self) -> ProjectScopeContext:
+        """Expose the binding held by the actual repository, without a second label."""
+        return self._repository.scope
 
-    async def _upload(self, upload: UploadStream) -> DocumentAccepted:
+    async def upload(
+        self, upload: UploadStream, command: SourceCommand | None = None
+    ) -> DocumentAccepted:
+        return await _document_runtime_boundary(self._upload(upload, command))
+
+    async def _upload(
+        self, upload: UploadStream, command: SourceCommand | None = None
+    ) -> DocumentAccepted:
         try:
             media_type = MediaType(upload.media_type)
         except ValueError as error:
@@ -78,7 +97,7 @@ class DocumentService:
             raise DocumentParseRejected("empty-document")
         try:
             reservation = await self._repository.reserve_upload(
-                ReserveUpload.from_staged(staged, now=self._clock())
+                replace(ReserveUpload.from_staged(staged, now=self._clock()), command=command)
             )
         except BaseException as error:
             try:
@@ -145,7 +164,18 @@ class DocumentService:
                     original = await self._artifacts.recover_original(
                         reservation.staging_key, reservation.revision_id
                     )
-                await self._repository.activate_upload(reservation, original)
+                if recovery.cancelled_source:
+                    original = await self._repository.record_upload_promotion(reservation, original)
+                    await self._artifacts.delete_revision_artifacts(
+                        DeletionTarget(
+                            document_id=reservation.document_id,
+                            revision_id=reservation.revision_id,
+                            chunk_ids=(),
+                            artifact_locators=(original,),
+                        )
+                    )
+                else:
+                    await self._repository.activate_upload(reservation, original)
             await _settle_cleanup(self._artifacts.discard_staging(reservation.staging_key))
             await self._repository.complete_upload_cleanup(
                 reservation.reservation_id, reservation.owner_token
@@ -209,6 +239,10 @@ async def _document_runtime_boundary(operation: Awaitable[_T]) -> _T:
         raise
     except (
         DocumentParseRejected,
+        SourceCommandReplay,
+        SourceCommandConflict,
+        SourceCommandPending,
+        SourceUnavailable,
         DocumentCapacityExceeded,
         DocumentNotFound,
         InvalidDocumentCursor,
@@ -273,6 +307,7 @@ def _iso(value: datetime) -> str:
 
 def _summary(record: DocumentRecord) -> DocumentSummary:
     return DocumentSummary(
+        source_id=record.source_id,
         document_id=record.document_id,
         filename=record.filename,
         media_type=cast(PublicMediaType, MediaType(record.media_type).value),

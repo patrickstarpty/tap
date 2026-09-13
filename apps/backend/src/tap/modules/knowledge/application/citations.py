@@ -6,6 +6,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.domain.documents import (
     ChunkId,
     DocumentId,
@@ -57,11 +58,26 @@ class CitationResolver:
         self._repository = repository
         self._artifacts = artifacts
 
+    @property
+    def scope(self) -> ProjectScopeContext:
+        """Expose the binding held by the actual repository, without a second label."""
+        return self._repository.scope
+
     async def resolve(self, citation_id: str) -> CitationPreviewResult:
+        return await self._resolve(citation_id, historical=False)
+
+    async def resolve_historical(self, citation_id: str) -> CitationPreviewResult:
+        return await self._resolve(citation_id, historical=True)
+
+    async def _resolve(self, citation_id: str, *, historical: bool) -> CitationPreviewResult:
         if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:
             raise CitationStale
         try:
-            lookup = await self._repository.load_citation(citation_id)
+            lookup = await (
+                self._repository.load_citation(citation_id, historical=True)
+                if historical
+                else self._repository.load_citation(citation_id)
+            )
         except CitationSnapshotCorrupt as error:
             raise CitationStale from error
         except asyncio.CancelledError:
@@ -70,7 +86,7 @@ class CitationResolver:
             raise CitationUnavailable from error
         if lookup is None:
             raise CitationStale
-        self._validate_ledger_facts(lookup)
+        self._validate_ledger_facts(lookup, historical=historical)
         assert lookup.document is not None
         assert lookup.document.normalized_locator is not None
         assert lookup.document.chunks_locator is not None
@@ -91,20 +107,21 @@ class CitationResolver:
             preview = self._resolve_exact(lookup, normalized, chunks)
         except (TypeError, ValueError) as error:
             raise CitationStale from error
-        try:
-            current = await self._repository.citation_is_current(lookup.citation)
-        except CitationSnapshotCorrupt as error:
-            raise CitationStale from error
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            raise CitationUnavailable from error
-        if not current:
-            raise CitationStale
+        if not historical:
+            try:
+                current = await self._repository.citation_is_current(lookup.citation)
+            except CitationSnapshotCorrupt as error:
+                raise CitationStale from error
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                raise CitationUnavailable from error
+            if not current:
+                raise CitationStale
         return preview
 
     @staticmethod
-    def _validate_ledger_facts(lookup: CitationLookup) -> None:
+    def _validate_ledger_facts(lookup: CitationLookup, *, historical: bool = False) -> None:
         citation = lookup.citation
         selected = {
             (item.document_id, item.revision_id, item.source_content_hash)
@@ -122,10 +139,15 @@ class CitationResolver:
             not in selected
             or document is None
             or document.document_id != citation.document_id
-            or document.status is not DocumentState.READY
-            or document.deleted
-            or document.current_revision_id != citation.revision_id
-            or document.current_source_content_hash != citation.source_content_hash
+            or (
+                not historical
+                and (
+                    document.status is not DocumentState.READY
+                    or document.deleted
+                    or document.current_revision_id != citation.revision_id
+                    or document.current_source_content_hash != citation.source_content_hash
+                )
+            )
             or document.revision_source_content_hash != citation.source_content_hash
             or document.normalized_locator is None
             or document.chunks_locator is None

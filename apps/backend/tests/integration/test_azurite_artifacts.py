@@ -10,6 +10,8 @@ import pytest
 import pytest_asyncio
 from pydantic import SecretStr
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
 if os.getenv("TAP_RUN_AZURITE_INTEGRATION") != "1":
     pytest.skip(
         "real Azurite suite requires TAP_RUN_AZURITE_INTEGRATION=1", allow_module_level=True
@@ -26,6 +28,7 @@ from tap.modules.knowledge.adapters.blob_artifacts import (  # noqa: E402
     AzureBlobArtifactStore,
     artifact_locator,
     encode_normalized_artifact,
+    staging_prefix,
 )
 from tap.modules.knowledge.domain.documents import (  # noqa: E402
     PARSER_VERSION,
@@ -46,6 +49,14 @@ from tap.modules.knowledge.ports.documents import EmbeddingArtifact  # noqa: E40
 SOURCE_HASH = "sha256:" + "a" * 64
 DOCUMENT_ID = DocumentId("doc_a")
 REVISION = str(revision_id_for(DOCUMENT_ID, SOURCE_HASH, PARSER_VERSION))
+
+
+@pytest.mark.asyncio
+async def test_real_azure_shared_knowledge_conformance(store):
+    from apps.backend.tests.contract.artifact_store_conformance import exercise_artifact_round_trip
+
+    await exercise_artifact_round_trip(store)
+
 
 AZURITE_CONNECTION = os.getenv(
     "AZURITE_CONNECTION_STRING",
@@ -109,7 +120,8 @@ class Upload:
 async def store() -> AzureBlobArtifactStore:
     await cleanup_revision()
     value = AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(connection_string=SecretStr(AZURITE_CONNECTION))
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(connection_string=SecretStr(AZURITE_CONNECTION)),
     )
     await value.ensure_containers()
     yield value
@@ -306,9 +318,9 @@ async def test_real_azurite_scavenger_is_bounded_and_respects_visibility_windows
     store: AzureBlobArtifactStore,
 ) -> None:
     now = datetime.now(timezone.utc)
-    invisible = "staging/task5-invisible-orphan"
-    visible_recent = "staging/task5-visible-recent"
-    visible_expired = "staging/task5-visible-expired"
+    invisible = staging_prefix(VALIDATION_SCOPE) + "task4-invisible-orphan"
+    visible_recent = staging_prefix(VALIDATION_SCOPE) + "task4-visible-recent"
+    visible_expired = staging_prefix(VALIDATION_SCOPE) + "task4-visible-expired"
     service = await service_client()
     try:
         container = service.get_container_client(ORIGINALS_CONTAINER)
@@ -336,10 +348,42 @@ async def test_real_azurite_scavenger_is_bounded_and_respects_visibility_windows
         )
 
         assert receipt.scanned == 3
-        assert set(receipt.removed) == {invisible, visible_expired}
+        assert set(receipt.removed) == {invisible}
+        assert await container.get_blob_client(visible_expired).exists()
         assert await container.get_blob_client(visible_recent).exists()
     finally:
         for name in (invisible, visible_recent, visible_expired):
+            try:
+                await service.get_blob_client(ORIGINALS_CONTAINER, name).delete_blob()
+            except ResourceNotFoundError:
+                pass
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_real_azurite_operator_scavenger_keeps_other_project_and_legacy_orphans(store):
+    from uuid import uuid4
+
+    prefix = staging_prefix(VALIDATION_SCOPE)
+    foreign_prefix = staging_prefix(replace(VALIDATION_SCOPE, project_id="foreign-project"))
+    token = uuid4().hex
+    names = (prefix + token, foreign_prefix + token, "staging/" + token)
+    service = await service_client()
+    now = datetime.now(timezone.utc)
+    try:
+        for name in names:
+            await service.get_blob_client(ORIGINALS_CONTAINER, name).upload_blob(
+                b"x", metadata={"stagedat": (now - timedelta(days=3)).isoformat()}
+            )
+        receipt = await store.scavenge_staging(now=now, visible_staging_keys=frozenset(), limit=100)
+        assert names[0] in receipt.removed
+        for name in names[1:]:
+            assert await service.get_blob_client(ORIGINALS_CONTAINER, name).exists()
+        staged = await store.stage_original(Upload(), max_bytes=100)
+        assert staged.staging_key.startswith(prefix)
+        await store.discard_staged(staged)
+    finally:
+        for name in names:
             try:
                 await service.get_blob_client(ORIGINALS_CONTAINER, name).delete_blob()
             except ResourceNotFoundError:

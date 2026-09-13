@@ -20,6 +20,7 @@ from azure.core.exceptions import (
 from azure.storage.blob import ContainerProperties
 from pydantic import SecretStr
 
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters import blob_artifacts
 from tap.modules.knowledge.adapters.blob_artifacts import (
     ARTIFACTS_CONTAINER,
@@ -61,6 +62,62 @@ from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure, Artifac
 SOURCE_HASH = "sha256:" + "a" * 64
 DOCUMENT_ID = DocumentId("doc_a")
 REVISION = str(revision_id_for(DOCUMENT_ID, SOURCE_HASH, PARSER_VERSION))
+
+
+@pytest.mark.asyncio
+async def test_project_scavenger_preserves_foreign_legacy_and_pinned_staging(monkeypatch):
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.knowledge.adapters.blob_artifacts import staging_prefix
+
+    prefix = staging_prefix(VALIDATION_SCOPE)
+    foreign = staging_prefix(replace(VALIDATION_SCOPE, project_id="foreign"))
+    now = datetime.now(timezone.utc)
+    deleted = []
+    names = [prefix + "orphan", prefix + "pinned", foreign + "orphan", "staging/legacy"]
+
+    class Blob:
+        async def delete_blob(self, **kwargs):
+            assert kwargs["etag"] == "version-1"
+            deleted.append(self.name)
+
+    class Container:
+        def list_blobs(self, **kwargs):
+            assert kwargs["name_starts_with"] == prefix
+
+            async def pages():
+                # Even a misbehaving provider cannot widen the candidate namespace.
+                for name in names:
+                    yield SimpleNamespace(
+                        name=name,
+                        etag="version-1",
+                        metadata={"stagedat": (now - timedelta(days=2)).isoformat()},
+                    )
+
+            return pages()
+
+        def get_blob_client(self, name):
+            blob = Blob()
+            blob.name = name
+            return blob
+
+    class Service:
+        def get_container_client(self, name):
+            return Container()
+
+    monkeypatch.setattr(
+        blob_artifacts.BlobServiceClient, "from_connection_string", lambda *a, **k: Service()
+    )
+    store = AzureBlobArtifactStore(
+        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true")),
+        scope=VALIDATION_SCOPE,
+    )
+    receipt = await store.scavenge_staging(
+        now=now, visible_staging_keys=frozenset({prefix + "pinned"}), limit=10
+    )
+    assert receipt.removed == (prefix + "orphan",)
+    assert deleted == [prefix + "orphan"]
+    with pytest.raises(ValueError, match="scope"):
+        await store.discard_staging(foreign + "orphan")
 
 
 def normalized_artifact() -> NormalizedArtifact:
@@ -459,10 +516,11 @@ def _store_with_double(
         lambda *args, **kwargs: service,
     )
     return AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(
             connection_string=SecretStr("UseDevelopmentStorage=true"),
             operation_timeout_seconds=timeout,
-        )
+        ),
     )
 
 
@@ -475,7 +533,8 @@ def _store_with_provider_failure(
         lambda *args, **kwargs: service,
     )
     return AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true")),
     )
 
 
@@ -497,7 +556,8 @@ def _store_with_container_properties(
         lambda *args, **kwargs: service,
     )
     return AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true")),
     )
 
 
@@ -577,7 +637,7 @@ def test_constructor_sdk_failure_is_provider_neutral_and_traceback_redacted(
     config = AzureBlobArtifactConfig(connection_string=SecretStr("AccountKey=input-secret"))
 
     with pytest.raises(ArtifactUnavailable) as caught:
-        AzureBlobArtifactStore(config)
+        AzureBlobArtifactStore(config, scope=VALIDATION_SCOPE)
 
     assert isinstance(caught.value, ArtifactProviderUnavailable)
     assert not isinstance(caught.value, (ServiceRequestError, TypeError, ValueError))
@@ -593,7 +653,7 @@ def test_constructor_caller_argument_errors_remain_type_or_value_errors() -> Non
     with pytest.raises(ValueError):
         AzureBlobArtifactConfig(connection_string=SecretStr(""))
     with pytest.raises(TypeError):
-        AzureBlobArtifactStore(object())  # type: ignore[arg-type]
+        AzureBlobArtifactStore(object(), scope=VALIDATION_SCOPE)  # type: ignore[arg-type]
 
 
 async def _exercise_public_blob_operation(
@@ -757,7 +817,8 @@ async def test_synchronous_sdk_factory_failures_are_provider_neutral_and_redacte
         lambda *args, **kwargs: service,
     )
     store = AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true")),
     )
 
     with pytest.raises(ArtifactProviderUnavailable) as caught:
@@ -788,7 +849,8 @@ async def test_provider_value_and_type_errors_cannot_escape_as_argument_validati
         lambda *args, **kwargs: service,
     )
     store = AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true"))
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(connection_string=SecretStr("UseDevelopmentStorage=true")),
     )
 
     with pytest.raises(ArtifactProviderUnavailable) as caught:
@@ -1923,10 +1985,11 @@ async def test_scavenger_list_page_uses_deadline_cancel_and_terminal_settlement(
         lambda *args, **kwargs: service,
     )
     store = AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(
             connection_string=SecretStr("UseDevelopmentStorage=true"),
             operation_timeout_seconds=0.01,
-        )
+        ),
     )
 
     with pytest.raises(ArtifactUnavailable, match="deadline"):
@@ -1948,7 +2011,8 @@ async def test_scavenger_uses_one_absolute_deadline_across_all_deletes(
     items = iter(
         (
             SimpleNamespace(
-                name=f"staging/slow-{index}",
+                name=f"{blob_artifacts.staging_prefix(VALIDATION_SCOPE)}slow-{index}",
+                etag="version-1",
                 metadata={"stagedat": (now - timedelta(hours=25)).isoformat()},
             )
             for index in range(2)
@@ -1996,13 +2060,14 @@ async def test_scavenger_uses_one_absolute_deadline_across_all_deletes(
         lambda *args, **kwargs: service,
     )
     store = AzureBlobArtifactStore(
-        AzureBlobArtifactConfig(
+        scope=VALIDATION_SCOPE,
+        config=AzureBlobArtifactConfig(
             connection_string=SecretStr("UseDevelopmentStorage=true"),
             operation_timeout_seconds=0.01,
-        )
+        ),
     )
 
     with pytest.raises(ArtifactUnavailable, match="deadline"):
         await store.scavenge_staging(now=now, visible_staging_keys=frozenset(), limit=2)
 
-    assert cancelled == ["staging/slow-1"]
+    assert cancelled == [blob_artifacts.staging_prefix(VALIDATION_SCOPE) + "slow-1"]

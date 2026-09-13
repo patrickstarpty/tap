@@ -81,6 +81,7 @@ export const COPY = {
   citationTitle: "原文",
   citationEmpty: "选择回答中的引用以核验原文。",
   citationEvidence: "原文依据",
+  citationOpen: "打开来源",
   citationLoading: "正在核验原文",
   closeCitation: "关闭原文",
   retryCitation: "重新核验",

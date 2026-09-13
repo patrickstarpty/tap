@@ -5,6 +5,7 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
+import { useQueries } from "@tanstack/react-query";
 import {
   useMemo,
   useRef,
@@ -21,6 +22,8 @@ import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
+import { KnowledgeGraphExplorer } from "../../../features/graph/components/KnowledgeGraphExplorer";
+import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
@@ -28,21 +31,66 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
-  onAddSource: (source: Pick<LibrarySource, "name" | "type">) => void;
+  onAddSource?: (file: File) => Promise<void> | void;
+  onInspectSource?: (sourceId: string, opener: HTMLElement) => void;
   sources: readonly LibrarySource[];
+  loadState?: "loading" | "loaded" | "error";
+  onReload?: () => void;
+  graphProjectId?: string;
 }
 
-function sourceType(filename: string): string {
-  return filename.split(".").pop()?.toLocaleUpperCase() ?? "FILE";
+function ProjectKnowledgeGraph({
+  projectId,
+  sources,
+}: {
+  projectId: string;
+  sources: readonly LibrarySource[];
+}) {
+  const graphSources = useQueries({
+    queries: sources
+      .filter((source) => source.status === "ready")
+      .map((source) => ({
+        queryKey: [
+          "knowledge",
+          projectId,
+          "source",
+          source.id,
+          "graph",
+        ] as const,
+        queryFn: ({ signal }: { signal: AbortSignal }) =>
+          createKnowledgeClient({ projectId }).getSource(source.id, signal),
+        retry: false,
+      })),
+  });
+  const revisionIds = graphSources.flatMap((detail) =>
+    (detail.data?.documents.items ?? [])
+      .filter((document) => document.status === "ready")
+      .map((document) => document.revisionId),
+  );
+
+  return (
+    <KnowledgeGraphExplorer
+      projectId={projectId}
+      sourceRevisionIds={revisionIds}
+    />
+  );
 }
 
 export function LibraryWorkspace({
   copy,
   onAddSource,
+  onInspectSource,
   sources,
+  loadState = "loaded",
+  onReload,
+  graphProjectId,
 }: LibraryWorkspaceProps) {
+  const [uploadPending, setUploadPending] = useState(false);
+  const [uploadFailed, setUploadFailed] = useState(false);
   const [view, setView] = useState<"list" | "cards">("cards");
-  const [mode, setMode] = useState<LibraryMode>("graph");
+  const [mode, setMode] = useState<LibraryMode>(() =>
+    graphProjectId === undefined ? "graph" : "list",
+  );
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
@@ -102,22 +150,31 @@ export function LibraryWorkspace({
   const openAddDialog = (event: MouseEvent<HTMLElement>) => {
     addDialogTriggerRef.current = event.currentTarget;
     setSelectedFile(null);
+    setUploadFailed(false);
     setAddDialogOpen(true);
   };
 
   const closeAddDialog = () => {
+    if (uploadPending) return;
     setSelectedFile(null);
     setAddDialogOpen(false);
   };
 
-  const addSource = (event: FormEvent<HTMLFormElement>) => {
+  const addSource = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (selectedFile === null) return;
-    onAddSource({
-      name: selectedFile.name,
-      type: sourceType(selectedFile.name),
-    });
-    closeAddDialog();
+    if (selectedFile === null || onAddSource === undefined || uploadPending)
+      return;
+    setUploadPending(true);
+    setUploadFailed(false);
+    try {
+      await onAddSource(selectedFile);
+      setSelectedFile(null);
+      setAddDialogOpen(false);
+    } catch {
+      setUploadFailed(true);
+    } finally {
+      setUploadPending(false);
+    }
   };
 
   const sourceStatus = (source: LibrarySource) => {
@@ -140,6 +197,7 @@ export function LibraryWorkspace({
           <Button
             type="primary"
             icon={<PlusOutlined aria-hidden="true" />}
+            disabled={onAddSource === undefined}
             onClick={openAddDialog}
           >
             {copy.library.addSource}
@@ -267,9 +325,20 @@ export function LibraryWorkspace({
           </div>
           <div className="tap-library-browser">
             <div>
-              {visibleSources.length === 0 ? (
+              {loadState === "loading" ? (
+                <p role="status" aria-label={copy.sources.loading}>
+                  {copy.sources.loading}
+                </p>
+              ) : loadState === "error" ? (
+                <div role="alert">
+                  <p>{copy.sources.error}</p>
+                  <Button onClick={onReload}>{copy.sources.retry}</Button>
+                </div>
+              ) : visibleSources.length === 0 ? (
                 <div className="tap-catalog-empty">
-                  {copy.library.noResults}
+                  {sources.length === 0
+                    ? copy.sources.empty
+                    : copy.library.noResults}
                 </div>
               ) : (
                 <ul
@@ -319,6 +388,17 @@ export function LibraryWorkspace({
                             <DownloadOutlined aria-hidden="true" />
                           </a>
                         ) : null}
+                        {onInspectSource !== undefined ? (
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              onInspectSource(source.id, event.currentTarget)
+                            }
+                            aria-label={`${copy.sources.view} ${source.name}`}
+                          >
+                            {copy.sources.view}
+                          </button>
+                        ) : null}
                       </div>
                     </li>
                   ))}
@@ -333,16 +413,23 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-graph-tab"
         >
-          <KnowledgeGraph
-            copy={copy}
-            query={query}
-            sources={facetSources}
-            onViewSource={(source) => {
-              setQuery(source.name);
-              setMode("list");
-              listTabRef.current?.focus();
-            }}
-          />
+          {graphProjectId === undefined ? (
+            <KnowledgeGraph
+              copy={copy}
+              query={query}
+              sources={facetSources}
+              onViewSource={(source) => {
+                setQuery(source.name);
+                setMode("list");
+                listTabRef.current?.focus();
+              }}
+            />
+          ) : (
+            <ProjectKnowledgeGraph
+              projectId={graphProjectId}
+              sources={visibleSources}
+            />
+          )}
         </div>
       )}
 
@@ -361,6 +448,7 @@ export function LibraryWorkspace({
               <span>{copy.library.sourceFile}</span>
               <input
                 type="file"
+                disabled={uploadPending}
                 aria-label={copy.library.sourceFile}
                 accept=".pdf,.docx,.md,.txt"
                 onChange={(event) =>
@@ -368,12 +456,21 @@ export function LibraryWorkspace({
                 }
               />
             </label>
+            {uploadFailed ? <p role="alert">{copy.library.failed}</p> : null}
             <div className="tap-dialog-actions">
-              <Button onClick={closeAddDialog}>{copy.library.cancel}</Button>
+              <Button disabled={uploadPending} onClick={closeAddDialog}>
+                {copy.library.cancel}
+              </Button>
               <Button
                 type="primary"
                 htmlType="submit"
-                disabled={selectedFile === null}
+                aria-label={copy.library.addSource}
+                loading={uploadPending}
+                disabled={
+                  selectedFile === null ||
+                  onAddSource === undefined ||
+                  uploadPending
+                }
               >
                 {copy.library.addSource}
               </Button>

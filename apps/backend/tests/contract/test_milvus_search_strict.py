@@ -101,6 +101,93 @@ class RecordingAuditSink(SearchAuditSink):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("version", ("doc-schema-v1", "doc-schema-v2"))
+async def test_owned_search_reads_exact_frozen_tuple_and_maps_both_profiles(version):
+    import json
+    from types import SimpleNamespace
+
+    from tap.modules.access.domain.policy import ResourceGrant
+    from tap.modules.knowledge.domain.documents import (
+        DocumentId,
+        RevisionId,
+        chunk_id_for,
+        logical_chunk_id_for,
+        logical_chunk_projection_id,
+    )
+    from tap.modules.knowledge.domain.models import ResolvedResourceRef, ResourceMode, RevisionKind
+    from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
+
+    owner = ReadyDocumentRevision(
+        "doc_" + "1" * 32, "rev_" + "2" * 64, "sha256:" + "4" * 64, "src_" + "3" * 32
+    )
+
+    class Owners:
+        scope = SimpleNamespace(enterprise_id="tenant-a", project_id="project-a")
+
+        async def load_current_source_revisions(self, selected):
+            assert selected == ((owner.source_id, owner.revision_id, owner.source_content_hash),)
+            return (owner,)
+
+    execution = doc_execution()
+    resource = ResolvedResourceRef(
+        family=SourceFamily.DOC,
+        source_id=owner.source_id,
+        mode=ResourceMode.SCOPE,
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision=owner.revision_id,
+        source_content_hash=owner.source_content_hash,
+        anchor=None,
+    )
+    grant = ResourceGrant(
+        family="doc",
+        source_id=owner.source_id,
+        revision_kind="blob_version",
+        revision=owner.revision_id,
+        source_content_hash=owner.source_content_hash,
+    )
+    object.__setattr__(execution.policy, "resource_grants", (grant,))
+    execution = replace(execution, plan=replace(execution.plan, resources=(resource,)))
+    row = valid_doc_row()
+    anchor = json.dumps(json.loads(row["anchor_json"]), sort_keys=True, separators=(",", ":"))
+    row.update(
+        schema_version=version,
+        source_id=owner.source_id if version == "doc-schema-v2" else owner.document_id,
+        source_revision=owner.revision_id,
+        anchor_json=anchor,
+        project_id="project-a",
+        allowed_group_ids=["group-one"],
+        classification_rank=1,
+        environment="production",
+        deleted=False,
+    )
+    row["enterprise_id" if version == "doc-schema-v2" else "tenant_id"] = "tenant-a"
+    if version == "doc-schema-v2":
+        row["document_id"] = owner.document_id
+    row["chunk_id"] = str(
+        chunk_id_for(RevisionId(owner.revision_id), anchor, row["chunk_content_hash"])
+    )
+    row["logical_chunk_id"] = logical_chunk_projection_id(
+        logical_chunk_id_for(DocumentId(owner.document_id), anchor)
+    )
+    reader = RecordingReader(
+        (row,), collection_descriptor=replace(descriptor(), schema_version=version)
+    )
+    audit = RecordingAuditSink()
+    target = replace(doc_target(), schema_version=version)
+    adapter = MilvusSearchAdapter(
+        config(targets={SourceFamily.DOC: target}), reader, audit, owners=Owners()
+    )
+    hits = await adapter.search(execution)
+    assert len(hits) == 1 and hits[0].source.source_id == owner.source_id
+    assert hits[0].chunk_id == row["chunk_id"]
+    assert "project_id" in reader.requests[0].output_fields
+    reader.rows = ({**row, "project_id": "other-project"},)
+    with pytest.raises(SearchUnavailable):
+        await adapter.search(execution)
+    assert audit.events[-1].outcome == "failure" and audit.events[-1].rejected_row_count == 1
+
+
+@pytest.mark.asyncio
 async def test_search_binds_once_and_builds_one_closed_bounded_hybrid_request() -> None:
     """Changing channel filters, fields, limits, or binding count breaks the request contract."""
     reader = RecordingReader()

@@ -11,6 +11,7 @@ from sqlalchemy import (
     BigInteger,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Table,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     insert,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
@@ -26,6 +28,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.chat_stream import ChatEventEnvelope
+from tap.contracts.events import ProjectEventEnvelope
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.application.ports import (
     ClaimedOutbox,
     CreateTurnCommand,
@@ -35,7 +39,15 @@ from tap.modules.chat.application.ports import (
     TurnNotFound,
 )
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId, TurnState
-from tap.platform.db.schema import metadata, outbox
+from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
+from tap.platform.db.schema import augment_project_table, metadata, outbox
+from tap.platform.messaging.mysql_outbox import (
+    compatibility_outbox_values,
+    scoped_outbox_id,
+    validate_outbox_row,
+    write_project_event,
+)
+from tap.platform.messaging.outbox_archive import record_dead_letter, safe_dispatch_reason
 
 chat_turn = Table(
     "chat_turn",
@@ -45,6 +57,9 @@ chat_turn = Table(
     Column("client_request_id", String(128), nullable=False),
     Column("message", Text, nullable=False),
     Column("state", String(32), nullable=False),
+    Column("processing_attempt", Integer, nullable=False, server_default="0"),
+    Column("processing_lease_token", String(64)),
+    Column("processing_lease_expires_at", DATETIME(fsp=6)),
     Column("last_sequence", BigInteger, nullable=False, server_default="0"),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint("chat_id", "client_request_id", name="uq_chat_turn_client_request"),
@@ -61,6 +76,7 @@ chat_event = Table(
         nullable=False,
     ),
     Column("sequence", BigInteger, nullable=False),
+    Column("stream_sequence", BigInteger, nullable=False),
     Column("event_type", String(64), nullable=False),
     Column("payload", JSON, nullable=False),
     Column("schema_version", Integer, nullable=False),
@@ -82,6 +98,18 @@ turn_snapshot = Table(
     Column("snapshot_version", BigInteger, nullable=False),
     Column("updated_at", DATETIME(fsp=6), nullable=False),
 )
+
+for _table in (chat_turn, chat_event, turn_snapshot):
+    augment_project_table(_table)
+
+chat_turn.append_constraint(
+    ForeignKeyConstraint(
+        ["project_id", "chat_id"],
+        ["conversation.project_id", "conversation.conversation_id"],
+        name="fk_chat_turn_project_conversation",
+    )
+)
+
 
 _TERMINAL_AND_RUNNING_STATES: Mapping[str, TurnState] = {
     "turn.started": TurnState.RUNNING,
@@ -115,15 +143,39 @@ def _turn_from_row(row: RowMapping) -> Turn:
 
 
 class MysqlTurnRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._scope = require_project_scope(scope)
         self._sessions = sessions
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
 
     async def create_with_outbox(self, command: CreateTurnCommand) -> Turn:
         created_at = _utc_naive(command.occurred_at)
         try:
             async with self._sessions() as session, session.begin():
                 await session.execute(
+                    text(
+                        "INSERT IGNORE INTO conversation "
+                        "(conversation_id,title,created_at,updated_at,enterprise_id,project_id,"
+                        "actor_id,identity_mode,identity_origin) VALUES "
+                        "(:conversation_id,:title,:created_at,:updated_at,:enterprise_id,"
+                        ":project_id,:actor_id,:identity_mode,:identity_origin)"
+                    ),
+                    {
+                        **scope_values(self._scope),
+                        "conversation_id": command.chat_id,
+                        "title": command.message[:120],
+                        "created_at": created_at,
+                        "updated_at": created_at,
+                    },
+                )
+                await session.execute(
                     insert(chat_turn).values(
+                        **scope_values(self._scope),
                         turn_id=command.turn_id,
                         chat_id=command.chat_id,
                         client_request_id=command.client_request_id,
@@ -133,19 +185,32 @@ class MysqlTurnRepository:
                         created_at=created_at,
                     )
                 )
+                event_values = compatibility_outbox_values(
+                    self._scope,
+                    outbox_id=scoped_outbox_id(
+                        self._scope, kind="turn-command", identity=command.command_id
+                    ),
+                    command_id=command.command_id,
+                    aggregate_type="chat_turn",
+                    aggregate_id=command.turn_id,
+                    sequence=None,
+                    message_type="turn.process_requested",
+                    created_at=created_at,
+                )
+                # Preserve the existing live uniqueness error contract; the
+                # common writer also fences keys whose original row was archived.
                 await session.execute(
                     insert(outbox).values(
-                        outbox_id=f"turn-command:{command.command_id}",
-                        command_id=command.command_id,
-                        aggregate_type="chat_turn",
-                        aggregate_id=command.turn_id,
-                        sequence=None,
-                        message_type="turn.process_requested",
+                        **event_values,
                         status="pending",
                         attempt_count=0,
                         next_attempt_at=created_at,
-                        created_at=created_at,
                     )
+                )
+                await write_project_event(
+                    session,
+                    scope=self._scope,
+                    envelope=ProjectEventEnvelope.from_dict(event_values["envelope"]),
                 )
         except IntegrityError as error:
             existing = await self._find_by_client_request(
@@ -153,6 +218,8 @@ class MysqlTurnRepository:
                 client_request_id=command.client_request_id,
             )
             if existing is not None:
+                if existing.message != command.message:
+                    raise ValueError("idempotency-conflict") from error
                 return existing
             raise error
 
@@ -175,6 +242,7 @@ class MysqlTurnRepository:
         async with self._sessions() as session:
             result = await session.execute(
                 select(chat_turn).where(
+                    *scope_predicates(chat_turn, self._scope),
                     chat_turn.c.chat_id == chat_id,
                     chat_turn.c.client_request_id == client_request_id,
                 )
@@ -192,7 +260,9 @@ class MysqlTurnRepository:
             return
         async with self._sessions() as session, session.begin():
             result = await session.execute(
-                select(chat_turn).where(chat_turn.c.turn_id == turn_id).with_for_update()
+                select(chat_turn)
+                .where(*scope_predicates(chat_turn, self._scope), chat_turn.c.turn_id == turn_id)
+                .with_for_update()
             )
             turn_row = result.mappings().one_or_none()
             if turn_row is None:
@@ -217,9 +287,11 @@ class MysqlTurnRepository:
                 event_type = envelope.event.type
                 await session.execute(
                     insert(chat_event).values(
+                        **scope_values(self._scope),
                         event_id=envelope.event_id,
                         turn_id=turn_id,
                         sequence=envelope.sequence,
+                        stream_sequence=envelope.sequence,
                         event_type=event_type,
                         payload=envelope.event.model_dump(mode="json", by_alias=True),
                         schema_version=envelope.schema_version,
@@ -228,23 +300,28 @@ class MysqlTurnRepository:
                 )
                 await session.execute(
                     insert(outbox).values(
-                        outbox_id=f"chat-event:{envelope.event_id}",
-                        command_id=f"chat-event:{envelope.event_id}",
-                        aggregate_type="chat_turn",
-                        aggregate_id=turn_id,
-                        sequence=envelope.sequence,
-                        message_type="chat.event_appended",
+                        **compatibility_outbox_values(
+                            self._scope,
+                            outbox_id=scoped_outbox_id(
+                                self._scope, kind="chat-event", identity=envelope.event_id
+                            ),
+                            command_id=f"chat-event:{envelope.event_id}",
+                            aggregate_type="chat_turn",
+                            aggregate_id=turn_id,
+                            sequence=envelope.sequence,
+                            message_type="chat.event_appended",
+                            created_at=occurred_at,
+                        ),
                         status="pending",
                         attempt_count=0,
                         next_attempt_at=occurred_at,
-                        created_at=occurred_at,
                     )
                 )
                 state = _TERMINAL_AND_RUNNING_STATES.get(event_type, state)
 
             await session.execute(
                 update(chat_turn)
-                .where(chat_turn.c.turn_id == turn_id)
+                .where(*scope_predicates(chat_turn, self._scope), chat_turn.c.turn_id == turn_id)
                 .values(
                     last_sequence=expected_sequence + len(events),
                     state=state.value,
@@ -253,8 +330,15 @@ class MysqlTurnRepository:
 
 
 class OutboxStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._scope = require_project_scope(scope)
         self._sessions = sessions
+
+    @property
+    def scope(self) -> ProjectScopeContext:
+        return self._scope
 
     async def reconcile_expired(self, now: datetime, limit: int) -> int:
         if limit <= 0:
@@ -265,6 +349,7 @@ class OutboxStore:
                     await session.execute(
                         select(outbox.c.outbox_id)
                         .where(
+                            *scope_predicates(outbox, self._scope),
                             outbox.c.status == "publishing",
                             outbox.c.lease_until <= _utc_naive(now),
                         )
@@ -278,7 +363,7 @@ class OutboxStore:
                 return 0
             await session.execute(
                 update(outbox)
-                .where(outbox.c.outbox_id.in_(expired_ids))
+                .where(*scope_predicates(outbox, self._scope), outbox.c.outbox_id.in_(expired_ids))
                 .values(
                     status="pending",
                     claimed_by=None,
@@ -306,6 +391,7 @@ class OutboxStore:
                     await session.execute(
                         select(outbox.c.outbox_id)
                         .where(
+                            *scope_predicates(outbox, self._scope),
                             outbox.c.status == "pending",
                             outbox.c.next_attempt_at <= claim_time,
                         )
@@ -321,7 +407,7 @@ class OutboxStore:
             for outbox_id, claim_token in claim_tokens.items():
                 await session.execute(
                     update(outbox)
-                    .where(outbox.c.outbox_id == outbox_id)
+                    .where(*scope_predicates(outbox, self._scope), outbox.c.outbox_id == outbox_id)
                     .values(
                         status="publishing",
                         claimed_by=worker_id,
@@ -332,11 +418,47 @@ class OutboxStore:
                     )
                 )
             rows = (
-                await session.execute(select(outbox).where(outbox.c.outbox_id.in_(pending_ids)))
-            ).mappings()
+                (
+                    await session.execute(
+                        select(outbox).where(
+                            *scope_predicates(outbox, self._scope),
+                            outbox.c.outbox_id.in_(pending_ids),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            valid_rows = []
+            for row in rows:
+                try:
+                    validate_outbox_row(cast(Mapping[str, object], row))
+                except ValueError:
+                    # Persist rejection in this claim transaction so one corrupt
+                    # envelope cannot roll back or starve the rest of the batch.
+                    await session.execute(
+                        update(outbox)
+                        .where(
+                            *scope_predicates(outbox, self._scope),
+                            outbox.c.outbox_id == row["outbox_id"],
+                            outbox.c.claim_token == row["claim_token"],
+                        )
+                        .values(
+                            status="delivery_failed",
+                            claimed_by=None,
+                            claim_token=None,
+                            lease_until=None,
+                            last_error="invalid_persisted_event",
+                        )
+                    )
+                    await record_dead_letter(session, dict(row), reason="invalid_persisted_event")
+                    continue
+                valid_rows.append(row)
             return [
                 ClaimedOutbox(
                     message=DispatchMessage(
+                        enterprise_id=cast(str, row["enterprise_id"]),
+                        project_id=cast(str, row["project_id"]),
                         command_id=CommandId(cast(str, row["command_id"])),
                         outbox_id=cast(str, row["outbox_id"]),
                         aggregate_type=cast(str, row["aggregate_type"]),
@@ -346,7 +468,7 @@ class OutboxStore:
                     attempt_count=cast(int, row["attempt_count"]),
                     claim_token=cast(str, row["claim_token"]),
                 )
-                for row in rows
+                for row in valid_rows
             ]
 
     async def mark_published(
@@ -360,6 +482,7 @@ class OutboxStore:
             result = await session.execute(
                 update(outbox)
                 .where(
+                    *scope_predicates(outbox, self._scope),
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
                     outbox.c.claim_token == claim_token,
@@ -388,6 +511,7 @@ class OutboxStore:
             result = await session.execute(
                 update(outbox)
                 .where(
+                    *scope_predicates(outbox, self._scope),
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
                     outbox.c.claim_token == claim_token,
@@ -398,7 +522,7 @@ class OutboxStore:
                     claimed_by=None,
                     claim_token=None,
                     lease_until=None,
-                    last_error=error[:2048],
+                    last_error=safe_dispatch_reason(error),
                 )
             )
             if result.rowcount != 1:
@@ -415,6 +539,7 @@ class OutboxStore:
             result = await session.execute(
                 update(outbox)
                 .where(
+                    *scope_predicates(outbox, self._scope),
                     outbox.c.outbox_id == outbox_id,
                     outbox.c.status == "publishing",
                     outbox.c.claim_token == claim_token,
@@ -424,11 +549,26 @@ class OutboxStore:
                     claimed_by=None,
                     claim_token=None,
                     lease_until=None,
-                    last_error=error[:2048],
+                    last_error=safe_dispatch_reason(error),
                 )
             )
             if result.rowcount != 1:
                 self._raise_lease_lost(outbox_id)
+            row = (
+                (
+                    await session.execute(
+                        select(outbox)
+                        .where(
+                            *scope_predicates(outbox, self._scope),
+                            outbox.c.outbox_id == outbox_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            await record_dead_letter(session, dict(row), reason=safe_dispatch_reason(error))
 
     @staticmethod
     def _raise_lease_lost(outbox_id: str) -> NoReturn:

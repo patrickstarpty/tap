@@ -12,6 +12,7 @@ from tap.modules.knowledge.adapters.milvus.search import MilvusSearchAdapter
 from tap.modules.knowledge.ports.errors import SearchUnavailable
 
 EVENT_KEYS = {
+    "metadata",
     "outcome",
     "provider",
     "query_plan_id",

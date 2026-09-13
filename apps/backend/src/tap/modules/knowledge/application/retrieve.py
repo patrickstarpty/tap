@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any, cast
 
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import (
@@ -56,6 +57,7 @@ from tap.modules.knowledge.ports.models import (
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
+    GovernedKnowledgeModels,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -162,13 +164,22 @@ class AuthorizedRetrieval:
         self,
         *,
         search: SearchPort,
-        embeddings: QueryEmbeddingPort,
-        answers: AnswerGenerationPort,
+        embeddings: QueryEmbeddingPort | None = None,
+        answers: AnswerGenerationPort | None = None,
+        models: GovernedKnowledgeModels | None = None,
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
     ) -> None:
         self._search = search
+        if models is not None:
+            if embeddings is not None or answers is not None:
+                raise ValueError("governed models cannot be mixed with legacy providers")
+            embeddings = models
+            answers = models
+        if embeddings is None or answers is None:
+            raise ValueError("Knowledge requires a complete model boundary")
+        self._models = models
         self._embeddings = embeddings
         self._answers = answers
         self._policy_verifier = policy_verifier
@@ -186,8 +197,12 @@ class AuthorizedRetrieval:
         self,
         request: AnswerRequest,
         policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        governance=None,
+        graph_context: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerResponse:
-        run = await self._retrieve(request.as_search_request(), policy)
+        run = await self._retrieve(request.as_search_request(), policy, frozen_policy=frozen_policy)
         required = tuple(
             resource for resource in run.plan.resources if resource.mode is ResourceMode.REQUIRED
         )
@@ -198,14 +213,24 @@ class AuthorizedRetrieval:
             return self._abstain(run.response, missing_reason)
         if self._has_conflicting_sources(run.response.evidence):
             return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
-        current = await self._verify_current(run.policy)
+        current = run.policy if frozen_policy else await self._verify_current(run.policy)
         self._validate_binding(current, run.plan, run.context_snapshot)
-        generation = await self._answers.answer(
-            run.plan.sanitized_query,
-            run.response.evidence,
-            run.response.retrieval_profile_id.value,
+        generation = (
+            await cast(Any, self._answers).answer(
+                run.plan.sanitized_query,
+                run.response.evidence,
+                run.response.retrieval_profile_id.value,
+                governance=governance,
+                graph_context=graph_context,
+            )
+            if governance is not None or graph_context
+            else await self._answers.answer(
+                run.plan.sanitized_query,
+                run.response.evidence,
+                run.response.retrieval_profile_id.value,
+            )
         )
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, run.plan, run.context_snapshot)
         claims = _resolve_generated_claims(
             generation,
@@ -213,6 +238,8 @@ class AuthorizedRetrieval:
             id_factory=self._id_factory,
         )
         if claims is None:
+            return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
+        if not generation.text and not claims:
             return self._abstain(run.response, AbstentionReason.INSUFFICIENT_EVIDENCE)
 
         return AnswerResponse(
@@ -233,8 +260,19 @@ class AuthorizedRetrieval:
         self,
         request: SearchRequest,
         policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
     ) -> _RetrievalRun:
-        current = await self._verify_current(policy)
+        if (
+            frozen_policy
+            and self._models is not None
+            and (
+                self._models.scope.enterprise_id != policy.tenant_id
+                or self._models.scope.project_id != policy.project_id
+            )
+        ):
+            raise AuthorizationDenied("model gateway Project does not match retrieval policy")
+        current = policy if frozen_policy else await self._verify_current(policy)
         profile = PROFILES[request.answer_mode]
         source_families = self._source_families(request, current)
         environment = self._environment(request, current)
@@ -285,11 +323,11 @@ class AuthorizedRetrieval:
         )
         trace_id = self._id_factory()
 
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         embedding = await self._embeddings.embed(plan.sanitized_query)
         self._validate_embedding(embedding, plan)
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         hits = await self._search.search(
             SearchExecution(
@@ -299,7 +337,7 @@ class AuthorizedRetrieval:
                 query_vector=embedding.vector,
             )
         )
-        current = await self._verify_current(current)
+        current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, plan, context_snapshot)
         if not all(self._hit_is_in_execution(hit, plan) for hit in hits):
             raise AuthorizationDenied("Search returned evidence outside bound execution")
@@ -346,6 +384,11 @@ class AuthorizedRetrieval:
         self,
         expected: RetrievalPolicyContext,
     ) -> RetrievalPolicyContext:
+        if self._models is not None and (
+            self._models.scope.enterprise_id != expected.tenant_id
+            or self._models.scope.project_id != expected.project_id
+        ):
+            raise AuthorizationDenied("model gateway Project does not match retrieval policy")
         current = await self._policy_verifier.verify_current(expected)
         if current is None:
             raise PolicyUnavailable("current Project Policy is unavailable")
@@ -441,22 +484,19 @@ class AuthorizedRetrieval:
         resource: ResourceRef,
         policy: RetrievalPolicyContext,
     ) -> ResolvedResourceRef:
-        grant = next(
-            (
-                candidate
-                for candidate in policy.resource_grants
-                if candidate.family == resource.family.value
-                and candidate.source_id == resource.source_id
-            ),
-            None,
+        grants = tuple(
+            candidate
+            for candidate in policy.resource_grants
+            if candidate.family == resource.family.value
+            and candidate.source_id == resource.source_id
+            and (
+                resource.requested_revision is None
+                or candidate.revision == resource.requested_revision
+            )
         )
-        if grant is None:
-            raise AuthorizationDenied("resource is not authorized")
-        if (
-            resource.requested_revision is not None
-            and resource.requested_revision != grant.revision
-        ):
-            raise AuthorizationDenied("resource revision is unavailable or unauthorized")
+        if len(grants) != 1:
+            raise AuthorizationDenied("resource revision is unavailable, ambiguous or unauthorized")
+        grant = grants[0]
         if resource.anchor is not None and not AuthorizedRetrieval._anchor_allowed(resource, grant):
             raise AuthorizationDenied("resource anchor is not authorized")
         try:
@@ -656,12 +696,15 @@ class AuthorizedRetrieval:
 
     @staticmethod
     def _has_conflicting_sources(evidence: tuple[Evidence, ...]) -> bool:
-        hashes_by_logical_chunk: dict[str, set[str]] = {}
+        hashes_by_identity: dict[tuple[str, str], set[str]] = {}
         for item in evidence:
-            hashes_by_logical_chunk.setdefault(item.logical_chunk_id, set()).add(
-                item.chunk_content_hash
-            )
-        return any(len(hashes) > 1 for hashes in hashes_by_logical_chunk.values())
+            identities = [("logical-chunk", item.logical_chunk_id)]
+            anchor = item.source.anchor
+            if isinstance(anchor, DocumentAnchor) and anchor.heading_path:
+                identities.append(("document-heading", anchor.heading_path[-1].casefold()))
+            for identity in identities:
+                hashes_by_identity.setdefault(identity, set()).add(item.chunk_content_hash)
+        return any(len(hashes) > 1 for hashes in hashes_by_identity.values())
 
     @staticmethod
     def _embedding_provenance(embedding: Embedding) -> ModelCallProvenance:

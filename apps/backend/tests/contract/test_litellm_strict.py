@@ -11,12 +11,12 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer_payload
-from tap.modules.knowledge.adapters.litellm import (
+from tap.entrypoints.legacy_litellm import (
     LiteLLMAdapter,
     LiteLLMConfig,
     ModelUnavailable,
 )
+from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer_payload
 from tap.modules.knowledge.domain.models import (
     CodeAnchor,
     ContentRole,
@@ -251,6 +251,41 @@ def test_grounded_output_accepts_utf8_claims_and_known_unique_labels() -> None:
     assert claims[1].evidence_labels == ("S2",)
 
 
+def test_grounded_output_projects_unique_complete_claims_into_canonical_answer() -> None:
+    answer, claims = parse_grounded_answer_payload(
+        {
+            "answer": "Summary: First grounded sentence. Second grounded sentence.",
+            "claims": [
+                {"text": "First grounded sentence.", "evidenceLabels": ["S1"]},
+                {"text": "Second grounded sentence.", "evidenceLabels": ["S2"]},
+            ],
+        },
+        (evidence(label="S1"), evidence(label="S2")),
+        max_answer_chars=16_000,
+        max_claims=64,
+        max_claim_chars=4_000,
+        max_labels_per_claim=16,
+    )
+
+    assert answer == "First grounded sentence.\n\nSecond grounded sentence."
+    assert tuple(claim.text for claim in claims) == (
+        "First grounded sentence.",
+        "Second grounded sentence.",
+    )
+
+
+@pytest.mark.parametrize("answer", ["", "I cannot answer from the supplied evidence."])
+def test_grounded_output_projects_zero_claims_to_closed_abstention(answer: str) -> None:
+    assert parse_grounded_answer_payload(
+        {"answer": answer, "claims": []},
+        (evidence(label="S1"),),
+        max_answer_chars=16_000,
+        max_claims=64,
+        max_claim_chars=4_000,
+        max_labels_per_claim=16,
+    ) == ("", ())
+
+
 def test_grounded_output_accepts_all_closed_upper_bounds() -> None:
     labels = tuple("L" * 64 if index == 0 else f"S{index}" for index in range(16))
     paragraphs = ["段" * 4_000, *(f"claim-{index}" for index in range(1, 64))]
@@ -291,7 +326,6 @@ def test_grounded_output_accepts_all_closed_upper_bounds() -> None:
             "answer": "x" * 16_001,
             "claims": [{"text": "x", "evidenceLabels": ["S1"]}],
         },
-        {"answer": "Complete paragraph.", "claims": []},
         {
             "answer": "Complete paragraph.",
             "claims": [{"text": f"claim-{index}", "evidenceLabels": ["S1"]} for index in range(65)],
@@ -384,7 +418,6 @@ def test_grounded_output_accepts_all_closed_upper_bounds() -> None:
         "blank-answer",
         "answer-not-utf8",
         "answer-length",
-        "zero-claims",
         "claim-count",
         "unknown-claim-field",
         "missing-claim-field",
@@ -1249,14 +1282,13 @@ async def test_document_prompt_injection_remains_evidence_data_and_cannot_widen_
 @pytest.mark.parametrize(
     "claims",
     [
-        [],
         [{"text": "x" * 501, "evidenceLabels": ["S1"]}],
         [{"text": "claim", "evidenceLabels": []}],
         [{"text": "claim", "evidenceLabels": ["S1"] * 5}],
         [{"text": "claim", "evidenceLabels": ["S99"]}],
         [{"text": f"claim-{index}", "evidenceLabels": ["S1"]} for index in range(5)],
     ],
-    ids=("empty", "claim-length", "no-label", "label-count", "unknown-label", "claim-count"),
+    ids=("claim-length", "no-label", "label-count", "unknown-label", "claim-count"),
 )
 async def test_grounded_answer_structure_is_closed_and_bounded(claims: object) -> None:
     """Unchecked provider JSON would produce an unsupported or unbounded answer graph."""

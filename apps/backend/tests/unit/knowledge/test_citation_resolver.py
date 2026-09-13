@@ -151,8 +151,12 @@ class MemoryCitationRepository:
         self.unavailable = False
         self.current = True
         self.current_checks = 0
+        self.historical_reads = 0
 
-    async def load_citation(self, citation_id: str) -> CitationLookup | None:
+    async def load_citation(
+        self, citation_id: str, *, historical: bool = False
+    ) -> CitationLookup | None:
+        self.historical_reads += int(historical)
         if self.corrupt:
             raise CitationSnapshotCorrupt("bad selected revisions")
         if self.unavailable:
@@ -216,6 +220,30 @@ def test_resolver_returns_exact_unicode_bounded_quote_and_context() -> None:
         assert preview.anchor.start_offset == len(prefix)
         assert preview.anchor.end_offset == len(prefix) + len(content)
         assert repository.current_checks == 1
+
+    asyncio.run(scenario())
+
+
+def test_historical_resolution_keeps_exact_evidence_after_source_deletion() -> None:
+    async def scenario() -> None:
+        citation_resolver, repository, _artifacts = resolver()
+        assert repository.lookup is not None and repository.lookup.document is not None
+        repository.lookup = replace(
+            repository.lookup,
+            document=replace(
+                repository.lookup.document,
+                status=DocumentState.DELETING,
+                deleted=True,
+                current_revision_id="revision-after-answer",
+                current_source_content_hash="sha256:" + "b" * 64,
+            ),
+        )
+
+        preview = await citation_resolver.resolve_historical("citation-a")
+
+        assert preview.quote
+        assert repository.historical_reads == 1
+        assert repository.current_checks == 0
 
     asyncio.run(scenario())
 

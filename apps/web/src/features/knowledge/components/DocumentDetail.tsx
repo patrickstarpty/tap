@@ -1,3 +1,4 @@
+import { useKnowledgeClient } from "../api/queries";
 import {
   Alert,
   Button,
@@ -59,7 +60,8 @@ export function DocumentDetail({
   onClose,
   onAfterClose,
 }: DocumentDetailProps) {
-  const detailQuery = useDocumentDetailQuery(documentId);
+  const { projectId } = useKnowledgeClient();
+  const detailQuery = useDocumentDetailQuery(projectId, documentId);
 
   return (
     <Drawer

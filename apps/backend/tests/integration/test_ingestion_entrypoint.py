@@ -19,8 +19,13 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 
 from tap.entrypoints import tapper_ingestion_worker
-from tap.entrypoints.tapper_runtime import TapperSettings, create_worker_runtime
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.entrypoints.tapper_runtime import (
+    TapperSettings,
+    create_project_audit,
+    create_worker_runtime,
+)
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application.ingestion import WorkerRun
 from tap.modules.knowledge.ports.documents import ArtifactLocator, ReserveUpload
@@ -33,11 +38,14 @@ DATABASE_URL = os.getenv(
 )
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
+    "knowledge_answer_source",
     "knowledge_answer_snapshot",
     "knowledge_chunk_manifest",
     "knowledge_ingestion_job",
     "knowledge_document_revision",
+    "knowledge_source_legacy_map",
     "knowledge_document",
+    "knowledge_source",
 )
 
 
@@ -78,7 +86,10 @@ def _worker_settings() -> tapper_ingestion_worker.WorkerSettings:
 async def _clean_knowledge(engine) -> None:  # type: ignore[no-untyped-def]
     async with engine.begin() as connection:
         await connection.execute(
-            text("DELETE FROM outbox WHERE aggregate_type = 'knowledge_document'")
+            text(
+                "DELETE FROM outbox WHERE aggregate_type IN "
+                "('knowledge_document', 'DocumentRevision')"
+            )
         )
         await connection.execute(text("UPDATE knowledge_document SET current_revision_id = NULL"))
         for table in KNOWLEDGE_TABLES:
@@ -601,7 +612,7 @@ def test_main_uses_only_the_fixed_runtime_factory_and_one_settings_snapshot(
     assert seen[0].database_url.endswith("127.0.0.1:13306/tap?charset=utf8mb4")
 
 
-def test_worker_entrypoint_parses_codex_selection_without_discovery(
+def test_worker_entrypoint_rejects_codex_selection_without_discovery(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
     seen: list[TapperSettings] = []
@@ -618,12 +629,12 @@ def test_worker_entrypoint_parses_codex_selection_without_discovery(
     monkeypatch.setattr(tapper_ingestion_worker, "run", fixed_run)
     monkeypatch.setattr(tapper_ingestion_worker.asyncio, "run", runner.run)
     try:
-        tapper_ingestion_worker.main(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
+        with pytest.raises(ValueError, match="TAPPER_ANSWER_BACKEND=codex is unavailable"):
+            tapper_ingestion_worker.main(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
     finally:
         runner.close()
 
-    assert len(seen) == 1
-    assert seen[0].answer_backend == "codex"
+    assert seen == []
 
 
 def test_worker_main_suppresses_worker_thread_rpc_details_for_the_full_process_lifetime(
@@ -753,6 +764,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
         )
         stream = f"tap:test:tapper-wakeup:{uuid4().hex}"
         consumer = RedisWakeupConsumer(
+            scope=VALIDATION_SCOPE,
             redis=redis,
             stream_name=stream,
             group_name="tapper-ingestion",
@@ -760,7 +772,9 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
             aggregate_type="knowledge_document",
         )
         try:
-            repository = MysqlDocumentRepository(sessions)
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
             reservation = await repository.reserve_upload(
                 ReserveUpload(
                     filename="redis-order.md",
@@ -783,6 +797,8 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
                         {
                             "aggregateId": "doc-1",
                             "aggregateType": "knowledge_document",
+                            "enterpriseId": "local",
+                            "projectId": "tapper-demo",
                         }
                     )
                 },
@@ -810,6 +826,7 @@ def test_real_loop_claims_mysql_before_redis_ack_and_survives_stream_reset() -> 
 
             await redis.delete(stream)
             reset_consumer = RedisWakeupConsumer(
+                scope=VALIDATION_SCOPE,
                 redis=redis,
                 stream_name=stream,
                 group_name="tapper-ingestion",

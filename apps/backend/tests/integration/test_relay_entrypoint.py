@@ -71,15 +71,14 @@ def test_relay_settings_derive_provider_and_identity_values_from_tapper_snapshot
     assert "16379" not in repr(settings)
 
 
-def test_relay_parses_codex_selection_without_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_relay_rejects_codex_selection_without_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     def forbidden_discovery(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("relay performed Codex discovery")
 
     monkeypatch.setattr(shutil, "which", forbidden_discovery)
 
-    settings = relay_reconciler.load_settings(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
-
-    assert settings.worker_id == "relay-e2e-worker"
+    with pytest.raises(ValueError, match="TAPPER_ANSWER_BACKEND=codex is unavailable"):
+        relay_reconciler.load_settings(_tapper_environment(TAPPER_ANSWER_BACKEND="codex"))
 
 
 def test_relay_invalid_provider_settings_fail_before_any_constructor(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -174,7 +173,7 @@ async def test_relay_partial_construction_closes_every_prior_owner(
         monkeypatch.setattr(
             relay_reconciler,
             "_build_relay",
-            lambda *_args: (_ for _ in ()).throw(primary),
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(primary),
             raising=False,
         )
 
@@ -216,7 +215,7 @@ async def test_relay_cancellation_and_close_failures_settle_all_without_masking(
     monkeypatch.setattr(
         relay_reconciler,
         "_build_relay",
-        lambda *_args: Relay(),
+        lambda *_args, **_kwargs: Relay(),
         raising=False,
     )
 
@@ -252,7 +251,7 @@ async def test_relay_signal_install_failure_closes_complete_runtime(
         lambda _settings: (Engine(), object()),
     )
     monkeypatch.setattr(relay_reconciler, "create_redis_client", lambda _url: Redis())
-    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args: object())
+    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args, **_kwargs: object())
 
     def fail_install(_stop: asyncio.Event):
         raise primary
@@ -292,7 +291,7 @@ async def test_relay_remove_failure_still_closes_every_runtime_owner(
         lambda _settings: (Engine(), object()),
     )
     monkeypatch.setattr(relay_reconciler, "create_redis_client", lambda _url: Redis())
-    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args: Relay())
+    monkeypatch.setattr(relay_reconciler, "_build_relay", lambda *_args, **_kwargs: Relay())
 
     def install(_stop: asyncio.Event):
         def remove() -> None:
@@ -403,7 +402,7 @@ async def test_relay_signal_stop_removes_handlers_and_closes_reverse(
     monkeypatch.setattr(
         relay_reconciler,
         "_build_relay",
-        lambda *_args: Relay(),
+        lambda *_args, **_kwargs: Relay(),
         raising=False,
     )
 

@@ -1,18 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-unset tapper_dev_caller_codex_home_set tapper_dev_caller_codex_home_value
-tapper_dev_caller_codex_home_set=0
-tapper_dev_caller_codex_home_value=""
-if [ "${CODEX_HOME+x}" = x ]; then
-  tapper_dev_caller_codex_home_set=1
-  tapper_dev_caller_codex_home_value="$CODEX_HOME"
-fi
 unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
-readonly tapper_dev_caller_codex_home_set tapper_dev_caller_codex_home_value
 
 tapper_dev_script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 tapper_dev_repo_root="$(CDPATH= cd -- "$tapper_dev_script_dir/.." && pwd)"
@@ -47,21 +39,14 @@ export TAPPER_API_PORT="${TAPPER_API_PORT:-8000}"
 export TAPPER_WEB_HOST="${TAPPER_WEB_HOST:-127.0.0.1}"
 export TAPPER_WEB_PORT="${TAPPER_WEB_PORT:-5173}"
 
-unset tapper_dev_codex_home_set tapper_dev_codex_home_value
-tapper_dev_codex_home_set=0
-tapper_dev_codex_home_value=""
-if [ "${CODEX_HOME+x}" = x ]; then
-  tapper_dev_codex_home_set=1
-  tapper_dev_codex_home_value="$CODEX_HOME"
-elif [ "$tapper_dev_caller_codex_home_set" -eq 1 ]; then
-  tapper_dev_codex_home_set=1
-  tapper_dev_codex_home_value="$tapper_dev_caller_codex_home_value"
-fi
 unset CODEX_HOME CODEX_API_KEY CODEX_BASE_URL CODEX_API_BASE
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
 unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
-readonly tapper_dev_codex_home_set tapper_dev_codex_home_value
+if [ "${TAPPER_ANSWER_BACKEND:-litellm}" != litellm ]; then
+  echo "Tapper V1 requires the governed model gateway." >&2
+  exit 2
+fi
 
 cd "$tapper_dev_repo_root"
 
@@ -70,6 +55,15 @@ if ! uv run --project apps/backend python -c \
   >/dev/null 2>&1; then
   echo "Tapper configuration is invalid; check .env.example." >&2
   exit 2
+fi
+
+if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then
+  TAPPER_OBJECT_STORE_IMAGE="$(bash "$tapper_dev_script_dir/build-tapper-object-store.sh" verify)"
+  export TAPPER_OBJECT_STORE_IMAGE
+  tapper_dev_object_container="$(docker compose -f "$tapper_dev_repo_root/compose.yaml" \
+    -p "$tapper_dev_requested_project" --profile tapper-objects ps -q tap-minio)"
+  bash "$tapper_dev_script_dir/build-tapper-object-store.sh" \
+    verify-container "$tapper_dev_object_container" >/dev/null
 fi
 
 tapper_dev_web_root="$tapper_dev_repo_root/apps/web"
@@ -83,9 +77,14 @@ if [ ! -x "$tapper_dev_vite_bin" ] || \
   exit 2
 fi
 
+tapper_dev_parser_pid=""
+tapper_dev_parser_state=""
 tapper_dev_api_pid=""
 tapper_dev_relay_pid=""
 tapper_dev_worker_pid=""
+tapper_dev_graph_pid=""
+tapper_dev_test_design_pid=""
+tapper_dev_generation_pid=""
 tapper_dev_web_pid=""
 tapper_dev_ready_file=""
 tapper_dev_cleanup_started=0
@@ -114,7 +113,8 @@ cleanup() {
     tapper_dev_ready_file=""
   fi
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_worker_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     terminate_pid "$child_pid" || cleanup_failed=1
   done
@@ -122,7 +122,8 @@ cleanup() {
   deadline=$(( SECONDS + tapper_dev_shutdown_grace_seconds ))
   while :; do
     live=0
-    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_worker_pid" \
+    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+      "$tapper_dev_worker_pid" \
       "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
       if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
         live=1
@@ -133,18 +134,41 @@ cleanup() {
     sleep 0.1 || cleanup_failed=1
   done
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_worker_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
       kill -KILL "$child_pid" 2>/dev/null || cleanup_failed=1
     fi
   done
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_worker_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ]; then
       wait "$child_pid" 2>/dev/null || true
     fi
   done
+
+  if [ -n "$tapper_dev_parser_pid" ]; then
+    terminate_pid "$tapper_dev_parser_pid" || cleanup_failed=1
+    parser_deadline=$(( SECONDS + 25 ))
+    while kill -0 "$tapper_dev_parser_pid" 2>/dev/null && [ "$SECONDS" -lt "$parser_deadline" ]; do
+      sleep 0.1
+    done
+    if kill -0 "$tapper_dev_parser_pid" 2>/dev/null; then
+      kill -KILL "$tapper_dev_parser_pid" 2>/dev/null || true
+      cleanup_failed=1
+    fi
+    wait "$tapper_dev_parser_pid" 2>/dev/null || cleanup_failed=1
+  fi
+  if [ -n "$tapper_dev_parser_state" ]; then
+    # A dead child or absent unresolved marker never proves remote cleanup.
+    # Reconcile the persisted exact association in a new locked process.
+    env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+      "$tapper_dev_repo_root/.venv/bin/python" -m tap.entrypoints.tapper_parser_worker \
+      --state-dir "$tapper_dev_parser_state" --project "$tapper_dev_requested_project" \
+      --cleanup-only || cleanup_failed=1
+  fi
 
   if [ "$cleanup_failed" -ne 0 ]; then
     echo "Tapper application cleanup failed." >&2
@@ -157,23 +181,53 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-(
-  if [ "$tapper_dev_codex_home_set" -eq 1 ]; then
-    export CODEX_HOME="$tapper_dev_codex_home_value"
+tapper_dev_parser_state="$tapper_dev_repo_root/.tapper/parser-runtime/$tapper_dev_requested_project"
+TAPPER_PARSER_SOCKET="$(exec env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+  "$tapper_dev_repo_root/.venv/bin/python" -m tap.entrypoints.tapper_parser_worker \
+  --state-dir "$tapper_dev_parser_state" --project "$tapper_dev_requested_project" --socket-path)"
+export TAPPER_PARSER_SOCKET
+parser_old_ready="$(cat "$tapper_dev_parser_state/ready-pid" 2>/dev/null || true)"
+(exec env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+  "$tapper_dev_repo_root/.venv/bin/python" -m tap.entrypoints.tapper_parser_worker \
+  --state-dir "$tapper_dev_parser_state" --project "$tapper_dev_requested_project") &
+tapper_dev_parser_pid=$!
+if [ "$parser_old_ready" = "$tapper_dev_parser_pid" ]; then
+  echo "Parser readiness identity was reused." >&2
+  exit 1
+fi
+parser_ready_deadline=$(( SECONDS + 60 ))
+while [ ! -S "$TAPPER_PARSER_SOCKET" ] || \
+  [ "$(cat "$tapper_dev_parser_state/ready-pid" 2>/dev/null || true)" != "$tapper_dev_parser_pid" ]; do
+  if ! kill -0 "$tapper_dev_parser_pid" 2>/dev/null || [ "$SECONDS" -ge "$parser_ready_deadline" ]; then
+    echo "Parser did not pass owned startup execution." >&2
+    exit 1
   fi
-  exec uv run --project apps/backend python -m tap.entrypoints.tapper_api
-) &
+  sleep 0.1
+done
+
+(exec uv run --project apps/backend python -m tap.entrypoints.tapper_api) &
 tapper_dev_api_pid=$!
 (exec uv run --project apps/backend python -m tap.entrypoints.relay_reconciler) &
 tapper_dev_relay_pid=$!
 (exec uv run --project apps/backend python -m tap.entrypoints.tapper_ingestion_worker) &
 tapper_dev_worker_pid=$!
+(exec uv run --project apps/backend python -m tap.entrypoints.tapper_graph_worker) &
+tapper_dev_graph_pid=$!
+(exec uv run --project apps/backend python -m tap.entrypoints.tapper_test_design_worker) &
+tapper_dev_test_design_pid=$!
+(exec uv run --project apps/backend python -m tap.entrypoints.tapper_generation_worker) &
+tapper_dev_generation_pid=$!
 (exec "$tapper_dev_vite_bin" "$tapper_dev_web_root" \
   --config "$tapper_dev_vite_config" \
   --host "$TAPPER_WEB_HOST" --port "$TAPPER_WEB_PORT" --strictPort) &
 tapper_dev_web_pid=$!
 
 child_exit_status() {
+  if [ -n "$tapper_dev_parser_pid" ] && ! kill -0 "$tapper_dev_parser_pid" 2>/dev/null; then
+    if wait "$tapper_dev_parser_pid"; then status=1; else status=$?; fi
+    tapper_dev_parser_pid=""
+    return "$status"
+  fi
   if [ -n "$tapper_dev_api_pid" ] && ! kill -0 "$tapper_dev_api_pid" 2>/dev/null; then
     if wait "$tapper_dev_api_pid"; then status=1; else status=$?; fi
     tapper_dev_api_pid=""
@@ -191,6 +245,27 @@ child_exit_status() {
     ! kill -0 "$tapper_dev_worker_pid" 2>/dev/null; then
     if wait "$tapper_dev_worker_pid"; then status=1; else status=$?; fi
     tapper_dev_worker_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
+  if [ -n "$tapper_dev_graph_pid" ] && \
+    ! kill -0 "$tapper_dev_graph_pid" 2>/dev/null; then
+    if wait "$tapper_dev_graph_pid"; then status=1; else status=$?; fi
+    tapper_dev_graph_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
+  if [ -n "$tapper_dev_generation_pid" ] && \
+    ! kill -0 "$tapper_dev_generation_pid" 2>/dev/null; then
+    if wait "$tapper_dev_generation_pid"; then status=1; else status=$?; fi
+    tapper_dev_generation_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
+  if [ -n "$tapper_dev_test_design_pid" ] && \
+    ! kill -0 "$tapper_dev_test_design_pid" 2>/dev/null; then
+    if wait "$tapper_dev_test_design_pid"; then status=1; else status=$?; fi
+    tapper_dev_test_design_pid=""
     [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
     return "$status"
   fi

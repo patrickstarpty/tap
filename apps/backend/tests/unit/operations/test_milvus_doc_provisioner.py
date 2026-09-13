@@ -28,15 +28,38 @@ class IndexParams:
         self.definition = dict(kwargs)
 
 
+@pytest.mark.asyncio
+async def test_v2_index_inventory_is_explicit_and_rejects_v1_or_extra_indexes():
+    client = PartialIndexClient()
+    client.collection = "kb_doc_v2_tapper_demo"
+    client.failed = True
+    schema = build_doc_collection_schema(
+        DocCollectionMetadata(
+            "doc-schema-v2",
+            doc_schema_sha256("doc-schema-v2"),
+            "tapper-demo-v2",
+            "tapper-embedding",
+            1536,
+        )
+    )
+    provisioner = PyMilvusDocProvisioner(client, sdk(), database_name="default")
+    await provisioner.create_indexes(client.collection, schema)
+    await provisioner.validate_collection_indexes(client.collection, schema)
+    client.indexes.add("tenant_id")
+    with pytest.raises(ValueError):
+        await provisioner.validate_collection_indexes(client.collection, schema)
+
+
 class PartialIndexClient:
     def __init__(self) -> None:
         self.indexes: set[str] = set()
         self.failed = False
         self.create_attempts: list[str] = []
         self.definitions: dict[str, dict[str, object]] = {}
+        self.collection = "kb_doc_v1_tapper_demo"
 
     def list_indexes(self, collection_name: str, **kwargs: object) -> list[str]:
-        assert collection_name == "kb_doc_v1_tapper_demo"
+        assert collection_name == self.collection
         return sorted(self.indexes)
 
     def prepare_index_params(self) -> IndexParams:
@@ -48,7 +71,7 @@ class PartialIndexClient:
         index_params: IndexParams,
         **kwargs: object,
     ) -> None:
-        assert collection_name == "kb_doc_v1_tapper_demo"
+        assert collection_name == self.collection
         assert index_params.index_name is not None
         self.create_attempts.append(index_params.index_name)
         if index_params.index_name == "bm25_sparse" and not self.failed:
@@ -69,10 +92,10 @@ class PartialIndexClient:
         return self.definitions[index_name]
 
     def load_collection(self, collection_name: str, **kwargs: object) -> None:
-        assert collection_name == "kb_doc_v1_tapper_demo"
+        assert collection_name == self.collection
 
     def get_load_state(self, collection_name: str, **kwargs: object) -> dict[str, object]:
-        assert collection_name == "kb_doc_v1_tapper_demo"
+        assert collection_name == self.collection
         return {"state": "Loaded"}
 
 
@@ -261,6 +284,32 @@ async def test_reader_rejects_alias_metadata_not_bound_to_exact_request_and_data
 
     with pytest.raises(RuntimeError, match="alias metadata"):
         await reader.describe_alias("kb_doc_tapper_demo_active")
+
+
+@pytest.mark.asyncio
+async def test_alias_observation_requires_explicit_closed_profiles() -> None:
+    client = ExactCollectionClient()
+    client.aliases["kb_doc_tapper_demo_active"] = "kb_doc_v2_tapper_demo_123456abcdef"
+    legacy = PyMilvusDocReader(client, database_name="default")  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="alias metadata"):
+        await legacy.describe_alias("kb_doc_tapper_demo_active")
+    migration = PyMilvusDocReader(  # type: ignore[arg-type]
+        client,
+        database_name="default",
+        allowed_schema_versions=("doc-schema-v1", "doc-schema-v2"),
+    )
+    assert (
+        await migration.describe_alias("kb_doc_tapper_demo_active")
+        == client.aliases["kb_doc_tapper_demo_active"]
+    )
+    for invalid in ("kb_doc_v3_tapper_demo", "kb_doc_v2_other", "kb_doc_v2_tapper_demo_extra"):
+        client.aliases["kb_doc_tapper_demo_active"] = invalid
+        with pytest.raises(RuntimeError, match="alias metadata"):
+            await migration.describe_alias("kb_doc_tapper_demo_active")
+    with pytest.raises(ValueError, match="profiles"):
+        PyMilvusDocReader(
+            client, database_name="default", allowed_schema_versions=("doc-schema-v3",)
+        )  # type: ignore[arg-type]
 
 
 def _grant_record(

@@ -9,6 +9,13 @@ import re
 from collections.abc import Mapping
 
 from tap.modules.knowledge.adapters.milvus.targets import BoundMilvusTarget
+from tap.modules.knowledge.domain.documents import (
+    DocumentId,
+    RevisionId,
+    chunk_id_for,
+    logical_chunk_id_for,
+    logical_chunk_projection_id,
+)
 from tap.modules.knowledge.domain.models import (
     ContentRole,
     DocumentAnchor,
@@ -17,8 +24,9 @@ from tap.modules.knowledge.domain.models import (
     SourceFamily,
     SourceRevisionRef,
 )
+from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import SearchUnavailable
-from tap.modules.knowledge.ports.models import SearchHit
+from tap.modules.knowledge.ports.models import SearchExecution, SearchHit
 
 _CHUNK_ID = re.compile(r"h_[0-9a-f]{64}\Z")
 _ROW_FIELDS = frozenset(
@@ -56,9 +64,16 @@ def map_milvus_hit(
     row: Mapping[str, object],
     bound: BoundMilvusTarget,
     local_rank: int,
+    *,
+    owners: tuple[ReadyDocumentRevision, ...] | None = None,
+    execution: SearchExecution | None = None,
 ) -> SearchHit:
     """Fail closed unless every row value matches the bound doc target."""
     try:
+        if bound.configured.schema_version == "doc-schema-v2" and owners is None:
+            raise ValueError("canonical schema requires trusted SQL ownership")
+        if owners is not None:
+            row = _owned_row(row, bound, owners, execution)
         if not isinstance(row, Mapping) or set(row) != _ROW_FIELDS:
             raise ValueError("row fields are not closed")
         if not isinstance(bound, BoundMilvusTarget):
@@ -252,3 +267,82 @@ def _optional_int(value: Mapping[str, object], name: str, *, minimum: int) -> in
 
 def _reject_json_constant(value: str) -> object:
     raise ValueError(f"unsupported JSON constant: {value}")
+
+
+def _owned_row(
+    row: Mapping[str, object],
+    bound: BoundMilvusTarget,
+    owners: tuple[ReadyDocumentRevision, ...],
+    execution: SearchExecution | None,
+) -> Mapping[str, object]:
+    if execution is None or not owners:
+        raise ValueError("owned projection requires frozen authorization")
+    canonical = bound.configured.schema_version == "doc-schema-v2"
+    scope_field = "enterprise_id" if canonical else "tenant_id"
+    extra = {
+        scope_field,
+        "project_id",
+        "allowed_group_ids",
+        "classification_rank",
+        "environment",
+        "deleted",
+    }
+    if canonical:
+        extra.add("document_id")
+    if set(row) != _ROW_FIELDS | extra:
+        raise ValueError("owned row fields are not closed")
+    policy = execution.policy
+    groups = row["allowed_group_ids"]
+    ranks = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
+    if (
+        row[scope_field] != policy.tenant_id
+        or row["project_id"] != policy.project_id
+        or row["deleted"] is not False
+        or not isinstance(groups, list)
+        or not groups
+        or len(groups) > 128
+        or any(not isinstance(group, str) for group in groups)
+        or not set(groups) & policy.actor.allowed_group_ids
+        or type(row["classification_rank"]) is not int
+        or row["classification_rank"]
+        not in {ranks[item.value] for item in policy.allowed_classifications}
+        or row["environment"] not in {"global", execution.plan.effective_environment}
+    ):
+        raise ValueError("owned row authorization mismatch")
+    matched = tuple(
+        owner
+        for owner in owners
+        if owner.revision_id == row["source_revision"]
+        and owner.source_content_hash == row["source_content_hash"]
+        and (
+            owner.source_id == row["source_id"] and owner.document_id == row["document_id"]
+            if canonical
+            else owner.document_id == row["source_id"]
+        )
+    )
+    if len(matched) != 1 or matched[0].source_id is None:
+        raise ValueError("owned row does not match unique frozen SQL facts")
+    owner = matched[0]
+    if not any(
+        resource.source_id == owner.source_id
+        and resource.revision == owner.revision_id
+        and resource.source_content_hash == owner.source_content_hash
+        for resource in execution.plan.resources
+    ):
+        raise ValueError("owned row is outside selected authority")
+    anchor = row["anchor_json"]
+    if not isinstance(anchor, str):
+        raise ValueError("owned row anchor is malformed")
+    parsed = json.loads(anchor)
+    if json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != anchor:
+        raise ValueError("owned row anchor is not canonical")
+    if row["chunk_id"] != str(
+        chunk_id_for(RevisionId(owner.revision_id), anchor, str(row["chunk_content_hash"]))
+    ) or row["logical_chunk_id"] != logical_chunk_projection_id(
+        logical_chunk_id_for(DocumentId(owner.document_id), anchor)
+    ):
+        raise ValueError("owned row Document chunk identity mismatch")
+    return {
+        **{key: value for key, value in row.items() if key not in extra},
+        "source_id": owner.source_id,
+    }

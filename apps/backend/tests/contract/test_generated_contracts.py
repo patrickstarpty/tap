@@ -70,9 +70,20 @@ def test_exporter_generates_byte_identical_openapi_with_stable_turn_operation_id
         == "chat_create_turn"
     )
     paths = json.loads(first_openapi)["paths"]
-    assert paths["/v1/knowledge/documents"]["post"]["operationId"] == "knowledge_upload_document"
-    assert paths["/v1/knowledge/answers"]["post"]["operationId"] == "knowledge_create_answer"
-    assert paths["/v1/citations/{citation_id}"]["get"]["operationId"] == "citation_get_preview"
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/documents"]["post"]["operationId"]
+        == "knowledge_upload_document"
+    )
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/answers"]["post"]["operationId"]
+        == "knowledge_create_answer"
+    )
+    assert (
+        paths["/api/v1/projects/{project_id}/knowledge/citations/{citation_id}"]["get"][
+            "operationId"
+        ]
+        == "citation_get_preview"
+    )
 
 
 def test_exporter_generates_sse_envelope_with_required_recovery_fields(tmp_path: Path) -> None:
@@ -162,9 +173,113 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "rerank.completed",
         "answer.delta",
         "citation.resolved",
+        "conversation.turn.requested",
+        "conversation.turn.completed",
         "turn.completed",
         "turn.abstained",
         "turn.degraded",
         "turn.canceled",
         "turn.failed",
     }
+    answer_claim = event_schema["$defs"]["AnswerClaim"]
+    assert set(answer_claim["required"]) == {
+        "claimId",
+        "text",
+        "answerStart",
+        "answerEnd",
+        "citationIds",
+    }
+
+
+def test_exporter_emits_private_events_and_problem_registry_without_public_leak(
+    tmp_path: Path,
+) -> None:
+    export_contracts(tmp_path)
+    internal = json.loads((tmp_path / "events/project-event.schema.json").read_bytes())
+    problems = json.loads((tmp_path / "problem-types.json").read_bytes())
+    types = {variant["properties"]["event_type"]["const"] for variant in internal["oneOf"]}
+    assert len(types) == 23
+    assert "conversation.turn.requested" in types
+    assert any(
+        problem["type"] == "https://tap.example/problems/scope-mismatch"
+        for problem in problems["problems"]
+    )
+    for path in ("openapi/api.json", "events/chat-stream.schema.json"):
+        content = (tmp_path / path).read_text()
+        assert "ProjectEventEnvelope" not in content
+        assert "inputSnapshotDigest" in content
+        assert "extractionProfileDigest" not in content
+
+
+def test_check_detects_extra_owned_artifacts_and_preserves_unowned_files(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    unowned = tmp_path / "events/notes.md"
+    unowned.write_text("keep me")
+    extra = tmp_path / "events/obsolete.schema.json"
+    extra.write_text("{}")
+    result = export_contracts(tmp_path, check=True, require_success=False)
+    assert result.returncode == 1
+    assert "events/obsolete.schema.json" in result.stderr
+    export_contracts(tmp_path)
+    assert extra.exists()  # Never silently delete an unexpected artifact.
+    assert unowned.read_text() == "keep me"
+
+
+def test_exported_problem_component_matches_runtime_and_all_refs_resolve(tmp_path: Path) -> None:
+    from tap.interfaces.http.app import create_app
+
+    export_contracts(tmp_path)
+    schema = json.loads((tmp_path / "openapi/api.json").read_bytes())
+    runtime = create_app().openapi()
+    assert (
+        schema["components"]["schemas"]["ProblemDetails"]
+        == runtime["components"]["schemas"]["ProblemDetails"]
+    )
+
+    def check_refs(value: object) -> None:
+        if isinstance(value, dict):
+            if "$ref" in value:
+                reference = value["$ref"]
+                assert reference.startswith("#/components/schemas/")
+                assert (
+                    reference.removeprefix("#/components/schemas/")
+                    in schema["components"]["schemas"]
+                )
+            for child in value.values():
+                check_refs(child)
+        elif isinstance(value, list):
+            for child in value:
+                check_refs(child)
+
+    check_refs(schema)
+    assert "ProjectEventEnvelope" not in schema["components"]["schemas"]
+
+
+def test_catalog_generated_validation_response_is_problem_details(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    schema = json.loads((tmp_path / "openapi/api.json").read_bytes())
+    response = schema["paths"]["/api/v1/projects/{project_id}/ai/models"]["get"]["responses"]["422"]
+    assert response["content"] == {
+        "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}
+    }
+    typescript = (REPOSITORY_ROOT / "apps/web/src/shared/api/generated/schema.ts").read_text()
+    operation = typescript.split("    ai_list_models: {", 1)[1].split("\n    };", 1)[0]
+    validation = operation.split("422: {", 1)[1].split("\n            };", 1)[0]
+    assert '"application/problem+json": components["schemas"]["ProblemDetails"]' in validation
+    assert "HTTPValidationError" not in validation
+
+
+def test_generated_conversation_validation_responses_are_problem_details(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    generated = json.loads((REPOSITORY_ROOT / "contracts/openapi/api.json").read_bytes())
+    for path, item in generated["paths"].items():
+        if "/conversations" not in path:
+            continue
+        for operation in item.values():
+            if not isinstance(operation, dict) or "operationId" not in operation:
+                continue
+            assert operation["responses"]["422"]["content"] == {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/ProblemDetails"}
+                }
+            }

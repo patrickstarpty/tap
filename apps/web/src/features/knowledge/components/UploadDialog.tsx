@@ -1,3 +1,4 @@
+import { useKnowledgeClient } from "../api/queries";
 import { InboxOutlined } from "@ant-design/icons";
 import { Alert, Button, Modal, Progress, Space, Typography } from "antd";
 import {
@@ -33,13 +34,14 @@ interface UploadDialogProps {
 }
 
 export function UploadDialog({ open, onClose, onAccepted }: UploadDialogProps) {
+  const { projectId } = useKnowledgeClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
-  const uploadMutation = useUploadDocumentMutation();
+  const uploadMutation = useUploadDocumentMutation(projectId);
   const uploadPending = uploadMutation.isPending;
 
   useEffect(

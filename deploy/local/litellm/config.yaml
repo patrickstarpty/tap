@@ -4,11 +4,15 @@ model_list:
       model: os.environ/LITELLM_MODEL
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
+    model_info:
+      id: os.environ/LITELLM_MODEL
   - model_name: tapper-embedding
     litellm_params:
       model: os.environ/LITELLM_TAPPER_EMBEDDING_MODEL
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
+    model_info:
+      id: os.environ/LITELLM_TAPPER_EMBEDDING_MODEL
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 

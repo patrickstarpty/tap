@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from tap.modules.access.application.authorize import build_retrieval_policy_context
+from tap.modules.access.application.policy import require_authorized
+from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
+from tap.modules.access.application.scope import RequestFacts
+from tap.modules.access.domain.authorization import ResourceRef
 from tap.modules.access.domain.policy import (
     AuthorizationDenied,
     Classification,
@@ -37,12 +41,16 @@ DEMO_SUBJECT = VerifiedSubjectFacts(
 
 
 class ReadyRevisionRepository(Protocol):
-    async def load_ready_revisions(
-        self, document_ids: tuple[str, ...]
+    async def load_current_source_revisions(
+        self, selected: tuple[tuple[str, str, str], ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...
 
 
-def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectPolicy:
+def project_policy_for(
+    revisions: tuple[ReadyDocumentRevision, ...], *, corpus_version: str = DEMO_CORPUS_VERSION
+) -> ProjectPolicy:
+    if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
+        raise ValueError("unsupported projection corpus")
     ordered = tuple(sorted(revisions, key=lambda item: item.document_id))
     if not ordered or len(ordered) > 20:
         raise ValueError("demo policy requires one to twenty ready revisions")
@@ -51,7 +59,7 @@ def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectP
     grants = tuple(
         ResourceGrant(
             family="doc",
-            source_id=item.document_id,
+            source_id=item.source_id or item.document_id,
             revision_kind="blob_version",
             revision=item.revision_id,
             source_content_hash=item.source_content_hash,
@@ -73,7 +81,7 @@ def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectP
     decision_id = _digest(
         {
             "aclDigest": acl_digest,
-            "corpusVersion": DEMO_CORPUS_VERSION,
+            "corpusVersion": corpus_version,
             "policyVersion": DEMO_POLICY_VERSION,
             "projectId": DEMO_PROJECT_ID,
             "schema": "tapper-demo-decision-v1",
@@ -88,7 +96,7 @@ def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectP
         classification_ceiling=Classification.INTERNAL,
         allowed_environments=frozenset({DEMO_ENVIRONMENT}),
         allowed_source_families=frozenset({"doc"}),
-        active_corpus_version=DEMO_CORPUS_VERSION,
+        active_corpus_version=corpus_version,
         acl_digest=acl_digest,
         policy_version=DEMO_POLICY_VERSION,
         decision_id=decision_id,
@@ -98,41 +106,75 @@ def project_policy_for(revisions: tuple[ReadyDocumentRevision, ...]) -> ProjectP
 
 def build_demo_policy_context(
     revisions: tuple[ReadyDocumentRevision, ...],
+    *,
+    corpus_version: str = DEMO_CORPUS_VERSION,
 ) -> RetrievalPolicyContext:
     return build_retrieval_policy_context(
         DEMO_SUBJECT,
-        project_policy_for(revisions),
+        project_policy_for(revisions, corpus_version=corpus_version),
         requested_tenant_id=DEMO_TENANT_ID,
         requested_project_id=DEMO_PROJECT_ID,
     )
 
 
+class DocumentPolicyChanged(AuthorizationDenied):
+    """Previously selected document facts are stale rather than actor-denied."""
+
+
 class DemoCurrentPolicyVerifier:
     """Reload the document ledger before each provider action and fail closed."""
 
-    def __init__(self, repository: ReadyRevisionRepository) -> None:
+    def __init__(
+        self,
+        repository: ReadyRevisionRepository,
+        *,
+        authorization_policy: AuthorizationPolicy,
+        scope_provider: ScopeProvider,
+        corpus_version: str = DEMO_CORPUS_VERSION,
+    ) -> None:
         self._repository = repository
+        self._authorization_policy = authorization_policy
+        self._scope_provider = scope_provider
+        if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
+            raise ValueError("unsupported projection corpus")
+        self._corpus_version = corpus_version
 
     async def verify_current(self, expected: RetrievalPolicyContext) -> RetrievalPolicyContext:
-        if not _is_demo_context(expected):
+        if not _is_demo_context(expected, corpus_version=self._corpus_version):
             raise AuthorizationDenied("expected policy is outside the fixed demo authority")
-        document_ids = tuple(grant.source_id for grant in expected.resource_grants)
+        scope = await self._scope_provider.current(RequestFacts(project_id=expected.project_id))
+        await require_authorized(
+            self._authorization_policy,
+            scope,
+            "knowledge.read",
+            ResourceRef(
+                enterprise_id=expected.tenant_id, project_id=expected.project_id, kind="knowledge"
+            ),
+        )
+        selected = tuple(
+            (grant.source_id, grant.revision, grant.source_content_hash)
+            for grant in expected.resource_grants
+        )
         try:
-            current_rows = await self._repository.load_ready_revisions(document_ids)
+            current_rows = await self._repository.load_current_source_revisions(selected)
         except Exception as error:
             raise PolicyUnavailable("current document policy is unavailable") from error
-        if tuple(sorted(document_ids)) != tuple(sorted(row.document_id for row in current_rows)):
-            raise AuthorizationDenied("selected document is no longer ready and current")
+        if set(selected) != {
+            (row.source_id, row.revision_id, row.source_content_hash) for row in current_rows
+        }:
+            raise DocumentPolicyChanged("selected document is no longer ready and current")
         try:
-            current = build_demo_policy_context(current_rows)
+            current = build_demo_policy_context(current_rows, corpus_version=self._corpus_version)
         except (TypeError, ValueError) as error:
-            raise AuthorizationDenied("current document policy is invalid") from error
+            raise DocumentPolicyChanged("current document policy is invalid") from error
         if current != expected:
-            raise AuthorizationDenied("selected document revision or content hash changed")
+            raise DocumentPolicyChanged("selected document revision or content hash changed")
         return current
 
 
-def _is_demo_context(value: RetrievalPolicyContext) -> bool:
+def _is_demo_context(
+    value: RetrievalPolicyContext, *, corpus_version: str = DEMO_CORPUS_VERSION
+) -> bool:
     return (
         isinstance(value, RetrievalPolicyContext)
         and value.tenant_id == DEMO_TENANT_ID
@@ -141,7 +183,7 @@ def _is_demo_context(value: RetrievalPolicyContext) -> bool:
         and value.actor.allowed_group_ids == frozenset({DEMO_GROUP_ID})
         and value.allowed_environments == frozenset({DEMO_ENVIRONMENT})
         and value.allowed_source_families == frozenset({"doc"})
-        and value.active_corpus_version == DEMO_CORPUS_VERSION
+        and value.active_corpus_version == corpus_version
         and value.policy_version == DEMO_POLICY_VERSION
         and 1 <= len(value.resource_grants) <= 20
         and all(
