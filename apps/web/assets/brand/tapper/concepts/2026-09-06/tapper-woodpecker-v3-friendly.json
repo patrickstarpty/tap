@@ -4,11 +4,7 @@
   "generator": "built-in image_gen",
   "image": "tapper-woodpecker-v3-friendly.png",
   "sourceConcept": "tapper-woodpecker-v2.png",
-  "confirmedKeywords": [
-    "聪明",
-    "敏锐",
-    "好奇"
-  ],
+  "confirmedKeywords": ["聪明", "敏锐", "好奇"],
   "userPreference": "用户友好，希望用户一看就喜欢；避免高高在上、生人勿近的气质。",
   "visualIntent": [
     "缩短颈部，收紧比例",
