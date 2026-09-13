@@ -60,6 +60,21 @@ describe("Tapper floating assistant", () => {
     }
   });
 
+  it("does not expose prototype replies in durable API mode", async () => {
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+      api: fakeKnowledgeClient().withDocuments([]),
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Low Code Automation" }),
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Ask Tapper" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("opens a nonmodal panel, preserves the draft, and restores focus on Escape", async () => {
     const user = userEvent.setup();
     renderPrototype();

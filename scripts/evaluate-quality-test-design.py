@@ -98,6 +98,16 @@ def validate_profile(
             raise ValueError(
                 "real Test Design gate requires one approved named reviewer per case"
             )
+        if real:
+            output_digest = observation.get("outputDigest")
+            if (
+                _DIGEST.fullmatch(str(output_digest)) is None
+                or observation.get("reviewedOutputDigest") != output_digest
+                or not isinstance(observation.get("generatedOutput"), dict)
+            ):
+                raise ValueError(
+                    "real Test Design gate requires generated output bound to its review"
+                )
     if real:
         dataset = _mapping(root.get("dataset"), "dataset")
         bindings = _mapping(root.get("bindings"), "bindings")
@@ -105,9 +115,10 @@ def validate_profile(
             len(cases) < 50
             or not reviewer_names
             or dataset.get("reviewStatus") != "approved"
+            or dataset.get("providerInvocationCount") != len(cases)
         ):
             raise ValueError(
-                "real Test Design gate requires 50 cases and one approved named reviewer"
+                "real Test Design gate requires 50 invoked cases and approved review"
             )
         actual_model = bindings.get("actualModel")
         if (

@@ -9,7 +9,7 @@
 | 目标产品形态 | 单一企业、多 Project、多用户；P0 才实施身份/RBAC/多 Project                                                                  |
 | 应用技术栈   | React + TypeScript；Python 3.13 + FastAPI/ASGI；MySQL、Redis、MinIO、Milvus、LiteLLM                                         |
 | 部署基线     | 企业内网 Linux + Docker Compose；Jenkins Controller/Agent 外置                                                               |
-| 当前实现事实 | V0/V1/V2/V3 Gate 已通过；V4 Web LCA/Recorder 尚未开始                                                                        |
+| 当前实现事实 | V0/V1 Gate 已通过；V2/V3 主体已实现但 Gate 重新打开；V4 Web LCA/Recorder 暂不放行                                               |
 
 ## 1. 架构目标与边界
 
@@ -37,8 +37,8 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 | 能力            | 当前仓库事实                                                                                             | 下一目标                                                                   |
 | --------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Knowledge       | V1 Gate 已通过：Source、Milvus、ModelGateway、Conversation/SSE、Citation、脱敏/审计与真实 Web 已实现     | 在 V4/V5 中保持同一 Project、快照和 Citation 契约                          |
-| Knowledge Graph | V2 Gate 已通过：MySQL Snapshot/Node/Edge/Evidence、真实抽取 Worker、有界回答增强与 WebGL Explorer 已实现 | 为 V3–VG 持续提供可核验 Graph Context                                      |
-| Test Management | V3 Gate 已通过：Test Plan/Test Case/BDD Draft、Review、人工发布、不可变 Revision 和质量门禁均已完成      | 在 V4 中由权威 Test IR 和 Automation Revision 消费 Published Test Plan     |
+| Knowledge Graph | 主体已实现；多 Document Revision 的 Snapshot 一致性与 E2E 证据待补，V2 Gate 重新打开          | 关闭更正项后再为后续里程碑提供可核验 Graph Context                         |
+| Test Management | 主体已实现；真实质量人审绑定与生成、编辑、冲突恢复 Web 旅程待补，V3 Gate 重新打开            | 关闭更正项后再由 Test IR 和 Automation Revision 消费 Published Test Plan   |
 | LCA             | 浏览器内 fixture、模拟 Run                                                                               | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder   |
 | Execution       | Azure DevOps/Mobile 仅为旧原型探索                                                                       | Jenkins-first Provider、Published Revision、Evidence 和 Test Plan 结果投影 |
 | Identity        | V0 固定 Validation Scope、共同实时 Policy 与 Project 隔离已通过                                          | P0 User/Session/Membership/RBAC                                            |
@@ -46,7 +46,7 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 
 任何页面 fixture、模拟 `Passed`、fake Adapter 或单次本地 smoke 都不能被表述为目标能力已完成。
 
-[Task 5A 隔离解析验收](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)已完成：固定资源预算、流式上传防护、精确 owner/image 冷恢复及原子关联记录；同宿主用户/Docker 管理员仍属可信边界。[V0](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md)、[V1](../reviews/2026-09-09-v1-trusted-knowledge-gate.md)、[V2](../reviews/2026-09-13-v2-knowledge-graph-gate.md)和[V3](../reviews/2026-09-14-v3-ai-test-design-gate.md)总门禁现已通过，下一阶段为 V4。
+[Task 5A 隔离解析验收](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)已完成：固定资源预算、流式上传防护、精确 owner/image 冷恢复及原子关联记录；同宿主用户/Docker 管理员仍属可信边界。[V0](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md)和[V1](../reviews/2026-09-09-v1-trusted-knowledge-gate.md)门禁已通过；V2/V3 的原通过结论已由[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)撤销，V4 暂不放行。
 
 ## 3. 逻辑架构
 

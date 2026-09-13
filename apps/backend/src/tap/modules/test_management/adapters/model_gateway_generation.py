@@ -314,16 +314,30 @@ def _revision(context: TestDesignContext, raw: dict[str, object]) -> TestPlanRev
 def _validate_citations(
     context: TestDesignContext, citations: tuple[TestPlanCitation, ...]
 ) -> None:
-    serialized = json.dumps(context.answer_evidence_snapshot, sort_keys=True, separators=(",", ":"))
+    raw_evidence = context.answer_evidence_snapshot.get(
+        "authorizedEvidence", context.answer_evidence_snapshot.get("citations", [])
+    )
+    if not isinstance(raw_evidence, list):
+        raise ValueError("frozen evidence citations are malformed")
+    authorized = {
+        (
+            item.get("sourceRevisionId"),
+            item.get("documentRevisionId"),
+            item.get("chunkId"),
+            item.get("contentDigest"),
+        )
+        for item in raw_evidence
+        if isinstance(item, dict)
+    }
     for citation in citations:
-        for value in (
+        identity = (
             citation.source_revision_id,
             citation.document_revision_id,
             citation.chunk_id,
             citation.content_digest,
-        ):
-            if value not in serialized:
-                raise ValueError("test design citation is outside frozen evidence")
+        )
+        if identity not in authorized:
+            raise ValueError("test design citation is outside frozen evidence")
 
 
 def _objects(value: dict[str, object], key: str) -> tuple[dict[str, object], ...]:

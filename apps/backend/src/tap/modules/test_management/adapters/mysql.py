@@ -599,6 +599,7 @@ class MysqlTestPlanRepository:
                             chat_turn.c.turn_id,
                             chat_turn.c.state,
                             turn_input_snapshot.c.snapshot_digest.label("input_digest"),
+                            turn_input_snapshot.c.snapshot.label("input_snapshot"),
                             turn_answer_evidence_snapshot.c.snapshot_digest.label("answer_digest"),
                             turn_answer_evidence_snapshot.c.input_snapshot_digest.label(
                                 "answer_input_digest"
@@ -641,6 +642,19 @@ class MysqlTestPlanRepository:
                 or snapshot["answer_input_digest"] != request.input_snapshot_digest
             ):
                 raise ValueError("generation snapshot digest binding is invalid")
+            input_snapshot = snapshot["input_snapshot"]
+            snapshot_skill_ids = (
+                input_snapshot.get("skill_revision_ids")
+                if isinstance(input_snapshot, dict)
+                else None
+            )
+            if not isinstance(input_snapshot, dict) or (
+                input_snapshot.get("model_alias") != request.model_alias
+                or input_snapshot.get("agent_revision_id") != request.agent_revision_id
+                or not isinstance(snapshot_skill_ids, list)
+                or tuple(snapshot_skill_ids) != request.skill_revision_ids
+            ):
+                raise ValueError("generation governance binding is invalid")
             values = scope_values(self.scope)
             await session.execute(
                 insert(test_plan_generation_job).values(
@@ -776,12 +790,14 @@ class MysqlTestPlanRepository:
                 text(
                     "SELECT 1 FROM knowledge_citation_snapshot "
                     "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
-                    "AND revision_id=:revision_id AND chunk_id=:chunk_id "
+                    "AND revision_id=:source_revision_id AND revision_id=:revision_id "
+                    "AND chunk_id=:chunk_id "
                     "AND chunk_content_hash=:content_digest LIMIT 1"
                 ),
                 {
                     "enterprise_id": scope.enterprise_id,
                     "project_id": scope.project_id,
+                    "source_revision_id": citation.source_revision_id,
                     "revision_id": citation.document_revision_id,
                     "chunk_id": citation.chunk_id,
                     "content_digest": citation.content_digest,

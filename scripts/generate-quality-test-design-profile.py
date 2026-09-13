@@ -45,14 +45,14 @@ def build() -> dict[str, object]:
                     "exactly one immutable result",
                 ],
                 "observation": {
-                    "schemaValid": True,
-                    "bddValid": True,
-                    "unsupportedFactCount": 0,
-                    "criticalCovered": 2,
+                    "schemaValid": False,
+                    "bddValid": False,
+                    "unsupportedFactCount": 1,
+                    "criticalCovered": 0,
                     "criticalTotal": 2,
-                    "criticalCorrectionRequired": False,
+                    "criticalCorrectionRequired": True,
                 },
-                "reviewerJudgments": [{"reviewer": "patrick", "approved": True}],
+                "reviewerJudgments": [],
             }
         )
     return {
@@ -60,7 +60,7 @@ def build() -> dict[str, object]:
         "profileId": "QUALITY-TEST-01",
         "dataset": {
             "version": "candidate-v1",
-            "reviewStatus": "approved",
+            "reviewStatus": "pending",
             "labelingMethod": "named-review-with-deterministic-adjudication",
         },
         "bindings": {

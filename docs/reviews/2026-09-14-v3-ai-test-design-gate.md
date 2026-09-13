@@ -1,6 +1,8 @@
 # V3 AI 测试设计门禁评审
 
-评审日期：2026-09-14。结论：**PASS / V4 已放行**。Task 15–17 的不可变 Test Plan Revision、确定性发布门禁、独立 Test Design Worker、grounded Draft、Web Review/发布与 `QUALITY-TEST-01` 均已完成；50 个业务意图由 `patrick` 具名复核，真实百炼运行满足全部硬阈值。
+> **更正（2026-09-14）：** 后续独立审查发现质量 profile、人工复核绑定与 Web 闭环证据不足，本页的 `PASS / V4 已放行` 结论已经由 [V2/V3 门禁更正评审](2026-09-14-v2-v3-gate-correction.md) 撤销。以下内容仅保留为当时记录，不得作为当前完成证据。
+
+评审日期：2026-09-14。原结论（已撤销）：**PASS / V4 已放行**。当时认为 Task 15–17 与 `QUALITY-TEST-01` 已完成；后续审查证明该证据不足。
 
 ## 已验证实现
 
@@ -38,4 +40,4 @@
 | `make test`                       | passed；Backend 3102 passed / 150 environment-skipped；Web 29 files / 366 passed                                |
 | `make check` / `git diff --check` | passed                                                                                                          |
 
-V3 的实现、具名复核、真实质量门禁、完整回归和隔离 E2E 均已通过；V4 Task 18 可开始。该结论不代表 Web Recorder、正式 Playwright Bundle、Jenkins 闭环、产品身份/RBAC 或生产加固已经完成。
+本段原结论已失效；当前状态和重新关闭门禁所需证据以 [V2/V3 门禁更正评审](2026-09-14-v2-v3-gate-correction.md) 为准。

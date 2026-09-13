@@ -1,6 +1,8 @@
 # V2 Grounded Knowledge Graph 门禁评审
 
-评审日期：2026-09-13。结论：**PASS / V3 已放行**。Task 11–13 的版本化 Graph 存储、独立耐久 Graph Worker、Project-scoped API、回答增强和 WebGL 探索器均已实现并通过本地全链路验证；`QUALITY-GRAPH-01` 的 200 条判断已由 `patrick` 独立复核并全部批准，最终真实百炼运行满足全部硬阈值。
+> **更正（2026-09-14）：** 后续独立审查发现多 Document Revision 的 Graph Snapshot 一致性和 E2E 证据不足，本页的 `PASS / V3 已放行` 结论已经由 [V2/V3 门禁更正评审](2026-09-14-v2-v3-gate-correction.md) 撤销。以下内容仅保留为当时记录，不得作为当前完成证据。
+
+评审日期：2026-09-13。原结论（已撤销）：**PASS / V3 已放行**。当时认为 Task 11–13 与 `QUALITY-GRAPH-01` 已完成；后续审查证明多 Revision 场景证据不足。
 
 ## 已验证实现
 

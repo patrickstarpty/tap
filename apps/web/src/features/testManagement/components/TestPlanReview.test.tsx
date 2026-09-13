@@ -89,9 +89,28 @@ describe("TestPlanReview", () => {
             origin: "SOURCE",
           },
         ],
-        assumptions: [],
-        unknowns: [],
-        coverageGaps: [],
+        assumptions: [
+          {
+            factId: "assumption_checkout",
+            graphEdgeId: "edge_payment",
+            text: "The payment provider is available",
+          },
+        ],
+        unknowns: [
+          {
+            factId: "unknown_checkout",
+            graphEdgeId: null,
+            text: "Whether retry is supported",
+          },
+        ],
+        coverageGaps: [
+          {
+            gapId: "gap_checkout",
+            requirementRef: "REQ-PAY-02",
+            reason: "The refund policy is missing",
+            severity: "HIGH",
+          },
+        ],
       },
     } as never);
     render(
@@ -104,6 +123,11 @@ describe("TestPlanReview", () => {
     );
     expect(screen.getByText("Given")).toBeVisible();
     expect(screen.getByText(/1 条来源依据/)).toBeVisible();
+    expect(screen.getByText("Cards are accepted")).toBeVisible();
+    expect(screen.getByText(/source_checkout/)).toBeVisible();
+    expect(screen.getByText("The payment provider is available")).toBeVisible();
+    expect(screen.getByText("Whether retry is supported")).toBeVisible();
+    expect(screen.getByText(/The refund policy is missing/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "批准并发布" }));
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({

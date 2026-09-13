@@ -1,14 +1,17 @@
+import asyncio
 import importlib.util
 import os
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts/evaluate-quality-test-design.py"
 GENERATOR = ROOT / "scripts/generate-quality-test-design-profile.py"
+RUNNER = ROOT / "scripts/run-quality-test-design-candidate.py"
 
 
 def _evaluator():
@@ -27,7 +30,16 @@ def _generator():
     return module
 
 
+def _runner():
+    spec = importlib.util.spec_from_file_location("run_quality_test_design_candidate", RUNNER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _profile() -> dict:
+    output_digest = "sha256:" + "a" * 64
     cases = []
     for index in range(50):
         cases.append(
@@ -42,6 +54,9 @@ def _profile() -> dict:
                     "criticalCovered": 1,
                     "criticalTotal": 1,
                     "criticalCorrectionRequired": False,
+                    "outputDigest": output_digest,
+                    "reviewedOutputDigest": output_digest,
+                    "generatedOutput": {"title": "reviewed output"},
                 },
                 "reviewerJudgments": [
                     {"reviewer": "patrick", "approved": True},
@@ -51,7 +66,11 @@ def _profile() -> dict:
     return {
         "schemaVersion": "quality-test-profile-v1",
         "profileId": "QUALITY-TEST-01",
-        "dataset": {"version": "unit-v1", "reviewStatus": "approved"},
+        "dataset": {
+            "version": "unit-v1",
+            "reviewStatus": "approved",
+            "providerInvocationCount": 50,
+        },
         "bindings": {"actualModel": "provider/model"},
         "cases": cases,
     }
@@ -123,9 +142,22 @@ def test_generated_profile_is_ready_for_one_named_reviewer_gate() -> None:
 
     assert profile["dataset"] == {
         "version": "candidate-v1",
-        "reviewStatus": "approved",
+        "reviewStatus": "pending",
         "labelingMethod": "named-review-with-deterministic-adjudication",
     }
+    assert all(not item["reviewerJudgments"] for item in profile["cases"])
+    assert all(item["observation"]["criticalCorrectionRequired"] for item in profile["cases"])
+
+
+@pytest.mark.parametrize("missing", ["generatedOutput", "reviewedOutputDigest"])
+def test_real_gate_requires_review_bound_generated_output(missing: str) -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["bindings"].update(module.current_bindings())
+    profile["cases"][0]["observation"].pop(missing)
+
+    with pytest.raises(ValueError, match="generated output bound to its review"):
+        module.evaluate(profile, real=True)
 
 
 def test_real_make_target_uses_validated_model_timeout(tmp_path: Path) -> None:
@@ -157,3 +189,57 @@ def test_real_make_target_uses_validated_model_timeout(tmp_path: Path) -> None:
     )
 
     assert log.read_text(encoding="utf-8").splitlines()[0] == "60"
+
+
+def test_real_runner_reinvokes_every_case_and_invalidates_changed_review(monkeypatch) -> None:
+    module = _runner()
+    calls = []
+
+    class Gateway:
+        async def generate_structured(self, request):
+            calls.append(request)
+            return SimpleNamespace(actual_provider="provider", actual_model="model")
+
+    class Models:
+        gateway = Gateway()
+
+        async def aclose(self):
+            return None
+
+    class Revision:
+        content_digest = "sha256:" + "b" * 64
+
+        def canonical_content(self):
+            return {"title": "fresh model output"}
+
+    class Generator:
+        def __init__(self, gateway, *, timeout_seconds):
+            self.gateway = gateway
+
+        async def generate(self, context):
+            await self.gateway.generate_structured(context.request)
+            return Revision()
+
+    profile = _generator().build()
+    profile["cases"] = profile["cases"][:1]
+    profile["cases"][0]["observation"].update(
+        outputDigest="sha256:" + "a" * 64,
+        reviewedOutputDigest="sha256:" + "a" * 64,
+    )
+    profile["cases"][0]["reviewerJudgments"] = [{"reviewer": "patrick", "approved": True}]
+    monkeypatch.setattr(
+        module.TapperSettings,
+        "from_mapping",
+        lambda _mapping: SimpleNamespace(model_timeout_seconds=60, chat_alias="tapper-chat"),
+    )
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, max_retries: Models())
+    monkeypatch.setattr(module, "ModelGatewayTestDesign", Generator)
+    monkeypatch.setattr(module, "validate_draft_structure", lambda _revision: None)
+
+    result = asyncio.run(module.run(profile))
+
+    assert len(calls) == 1
+    assert result["dataset"]["providerInvocationCount"] == 1
+    assert result["dataset"]["reviewStatus"] == "pending"
+    assert result["cases"][0]["reviewerJudgments"] == []
+    assert result["cases"][0]["observation"]["generatedOutput"] == {"title": "fresh model output"}

@@ -2293,7 +2293,7 @@ export function TapProductPrototype({
         ) : null}
       </main>
       <TapperFloatingAssistant
-        visible={!tapperWorkspaceActive}
+        visible={!durable && !tapperWorkspaceActive}
         context={floatingContext}
         conversation={activeConversation}
         draft={messageDraft}

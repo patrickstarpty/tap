@@ -27,8 +27,10 @@ class CapturingGateway:
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
         self.identities: set[tuple[str, str]] = set()
+        self.invocation_count = 0
 
     async def generate_structured(self, request):  # type: ignore[no-untyped-def]
+        self.invocation_count += 1
         result = await self.delegate.generate_structured(request)
         self.identities.add((result.actual_provider, result.actual_model))
         return result
@@ -48,8 +50,10 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
     )
     observations = deepcopy(profile)
     semaphore = asyncio.Semaphore(4)
+    review_invalidated = False
 
     async def evaluate_case(index: int, item: dict[str, Any]) -> None:
+        nonlocal review_invalidated
         source = str(item["source"])
         suffix = f"{index + 1:03d}"
         request = TestPlanGenerationRequest.create(
@@ -89,26 +93,33 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 revision = await generator.generate(context)
             validate_draft_structure(revision)
-            content = json.dumps(
-                revision.canonical_content(), ensure_ascii=False
-            ).lower()
-            requirements = [
-                str(value).lower() for value in item["criticalRequirements"]
-            ]
-            covered = sum(
-                ("approval" in requirement and "approv" in content)
-                or ("immutable" in requirement and "immutable" in content)
-                for requirement in requirements
+            output = revision.canonical_content()
+            output_digest = revision.content_digest
+            review_is_current = (
+                observation.get("reviewedOutputDigest") == output_digest
+                and bool(item.get("reviewerJudgments"))
+                and all(
+                    judgment.get("approved") is True
+                    for judgment in item["reviewerJudgments"]
+                    if isinstance(judgment, dict)
+                )
             )
             observation.update(
                 schemaValid=True,
                 bddValid=True,
-                unsupportedFactCount=0,
-                criticalCovered=covered,
-                criticalTotal=len(requirements),
-                criticalCorrectionRequired=covered < len(requirements),
-                outputDigest=revision.content_digest,
+                criticalTotal=len(item["criticalRequirements"]),
+                outputDigest=output_digest,
+                generatedOutput=output,
             )
+            if not review_is_current:
+                review_invalidated = True
+                observation.update(
+                    unsupportedFactCount=1,
+                    criticalCovered=0,
+                    criticalCorrectionRequired=True,
+                )
+                observation.pop("reviewedOutputDigest", None)
+                item["reviewerJudgments"] = []
             observation.pop("failureType", None)
             observation.pop("failureMessage", None)
         except Exception as error:
@@ -128,9 +139,10 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             *(
                 evaluate_case(index, item)
                 for index, item in enumerate(observations["cases"])
-                if "outputDigest" not in item["observation"]
             )
         )
+        if capture.invocation_count != len(observations["cases"]):
+            raise ValueError("every quality case must invoke the real model")
         if len(capture.identities) > 1:
             raise ValueError("real model identity changed during candidate run")
         if capture.identities:
@@ -138,6 +150,9 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 next(iter(capture.identities))
             )
         observations["dataset"]["modelObservationStatus"] = "captured"
+        observations["dataset"]["providerInvocationCount"] = capture.invocation_count
+        if review_invalidated:
+            observations["dataset"]["reviewStatus"] = "pending"
         return observations
     finally:
         await models.aclose()

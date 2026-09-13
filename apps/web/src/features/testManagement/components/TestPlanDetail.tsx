@@ -39,6 +39,61 @@ export function TestPlanDetail({ plan }: { plan: TestPlanRevision }) {
           · {plan.unknowns.length} 项未知 · {plan.coverageGaps.length}{" "}
           个覆盖缺口
         </p>
+        {plan.citations.length > 0 ? (
+          <section aria-labelledby="test-citations-title">
+            <h4 id="test-citations-title">来源依据</h4>
+            <ul>
+              {plan.citations.map((citation) => (
+                <li key={citation.citationId}>
+                  <p>{citation.claimText}</p>
+                  <small>
+                    {citation.origin} · source {citation.sourceRevisionId} ·
+                    document {citation.documentRevisionId} · chunk{" "}
+                    {citation.chunkId}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {plan.assumptions.length > 0 ? (
+          <section aria-labelledby="test-assumptions-title">
+            <h4 id="test-assumptions-title">假设</h4>
+            <ul>
+              {plan.assumptions.map((assumption) => (
+                <li key={assumption.factId}>
+                  {assumption.text}
+                  {assumption.graphEdgeId ? (
+                    <small> · graph edge {assumption.graphEdgeId}</small>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {plan.unknowns.length > 0 ? (
+          <section aria-labelledby="test-unknowns-title">
+            <h4 id="test-unknowns-title">未知项</h4>
+            <ul>
+              {plan.unknowns.map((unknown) => (
+                <li key={unknown.factId}>{unknown.text}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {plan.coverageGaps.length > 0 ? (
+          <section aria-labelledby="test-coverage-gaps-title">
+            <h4 id="test-coverage-gaps-title">覆盖缺口</h4>
+            <ul>
+              {plan.coverageGaps.map((gap) => (
+                <li key={gap.gapId}>
+                  <strong>{gap.severity}</strong> · {gap.requirementRef}:{" "}
+                  {gap.reason}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </section>
     </article>
   );

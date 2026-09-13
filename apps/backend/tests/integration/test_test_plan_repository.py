@@ -52,7 +52,11 @@ async def _seed_completed_turn(sessions, *, turn_id: str = "turn_checkout") -> N
                 snapshot_id="input_checkout",
                 turn_id=turn_id,
                 snapshot_digest="sha256:" + "1" * 64,
-                snapshot={},
+                snapshot={
+                    "model_alias": "tapper-chat",
+                    "agent_revision_id": "validation_knowledge_agent_v1",
+                    "skill_revision_ids": ["validation_test_design_skill_v1"],
+                },
                 created_at=now,
             )
         )
@@ -138,6 +142,9 @@ async def test_generation_job_binds_exact_completed_turn_snapshots_and_replays(
         {"answer_evidence_snapshot_digest": "sha256:" + "9" * 64},
         {"turn_id": "turn_other"},
         {"conversation_id": "conversation_other"},
+        {"model_alias": "other-model"},
+        {"agent_revision_id": "other-agent"},
+        {"skill_revision_ids": ("other-skill",)},
     ],
 )
 async def test_generation_job_rejects_tampered_or_cross_turn_snapshots(

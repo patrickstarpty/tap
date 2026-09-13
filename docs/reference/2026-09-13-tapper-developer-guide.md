@@ -10,10 +10,10 @@
 | ------ | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | V0     | `gate-passed` | 固定 Validation Scope、Project 授权、Audit/Outbox、MinIO、隔离 Parser 与恢复门禁                                        |
 | V1     | `gate-passed` | Source/Document Revision、Milvus 检索、统一 ModelGateway、Agent/Skill、持久 Conversation、SSE、Citation 与真实 Web 接线 |
-| V2     | `gate-passed` | 版本化 Knowledge Graph、真实抽取 Worker、有界 Graph Context、Evidence API 与 WebGL Explorer                             |
-| V3     | `gate-passed` | Test Plan Draft/Revision、grounded 生成、Review、人工发布和 `QUALITY-TEST-01` 已通过                                    |
+| V2     | `gate-reopened` | 主体已实现；多 Document Revision 的 Graph Snapshot 一致性与 E2E 证据待补                                             |
+| V3     | `gate-reopened` | 主体已实现；真实候选逐例人审绑定及生成、编辑、冲突恢复的完整 Web 旅程待补                                              |
 
-V3 已通过[AI 测试设计门禁](../reviews/2026-09-14-v3-ai-test-design-gate.md)。最新状态以[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-14)和[评审索引](../reviews/index.md)为准，不根据目录名、原型页面或计划复选框推断。
+V2/V3 原 Gate Review 的通过结论已由[门禁更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)撤销，V4 暂不放行。最新状态以[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-14)和[评审索引](../reviews/index.md)为准，不根据目录名、原型页面或计划复选框推断。
 
 ## 2. 建议阅读顺序
 
@@ -21,7 +21,7 @@ V3 已通过[AI 测试设计门禁](../reviews/2026-09-14-v3-ai-test-design-gate
 2. [当前架构](../architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)：模块职责、数据主权和安全不变量。
 3. [核心契约](2026-09-04-tapper-platform-contracts.md)：Project、Conversation、Graph、Test Plan 和错误语义。
 4. [当前实施计划](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md)：当前 Task 的精确文件、RED/GREEN 命令与提交边界。
-5. [V1](../reviews/2026-09-09-v1-trusted-knowledge-gate.md)、[V2](../reviews/2026-09-13-v2-knowledge-graph-gate.md)和[V3](../reviews/2026-09-14-v3-ai-test-design-gate.md) Gate Review：已经通过的实际证据和限制。
+5. [V2/V3 门禁更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)：先确认当前缺口；V2/V3 原 Gate Review 仅用于追溯。V1 及更早门禁仍按各自 Review 判断。
 
 历史 RFC、被替代 ADR 和旧独立 `TapperWorkspace` 只用于追溯，不是当前产品入口。
 
@@ -110,8 +110,11 @@ Backend 依赖方向保持 `domain → application/ports ← adapters/interfaces
 ### 修改 Test Plan 生成
 
 - Generation Job 必须绑定同一 Project/Turn 的 Input 与 Answer/Evidence digest。
+- 请求中的 model alias、Agent Revision 和 Skill Revision 必须与冻结 Input Snapshot 完全一致；浏览器不能在生成阶段替换这些选择。
 - 来源事实、Graph inference、Assumption、Unknown 和 Coverage Gap 必须保持不同语义；INFERRED edge 不能作为来源事实发布。
+- Citation 的 Source Revision、Document Revision、chunk 和 digest 必须作为同一 Evidence 元组匹配，不能从多条 Evidence 拼接字段。
 - Edit 使用版本条件，Publish 必须经过确定性门禁并生成不可变 Revision、Audit 和 Outbox 事件。
+- 当前 Web 只覆盖明细 Review 与 Publish；generation job 轮询/失败/深链接、Edit 和 `revision-conflict` reload 仍是 V3 门禁缺口。用 API 或 fixture 验证这些路径不能算 Web 出口。
 
 修改公共 DTO、事件或错误语义时，同步 Backend models、OpenAPI/SSE/Project event schema、生成的 Web 类型和对应契约测试，然后运行 `make contracts`。
 
@@ -135,7 +138,7 @@ make quality-graph
 make quality-test-design
 ```
 
-`quality-*-real` 会产生真实 Provider 调用，必须使用对应 opt-in、隔离环境和人工复核输入；默认 CI 和普通 `make test` 不得触发。完成声明必须链接实际 Gate Review，不能用 Fake Adapter、页面 fixture、skip 或单次 happy path 代替。
+`quality-*-real` 会产生真实 Provider 调用，必须使用对应 opt-in、隔离环境和人工复核输入；默认 CI 和普通 `make test` 不得触发。Test Design 候选运行后必须逐例检查保存的 `generatedOutput`，由具名 reviewer 写入判断并让 `reviewedOutputDigest` 精确匹配当前 `outputDigest`；生成器提供的 `pending` profile 不是人工复核结果。完成声明必须链接实际 Gate Review，不能用 Fake Adapter、页面 fixture、skip、预填汇总指标或单次 happy path 代替。
 
 ## 8. 常见判断错误
 
@@ -147,4 +150,4 @@ make quality-test-design
 
 ## 9. 当前下一步
 
-V3 已完成。下一步从 V4 Task 18 开始，先实现 authoritative Test IR、Automation Revision 和确定性 Playwright 生成器；继续遵守实施计划的顺序与门禁，不能把现有原型 fixture 当作 V4 实现。
+先关闭 [V2/V3 门禁更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)列出的缺口：明确多 Revision Graph 契约，重新生成并人工复核真实 Test Design 候选，并完成生成、编辑、冲突恢复与深链接的浏览器旅程。只有新的 V2/V3 Gate Review 为 `pass` 后，才能从 V4 Task 18 开始；现有原型 fixture 不能作为 V4 实现。
