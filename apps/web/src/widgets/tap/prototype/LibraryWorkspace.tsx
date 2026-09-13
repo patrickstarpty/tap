@@ -68,11 +68,22 @@ export function LibraryWorkspace({
       ),
     [sources, statusFilter, typeFilter],
   );
+  const visibleSources = useMemo(
+    () =>
+      normalizedQuery.length === 0
+        ? facetSources
+        : facetSources.filter((source) =>
+            [source.name, source.type, source.description].some((value) =>
+              value.toLocaleLowerCase().includes(normalizedQuery),
+            ),
+          ),
+    [facetSources, normalizedQuery],
+  );
   const graphSources = useQueries({
     queries:
       projectId === undefined
         ? []
-        : facetSources
+        : visibleSources
             .filter((source) => source.status === "ready")
             .map((source) => ({
               queryKey: [
@@ -94,17 +105,6 @@ export function LibraryWorkspace({
     (detail.data?.documents.items ?? [])
       .filter((document) => document.status === "ready")
       .map((document) => document.revisionId),
-  );
-  const visibleSources = useMemo(
-    () =>
-      normalizedQuery.length === 0
-        ? facetSources
-        : facetSources.filter((source) =>
-            [source.name, source.type, source.description].some((value) =>
-              value.toLocaleLowerCase().includes(normalizedQuery),
-            ),
-          ),
-    [facetSources, normalizedQuery],
   );
   const filtersActive =
     normalizedQuery.length > 0 ||
@@ -343,7 +343,6 @@ export function LibraryWorkspace({
           ) : (
             <KnowledgeGraphExplorer
               projectId={projectId}
-              query={query}
               sourceRevisionIds={graphRevisionIds}
             />
           )}

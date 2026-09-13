@@ -181,6 +181,14 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "turn.canceled",
         "turn.failed",
     }
+    answer_claim = event_schema["$defs"]["AnswerClaim"]
+    assert set(answer_claim["required"]) == {
+        "claimId",
+        "text",
+        "answerStart",
+        "answerEnd",
+        "citationIds",
+    }
 
 
 def test_exporter_emits_private_events_and_problem_registry_without_public_leak(

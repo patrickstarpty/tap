@@ -1,5 +1,11 @@
 {
-  "journey": ["tests/e2e/tapper.spec.ts", "tests/e2e/knowledge-upload-security.spec.ts", "tests/e2e/knowledge-conversation.spec.ts", "tests/e2e/knowledge-graph.spec.ts", "tests/e2e/tapper-test-plan.spec.ts"],
+  "journey": [
+    "tests/e2e/tapper.spec.ts",
+    "tests/e2e/knowledge-upload-security.spec.ts",
+    "tests/e2e/knowledge-conversation.spec.ts",
+    "tests/e2e/tapper-test-plan.spec.ts",
+    "tests/e2e/knowledge-graph.spec.ts"
+  ],
   "app-restart": ["tests/e2e/persistence.spec.ts"],
   "compose-restart": ["tests/e2e/persistence.spec.ts"]
 }

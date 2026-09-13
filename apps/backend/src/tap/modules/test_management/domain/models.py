@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_IDENTIFIER = re.compile(r"[a-z][a-z0-9_-]{2,127}\Z")
+_IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{2,127}\Z")
 
 
 def _identifier(name: str, value: str) -> None:

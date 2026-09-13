@@ -54,7 +54,6 @@ describe("KnowledgeGraphExplorer", () => {
       <KnowledgeGraphExplorer
         projectId="tapper-demo"
         sourceRevisionIds={["revision-1"]}
-        query=""
       />,
     );
     expect(active).toHaveBeenCalledWith("tapper-demo", ["revision-1"]);
@@ -79,7 +78,6 @@ describe("KnowledgeGraphExplorer", () => {
       <KnowledgeGraphExplorer
         projectId="tapper-demo"
         sourceRevisionIds={["revision-1"]}
-        query=""
       />,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(

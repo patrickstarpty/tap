@@ -5,10 +5,12 @@ let cleanupSourceId: string | null = null;
 
 test.afterEach(async ({ request }) => {
   if (cleanupSourceId === null) return;
-  const runtime = (await (await request.get("/api/v1/runtime-mode")).json()) as {
+  const runtime = (await (
+    await request.get("/api/v1/runtime-mode")
+  ).json()) as {
     projectId: string;
   };
-  await request.delete(
+  const deleted = await request.delete(
     `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/knowledge/sources/${cleanupSourceId}`,
     {
       headers: {
@@ -17,6 +19,18 @@ test.afterEach(async ({ request }) => {
       },
     },
   );
+  expect(deleted.status()).toBe(204);
+  await expect
+    .poll(
+      async () =>
+        (
+          await request.get(
+            `/api/v1/projects/${encodeURIComponent(runtime.projectId)}/knowledge/sources/${cleanupSourceId}`,
+          )
+        ).status(),
+      { timeout: 45_000 },
+    )
+    .toBe(404);
   cleanupSourceId = null;
 });
 
@@ -43,7 +57,7 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       },
     },
   });
-  expect(uploaded.status(), await uploaded.text()).toBe(202);
+  expect(uploaded.status(), `upload: ${await uploaded.text()}`).toBe(202);
   const source = (await uploaded.json()) as { source: { sourceId: string } };
   cleanupSourceId = source.source.sourceId;
   let sourceRevisionId = "";
@@ -83,7 +97,10 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       skillRevisionIds: [skills.items[0]!.revisionId],
     },
   });
-  expect(conversation.status(), await conversation.text()).toBe(202);
+  expect(
+    conversation.status(),
+    `conversation: ${await conversation.text()}`,
+  ).toBe(202);
   const accepted = (await conversation.json()) as {
     conversationId: string;
     turnId: string;
@@ -132,7 +149,9 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       objective: "Verify successful card checkout",
     },
   });
-  expect(generation.status(), await generation.text()).toBe(202);
+  expect(generation.status(), `generation: ${await generation.text()}`).toBe(
+    202,
+  );
   const job = (await generation.json()) as {
     jobId: string;
     testPlanId: string;

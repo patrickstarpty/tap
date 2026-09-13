@@ -12,6 +12,16 @@
     "AnswerClaim": {
       "additionalProperties": false,
       "properties": {
+        "answerEnd": {
+          "minimum": 0,
+          "title": "Answerend",
+          "type": "integer"
+        },
+        "answerStart": {
+          "minimum": 0,
+          "title": "Answerstart",
+          "type": "integer"
+        },
         "citationIds": {
           "items": {
             "type": "string"
@@ -33,6 +43,8 @@
       "required": [
         "claimId",
         "text",
+        "answerStart",
+        "answerEnd",
         "citationIds"
       ],
       "title": "AnswerClaim",

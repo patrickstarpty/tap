@@ -86,7 +86,23 @@ test("ready knowledge is published as a bounded grounded graph", async ({
 
   await page.goto("/");
   await page.getByRole("button", { name: /Library|知识库/u }).click();
+  await page.getByRole("textbox", { name: "Search library" }).fill(filename);
+  await expect(
+    page
+      .getByLabel("All", { exact: true })
+      .getByText(filename, { exact: true }),
+  ).toBeVisible();
+  const activeGraphResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname.endsWith("/knowledge/graph/snapshots"),
+  );
   await page.getByRole("tab", { name: /Graph|图谱/u }).click();
+  const activeGraph = await activeGraphResponse;
+  expect(activeGraph.status(), await activeGraph.text()).toBe(200);
+  expect(
+    ((await activeGraph.json()) as { items: unknown[] }).items.length,
+  ).toBeGreaterThan(0);
   const explorer = page.getByRole("region", {
     name: "Knowledge graph explorer",
   });

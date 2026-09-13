@@ -637,6 +637,10 @@ export interface components {
         };
         /** AnswerClaim */
         AnswerClaim: {
+            /** Answerend */
+            answerEnd: number;
+            /** Answerstart */
+            answerStart: number;
             /** Citationids */
             citationIds: string[];
             /** Claimid */

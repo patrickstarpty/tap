@@ -195,6 +195,7 @@ export function useConversationStream(
   const resume = useRef(0);
   const initialCursorRef = useRef(initialCursor);
   const streamIdentity = useRef<string | null>(null);
+  const streamConversation = useRef<string | null>(null);
   const [error, setError] = useState<ConversationClientError | null>(null);
   const [generation, setGeneration] = useState(0);
   initialCursorRef.current = initialCursor;
@@ -209,8 +210,12 @@ export function useConversationStream(
     const identity = `${conversationId}:${targetTurnId}`;
     if (streamIdentity.current !== identity) {
       streamIdentity.current = identity;
-      resume.current = initialCursorRef.current;
-      setState({ lastSequence: initialCursorRef.current, turns: {} });
+      resume.current =
+        streamConversation.current === conversationId
+          ? Math.max(resume.current, initialCursorRef.current)
+          : initialCursorRef.current;
+      streamConversation.current = conversationId;
+      setState({ lastSequence: resume.current, turns: {} });
     }
     setError(null);
     const controller = new AbortController();

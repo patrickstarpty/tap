@@ -9,15 +9,13 @@ import "./graph.css";
 export function KnowledgeGraphExplorer({
   projectId,
   sourceRevisionIds,
-  query,
 }: {
   projectId: string;
   sourceRevisionIds: string[];
-  query: string;
 }) {
   const active = useActiveGraph(projectId, sourceRevisionIds);
   const snapshotId = active.data?.items[0]?.snapshotId ?? null;
-  const graph = useGraphSearch(projectId, snapshotId, query.trim() || "*");
+  const graph = useGraphSearch(projectId, snapshotId, "*");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const selectedNode = graph.data?.nodes.find(
     (node) => node.nodeId === selectedNodeId,

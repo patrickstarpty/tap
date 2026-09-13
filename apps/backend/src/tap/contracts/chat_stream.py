@@ -119,7 +119,15 @@ class Citation(StreamContractModel):
 class AnswerClaim(StreamContractModel):
     claim_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    answer_start: Annotated[int, Field(ge=0, strict=True)]
+    answer_end: Annotated[int, Field(ge=0, strict=True)]
     citation_ids: list[str]
+
+    @model_validator(mode="after")
+    def ordered_answer_span(self):
+        if self.answer_end < self.answer_start:
+            raise ValueError("answer claim end must not precede start")
+        return self
 
 
 class RetrievalAnswerResponse(StreamContractModel):

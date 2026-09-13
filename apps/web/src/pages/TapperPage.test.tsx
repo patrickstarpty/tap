@@ -82,6 +82,12 @@ describe("Tapper product prototype", () => {
               createdAt: "2026-09-09T00:00:00Z",
               updatedAt: "2026-09-09T00:00:01Z",
             },
+            {
+              conversationId: "conversation-2",
+              title: "Older durable prompt",
+              createdAt: "2026-09-08T00:00:00Z",
+              updatedAt: "2026-09-08T00:00:01Z",
+            },
           ],
           nextCursor: null,
         });
@@ -157,6 +163,11 @@ describe("Tapper product prototype", () => {
       ).getByText("Durable prompt"),
     ).toBeVisible();
     expect(screen.queryByText("Local-only prompt")).not.toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Chat history" }),
+      ).getByRole("button", { name: /Older durable prompt/u }),
+    ).toBeVisible();
     first.unmount();
     renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
     await waitFor(() =>

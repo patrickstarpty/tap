@@ -170,8 +170,8 @@ def test_revision_rejects_duplicate_or_unstable_identities() -> None:
 def test_generation_request_freezes_both_turn_snapshot_digests() -> None:
     request = PlanGenerationRequest.create(
         project_id="tapper-demo",
-        conversation_id="conversation_checkout",
-        turn_id="turn_checkout",
+        conversation_id="1" * 32,
+        turn_id="2" * 32,
         input_snapshot_digest="sha256:" + "1" * 64,
         answer_evidence_snapshot_digest="sha256:" + "2" * 64,
         model_alias="tapper-chat",
@@ -182,8 +182,8 @@ def test_generation_request_freezes_both_turn_snapshot_digests() -> None:
     )
     replay = PlanGenerationRequest.create(
         project_id="tapper-demo",
-        conversation_id="conversation_checkout",
-        turn_id="turn_checkout",
+        conversation_id="1" * 32,
+        turn_id="2" * 32,
         input_snapshot_digest="sha256:" + "1" * 64,
         answer_evidence_snapshot_digest="sha256:" + "2" * 64,
         model_alias="tapper-chat",

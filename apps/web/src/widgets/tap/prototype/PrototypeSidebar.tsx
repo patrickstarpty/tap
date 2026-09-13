@@ -107,6 +107,9 @@ export function PrototypeSidebar({
   const conversationHistory = conversations
     .map((conversation, index) => ({ conversation, index }))
     .filter(({ conversation }) => {
+      if (historyState !== undefined && conversation.id !== "draft") {
+        return true;
+      }
       const contextCount =
         conversation.selectedSourceIds.length +
         conversation.selectedAgentIds.length +
@@ -121,7 +124,8 @@ export function PrototypeSidebar({
       conversation.selectedAgentIds.length +
       conversation.selectedSkillIds.length;
     const title =
-      conversation.turns.length > 0
+      conversation.turns.length > 0 ||
+      (historyState !== undefined && conversation.id !== "draft")
         ? conversation.title
         : copy.navigation.newChat;
     const contextLabel =

@@ -140,6 +140,40 @@ describe("useConversationStream", () => {
     expect(result.current.state.turns["turn-2"]?.answer).toBe("second answer");
   });
 
+  it("resumes a new turn in the same conversation from the consumed stream cursor", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        stream(
+          event(5, "turn-1", "turn.completed", {
+            answer: { answer: "first answer", citations: [] },
+          }),
+          event(6, "turn-1", "conversation.turn.completed", {
+            outcome: "completed",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        stream(
+          event(7, "turn-2", "turn.completed", {
+            answer: { answer: "second answer", citations: [] },
+          }),
+        ),
+      );
+
+    const { result, rerender } = renderHook(
+      ({ turnId }) =>
+        useConversationStream("project-1", "conversation-1", turnId, 1),
+      { initialProps: { turnId: "turn-1" } },
+    );
+    await waitFor(() => expect(result.current.state.lastSequence).toBe(6));
+    rerender({ turnId: "turn-2" });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+
+    const resumed = fetcher.mock.calls[1]![0] as Request;
+    expect(resumed.headers.get("Last-Event-ID")).toBe("6");
+  });
+
   it("reconnects from the last consumed event without duplicating streamed text", async () => {
     vi.useFakeTimers();
     const fetcher = vi
