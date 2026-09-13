@@ -12,6 +12,7 @@ import pytest
 BACKEND_SOURCE = Path(__file__).resolve().parents[2] / "src" / "tap"
 KNOWLEDGE = BACKEND_SOURCE / "modules" / "knowledge"
 ACCESS = BACKEND_SOURCE / "modules" / "access"
+TEST_MANAGEMENT = BACKEND_SOURCE / "modules" / "test_management"
 CHAT_API_SYMBOLS = {
     "AnswerRequest",
     "AnswerResponse",
@@ -375,6 +376,9 @@ def test_framework_free_knowledge_layers_do_not_import_framework_or_provider_sdk
         KNOWLEDGE / "ports",
         ACCESS / "domain",
         ACCESS / "application",
+        TEST_MANAGEMENT / "domain",
+        TEST_MANAGEMENT / "application",
+        TEST_MANAGEMENT / "ports",
     )
     layer_files = tuple(path for root in layer_roots for path in recursive_python_files(root))
 
@@ -393,6 +397,9 @@ def test_stable_knowledge_layers_do_not_import_interface_adapters() -> None:
         KNOWLEDGE / "domain",
         KNOWLEDGE / "application",
         KNOWLEDGE / "ports",
+        TEST_MANAGEMENT / "domain",
+        TEST_MANAGEMENT / "application",
+        TEST_MANAGEMENT / "ports",
     )
 
     for root in stable_roots:

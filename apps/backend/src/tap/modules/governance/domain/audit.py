@@ -28,6 +28,8 @@ class AuditAction(StrEnum):
     GRAPH_SNAPSHOT_REQUESTED = "graph-snapshot-requested"
     GRAPH_SNAPSHOT_READY = "graph-snapshot-ready"
     GRAPH_SNAPSHOT_FAILED = "graph-snapshot-failed"
+    TEST_PLAN_GENERATION_REQUESTED = "test-plan-generation-requested"
+    TEST_PLAN_REVISION_PUBLISHED = "test-plan-revision-published"
 
 
 class AuditResource(StrEnum):
@@ -37,6 +39,7 @@ class AuditResource(StrEnum):
     PROJECT_MAINTENANCE = "project-maintenance"
     CONVERSATION_TURN = "conversation-turn"
     GRAPH_SNAPSHOT = "graph-snapshot"
+    TEST_PLAN_REVISION = "test-plan-revision"
 
 
 class AuditOutcome(StrEnum):
@@ -109,7 +112,13 @@ def audit_content_digest(
     if type(safe_metadata) is not SafeAuditMetadata:
         raise TypeError("audit requires SafeAuditMetadata")
     expected_resource = (
-        AuditResource.GRAPH_SNAPSHOT
+        AuditResource.TEST_PLAN_REVISION
+        if action
+        in {
+            AuditAction.TEST_PLAN_GENERATION_REQUESTED,
+            AuditAction.TEST_PLAN_REVISION_PUBLISHED,
+        }
+        else AuditResource.GRAPH_SNAPSHOT
         if action
         in {
             AuditAction.GRAPH_SNAPSHOT_REQUESTED,

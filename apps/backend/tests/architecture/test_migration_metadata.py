@@ -9,6 +9,16 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "test_plan",
+    "test_plan_revision",
+    "test_case",
+    "test_scenario",
+    "test_plan_step",
+    "test_plan_citation",
+    "test_plan_assumption",
+    "test_plan_unknown",
+    "test_plan_coverage_gap",
+    "test_plan_generation_job",
     "graph_snapshot",
     "graph_snapshot_revision",
     "graph_active_snapshot",

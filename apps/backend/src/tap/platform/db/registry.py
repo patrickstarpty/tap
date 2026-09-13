@@ -33,6 +33,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_lineage,
     knowledge_projection_state,
 )
+from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 
 # Explicit Project business inventory, separate from identity-registry ownership.
@@ -70,6 +71,7 @@ BUSINESS_TABLES = (
     skill,
     skill_revision,
     *GRAPH_TABLES,
+    *TEST_MANAGEMENT_TABLES,
 )
 
 
