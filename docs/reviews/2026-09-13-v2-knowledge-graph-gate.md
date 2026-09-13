@@ -1,6 +1,6 @@
 # V2 Grounded Knowledge Graph 门禁评审
 
-评审日期：2026-09-13。结论：**PASS / V3 已放行**。Task 11–13 的版本化 Graph 存储、独立耐久 Graph Worker、Project-scoped API、回答增强和 WebGL 探索器均已实现并通过本地全链路验证；`QUALITY-GRAPH-01` 的 200 条判断已由 `human:patrick` 独立复核并全部批准，最终真实百炼运行满足全部硬阈值。
+评审日期：2026-09-13。结论：**PASS / V3 已放行**。Task 11–13 的版本化 Graph 存储、独立耐久 Graph Worker、Project-scoped API、回答增强和 WebGL 探索器均已实现并通过本地全链路验证；`QUALITY-GRAPH-01` 的 200 条判断已由 `patrick` 独立复核并全部批准，最终真实百炼运行满足全部硬阈值。
 
 ## 已验证实现
 
@@ -33,7 +33,7 @@
 | --- | --- |
 | Graph quality evaluator contract | 10 passed；包含错误合并、dangling Evidence、伪 EXTRACTED、未复核和陈旧 digest 负矩阵 |
 | 离线候选 evaluator | passed；20 documents、200 labels，全部数值阈值满足 |
-| 正式真实百炼门禁 | passed；20/20 文档、200/200 判断，实际模型 `dashscope/qwen-plus`，真实 MySQL Graph 发布成功；reviewer `human:patrick` |
+| 正式真实百炼门禁 | passed；20/20 文档、200/200 判断，实际模型 `dashscope/qwen-plus`，真实 MySQL Graph 发布成功；reviewer `patrick` |
 | MySQL Graph | migration-check passed；schema drift passed，44 tables；lease recovery 与原子完成集成测试 passed |
 | Web Graph 与请求审计 | 364 passed；Graph unavailable 状态机定向测试 passed |
 | isolated E2E | passed；28 persistence checks，zero skipped/flaky；应用与 Compose 重启后 Graph Snapshot/Evidence 可读 |
