@@ -29,9 +29,9 @@ date: 2026-09-04
 | -------------------- | ------------- | ---------------------------------------------------------------------------- |
 | V0 Validation Scope  | `gate-passed` | [V0 完整出口](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md) |
 | V1 Trusted Knowledge | `gate-passed` | [V1 可信知识门禁](../reviews/2026-09-09-v1-trusted-knowledge-gate.md)        |
-| V2 Knowledge Graph   | `gate-passed` | [V2 Knowledge Graph 门禁](../reviews/2026-09-13-v2-knowledge-graph-gate.md)  |
-| V3 AI Test Design    | `gate-passed` | [V3 AI Test Design 门禁](../reviews/2026-09-14-v3-ai-test-design-gate.md)      |
-| V4 Web LCA/Recorder  | `not-started` | V3 已放行；下一步从 Task 18 开始                                              |
+| V2 Knowledge Graph   | `gate-reopened` | 多 Revision Graph 契约与 E2E 待补；见[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) |
+| V3 AI Test Design    | `gate-reopened` | 真实人审绑定与完整 Web 旅程待补；见[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)      |
+| V4 Web LCA/Recorder  | `blocked` | 仅在新的 V2/V3 Gate Review 为 `pass` 后开始                                    |
 | V5 Jenkins Loop      | `not-started` | 仅在 V4 Gate Review 为 `pass` 后开始                                         |
 | VG/P0/P1             | `not-started` | 继续遵守 Validation → 产品身份 → 生产加固的授权边界                          |
 

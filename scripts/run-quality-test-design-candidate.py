@@ -27,15 +27,47 @@ class CapturingGateway:
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
         self.identities: set[tuple[str, str]] = set()
+        self.invocation_count = 0
+        self.receipts: dict[str, tuple[str, str, str]] = {}
 
     async def generate_structured(self, request):  # type: ignore[no-untyped-def]
+        self.invocation_count += 1
         result = await self.delegate.generate_structured(request)
         self.identities.add((result.actual_provider, result.actual_model))
+        if (
+            not isinstance(result.provider_request_id, str)
+            or not result.provider_request_id
+        ):
+            raise ValueError("real model result requires a provider request id")
+        self.receipts[request.idempotency_key] = (
+            result.actual_provider,
+            result.actual_model,
+            result.provider_request_id,
+        )
         return result
 
 
 def _digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode()).hexdigest()
+
+
+def _candidate_digest(
+    item: dict[str, Any], *, request_digest: str, output_digest: str
+) -> str:
+    material = json.dumps(
+        {
+            "caseId": item["caseId"],
+            "intent": item["intent"],
+            "source": item["source"],
+            "criticalRequirements": item["criticalRequirements"],
+            "requestDigest": request_digest,
+            "outputDigest": output_digest,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return _digest(material)
 
 
 async def run(profile: dict[str, Any]) -> dict[str, Any]:
@@ -47,9 +79,12 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
         timeout_seconds=min(60.0, settings.model_timeout_seconds),
     )
     observations = deepcopy(profile)
+    bindings = observations["bindings"]
     semaphore = asyncio.Semaphore(4)
+    review_invalidated = False
 
     async def evaluate_case(index: int, item: dict[str, Any]) -> None:
+        nonlocal review_invalidated
         source = str(item["source"])
         suffix = f"{index + 1:03d}"
         request = TestPlanGenerationRequest.create(
@@ -58,9 +93,11 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             turn_id=f"quality_turn_{suffix}",
             input_snapshot_digest=_digest(str(item["intent"])),
             answer_evidence_snapshot_digest=_digest(source),
-            model_alias=settings.chat_alias,
-            agent_revision_id="validation_test_design_agent_v1",
-            skill_revision_ids=("validation_test_design_skill_v1",),
+            model_alias=str(bindings["modelAlias"]),
+            agent_revision_id=str(bindings["agentRevisionId"]),
+            skill_revision_ids=tuple(
+                str(item) for item in bindings["skillRevisionIds"]
+            ),
             objective=str(item["intent"]),
             idempotency_key=f"quality_test_design_{suffix}",
         )
@@ -89,26 +126,51 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 revision = await generator.generate(context)
             validate_draft_structure(revision)
-            content = json.dumps(
-                revision.canonical_content(), ensure_ascii=False
-            ).lower()
-            requirements = [
-                str(value).lower() for value in item["criticalRequirements"]
+            output = revision.canonical_content()
+            output_digest = revision.content_digest
+            provider, model, provider_request_id = capture.receipts[
+                request.idempotency_key
             ]
-            covered = sum(
-                ("approval" in requirement and "approv" in content)
-                or ("immutable" in requirement and "immutable" in content)
-                for requirement in requirements
+            candidate_digest = _candidate_digest(
+                item,
+                request_digest=request.request_digest,
+                output_digest=output_digest,
+            )
+            review_is_current = (
+                observation.get("reviewedOutputDigest") == output_digest
+                and observation.get("reviewedCaseDigest") == candidate_digest
+                and bool(item.get("reviewerJudgments"))
+                and all(
+                    judgment.get("approved") is True
+                    for judgment in item["reviewerJudgments"]
+                    if isinstance(judgment, dict)
+                )
             )
             observation.update(
                 schemaValid=True,
                 bddValid=True,
-                unsupportedFactCount=0,
-                criticalCovered=covered,
-                criticalTotal=len(requirements),
-                criticalCorrectionRequired=covered < len(requirements),
-                outputDigest=revision.content_digest,
+                criticalTotal=len(item["criticalRequirements"]),
+                outputDigest=output_digest,
+                generatedOutput=output,
+                candidateDigest=candidate_digest,
+                providerReceipt={
+                    "requestDigest": request.request_digest,
+                    "outputDigest": output_digest,
+                    "provider": provider,
+                    "model": model,
+                    "providerRequestId": provider_request_id,
+                },
             )
+            if not review_is_current:
+                review_invalidated = True
+                observation.update(
+                    unsupportedFactCount=1,
+                    criticalCovered=0,
+                    criticalCorrectionRequired=True,
+                )
+                observation.pop("reviewedOutputDigest", None)
+                observation.pop("reviewedCaseDigest", None)
+                item["reviewerJudgments"] = []
             observation.pop("failureType", None)
             observation.pop("failureMessage", None)
         except Exception as error:
@@ -128,9 +190,10 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             *(
                 evaluate_case(index, item)
                 for index, item in enumerate(observations["cases"])
-                if "outputDigest" not in item["observation"]
             )
         )
+        if capture.invocation_count != len(observations["cases"]):
+            raise ValueError("every quality case must invoke the real model")
         if len(capture.identities) > 1:
             raise ValueError("real model identity changed during candidate run")
         if capture.identities:
@@ -138,6 +201,9 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 next(iter(capture.identities))
             )
         observations["dataset"]["modelObservationStatus"] = "captured"
+        observations["dataset"]["providerInvocationCount"] = capture.invocation_count
+        if review_invalidated:
+            observations["dataset"]["reviewStatus"] = "pending"
         return observations
     finally:
         await models.aclose()

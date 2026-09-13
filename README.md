@@ -150,19 +150,19 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 当前状态
 
 - 架构状态：`v0.4 accepted — validation-first knowledge and web automation`
-- 实现状态：`V0/V1/V2/V3 gates passed; V4 not started`
-- 当前交付重点：`V4 Web LCA/Recorder`
-- 后续顺序：`V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
+- 实现状态：`V0/V1 gate-passed; V2/V3 gate-reopened; V4 blocked`
+- 当前交付重点：`关闭 V2/V3 更正门禁`
+- 后续顺序：`V2/V3 re-review → V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 
-V0 的固定 Validation Scope、Project 授权、Audit、恢复、MinIO 和隔离 Parser 已通过[完整出口](docs/reviews/2026-09-06-v0-validation-scope-reliability-gate.md)。V1 的 Source、统一 ModelGateway、AI Agent/Skill、持久 Conversation/SSE、真实 Web 接线和知识质量已通过[可信知识门禁](docs/reviews/2026-09-09-v1-trusted-knowledge-gate.md)。V2 的版本化 Knowledge Graph、真实抽取、回答增强、WebGL Explorer 和 200 条人工判断已通过[知识图谱门禁](docs/reviews/2026-09-13-v2-knowledge-graph-gate.md)。V3 的 Test Plan Revision/发布门禁、grounded Draft、Review、深链接和 `QUALITY-TEST-01` 已通过[AI 测试设计门禁](docs/reviews/2026-09-14-v3-ai-test-design-gate.md)，V4 可开始。开发入口、调用链和扩展位置见 [Tapper 开发者指南](docs/reference/2026-09-13-tapper-developer-guide.md)。
+V0 的固定 Validation Scope、Project 授权、Audit、恢复、MinIO 和隔离 Parser 已通过[完整出口](docs/reviews/2026-09-06-v0-validation-scope-reliability-gate.md)。V1 的 Source、统一 ModelGateway、AI Agent/Skill、持久 Conversation/SSE、真实 Web 接线和知识质量已通过[可信知识门禁](docs/reviews/2026-09-09-v1-trusted-knowledge-gate.md)。V2/V3 已有 Knowledge Graph、Test Plan 与对应 Web/API 主体实现，但后续独立审查重新打开了门禁：多 Revision Graph 一致性、真实 Test Design 人审绑定和完整 Web 评审旅程仍需补证，V4 暂不放行。当前状态见 [V2/V3 门禁更正评审](docs/reviews/2026-09-14-v2-v3-gate-correction.md)，开发入口、调用链和扩展位置见 [Tapper 开发者指南](docs/reference/2026-09-13-tapper-developer-guide.md)。
 
 ## Tapper 本地知识工作区
 
-Tapper 当前产品入口在已确认的 TAP 壳层中使用真实 Project API。Library 支持 Source create/list/detail/delete/retry、真实上传与六阶段 ingestion；Conversation 支持服务端历史、不可变 Turn 快照、可恢复 SSE、取消、引用与 Artifact Link；Knowledge Answer 可使用当前授权的 Milvus 文档证据和有界 Graph Context。Library 的 Knowledge Graph 使用真实 Snapshot/Evidence API；Tapper 可生成 grounded Test Plan Draft，Test Management 支持 Review、编辑冲突和人工发布不可变 Revision。本地 Milvus `doc-schema-v2` 使用 canonical Enterprise/Project/Source/Document/Revision 投影。
+Tapper 当前产品入口在已确认的 TAP 壳层中使用真实 Project API。Library 支持 Source create/list/detail/delete/retry、真实上传与六阶段 ingestion；Conversation 支持服务端历史、不可变 Turn 快照、可恢复 SSE、取消、引用与 Artifact Link；Knowledge Answer 可使用当前授权的 Milvus 文档证据和有界 Graph Context。Library 的 Knowledge Graph 使用真实 Snapshot/Evidence API；Tapper 可请求生成 grounded Test Plan Draft，Test Management Web 支持明细 Review 和人工发布，编辑与冲突恢复仍只具备 API 能力。本地 Milvus `doc-schema-v2` 使用 canonical Enterprise/Project/Source/Document/Revision 投影。
 
-当前仍未交付登录、产品身份/RBAC、多 Project 产品化、OCR、Web Recorder、正式 Playwright Bundle、Jenkins 结果闭环和生产加固。API、Web 和所有中间件只绑定精确 loopback；固定 Validation 身份仅适用于验证环境，不能直接开放到局域网或生产环境。V3 通过不代表 V4/V5、产品身份或生产加固已经完成。
+当前仍未交付登录、产品身份/RBAC、多 Project 产品化、OCR、Web Recorder、正式 Playwright Bundle、Jenkins 结果闭环和生产加固。API、Web 和所有中间件只绑定精确 loopback；固定 Validation 身份仅适用于验证环境，不能直接开放到局域网或生产环境。V2/V3 当前为 `gate-reopened`，不能作为 V4/V5、产品身份或生产加固已经完成的依据。
 
 支持文本可提取的 PDF、DOCX、Markdown（MD）和 TXT。PDF 不执行 OCR；扫描件返回 `ocr-required`。服务端硬上限为每文件 `25 MiB`、最多 `50` 份未删除文档、每次回答最多选择 `20` 份 ready 文档。
 

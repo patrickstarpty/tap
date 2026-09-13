@@ -163,3 +163,28 @@ async def test_malformed_ungrounded_or_privileged_model_output_fails_closed(muta
 
     with pytest.raises(ValueError):
         await ModelGatewayTestDesign(Gateway(output)).generate(_context())
+
+
+@pytest.mark.asyncio
+async def test_citation_fields_cannot_be_composed_from_different_evidence_rows() -> None:
+    context = _context()
+    evidence = [
+        *context.answer_evidence_snapshot["citations"],  # type: ignore[misc]
+        {
+            "sourceRevisionId": "source_revision_other",
+            "documentRevisionId": "document_revision_other",
+            "chunkId": "chunk_other",
+            "contentDigest": "sha256:" + "b" * 64,
+        },
+    ]
+    composite = deepcopy(_output())
+    composite["citations"][0]["chunkId"] = "chunk_other"  # type: ignore[index]
+    mixed_context = DesignContext(
+        context.scope,
+        context.request,
+        context.input_snapshot,
+        {"citations": evidence},
+    )
+
+    with pytest.raises(ValueError, match="outside frozen evidence"):
+        await ModelGatewayTestDesign(Gateway(composite)).generate(mixed_context)

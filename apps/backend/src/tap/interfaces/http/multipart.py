@@ -124,7 +124,7 @@ class BoundedMultipartParser(MultiPartParser):
 class BoundedUploadRoute(APIRoute):
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         original = super().get_route_handler()
-        if self.endpoint.__name__ != "upload_document":
+        if self.endpoint.__name__ not in {"upload_document", "upload_source"}:
             return original
 
         async def bounded(request: Request) -> Response:

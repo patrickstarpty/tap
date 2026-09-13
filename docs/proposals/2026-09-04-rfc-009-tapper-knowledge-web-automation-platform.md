@@ -44,10 +44,10 @@ related-adrs:
   → 用户 / 认证 / RBAC / 多 Project 产品化
 ```
 
-本文是已接受的目标设计，不等同于全部完成状态。截至 2026-09-14，仓库已按本 RFC 完成 V3：
+本文是已接受的目标设计，不等同于全部完成状态。截至 2026-09-14，仓库已实现 V2/V3 主体，但相应 Gate 已重新打开：
 
-- V0、V1、V2、V3 Gate Review 已通过；固定 Validation Scope、可信 Knowledge/Conversation、真实 Knowledge Graph、AI Test Design 与默认产品壳接线已经实现。
-- V3 Task 15–17 的 grounded Test Plan Draft、Review、人工发布不可变 Revision 和 `QUALITY-TEST-01` 已通过；证据见 [V3 Gate Review](../reviews/2026-09-14-v3-ai-test-design-gate.md)。
+- V0、V1 Gate Review 已通过；Knowledge Graph、AI Test Design 与默认产品壳接线已有主体实现。
+- V2 多 Revision Graph 一致性、V3 真实候选人审绑定与完整 Web 评审旅程仍需补证；原 V2/V3 `pass` 已由[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)撤销，V4 暂不放行。
 - `TapperPage` 继续挂载 `TapProductPrototype` 作为产品壳，但通过 `conversationSource="api"` 使用真实 Project、Conversation、Knowledge、Graph 和 Test Plan API；未实施模块继续使用明确的 fixture。
 - 可配置多 Project、用户认证、Membership/RBAC、正式 Automation/Recorder、Jenkins Provider 和真实 Execution Evidence 尚未完成。
 - 在对应发布门禁通过前，原型中的 `Passed`、Run、Graph、Agent 和资产都不得描述为生产实现或真实执行证据。
@@ -1210,7 +1210,7 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 
 ### 20.2 必须迁移而非误当已完成
 
-本节记录 RFC 接受时必须完成的迁移清单，不是 2026-09-13 的进度表。V0–V2 已完成项保留原文用于追溯；现行状态以[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-13)和对应 Gate Review 为准。
+本节记录 RFC 接受时必须完成的迁移清单，不是当前进度表。原文中的完成表述保留用于追溯；现行状态以[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-14)和[门禁更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)为准。
 
 - 当前 `demo_policy`、loopback 信任和固定 local actor 只能作为 V0 Validation Adapter 的起点，不能进入 P0/P1 多用户生产路径，也不能作为已完成认证的证据。
 - 当前页面级 Answer 和原型 local storage 不能作为持久 Conversation。仓库虽已有 MySQL Turn/Outbox primitive，但运行时未组装 Chat Processor、SSE 和 History，现有 Turn HTTP 路径仍不是可用产品接口。

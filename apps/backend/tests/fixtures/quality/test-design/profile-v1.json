@@ -3,7 +3,7 @@
   "profileId": "QUALITY-TEST-01",
   "dataset": {
     "version": "candidate-v1",
-    "reviewStatus": "approved",
+    "reviewStatus": "pending",
     "labelingMethod": "named-review-with-deterministic-adjudication"
   },
   "bindings": {
@@ -15,7 +15,7 @@
     ],
     "promptDigest": "sha256:37001c112a5f9ca449a907dcea76b770203eb9f98ef91aec462f02b1a113fbfe",
     "schemaDigest": "sha256:4ef670689e4c1e6e970ba9de97298895e0738f373a0f3f186b16a3cebadbce27",
-    "evaluatorDigest": "sha256:bc031aa6b59cb180c29f10c505f4a705dcd43bd234bd8653c22ab5ad00a4430c"
+    "evaluatorDigest": "sha256:9ba19b3a961817413856e84acfae4937ba93324469825599fb36f4a9500ed8de"
   },
   "cases": [
     {
@@ -27,19 +27,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-002",
@@ -50,19 +45,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-003",
@@ -73,19 +63,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-004",
@@ -96,19 +81,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-005",
@@ -119,19 +99,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-006",
@@ -142,19 +117,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-007",
@@ -165,19 +135,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-008",
@@ -188,19 +153,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-009",
@@ -211,19 +171,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-010",
@@ -234,19 +189,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-011",
@@ -257,19 +207,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-012",
@@ -280,19 +225,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-013",
@@ -303,19 +243,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-014",
@@ -326,19 +261,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-015",
@@ -349,19 +279,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-016",
@@ -372,19 +297,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-017",
@@ -395,19 +315,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-018",
@@ -418,19 +333,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-019",
@@ -441,19 +351,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-020",
@@ -464,19 +369,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-021",
@@ -487,19 +387,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-022",
@@ -510,19 +405,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-023",
@@ -533,19 +423,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-024",
@@ -556,19 +441,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-025",
@@ -579,19 +459,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-026",
@@ -602,19 +477,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-027",
@@ -625,19 +495,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-028",
@@ -648,19 +513,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-029",
@@ -671,19 +531,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-030",
@@ -694,19 +549,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-031",
@@ -717,19 +567,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-032",
@@ -740,19 +585,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-033",
@@ -763,19 +603,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-034",
@@ -786,19 +621,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-035",
@@ -809,19 +639,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-036",
@@ -832,19 +657,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-037",
@@ -855,19 +675,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-038",
@@ -878,19 +693,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-039",
@@ -901,19 +711,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-040",
@@ -924,19 +729,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-041",
@@ -947,19 +747,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-042",
@@ -970,19 +765,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-043",
@@ -993,19 +783,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-044",
@@ -1016,19 +801,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-045",
@@ -1039,19 +819,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-046",
@@ -1062,19 +837,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-047",
@@ -1085,19 +855,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-048",
@@ -1108,19 +873,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-049",
@@ -1131,19 +891,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     },
     {
       "caseId": "business-intent-050",
@@ -1154,19 +909,14 @@
         "exactly one immutable result"
       ],
       "observation": {
-        "schemaValid": true,
-        "bddValid": true,
-        "unsupportedFactCount": 0,
-        "criticalCovered": 2,
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
         "criticalTotal": 2,
-        "criticalCorrectionRequired": false
+        "criticalCorrectionRequired": true
       },
-      "reviewerJudgments": [
-        {
-          "reviewer": "patrick",
-          "approved": true
-        }
-      ]
+      "reviewerJudgments": []
     }
   ]
 }

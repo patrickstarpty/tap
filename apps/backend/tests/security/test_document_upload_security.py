@@ -265,7 +265,10 @@ def test_upload_wrong_origin_rejects_before_spool_or_body(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suffix", [b"", b"forbidden\r\n--x--\r\n", b"--x--\r\n"])
 @pytest.mark.parametrize("split", ["single", "after-terminal", "inside-terminal"])
-async def test_real_upload_route_rejects_every_first_terminal_epilogue(suffix, split):
+@pytest.mark.parametrize("endpoint_name", ["upload_document", "upload_source"])
+async def test_real_upload_route_rejects_every_first_terminal_epilogue(
+    suffix, split, endpoint_name
+):
     import httpx
     from fastapi import FastAPI, File
     from starlette.responses import JSONResponse
@@ -281,10 +284,12 @@ async def test_real_upload_route_rejects_every_first_terminal_epilogue(suffix, s
     async def rejected(_request, _error):
         return JSONResponse({"error": "closed-upload-rejection"}, status_code=400)
 
-    @app.post("/upload")
-    async def upload_document(upload: UploadFile = File(...)):
+    async def upload(upload: UploadFile = File(...)):
         calls.append(True)
         return {"bytes": len(await upload.read())}
+
+    upload.__name__ = endpoint_name
+    app.post("/upload")(upload)
 
     valid = (
         b'--x\r\nContent-Disposition: form-data; name="upload"; filename="a.txt"\r\n'
