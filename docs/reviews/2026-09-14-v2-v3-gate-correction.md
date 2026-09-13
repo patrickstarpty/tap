@@ -21,7 +21,7 @@
 ## 已立即修正
 
 - `/knowledge/sources` 与旧上传入口共同使用有界 multipart 读取，避免路由改名后绕过上传大小保护。
-- Test Design 候选运行不再复用旧 digest 或预造通过结论；正式 evaluator 要求本次逐例输出、输出 digest、与输出绑定的人工复核以及完整 provider 调用计数。
+- Test Design 候选运行不再复用旧 digest 或预造通过结论；正式 evaluator 会重建并校验完整输出，要求每例唯一 Provider request ID，并把人工复核同时绑定到 intent、source、关键要求、request digest 与 output digest。
 - Citation 必须精确匹配同一条授权 Evidence；生成参数必须等于冻结 Input Snapshot；发布时 Citation 的 Source/Document Revision、chunk 与 digest 必须属于当前授权 Revision。
 - 持久 API 模式不再显示只存在于页面内存的浮动助手原型回复；Test Plan Review 现在展示 Citation、Assumption、Unknown 和 Coverage Gap 明细，而不只显示计数。
 

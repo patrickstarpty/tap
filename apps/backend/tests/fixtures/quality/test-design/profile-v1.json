@@ -15,7 +15,7 @@
     ],
     "promptDigest": "sha256:37001c112a5f9ca449a907dcea76b770203eb9f98ef91aec462f02b1a113fbfe",
     "schemaDigest": "sha256:4ef670689e4c1e6e970ba9de97298895e0738f373a0f3f186b16a3cebadbce27",
-    "evaluatorDigest": "sha256:e020781bf85f1ca9cb22ed35910e0dfb39a8c4d1c5089e3c93425eae00863cb8"
+    "evaluatorDigest": "sha256:9ba19b3a961817413856e84acfae4937ba93324469825599fb36f4a9500ed8de"
   },
   "cases": [
     {

@@ -28,21 +28,46 @@ class CapturingGateway:
         self.delegate = delegate
         self.identities: set[tuple[str, str]] = set()
         self.invocation_count = 0
-        self.receipts: dict[str, tuple[str, str]] = {}
+        self.receipts: dict[str, tuple[str, str, str]] = {}
 
     async def generate_structured(self, request):  # type: ignore[no-untyped-def]
         self.invocation_count += 1
         result = await self.delegate.generate_structured(request)
         self.identities.add((result.actual_provider, result.actual_model))
+        if (
+            not isinstance(result.provider_request_id, str)
+            or not result.provider_request_id
+        ):
+            raise ValueError("real model result requires a provider request id")
         self.receipts[request.idempotency_key] = (
             result.actual_provider,
             result.actual_model,
+            result.provider_request_id,
         )
         return result
 
 
 def _digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode()).hexdigest()
+
+
+def _candidate_digest(
+    item: dict[str, Any], *, request_digest: str, output_digest: str
+) -> str:
+    material = json.dumps(
+        {
+            "caseId": item["caseId"],
+            "intent": item["intent"],
+            "source": item["source"],
+            "criticalRequirements": item["criticalRequirements"],
+            "requestDigest": request_digest,
+            "outputDigest": output_digest,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return _digest(material)
 
 
 async def run(profile: dict[str, Any]) -> dict[str, Any]:
@@ -103,9 +128,17 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             validate_draft_structure(revision)
             output = revision.canonical_content()
             output_digest = revision.content_digest
-            provider, model = capture.receipts[request.idempotency_key]
+            provider, model, provider_request_id = capture.receipts[
+                request.idempotency_key
+            ]
+            candidate_digest = _candidate_digest(
+                item,
+                request_digest=request.request_digest,
+                output_digest=output_digest,
+            )
             review_is_current = (
                 observation.get("reviewedOutputDigest") == output_digest
+                and observation.get("reviewedCaseDigest") == candidate_digest
                 and bool(item.get("reviewerJudgments"))
                 and all(
                     judgment.get("approved") is True
@@ -119,11 +152,13 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 criticalTotal=len(item["criticalRequirements"]),
                 outputDigest=output_digest,
                 generatedOutput=output,
+                candidateDigest=candidate_digest,
                 providerReceipt={
                     "requestDigest": request.request_digest,
                     "outputDigest": output_digest,
                     "provider": provider,
                     "model": model,
+                    "providerRequestId": provider_request_id,
                 },
             )
             if not review_is_current:
@@ -134,6 +169,7 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                     criticalCorrectionRequired=True,
                 )
                 observation.pop("reviewedOutputDigest", None)
+                observation.pop("reviewedCaseDigest", None)
                 item["reviewerJudgments"] = []
             observation.pop("failureType", None)
             observation.pop("failureMessage", None)

@@ -135,11 +135,27 @@ def _profile() -> dict:
             objective=intent,
             idempotency_key=f"quality_test_design_{suffix}",
         )
+        candidate_digest = text_digest(
+            json.dumps(
+                {
+                    "caseId": f"intent-{index:03d}",
+                    "intent": intent,
+                    "source": source,
+                    "criticalRequirements": ["immutable record"],
+                    "requestDigest": request.request_digest,
+                    "outputDigest": output_digest,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
         cases.append(
             {
                 "caseId": f"intent-{index:03d}",
                 "intent": intent,
                 "source": source,
+                "criticalRequirements": ["immutable record"],
                 "observation": {
                     "schemaValid": True,
                     "bddValid": True,
@@ -150,11 +166,14 @@ def _profile() -> dict:
                     "outputDigest": output_digest,
                     "reviewedOutputDigest": output_digest,
                     "generatedOutput": output,
+                    "candidateDigest": candidate_digest,
+                    "reviewedCaseDigest": candidate_digest,
                     "providerReceipt": {
                         "requestDigest": request.request_digest,
                         "outputDigest": output_digest,
                         "provider": "provider",
                         "model": "model",
+                        "providerRequestId": f"provider-request-{suffix}",
                     },
                 },
                 "reviewerJudgments": [
@@ -296,6 +315,16 @@ def test_real_gate_requires_per_case_provider_receipts() -> None:
         module.evaluate(profile, real=True)
 
 
+def test_real_gate_rejects_review_for_changed_critical_requirements() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["bindings"].update(module.current_bindings())
+    profile["cases"][0]["criticalRequirements"] = ["a new unreviewed requirement"]
+
+    with pytest.raises(ValueError, match="current business case"):
+        module.evaluate(profile, real=True)
+
+
 def test_real_make_target_uses_validated_model_timeout(tmp_path: Path) -> None:
     log = tmp_path / "timeouts.log"
     uv = tmp_path / "uv"
@@ -327,14 +356,20 @@ def test_real_make_target_uses_validated_model_timeout(tmp_path: Path) -> None:
     assert log.read_text(encoding="utf-8").splitlines()[0] == "60"
 
 
-def test_real_runner_reinvokes_every_case_and_invalidates_changed_review(monkeypatch) -> None:
+def test_real_runner_reinvokes_and_invalidates_review_for_changed_requirements(
+    monkeypatch,
+) -> None:
     module = _runner()
     calls = []
 
     class Gateway:
         async def generate_structured(self, request):
             calls.append(request)
-            return SimpleNamespace(actual_provider="provider", actual_model="model")
+            return SimpleNamespace(
+                actual_provider="provider",
+                actual_model="model",
+                provider_request_id="provider-request-001",
+            )
 
     class Models:
         gateway = Gateway()
@@ -358,11 +393,31 @@ def test_real_runner_reinvokes_every_case_and_invalidates_changed_review(monkeyp
 
     profile = _generator().build()
     profile["cases"] = profile["cases"][:1]
+    item = profile["cases"][0]
+    request = GenerationRequest.create(
+        project_id=VALIDATION_SCOPE.project_id,
+        conversation_id="quality_conversation_001",
+        turn_id="quality_turn_001",
+        input_snapshot_digest=text_digest(item["intent"]),
+        answer_evidence_snapshot_digest=text_digest(item["source"]),
+        model_alias="tapper-chat",
+        agent_revision_id="validation-test-design-agent-v1",
+        skill_revision_ids=("validation-test-design-skill-v1",),
+        objective=item["intent"],
+        idempotency_key="quality_test_design_001",
+    )
+    reviewed_case_digest = module._candidate_digest(
+        item,
+        request_digest=request.request_digest,
+        output_digest="sha256:" + "b" * 64,
+    )
     profile["cases"][0]["observation"].update(
-        outputDigest="sha256:" + "a" * 64,
-        reviewedOutputDigest="sha256:" + "a" * 64,
+        outputDigest="sha256:" + "b" * 64,
+        reviewedOutputDigest="sha256:" + "b" * 64,
+        reviewedCaseDigest=reviewed_case_digest,
     )
     profile["cases"][0]["reviewerJudgments"] = [{"reviewer": "patrick", "approved": True}]
+    profile["cases"][0]["criticalRequirements"] = ["a new unreviewed requirement"]
     monkeypatch.setattr(
         module.TapperSettings,
         "from_mapping",
@@ -378,10 +433,12 @@ def test_real_runner_reinvokes_every_case_and_invalidates_changed_review(monkeyp
     assert result["dataset"]["providerInvocationCount"] == 1
     assert result["dataset"]["reviewStatus"] == "pending"
     assert result["cases"][0]["reviewerJudgments"] == []
+    assert "reviewedCaseDigest" not in result["cases"][0]["observation"]
     assert result["cases"][0]["observation"]["generatedOutput"] == {"title": "fresh model output"}
     assert result["cases"][0]["observation"]["providerReceipt"] == {
         "requestDigest": calls[0].request_digest,
         "outputDigest": "sha256:" + "b" * 64,
         "provider": "provider",
         "model": "model",
+        "providerRequestId": "provider-request-001",
     }

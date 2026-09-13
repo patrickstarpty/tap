@@ -138,7 +138,7 @@ make quality-graph
 make quality-test-design
 ```
 
-`quality-*-real` 会产生真实 Provider 调用，必须使用对应 opt-in、隔离环境和人工复核输入；默认 CI 和普通 `make test` 不得触发。Test Design 候选运行后必须逐例检查保存的 `generatedOutput`，由具名 reviewer 写入判断并让 `reviewedOutputDigest` 精确匹配当前 `outputDigest`；生成器提供的 `pending` profile 不是人工复核结果。完成声明必须链接实际 Gate Review，不能用 Fake Adapter、页面 fixture、skip、预填汇总指标或单次 happy path 代替。
+`quality-*-real` 会产生真实 Provider 调用，必须使用对应 opt-in、隔离环境和人工复核输入；默认 CI 和普通 `make test` 不得触发。Test Design 候选运行后必须逐例检查保存的 `generatedOutput` 和 `criticalRequirements`：具名 reviewer 写入判断，把当前 `outputDigest` 复制到 `reviewedOutputDigest`，把当前 `candidateDigest` 复制到 `reviewedCaseDigest`，最后才把 dataset `reviewStatus` 设为 `approved`。runner 会为每例记录唯一 Provider request ID；任意业务意图、来源、关键要求、请求或输出变化都会使旧复核失效。生成器提供的 `pending` profile 不是人工复核结果。完成声明必须链接实际 Gate Review，不能用 Fake Adapter、页面 fixture、skip、预填汇总指标或单次 happy path 代替。
 
 ## 8. 常见判断错误
 

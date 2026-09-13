@@ -34,6 +34,7 @@ from tap.modules.test_management.domain.models import (
 from tap.modules.test_management.domain.validation import validate_draft_structure
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_PROVIDER_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 
 
 def current_bindings() -> dict[str, str]:
@@ -211,6 +212,31 @@ def _expected_request(
     )
 
 
+def _candidate_digest(
+    case: dict[str, Any], *, request_digest: str, output_digest: str
+) -> str:
+    requirements = [
+        _text({"value": item}, "value")
+        for item in _array(case.get("criticalRequirements"), "criticalRequirements")
+    ]
+    if not requirements:
+        raise ValueError("criticalRequirements must be nonempty")
+    material = json.dumps(
+        {
+            "caseId": case.get("caseId"),
+            "intent": _text(case, "intent"),
+            "source": _text(case, "source"),
+            "criticalRequirements": requirements,
+            "requestDigest": request_digest,
+            "outputDigest": output_digest,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return text_digest(material)
+
+
 def validate_profile(
     profile: object, *, real: bool = False
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -226,6 +252,7 @@ def validate_profile(
     reviewer_names: set[str] = set()
     bindings = _mapping(root.get("bindings"), "bindings")
     invocation_digests: set[str] = set()
+    provider_request_ids: set[str] = set()
     for index, case in enumerate(cases):
         if not isinstance(case.get("intent"), str) or not case["intent"].strip():
             raise ValueError("business intent must be nonblank")
@@ -279,8 +306,21 @@ def validate_profile(
             expected_request = _expected_request(index, case, bindings)
             provider = receipt.get("provider")
             model = receipt.get("model")
+            provider_request_id = receipt.get("providerRequestId")
+            candidate_digest = _candidate_digest(
+                case,
+                request_digest=expected_request.request_digest,
+                output_digest=str(output_digest),
+            )
             if (
-                set(receipt) != {"requestDigest", "outputDigest", "provider", "model"}
+                set(receipt)
+                != {
+                    "requestDigest",
+                    "outputDigest",
+                    "provider",
+                    "model",
+                    "providerRequestId",
+                }
                 or request_digest != expected_request.request_digest
                 or receipt.get("outputDigest") != output_digest
                 or not isinstance(provider, str)
@@ -289,11 +329,21 @@ def validate_profile(
                 or not isinstance(model, str)
                 or not model
                 or f"{provider}/{model}" != bindings.get("actualModel")
+                or not isinstance(provider_request_id, str)
+                or _PROVIDER_REQUEST_ID.fullmatch(provider_request_id) is None
             ):
                 raise ValueError(
                     "real Test Design gate requires a bound provider receipt"
                 )
+            if (
+                observation.get("candidateDigest") != candidate_digest
+                or observation.get("reviewedCaseDigest") != candidate_digest
+            ):
+                raise ValueError(
+                    "real Test Design gate requires review bound to the current business case"
+                )
             invocation_digests.add(str(request_digest))
+            provider_request_ids.add(provider_request_id)
     if real:
         dataset = _mapping(root.get("dataset"), "dataset")
         if (
@@ -302,6 +352,7 @@ def validate_profile(
             or dataset.get("reviewStatus") != "approved"
             or dataset.get("providerInvocationCount") != len(cases)
             or len(invocation_digests) != len(cases)
+            or len(provider_request_ids) != len(cases)
         ):
             raise ValueError(
                 "real Test Design gate requires 50 invoked cases and approved review"
