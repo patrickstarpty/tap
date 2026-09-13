@@ -155,7 +155,7 @@ async def test_generation_job_rejects_tampered_or_cross_turn_snapshots(
     try:
         await _seed_completed_turn(sessions)
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        with pytest.raises(ValueError, match="snapshot|Turn"):
+        with pytest.raises(ValueError, match="snapshot|Turn|governance"):
             await repository.request_generation(
                 VALIDATION_SCOPE,
                 _request(**changes),

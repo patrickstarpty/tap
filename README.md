@@ -150,9 +150,9 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 当前状态
 
 - 架构状态：`v0.4 accepted — validation-first knowledge and web automation`
-- 实现状态：`V0/V1/V2/V3 gates passed; V4 not started`
-- 当前交付重点：`V4 Web LCA/Recorder`
-- 后续顺序：`V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
+- 实现状态：`V0/V1 gate-passed; V2/V3 gate-reopened; V4 blocked`
+- 当前交付重点：`关闭 V2/V3 更正门禁`
+- 后续顺序：`V2/V3 re-review → V4 Web LCA/Recorder → V5 Jenkins → VG → P0 → P1`
 - 默认仓库可见性：建议 `private`
 - 下一决策点：见 [待确认项](docs/proposals/2026-08-20-open-questions.md)
 

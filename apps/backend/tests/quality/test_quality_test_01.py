@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import importlib.util
+import json
 import os
 import stat
 import subprocess
@@ -7,6 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.domain.models import text_digest
+from tap.modules.test_management.domain.models import (
+    TestPlanGenerationRequest as GenerationRequest,
+)
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts/evaluate-quality-test-design.py"
@@ -39,14 +47,99 @@ def _runner():
 
 
 def _profile() -> dict:
-    output_digest = "sha256:" + "a" * 64
     cases = []
     for index in range(50):
+        suffix = f"{index + 1:03d}"
+        intent = f"Verify business workflow {index}"
+        source = "A successful operation creates an immutable record."
+        output = {
+            "title": f"Workflow {index}",
+            "objective": intent,
+            "scope": ["Approved operation"],
+            "prerequisites": ["The request exists"],
+            "risks": ["Duplicate records"],
+            "cases": [
+                {
+                    "caseId": f"case_{suffix}",
+                    "ordinal": 1,
+                    "title": "Create record",
+                    "objective": intent,
+                    "critical": True,
+                    "scenarios": [
+                        {
+                            "scenarioId": f"scenario_{suffix}",
+                            "ordinal": 1,
+                            "title": "Approved request",
+                            "steps": [
+                                {
+                                    "stepId": f"given_{suffix}",
+                                    "ordinal": 1,
+                                    "keyword": "Given",
+                                    "text": "a valid request",
+                                    "expectedResult": None,
+                                    "critical": False,
+                                },
+                                {
+                                    "stepId": f"when_{suffix}",
+                                    "ordinal": 2,
+                                    "keyword": "When",
+                                    "text": "the request is approved",
+                                    "expectedResult": None,
+                                    "critical": False,
+                                },
+                                {
+                                    "stepId": f"then_{suffix}",
+                                    "ordinal": 3,
+                                    "keyword": "Then",
+                                    "text": "an immutable record is created",
+                                    "expectedResult": "one immutable record exists",
+                                    "critical": True,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "citations": [
+                {
+                    "citationId": f"citation_{suffix}",
+                    "sourceRevisionId": f"source_revision_{suffix}",
+                    "documentRevisionId": f"document_revision_{suffix}",
+                    "chunkId": f"chunk_{suffix}",
+                    "contentDigest": text_digest(source),
+                    "claimText": source,
+                    "origin": "SOURCE",
+                }
+            ],
+            "assumptions": [],
+            "unknowns": [],
+            "coverageGaps": [],
+        }
+        output_digest = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    output, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+        )
+        request = GenerationRequest.create(
+            project_id=VALIDATION_SCOPE.project_id,
+            conversation_id=f"quality_conversation_{suffix}",
+            turn_id=f"quality_turn_{suffix}",
+            input_snapshot_digest=text_digest(intent),
+            answer_evidence_snapshot_digest=text_digest(source),
+            model_alias="tapper-chat",
+            agent_revision_id="validation-test-design-agent-v1",
+            skill_revision_ids=("validation-test-design-skill-v1",),
+            objective=intent,
+            idempotency_key=f"quality_test_design_{suffix}",
+        )
         cases.append(
             {
                 "caseId": f"intent-{index:03d}",
-                "intent": f"Verify business workflow {index}",
-                "source": "A successful operation creates an immutable record.",
+                "intent": intent,
+                "source": source,
                 "observation": {
                     "schemaValid": True,
                     "bddValid": True,
@@ -56,7 +149,13 @@ def _profile() -> dict:
                     "criticalCorrectionRequired": False,
                     "outputDigest": output_digest,
                     "reviewedOutputDigest": output_digest,
-                    "generatedOutput": {"title": "reviewed output"},
+                    "generatedOutput": output,
+                    "providerReceipt": {
+                        "requestDigest": request.request_digest,
+                        "outputDigest": output_digest,
+                        "provider": "provider",
+                        "model": "model",
+                    },
                 },
                 "reviewerJudgments": [
                     {"reviewer": "patrick", "approved": True},
@@ -71,7 +170,12 @@ def _profile() -> dict:
             "reviewStatus": "approved",
             "providerInvocationCount": 50,
         },
-        "bindings": {"actualModel": "provider/model"},
+        "bindings": {
+            "modelAlias": "tapper-chat",
+            "actualModel": "provider/model",
+            "agentRevisionId": "validation-test-design-agent-v1",
+            "skillRevisionIds": ["validation-test-design-skill-v1"],
+        },
         "cases": cases,
     }
 
@@ -156,7 +260,39 @@ def test_real_gate_requires_review_bound_generated_output(missing: str) -> None:
     profile["bindings"].update(module.current_bindings())
     profile["cases"][0]["observation"].pop(missing)
 
-    with pytest.raises(ValueError, match="generated output bound to its review"):
+    with pytest.raises(ValueError, match="generated output"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_rejects_incomplete_generated_output() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["bindings"].update(module.current_bindings())
+
+    profile["cases"][0]["observation"]["generatedOutput"] = {"title": "incomplete"}
+
+    with pytest.raises(ValueError, match="generated output"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_recomputes_generated_output_digest() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["bindings"].update(module.current_bindings())
+    profile["cases"][0]["observation"]["generatedOutput"]["title"] = "changed"
+
+    with pytest.raises(ValueError, match="bound to its review"):
+        module.evaluate(profile, real=True)
+
+
+def test_real_gate_requires_per_case_provider_receipts() -> None:
+    module = _evaluator()
+    profile = _profile()
+    profile["bindings"].update(module.current_bindings())
+
+    profile["cases"][0]["observation"].pop("providerReceipt")
+
+    with pytest.raises(ValueError, match="provider receipt"):
         module.evaluate(profile, real=True)
 
 
@@ -243,3 +379,9 @@ def test_real_runner_reinvokes_every_case_and_invalidates_changed_review(monkeyp
     assert result["dataset"]["reviewStatus"] == "pending"
     assert result["cases"][0]["reviewerJudgments"] == []
     assert result["cases"][0]["observation"]["generatedOutput"] == {"title": "fresh model output"}
+    assert result["cases"][0]["observation"]["providerReceipt"] == {
+        "requestDigest": calls[0].request_digest,
+        "outputDigest": "sha256:" + "b" * 64,
+        "provider": "provider",
+        "model": "model",
+    }

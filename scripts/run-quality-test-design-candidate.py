@@ -28,11 +28,16 @@ class CapturingGateway:
         self.delegate = delegate
         self.identities: set[tuple[str, str]] = set()
         self.invocation_count = 0
+        self.receipts: dict[str, tuple[str, str]] = {}
 
     async def generate_structured(self, request):  # type: ignore[no-untyped-def]
         self.invocation_count += 1
         result = await self.delegate.generate_structured(request)
         self.identities.add((result.actual_provider, result.actual_model))
+        self.receipts[request.idempotency_key] = (
+            result.actual_provider,
+            result.actual_model,
+        )
         return result
 
 
@@ -49,6 +54,7 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
         timeout_seconds=min(60.0, settings.model_timeout_seconds),
     )
     observations = deepcopy(profile)
+    bindings = observations["bindings"]
     semaphore = asyncio.Semaphore(4)
     review_invalidated = False
 
@@ -62,9 +68,11 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             turn_id=f"quality_turn_{suffix}",
             input_snapshot_digest=_digest(str(item["intent"])),
             answer_evidence_snapshot_digest=_digest(source),
-            model_alias=settings.chat_alias,
-            agent_revision_id="validation_test_design_agent_v1",
-            skill_revision_ids=("validation_test_design_skill_v1",),
+            model_alias=str(bindings["modelAlias"]),
+            agent_revision_id=str(bindings["agentRevisionId"]),
+            skill_revision_ids=tuple(
+                str(item) for item in bindings["skillRevisionIds"]
+            ),
             objective=str(item["intent"]),
             idempotency_key=f"quality_test_design_{suffix}",
         )
@@ -95,6 +103,7 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
             validate_draft_structure(revision)
             output = revision.canonical_content()
             output_digest = revision.content_digest
+            provider, model = capture.receipts[request.idempotency_key]
             review_is_current = (
                 observation.get("reviewedOutputDigest") == output_digest
                 and bool(item.get("reviewerJudgments"))
@@ -110,6 +119,12 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 criticalTotal=len(item["criticalRequirements"]),
                 outputDigest=output_digest,
                 generatedOutput=output,
+                providerReceipt={
+                    "requestDigest": request.request_digest,
+                    "outputDigest": output_digest,
+                    "provider": provider,
+                    "model": model,
+                },
             )
             if not review_is_current:
                 review_invalidated = True
