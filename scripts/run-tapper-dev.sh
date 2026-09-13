@@ -82,6 +82,7 @@ tapper_dev_parser_state=""
 tapper_dev_api_pid=""
 tapper_dev_relay_pid=""
 tapper_dev_worker_pid=""
+tapper_dev_graph_pid=""
 tapper_dev_generation_pid=""
 tapper_dev_web_pid=""
 tapper_dev_ready_file=""
@@ -111,7 +112,8 @@ cleanup() {
     tapper_dev_ready_file=""
   fi
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_worker_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     terminate_pid "$child_pid" || cleanup_failed=1
   done
@@ -119,7 +121,8 @@ cleanup() {
   deadline=$(( SECONDS + tapper_dev_shutdown_grace_seconds ))
   while :; do
     live=0
-    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_worker_pid" \
+    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+      "$tapper_dev_worker_pid" \
       "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
       if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
         live=1
@@ -130,13 +133,15 @@ cleanup() {
     sleep 0.1 || cleanup_failed=1
   done
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_worker_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
       kill -KILL "$child_pid" 2>/dev/null || cleanup_failed=1
     fi
   done
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_worker_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_generation_pid" "$tapper_dev_graph_pid" \
+    "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ]; then
       wait "$child_pid" 2>/dev/null || true
@@ -205,6 +210,8 @@ tapper_dev_api_pid=$!
 tapper_dev_relay_pid=$!
 (exec uv run --project apps/backend python -m tap.entrypoints.tapper_ingestion_worker) &
 tapper_dev_worker_pid=$!
+(exec uv run --project apps/backend python -m tap.entrypoints.tapper_graph_worker) &
+tapper_dev_graph_pid=$!
 (exec uv run --project apps/backend python -m tap.entrypoints.tapper_generation_worker) &
 tapper_dev_generation_pid=$!
 (exec "$tapper_dev_vite_bin" "$tapper_dev_web_root" \
@@ -235,6 +242,13 @@ child_exit_status() {
     ! kill -0 "$tapper_dev_worker_pid" 2>/dev/null; then
     if wait "$tapper_dev_worker_pid"; then status=1; else status=$?; fi
     tapper_dev_worker_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
+  if [ -n "$tapper_dev_graph_pid" ] && \
+    ! kill -0 "$tapper_dev_graph_pid" 2>/dev/null; then
+    if wait "$tapper_dev_graph_pid"; then status=1; else status=$?; fi
+    tapper_dev_graph_pid=""
     [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
     return "$status"
   fi

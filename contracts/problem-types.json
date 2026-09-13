@@ -150,6 +150,14 @@
       "type": "https://tap.example/problems/execution-provider-unavailable"
     },
     {
+      "code": "graph-fact-not-found",
+      "detail": "The graph fact is unavailable in this Project snapshot.",
+      "retryable": false,
+      "status": 404,
+      "title": "Graph fact not found",
+      "type": "https://tap.example/problems/graph-fact-not-found"
+    },
+    {
       "code": "graph-unavailable",
       "detail": "The graph service is currently unavailable.",
       "failureStage": "graph",

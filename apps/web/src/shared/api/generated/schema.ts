@@ -294,6 +294,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/graph/evidence/{evidence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Detail */
+        get: operations["graph_get_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Node Detail */
+        get: operations["graph_get_node"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}/neighbors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Neighbors */
+        post: operations["graph_get_neighbors"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bounded Path */
+        post: operations["graph_bounded_path"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search Graph */
+        post: operations["graph_search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Active Snapshots */
+        get: operations["graph_list_active_snapshots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/sources": {
         parameters: {
             query?: never;
@@ -876,6 +978,10 @@ export interface components {
             answerEvidenceSnapshotId?: string | null;
             /** Attempt */
             attempt: number;
+            /** Graphcontextstatus */
+            graphContextStatus?: ("APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED") | null;
+            /** Graphsnapshotid */
+            graphSnapshotId?: string | null;
             input: components["schemas"]["ConversationTurnInputView"];
             /** Inputsnapshotdigest */
             inputSnapshotDigest: string;
@@ -1093,6 +1199,143 @@ export interface components {
              */
             type: "failure";
         };
+        /** GraphEdgeView */
+        GraphEdgeView: {
+            /** Confidence */
+            confidence: number;
+            /** Edgeid */
+            edgeId: string;
+            /**
+             * Evidenceids
+             * @default []
+             */
+            evidenceIds?: string[];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "EXTRACTED" | "INFERRED";
+            /** Relationtype */
+            relationType: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
+        /** GraphEvidenceView */
+        GraphEvidenceView: {
+            /** Anchor */
+            anchor: {
+                [key: string]: unknown;
+            };
+            /** Chunkid */
+            chunkId: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /** Evidenceid */
+            evidenceId: string;
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** GraphNeighborRequest */
+        GraphNeighborRequest: {
+            /**
+             * Depth
+             * @default 1
+             */
+            depth?: number;
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /** Snapshotid */
+            snapshotId: string;
+        };
+        /** GraphNodeView */
+        GraphNodeView: {
+            /** Canonicalkey */
+            canonicalKey: string;
+            /**
+             * Evidenceids
+             * @default []
+             */
+            evidenceIds?: string[];
+            /** Label */
+            label: string;
+            /** Nodeid */
+            nodeId: string;
+            /** Nodetype */
+            nodeType: string;
+        };
+        /** GraphPathRequest */
+        GraphPathRequest: {
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
+        /** GraphSearchRequest */
+        GraphSearchRequest: {
+            /**
+             * Nodelimit
+             * @default 50
+             */
+            nodeLimit?: number;
+            /** Query */
+            query: string;
+            /** Snapshotid */
+            snapshotId: string;
+        };
+        /** GraphSnapshotPage */
+        GraphSnapshotPage: {
+            /** Items */
+            items: components["schemas"]["GraphSnapshotView"][];
+        };
+        /** GraphSnapshotView */
+        GraphSnapshotView: {
+            /** Documentrevisionids */
+            documentRevisionIds: string[];
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourcerevisionids */
+            sourceRevisionIds: string[];
+            /** Sourcesetdigest */
+            sourceSetDigest: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "CANDIDATE" | "READY" | "FAILED";
+        };
+        /** GraphSubgraphView */
+        GraphSubgraphView: {
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeView"][];
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence?: components["schemas"]["GraphEvidenceView"][];
+            /** Nodes */
+            nodes: components["schemas"]["GraphNodeView"][];
+            /** Snapshotid */
+            snapshotId: string;
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /** HealthComponent */
         HealthComponent: {
             name: components["schemas"]["HealthComponentName"];
@@ -1201,7 +1444,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
         } & ({
             /** @constant */
             detail?: "The grounded answer could not be committed atomically.";
@@ -1423,6 +1666,19 @@ export interface components {
             title?: "Execution provider unavailable";
             /** @constant */
             type?: "https://tap.example/problems/execution-provider-unavailable";
+        } | {
+            /** @constant */
+            detail?: "The graph fact is unavailable in this Project snapshot.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "Graph fact not found";
+            /** @constant */
+            type?: "https://tap.example/problems/graph-fact-not-found";
         } | {
             /** @constant */
             detail?: "The graph service is currently unavailable.";
@@ -1769,6 +2025,17 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            /**
+             * Graphcontextstatus
+             * @default NOT_SELECTED
+             * @enum {string}
+             */
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            /**
+             * Graphsnapshotid
+             * @default null
+             */
+            graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -2235,6 +2502,15 @@ export interface components {
              */
             state: "running";
         };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
         /** BddAnchor */
         tap__contracts__chat_stream__BddAnchor: {
             /** Featureid */
@@ -2334,6 +2610,14 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            /**
+             * Graphcontextstatus
+             * @default NOT_SELECTED
+             * @enum {string}
+             */
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            /** Graphsnapshotid */
+            graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -2445,6 +2729,14 @@ export interface components {
             degradationReasons?: string[] | null;
             /** Degradedmode */
             degradedMode: boolean;
+            /**
+             * Graphcontextstatus
+             * @default NOT_SELECTED
+             * @enum {string}
+             */
+            graphContextStatus?: "APPLIED" | "NOT_READY" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED";
+            /** Graphsnapshotid */
+            graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -3636,6 +3928,276 @@ export interface operations {
                 };
             };
             /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    graph_get_evidence: {
+        parameters: {
+            query: {
+                snapshotId: string;
+            };
+            header?: never;
+            path: {
+                evidence_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEvidenceView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_get_node: {
+        parameters: {
+            query: {
+                snapshotId: string;
+            };
+            header?: never;
+            path: {
+                node_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_get_neighbors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphNeighborRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_bounded_path: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphPathRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_search: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_list_active_snapshots: {
+        parameters: {
+            query: {
+                sourceRevisionId: string[];
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSnapshotPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Graph unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

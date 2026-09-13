@@ -1620,6 +1620,39 @@ def test_worker_graph_reuses_one_repo_blob_model_and_outer_resource_owner() -> N
 
 
 @pytest.mark.asyncio
+async def test_graph_worker_runtime_is_independent_and_owns_only_its_resources(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    events: list[str] = []
+
+    class Resource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            events.append(self.name)
+
+    engine = Resource("engine")
+    blob = Resource("blob")
+    redis = Resource("redis")
+    sessions = object()
+    monkeypatch.setattr(module, "_open_database", lambda _settings: (engine, sessions))
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
+
+    runtime = await module.create_graph_worker_runtime(settings)
+
+    assert runtime.worker._artifacts is blob
+    assert runtime.worker._worker_id == settings.worker_id + "-graph"
+    assert runtime.wakeups._group_name == "tapper-graph"
+    assert runtime.wakeups._aggregate_type == "GraphSnapshot"
+    await runtime.resources[0].aclose()
+    assert events == ["redis", "blob", "engine"]
+
+
+@pytest.mark.asyncio
 async def test_create_worker_runtime_registers_only_index_and_closes_outer_graph_once(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]

@@ -58,7 +58,10 @@ class GenerationWorker:
                 )
                 return ProviderResult(
                     answer=answer.answer,
-                    graph_context_status=GraphContextStatus.NOT_REQUESTED,
+                    graph_context_status=GraphContextStatus(
+                        getattr(answer, "graph_context_status", "UNAVAILABLE")
+                    ),
+                    graph_snapshot_id=getattr(answer, "graph_snapshot_id", None),
                     retrieval_summary=RetrievalSummary(
                         "abstained" if answer.abstained else "completed",
                         trace_id=answer.trace_id,

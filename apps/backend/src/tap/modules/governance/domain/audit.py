@@ -25,6 +25,9 @@ class AuditAction(StrEnum):
     RECONCILE_ALL = "reconcile-all"
     CONVERSATION_TURN_REQUESTED = "conversation-turn-requested"
     CONVERSATION_TURN_COMPLETED = "conversation-turn-completed"
+    GRAPH_SNAPSHOT_REQUESTED = "graph-snapshot-requested"
+    GRAPH_SNAPSHOT_READY = "graph-snapshot-ready"
+    GRAPH_SNAPSHOT_FAILED = "graph-snapshot-failed"
 
 
 class AuditResource(StrEnum):
@@ -33,6 +36,7 @@ class AuditResource(StrEnum):
     DOCUMENT_REVISION = "document-revision"
     PROJECT_MAINTENANCE = "project-maintenance"
     CONVERSATION_TURN = "conversation-turn"
+    GRAPH_SNAPSHOT = "graph-snapshot"
 
 
 class AuditOutcome(StrEnum):
@@ -105,7 +109,14 @@ def audit_content_digest(
     if type(safe_metadata) is not SafeAuditMetadata:
         raise TypeError("audit requires SafeAuditMetadata")
     expected_resource = (
-        AuditResource.CONVERSATION_TURN
+        AuditResource.GRAPH_SNAPSHOT
+        if action
+        in {
+            AuditAction.GRAPH_SNAPSHOT_REQUESTED,
+            AuditAction.GRAPH_SNAPSHOT_READY,
+            AuditAction.GRAPH_SNAPSHOT_FAILED,
+        }
+        else AuditResource.CONVERSATION_TURN
         if action
         in {
             AuditAction.CONVERSATION_TURN_REQUESTED,

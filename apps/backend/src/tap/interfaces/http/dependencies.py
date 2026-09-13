@@ -31,6 +31,7 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 
 
@@ -136,6 +137,19 @@ class HttpServices:
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
+    graph: GraphStorePort | None = None
+
+
+class GraphUnavailable(Exception):
+    """The dedicated Graph runtime is unavailable; never represent this as an empty graph."""
+
+
+def graph_service(request: Request) -> GraphStorePort:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.graph if isinstance(services, HttpServices) else None
+    if service is None:
+        raise GraphUnavailable
+    return service
 
 
 def knowledge_service(request: Request) -> KnowledgeHttpService:

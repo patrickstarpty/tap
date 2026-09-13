@@ -535,6 +535,7 @@ function ProjectLibraryWorkspace({
   return (
     <>
       <LibraryWorkspace
+        projectId={projectId}
         copy={copy}
         sources={sources}
         loadState={loadState}

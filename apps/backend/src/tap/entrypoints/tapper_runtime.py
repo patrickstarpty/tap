@@ -106,6 +106,7 @@ class TapperSettings:
     web_port: int
     model_backend: str
     answer_backend: str
+    graph_extraction_mode: str
     embedding_dimension: int
     poll_seconds: float
     job_batch_size: int
@@ -356,6 +357,12 @@ class TapperSettings:
             web_port=_integer(values, "TAPPER_WEB_PORT", 5173, minimum=1, maximum=65535),
             model_backend=backend,
             answer_backend=answer_backend,
+            graph_extraction_mode=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_EXTRACTION_MODE",
+                default="fake",
+                choices=frozenset({"fake", "model"}),
+            ),
             embedding_dimension=dimension,
             poll_seconds=_duration(values, "TAPPER_POLL_SECONDS", 1.0, maximum=60),
             job_batch_size=_integer(
@@ -683,6 +690,7 @@ async def create_api_runtime(
             authorization_policy=authorization_policy,
             asset_catalog=asset_catalog,
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
@@ -782,9 +790,70 @@ def _build_document_repository(
     *,
     scope: ProjectScopeContext,
 ) -> MysqlDocumentRepository:
+    from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore, MysqlGraphReadyProjection
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
-    return MysqlDocumentRepository(sessions, scope=scope, audit_factory=create_project_audit)
+    graph_jobs = MysqlGraphJobStore(sessions)
+    return MysqlDocumentRepository(
+        sessions,
+        scope=scope,
+        audit_factory=create_project_audit,
+        ready_projection=MysqlGraphReadyProjection(graph_jobs, model_alias="tapper-chat"),
+    )
+
+
+async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
+    """Construct the independently restartable durable Graph worker."""
+
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper graph worker runtime requires validated settings")
+    resources = OwnedResources()
+    try:
+        engine, sessions = _open_database(settings)
+        resources.push(engine)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        artifacts = _create_blob(settings)
+        resources.push(artifacts)
+        redis = _create_redis(settings)
+        resources.push(redis)
+
+        from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+        from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
+        from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.application.worker import GraphWorker
+        from tap.modules.graph.ports.extraction import GraphExtractionPort
+        from tap.modules.knowledge.ports.documents import ArtifactStore
+        from tap.platform.messaging.redis_dispatch import AsyncRedisStream
+        from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
+
+        if settings.graph_extraction_mode == "model":
+            embeddings = _create_embeddings(settings)
+            _push_if_owned(resources, embeddings)
+            extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
+                embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
+            )
+        else:
+            extractor = DeterministicGraphExtraction()
+        worker = GraphWorker(
+            jobs=MysqlGraphJobStore(sessions),
+            artifacts=cast(ArtifactStore, artifacts),
+            extractor=extractor,
+            scope=scope,
+            worker_id=settings.worker_id + "-graph",
+        )
+        wakeups = RedisWakeupConsumer(
+            scope=scope,
+            redis=cast(AsyncRedisStream, redis),
+            stream_name=settings.redis_stream,
+            group_name="tapper-graph",
+            consumer_name=settings.worker_id + "-graph",
+            aggregate_type="GraphSnapshot",
+        )
+        return WorkerRuntime(worker=worker, wakeups=wakeups, resources=(resources,))
+    except BaseException as error:
+        await resources.aclose(error)
+        raise AssertionError("graph worker resource settlement unexpectedly returned")
 
 
 def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
@@ -1270,6 +1339,7 @@ def _assemble_http_services(
     authorization_policy: AuthorizationPolicy,
     asset_catalog: object | None = None,
     conversation_sessions: object | None = None,
+    graph_sessions: object | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1323,6 +1393,14 @@ def _assemble_http_services(
             MysqlConversationRepository(conversation_sessions, scope=repository.scope),  # type: ignore[arg-type]
             scope=repository.scope,
         )
+    graph = None
+    graph_enricher = None
+    if graph_sessions is not None:
+        from tap.modules.graph.adapters.mysql import MysqlGraphStore
+        from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
+
+        graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
+        graph_enricher = GraphAnswerEnricher(graph)
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
@@ -1335,12 +1413,14 @@ def _assemble_http_services(
             searches=search_service,
             sources=SourceService(cast(SourceRepository, repository), documents),
             corpus_version=corpus_version,
+            graph_enricher=graph_enricher,
         ),
         readiness=readiness,
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,
         scope=repository.scope,
         conversations=conversations,
+        graph=graph,
     )
 
 

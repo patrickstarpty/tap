@@ -4,6 +4,7 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
+import { useQueries } from "@tanstack/react-query";
 import {
   useMemo,
   useRef,
@@ -16,6 +17,8 @@ import {
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
+import { KnowledgeGraphExplorer } from "../../../features/graph/components/KnowledgeGraphExplorer";
+import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
@@ -28,6 +31,7 @@ interface LibraryWorkspaceProps {
   sources: readonly LibrarySource[];
   loadState?: "loading" | "loaded" | "error";
   onReload?: () => void;
+  projectId?: string;
 }
 
 export function LibraryWorkspace({
@@ -37,6 +41,7 @@ export function LibraryWorkspace({
   sources,
   loadState = "loaded",
   onReload,
+  projectId,
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
@@ -62,6 +67,33 @@ export function LibraryWorkspace({
           (statusFilter === "all" || source.status === statusFilter),
       ),
     [sources, statusFilter, typeFilter],
+  );
+  const graphSources = useQueries({
+    queries:
+      projectId === undefined
+        ? []
+        : facetSources
+            .filter((source) => source.status === "ready")
+            .map((source) => ({
+              queryKey: [
+                "knowledge",
+                projectId,
+                "source",
+                source.id,
+                "graph",
+              ] as const,
+              queryFn: ({ signal }: { signal: AbortSignal }) =>
+                createKnowledgeClient({ projectId }).getSource(
+                  source.id,
+                  signal,
+                ),
+              retry: false,
+            })),
+  });
+  const graphRevisionIds = graphSources.flatMap((detail) =>
+    (detail.data?.documents.items ?? [])
+      .filter((document) => document.status === "ready")
+      .map((document) => document.revisionId),
   );
   const visibleSources = useMemo(
     () =>
@@ -306,7 +338,15 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-graph-tab"
         >
-          <KnowledgeGraph copy={copy} query={query} sources={facetSources} />
+          {projectId === undefined ? (
+            <KnowledgeGraph copy={copy} query={query} sources={facetSources} />
+          ) : (
+            <KnowledgeGraphExplorer
+              projectId={projectId}
+              query={query}
+              sourceRevisionIds={graphRevisionIds}
+            />
+          )}
         </div>
       )}
 

@@ -9,6 +9,16 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "graph_snapshot",
+    "graph_snapshot_revision",
+    "graph_active_snapshot",
+    "graph_snapshot_document_revision",
+    "graph_node",
+    "graph_edge",
+    "graph_node_evidence",
+    "graph_edge_evidence",
+    "graph_inference_provenance",
+    "graph_extraction_job",
     "knowledge_source",
     "knowledge_source_command",
     "knowledge_source_legacy_map",

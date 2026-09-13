@@ -268,6 +268,13 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "graph-fact-not-found",
+                "Graph fact not found",
+                404,
+                "The graph fact is unavailable in this Project snapshot.",
+                False,
+            ),
+            ProblemDefinition(
                 "graph-unavailable",
                 "Graph unavailable",
                 503,

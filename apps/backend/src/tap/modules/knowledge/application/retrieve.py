@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -200,6 +200,7 @@ class AuthorizedRetrieval:
         *,
         frozen_policy: bool = False,
         governance=None,
+        graph_context: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerResponse:
         run = await self._retrieve(request.as_search_request(), policy, frozen_policy=frozen_policy)
         required = tuple(
@@ -220,8 +221,9 @@ class AuthorizedRetrieval:
                 run.response.evidence,
                 run.response.retrieval_profile_id.value,
                 governance=governance,
+                graph_context=graph_context,
             )
-            if governance is not None
+            if governance is not None or graph_context
             else await self._answers.answer(
                 run.plan.sanitized_query,
                 run.response.evidence,

@@ -192,6 +192,18 @@ def _turn(value):
         answer_evidence_snapshot_digest=None
         if value.answer_snapshot is None
         else value.answer_snapshot.digest,
+        graph_context_status=None
+        if value.answer_snapshot is None
+        else {
+            "NOT_REQUESTED": "NOT_SELECTED",
+            "REJECTED": "FAILED",
+        }.get(
+            value.answer_snapshot.value.graph_context_status.value,
+            value.answer_snapshot.value.graph_context_status.value,
+        ),
+        graph_snapshot_id=None
+        if value.answer_snapshot is None
+        else value.answer_snapshot.value.graph_snapshot_id,
         input=ConversationTurnInputView(
             message=frozen.message,
             model_alias=frozen.model_alias,

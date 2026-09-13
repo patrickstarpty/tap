@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 from uuid import uuid4
 
 from tap.contracts.http import AbstentionReason as HttpAbstentionReason
@@ -129,9 +130,13 @@ class KnowledgeAPI:
     ) -> AnswerResponse:
         return await self._retrieval.answer(request, policy)
 
-    async def answer_frozen(self, request, policy, *, governance):
+    async def answer_frozen(self, request, policy, *, governance, graph_context=()):
         return await self._retrieval.answer(
-            request, policy, frozen_policy=True, governance=governance
+            request,
+            policy,
+            frozen_policy=True,
+            governance=governance,
+            graph_context=graph_context,
         )
 
 
@@ -177,7 +182,14 @@ def search_response_to_http(response: SearchResponse) -> HttpSearchResponse:
     )
 
 
-def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
+def answer_response_to_http(
+    response: AnswerResponse,
+    *,
+    graph_context_status: Literal[
+        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+    ] = "NOT_SELECTED",
+    graph_snapshot_id: str | None = None,
+) -> HttpAnswerResponse:
     return HttpAnswerResponse(
         trace_id=response.trace_id,
         query_plan_id=response.query_plan_id,
@@ -204,6 +216,8 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
             for item in response.claims
         ],
         citations=[_citation_to_http(item) for item in response.citations],
+        graph_context_status=graph_context_status,
+        graph_snapshot_id=graph_snapshot_id,
     )
 
 

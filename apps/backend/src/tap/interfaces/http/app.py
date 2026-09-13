@@ -22,6 +22,7 @@ from tap.interfaces.http.routes.conversations import router as conversations_rou
 from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
+from tap.interfaces.http.routes.knowledge_graph import router as knowledge_graph_router
 from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sources_router
 from tap.interfaces.http.routes.model_catalog import router as model_catalog_router
 from tap.interfaces.http.scope import resolve_project_scope
@@ -98,6 +99,7 @@ def create_app(
         model_catalog_router,
         ai_assets_router,
         conversations_router,
+        knowledge_graph_router,
     ):
         app.include_router(
             router,

@@ -984,6 +984,28 @@
         {
           "properties": {
             "detail": {
+              "const": "The graph fact is unavailable in this Project snapshot."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Graph fact not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/graph-fact-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The graph service is currently unavailable."
             },
             "failureStage": {
@@ -1453,6 +1475,7 @@
             "https://tap.example/problems/embedding-unavailable",
             "https://tap.example/problems/empty-document",
             "https://tap.example/problems/execution-provider-unavailable",
+            "https://tap.example/problems/graph-fact-not-found",
             "https://tap.example/problems/graph-unavailable",
             "https://tap.example/problems/idempotency-conflict",
             "https://tap.example/problems/knowledge-runtime-unavailable",
@@ -1637,6 +1660,30 @@
         "degradedMode": {
           "title": "Degradedmode",
           "type": "boolean"
+        },
+        "graphContextStatus": {
+          "default": "NOT_SELECTED",
+          "enum": [
+            "APPLIED",
+            "NOT_READY",
+            "FAILED",
+            "UNAVAILABLE",
+            "NOT_SELECTED"
+          ],
+          "title": "Graphcontextstatus",
+          "type": "string"
+        },
+        "graphSnapshotId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graphsnapshotid"
         },
         "queryPlanId": {
           "minLength": 1,

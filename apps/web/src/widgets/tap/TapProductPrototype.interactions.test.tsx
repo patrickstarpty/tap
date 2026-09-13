@@ -2363,24 +2363,16 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
-    const graph = screen.getByRole("group", {
-      name: "Life insurance knowledge graph",
-    });
-    expect(graph).toBeVisible();
-    expect(within(graph).getByText(/health-disclosure-guide/)).toBeVisible();
     expect(
-      within(graph).getByRole("button", {
-        name: /health-disclosure-guide\.pdf/,
-      }),
-    ).toHaveAttribute("data-highlighted", "true");
+      await screen.findByText(
+        "Select at least one ready source to explore its graph.",
+      ),
+    ).toBeVisible();
     expect(
-      within(graph).getByRole("button", {
-        name: /life-underwriting-rules\.md/,
+      screen.queryByRole("group", {
+        name: "Life insurance knowledge graph",
       }),
-    ).toHaveAttribute("data-dimmed", "true");
-    expect(screen.getByText(/Illustrative view/)).toBeVisible();
-    expect(within(graph).getByText("Health disclosure")).toBeVisible();
-    expect(within(graph).getByText("informs")).toBeVisible();
+    ).not.toBeInTheDocument();
 
     await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "All" }));
@@ -2423,118 +2415,35 @@ describe("Tap product prototype interactions", () => {
     ).toBeVisible();
   });
 
-  it("filters graph communities, inspects nodes, and controls the viewport", async () => {
+  it("does not substitute the illustrative graph without a published revision", async () => {
     const user = userEvent.setup();
     renderPrototypeWithManyDocuments();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    const graph = screen.getByRole("group", {
-      name: "Life insurance knowledge graph",
-    });
-    const sourcesCommunity = screen.getByRole("checkbox", {
-      name: /Sources · 5 nodes/,
-    });
-    expect(sourcesCommunity).toBeChecked();
-    await user.click(sourcesCommunity);
     expect(
-      within(graph).queryByRole("button", { name: /beneficiary-guide\.md/ }),
-    ).toBeNull();
-    await user.click(sourcesCommunity);
-
-    await user.click(
-      within(graph).getByRole("button", {
-        name: "Health disclosure · Concept · Underwriting",
-      }),
-    );
-    const inspector = screen.getByRole("region", { name: "Node details" });
-    expect(within(inspector).getByText("Health disclosure")).toBeVisible();
-    expect(within(inspector).getByText("3 connections")).toBeVisible();
-    expect(within(inspector).getByText("EXTRACTED")).toBeVisible();
-
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("100%");
-    await user.click(screen.getByRole("button", { name: "Zoom in" }));
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("125%");
-    await user.click(screen.getByRole("button", { name: "Reset view" }));
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("100%");
-    const zoomOut = screen.getByRole("button", { name: "Zoom out" });
-    await user.click(zoomOut);
-    await user.click(zoomOut);
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("75%");
-    expect(zoomOut).toBeDisabled();
+      await screen.findByText(
+        "Select at least one ready source to explore its graph.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Illustrative view")).not.toBeInTheDocument();
   });
 
-  it("summarizes every visible graph document, concept, and labeled relationship", async () => {
+  it("omits illustrative graph summaries from the durable product path", async () => {
     const user = userEvent.setup();
     renderPrototypeWithManyDocuments();
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    const graph = screen.getByRole("group", {
-      name: "Life insurance knowledge graph",
-    });
-    const summary = screen.getByRole("region", {
-      name: "Knowledge graph summary",
-    });
-    const documents = within(summary).getByRole("list", {
-      name: "Visible documents",
-    });
-    expect(within(documents).getAllByRole("listitem")).toHaveLength(5);
-    expect(within(documents).getByText("beneficiary-guide.md")).toBeVisible();
-    expect(within(graph).getByText("beneficiary-guide.md")).toBeVisible();
-
-    const concepts = within(summary).getByRole("list", {
-      name: "Concepts",
-    });
     expect(
-      within(concepts)
-        .getAllByRole("listitem")
-        .map((item) => item.textContent),
-    ).toEqual([
-      "Life insurance application",
-      "Underwriting",
-      "Health disclosure",
-      "Beneficiary",
-    ]);
-
-    const relationships = within(summary).getByRole("list", {
-      name: "Labeled relationships",
-    });
-    expect(
-      within(relationships).getByText(
-        "Life insurance application requires Health disclosure",
+      await screen.findByText(
+        "Select at least one ready source to explore its graph.",
       ),
-    ).toBeInTheDocument();
+    ).toBeVisible();
     expect(
-      within(relationships).getByText("Health disclosure informs Underwriting"),
-    ).toBeInTheDocument();
-    expect(
-      within(relationships).getByText(
-        "Life insurance application names Beneficiary",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      within(relationships).getByText(
-        "beneficiary-guide.md supports Life insurance application",
-      ),
-    ).toBeInTheDocument();
-    expect(graph).toHaveAttribute(
-      "aria-describedby",
-      expect.stringContaining("tap-library-graph-summary"),
-    );
-    expect(within(graph).queryByText("寿险投保")).toBeNull();
-    expect(within(graph).queryByText("健康告知")).toBeNull();
-    expect(within(graph).queryByText("核保")).toBeNull();
-    expect(within(graph).queryByText("受益人")).toBeNull();
+      screen.queryByRole("region", { name: "Knowledge graph summary" }),
+    ).not.toBeInTheDocument();
   });
 });

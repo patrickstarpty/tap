@@ -95,6 +95,7 @@ def test_e2e_manifest_preserves_restart_and_security_journeys():
             "tests/e2e/tapper.spec.ts",
             "tests/e2e/knowledge-upload-security.spec.ts",
             "tests/e2e/knowledge-conversation.spec.ts",
+            "tests/e2e/knowledge-graph.spec.ts",
         ],
         "app-restart": ["tests/e2e/persistence.spec.ts"],
         "compose-restart": ["tests/e2e/persistence.spec.ts"],
@@ -153,7 +154,7 @@ async def test_parser_control_distinguishes_clean_half_close_from_truncation(dat
 
 def native_journey():
     return {
-        "stats": {"expected": 3, "unexpected": 0, "flaky": 0, "skipped": 0},
+        "stats": {"expected": 4, "unexpected": 0, "flaky": 0, "skipped": 0},
         "suites": [
             {
                 "specs": [
@@ -175,6 +176,7 @@ def native_journey():
                 "tapper.spec.ts",
                 "knowledge-upload-security.spec.ts",
                 "knowledge-conversation.spec.ts",
+                "knowledge-graph.spec.ts",
             ]
         ],
     }
@@ -204,7 +206,7 @@ def test_native_e2e_report_rejects_nonpassing_or_incomplete_evidence(drift):
     if drift == "unexpected":
         native["suites"][0]["specs"][0]["file"] = "other.spec.ts"
     if drift == "count":
-        native["stats"]["expected"] = 4
+        native["stats"]["expected"] = 5
     if drift == "error":
         native["errors"] = [{"message": "private error"}]
     with pytest.raises(ValueError):
@@ -232,8 +234,9 @@ def test_native_e2e_projection_preserves_identity_and_discards_content():
         "tests/e2e/tapper.spec.ts",
         "tests/e2e/knowledge-upload-security.spec.ts",
         "tests/e2e/knowledge-conversation.spec.ts",
+        "tests/e2e/knowledge-graph.spec.ts",
     }
-    assert result["counts"]["passed"] == 3
+    assert result["counts"]["passed"] == 4
     assert "private canary" not in json.dumps(result)
 
 

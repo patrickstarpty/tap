@@ -52,6 +52,8 @@ class GraphContextStatus(StrEnum):
     UNAVAILABLE = "UNAVAILABLE"
     REJECTED = "REJECTED"
     FAILED = "FAILED"
+    NOT_READY = "NOT_READY"
+    NOT_SELECTED = "NOT_SELECTED"
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 from tap.contracts.http import (
     CitationPreview,
@@ -93,6 +93,7 @@ class KnowledgeHttpService:
         searches: SearchOperations | None = None,
         sources: SourceService | None = None,
         corpus_version: str = "tapper-demo-v1",
+        graph_enricher=None,
     ) -> None:
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
@@ -102,6 +103,7 @@ class KnowledgeHttpService:
         self._searches = searches
         self._sources = sources
         self._corpus_version = corpus_version
+        self._graph_enricher = graph_enricher
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -266,10 +268,28 @@ class KnowledgeHttpService:
                 ),
             )
         domain_request = answer_request_from_http(request)
+        graph_context = None
+        if self._graph_enricher is not None:
+            graph_context = await self._graph_enricher.enrich(
+                self.scope,
+                tuple(frozen_input.source_revision_ids),
+                domain_request.query,
+            )
         response = await self._answers.answer_frozen(
-            domain_request, revisions, policy, governance=governance
+            domain_request,
+            revisions,
+            policy,
+            governance=governance,
+            graph_context=() if graph_context is None else graph_context.facts,
         )
-        return answer_response_to_http(response)
+        return answer_response_to_http(
+            response,
+            graph_context_status=cast(
+                Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"],
+                "UNAVAILABLE" if graph_context is None else graph_context.status.value,
+            ),
+            graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
+        )
 
     async def search(self, request: RetrievalSearchRequest) -> RetrievalSearchResponse:
         """Expose real evidence only to trusted in-process verification, never an HTTP route."""

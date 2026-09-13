@@ -33,8 +33,16 @@ describe("E2ERequestFailureAudit", () => {
       "GET",
       "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources?limit=50",
     ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources/src_0123456789abcdef0123456789abcdef?limit=50",
+    ],
     ["GET", "http://127.0.0.1:15173/api/v1/projects/project-e2e/ai/agents"],
     ["GET", "http://127.0.0.1:15173/api/v1/projects/project-e2e/ai/skills"],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/snapshots?sourceRevisionId=rev_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ],
     [
       "GET",
       "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations?limit=20",
@@ -192,6 +200,12 @@ describe("E2ERequestFailureAudit", () => {
     {
       errorText: "net::ERR_ABORTED",
       method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/snapshots?sourceRevisionId=secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
       url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations?limit=20&cursor=secret",
       expected: "GET outside-allowlist net::ERR_ABORTED",
     },
@@ -199,6 +213,18 @@ describe("E2ERequestFailureAudit", () => {
       errorText: "net::ERR_ABORTED",
       method: "GET",
       url: "http://127.0.0.1:15173/api/v1/projects/project-other/ai/agents",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources/src_secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources/src_0123456789abcdef0123456789abcdef",
       expected: "GET outside-allowlist net::ERR_ABORTED",
     },
     {

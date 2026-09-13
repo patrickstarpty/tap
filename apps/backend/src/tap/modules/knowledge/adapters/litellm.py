@@ -150,6 +150,7 @@ class KnowledgeModelGateway:
         profile_id: str,
         *,
         governance: GenerationGovernance | None = None,
+        graph_context=(),
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -157,20 +158,31 @@ class KnowledgeModelGateway:
         ):
             raise AnswerUnavailable("model-unavailable")
         # Redact copies only; canonical evidence, hashes and citation authority stay intact.
+        context_value = {
+            "query": await self._redact(query),
+            "evidence": [
+                {
+                    "label": item.evidence_label,
+                    "content": await self._redact(item.content),
+                    "sourceRevision": item.source.revision,
+                    "sourceContentHash": item.source.source_content_hash,
+                    "chunkContentHash": item.chunk_content_hash,
+                }
+                for item in evidence
+            ],
+        }
+        if graph_context:
+            context_value["knowledgeGraph"] = [
+                {
+                    **dict(item),
+                    **(
+                        {"label": await self._redact(str(item["label"]))} if "label" in item else {}
+                    ),
+                }
+                for item in graph_context
+            ]
         context = json.dumps(
-            {
-                "query": await self._redact(query),
-                "evidence": [
-                    {
-                        "label": item.evidence_label,
-                        "content": await self._redact(item.content),
-                        "sourceRevision": item.source.revision,
-                        "sourceContentHash": item.source.source_content_hash,
-                        "chunkContentHash": item.chunk_content_hash,
-                    }
-                    for item in evidence
-                ],
-            },
+            context_value,
             ensure_ascii=False,
             separators=(",", ":"),
         )

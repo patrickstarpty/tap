@@ -630,6 +630,16 @@ class RetrievalAnswerResponse(ContractModel):
     abstention_reason: AbstentionReason | None = None
     claims: list[RetrievalClaim]
     citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
+    graph_context_status: Literal[
+        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+    ] = "NOT_SELECTED"
+    graph_snapshot_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_graph_context(self) -> Self:
+        if (self.graph_context_status == "APPLIED") != bool(self.graph_snapshot_id):
+            raise ValueError("only applied Graph context can identify a snapshot")
+        return self
 
     @model_validator(mode="after")
     def validate_claim_spans(self) -> Self:
@@ -728,6 +738,10 @@ class ConversationTurnSummary(ContractModel):
     input_snapshot_digest: CanonicalSha256
     answer_evidence_snapshot_id: str | None = None
     answer_evidence_snapshot_digest: CanonicalSha256 | None = None
+    graph_context_status: (
+        Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"] | None
+    ) = None
+    graph_snapshot_id: str | None = None
     input: ConversationTurnInputView
 
 
@@ -781,3 +795,68 @@ class ConversationEventItem(ContractModel):
 
 class ConversationEventPage(ContractModel):
     items: list[ConversationEventItem]
+
+
+class GraphSnapshotView(ContractModel):
+    snapshot_id: str
+    source_set_digest: CanonicalSha256
+    source_revision_ids: list[str]
+    document_revision_ids: list[str]
+    status: Literal["CANDIDATE", "READY", "FAILED"]
+
+
+class GraphSnapshotPage(ContractModel):
+    items: list[GraphSnapshotView]
+
+
+class GraphNodeView(ContractModel):
+    node_id: str
+    label: str
+    node_type: str
+    canonical_key: str
+    evidence_ids: list[str] = []
+
+
+class GraphEdgeView(ContractModel):
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    relation_type: str
+    origin: Literal["EXTRACTED", "INFERRED"]
+    confidence: float
+    evidence_ids: list[str] = []
+
+
+class GraphEvidenceView(ContractModel):
+    evidence_id: str
+    source_revision_id: str
+    document_revision_id: str
+    chunk_id: str
+    anchor: dict[str, object]
+    content_digest: CanonicalSha256
+
+
+class GraphSubgraphView(ContractModel):
+    snapshot_id: str
+    nodes: list[GraphNodeView]
+    edges: list[GraphEdgeView]
+    evidence: list[GraphEvidenceView] = []
+
+
+class GraphSearchRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    query: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class GraphNeighborRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class GraphPathRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50

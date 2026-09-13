@@ -76,6 +76,31 @@ test("Tapper durable state survives the selected restart boundary", async ({
   for (const document of survivors)
     await assertCurrentDocument(page, document, knowledgePath);
 
+  const graphSnapshots = await page.request.get(
+    `${knowledgePath}/graph/snapshots`,
+    { params: { sourceRevisionId: state.policy.revisionId } },
+  );
+  expect(graphSnapshots.status()).toBe(200);
+  const graphSnapshot = (await graphSnapshots.json()) as {
+    items: Array<{ snapshotId: string; status: string }>;
+  };
+  expect(graphSnapshot.items[0]?.status).toBe("READY");
+  const graphQuery = await page.request.post(`${knowledgePath}/graph/query`, {
+    headers: { Origin: ORIGIN },
+    data: {
+      snapshotId: graphSnapshot.items[0]!.snapshotId,
+      query: "*",
+      nodeLimit: 500,
+    },
+  });
+  expect(graphQuery.status()).toBe(200);
+  const persistedGraph = (await graphQuery.json()) as {
+    nodes: Array<{ nodeId: string }>;
+    evidence: Array<{ evidenceId: string }>;
+  };
+  expect(persistedGraph.nodes.length).toBeGreaterThan(0);
+  expect(persistedGraph.evidence.length).toBeGreaterThan(0);
+
   const citationResponse = await page.request.get(
     `${knowledgePath}/citations/${state.citation.citationId}`,
   );

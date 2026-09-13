@@ -1368,6 +1368,35 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "graphContextStatus": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPLIED",
+                  "NOT_READY",
+                  "FAILED",
+                  "UNAVAILABLE",
+                  "NOT_SELECTED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphcontextstatus"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphsnapshotid"
+          },
           "input": {
             "$ref": "#/components/schemas/ConversationTurnInputView"
           },
@@ -2050,6 +2079,350 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "GraphEdgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edgeId": {
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "evidenceIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidenceids",
+            "type": "array"
+          },
+          "origin": {
+            "enum": [
+              "EXTRACTED",
+              "INFERRED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "relationType": {
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edgeId",
+          "sourceNodeId",
+          "targetNodeId",
+          "relationType",
+          "origin",
+          "confidence"
+        ],
+        "title": "GraphEdgeView",
+        "type": "object"
+      },
+      "GraphEvidenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "additionalProperties": true,
+            "title": "Anchor",
+            "type": "object"
+          },
+          "chunkId": {
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "documentRevisionId": {
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "evidenceId": {
+            "title": "Evidenceid",
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidenceId",
+          "sourceRevisionId",
+          "documentRevisionId",
+          "chunkId",
+          "anchor",
+          "contentDigest"
+        ],
+        "title": "GraphEvidenceView",
+        "type": "object"
+      },
+      "GraphNeighborRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "depth": {
+            "default": 1,
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "snapshotId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId"
+        ],
+        "title": "GraphNeighborRequest",
+        "type": "object"
+      },
+      "GraphNodeView": {
+        "additionalProperties": false,
+        "properties": {
+          "canonicalKey": {
+            "title": "Canonicalkey",
+            "type": "string"
+          },
+          "evidenceIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidenceids",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "nodeType": {
+            "title": "Nodetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "label",
+          "nodeType",
+          "canonicalKey"
+        ],
+        "title": "GraphNodeView",
+        "type": "object"
+      },
+      "GraphPathRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "snapshotId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "sourceNodeId",
+          "targetNodeId"
+        ],
+        "title": "GraphPathRequest",
+        "type": "object"
+      },
+      "GraphSearchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "snapshotId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "query"
+        ],
+        "title": "GraphSearchRequest",
+        "type": "object"
+      },
+      "GraphSnapshotPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GraphSnapshotView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GraphSnapshotPage",
+        "type": "object"
+      },
+      "GraphSnapshotView": {
+        "additionalProperties": false,
+        "properties": {
+          "documentRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourcerevisionids",
+            "type": "array"
+          },
+          "sourceSetDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Sourcesetdigest",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "CANDIDATE",
+              "READY",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "sourceSetDigest",
+          "sourceRevisionIds",
+          "documentRevisionIds",
+          "status"
+        ],
+        "title": "GraphSnapshotView",
+        "type": "object"
+      },
+      "GraphSubgraphView": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphEvidenceView"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "nodes",
+          "edges"
+        ],
+        "title": "GraphSubgraphView",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthComponent": {
         "additionalProperties": false,
         "properties": {
@@ -2663,6 +3036,28 @@
           {
             "properties": {
               "detail": {
+                "const": "The graph fact is unavailable in this Project snapshot."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 404
+              },
+              "title": {
+                "const": "Graph fact not found"
+              },
+              "type": {
+                "const": "https://tap.example/problems/graph-fact-not-found"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "The graph service is currently unavailable."
               },
               "failureStage": {
@@ -3132,6 +3527,7 @@
               "https://tap.example/problems/embedding-unavailable",
               "https://tap.example/problems/empty-document",
               "https://tap.example/problems/execution-provider-unavailable",
+              "https://tap.example/problems/graph-fact-not-found",
               "https://tap.example/problems/graph-unavailable",
               "https://tap.example/problems/idempotency-conflict",
               "https://tap.example/problems/knowledge-runtime-unavailable",
@@ -3499,6 +3895,30 @@
           "degradedMode": {
             "title": "Degradedmode",
             "type": "boolean"
+          },
+          "graphContextStatus": {
+            "default": "NOT_SELECTED",
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Graphcontextstatus",
+            "type": "string"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Graphsnapshotid"
           },
           "queryPlanId": {
             "minLength": 1,
@@ -4914,6 +5334,39 @@
         "title": "TurnStartedPayload",
         "type": "object"
       },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
       "tap__contracts__chat_stream__BddAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -5232,6 +5685,29 @@
           "degradedMode": {
             "title": "Degradedmode",
             "type": "boolean"
+          },
+          "graphContextStatus": {
+            "default": "NOT_SELECTED",
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Graphcontextstatus",
+            "type": "string"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphsnapshotid"
           },
           "queryPlanId": {
             "minLength": 1,
@@ -5646,6 +6122,29 @@
           "degradedMode": {
             "title": "Degradedmode",
             "type": "boolean"
+          },
+          "graphContextStatus": {
+            "default": "NOT_SELECTED",
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Graphcontextstatus",
+            "type": "string"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphsnapshotid"
           },
           "queryPlanId": {
             "minLength": 1,
@@ -7457,6 +7956,429 @@
         "summary": "Retry Document",
         "tags": [
           "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/evidence/{evidence_id}": {
+      "get": {
+        "operationId": "graph_get_evidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "title": "Snapshotid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphEvidenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence Detail",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}": {
+      "get": {
+        "operationId": "graph_get_node",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "title": "Snapshotid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Detail",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}/neighbors": {
+      "post": {
+        "operationId": "graph_get_neighbors",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphNeighborRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Neighbors",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/path": {
+      "post": {
+        "operationId": "graph_bounded_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bounded Path",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/query": {
+      "post": {
+        "operationId": "graph_search",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Graph",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/snapshots": {
+      "get": {
+        "operationId": "graph_list_active_snapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceRevisionId",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "title": "Sourcerevisionid",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSnapshotPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Graph unavailable"
+          }
+        },
+        "summary": "List Active Snapshots",
+        "tags": [
+          "knowledge-graph"
         ]
       }
     },

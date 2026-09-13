@@ -135,6 +135,10 @@ class RetrievalAnswerResponse(StreamContractModel):
     abstention_reason: AbstentionReason | None = None
     claims: list[AnswerClaim]
     citations: list[Citation]
+    graph_context_status: Literal[
+        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+    ] = "NOT_SELECTED"
+    graph_snapshot_id: str | None = None
 
 
 class TurnStartedPayload(StreamContractModel):

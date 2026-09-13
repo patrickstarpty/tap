@@ -157,6 +157,12 @@ def test_0012a_conversation_governance_revision_is_literal_and_registered():
     assert validate_revision("0012a_conversation_governance") == "0012a_conversation_governance"
 
 
+def test_0013_knowledge_graph_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0013_knowledge_graph") == "0013_knowledge_graph"
+
+
 def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_authority(
     owned_project_mysql,
 ):

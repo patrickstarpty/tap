@@ -725,6 +725,18 @@ class ProjectAuditFactory(Protocol):
     ) -> ProjectAuditPort: ...
 
 
+class ReadyRevisionProjection(Protocol):
+    async def after_ready(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        revision: RowMapping,
+        *,
+        now: datetime,
+        ingestion_job_id: str,
+    ) -> None: ...
+
+
 class MysqlDocumentRepository:
     """The MySQL document/revision/job facts and their transaction boundaries."""
 
@@ -734,9 +746,11 @@ class MysqlDocumentRepository:
         *,
         scope: ProjectScopeContext,
         audit_factory: ProjectAuditFactory,
+        ready_projection: ReadyRevisionProjection | None = None,
     ) -> None:
         self._scope = require_project_scope(scope)
         self._audit_factory = audit_factory
+        self._ready_projection = ready_projection
         self._answer_snapshot_lock_name = (
             "tap:answer:"
             + sha256(f"{scope.enterprise_id}/{scope.project_id}".encode()).hexdigest()[:48]
@@ -3727,6 +3741,14 @@ class MysqlDocumentRepository:
                 await self._revision_event(
                     session, ready_revision, ready=True, now=database_now, job_id=commit.job_id
                 )
+                if self._ready_projection is not None:
+                    await self._ready_projection.after_ready(
+                        session,
+                        self._scope,
+                        ready_revision,
+                        now=database_now,
+                        ingestion_job_id=commit.job_id,
+                    )
             # Source/fact/FK/Audit/Outbox writes above may have waited after the
             # initial lease check. This final mutation still owns the locked job.
             terminal_now = await _database_now(session)

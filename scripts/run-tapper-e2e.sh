@@ -393,6 +393,7 @@ start_apps() {
       if wait "$tapper_e2e_apps_pid"; then app_status=1; else app_status=$?; fi
       tapper_e2e_apps_pid=""
       echo "Tapper E2E applications did not become ready at supervisor." >&2
+      tail -n 200 "$tapper_e2e_state_dir/apps.log" >&2 || true
       return "$app_status"
     fi
     tapper_e2e_ready_stage="api-http"
@@ -414,6 +415,7 @@ start_apps() {
       if wait "$tapper_e2e_apps_pid"; then app_status=1; else app_status=$?; fi
       tapper_e2e_apps_pid=""
       echo "Tapper E2E applications did not become ready at supervisor." >&2
+      tail -n 200 "$tapper_e2e_state_dir/apps.log" >&2 || true
       return "$app_status"
     fi
     sleep 0.2
@@ -423,6 +425,7 @@ start_apps() {
     *) tapper_e2e_ready_stage="supervisor" ;;
   esac
   echo "Tapper E2E applications did not become ready at $tapper_e2e_ready_stage." >&2
+  tail -n 200 "$tapper_e2e_state_dir/apps.log" >&2 || true
   return 1
 }
 
@@ -442,6 +445,30 @@ run_playwright() {
   else
     phase_status=$?
     echo "Tapper E2E phase $phase failed." >&2
+    python3 - "$report_file" >&2 <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_text()
+report, _ = json.JSONDecoder().raw_decode(raw.lstrip())
+messages = []
+
+def visit(value):
+    if isinstance(value, dict):
+        error = value.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            messages.append(error["message"])
+        for item in value.values():
+            visit(item)
+    elif isinstance(value, list):
+        for item in value:
+            visit(item)
+
+visit(report)
+print("\n".join(dict.fromkeys(messages))[:20000])
+PY
+    tail -n 100 "$error_file" >&2 || true
     return "$phase_status"
   fi
   python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" validate "$phase" "$report_file" \

@@ -1,0 +1,3341 @@
+{
+  "schemaVersion": "quality-graph-profile-v1",
+  "profileId": "QUALITY-GRAPH-01",
+  "dataset": {
+    "version": "candidate-v2",
+    "reviewStatus": "approved",
+    "labelingMethod": "generated-candidate-independent-human-reviewed",
+    "notice": "The generated corpus and all 200 expected judgments were approved by human reviewer human:patrick on 2026-09-13."
+  },
+  "bindings": {
+    "modelAlias": "tapper-chat",
+    "actualModel": "pending/real-model-run",
+    "promptDigest": "sha256:cf2bf56771e0766ad84b49f72e9fa212befa4fa8488cc6607366e15a825bb7a1",
+    "schemaDigest": "sha256:4896c693809d08d7f8f6b78972705d282a905c6956286f7465a8a43245bd0761",
+    "evaluatorDigest": "sha256:6a7ce81f1d8bda9868b6c187b8145da648e480b71da02bfebc3954175ca61bf1"
+  },
+  "documents": [
+    {
+      "documentId": "quality-graph-01",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 01\n\nActor reviewer-01 uses system claims-portal-01.\n\nRequirement requirement-01-evidence applies to reviewer-01 and governs claims-portal-01: every claim must cite immutable source evidence.\n\nRequirement requirement-01-approval depends on requirement-01-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-01 records the final approval decision in claims-portal-01.\n\n## Canonical graph facts\n\n- `reviewer-01 --USES--> claims-portal-01`\n- `requirement-01-evidence --APPLIES_TO--> reviewer-01`\n- `requirement-01-evidence --GOVERNS--> claims-portal-01`\n- `requirement-01-approval --DEPENDS_ON--> requirement-01-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:00a420a6de76614ee69c9e2bb311a340df5ea9c447f5c27d193e1cf10761d1cf"
+    },
+    {
+      "documentId": "quality-graph-02",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 02\n\nActor reviewer-02 uses system claims-portal-02.\n\nRequirement requirement-02-evidence applies to reviewer-02 and governs claims-portal-02: every claim must cite immutable source evidence.\n\nRequirement requirement-02-approval depends on requirement-02-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-02 records the final approval decision in claims-portal-02.\n\n## Canonical graph facts\n\n- `reviewer-02 --USES--> claims-portal-02`\n- `requirement-02-evidence --APPLIES_TO--> reviewer-02`\n- `requirement-02-evidence --GOVERNS--> claims-portal-02`\n- `requirement-02-approval --DEPENDS_ON--> requirement-02-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:130aa94cc4b490d4b2d47a429ff29fe915b4939626aea5c2dff956cea572712c"
+    },
+    {
+      "documentId": "quality-graph-03",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 03\n\nActor reviewer-03 uses system claims-portal-03.\n\nRequirement requirement-03-evidence applies to reviewer-03 and governs claims-portal-03: every claim must cite immutable source evidence.\n\nRequirement requirement-03-approval depends on requirement-03-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-03 records the final approval decision in claims-portal-03.\n\n## Canonical graph facts\n\n- `reviewer-03 --USES--> claims-portal-03`\n- `requirement-03-evidence --APPLIES_TO--> reviewer-03`\n- `requirement-03-evidence --GOVERNS--> claims-portal-03`\n- `requirement-03-approval --DEPENDS_ON--> requirement-03-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:8154eeb37dbdf349e1340d539e807f83544fcc09e9e68b99604cc8589db5c95a"
+    },
+    {
+      "documentId": "quality-graph-04",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 04\n\nActor reviewer-04 uses system claims-portal-04.\n\nRequirement requirement-04-evidence applies to reviewer-04 and governs claims-portal-04: every claim must cite immutable source evidence.\n\nRequirement requirement-04-approval depends on requirement-04-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-04 records the final approval decision in claims-portal-04.\n\n## Canonical graph facts\n\n- `reviewer-04 --USES--> claims-portal-04`\n- `requirement-04-evidence --APPLIES_TO--> reviewer-04`\n- `requirement-04-evidence --GOVERNS--> claims-portal-04`\n- `requirement-04-approval --DEPENDS_ON--> requirement-04-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:d446a72e9f1d6b2c49a87a9b6a83379623f7cdeec01ddd829be774f64b591f45"
+    },
+    {
+      "documentId": "quality-graph-05",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 05\n\nActor reviewer-05 uses system claims-portal-05.\n\nRequirement requirement-05-evidence applies to reviewer-05 and governs claims-portal-05: every claim must cite immutable source evidence.\n\nRequirement requirement-05-approval depends on requirement-05-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-05 records the final approval decision in claims-portal-05.\n\n## Canonical graph facts\n\n- `reviewer-05 --USES--> claims-portal-05`\n- `requirement-05-evidence --APPLIES_TO--> reviewer-05`\n- `requirement-05-evidence --GOVERNS--> claims-portal-05`\n- `requirement-05-approval --DEPENDS_ON--> requirement-05-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:9ff142a2501b43a423fc3ecaa0a69da78a854426d747f0145f7f6cb20f0d1efb"
+    },
+    {
+      "documentId": "quality-graph-06",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 06\n\nActor reviewer-06 uses system claims-portal-06.\n\nRequirement requirement-06-evidence applies to reviewer-06 and governs claims-portal-06: every claim must cite immutable source evidence.\n\nRequirement requirement-06-approval depends on requirement-06-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-06 records the final approval decision in claims-portal-06.\n\n## Canonical graph facts\n\n- `reviewer-06 --USES--> claims-portal-06`\n- `requirement-06-evidence --APPLIES_TO--> reviewer-06`\n- `requirement-06-evidence --GOVERNS--> claims-portal-06`\n- `requirement-06-approval --DEPENDS_ON--> requirement-06-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:d95445d0ddcbde20496574b3c5d4a5245091e94e782001c985e04c2092494656"
+    },
+    {
+      "documentId": "quality-graph-07",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 07\n\nActor reviewer-07 uses system claims-portal-07.\n\nRequirement requirement-07-evidence applies to reviewer-07 and governs claims-portal-07: every claim must cite immutable source evidence.\n\nRequirement requirement-07-approval depends on requirement-07-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-07 records the final approval decision in claims-portal-07.\n\n## Canonical graph facts\n\n- `reviewer-07 --USES--> claims-portal-07`\n- `requirement-07-evidence --APPLIES_TO--> reviewer-07`\n- `requirement-07-evidence --GOVERNS--> claims-portal-07`\n- `requirement-07-approval --DEPENDS_ON--> requirement-07-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:a0cf696b5277aa33481b34b9f3dfc25a263cd6ebeb185455e40b7587c8a48fde"
+    },
+    {
+      "documentId": "quality-graph-08",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 08\n\nActor reviewer-08 uses system claims-portal-08.\n\nRequirement requirement-08-evidence applies to reviewer-08 and governs claims-portal-08: every claim must cite immutable source evidence.\n\nRequirement requirement-08-approval depends on requirement-08-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-08 records the final approval decision in claims-portal-08.\n\n## Canonical graph facts\n\n- `reviewer-08 --USES--> claims-portal-08`\n- `requirement-08-evidence --APPLIES_TO--> reviewer-08`\n- `requirement-08-evidence --GOVERNS--> claims-portal-08`\n- `requirement-08-approval --DEPENDS_ON--> requirement-08-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:b0f099ff338c71dba2edcbebf84d0c6703c9bd2027b26a8e99cdf7dc1ca4e5fa"
+    },
+    {
+      "documentId": "quality-graph-09",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 09\n\nActor reviewer-09 uses system claims-portal-09.\n\nRequirement requirement-09-evidence applies to reviewer-09 and governs claims-portal-09: every claim must cite immutable source evidence.\n\nRequirement requirement-09-approval depends on requirement-09-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-09 records the final approval decision in claims-portal-09.\n\n## Canonical graph facts\n\n- `reviewer-09 --USES--> claims-portal-09`\n- `requirement-09-evidence --APPLIES_TO--> reviewer-09`\n- `requirement-09-evidence --GOVERNS--> claims-portal-09`\n- `requirement-09-approval --DEPENDS_ON--> requirement-09-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:a4a421e89dcd7ba6892377ee7bef1862bc6745409ba3ee05aecb455b120e6b60"
+    },
+    {
+      "documentId": "quality-graph-10",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 10\n\nActor reviewer-10 uses system claims-portal-10.\n\nRequirement requirement-10-evidence applies to reviewer-10 and governs claims-portal-10: every claim must cite immutable source evidence.\n\nRequirement requirement-10-approval depends on requirement-10-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-10 records the final approval decision in claims-portal-10.\n\n## Canonical graph facts\n\n- `reviewer-10 --USES--> claims-portal-10`\n- `requirement-10-evidence --APPLIES_TO--> reviewer-10`\n- `requirement-10-evidence --GOVERNS--> claims-portal-10`\n- `requirement-10-approval --DEPENDS_ON--> requirement-10-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:706739a806590f59e24a635ce8238decea7d370765da8691a3487a781304ea3c"
+    },
+    {
+      "documentId": "quality-graph-11",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 11\n\nActor reviewer-11 uses system claims-portal-11.\n\nRequirement requirement-11-evidence applies to reviewer-11 and governs claims-portal-11: every claim must cite immutable source evidence.\n\nRequirement requirement-11-approval depends on requirement-11-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-11 records the final approval decision in claims-portal-11.\n\n## Canonical graph facts\n\n- `reviewer-11 --USES--> claims-portal-11`\n- `requirement-11-evidence --APPLIES_TO--> reviewer-11`\n- `requirement-11-evidence --GOVERNS--> claims-portal-11`\n- `requirement-11-approval --DEPENDS_ON--> requirement-11-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:91133fe773f4b01cb03b425f1b9781bb54df564ac4b962459e686a574508f72b"
+    },
+    {
+      "documentId": "quality-graph-12",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 12\n\nActor reviewer-12 uses system claims-portal-12.\n\nRequirement requirement-12-evidence applies to reviewer-12 and governs claims-portal-12: every claim must cite immutable source evidence.\n\nRequirement requirement-12-approval depends on requirement-12-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-12 records the final approval decision in claims-portal-12.\n\n## Canonical graph facts\n\n- `reviewer-12 --USES--> claims-portal-12`\n- `requirement-12-evidence --APPLIES_TO--> reviewer-12`\n- `requirement-12-evidence --GOVERNS--> claims-portal-12`\n- `requirement-12-approval --DEPENDS_ON--> requirement-12-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:994ec355ab33c27b7b8b7e43210568bf7e6486c99b33bc68be1013e5e277191c"
+    },
+    {
+      "documentId": "quality-graph-13",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 13\n\nActor reviewer-13 uses system claims-portal-13.\n\nRequirement requirement-13-evidence applies to reviewer-13 and governs claims-portal-13: every claim must cite immutable source evidence.\n\nRequirement requirement-13-approval depends on requirement-13-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-13 records the final approval decision in claims-portal-13.\n\n## Canonical graph facts\n\n- `reviewer-13 --USES--> claims-portal-13`\n- `requirement-13-evidence --APPLIES_TO--> reviewer-13`\n- `requirement-13-evidence --GOVERNS--> claims-portal-13`\n- `requirement-13-approval --DEPENDS_ON--> requirement-13-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:72ab56186b4a2aeda17fe2fe2cde7906fca1a7bbf4c5438f0db89312824c3c62"
+    },
+    {
+      "documentId": "quality-graph-14",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 14\n\nActor reviewer-14 uses system claims-portal-14.\n\nRequirement requirement-14-evidence applies to reviewer-14 and governs claims-portal-14: every claim must cite immutable source evidence.\n\nRequirement requirement-14-approval depends on requirement-14-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-14 records the final approval decision in claims-portal-14.\n\n## Canonical graph facts\n\n- `reviewer-14 --USES--> claims-portal-14`\n- `requirement-14-evidence --APPLIES_TO--> reviewer-14`\n- `requirement-14-evidence --GOVERNS--> claims-portal-14`\n- `requirement-14-approval --DEPENDS_ON--> requirement-14-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:661fb34460fb7316f1807af7492f33a0dae9269a07101f9e2665e462491fb5a1"
+    },
+    {
+      "documentId": "quality-graph-15",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 15\n\nActor reviewer-15 uses system claims-portal-15.\n\nRequirement requirement-15-evidence applies to reviewer-15 and governs claims-portal-15: every claim must cite immutable source evidence.\n\nRequirement requirement-15-approval depends on requirement-15-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-15 records the final approval decision in claims-portal-15.\n\n## Canonical graph facts\n\n- `reviewer-15 --USES--> claims-portal-15`\n- `requirement-15-evidence --APPLIES_TO--> reviewer-15`\n- `requirement-15-evidence --GOVERNS--> claims-portal-15`\n- `requirement-15-approval --DEPENDS_ON--> requirement-15-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:58f5bf068c214f1d250480b5511b0e99be81da3aef57dff987ee1ccf2c61fb5c"
+    },
+    {
+      "documentId": "quality-graph-16",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 16\n\nActor reviewer-16 uses system claims-portal-16.\n\nRequirement requirement-16-evidence applies to reviewer-16 and governs claims-portal-16: every claim must cite immutable source evidence.\n\nRequirement requirement-16-approval depends on requirement-16-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-16 records the final approval decision in claims-portal-16.\n\n## Canonical graph facts\n\n- `reviewer-16 --USES--> claims-portal-16`\n- `requirement-16-evidence --APPLIES_TO--> reviewer-16`\n- `requirement-16-evidence --GOVERNS--> claims-portal-16`\n- `requirement-16-approval --DEPENDS_ON--> requirement-16-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:6e5714a763daab6177f5741055ce0675982c9dcf23e94b4f2510282b02651dec"
+    },
+    {
+      "documentId": "quality-graph-17",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 17\n\nActor reviewer-17 uses system claims-portal-17.\n\nRequirement requirement-17-evidence applies to reviewer-17 and governs claims-portal-17: every claim must cite immutable source evidence.\n\nRequirement requirement-17-approval depends on requirement-17-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-17 records the final approval decision in claims-portal-17.\n\n## Canonical graph facts\n\n- `reviewer-17 --USES--> claims-portal-17`\n- `requirement-17-evidence --APPLIES_TO--> reviewer-17`\n- `requirement-17-evidence --GOVERNS--> claims-portal-17`\n- `requirement-17-approval --DEPENDS_ON--> requirement-17-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:39ac920bbdb1c7b539dc31ed3b1a27503f6663cf7f87d4eac3af99b633162d94"
+    },
+    {
+      "documentId": "quality-graph-18",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 18\n\nActor reviewer-18 uses system claims-portal-18.\n\nRequirement requirement-18-evidence applies to reviewer-18 and governs claims-portal-18: every claim must cite immutable source evidence.\n\nRequirement requirement-18-approval depends on requirement-18-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-18 records the final approval decision in claims-portal-18.\n\n## Canonical graph facts\n\n- `reviewer-18 --USES--> claims-portal-18`\n- `requirement-18-evidence --APPLIES_TO--> reviewer-18`\n- `requirement-18-evidence --GOVERNS--> claims-portal-18`\n- `requirement-18-approval --DEPENDS_ON--> requirement-18-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:64df0a4e89c9b3cb4589744d1607b9754fc4719c2ca93c33ae2d35b0807eac81"
+    },
+    {
+      "documentId": "quality-graph-19",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 19\n\nActor reviewer-19 uses system claims-portal-19.\n\nRequirement requirement-19-evidence applies to reviewer-19 and governs claims-portal-19: every claim must cite immutable source evidence.\n\nRequirement requirement-19-approval depends on requirement-19-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-19 records the final approval decision in claims-portal-19.\n\n## Canonical graph facts\n\n- `reviewer-19 --USES--> claims-portal-19`\n- `requirement-19-evidence --APPLIES_TO--> reviewer-19`\n- `requirement-19-evidence --GOVERNS--> claims-portal-19`\n- `requirement-19-approval --DEPENDS_ON--> requirement-19-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:51cd32c78000311fb77bfbca8afd371304f4e8814525139682aeae9f2148912a"
+    },
+    {
+      "documentId": "quality-graph-20",
+      "mediaType": "text/markdown",
+      "content": "# Claims control 20\n\nActor reviewer-20 uses system claims-portal-20.\n\nRequirement requirement-20-evidence applies to reviewer-20 and governs claims-portal-20: every claim must cite immutable source evidence.\n\nRequirement requirement-20-approval depends on requirement-20-evidence: approval is allowed only after the evidence check succeeds.\n\nThe same actor reviewer-20 records the final approval decision in claims-portal-20.\n\n## Canonical graph facts\n\n- `reviewer-20 --USES--> claims-portal-20`\n- `requirement-20-evidence --APPLIES_TO--> reviewer-20`\n- `requirement-20-evidence --GOVERNS--> claims-portal-20`\n- `requirement-20-approval --DEPENDS_ON--> requirement-20-evidence`\n\n## Declared inference rule\n\nWhen X DEPENDS_ON Y and Y GOVERNS Z, derive X INDIRECTLY_GOVERNS Z. Cite both input edges as provenance. Rule digest: `sha256:73a93e26a5a9c0f3f091c4b6f0662a9177eb5ef625173fabd312de65066337a9`.\n",
+      "contentDigest": "sha256:47f1893e03249d8b54c0e68cd1d6e03a23714c8736bd4fef50ae377568ae879c"
+    }
+  ],
+  "labels": [
+    {
+      "labelId": "quality-graph-01-label-01",
+      "documentId": "quality-graph-01",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-01",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-02",
+      "documentId": "quality-graph-01",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-01",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-03",
+      "documentId": "quality-graph-01",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-01-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-04",
+      "documentId": "quality-graph-01",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-01-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-05",
+      "documentId": "quality-graph-01",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-01",
+        "relationType": "USES",
+        "target": "claims-portal-01"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-06",
+      "documentId": "quality-graph-01",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-01-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-01"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-07",
+      "documentId": "quality-graph-01",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-01-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-01"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-08",
+      "documentId": "quality-graph-01",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-01-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-01-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-09",
+      "documentId": "quality-graph-01",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-01",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-01-label-10",
+      "documentId": "quality-graph-01",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-01-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-01",
+        "inputFacts": [
+          "requirement-01-approval:DEPENDS_ON:requirement-01-evidence",
+          "requirement-01-evidence:GOVERNS:claims-portal-01"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-01",
+      "documentId": "quality-graph-02",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-02",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-02",
+      "documentId": "quality-graph-02",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-02",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-03",
+      "documentId": "quality-graph-02",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-02-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-04",
+      "documentId": "quality-graph-02",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-02-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-05",
+      "documentId": "quality-graph-02",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-02",
+        "relationType": "USES",
+        "target": "claims-portal-02"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-06",
+      "documentId": "quality-graph-02",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-02-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-02"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-07",
+      "documentId": "quality-graph-02",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-02-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-02"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-08",
+      "documentId": "quality-graph-02",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-02-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-02-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-09",
+      "documentId": "quality-graph-02",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-02",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-02-label-10",
+      "documentId": "quality-graph-02",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-02-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-02",
+        "inputFacts": [
+          "requirement-02-approval:DEPENDS_ON:requirement-02-evidence",
+          "requirement-02-evidence:GOVERNS:claims-portal-02"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-01",
+      "documentId": "quality-graph-03",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-03",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-02",
+      "documentId": "quality-graph-03",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-03",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-03",
+      "documentId": "quality-graph-03",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-03-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-04",
+      "documentId": "quality-graph-03",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-03-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-05",
+      "documentId": "quality-graph-03",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-03",
+        "relationType": "USES",
+        "target": "claims-portal-03"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-06",
+      "documentId": "quality-graph-03",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-03-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-03"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-07",
+      "documentId": "quality-graph-03",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-03-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-03"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-08",
+      "documentId": "quality-graph-03",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-03-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-03-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-09",
+      "documentId": "quality-graph-03",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-03",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-03-label-10",
+      "documentId": "quality-graph-03",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-03-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-03",
+        "inputFacts": [
+          "requirement-03-approval:DEPENDS_ON:requirement-03-evidence",
+          "requirement-03-evidence:GOVERNS:claims-portal-03"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-01",
+      "documentId": "quality-graph-04",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-04",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-02",
+      "documentId": "quality-graph-04",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-04",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-03",
+      "documentId": "quality-graph-04",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-04-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-04",
+      "documentId": "quality-graph-04",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-04-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-05",
+      "documentId": "quality-graph-04",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-04",
+        "relationType": "USES",
+        "target": "claims-portal-04"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-06",
+      "documentId": "quality-graph-04",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-04-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-04"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-07",
+      "documentId": "quality-graph-04",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-04-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-04"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-08",
+      "documentId": "quality-graph-04",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-04-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-04-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-09",
+      "documentId": "quality-graph-04",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-04",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-04-label-10",
+      "documentId": "quality-graph-04",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-04-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-04",
+        "inputFacts": [
+          "requirement-04-approval:DEPENDS_ON:requirement-04-evidence",
+          "requirement-04-evidence:GOVERNS:claims-portal-04"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-01",
+      "documentId": "quality-graph-05",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-05",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-02",
+      "documentId": "quality-graph-05",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-05",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-03",
+      "documentId": "quality-graph-05",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-05-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-04",
+      "documentId": "quality-graph-05",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-05-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-05",
+      "documentId": "quality-graph-05",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-05",
+        "relationType": "USES",
+        "target": "claims-portal-05"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-06",
+      "documentId": "quality-graph-05",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-05-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-05"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-07",
+      "documentId": "quality-graph-05",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-05-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-05"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-08",
+      "documentId": "quality-graph-05",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-05-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-05-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-09",
+      "documentId": "quality-graph-05",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-05",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-05-label-10",
+      "documentId": "quality-graph-05",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-05-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-05",
+        "inputFacts": [
+          "requirement-05-approval:DEPENDS_ON:requirement-05-evidence",
+          "requirement-05-evidence:GOVERNS:claims-portal-05"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-01",
+      "documentId": "quality-graph-06",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-06",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-02",
+      "documentId": "quality-graph-06",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-06",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-03",
+      "documentId": "quality-graph-06",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-06-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-04",
+      "documentId": "quality-graph-06",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-06-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-05",
+      "documentId": "quality-graph-06",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-06",
+        "relationType": "USES",
+        "target": "claims-portal-06"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-06",
+      "documentId": "quality-graph-06",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-06-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-06"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-07",
+      "documentId": "quality-graph-06",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-06-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-06"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-08",
+      "documentId": "quality-graph-06",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-06-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-06-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-09",
+      "documentId": "quality-graph-06",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-06",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-06-label-10",
+      "documentId": "quality-graph-06",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-06-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-06",
+        "inputFacts": [
+          "requirement-06-approval:DEPENDS_ON:requirement-06-evidence",
+          "requirement-06-evidence:GOVERNS:claims-portal-06"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-01",
+      "documentId": "quality-graph-07",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-07",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-02",
+      "documentId": "quality-graph-07",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-07",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-03",
+      "documentId": "quality-graph-07",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-07-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-04",
+      "documentId": "quality-graph-07",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-07-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-05",
+      "documentId": "quality-graph-07",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-07",
+        "relationType": "USES",
+        "target": "claims-portal-07"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-06",
+      "documentId": "quality-graph-07",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-07-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-07"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-07",
+      "documentId": "quality-graph-07",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-07-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-07"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-08",
+      "documentId": "quality-graph-07",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-07-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-07-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-09",
+      "documentId": "quality-graph-07",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-07",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-07-label-10",
+      "documentId": "quality-graph-07",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-07-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-07",
+        "inputFacts": [
+          "requirement-07-approval:DEPENDS_ON:requirement-07-evidence",
+          "requirement-07-evidence:GOVERNS:claims-portal-07"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-01",
+      "documentId": "quality-graph-08",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-08",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-02",
+      "documentId": "quality-graph-08",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-08",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-03",
+      "documentId": "quality-graph-08",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-08-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-04",
+      "documentId": "quality-graph-08",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-08-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-05",
+      "documentId": "quality-graph-08",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-08",
+        "relationType": "USES",
+        "target": "claims-portal-08"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-06",
+      "documentId": "quality-graph-08",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-08-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-08"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-07",
+      "documentId": "quality-graph-08",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-08-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-08"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-08",
+      "documentId": "quality-graph-08",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-08-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-08-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-09",
+      "documentId": "quality-graph-08",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-08",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-08-label-10",
+      "documentId": "quality-graph-08",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-08-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-08",
+        "inputFacts": [
+          "requirement-08-approval:DEPENDS_ON:requirement-08-evidence",
+          "requirement-08-evidence:GOVERNS:claims-portal-08"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-01",
+      "documentId": "quality-graph-09",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-09",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-02",
+      "documentId": "quality-graph-09",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-09",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-03",
+      "documentId": "quality-graph-09",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-09-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-04",
+      "documentId": "quality-graph-09",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-09-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-05",
+      "documentId": "quality-graph-09",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-09",
+        "relationType": "USES",
+        "target": "claims-portal-09"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-06",
+      "documentId": "quality-graph-09",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-09-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-09"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-07",
+      "documentId": "quality-graph-09",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-09-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-09"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-08",
+      "documentId": "quality-graph-09",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-09-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-09-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-09",
+      "documentId": "quality-graph-09",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-09",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-09-label-10",
+      "documentId": "quality-graph-09",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-09-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-09",
+        "inputFacts": [
+          "requirement-09-approval:DEPENDS_ON:requirement-09-evidence",
+          "requirement-09-evidence:GOVERNS:claims-portal-09"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-01",
+      "documentId": "quality-graph-10",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-10",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-02",
+      "documentId": "quality-graph-10",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-10",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-03",
+      "documentId": "quality-graph-10",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-10-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-04",
+      "documentId": "quality-graph-10",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-10-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-05",
+      "documentId": "quality-graph-10",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-10",
+        "relationType": "USES",
+        "target": "claims-portal-10"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-06",
+      "documentId": "quality-graph-10",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-10-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-10"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-07",
+      "documentId": "quality-graph-10",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-10-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-10"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-08",
+      "documentId": "quality-graph-10",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-10-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-10-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-09",
+      "documentId": "quality-graph-10",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-10",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-10-label-10",
+      "documentId": "quality-graph-10",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-10-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-10",
+        "inputFacts": [
+          "requirement-10-approval:DEPENDS_ON:requirement-10-evidence",
+          "requirement-10-evidence:GOVERNS:claims-portal-10"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-01",
+      "documentId": "quality-graph-11",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-11",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-02",
+      "documentId": "quality-graph-11",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-11",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-03",
+      "documentId": "quality-graph-11",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-11-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-04",
+      "documentId": "quality-graph-11",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-11-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-05",
+      "documentId": "quality-graph-11",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-11",
+        "relationType": "USES",
+        "target": "claims-portal-11"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-06",
+      "documentId": "quality-graph-11",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-11-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-11"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-07",
+      "documentId": "quality-graph-11",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-11-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-11"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-08",
+      "documentId": "quality-graph-11",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-11-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-11-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-09",
+      "documentId": "quality-graph-11",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-11",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-11-label-10",
+      "documentId": "quality-graph-11",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-11-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-11",
+        "inputFacts": [
+          "requirement-11-approval:DEPENDS_ON:requirement-11-evidence",
+          "requirement-11-evidence:GOVERNS:claims-portal-11"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-01",
+      "documentId": "quality-graph-12",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-12",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-02",
+      "documentId": "quality-graph-12",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-12",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-03",
+      "documentId": "quality-graph-12",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-12-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-04",
+      "documentId": "quality-graph-12",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-12-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-05",
+      "documentId": "quality-graph-12",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-12",
+        "relationType": "USES",
+        "target": "claims-portal-12"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-06",
+      "documentId": "quality-graph-12",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-12-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-12"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-07",
+      "documentId": "quality-graph-12",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-12-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-12"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-08",
+      "documentId": "quality-graph-12",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-12-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-12-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-09",
+      "documentId": "quality-graph-12",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-12",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-12-label-10",
+      "documentId": "quality-graph-12",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-12-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-12",
+        "inputFacts": [
+          "requirement-12-approval:DEPENDS_ON:requirement-12-evidence",
+          "requirement-12-evidence:GOVERNS:claims-portal-12"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-01",
+      "documentId": "quality-graph-13",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-13",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-02",
+      "documentId": "quality-graph-13",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-13",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-03",
+      "documentId": "quality-graph-13",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-13-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-04",
+      "documentId": "quality-graph-13",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-13-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-05",
+      "documentId": "quality-graph-13",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-13",
+        "relationType": "USES",
+        "target": "claims-portal-13"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-06",
+      "documentId": "quality-graph-13",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-13-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-13"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-07",
+      "documentId": "quality-graph-13",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-13-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-13"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-08",
+      "documentId": "quality-graph-13",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-13-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-13-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-09",
+      "documentId": "quality-graph-13",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-13",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-13-label-10",
+      "documentId": "quality-graph-13",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-13-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-13",
+        "inputFacts": [
+          "requirement-13-approval:DEPENDS_ON:requirement-13-evidence",
+          "requirement-13-evidence:GOVERNS:claims-portal-13"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-01",
+      "documentId": "quality-graph-14",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-14",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-02",
+      "documentId": "quality-graph-14",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-14",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-03",
+      "documentId": "quality-graph-14",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-14-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-04",
+      "documentId": "quality-graph-14",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-14-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-05",
+      "documentId": "quality-graph-14",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-14",
+        "relationType": "USES",
+        "target": "claims-portal-14"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-06",
+      "documentId": "quality-graph-14",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-14-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-14"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-07",
+      "documentId": "quality-graph-14",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-14-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-14"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-08",
+      "documentId": "quality-graph-14",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-14-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-14-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-09",
+      "documentId": "quality-graph-14",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-14",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-14-label-10",
+      "documentId": "quality-graph-14",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-14-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-14",
+        "inputFacts": [
+          "requirement-14-approval:DEPENDS_ON:requirement-14-evidence",
+          "requirement-14-evidence:GOVERNS:claims-portal-14"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-01",
+      "documentId": "quality-graph-15",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-15",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-02",
+      "documentId": "quality-graph-15",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-15",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-03",
+      "documentId": "quality-graph-15",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-15-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-04",
+      "documentId": "quality-graph-15",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-15-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-05",
+      "documentId": "quality-graph-15",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-15",
+        "relationType": "USES",
+        "target": "claims-portal-15"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-06",
+      "documentId": "quality-graph-15",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-15-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-15"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-07",
+      "documentId": "quality-graph-15",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-15-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-15"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-08",
+      "documentId": "quality-graph-15",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-15-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-15-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-09",
+      "documentId": "quality-graph-15",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-15",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-15-label-10",
+      "documentId": "quality-graph-15",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-15-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-15",
+        "inputFacts": [
+          "requirement-15-approval:DEPENDS_ON:requirement-15-evidence",
+          "requirement-15-evidence:GOVERNS:claims-portal-15"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-01",
+      "documentId": "quality-graph-16",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-16",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-02",
+      "documentId": "quality-graph-16",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-16",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-03",
+      "documentId": "quality-graph-16",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-16-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-04",
+      "documentId": "quality-graph-16",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-16-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-05",
+      "documentId": "quality-graph-16",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-16",
+        "relationType": "USES",
+        "target": "claims-portal-16"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-06",
+      "documentId": "quality-graph-16",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-16-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-16"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-07",
+      "documentId": "quality-graph-16",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-16-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-16"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-08",
+      "documentId": "quality-graph-16",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-16-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-16-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-09",
+      "documentId": "quality-graph-16",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-16",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-16-label-10",
+      "documentId": "quality-graph-16",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-16-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-16",
+        "inputFacts": [
+          "requirement-16-approval:DEPENDS_ON:requirement-16-evidence",
+          "requirement-16-evidence:GOVERNS:claims-portal-16"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-01",
+      "documentId": "quality-graph-17",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-17",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-02",
+      "documentId": "quality-graph-17",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-17",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-03",
+      "documentId": "quality-graph-17",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-17-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-04",
+      "documentId": "quality-graph-17",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-17-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-05",
+      "documentId": "quality-graph-17",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-17",
+        "relationType": "USES",
+        "target": "claims-portal-17"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-06",
+      "documentId": "quality-graph-17",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-17-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-17"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-07",
+      "documentId": "quality-graph-17",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-17-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-17"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-08",
+      "documentId": "quality-graph-17",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-17-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-17-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-09",
+      "documentId": "quality-graph-17",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-17",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-17-label-10",
+      "documentId": "quality-graph-17",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-17-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-17",
+        "inputFacts": [
+          "requirement-17-approval:DEPENDS_ON:requirement-17-evidence",
+          "requirement-17-evidence:GOVERNS:claims-portal-17"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-01",
+      "documentId": "quality-graph-18",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-18",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-02",
+      "documentId": "quality-graph-18",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-18",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-03",
+      "documentId": "quality-graph-18",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-18-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-04",
+      "documentId": "quality-graph-18",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-18-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-05",
+      "documentId": "quality-graph-18",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-18",
+        "relationType": "USES",
+        "target": "claims-portal-18"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-06",
+      "documentId": "quality-graph-18",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-18-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-18"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-07",
+      "documentId": "quality-graph-18",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-18-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-18"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-08",
+      "documentId": "quality-graph-18",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-18-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-18-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-09",
+      "documentId": "quality-graph-18",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-18",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-18-label-10",
+      "documentId": "quality-graph-18",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-18-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-18",
+        "inputFacts": [
+          "requirement-18-approval:DEPENDS_ON:requirement-18-evidence",
+          "requirement-18-evidence:GOVERNS:claims-portal-18"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-01",
+      "documentId": "quality-graph-19",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-19",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-02",
+      "documentId": "quality-graph-19",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-19",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-03",
+      "documentId": "quality-graph-19",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-19-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-04",
+      "documentId": "quality-graph-19",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-19-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-05",
+      "documentId": "quality-graph-19",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-19",
+        "relationType": "USES",
+        "target": "claims-portal-19"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-06",
+      "documentId": "quality-graph-19",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-19-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-19"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-07",
+      "documentId": "quality-graph-19",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-19-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-19"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-08",
+      "documentId": "quality-graph-19",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-19-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-19-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-09",
+      "documentId": "quality-graph-19",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-19",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-19-label-10",
+      "documentId": "quality-graph-19",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-19-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-19",
+        "inputFacts": [
+          "requirement-19-approval:DEPENDS_ON:requirement-19-evidence",
+          "requirement-19-evidence:GOVERNS:claims-portal-19"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-01",
+      "documentId": "quality-graph-20",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-20",
+        "nodeType": "ACTOR"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-02",
+      "documentId": "quality-graph-20",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "claims-portal-20",
+        "nodeType": "SYSTEM"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-03",
+      "documentId": "quality-graph-20",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-20-evidence",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-04",
+      "documentId": "quality-graph-20",
+      "kind": "node",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "requirement-20-approval",
+        "nodeType": "REQUIREMENT"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-05",
+      "documentId": "quality-graph-20",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "reviewer-20",
+        "relationType": "USES",
+        "target": "claims-portal-20"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-06",
+      "documentId": "quality-graph-20",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-20-evidence",
+        "relationType": "APPLIES_TO",
+        "target": "reviewer-20"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-07",
+      "documentId": "quality-graph-20",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-20-evidence",
+        "relationType": "GOVERNS",
+        "target": "claims-portal-20"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-08",
+      "documentId": "quality-graph-20",
+      "kind": "edge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "source": "requirement-20-approval",
+        "relationType": "DEPENDS_ON",
+        "target": "requirement-20-evidence"
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-09",
+      "documentId": "quality-graph-20",
+      "kind": "merge",
+      "origin": "EXTRACTED",
+      "expected": {
+        "canonicalKey": "reviewer-20",
+        "mentionCount": 2,
+        "shouldMerge": true
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    },
+    {
+      "labelId": "quality-graph-20-label-10",
+      "documentId": "quality-graph-20",
+      "kind": "edge",
+      "origin": "INFERRED",
+      "expected": {
+        "source": "requirement-20-approval",
+        "relationType": "INDIRECTLY_GOVERNS",
+        "target": "claims-portal-20",
+        "inputFacts": [
+          "requirement-20-approval:DEPENDS_ON:requirement-20-evidence",
+          "requirement-20-evidence:GOVERNS:claims-portal-20"
+        ]
+      },
+      "predicted": true,
+      "correct": true,
+      "evidenceResolvable": true,
+      "provenanceComplete": true,
+      "reviewer": "human:patrick"
+    }
+  ]
+}

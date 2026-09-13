@@ -39,6 +39,7 @@ SOURCE_COMMANDS_REVISION = "0010a_source_commands"
 AI_ASSET_CATALOG_REVISION = "0011_ai_agent_skill_catalog"
 CONVERSATION_REVISION = "0012_conversations"
 CONVERSATION_GOVERNANCE_REVISION = "0012a_conversation_governance"
+GRAPH_REVISION = "0013_knowledge_graph"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -583,6 +584,7 @@ def assert_preserved(
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
         CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -623,6 +625,7 @@ def assert_preserved(
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
         CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -634,6 +637,7 @@ def assert_preserved(
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
         CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1142,6 +1146,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         AI_ASSET_CATALOG_REVISION,
         CONVERSATION_REVISION,
         CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1194,6 +1199,41 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                     conversation_backfill="passed",
                     conversation_downgrade_replay="passed",
                 )
+            if revision == GRAPH_REVISION:
+                graph_tables = {
+                    "graph_snapshot",
+                    "graph_snapshot_revision",
+                    "graph_active_snapshot",
+                    "graph_snapshot_document_revision",
+                    "graph_node",
+                    "graph_edge",
+                    "graph_node_evidence",
+                    "graph_edge_evidence",
+                    "graph_inference_provenance",
+                    "graph_extraction_job",
+                }
+                with engine.connect() as connection:
+                    if graph_tables - set(inspect(connection).get_table_names()):
+                        raise ValueError("Graph migration tables are missing")
+                    if any(
+                        connection.execute(
+                            text(f"SELECT 1 FROM {name} LIMIT 1")
+                        ).first()
+                        is not None
+                        for name in graph_tables
+                    ):
+                        raise ValueError("Graph migration fabricated snapshot facts")
+                database.downgrade(CONVERSATION_GOVERNANCE_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(
+                        connection, before, CONVERSATION_GOVERNANCE_REVISION
+                    )
+                    if graph_tables & set(inspect(connection).get_table_names()):
+                        raise ValueError("Graph downgrade retained owned tables")
+                database.upgrade(GRAPH_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, GRAPH_REVISION)
+                identity_result["graph_downgrade_replay"] = "passed"
             if revision == AI_ASSET_CATALOG_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)

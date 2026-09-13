@@ -12,7 +12,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from tap.contracts.problems import ProblemDetails, build_problem
-from tap.interfaces.http.dependencies import KnowledgeRuntimeUnavailable
+from tap.interfaces.http.dependencies import GraphUnavailable, KnowledgeRuntimeUnavailable
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
@@ -21,6 +21,7 @@ from tap.modules.chat.application.conversations import (
     ConversationNotFound,
     InvalidConversationCursor,
 )
+from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     AnswerSnapshotUnavailable,
@@ -130,6 +131,16 @@ def register_problem_handlers(app: FastAPI) -> None:
 
     app.openapi = openapi_with_problems  # type: ignore[method-assign]
     app.add_middleware(RequestCorrelationMiddleware)
+
+    @app.exception_handler(GraphUnavailable)
+    async def graph_unavailable_problem(request: Request, _error: GraphUnavailable) -> JSONResponse:
+        return problem_response("graph-unavailable", request)
+
+    @app.exception_handler(GraphFactNotFound)
+    async def graph_fact_not_found_problem(
+        request: Request, _error: GraphFactNotFound
+    ) -> JSONResponse:
+        return problem_response("graph-fact-not-found", request)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_problem(

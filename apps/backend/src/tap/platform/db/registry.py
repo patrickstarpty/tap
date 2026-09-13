@@ -12,6 +12,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_input_snapshot,
 )
 from tap.modules.governance.adapters.schema import project_audit
+from tap.modules.graph.adapters.mysql import GRAPH_TABLES
 from tap.modules.knowledge.adapters.mysql_audit import knowledge_search_audit
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_answer_snapshot,
@@ -68,6 +69,7 @@ BUSINESS_TABLES = (
     ai_agent_revision,
     skill,
     skill_revision,
+    *GRAPH_TABLES,
 )
 
 
