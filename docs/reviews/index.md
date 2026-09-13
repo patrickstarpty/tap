@@ -33,3 +33,4 @@
 - [Tapper V1 真实 Conversation Web 接线验收](2026-09-09-tapper-v1-durable-conversation-web-review.md)：Task 9 通过；记录默认 API 模式、历史 Context/Citation、可恢复多轮 SSE、页面级重启旅程、两轮审查修正和完整隔离回归。
 - [V1 可信知识质量门禁评审](2026-09-09-v1-trusted-knowledge-gate.md)：`pass`；100 条人工复核 case、11 份合成语料与批准的百炼实际路由通过全部硬阈值、zero-skip、真实 Milvus、隔离 E2E 和完整回归，V2 已放行。
 - [V2 Grounded Knowledge Graph 门禁评审](2026-09-13-v2-knowledge-graph-gate.md)：`pass`；Task 11–14、200 条独立人工判断、真实百炼 Graph、完整回归和隔离 E2E 均通过，V3 已放行。
+- [V3 AI 测试设计门禁评审](2026-09-14-v3-ai-test-design-gate.md)：`pass`；Task 15–17、50 个具名复核业务意图、真实百炼 Test Design、完整回归和隔离 E2E 均通过，V4 已放行。
