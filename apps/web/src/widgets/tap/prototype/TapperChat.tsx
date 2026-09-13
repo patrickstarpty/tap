@@ -1,9 +1,9 @@
 import {
+  ArrowUpOutlined,
   BookOutlined,
   CloseOutlined,
   PlusOutlined,
   RobotOutlined,
-  SendOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
@@ -29,6 +29,7 @@ import type {
 } from "./model";
 import { useModelCatalog } from "../../../features/knowledge/api/modelCatalog";
 import { ModelSelector } from "../../../features/knowledge/components/ModelSelector";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { AccessibleDialog } from "./AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
@@ -39,6 +40,10 @@ interface TapperChatProps {
   conversation: Conversation;
   copy: PrototypeCopy;
   isInert?: boolean;
+  message: string;
+  onMessageChange: (message: string) => void;
+  pageContext?: AssistantTurn["pageContext"];
+  onClearPageContext: () => void;
   onModelChange: (modelId: CodexModelId) => void;
   onSend: (prompt: string) => boolean | Promise<boolean>;
   onCancel?: (turnId: string) => void;
@@ -104,6 +109,10 @@ export function TapperChat({
   conversation,
   copy,
   isInert = false,
+  message,
+  onMessageChange: setMessage,
+  pageContext,
+  onClearPageContext,
   onModelChange,
   onSend,
   onCancel,
@@ -124,7 +133,6 @@ export function TapperChat({
   const modelAvailable = allowedModels.some(
     (model) => model.alias === conversation.modelId,
   );
-  const [message, setMessage] = useState("");
   const [submitError, setSubmitError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [picker, setPicker] = useState<PickerKind | null>(null);
@@ -157,7 +165,6 @@ export function TapperChat({
   const hasTurns = conversation.turns.length > 0;
 
   useEffect(() => {
-    setMessage("");
     setMenuOpen(false);
     setPicker(null);
     setPickerQuery("");
@@ -242,6 +249,24 @@ export function TapperChat({
     wasMenuOpenRef.current = menuOpen;
   }, [menuOpen, picker]);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        !menuRef.current?.contains(target) &&
+        !addTriggerRef.current?.contains(target)
+      ) {
+        // The clicked destination owns focus; only keyboard dismissal restores it.
+        wasMenuOpenRef.current = false;
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [menuOpen]);
   const selectedSources = sources.filter((source) =>
     conversation.selectedSourceIds.includes(source.id),
   );
@@ -501,15 +526,22 @@ export function TapperChat({
       <label className="tapper-visually-hidden" htmlFor="tap-message">
         {copy.chat.messageTapper}
       </label>
-      <Input.TextArea
-        ref={composerRef}
-        id="tap-message"
-        value={message}
-        rows={3}
-        placeholder={copy.chat.placeholder}
-        onChange={(event) => setMessage(event.target.value)}
-        onKeyDown={handleComposerKeyDown}
-      />
+
+      {pageContext ? (
+        <div className="tap-context-chips">
+          <span className="tap-context-chip" title={pageContext.summary}>
+            <BookOutlined aria-hidden="true" />
+            <span>{pageContext.label}</span>
+            <button
+              type="button"
+              aria-label={`${copy.composer.remove} ${pageContext.label}`}
+              onClick={onClearPageContext}
+            >
+              <CloseOutlined aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+      ) : null}
 
       {selectedSources.length + selectedAgents.length + selectedSkills.length >
       0 ? (
@@ -524,7 +556,7 @@ export function TapperChat({
               className="tap-context-chip"
               data-kind="knowledge"
             >
-              <BookOutlined aria-hidden="true" />
+              <FileTypeIcon type={source.type} />
               <span title={source.name}>{source.name}</span>
               <button
                 type="button"
@@ -571,6 +603,16 @@ export function TapperChat({
           ))}
         </div>
       ) : null}
+
+      <Input.TextArea
+        ref={composerRef}
+        id="tap-message"
+        value={message}
+        rows={3}
+        placeholder={copy.chat.placeholder}
+        onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={handleComposerKeyDown}
+      />
 
       <div className="tap-composer-footer">
         <div className="tap-composer-context-control">
@@ -632,14 +674,16 @@ export function TapperChat({
           }
           menuLabel={copy.composer.models}
         />
-        <Button
-          type="primary"
-          shape="circle"
-          htmlType="submit"
+        <button
+          className="tap-composer-send-button"
+          type="submit"
           aria-label={copy.chat.send}
           disabled={message.trim().length === 0 || !modelAvailable || sending}
-          icon={<SendOutlined aria-hidden="true" />}
-        />
+        >
+          <span className="tap-composer-send-face">
+            <ArrowUpOutlined aria-hidden="true" />
+          </span>
+        </button>
         {onCancel !== undefined &&
         ["queued", "running"].includes(
           conversation.turns[conversation.turns.length - 1]?.status ?? "",
@@ -705,6 +749,28 @@ export function TapperChat({
                 lang={turn.locale === "zh" ? "zh-CN" : "en"}
               >
                 <div className="tap-user-message">{turn.prompt}</div>
+                {(turn.sourceReferences.length > 0 ||
+                  (turn.catalogReferences?.length ?? 0) > 0) && (
+                  <details className="tap-message-context">
+                    <summary>
+                      {turn.locale === "zh" ? "本轮上下文" : "Message context"}{" "}
+                      ·{" "}
+                      {turn.sourceReferences.length +
+                        (turn.catalogReferences?.length ?? 0)}
+                    </summary>
+                    <ul>
+                      {turn.sourceReferences.map((source) => (
+                        <li key={`source-${source.id}`}>{source.name}</li>
+                      ))}
+                      {turn.catalogReferences?.map((item) => (
+                        <li key={`${item.kind}-${item.id}`}>
+                          {item.kind === "agent" ? "Agent" : "Skill"} ·{" "}
+                          {item.name}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 <div className="tap-assistant-message">
                   {renderAssistantTurn(turn)}
                 </div>
@@ -943,6 +1009,9 @@ export function TapperChat({
                     setPicker(null);
                   }}
                 >
+                  {picker === "library" ? (
+                    <FileTypeIcon type={item.name.split(".").pop() ?? "FILE"} />
+                  ) : null}
                   {item.name}
                 </button>
               ))

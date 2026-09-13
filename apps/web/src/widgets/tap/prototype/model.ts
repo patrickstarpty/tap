@@ -58,6 +58,16 @@ export interface AssistantTurn {
   answerEvidenceSnapshotDigest?: string | null;
   agentRevisionId?: string | null;
   skillRevisionIds?: readonly string[];
+  catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
+  pageContext?: {
+    label: string;
+    summary: string;
+    facts: readonly string[];
+  };
+  prototypeReply?: {
+    text: string;
+    suggestions: readonly string[];
+  };
   automationSteps?: readonly AutomationStepSnapshot[];
   automationWorkflow?: {
     stage:
@@ -92,6 +102,9 @@ export interface CatalogItem {
 }
 
 export interface LibrarySource {
+  isExample?: boolean;
+  downloadUrl?: string;
+  preview?: { imageUrl?: string; text?: string };
   id: string;
   name: string;
   origin: LibrarySourceOrigin;
@@ -316,5 +329,8 @@ export function appendTurn(
         ? turn.prompt
         : conversation.title,
     turns: [...conversation.turns, turn],
+    selectedSourceIds: [],
+    selectedAgentIds: [],
+    selectedSkillIds: [],
   };
 }

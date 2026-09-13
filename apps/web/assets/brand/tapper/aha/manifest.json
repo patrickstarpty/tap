@@ -1,0 +1,1148 @@
+{
+  "name": "Tapper Aha asset kit",
+  "created": "2026-09-06",
+  "version": "1.0",
+  "method": "Palette segmentation, exterior-background removal, contour simplification and cubic Bézier vector tracing; PNGs rasterized directly from SVGs. No bitmap data embedded in SVG.",
+  "palette": {
+    "ink": "#14201D",
+    "orange": "#E87722",
+    "ivory": "#FAF9F6",
+    "black": "#000000",
+    "white": "#FFFFFF"
+  },
+  "variants": {
+    "color": "Ink body, orange crest, opaque ivory interior details; transparent exterior.",
+    "ink": "Single ink fill, transparent knockout details.",
+    "black": "Single black fill, transparent knockout details.",
+    "white": "Single white fill, transparent knockout details.",
+    "orange": "Single orange fill, transparent knockout details.",
+    "light": "Ivory circular launcher with color portrait; transparent outside circle.",
+    "dark": "Ink circular launcher with ivory body, orange crest and ink details; transparent outside circle."
+  },
+  "counts": {
+    "svg": 17,
+    "png": 96
+  },
+  "assets": [
+    {
+      "path": "svg/fullbody/tapper-aha-fullbody-color.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "48929951fd57fbad68560461cc8690992a72687233a6a458925b73b1ac515e96"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-color-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "6b8aa5058ea8303c9c8edcbd7f896d1bf90f6b9467a51ee0068ac806e4d3e4ef"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-color-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "05790c8053ddf18b20d8e493ce3e848e3486cbd71a2c69f0c44cc49957cb46be"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-color-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "7b2ac17bd8e28e0c2a3c8b8d5e0b47be0f07bb122033cec1b4c2e9f32ba3c4be"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-color-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "ccbd1464874ca96e22a387c7d8b4a17d928610a37e6d916e3e777d87c196b057"
+    },
+    {
+      "path": "svg/avatar/tapper-aha-avatar-color.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "color",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "f64fd26d63a84891bcdb43f0208ba21c0ad01925947482d3c473663ec261a9ac"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "20495a138bd826d8fb9b68022e30dadbb3fb3b34e94285a582b6d688517ee4af"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "9e5701135be5e059a037ecda9fd99300e4c74a8551373dbbffc1e0f6f1b8275c"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "29c71f539ba5641e4dc8e376944ca1dee99164919d0c8ae27f96b143515edf66"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "4b4d689cde05fc9c49e29bb0d94ec76c67c486c6ceb5a9db39fdd508bf93b7db"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "5053daa50ccef764ceb7f8ca063ade3bad0a699eb30b219a10226f91e0017c99"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "06e9e61f8e8d013e9caf39cbbfbe3a0e0eded4d0ab77a0b7840e0b1d854dbc0a"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "1fa6a5b19f1540f4bc3eba28ab1fe5995b1800521136432ce913fed8fb3b83cb"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-color-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "b0228b7745963c7c8a37313a005b85352452c518f8ec26216105353107dcf6cc"
+    },
+    {
+      "path": "svg/lockup/tapper-aha-lockup-color.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "color",
+      "width": 2250,
+      "height": 700,
+      "sha256": "812cc273ef9ec57afbeb6590424e9c05d9b50bed57abaaf166e180966d9d4f81"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-color-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "a2c20743a5aeb2cc1353649b0c9a4b70b28db32c2e8f52a927e72e3bf9a879ef"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-color-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "516e065fc5f3abb34d7bb2d82b459a8c6ee65f746ebfd9886d4a56aca4407c5d"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-color-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "07780d252fc362f9ef62cc765a8d3585792e861f1d34f7b1c9ccde59a31dd0c9"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-color-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "af0a30c245be8be4baf6b8144f95812388738ddfb229082b5e903f1f23b9daef"
+    },
+    {
+      "path": "svg/fullbody/tapper-aha-fullbody-ink.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "0c23dd01d4ced10062873b6b305d82f21c119b1244d2fb200b3eacd5f19f77fc"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-ink-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "faa407c79b3ba23d54711737b91e363b4744027cb938b307060046ea3f22385b"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-ink-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "5f32de85b18ced2ae91d915027e615001ed5aa657f63cb28ba58b98e5216107a"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-ink-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "830e05d9f0703da0e1777cc4ae4d72ee8ea686e37bd87a2160d5c7ddcca21765"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-ink-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "27e69855caca3b45e4d447950494accdfd3244a4639c9d75af7b04cc5dff603a"
+    },
+    {
+      "path": "svg/avatar/tapper-aha-avatar-ink.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "909a35770f5e7b2a21fd8cf315a955902059371e0754bc6342f8d48c29ae41f8"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "00c59bd3ffa0b5b4604f6f0e7653e7d11682a286375e580356272a0b7afd083f"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "e62c36beac44997143bcda39cd85a9c919e6b56db88cdd6b144300dff63dc4d9"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "0ccf4dfaa78e4bc43b4f55736b445191b2a05350727a783692144f79889825be"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "6f57949d12022e69bed9b44a5e3fb088669eb478609f2be8e5d6addb2f4b03fa"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "490b56fa8e45c34ef2e60ea6b6bee4ea831afd7716778e75386256e2b83acd95"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "2345fcc9a08fd88d28dc62e7d8ef7e887948861bc295d425eee1eaa1b10af92a"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "1fbbf1160510ee703731a38be9c7d59b27ab46f9866ce0a28edb4d4c0b9c63dd"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-ink-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "112447bd24a6041e301de33d2dfbe60af1292473d8753df4096fe4d999b004da"
+    },
+    {
+      "path": "svg/lockup/tapper-aha-lockup-ink.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 2250,
+      "height": 700,
+      "sha256": "96645a6f264fe65ac1632ee3e5838dee49e452a19cfcafb02970597fe9b7aead"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-ink-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "51cef871f9e1013a73f031fb72761f0aef1b9d75b531d229cef7bc0c75740fee"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-ink-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "7c212603198843fed4e8ce243049d7f109666d0de62f94c62716f1bf3f74346e"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-ink-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "c50b53179e142a512f0dbfc88a0368993045f689efa87b33bec89e46c090e157"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-ink-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "651a5b7ed6ff1efc025a972198b315a1fa975c2a44d2879509add8b9108ad5bd"
+    },
+    {
+      "path": "svg/fullbody/tapper-aha-fullbody-black.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "5e3faf7284d47d61c9c893015023b53810f6c8bb06fcd10d1b6ea93ab3c6aa7f"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-black-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "603355a107302b16a2a16a95fd1465908630a593e014f4972da7b937061a6d3f"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-black-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "b561a99274a52e301f42cd9e84208bb6dce595821dd3d359c5f3c3f786507263"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-black-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "9d600ae4a6f86c22df6b5af2ef0def6e757e0b338b5b2f7b018da392babbde12"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-black-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "91250d869c0c7f63ba089e56b91402e90771ace044bd914981850d5e5a672735"
+    },
+    {
+      "path": "svg/avatar/tapper-aha-avatar-black.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "black",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "e6d7fcda8d435c1803954a6ab9b076048be171c15f1cd3ca3e60f2732ec0f5e5"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "4dfbcc79de930bd3a9fdc88122305eb0f2b9cccf3fe56f79e7a7c9b1bb2f5ad3"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "56e9813981b79308455ec9552392cfcc172383c8b3e48ad28050a2b1b93886d3"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "911abd506a8c5b180f55f4c3068c97c83929ff4cacc17f6e3cd3730205799a6f"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "f5ccc284b4c1811a9d0a10f978e0acdf16237ea2d42d424b46b993b6ead098ba"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "33ee07975ad69b1236c381bf5e35dbe9d9c25d09abef1ae9ecea4673bd3f7bbd"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "875938f84a211034d7249ec9a79e5577006eaf64765ff20e02cd10d470442e20"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "7ec20a64fcedc33f3f71f70a7b79c131cd0077fe296ab4a980c1f8abaf33533c"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-black-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "f5381468bd39157641b2d652212f04465b5a5379f5ae340c97013a37b39bd53a"
+    },
+    {
+      "path": "svg/lockup/tapper-aha-lockup-black.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "black",
+      "width": 2250,
+      "height": 700,
+      "sha256": "a1ace7a0796da1c42cc26d6221b3cd1ff8462c4aa5d1d90c1c059612f749751b"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-black-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "6876ba658ed23d1c082478a18899ff17728d913fd246b8fbb1b932c0e4e310b5"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-black-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "7f42ff54a44f07578f9551816ab8db4e7b27e20a8c70cfc0cf29b7f3a49635a8"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-black-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "ff193a642918c52032b14bd37700d7c10c45bcdec39c931b564de857b84c8317"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-black-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "8d3fb8b59d42a8b32cb0e38db96d55fb424787f1d553d54b86c6730bae60c06d"
+    },
+    {
+      "path": "svg/fullbody/tapper-aha-fullbody-white.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "369ae798057540321d21545f1a026c8147bb860ca12c1bac3e5d810763013e6e"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-white-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "29f877b65ef3a90cec75baf847c2df3b248e44997b1389265e02818e2dd4fc6f"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-white-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "d5c1a1cd861106c29fd818332abe56b7eef7564ce187bedd3d72eaa77aef7947"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-white-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "61c7a8d739c8e4f1d81f16cbcdcca1b81b9f53e2289c0d24048b971e7152bff7"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-white-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "05b49dcf7afeedceef919e4ce4d511f5e8e4f12c9a2d49f74b9bbee319c41e2a"
+    },
+    {
+      "path": "svg/avatar/tapper-aha-avatar-white.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "white",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "756f74957547d274429ba5cdecc77e70f5357b3c998243eee5b9fa681b348289"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "dcf213039c3e45a673a6514bb3e62bdd29cb7cc23aad1e2d05958014c3224180"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "0391287546189963e7c14be988a84beaddabe0ab656cf3b2592bf4cefe725cf3"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "4ba742f17a17b29467f9301079a4aff03b17bebf93d02b4c85f8117d23bc7806"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "d659a9bf7de81ebe9a4c99b187e4be40172fcf079f1dc130fa7300e93f0f898c"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "ab42eaa2992860d8c58781000ae7c2eab601590e3c1932d7bf24b07d62e76d88"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "72d93f86d122d9e26f582a75c94a7edd415da2f623e143060b7ce1795a52ea57"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "3dc2febf653c2c7cdb67bfccd1b9a76201bb3ea69733def1a964803431b7f21c"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-white-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "5493948e3d3d48b255daed20eb8181c5f4a6e1b443d9aaf483b43110e203c8a2"
+    },
+    {
+      "path": "svg/lockup/tapper-aha-lockup-white.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "white",
+      "width": 2250,
+      "height": 700,
+      "sha256": "9d1338638b82b54a5e1945ceb6d2c8b1e19ca1da6b803c1583df8a2498f2abe2"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-white-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "456de33aefc6f94bfdfbdaca179e11e8852783b2b36f783ddad51ecd244d6761"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-white-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "2c33ebb5e9f975d55ede32f9ca58a26c4d03d96023304c96c73a76e60562c5bf"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-white-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "1768275802502837d3861e5bd890883791326046b6c1d2bc7cef9a8332248a84"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-white-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "df406d84d84260cead667c28fa5ed33c8bc9ebf0438a6f2a3ef7918db69752b3"
+    },
+    {
+      "path": "svg/fullbody/tapper-aha-fullbody-orange.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "7f55180dfde97781ed3b86f3e2ef48401e900ef06643be6007dbc8c5c99ef2a0"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-orange-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "6b5779bd62924c7122065c3eb19cae88dcc581b15b8cd3f5d7f16debf2cdd705"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-orange-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "9c1de79f04397b1f606391997f45fbf3ca9d0a5084e79a7fcecee11f66254156"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-orange-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "f32a354462a7d3eb65d389b980f62809e0ff317371201b25dcf7d080b02e3a77"
+    },
+    {
+      "path": "png/fullbody/tapper-aha-fullbody-orange-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "f68296b7bca241cbe52a62096dce67e913d6a4a40493a2791cc80bb3b30c4a57"
+    },
+    {
+      "path": "svg/avatar/tapper-aha-avatar-orange.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "1e3549dbf8d6cbb45eb4a3382af88b173fa71f5eef749ef1da3035c716113301"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "981dd89e583c1114ffb230d08c8e855fe88622286ef9712668001acda57a72da"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "f7f6185493cff511edf883d1954be266ae03dd51700e6dc52b93a4ef96a5b6f7"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "0bf26719cde1811f85cebad06163689b6196e7a3c47663ccebea7cad52f0eada"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "c59db877145662e07c531ab87d6485ccfdcaf14086fe694fed3b327530452d90"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "45b30a393c3703f647925b42a60430c1e523ef3e57102e57e9d984c6d1d1012a"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "b60aaf41786dce1ab712d4c9a21cde11a1f30472572c1f651a2ad13533806205"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "3f5c43c3b04c8dea54733fff0270128006e17279caed79b36f6c0a74917b4f2c"
+    },
+    {
+      "path": "png/avatar/tapper-aha-avatar-orange-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "afd6b9c257ff77d864de3b5d4ddf6d894cd9897555780ccad83b333dc3a6a9dc"
+    },
+    {
+      "path": "svg/lockup/tapper-aha-lockup-orange.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 2250,
+      "height": 700,
+      "sha256": "5d22b7e0d5d1333deb602af87663319d3e071d3383f033a2090bcf67304e3a1d"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-orange-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "d36524b784542358e75d6f9b0ca2012b068c51ac38e747f9f88fff2162a42994"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-orange-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "a421d85e2604452179d895a5c9737f7ca69e3869fc172f1ddb18e8c0fc566260"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-orange-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "a20402eed2aae963aae1f4c7e6123ae44aaedf195b83cec35965517f71df5002"
+    },
+    {
+      "path": "png/lockup/tapper-aha-lockup-orange-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "8e38d1a746c8ae677469e2fb4ec77369bf63bdc8b1e1795efe04feb74efa940a"
+    },
+    {
+      "path": "svg/launcher/tapper-aha-launcher-light.svg",
+      "format": "svg",
+      "family": "launcher",
+      "variant": "light",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "22b4f0cdeee78fc71bfe3b05d50cb10df2ca9dde28e92c170fc97c042d7b34f9"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-32.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "afe965cf9c1009f727e13510cb5f925574c551bb1b9f0500f69cf4d4707d5248"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-40.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 40,
+      "height": 40,
+      "hasAlpha": true,
+      "sha256": "fefe40c9cb8d22f9e0143246ce4bd8d97d8f0d03d7257bdd4cede1f708ad56cc"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-48.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "a675b5ea02500d5368168be3d24a9b16cce867bad9ca1719f42afefaa373cded"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-56.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 56,
+      "height": 56,
+      "hasAlpha": true,
+      "sha256": "5752976bb1e9f315363346d55ca2aa0a47c189a817ed170869326b037e4d6ef3"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-64.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "9b01506f4f803bae210168f23a6699dc340ee87b96598fd7ccf9d0891cab4f41"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-128.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "3601a47a90cf16778ac25eb2d67fbf21614a162a282cee4ec8dede181383249a"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-256.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "2cf1cdd26a9095954e8686da6e13cf21acda9b8c789db0a739f3c25c10a18b5a"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-light-512.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "96b7108cb6c18aa8bcaecc8a2b70e2ece118cc65c8d048aa8b9eb86a06027bed"
+    },
+    {
+      "path": "svg/launcher/tapper-aha-launcher-dark.svg",
+      "format": "svg",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "8e4d7c6bed5dd0034e1046421618c1be86d6023f61582d9248833f7a6e640c05"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-32.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "37f6ab0461940941bf94542c079fdd8cc7ff9863d6692bdf1b32359b51e38bf7"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-40.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 40,
+      "height": 40,
+      "hasAlpha": true,
+      "sha256": "bc317ec9d707e8571daec96c6b9a1862050422e29dec2933b5d2e8d5096bba17"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-48.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "2c7f3d3615cf895f1f1c6911b6b39f84da1f5594a54f24228ab44f677d07406a"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-56.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 56,
+      "height": 56,
+      "hasAlpha": true,
+      "sha256": "095889b8c2f1bba6eedb79caa4c081e5170ac2101483755569dc1735b9bb65f1"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-64.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "14c73177274a5768994470bc8c404e0b083108ee965dfe678e8363a35b75af1f"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-128.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "312fa03ded34cbe89623c3cfbd8a7c891a9770dfb7ebdd95fd85652ac6d80fea"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-256.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "c0047fbcaff640746606e17a9698921f00d34e289537dcb56ba8e9a4665eb383"
+    },
+    {
+      "path": "png/launcher/tapper-aha-launcher-dark-512.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "d729b3cf7a4c107ef3c98b67295d3ff12d19e60d5446613b4d851ce47d37dcad"
+    }
+  ],
+  "referenceFilename": "tapper-woodpecker-v7-aha.png",
+  "wordmarkFilename": "tapper-wordmark-ink.svg",
+  "generationRecord": "generation.json",
+  "vectorRefinements": [
+    "Removed tiny far-eye detail and smoothed forehead notch to maintain a single visible eye.",
+    "Three discovery rays exported as separate paths inside aha-discovery-rays."
+  ]
+}

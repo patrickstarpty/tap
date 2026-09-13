@@ -77,7 +77,7 @@ describe("Tapper prototype model", () => {
     });
   });
 
-  it("appends turns immutably without clearing an earlier conversation context", () => {
+  it("records the turn and clears only the pending message context", () => {
     const conversation = createConversation("chat-1", {
       selectedAgentIds: ["underwriting-reviewer"],
       selectedSkillIds: ["rules-lookup"],
@@ -104,15 +104,15 @@ describe("Tapper prototype model", () => {
     expect(nextConversation).toEqual({
       ...conversation,
       turns: [turn],
+      selectedSourceIds: [],
+      selectedAgentIds: [],
+      selectedSkillIds: [],
     });
     expect(nextConversation).not.toBe(conversation);
     expect(conversation.turns).toEqual([]);
-    expect(nextConversation.selectedSourceIds).toEqual([
-      "life-underwriting-rules",
-    ]);
-    expect(nextConversation.selectedAgentIds).toEqual([
-      "underwriting-reviewer",
-    ]);
-    expect(nextConversation.selectedSkillIds).toEqual(["rules-lookup"]);
+    expect(nextConversation.selectedSourceIds).toEqual([]);
+    expect(nextConversation.selectedAgentIds).toEqual([]);
+    expect(nextConversation.selectedSkillIds).toEqual([]);
+    expect(conversation.selectedSourceIds).toEqual(["life-underwriting-rules"]);
   });
 });

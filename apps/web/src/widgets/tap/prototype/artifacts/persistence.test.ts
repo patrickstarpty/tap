@@ -43,6 +43,45 @@ describe("prototype persistence", () => {
     expect(loadPrototypeSnapshot(storage)).toEqual(snapshot);
   });
 
+  it("retains library flags and source records without storing the bundled demo content", () => {
+    const snapshot: PrototypeSnapshot = {
+      version: 2,
+      activeConversationId: "chat-1",
+      conversations: [createConversation("chat-1")],
+      artifacts: createInitialArtifactState(),
+      library: {
+        open: true,
+        examplesLoaded: true,
+        fwdLoaded: true,
+        localSources: [
+          { id: "local-source-4", name: "My notes.md", type: "MD" },
+        ],
+      },
+    };
+    expect(readPrototypeSnapshot(JSON.stringify(snapshot))).toEqual(snapshot);
+    expect(
+      readPrototypeSnapshot(
+        JSON.stringify({
+          ...snapshot,
+          library: {
+            open: "true",
+            examplesLoaded: false,
+            fwdLoaded: true,
+            localSources: [
+              null,
+              { id: "bad", name: 123 },
+              ...snapshot.library!.localSources,
+            ],
+          },
+        }),
+      )?.library,
+    ).toEqual({ ...snapshot.library, open: false, examplesLoaded: false });
+    expect(
+      readPrototypeSnapshot(JSON.stringify({ ...snapshot, library: "invalid" }))
+        ?.library,
+    ).toBeUndefined();
+  });
+
   it("ignores v1 snapshots without deleting their browser state", () => {
     const v1Serialized = JSON.stringify({
       version: 1,

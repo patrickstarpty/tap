@@ -13,8 +13,8 @@ import type { Conversation, Locale, ProductModule } from "./model";
 import { PanelToggleIcon } from "./PanelToggleIcon";
 import { ConversationHistory } from "../../../features/conversations/components/ConversationHistory";
 
-const tapperMark = new URL(
-  "../../../../assets/brand/tapper/svg/tapper-mark-ink.svg?no-inline",
+const tapperListeningAvatar = new URL(
+  "../../../../assets/brand/tapper/listening/svg/avatar/tapper-listening-avatar-color.svg?no-inline",
   import.meta.url,
 ).href;
 const tapperWordmark = new URL(
@@ -73,7 +73,13 @@ export function PrototypeSidebar({
     {
       key: "tapper",
       label: copy.navigation.tapper,
-      icon: <img className="tap-tapper-rail-mark" src={tapperMark} alt="" />,
+      icon: (
+        <img
+          className="tap-tapper-rail-mark"
+          src={tapperListeningAvatar}
+          alt=""
+        />
+      ),
     },
     {
       key: "test-management",
@@ -114,11 +120,10 @@ export function PrototypeSidebar({
         conversation.selectedSourceIds.length +
         conversation.selectedAgentIds.length +
         conversation.selectedSkillIds.length;
-
       return conversation.turns.length > 0 || contextCount > 0;
     });
 
-  const getConversationLabel = (conversation: Conversation, index: number) => {
+  const getConversationLabel = (conversation: Conversation) => {
     const contextCount =
       conversation.selectedSourceIds.length +
       conversation.selectedAgentIds.length +
@@ -131,7 +136,7 @@ export function PrototypeSidebar({
     const contextLabel =
       contextCount > 0 ? ` · ${contextCount} ${copy.sources.selected}` : "";
 
-    return `${title} · ${copy.chat.conversation} ${index + 1}${contextLabel}`;
+    return `${title}${contextLabel}`;
   };
 
   const moduleButton = (
@@ -156,7 +161,7 @@ export function PrototypeSidebar({
         aria-expanded={
           module.key === "tapper" ? tapperSidebarVisible : undefined
         }
-        title={location === "product" ? module.label : undefined}
+        title={location === "product" || collapsed ? module.label : undefined}
         onClick={() => onModuleChange(module.key)}
       >
         {module.icon}
@@ -217,10 +222,11 @@ export function PrototypeSidebar({
       <aside
         id="tap-tapper-sidebar"
         className="tap-tapper-sidebar"
-        aria-hidden={tapperSidebarVisible ? undefined : true}
+        aria-hidden={tapperWorkspaceActive ? undefined : true}
         aria-label={copy.navigation.tapperTools}
-        data-collapsed={!tapperSidebarVisible}
-        inert={tapperSidebarVisible ? undefined : true}
+        data-collapsed={collapsed}
+        data-inactive={!tapperWorkspaceActive}
+        inert={tapperWorkspaceActive ? undefined : true}
       >
         <div className="tap-tapper-sidebar-header">
           <h2 aria-label={copy.navigation.tapper}>
@@ -228,13 +234,20 @@ export function PrototypeSidebar({
           </h2>
           <button
             type="button"
-            className="tap-panel-toggle tap-panel-toggle--left-collapse"
+            className={`tap-panel-toggle tap-panel-toggle--left-${collapsed ? "expand" : "collapse"}`}
             aria-controls="tap-tapper-sidebar"
-            aria-expanded="true"
-            aria-label={copy.navigation.collapseSidebar}
+            aria-expanded={!collapsed}
+            aria-label={
+              collapsed
+                ? copy.navigation.expandSidebar
+                : copy.navigation.collapseSidebar
+            }
             onClick={onToggleCollapsed}
           >
-            <PanelToggleIcon side="left" state="expanded" />
+            <PanelToggleIcon
+              side="left"
+              state={collapsed ? "collapsed" : "expanded"}
+            />
           </button>
         </div>
 
@@ -247,6 +260,7 @@ export function PrototypeSidebar({
             type="button"
             className="tap-navigation-item tap-navigation-item--tapper"
             aria-label={copy.navigation.newChat}
+            title={collapsed ? copy.navigation.newChat : undefined}
             aria-current={activeModule === "tapper" ? "page" : undefined}
             onClick={onNewChat}
           >
@@ -263,7 +277,7 @@ export function PrototypeSidebar({
             conversations={conversationHistory.map(
               ({ conversation, index }) => ({
                 conversationId: conversation.id,
-                title: getConversationLabel(conversation, index),
+                title: getConversationLabel(conversation),
                 createdAt: "1970-01-01T00:00:00Z",
                 updatedAt: "1970-01-01T00:00:00Z",
               }),

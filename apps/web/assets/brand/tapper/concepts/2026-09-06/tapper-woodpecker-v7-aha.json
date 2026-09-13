@@ -1,0 +1,46 @@
+{
+  "created": "2026-09-06",
+  "status": "exported-asset-family-based-on-selected-aha-expression",
+  "generator": "built-in image_gen for the expression study; vector tracing and SVG export for the asset family",
+  "image": "tapper-woodpecker-v7-aha.png",
+  "sourceConcepts": [
+    "tapper-woodpecker-v6-listening.png",
+    "tapper-woodpecker-v3-friendly.png / bottom-row Aha"
+  ],
+  "userRequest": "很好。Aha 我也要这样一套",
+  "confirmedKeywords": [
+    "聪明",
+    "敏锐",
+    "好奇"
+  ],
+  "expression": "侧身单眼，微张喙，橙色口腔，三道橙色发现提示线；表达灵感来了或发现问题。",
+  "vectorRefinements": [
+    "清理生成参考中额头远侧眼点与缺口，使额头成为连续曲线，保留单眼侧脸。",
+    "三条提示线各自保留独立path，位于aha-discovery-rays组。",
+    "归一为墨色、橙色、暖白三色；透明外部。"
+  ],
+  "sourceImageFile": {
+    "width": 1254,
+    "height": 1254,
+    "background": "opaque warm white",
+    "hasAlpha": false,
+    "sha256": "bf28a60b820c47cb4638ebca2a9d8112b9a5cff3612cd768b4748f6062cb7fc7"
+  },
+  "deliverables": {
+    "svg": 17,
+    "png": 96,
+    "families": [
+      "fullbody",
+      "avatar",
+      "launcher",
+      "lockup"
+    ],
+    "note": "最终SVG及导出的透明PNG包含额头清理；原始ImageGen PNG作为生成过程留档，并非最终资产。"
+  },
+  "generationHistory": [
+    {
+      "operation": "derive Aha from Listening identity and the selected Aha expression",
+      "prompt": "Use case: identity-preserve. Create the standalone AHA expression of the existing Tapper woodpecker, ready to vectorize into the same asset family.\nInput 1 is the EDIT TARGET and identity master: the polished full-body Listening woodpecker. Input 2 is the supporting EXPRESSION REFERENCE only: copy the small \"Aha\" bird in the BOTTOM ROW (third pose from the left, near x750 y870). Do not copy the large portrait, Exploring, or waving bird.\nKeep the FIRST image's body, feet, tail, folded wings, head-to-body proportions, swept orange crest, ink silhouette, white cheek, single main visible eye, exact side-view head angle facing RIGHT, and composition. Make only the Aha expression changes shown in the SECOND reference: (1) open the beak a little in a delighted recognition gesture, with a clear upper beak and short tapered lower jaw, a small orange inner-mouth wedge, NO human lips, teeth or tongue; (2) retain the one attentive eye and let it feel subtly brightened, no enlarging to baby eyes, no frontal two-eye face; (3) place EXACTLY THREE short orange rounded-ended discovery rays above the forehead toward the upper-right, separate from the crest and from each other, radiating outward in a compact fan like the Aha reference. These are plain rays, not stars, bulbs, exclamation punctuation or sparks all around. Keep all three clearly inside the square canvas with generous margins and above the beak, around the upper-right forehead area, no higher than the top of the existing crest. Keep their scale modest but legible when the head is used as an icon.\nEmotion: \"Aha, I found something!\" Smart, perceptive, curious, welcoming equal colleague. A small delighted discovery, never panic, shouting, smugness or a surprised open-mouthed baby.\nPreserve the friendly side-facing Listening character. Do NOT rotate head toward camera, reveal a second round eye, change species, lengthen the neck, add a waving wing, or change the body stance. Full-body standing bird with tail and both feet fully visible. Same square composition and size as input 1; all details comfortably inside 80-85% of the canvas.\nFlat graphic brand illustration, exactly ink #14201D, orange #E87722, ivory #FAF9F6. Clean solid uniform fills, smooth contours, no texture, grain, gradient, shadow or 3D. Uniform opaque warm-white #FAF9F6 exterior background for later vector conversion. No text, \"Aha\" label, wordmark, title, board, border, extra poses, props, or duplicate characters."
+    }
+  ]
+}

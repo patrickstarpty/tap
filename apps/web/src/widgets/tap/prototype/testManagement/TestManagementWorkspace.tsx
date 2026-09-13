@@ -54,7 +54,7 @@ const TEXT = {
     dataHeading: "Reusable test data",
     dataEmpty: "Test data sets will appear here.",
     newData: "New data set",
-    back: "Back to Test Plans",
+    back: "Back to Test Plan",
     linkedAutomation: "Linked Automation",
     noAutomation: "No Automation linked",
     linkAutomation: "Link Automation",
@@ -429,12 +429,20 @@ export function TestManagementWorkspace({
               <span role="columnheader">{text.automation}</span>
               <span role="columnheader">{text.source}</span>
               <span role="columnheader">{text.status}</span>
-              <span role="columnheader" aria-label={text.open} />
             </div>
             {plans.map((plan) => (
               <div
                 className="tap-plan-row tap-plan-row--automation"
                 role="row"
+                tabIndex={0}
+                onClick={() => onOpenPlan(plan.id)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpenPlan(plan.id);
+                  }
+                }}
                 key={plan.id}
               >
                 <span role="cell">
@@ -454,11 +462,6 @@ export function TestManagementWorkspace({
                 <span role="cell" className="tap-status-ready">
                   <CheckCircleFilled aria-hidden="true" />{" "}
                   {plan.status === "ready" ? text.ready : text.draft}
-                </span>
-                <span role="cell">
-                  <Button onClick={() => onOpenPlan(plan.id)}>
-                    {text.open} {plan.id}
-                  </Button>
                 </span>
               </div>
             ))}

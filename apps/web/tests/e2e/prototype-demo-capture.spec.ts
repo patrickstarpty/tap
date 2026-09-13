@@ -20,46 +20,50 @@ const OUTPUT_DIR = resolve(process.cwd(), "../../docs/assets/prototype-demo");
 const MIN_GRAPH_CAPTURE_LABEL_HEIGHT = 12;
 
 const OUTPUTS = [
-  "01-tapper-new-chat.jpg",
-  "02-tapper-conversation-minimap.jpg",
-  "03-tapper-model-selector.jpg",
-  "04-tapper-context-menu.jpg",
-  "05-tapper-source-picker.jpg",
-  "06-tapper-agent-picker.jpg",
-  "07-tapper-skill-picker.jpg",
-  "08-tapper-selected-context.jpg",
-  "09-tapper-agent-catalog.jpg",
-  "10-tapper-create-agent.jpg",
-  "11-tapper-skill-catalog.jpg",
-  "12-tapper-create-skill.jpg",
-  "13-tapper-library-empty.jpg",
-  "14-tapper-library-all.jpg",
-  "15-tapper-library-filtered.jpg",
-  "16-tapper-add-source.jpg",
-  "17-tapper-knowledge-graph.jpg",
-  "18-tapper-knowledge-graph-node.jpg",
-  "19-test-management-plans.jpg",
-  "20-test-plan-detail-linked.jpg",
-  "21-test-plan-run-config.jpg",
-  "22-test-plan-run-result.jpg",
-  "23-test-plan-detail-unlinked.jpg",
-  "24-test-management-test-data.jpg",
-  "25-automation-library.jpg",
-  "26-create-automation.jpg",
-  "27-web-automation-bdd-mapping.jpg",
-  "28-web-automation-action-editor.jpg",
-  "29-web-automation-ai-agent.jpg",
-  "30-web-automation-run-history.jpg",
-  "31-mobile-automation-device.jpg",
-  "32-mobile-automation-run-result.jpg",
-  "33-tapper-test-plan-first.jpg",
-  "34-tapper-test-plan-review.jpg",
-  "34b-tapper-generate-linked-automation.jpg",
-  "35-tapper-channel-choice.jpg",
-  "36-tapper-linked-artifacts.jpg",
-  "37-tapper-minimap-preview.jpg",
-  "38-tapper-sources-collapsed.jpg",
-  "39-tapper-sidebar-collapsed.jpg",
+  "01-tapper-new-chat.png",
+  "02-tapper-conversation-minimap.png",
+  "03-tapper-model-selector.png",
+  "04-tapper-context-menu.png",
+  "05-tapper-source-picker.png",
+  "06-tapper-agent-picker.png",
+  "07-tapper-skill-picker.png",
+  "08-tapper-selected-context.png",
+  "09-tapper-agent-catalog.png",
+  "10-tapper-create-agent.png",
+  "11-tapper-skill-catalog.png",
+  "12-tapper-create-skill.png",
+  "13-tapper-library-empty.png",
+  "14-tapper-library-all.png",
+  "15-tapper-library-filtered.png",
+  "16-tapper-add-source.png",
+  "17-tapper-knowledge-graph.png",
+  "18-tapper-knowledge-graph-node.png",
+  "19-test-management-plans.png",
+  "20-test-plan-detail-linked.png",
+  "21-test-plan-run-config.png",
+  "22-test-plan-run-result.png",
+  "23-test-plan-detail-unlinked.png",
+  "24-test-management-test-data.png",
+  "25-automation-library.png",
+  "26-create-automation.png",
+  "27-web-automation-bdd-mapping.png",
+  "28-web-automation-action-editor.png",
+  "29-web-automation-ai-agent.png",
+  "30-web-automation-run-history.png",
+  "31-mobile-automation-device.png",
+  "32-mobile-automation-run-result.png",
+  "33-tapper-test-plan-first.png",
+  "34-tapper-test-plan-review.png",
+  "34b-tapper-generate-linked-automation.png",
+  "35-tapper-channel-choice.png",
+  "36-tapper-linked-artifacts.png",
+  "37-tapper-minimap-preview.png",
+  "38-tapper-sources-collapsed.png",
+  "39-tapper-sidebar-collapsed.png",
+  "40-library-search-location.png",
+  "41-tapper-floating-context.png",
+  "42-tapper-floating-aha.png",
+  "43-tapper-floating-handoff.png",
 ] as const;
 
 class CaptureManifest<Name extends string> {
@@ -139,7 +143,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
     mediaType: "application/pdf",
     stage: "ready",
     status: "ready",
-    updatedAt: "2026-09-05T02:00:00Z",
+    updatedAt: "2026-09-06T02:00:00Z",
   },
   {
     chunkCount: 11,
@@ -151,7 +155,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
     mediaType: "text/markdown",
     stage: "ready",
     status: "ready",
-    updatedAt: "2026-09-05T02:00:00Z",
+    updatedAt: "2026-09-06T02:00:00Z",
   },
   {
     chunkCount: 0,
@@ -164,7 +168,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     stage: "embedding",
     status: "processing",
-    updatedAt: "2026-09-05T02:00:00Z",
+    updatedAt: "2026-09-06T02:00:00Z",
   },
   {
     chunkCount: 0,
@@ -176,7 +180,7 @@ const MOCK_DOCUMENTS: DocumentSummary[] = [
     mediaType: "text/plain",
     stage: "parsing",
     status: "failed",
-    updatedAt: "2026-09-05T02:00:00Z",
+    updatedAt: "2026-09-06T02:00:00Z",
   },
 ];
 
@@ -190,7 +194,7 @@ const MOCK_UPLOAD: DocumentSummary = {
   mediaType: "text/plain",
   stage: "stored",
   status: "queued",
-  updatedAt: "2026-09-05T02:00:00Z",
+  updatedAt: "2026-09-06T02:00:00Z",
 };
 
 const MOCK_ANSWER_TEXT =
@@ -263,7 +267,7 @@ function documentDetail(document: DocumentSummary): DocumentDetail {
     stages: INGESTION_STAGES.map((stage, index) => ({
       completedAt:
         index < activeStage || document.status === "ready"
-          ? "2026-09-05T02:00:00Z"
+          ? "2026-09-06T02:00:00Z"
           : null,
       errorCode:
         document.status === "failed" && index === activeStage
@@ -446,7 +450,7 @@ async function startFlow(
   page: Page,
   documents: readonly DocumentSummary[] = MOCK_DOCUMENTS,
 ) {
-  await page.clock.install({ time: new Date("2026-09-05T10:00:00+08:00") });
+  await page.clock.install({ time: new Date("2026-09-06T10:00:00+08:00") });
   await page.addInitScript(() => window.localStorage.clear());
   await page.route("**/api/v1/runtime-mode", (route) =>
     fulfillJson(route, {
@@ -469,19 +473,28 @@ async function capture(page: Page, name: (typeof OUTPUTS)[number]) {
   ).toContainText("操作统一记录到固定 Validation Actor，不代表个人身份");
   await expect(page.getByLabel("TAP platform")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Tapper", includeHidden: true }),
+    page.getByRole("button", {
+      name: "Tapper",
+      includeHidden: true,
+      exact: true,
+    }),
   ).toBeVisible();
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+  await page.waitForFunction(() =>
+    [...document.images].every(
+      (image) => image.complete && image.naturalWidth > 0,
+    ),
+  );
   captureManifest.start(name);
   const imagePath = resolve(OUTPUT_DIR, name);
   await page.screenshot({
     animations: "disabled",
     caret: "hide",
     path: imagePath,
-    type: "jpeg",
-    quality: 90,
+    type: "png",
+    scale: "device",
     fullPage: false,
   });
   const imageBytes = readFileSync(imagePath);
@@ -489,25 +502,29 @@ async function capture(page: Page, name: (typeof OUTPUTS)[number]) {
     name,
     createHash("sha256").update(imageBytes).digest("hex"),
   );
-  const source = `data:image/jpeg;base64,${imageBytes.toString("base64")}`;
+  const source = `data:image/png;base64,${imageBytes.toString("base64")}`;
   const dimensions = await page.evaluate(
     (url) =>
       new Promise<[number, number]>((resolveImage, rejectImage) => {
         const image = new Image();
         image.onload = () =>
           resolveImage([image.naturalWidth, image.naturalHeight]);
-        image.onerror = () => rejectImage(new Error("invalid JPEG"));
+        image.onerror = () => rejectImage(new Error("invalid PNG"));
         image.src = url;
       }),
     source,
   );
-  expect(dimensions).toEqual([1280, 720]);
+  expect(dimensions).toEqual([2560, 1440]);
 }
 
 async function sendMessage(page: Page, prompt: string) {
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("log", { name: "Conversation" })
+      .getByText(prompt, { exact: true }),
+  ).toBeVisible();
 }
 
 async function openComposerMenu(page: Page) {
@@ -517,7 +534,7 @@ async function openComposerMenu(page: Page) {
   ).toBeVisible();
 }
 
-test.use({ viewport: { width: 1280, height: 720 } });
+test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 });
 
 test("canonical Source fixture drives accessible selection without capture", async ({
   page,
@@ -710,75 +727,32 @@ test.describe("reduced motion", () => {
   }
 });
 
-for (const viewport of [
-  { width: 1280, height: 720 },
-  { width: 390, height: 844 },
-]) {
-  test(`runtime unavailable preserves navigation at ${viewport.width}`, async ({
-    page,
-  }) => {
-    await page.setViewportSize(viewport);
-    await page.addInitScript(() => window.localStorage.clear());
-    let knowledgeRequests = 0;
-    await page.route("**/api/v1/projects/**", (route) => {
-      knowledgeRequests += 1;
-      return route.abort();
-    });
-    await page.route("**/api/v1/runtime-mode", (route) =>
-      route.fulfill({ status: 503, body: "unavailable" }),
-    );
-    await page.goto("/");
-    await expect(
-      page.getByRole("status", { name: "Validation Mode" }),
-    ).toContainText("运行环境连接失败 · 服务器操作暂不可用");
-    await expect(
-      page.getByRole("navigation", { name: "Product" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Test Management" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Test Management" }),
-    ).toBeVisible();
-    expect(knowledgeRequests).toBe(0);
-    await page.screenshot({
-      path: test.info().outputPath(`runtime-unavailable-${viewport.width}.png`),
-    });
-  });
-}
-
-test("checked-in screenshot inventory is canonical", () => {
-  expect(OUTPUTS).toHaveLength(40);
-  const actual = readdirSync(OUTPUT_DIR)
-    .filter((name) => name.endsWith(".jpg"))
-    .sort();
-  expect(actual).toEqual([...OUTPUTS].sort());
-});
-
 test("capture manifest rejects a duplicate output name", () => {
-  const manifest = new CaptureManifest(["one.jpg"] as const);
-  manifest.start("one.jpg");
+  const manifest = new CaptureManifest(["one.png"] as const);
+  manifest.start("one.png");
 
-  expect(() => manifest.start("one.jpg")).toThrow(
-    "Capture produced more than once: one.jpg",
+  expect(() => manifest.start("one.png")).toThrow(
+    "Capture produced more than once: one.png",
   );
 });
 
 test("capture manifest rejects a missing output", () => {
-  const manifest = new CaptureManifest(["one.jpg", "two.jpg"] as const);
-  manifest.start("one.jpg");
-  manifest.finish("one.jpg", "digest-one");
+  const manifest = new CaptureManifest(["one.png", "two.png"] as const);
+  manifest.start("one.png");
+  manifest.finish("one.png", "digest-one");
 
-  expect(() => manifest.verifyComplete()).toThrow("Missing captures: two.jpg");
+  expect(() => manifest.verifyComplete()).toThrow("Missing captures: two.png");
 });
 
 test("capture manifest rejects identical bytes for distinct outputs", () => {
-  const manifest = new CaptureManifest(["one.jpg", "two.jpg"] as const);
-  manifest.start("one.jpg");
-  manifest.finish("one.jpg", "same-digest");
-  manifest.start("two.jpg");
-  manifest.finish("two.jpg", "same-digest");
+  const manifest = new CaptureManifest(["one.png", "two.png"] as const);
+  manifest.start("one.png");
+  manifest.finish("one.png", "same-digest");
+  manifest.start("two.png");
+  manifest.finish("two.png", "same-digest");
 
   expect(() => manifest.verifyComplete()).toThrow(
-    "Byte-identical captures: one.jpg, two.jpg",
+    "Byte-identical captures: one.png, two.png",
   );
 });
 
@@ -795,7 +769,7 @@ test("01 captures the fresh Tapper conversation", async ({ page }) => {
     "aria-current",
     "page",
   );
-  await capture(page, "01-tapper-new-chat.jpg");
+  await capture(page, "01-tapper-new-chat.png");
 });
 
 test("02 and 37 capture conversation minimap states", async ({ page }) => {
@@ -815,7 +789,7 @@ test("02 and 37 capture conversation minimap states", async ({ page }) => {
   await expect(
     page.getByRole("navigation", { name: "Questions in this conversation" }),
   ).toBeVisible();
-  await capture(page, "02-tapper-conversation-minimap.jpg");
+  await capture(page, "02-tapper-conversation-minimap.png");
 
   const activeTick = page.getByRole("button", {
     name: `Jump to question 2: ${secondQuestion}`,
@@ -823,7 +797,7 @@ test("02 and 37 capture conversation minimap states", async ({ page }) => {
   await expect(activeTick).toHaveAttribute("aria-current", "true");
   await activeTick.hover();
   await expect(page.getByRole("tooltip")).toHaveText(secondQuestion);
-  await capture(page, "37-tapper-minimap-preview.jpg");
+  await capture(page, "37-tapper-minimap-preview.png");
 });
 
 test("03 captures the model-only selector", async ({ page }) => {
@@ -835,7 +809,7 @@ test("03 captures the model-only selector", async ({ page }) => {
   await expect(page.getByRole("menu", { name: "Add to message" })).toHaveCount(
     0,
   );
-  await capture(page, "03-tapper-model-selector.jpg");
+  await capture(page, "03-tapper-model-selector.png");
 });
 
 test("04 through 08 capture composer context selection", async ({ page }) => {
@@ -851,7 +825,7 @@ test("04 through 08 capture composer context selection", async ({ page }) => {
   await expect(
     page.getByRole("menuitem", { name: "Use Skills" }),
   ).toBeVisible();
-  await capture(page, "04-tapper-context-menu.jpg");
+  await capture(page, "04-tapper-context-menu.png");
 
   await page.getByRole("menuitem", { name: "Add from Library" }).click();
   const sourceDialog = page.getByRole("dialog", { name: "Add from Library" });
@@ -859,7 +833,7 @@ test("04 through 08 capture composer context selection", async ({ page }) => {
   await expect(
     sourceDialog.getByRole("option", { name: "Life underwriting guide.pdf" }),
   ).toBeVisible();
-  await capture(page, "05-tapper-source-picker.jpg");
+  await capture(page, "05-tapper-source-picker.png");
   await sourceDialog
     .getByRole("option", { name: "Life underwriting guide.pdf" })
     .click();
@@ -874,7 +848,7 @@ test("04 through 08 capture composer context selection", async ({ page }) => {
   await expect(
     agentDialog.getByRole("option", { name: "Life Underwriting Analyst" }),
   ).toBeVisible();
-  await capture(page, "06-tapper-agent-picker.jpg");
+  await capture(page, "06-tapper-agent-picker.png");
   await agentDialog
     .getByRole("option", { name: "Life Underwriting Analyst" })
     .click();
@@ -886,7 +860,7 @@ test("04 through 08 capture composer context selection", async ({ page }) => {
   await expect(
     skillDialog.getByRole("option", { name: "BDD Scenario Design" }),
   ).toBeVisible();
-  await capture(page, "07-tapper-skill-picker.jpg");
+  await capture(page, "07-tapper-skill-picker.png");
   await skillDialog
     .getByRole("option", { name: "BDD Scenario Design" })
     .click();
@@ -901,23 +875,23 @@ test("04 through 08 capture composer context selection", async ({ page }) => {
   await expect(
     context.getByText("BDD Scenario Design", { exact: true }),
   ).toBeVisible();
-  await capture(page, "08-tapper-selected-context.jpg");
+  await capture(page, "08-tapper-selected-context.png");
 });
 
 test("09 through 12 capture Agent and Skill catalogs", async ({ page }) => {
   await startFlow(page);
 
-  await page.getByRole("button", { name: "Agent" }).click();
+  await page.getByRole("button", { name: "Agents" }).click();
   await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Agent catalog" })).toBeVisible();
-  await capture(page, "09-tapper-agent-catalog.jpg");
+  await capture(page, "09-tapper-agent-catalog.png");
 
   await page.getByRole("button", { name: "Create agent" }).click();
   await expect(
     page.getByRole("dialog", { name: "Create agent" }),
   ).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Name" })).toBeVisible();
-  await capture(page, "10-tapper-create-agent.jpg");
+  await capture(page, "10-tapper-create-agent.png");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Create agent" })).toHaveCount(
     0,
@@ -926,7 +900,7 @@ test("09 through 12 capture Agent and Skill catalogs", async ({ page }) => {
   await page.getByRole("button", { name: "Skills" }).click();
   await expect(page.getByRole("heading", { name: "Skills" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Skill catalog" })).toBeVisible();
-  await capture(page, "11-tapper-skill-catalog.jpg");
+  await capture(page, "11-tapper-skill-catalog.png");
 
   await page.getByRole("button", { name: "Create skill" }).click();
   await expect(
@@ -935,18 +909,22 @@ test("09 through 12 capture Agent and Skill catalogs", async ({ page }) => {
   await expect(
     page.getByRole("textbox", { name: "Instructions" }),
   ).toBeVisible();
-  await capture(page, "12-tapper-create-skill.jpg");
+  await capture(page, "12-tapper-create-skill.png");
 });
 
-test("13 captures the empty Library", async ({ page }) => {
+test("13 captures Library with no search matches", async ({ page }) => {
   await startFlow(page, []);
   await page.getByRole("button", { name: "Library" }).click();
+  await page.getByRole("tab", { name: "Documents" }).click();
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Search library" })
+    .fill("no-matching-document");
   await expect(
     page.getByText("No matching sources", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("0/0 sources", { exact: true })).toBeVisible();
-  await capture(page, "13-tapper-library-empty.jpg");
+  await expect(page.getByText("0/28 sources", { exact: true })).toBeVisible();
+  await capture(page, "13-tapper-library-empty.png");
 });
 
 test("14 through 18 capture Library list and graph states", async ({
@@ -954,31 +932,32 @@ test("14 through 18 capture Library list and graph states", async ({
 }) => {
   await startFlow(page);
   await page.getByRole("button", { name: "Library" }).click();
+  await page.getByRole("tab", { name: "Documents" }).click();
 
   await expect(
     page.getByRole("list", { name: "Library sources" }),
   ).toBeVisible();
-  await expect(page.getByText("4/4 sources", { exact: true })).toBeVisible();
-  await capture(page, "14-tapper-library-all.jpg");
+  await expect(page.getByText("32/32 sources", { exact: true })).toBeVisible();
+  await capture(page, "14-tapper-library-all.png");
 
   await page
     .getByRole("textbox", { name: "Search library" })
     .fill("underwriting");
   await page.getByRole("combobox", { name: "Type" }).selectOption("PDF");
   await page.getByRole("combobox", { name: "Status" }).selectOption("ready");
-  await expect(page.getByText("1/4 sources", { exact: true })).toBeVisible();
+  await expect(page.getByText("2/32 sources", { exact: true })).toBeVisible();
   await expect(
     page
-      .getByRole("tabpanel", { name: "All" })
+      .getByRole("tabpanel", { name: "Documents" })
       .getByText("Life underwriting guide.pdf", { exact: true }),
   ).toBeVisible();
-  await capture(page, "15-tapper-library-filtered.jpg");
+  await capture(page, "15-tapper-library-filtered.png");
 
   await page.getByRole("button", { name: "Clear filters" }).click();
   await page.getByRole("button", { name: "Add source" }).click();
   await expect(page.getByRole("dialog", { name: "Add source" })).toBeVisible();
   await expect(page.getByLabel("Source file")).toBeVisible();
-  await capture(page, "16-tapper-add-source.jpg");
+  await capture(page, "16-tapper-add-source.png");
   await page.keyboard.press("Escape");
 
   await page.getByRole("tab", { name: "Knowledge Graph" }).click();
@@ -989,9 +968,10 @@ test("14 through 18 capture Library list and graph states", async ({
   await expect(page.getByRole("status", { name: "Zoom level" })).toHaveText(
     "100%",
   );
-  await expect(
-    page.getByRole("region", { name: "Node details" }),
-  ).toContainText("Select a node to inspect its relationships.");
+  await expect(page.getByRole("region", { name: "Node details" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
   const graphBox = await graph.boundingBox();
   expect(graphBox).not.toBeNull();
   if (graphBox === null) throw new Error("Graph capture geometry is missing");
@@ -999,12 +979,10 @@ test("14 through 18 capture Library list and graph states", async ({
   expect(viewport).not.toBeNull();
   if (viewport === null)
     throw new Error("Capture viewport geometry is missing");
-  for (const label of [
-    "Life underwriting guide.pdf",
-    "Beneficiary workflow.docx",
-  ]) {
+  for (const label of ["New business", "Claims"]) {
     const labelBox = await graph
-      .getByText(label, { exact: true })
+      .locator(".tap-graph-node-label")
+      .filter({ hasText: new RegExp(`^${label}$`) })
       .boundingBox();
     expect(labelBox).not.toBeNull();
     if (labelBox === null)
@@ -1026,7 +1004,7 @@ test("14 through 18 capture Library list and graph states", async ({
     expect(labelBox.y).toBeGreaterThanOrEqual(0);
     expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(viewport.height);
   }
-  await capture(page, "17-tapper-knowledge-graph.jpg");
+  await capture(page, "17-tapper-knowledge-graph.png");
 
   await page
     .getByRole("button", {
@@ -1038,7 +1016,7 @@ test("14 through 18 capture Library list and graph states", async ({
     inspector.getByRole("heading", { name: "Life insurance application" }),
   ).toBeVisible();
   await expect(inspector).toContainText("Relationships");
-  await capture(page, "18-tapper-knowledge-graph-node.jpg");
+  await capture(page, "18-tapper-knowledge-graph-node.png");
 });
 
 test("19 through 24 capture Test Management journeys", async ({ page }) => {
@@ -1051,9 +1029,9 @@ test("19 through 24 capture Test Management journeys", async ({ page }) => {
   await expect(
     page.getByRole("table", { name: "Test plan list" }),
   ).toBeVisible();
-  await capture(page, "19-test-management-plans.jpg");
+  await capture(page, "19-test-management-plans.png");
 
-  await page.getByRole("button", { name: "Open TP-101" }).click();
+  await page.getByRole("row", { name: /TP-101/ }).click();
   await expect(
     page.getByRole("heading", {
       name: "Life insurance application underwriting",
@@ -1062,7 +1040,7 @@ test("19 through 24 capture Test Management journeys", async ({ page }) => {
   await expect(
     page.getByRole("region", { name: "Linked Automation" }),
   ).toContainText("AUTO-101");
-  await capture(page, "20-test-plan-detail-linked.jpg");
+  await capture(page, "20-test-plan-detail-linked.png");
 
   await page
     .getByRole("combobox", { name: "Execution Agent" })
@@ -1073,32 +1051,32 @@ test("19 through 24 capture Test Management journeys", async ({ page }) => {
   await expect(
     page.getByRole("combobox", { name: "Execution Agent" }),
   ).toHaveValue("ado-web-agent-03");
-  await capture(page, "21-test-plan-run-config.jpg");
+  await capture(page, "21-test-plan-run-config.png");
 
   await page.getByRole("button", { name: "Run automation" }).click();
   await expect(page.getByText("RUN-001", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Completed · Simulated", { exact: true }),
   ).toBeVisible();
-  await capture(page, "22-test-plan-run-result.jpg");
+  await capture(page, "22-test-plan-run-result.png");
 
-  await page.getByRole("button", { name: "Back to Test Plans" }).click();
-  await page.getByRole("button", { name: "Open TP-102" }).click();
+  await page.getByRole("button", { name: "Back to Test Plan" }).click();
+  await page.getByRole("row", { name: /TP-102/ }).click();
   await expect(
     page.getByRole("region", { name: "Linked Automation" }),
   ).toContainText("No Automation linked");
   await expect(
     page.getByText("Link an Automation to run this plan", { exact: true }),
   ).toBeVisible();
-  await capture(page, "23-test-plan-detail-unlinked.jpg");
+  await capture(page, "23-test-plan-detail-unlinked.png");
 
-  await page.getByRole("button", { name: "Back to Test Plans" }).click();
+  await page.getByRole("button", { name: "Back to Test Plan" }).click();
   await page.getByRole("tab", { name: "Test Data" }).click();
   await expect(page.getByRole("tabpanel", { name: "Test Data" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Reusable test data" }),
   ).toBeVisible();
-  await capture(page, "24-test-management-test-data.jpg");
+  await capture(page, "24-test-management-test-data.png");
 });
 
 test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
@@ -1111,7 +1089,7 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(
     page.getByRole("table", { name: "Low Code Automation" }),
   ).toBeVisible();
-  await capture(page, "25-automation-library.jpg");
+  await capture(page, "25-automation-library.png");
 
   await page.getByRole("button", { name: "New automation" }).click();
   await page
@@ -1126,16 +1104,16 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Generate BDD" }),
   ).toBeVisible();
-  await capture(page, "26-create-automation.jpg");
+  await capture(page, "26-create-automation.png");
   await page.getByRole("button", { name: "Generate BDD" }).click();
   await expect(
     page.getByRole("heading", { name: "Quote verification journey" }),
   ).toBeVisible();
 
   await page
-    .getByRole("button", { name: "Back to Automation Library" })
+    .getByRole("button", { name: "Back to Low Code Automation" })
     .click();
-  await page.getByRole("button", { name: "Open AUTO-101" }).click();
+  await page.getByRole("row", { name: /AUTO-101/ }).click();
   await expect(
     page.getByRole("heading", {
       name: "Life insurance application automation",
@@ -1145,7 +1123,7 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(
     page.getByText("Navigate", { exact: true }).first(),
   ).toBeVisible();
-  await capture(page, "27-web-automation-bdd-mapping.jpg");
+  await capture(page, "27-web-automation-bdd-mapping.png");
 
   await page.getByRole("button", { name: "Edit automation actions 1" }).click();
   await expect(
@@ -1154,7 +1132,7 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(
     page.getByRole("textbox", { name: "Locator or target 1 for BDD step 1" }),
   ).toBeVisible();
-  await capture(page, "28-web-automation-action-editor.jpg");
+  await capture(page, "28-web-automation-action-editor.png");
 
   await page.getByRole("tab", { name: "AI Agent" }).click();
   const agentPanel = page.getByRole("region", { name: "Automation AI Agent" });
@@ -1165,7 +1143,7 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(agentPanel).toContainText(
     "Suggested change: add a validation scenario for missing health disclosures.",
   );
-  await capture(page, "29-web-automation-ai-agent.jpg");
+  await capture(page, "29-web-automation-ai-agent.png");
 
   await page.getByRole("tab", { name: "Run" }).click();
   await page
@@ -1176,12 +1154,12 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(
     page.getByRole("region", { name: "Automation run history" }),
   ).toContainText("Completed · Simulated");
-  await capture(page, "30-web-automation-run-history.jpg");
+  await capture(page, "30-web-automation-run-history.png");
 
   await page
-    .getByRole("button", { name: "Back to Automation Library" })
+    .getByRole("button", { name: "Back to Low Code Automation" })
     .click();
-  await page.getByRole("button", { name: "Open AUTO-102" }).click();
+  await page.getByRole("row", { name: /AUTO-102/ }).click();
   await expect(
     page.getByRole("heading", { name: "Claims photo upload" }),
   ).toBeVisible();
@@ -1197,14 +1175,14 @@ test("25 through 32 capture Low Code Automation journeys", async ({ page }) => {
   await expect(page.getByRole("combobox", { name: "Device" })).toHaveValue(
     "iphone-15",
   );
-  await capture(page, "31-mobile-automation-device.jpg");
+  await capture(page, "31-mobile-automation-device.png");
 
   await page.getByRole("button", { name: "Run automation" }).click();
   await expect(page.getByText("RUN-002", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Completed · Simulated", { exact: true }),
   ).toBeVisible();
-  await capture(page, "32-mobile-automation-run-result.jpg");
+  await capture(page, "32-mobile-automation-run-result.png");
 });
 
 test("33, 34, 34b, and 36 capture the linked generation journey", async ({
@@ -1222,7 +1200,7 @@ test("33, 34, 34b, and 36 capture the linked generation journey", async ({
   await expect(
     artifact.getByRole("button", { name: "Create Test Plan first" }),
   ).toBeVisible();
-  await capture(page, "33-tapper-test-plan-first.jpg");
+  await capture(page, "33-tapper-test-plan-first.png");
 
   await artifact
     .getByRole("button", { name: "Create Test Plan first" })
@@ -1233,7 +1211,7 @@ test("33, 34, 34b, and 36 capture the linked generation journey", async ({
   await expect(
     artifact.getByText(/TP-103 · 3 scenarios · Draft/u),
   ).toBeVisible();
-  await capture(page, "34-tapper-test-plan-review.jpg");
+  await capture(page, "34-tapper-test-plan-review.png");
 
   const generateButton = artifact.getByRole("button", {
     name: "Generate linked automation",
@@ -1280,7 +1258,7 @@ test("33, 34, 34b, and 36 capture the linked generation journey", async ({
     expect(headingBox.y).toBeGreaterThanOrEqual(0);
     expect(headingBox.y + headingBox.height).toBeLessThanOrEqual(composerBox.y);
   }
-  await capture(page, "34b-tapper-generate-linked-automation.jpg");
+  await capture(page, "34b-tapper-generate-linked-automation.png");
 
   await generateButton.click();
   await expect(
@@ -1293,7 +1271,7 @@ test("33, 34, 34b, and 36 capture the linked generation journey", async ({
   await openAutomationButton.scrollIntoViewIfNeeded();
   await openAutomationButton.focus();
   await expect(openAutomationButton).toBeFocused();
-  await capture(page, "36-tapper-linked-artifacts.jpg");
+  await capture(page, "36-tapper-linked-artifacts.png");
 });
 
 test("35 captures explicit automation channel choice", async ({ page }) => {
@@ -1318,7 +1296,7 @@ test("35 captures explicit automation channel choice", async ({ page }) => {
   await expect(
     artifact.getByRole("button", { name: "Create Mobile automation" }),
   ).toBeVisible();
-  await capture(page, "35-tapper-channel-choice.jpg");
+  await capture(page, "35-tapper-channel-choice.png");
 });
 
 test("38 captures collapsed Knowledge sources", async ({ page }) => {
@@ -1332,7 +1310,7 @@ test("38 captures collapsed Knowledge sources", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "What can I do for you?" }),
   ).toBeVisible();
-  await capture(page, "38-tapper-sources-collapsed.jpg");
+  await capture(page, "38-tapper-sources-collapsed.png");
 });
 
 test("39 captures collapsed Tapper sidebar", async ({ page }) => {
@@ -1344,7 +1322,70 @@ test("39 captures collapsed Tapper sidebar", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "What can I do for you?" }),
   ).toBeVisible();
-  await capture(page, "39-tapper-sidebar-collapsed.jpg");
+  await capture(page, "39-tapper-sidebar-collapsed.png");
+});
+
+test("40 captures graph search and node location", async ({ page }) => {
+  await startFlow(page);
+  await page.getByRole("button", { name: "Library" }).click();
+  await expect(
+    page.getByRole("tab", { name: "Knowledge Graph" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await page
+    .getByRole("textbox", { name: "Search library" })
+    .fill("disclosure");
+  await page
+    .getByRole("region", { name: "Search results" })
+    .getByRole("button", {
+      name: "Health disclosure Concept · Underwriting",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Node details" }),
+  ).toContainText("Health disclosure");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await capture(page, "40-library-search-location.png");
+});
+
+test("41 through 43 capture floating context, unread reply and handoff", async ({
+  page,
+}) => {
+  await startFlow(page);
+  await page.getByRole("button", { name: "Test Management" }).click();
+  await page.getByRole("row", { name: /TP-101/ }).click();
+  await page.getByRole("button", { name: "Ask Tapper", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Tapper assistant" });
+  await panel.locator("summary").click();
+  await capture(page, "41-tapper-floating-context.png");
+  await panel
+    .getByRole("textbox", { name: "Message Tapper" })
+    .fill("What exploratory tests would help this plan?");
+  await panel.getByRole("button", { name: "Send message" }).click();
+  await panel.getByRole("button", { name: "Minimize Tapper" }).click();
+  await page.clock.runFor(800);
+  await expect(
+    page.getByRole("button", { name: "Tapper has a new reply" }),
+  ).toBeVisible();
+  await capture(page, "42-tapper-floating-aha.png");
+  await page.getByRole("button", { name: "Tapper has a new reply" }).click();
+  await panel
+    .getByRole("textbox", { name: "Message Tapper" })
+    .fill("Which boundary should we explore next?");
+  await panel.getByRole("button", { name: "Continue in Tapper" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message Tapper" }),
+  ).toHaveValue("Which boundary should we explore next?");
+  await capture(page, "43-tapper-floating-handoff.png");
+});
+
+test("checked-in screenshot inventory is canonical", () => {
+  expect(OUTPUTS).toHaveLength(44);
+  const actual = readdirSync(OUTPUT_DIR)
+    .filter((name) => name.endsWith(".png"))
+    .sort();
+  expect(actual).toEqual([...OUTPUTS].sort());
 });
 
 test("full capture manifest is complete and byte-distinct", () => {

@@ -12,23 +12,23 @@
 
 ## 验证证据
 
-| 检查 | 实际结果 |
-| --- | --- |
-| 最终字面量 Project/Origin contract 选择 | 41 passed，exit 0 |
-| HTTP/service/cancellation 组合 | 105 passed；runtime 选择另有 7 passed |
-| 实际 repository 错装范围回归 | 4 例 RED 503 后 GREEN 403，sentinel 验证零 session/authority 调用 |
-| Project client/cache 与兼容组件 | 104 passed；包含延迟 retry 跨 Project 完成场景 |
-| 完整 Web suite | 285 passed，17 files；在最后 ID 长度修正前执行 |
-| 最后 runtime ID 长度修正 | 129 字符 Project/Actor RED 2 failed；128 接受、129 拒绝及 providers GREEN 12 passed |
-| Vite 契约修正 | 2 passed，86 deselected；检查 /api 与 changeOrigin=false |
-| 原型浏览器检查 | 22 passed，刷新原有 40 张 JPG；包含桌面/390px、reduced-motion、运行环境失败导航 |
-| `make contracts`、修正后 `make check`、`git diff --check` | passed |
+| 检查                                                      | 实际结果                                                                            |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| 最终字面量 Project/Origin contract 选择                   | 41 passed，exit 0                                                                   |
+| HTTP/service/cancellation 组合                            | 105 passed；runtime 选择另有 7 passed                                               |
+| 实际 repository 错装范围回归                              | 4 例 RED 503 后 GREEN 403，sentinel 验证零 session/authority 调用                   |
+| Project client/cache 与兼容组件                           | 104 passed；包含延迟 retry 跨 Project 完成场景                                      |
+| 完整 Web suite                                            | 285 passed，17 files；在最后 ID 长度修正前执行                                      |
+| 最后 runtime ID 长度修正                                  | 129 字符 Project/Actor RED 2 failed；128 接受、129 拒绝及 providers GREEN 12 passed |
+| Vite 契约修正                                             | 2 passed，86 deselected；检查 /api 与 changeOrigin=false                            |
+| 原型浏览器检查                                            | 22 passed，刷新原有 40 张 JPG；包含桌面/390px、reduced-motion、运行环境失败导航     |
+| `make contracts`、修正后 `make check`、`git diff --check` | passed                                                                              |
 
 完整 owned Backend 回归原始结果为 **2535 passed、9 skipped、1 failed**，6 条已有 Alembic path_separator 弃用警告，489.61 秒，exit 1。唯一失败是 `test_vite_config_is_strict_and_exposes_only_same_origin_api_proxies` 的旧预期列表，修正后的两项 Vite 测试通过。该运行已载入旧断言，最后 ID 长度修正另由 12 项 runtime/provider 测试覆盖；没有重跑最终源码完整 Backend 或 Web suite。九项跳过是明确 opt-in 的真实 Milvus/Entra/Azure、持久化 E2E 阶段、Codex capability 和真实模型门禁，不作为通过证据。此前 Task 2B supervisor 与 Task 2C runtime 旧断言场景本轮均未再失败。
 
 所有真实测试使用独占的一次性 MySQL/Redis/Azurite。runner 返回 `cleanup_complete`，另外按 Compose labels 检查该次项目的 container/volume/network 均为零；本机 receipt 为 `/private/tmp/tap-task3-cleanup-receipt.json`。未操作默认 Demo、真实模型、Milvus Provider、Recorder/Jenkins 或生产资源。
 
-截图以明确的 runtime/document fixture 驱动，用于页面与交互检查，不代表真实后端或业务质量验收。实际 15175 预览在检查时 runtime 不可用，界面如实显示连接失败且可以切换模块。控制器已查看桌面、手机提示布局和手机断开状态。示例图片见[新对话](../assets/prototype-demo/01-tapper-new-chat.jpg)和[Library](../assets/prototype-demo/14-tapper-library-all.jpg)。
+截图以明确的 runtime/document fixture 驱动，用于页面与交互检查，不代表真实后端或业务质量验收。实际 15175 预览在检查时 runtime 不可用，界面如实显示连接失败且可以切换模块。控制器已查看桌面、手机提示布局和手机断开状态。示例图片见[新对话](../assets/prototype-demo/01-tapper-new-chat.png)和[Library](../assets/prototype-demo/14-tapper-library-all.png)。
 
 ## 审查与验证边界
 

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Beneficiary validation report</title>
+    <style>
+      body {
+        font:
+          18px/1.65 Arial,
+          sans-serif;
+        color: #263b30;
+        max-width: 760px;
+        margin: 48px auto;
+        padding: 0 24px;
+      }
+      h1 {
+        font-size: 32px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 14px 12px;
+        border-bottom: 1px solid #dce4de;
+      }
+      th {
+        background: #edf3ef;
+      }
+      small {
+        color: #626966;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Beneficiary validation report</h1>
+    <p><small>TAP sample file. Fictional execution results.</small></p>
+    <p>
+      Allocation boundaries behave as expected. Duplicate confirmation needs
+      further investigation.
+    </p>
+    <table>
+      <tr>
+        <th>Scenario</th>
+        <th>Result</th>
+      </tr>
+      <tr>
+        <td>Allocation totals 100%</td>
+        <td>Passed</td>
+      </tr>
+      <tr>
+        <td>Allocation totals 99%</td>
+        <td>Passed</td>
+      </tr>
+      <tr>
+        <td>Duplicate confirmation</td>
+        <td>Failed</td>
+      </tr>
+    </table>
+    <h2>Next investigation</h2>
+    <p>
+      Retry after a simulated timeout and verify that one request creates one
+      audit event.
+    </p>
+  </body>
+</html>

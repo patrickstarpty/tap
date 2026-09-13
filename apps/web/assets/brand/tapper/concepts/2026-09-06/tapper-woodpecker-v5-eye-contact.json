@@ -1,0 +1,47 @@
+{
+  "created": "2026-09-06",
+  "status": "front-facing-direction-rejected-retained-for-history",
+  "subsequentUserFeedback": "用户不喜欢正脸看过来的造型，认为看起来不聪明；转向用户提供的Listening侧身单眼形象。",
+  "nextCandidate": "tapper-woodpecker-v6-listening.png",
+  "generator": "built-in image_gen",
+  "image": "tapper-woodpecker-v5-eye-contact.png",
+  "sourceConcept": "tapper-woodpecker-v4-polished.png",
+  "userFeedback": "前面的精修LOGO没有与用户对视；保留该版，另外制作对视版本。",
+  "confirmedKeywords": [
+    "聪明",
+    "敏锐",
+    "好奇"
+  ],
+  "changes": [
+    "脸部转向用户，露出双眼并将视线落向镜头",
+    "保留橙色两瓣头冠、墨色身体、白颊和肩部弧线",
+    "修正首轮过圆的嘴部，恢复向右伸出的收尖鸟喙"
+  ],
+  "preservedPreviousImage": {
+    "image": "tapper-woodpecker-v4-polished.png",
+    "role": "保留侧视版本",
+    "sha256": "5c826898ecbe92d54578fe6c1845926b7fdabfa46c7ea6e8b02a0a09ee0f5478"
+  },
+  "file": {
+    "width": 1254,
+    "height": 1254,
+    "background": "opaque warm white",
+    "hasAlpha": false,
+    "sha256": "a2d1251aa843b9ecc093e4ac5c41ceaae6c529f15ee94c71c553706f5754fac4"
+  },
+  "validation": {
+    "method": "生成图目视检查及独立视觉复核；源图与归档图SHA256一致，原v4图像校验值不变。",
+    "observation": "双眼焦点朝向观者，无明显斜视；修正后喙形恢复鸟类特征。",
+    "scope": "PNG概念候选，尚未进行本版的小尺寸入口测试或用户测试；非透明背景或SVG生产资产。"
+  },
+  "generationHistory": [
+    {
+      "operation": "turn face toward viewer and establish direct eye contact",
+      "prompt": "Use case: identity-preserve character pose edit. Make a NEW DIRECT-EYE-CONTACT portrait of the SAME friendly Tapper woodpecker mascot in the attached image. The previous image must remain as a side-looking variant; the user explicitly says its eye is NOT looking at them. Therefore this edit MUST visibly change HEAD ORIENTATION AND GAZE, not merely claim eye contact while reproducing the same profile. MAIN CHANGE: keep the shoulders/body slightly turned to the right, but turn the HEAD BACK TOWARD THE CAMERA, to a near-frontal gentle three-quarter view, about 10-20 degrees from frontal. BOTH EYES ARE VISIBLE. The far eye can be slightly smaller due to perspective, but it must be clearly visible. BOTH DARK PUPILS focus DIRECTLY AT THE VIEWER/CAMERA, at equal eye level; the user should immediately feel 'this little bird is looking at me and listening'. Do not look off toward the right, left, above or below the user. No side-eye, no cross-eyes, no wall-eyes. Foreshorten the beak to support the turn toward the lens: a stout short woodpecker chisel beak projecting gently toward the viewer and only slightly toward viewer-right, NOT a long horizontal side-profile beak stretching to the right edge. Keep a 5-degree inquisitive head tilt, relaxed attentive eyelids, one small highlight per pupil, friendly slight smile-like cheek gesture and no raised haughty chin. Do not stare aggressively. Preserve the SAME character identity from the reference: ink black-green #14201D plumage, swept ORANGE #E87722 two-lobed crest, warm ivory #FAF9F6 small tapered cheek marking, rounded compact head, short neck, sturdy beak, rounded near shoulder and one clean shoulder separation curve. Crest sweeps backward across the skull in perspective, not straight up like a cockatoo. Adapt facial markings naturally to the new viewpoint; do not paste two copies of the profile eye on a flat face. Three-dimensional orientation expressed ONLY through clean 2D flat shapes, no rendered shading. Identity must remain Tapper, a curious, smart, observant and approachable woodpecker companion for software testing, not a penguin, owl, duck, eagle, crane or another character. Eyes should be warm and lively, moderate sized, not huge infant eyes. Flat polished 2D logo/mascot artwork using ONLY uniform solid ink, orange and warm ivory shapes. No texture, gradient, light modeling, shadows, gloss, feathers, fine line clutter or outer outline. A SINGLE centered head-and-shoulders portrait on a perfectly solid opaque warm white #FAF9F6 background. Square composition, balanced margins, character fills approximately 80% width/height. No transparent checkerboard, no frame, no title, no typography, no board, no multiple poses. This is the direct-gaze sibling of the supplied portrait: turn the face toward us enough to unmistakably see both eyes looking directly into the lens. Eye contact is the highest priority of the edit."
+    },
+    {
+      "operation": "restore tapered woodpecker beak while preserving eye contact",
+      "prompt": "Use case: precise-object-edit. Input 1 is the EDIT TARGET: Tapper woodpecker with two visible eyes making warm, clear direct eye contact. Input 2 is supporting reference ONLY for its tapered bird beak. Preserve input 1's exact eye shapes, pupil positions, eye contact, crest, cheeks, shoulders, colors, scale and composition. Change ONLY the beak region: the current broad rounded muzzle looks like a dinosaur or duck. Replace it with a recognizable woodpecker's clean tapered wedge beak, seen in three-quarter perspective, extending a moderate distance RIGHT beyond the head silhouette. About 20% of head width should project past the right cheek. The top edge is gently straight, tip tapers to a softly rounded POINT, underside slopes back up to the mouth corner, with ONE simple thin ivory beak-separation curve. Use the second image's construction but shorten it for foreshortening; not a long spear, hooked raptor, flat wide duck bill, round nose or smiling mammal muzzle. Maintain the FIRST IMAGE's near-frontal head and BOTH VISIBLE EYES looking DIRECTLY into the camera at the user: never rotate the face to profile, never shift pupils to the right, never hide the far eye. Keep the friendly, smart, perceptive, curious personality, warm subtle smile, swept orange two-lobed crest, ink #14201D body and warm ivory cheeks. Flat graphic mascot-logo, uniform opaque warm-white #FAF9F6 background, no texture, shadows, gradients, words, labels, frame or extra variations. Single square head-and-shoulders portrait. The edit must keep eye contact while restoring the bird's beak identity."
+    }
+  ]
+}

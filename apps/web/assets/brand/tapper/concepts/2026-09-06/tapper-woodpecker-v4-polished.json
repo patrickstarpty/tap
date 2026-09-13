@@ -1,0 +1,59 @@
+{
+  "created": "2026-09-06",
+  "status": "selected-portrait-polish-candidate",
+  "subsequentUserFeedback": "用户指出本版未与用户对视，要求保留为侧视版本，另做对视版本；下方原始prompt与preserved为当时设计意图，不代表已达成对视。",
+  "eyeContactCompanion": "tapper-woodpecker-v5-eye-contact.png",
+  "generator": "built-in image_gen",
+  "image": "tapper-woodpecker-v4-polished.png",
+  "sourceConcept": "tapper-woodpecker-v3-friendly.png / upper-left main portrait",
+  "confirmedKeywords": [
+    "聪明",
+    "敏锐",
+    "好奇"
+  ],
+  "preserved": "用户认可第一个头像看着用户的感觉；保留单眼回看、亲近感、头倾、短颈、墨色身体、橙冠与白颊。",
+  "changes": [
+    "合并头冠为两瓣主要轮廓",
+    "调整嘴喙比例与收尾",
+    "简化白颊和肩部线条",
+    "去除微弱眉线及羽毛细节"
+  ],
+  "file": {
+    "width": 1254,
+    "height": 1254,
+    "background": "opaque warm white",
+    "hasAlpha": false,
+    "sha256": "5c826898ecbe92d54578fe6c1845926b7fdabfa46c7ea6e8b02a0a09ee0f5478"
+  },
+  "validation": {
+    "method": "本地浏览器在 deviceScaleFactor=1 下渲染实际CSS尺寸，并目视检查截图；未做用户测试。",
+    "cssImageSizes": [
+      24,
+      32,
+      48,
+      64,
+      96,
+      128
+    ],
+    "launcherTest": {
+      "buttonSize": 56,
+      "imageSizes": [
+        32,
+        40,
+        48
+      ]
+    },
+    "observation": "40-48px头像能较好保留眼神。在56px入口内建议先采用40px图像，48px作为更饱满的对照。24px表情细节较弱，建议另做头部简化稿。",
+    "scope": "当前为PNG精修概念稿，尚非透明背景或SVG生产资产。"
+  },
+  "generationHistory": [
+    {
+      "operation": "selected portrait refinement",
+      "prompt": "Use case: identity-preserve / logo-brand refinement. The USER HAS SELECTED AND LIKES the LARGE PORTRAIT IN THE UPPER LEFT of the attached Tapper woodpecker character sheet. Refine THAT EXACT portrait into a polished standalone mascot-logo asset. This is careful finishing, NOT a redesign. Preserve its identity and appeal. Most important invariant: PRESERVE THE SAME ONE VISIBLE EYE, its size, shape, pupil position, small highlight and the feeling that the bird is looking back toward the USER. Preserve the same gentle three-quarter/side angle with beak pointing RIGHT, slight inquisitive head tilt, compact head on short neck, friendly cheek sweep, and dark rounded shoulder at bottom left. Do not use the small standing/waving bird or any other pose as the target. Do not turn it into a frontal two-eye face, profile looking away, adult stern raptor, long-necked crane, penguin, duck, or a different character. Personality: SMART, OBSERVANT, CURIOUS, emotionally welcoming and equal to the user. Specific restrained refinements only: (1) consolidate the orange swept-back crest into TWO intentional broad softly pointed lobes with smooth clean joining curves; keep the same swept silhouette and approximate size, eliminate tiny spikes and awkward notches; (2) make the short sturdy beak about 10% slimmer vertically with a slightly clearer gently straight chisel top and softened tip, preserving approximate length and the subtle friendly beak-line; no long pointed spear, broad flat duck bill, grin or sharp downturned hook; (3) simplify the ivory cheek into one smooth tapered crescent/stripe with balanced thickness, maintaining the warm smile-like gesture below the eye but never a big white face disk or belly; (4) remove the nearly invisible eyebrow line and ALL thin feather/body contour lines except ONE clean optional shoulder separation arc that is thick enough to remain clear; (5) clean optical balance of the whole portrait, smooth all contour tangencies, make the crop at the shoulders deliberate. FLAT 2D graphic identity work, exactly THREE SOLID COLOURS: ink #14201D, orange #E87722, warm ivory #FAF9F6. Use a solid dark eye pupil in the ink, ivory eye and one small ivory highlight. Uniform fills, absolutely no gradients, texture, mottling, paper grain, shadows, gloss, bevels, outlines around every shape or 3D. Match the approved reference warmth, do not make the face more babyish or the eye larger. Square 1536x1536 high-resolution output if possible. GENUINELY TRANSPARENT ALPHA BACKGROUND, no visible checkerboard, no white card, no drop shadow. Single centered head-and-shoulders portrait only, comfortably filling about 78-82% of the canvas in both dimensions, balanced padding around crest and beak. No typography, title, board, labels, miniatures, background objects, footer, mockup or extra variations. Output should feel like the user's favourite upper-left portrait carefully redrawn by a skilled brand illustrator, immediately recognisable as that same friendly Tapper, ready to be evaluated as a small assistant launcher."
+    },
+    {
+      "operation": "replace generated checkerboard with opaque warm-white background",
+      "prompt": "Use case: precise-object-edit / background replacement. EDIT ONLY THE BACKGROUND of this exact supplied Tapper woodpecker portrait. Remove ALL of the visible grey-white checkerboard pattern surrounding the character. Replace the entire background with a PERFECTLY UNIFORM SOLID warm white colour #FAF9F6. This is intentionally an opaque warm-white-background master, NOT a transparency request. No checkerboard anywhere, no gradient, no texture, no shadow, no border. Preserve the character EXACTLY as supplied: same outline, same crop and position and padding, same single eye looking toward the viewer, same iris and highlight, identical crest, beak, cheek, shoulder arc and orange/ink/ivory fills. Do not redraw, restyle, resize, recolour or add any character feature. The tiny internal ivory eye, cheek and shoulder shapes must remain intact, do not erase them as background. Square image, same composition, no text. The only requested change is replacing the exterior checkerboard with flat #FAF9F6."
+    }
+  ]
+}

@@ -2,11 +2,11 @@
 
 <!-- impeccable:design-schema 1 -->
 
-Updated: 2026-09-05. Applies to the TAP product shell, Tapper, Library/Graph, Agent/Skills, Test Management, Automation. Product truth: [PRODUCT.md](PRODUCT.md). Approved visual brief: [TAP light design](../../docs/reference/2026-09-05-tap-fwd-light-design.md).
+Updated: 2026-09-06. Applies to the TAP product shell, Tapper, Library/Graph, Agent/Skills, Test Management, Automation. Product truth: [PRODUCT.md](PRODUCT.md). Approved visual brief: [TAP light design](../../docs/reference/2026-09-05-tap-fwd-light-design.md).
 
 ## Direction
 
-A light, quiet working interface inspired by FWD's warm orange identity and the clarity of Codex / Manus. TAP is the platform; Tapper is its intelligent workspace. Preserve the existing ink SVG mark/wordmark. Technology is expressed through precise typography, graph relationships, code, evidence, and useful interaction states.
+A light, quiet working interface inspired by FWD's warm orange identity and the clarity of Codex / Manus. TAP is the platform; Tapper is its intelligent workspace. Use the approved Listening woodpecker avatar with the existing ink SVG wordmark. Technology is expressed through precise typography, graph relationships, code, evidence, and useful interaction states.
 
 ## Tokens
 
@@ -41,6 +41,7 @@ Control radius 8–10px; content and floating surfaces 12–16px. Use neutral su
 - Knowledge sources are an optional right panel on wide screens; at 1100px and below they start closed and use a drawer with inert background, Escape dismissal and restored focus.
 - Tapper sidebar uses its existing drawer at 640px and below. Never compress the composer between two persistent sidebars at tablet widths.
 - Conversation remains the main surface. Source selection, catalog controls, model menus, asset links and Run controls share the same accent language.
+- Test Management and Low Code Automation have a 56px Listening launcher at bottom right. Its nonmodal panel shows explicit page context, quick questions, prototype suggestions and a handoff to the shared Tapper conversation. Aha indicates an unread reply and resets on viewing. Tapper, Agent, Skills and Library omit this launcher. Completed turns use the existing browser persistence; the shared draft remains in memory.
 - Graph, BDD, generated code and logs use light surfaces. No ornamental grid, glow or gradients.
 
 ## States and motion

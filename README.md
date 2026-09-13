@@ -4,7 +4,13 @@ TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能�
 
 ## 客户原型演示
 
-当前纯前端交互原型展示 Tapper 组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Automation；BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。详细页面说明、40 张逐页截图、现场话术和客户问答见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)，交互事实源见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。
+截至 2026-09-06，当前前端交互原型以 Tapper 为统一助手入口，组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Automation。BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。
+
+- **导航与品牌**：平台与浏览器标题使用 TAP；Tapper 使用 Listening 啄木鸟标识。二级菜单为 `New chat`、`Agents`、`Skills`、`Library`，收起后保留图标导航。点击一级 Tapper 入口回到当前会话并保留草稿；新建会话使用 `New chat`。
+- **知识检索**：Library 默认打开 Knowledge Graph，搜索文档、概念或实体后可点击结果定位、高亮节点并查看关系。清空搜索恢复总览；`Documents`（文档列表）提供名称、类型与状态筛选。图谱支持平移、缩放、全屏及收起辅助面板；文档节点可跳到对应来源记录，尚无原文预览。
+- **跨页面助手**：Test Management 与 Low Code Automation 右下角提供 Tapper 悬浮入口，支持当前页面上下文、快捷提问、轻量对话和“在 Tapper 中继续”。Listening 为默认形象，Aha 表示收起后收到未读回复；回复是基于页面数据的确定性原型建议。
+
+当前操作步骤、现场话术、能力边界及 2026-09-06 从当前原型采集的 44 张截图见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)。历史交互基线见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。
 
 从仓库根目录启动原型：
 
@@ -12,15 +18,31 @@ TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能�
 corepack pnpm --dir apps/web dev --port 4175
 ```
 
-打开 `http://127.0.0.1:4175/`。下图是建议向客户重点展示的六个页面：
+打开 `http://127.0.0.1:4175/`。下图为 2026-09-06 从当前原型重新采集的六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
 
-| Tapper 统一对话入口                                                                          | Graphify 式 Knowledge Graph                                                                    |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| ![Tapper 新对话入口](docs/assets/prototype-demo/01-tapper-new-chat.jpg)                      | ![Knowledge Graph](docs/assets/prototype-demo/17-tapper-knowledge-graph.jpg)                   |
-| **已关联的 Test Plan**                                                                       | **BDD 与 Automation actions 映射**                                                             |
-| ![已关联 Automation 的 Test Plan](docs/assets/prototype-demo/20-test-plan-detail-linked.jpg) | ![Web Automation BDD 与动作映射](docs/assets/prototype-demo/27-web-automation-bdd-mapping.jpg) |
-| **Web Automation 执行历史**                                                                  | **Tapper 生成并关联两类资产**                                                                  |
-| ![Web Automation 执行历史](docs/assets/prototype-demo/30-web-automation-run-history.jpg)     | ![Tapper 生成关联资产](docs/assets/prototype-demo/36-tapper-linked-artifacts.jpg)              |
+**Tapper 统一对话入口**
+
+![Tapper 新对话入口](docs/assets/prototype-demo/01-tapper-new-chat.png)
+
+**Knowledge Graph**
+
+![Knowledge Graph](docs/assets/prototype-demo/17-tapper-knowledge-graph.png)
+
+**已关联的 Test Plan**
+
+![已关联 Automation 的 Test Plan](docs/assets/prototype-demo/20-test-plan-detail-linked.png)
+
+**BDD 与 Automation actions 映射**
+
+![Web Automation BDD 与动作映射](docs/assets/prototype-demo/27-web-automation-bdd-mapping.png)
+
+**Web Automation 执行历史**
+
+![Web Automation 执行历史](docs/assets/prototype-demo/30-web-automation-run-history.png)
+
+**Tapper 生成并关联两类资产**
+
+![Tapper 生成关联资产](docs/assets/prototype-demo/36-tapper-linked-artifacts.png)
 
 演示时必须明确：Tapper 中的 **AI Agent** 负责分析、生成和调整；正式路线中的 **Execution Agent** 是 Jenkins **Pipeline Agent**。截图中的 Azure DevOps 与 Mobile 是旧的模拟交互探索，不属于当前实施范围。当前 Conversation、资产和 Run 使用浏览器状态模拟，所有运行均标为 `Simulated`；这不表示已连接真实 Pipeline、浏览器、移动设备或生成真实 Execution Evidence。
 

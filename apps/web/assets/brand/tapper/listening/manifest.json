@@ -1,0 +1,1143 @@
+{
+  "name": "Tapper Listening asset kit",
+  "created": "2026-09-06",
+  "version": "1.0",
+  "method": "Palette segmentation, exterior-background removal, contour simplification and cubic Bézier vector tracing; PNGs rasterized directly from SVGs. No bitmap data embedded in SVG.",
+  "palette": {
+    "ink": "#14201D",
+    "orange": "#E87722",
+    "ivory": "#FAF9F6",
+    "black": "#000000",
+    "white": "#FFFFFF"
+  },
+  "variants": {
+    "color": "Ink body, orange crest, opaque ivory interior details; transparent exterior.",
+    "ink": "Single ink fill, transparent knockout details.",
+    "black": "Single black fill, transparent knockout details.",
+    "white": "Single white fill, transparent knockout details.",
+    "orange": "Single orange fill, transparent knockout details.",
+    "light": "Ivory circular launcher with color portrait; transparent outside circle.",
+    "dark": "Ink circular launcher with ivory body, orange crest and ink details; transparent outside circle."
+  },
+  "counts": {
+    "svg": 17,
+    "png": 96
+  },
+  "assets": [
+    {
+      "path": "svg/fullbody/tapper-listening-fullbody-color.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "93b7a3425884bfa6b220908ff24aa5c3fe80aa1724e05aafa710fdef0efafc0b"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-color-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "764cd0ea6df001346b0624ee2ec9e35b61655b6a8d748912594a526a4dcc1585"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-color-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "0807fc14d62d4c168a60e917818306cc58404018467a5de55ebdeda408e8cf36"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-color-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "12fdf04cd495bb30052bcd14ce6bd93f54fc134def105cb4641a938d5a3150ff"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-color-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "color",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "ba3c29d314be07db1a93bfaa111ea68cb54f2081db782be124f82c37d7872dfc"
+    },
+    {
+      "path": "svg/avatar/tapper-listening-avatar-color.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "color",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "ef2f5b58527b2fa37ae128949d9f076f37ec07d417ed054f10230f753e140e12"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "18114b15bf328cba2618ec4a9e9255aa247961944c5973ada26d948c742b1806"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "d5beaf64ae626c485b24cd21aff95e2246bbb5a646a92f3f464682c72d74a0ba"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "4cfb781392470d73da4e27827dc66f977aead04893ac9a7e118e7b237ab65002"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "2be3e5a29a52a69e37984379883d3c7dba26a380fc988754d562bc0d366e49a7"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "f3b5ba0908585a677eb6bb88827d37bc28b66b4795358dfcbe5f6fe0589da2d7"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "985be7f1d9ef985298bb469b656e82ae16a068ba38e57c0ce0b0023308e5fea4"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "36e7a68ca074803e69d7ee91fcdc6f2ce30b175e5ab2667bcc6e184ab1229bea"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-color-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "color",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "d9864ff3020691a339a63f9467ccd59a53b632db60642331e5cb789cc167ed85"
+    },
+    {
+      "path": "svg/lockup/tapper-listening-lockup-color.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "color",
+      "width": 2250,
+      "height": 700,
+      "sha256": "d40c5cab601d340ec27a4c4f3b15e952f80d38240575d3677abd0bb74a8b4c31"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-color-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "724eb7e129e47e990c26236451ac840e03d0273bbf4fe848953582bfa3fa4126"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-color-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "21f1a05cbc7445e7c454e7aa2335bcc5435c99f47f359a7939772757788f0a0e"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-color-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "c7ce825d3ac8cfc0fea6a8bc7ff1eccb5e3ec0d3343e3e8e9d8527c08b3a2ff4"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-color-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "color",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "fb39b1d9ad13056fe643b82f8563f44fe840c8b7819ee9667cf558db0bd9b4ee"
+    },
+    {
+      "path": "svg/fullbody/tapper-listening-fullbody-ink.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "282645869f36bb7550058e9f9e2e282238ee5837ac8958e23fd6ffb8e781aaa4"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-ink-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "cb2ca2f7ffb94a17aa25273dc33fa261ea6e0d00de49c2d7a2a39f9f800420ed"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-ink-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "c5b6af1ae22a15a235dc23253c591138132e5c6d0ac9da0c93c3371059f14236"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-ink-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "7e8b546afe0df44f2a0ae38b3a24016dbbc42e14e93c1cacc502566d87f15117"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-ink-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "ink",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "c8c69a55c9c850d82e5001060b56cb60d416f57d9eb3f3eaa5b2a640bb73fec8"
+    },
+    {
+      "path": "svg/avatar/tapper-listening-avatar-ink.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "903f3112c7aeacef76a7c53be280a08cfefafeedabd9e9443a959b99db675d7d"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "0f556ad1ef5c301cb8f5aaf52529cc3614ba6883f7e3762c257393f8673ccbb6"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "270db92f3792f5719c43b856aab1c9a1435c248111ce1ef09b236997c58a78c2"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "10c4d38e3ff2226cd05bebbe5960237b23c7c7d52086d1fc9554df4959bbc49b"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "ff600d62aab0936ccd8efe55590991806cef2e210965a35426c6424f6eaeef3b"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "0f9a2dde542ff6207b39fb0dcc1d1db93518bfccf824d30eae3ee6f8e0f9f375"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "5a598bac593e22fb767e5ef3b41842734750ec3786105f20eda891512c103861"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "8e25d0868a35e860ca6d5ba67bbc9d993c33099506b4d980f9b33abf65754905"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-ink-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "ink",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "dc67aaf8c82a46cd14dcdc72e18bf80ef63a5f1c5f7c2022d573924b4a9f603e"
+    },
+    {
+      "path": "svg/lockup/tapper-listening-lockup-ink.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 2250,
+      "height": 700,
+      "sha256": "9d0fd9994484d02a41c334fb5ad870a89d28fae75b1a9a8cf4050da91d080192"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-ink-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "64392e24b36aa776711d3cfdb5880a9fe9484db543230eba18c235a724a75e7f"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-ink-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "c06fc3add4f545408c3e4d6a3711807c7714c062eefc73e9d502a596e1856168"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-ink-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "1d91a5415858ad54b39d5f8fe9759a96a29b3c10ef5c561778fc0a9d9bbb7b2e"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-ink-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "ink",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "a025085eaa400ae7e0c5af031d625eee39add3971102580e77d67488eeeb9bf6"
+    },
+    {
+      "path": "svg/fullbody/tapper-listening-fullbody-black.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "21a9e71d9952c2d6556f76eeed7bb99e76fde982874b47687636fa787a568b47"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-black-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "569bcd5ac0d91d1c9bc5702dabcf1c8e3fc47371ca69381c75508db583072cc8"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-black-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "2945d51bd578b96cd4ebaf2269aba83e7a24ff2576b70a13fc0c2e22386f8624"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-black-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "858bac128d8425fa94e5c755d5859f0da5367cc8ec576d85658ee114113dd551"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-black-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "black",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "6a5c046abae80a65dcb3f89332ca751f1c6ae2f98af687c6df094c30a6b0221b"
+    },
+    {
+      "path": "svg/avatar/tapper-listening-avatar-black.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "black",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "7c1385e425fae2451ae0cc29becb3e90c11b81c5af5f7cccb6d7f18d1006d326"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "f83c2120553d8542f3685e5cb6e5bb916886f2866518cb6cdaea13d1bc6f59d1"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "3c87eafdac722bc5924bcee30483e2c98997b6fc0ffdfb215d928347ff0ef784"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "07f5a704025684cf66d463c02c2070658793ecbe053dde04509606d63bde431a"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "aa2c308a61757f193abcdf8f5ae4420085bbc99182e90ffcf9bef558ad04339b"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "04bd4c8ef4252f8f4997d4e67976296bd94e5395588904789ccde71e515baf8d"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "139f815ad9f6e56825fd497f63fdb0d29b86350ad93daeaeb9f2e25517b4a42c"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "b609846499adcb867d7019a068f21f7c8519f304ee0e781284c618c8fb67de87"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-black-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "black",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "6aef9f1444d3eff13248a8831de0a8e7ab67299542fdc2d97283c2cc01830da7"
+    },
+    {
+      "path": "svg/lockup/tapper-listening-lockup-black.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "black",
+      "width": 2250,
+      "height": 700,
+      "sha256": "2f837ba1cd6ee4790d40b7375a0c591a693f224b942d2d5c6b00ba4ce508a876"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-black-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "d190f692aeb15dae8c3275e66f87b61c6672106946a3a680654b684648be6f32"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-black-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "bcbc31abfcbf936ee01714e2dc667c2caa254c915e511b7535b933360f5a9f40"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-black-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "c9d0cc4ede79f993dde47ced482eeb09a94559d124ea63ee6dff1393f7ff53e3"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-black-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "black",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "eb426d7c307e064ef1267ee69322854a2d0422d5dc451e557781f21e589acd4d"
+    },
+    {
+      "path": "svg/fullbody/tapper-listening-fullbody-white.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "c7cda0da5346f4cd02184f8a61701f5c536b6cb0ab8ba5ab3106919f78d45697"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-white-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "17020aa67f97331d25f62e5c8c09351d0c4b79a9233d773ceb46bba54caa4302"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-white-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "6197ae50e960fa527f89e5d9840e2deec1f162125490896e0c2563d8009d7b5c"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-white-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "0a35cae2a30d5136e32b99d785b3ea4c5cd646aef362ce31e6616520ea63bcbb"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-white-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "white",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "8529e206390c322639b5325d804fca39374e2ba010a1e796eea8fc84db39b8b8"
+    },
+    {
+      "path": "svg/avatar/tapper-listening-avatar-white.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "white",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "1c97d9d951b38f3c48902b455ffd5f46fac7593000d40a7a535d02abebaf38b9"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "9e6d71639c303f10bc82fc887d23c50d5cf5f4581be5e3bcf695a01ecdac55e0"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "6728bfc3f4e04c2aae2f505115eeaf491a3f82d3524e924889c7601196542967"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "0a1f7ca7a7974328abdfc50d159404f12819962d5aa3b0bb730a8fb750f84741"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "4968aa9a1089fbf28b19fd999d88a143cc1aabd2e7e97aa0df627830908b9924"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "d01931096c4b788f81f1534d01d21a0ae4f2ae661367b31cfcaad41cce6e8d1f"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "6fbcda07792d2d895ee0a4510ebff1282632ad32eeb8b9e3d135d1d1bba012fe"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "a6d3c7f7a2e9915e0f7e33ee0ff919c0450d03c1d897862f21715701ae03cdfb"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-white-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "white",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "5bb951b0ecf9d0e08f126bdd20fd5a443231a3793348840ad814a865854242a9"
+    },
+    {
+      "path": "svg/lockup/tapper-listening-lockup-white.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "white",
+      "width": 2250,
+      "height": 700,
+      "sha256": "5a178870ccf7e83c435dc503fde48b3eef1106eca8cd18c6f704fe30540f027d"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-white-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "11056cd62670fdbe3da7e067e58f7e6731b93d2c8309325ab4f042516b738856"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-white-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "d75c4120987c8c94111a0481b9e59ab9a42ed23e3a56daa9df219c468ac91b9c"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-white-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "3787c7e60c613f9337da10ff2a54691f5415a8c459b52e8a46de07c22fbd75bf"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-white-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "white",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "8e4140d152e421c56160851919eda04e94f98a52b29ead7056048635d32e084a"
+    },
+    {
+      "path": "svg/fullbody/tapper-listening-fullbody-orange.svg",
+      "format": "svg",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 1254,
+      "height": 1254,
+      "sha256": "f413c25a6c09e6dca9beb4211b0d47d820bc266a285fdfdf317f79cfec41ec55"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-orange-256.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "754f6bed4532d74ec29485df449688375cc3e6779163d631a34c188a67058c85"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-orange-512.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "264bb946b87d0808de434f1e41869d3d218baeb0d5e293bf4e2724ec95c0e033"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-orange-1024.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "4294776a191f12560714db5b5e052bc3fd23de24b3fea7af009b049f09778cf6"
+    },
+    {
+      "path": "png/fullbody/tapper-listening-fullbody-orange-2048.png",
+      "format": "png",
+      "family": "fullbody",
+      "variant": "orange",
+      "width": 2048,
+      "height": 2048,
+      "hasAlpha": true,
+      "sha256": "165232aeb7b9600512ae4a16a5a7fd531dcfbfcf3a253930757f227062f32d18"
+    },
+    {
+      "path": "svg/avatar/tapper-listening-avatar-orange.svg",
+      "format": "svg",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "e708a75ee554e385748a3a3c6e5e4134e55cd0cd1e638890e3416050c1b81a5d"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-24.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 24,
+      "height": 24,
+      "hasAlpha": true,
+      "sha256": "9b5d07660c5f8d0753b9604bbfb4e50d73dc6ab2576af8c00a24aec93e97cdfa"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-32.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "6f8557391a88656f1b5aa27a00d54d1787c8faf5ba8fb541a3d67f0aa5257c35"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-48.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "43327fea671eaa300f19c997bf31bd5dccf43c013280524923ee6a8ffdfd14d7"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-64.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "dcb9556b9ec16d5009dc969998fe944c96ac46b0bd7242bb53793ec589d56d83"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-128.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "c535d6ef84e8603977e2a958f2a6114c08461ff2045113d6722725065e861762"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-256.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "9a67ba5726fcb9cece609a5c31cc17853aadf692d8bf8886f7fe7ded23721d0b"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-512.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "cfc9d87383168493e917ea24d3de0430e935d0d7d95fe57641d08ad647a955e5"
+    },
+    {
+      "path": "png/avatar/tapper-listening-avatar-orange-1024.png",
+      "format": "png",
+      "family": "avatar",
+      "variant": "orange",
+      "width": 1024,
+      "height": 1024,
+      "hasAlpha": true,
+      "sha256": "eb49cb004b179c49347df447b289e0e029ec5d86060cfcc8e2d302f5b5b0c29e"
+    },
+    {
+      "path": "svg/lockup/tapper-listening-lockup-orange.svg",
+      "format": "svg",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 2250,
+      "height": 700,
+      "sha256": "c965cd311360b2e510092e16fc7aff9c769d8efaa610cff3dc5d8d13e92b48f4"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-orange-256w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 256,
+      "height": 80,
+      "hasAlpha": true,
+      "sha256": "9e15264e5c23acc8d7f43c8674c1932e0cedd52fafd917ce3877970de033cd02"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-orange-512w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 512,
+      "height": 159,
+      "hasAlpha": true,
+      "sha256": "5a31b1d4b00136d88987d77efffe46cea485d9ead44bbda79ff4b2247dcb24e6"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-orange-1024w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 1024,
+      "height": 319,
+      "hasAlpha": true,
+      "sha256": "28c9ea216c46283661777fef301dbfeddbeb33a72e61e0c29cc78c4f2f239330"
+    },
+    {
+      "path": "png/lockup/tapper-listening-lockup-orange-2048w.png",
+      "format": "png",
+      "family": "lockup",
+      "variant": "orange",
+      "width": 2048,
+      "height": 637,
+      "hasAlpha": true,
+      "sha256": "a8904e65ea09e9f095bd576eb6c69fe2f8708a28506a28a5d10ee411ee3feba8"
+    },
+    {
+      "path": "svg/launcher/tapper-listening-launcher-light.svg",
+      "format": "svg",
+      "family": "launcher",
+      "variant": "light",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "7e174cf48c4049727a80d00cf4aa0b2230c5fbf1c181453fbf09e9c2b9dd0438"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-32.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "020924a2d8b27afa27bb83043a01fb7c60cbace42b1026c883cf2c135e3ea358"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-40.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 40,
+      "height": 40,
+      "hasAlpha": true,
+      "sha256": "49a992472394d23cebf5ef2777f5be4b81c1a2fe58d0bd3f0db772a14216bb77"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-48.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "6d7a37ecfa9deb9492689bd669d23868f8390ead5dae06b3111096acc67f9327"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-56.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 56,
+      "height": 56,
+      "hasAlpha": true,
+      "sha256": "2fcb04fa1be03e743f98af21fafbdf5cbaa42f77543a100a555fd090c2acb445"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-64.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "24bb355d038abf3cc668d26299552163d95e89c876da75c24c2ce7a0006fe714"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-128.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "e974a4a2e35f8be67eafacd3a42f31055d6f0185e226fb4c12c37c8b55b4294e"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-256.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "9a114598640d9ad866db802c30ec0035c944d9678277e78032230a5f7fede27f"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-light-512.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "light",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "ef688eddaa0accdc2e6c8476ef1a2fac7437d37fcb1b0cbd920cee076fdfe450"
+    },
+    {
+      "path": "svg/launcher/tapper-listening-launcher-dark.svg",
+      "format": "svg",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 1024,
+      "height": 1024,
+      "sha256": "7268326efca13ca5233b35bf30c5015e5c1f67cef3db56fcfc3fcc5c5caec6f2"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-32.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 32,
+      "height": 32,
+      "hasAlpha": true,
+      "sha256": "c611ff5e8849cc093d6904296a0f8b9c0fb33674993ca128840f080029433ffe"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-40.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 40,
+      "height": 40,
+      "hasAlpha": true,
+      "sha256": "bd7efd667b6efa9256d94f6bb4570908a719a0dd79da800c203d50b0909e1c59"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-48.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 48,
+      "height": 48,
+      "hasAlpha": true,
+      "sha256": "72ac70bed57b512eaee2672de989e6612b923b3d3746208f3537d76f4ebfc005"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-56.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 56,
+      "height": 56,
+      "hasAlpha": true,
+      "sha256": "9f309f45ffa790f614a725d3a8ac7360ff8c204d830b1e99dab6452da7a9ebee"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-64.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 64,
+      "height": 64,
+      "hasAlpha": true,
+      "sha256": "fa803853c1543a403d3a314655e54c98b1361276e0971a72d41c6e85a8b2823f"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-128.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 128,
+      "height": 128,
+      "hasAlpha": true,
+      "sha256": "1c6319be84e4d1198300548b1ef396d74c7a03d220afa026d10ce4cbd4b158c7"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-256.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 256,
+      "height": 256,
+      "hasAlpha": true,
+      "sha256": "cbdc0435e547d7ef2eeef37487fb32daefdeeb26604ce1a71902a8289c68ef5c"
+    },
+    {
+      "path": "png/launcher/tapper-listening-launcher-dark-512.png",
+      "format": "png",
+      "family": "launcher",
+      "variant": "dark",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "sha256": "48a37306f8f6dccccb02b96295e6c407b22ca82cb4ba5740ad354547cb2e2096"
+    }
+  ],
+  "referenceFilename": "tapper-woodpecker-v6-listening.png",
+  "wordmarkFilename": "tapper-wordmark-ink.svg"
+}

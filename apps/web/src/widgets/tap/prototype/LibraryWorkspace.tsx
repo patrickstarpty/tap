@@ -1,6 +1,7 @@
 import {
-  FileMarkdownOutlined,
-  FileTextOutlined,
+  AppstoreOutlined,
+  BarsOutlined,
+  DownloadOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
@@ -14,6 +15,10 @@ import {
   type MouseEvent,
 } from "react";
 
+import ReactMarkdown from "react-markdown";
+
+import { FileTypeIcon } from "./FileTypeIcon";
+import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
@@ -26,12 +31,50 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
-  onAddSource?: (file: File) => Promise<void>;
+  onAddSource?: (file: File) => Promise<void> | void;
   onInspectSource?: (sourceId: string, opener: HTMLElement) => void;
   sources: readonly LibrarySource[];
   loadState?: "loading" | "loaded" | "error";
   onReload?: () => void;
   projectId?: string;
+  graphProjectId?: string;
+}
+
+function ProjectKnowledgeGraph({
+  projectId,
+  sources,
+}: {
+  projectId: string;
+  sources: readonly LibrarySource[];
+}) {
+  const graphSources = useQueries({
+    queries: sources
+      .filter((source) => source.status === "ready")
+      .map((source) => ({
+        queryKey: [
+          "knowledge",
+          projectId,
+          "source",
+          source.id,
+          "graph",
+        ] as const,
+        queryFn: ({ signal }: { signal: AbortSignal }) =>
+          createKnowledgeClient({ projectId }).getSource(source.id, signal),
+        retry: false,
+      })),
+  });
+  const revisionIds = graphSources.flatMap((detail) =>
+    (detail.data?.documents.items ?? [])
+      .filter((document) => document.status === "ready")
+      .map((document) => document.revisionId),
+  );
+
+  return (
+    <KnowledgeGraphExplorer
+      projectId={projectId}
+      sourceRevisionIds={revisionIds}
+    />
+  );
 }
 
 export function LibraryWorkspace({
@@ -42,10 +85,14 @@ export function LibraryWorkspace({
   loadState = "loaded",
   onReload,
   projectId,
+  graphProjectId,
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
-  const [mode, setMode] = useState<LibraryMode>("list");
+  const [view, setView] = useState<"list" | "cards">("cards");
+  const [mode, setMode] = useState<LibraryMode>(() =>
+    graphProjectId === undefined ? "graph" : "list",
+  );
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
@@ -79,33 +126,6 @@ export function LibraryWorkspace({
           ),
     [facetSources, normalizedQuery],
   );
-  const graphSources = useQueries({
-    queries:
-      projectId === undefined
-        ? []
-        : visibleSources
-            .filter((source) => source.status === "ready")
-            .map((source) => ({
-              queryKey: [
-                "knowledge",
-                projectId,
-                "source",
-                source.id,
-                "graph",
-              ] as const,
-              queryFn: ({ signal }: { signal: AbortSignal }) =>
-                createKnowledgeClient({ projectId }).getSource(
-                  source.id,
-                  signal,
-                ),
-              retry: false,
-            })),
-  });
-  const graphRevisionIds = graphSources.flatMap((detail) =>
-    (detail.data?.documents.items ?? [])
-      .filter((document) => document.status === "ready")
-      .map((document) => document.revisionId),
-  );
   const filtersActive =
     normalizedQuery.length > 0 ||
     typeFilter !== "all" ||
@@ -124,8 +144,8 @@ export function LibraryWorkspace({
       return;
     }
     event.preventDefault();
-    if (event.key === "Home") return selectMode("list");
-    if (event.key === "End") return selectMode("graph");
+    if (event.key === "Home") return selectMode("graph");
+    if (event.key === "End") return selectMode("list");
     selectMode(currentMode === "list" ? "graph" : "list");
   };
 
@@ -167,7 +187,7 @@ export function LibraryWorkspace({
 
   return (
     <section
-      className="tap-module tap-library"
+      className={`tap-module tap-library${mode === "graph" ? " tap-library--graph" : ""}`}
       aria-labelledby="library-heading"
     >
       <header className="tap-module-heading">
@@ -175,14 +195,16 @@ export function LibraryWorkspace({
           <h1 id="library-heading">{copy.library.heading}</h1>
           <p>{copy.library.description}</p>
         </div>
-        <Button
-          type="primary"
-          icon={<PlusOutlined aria-hidden="true" />}
-          disabled={onAddSource === undefined}
-          onClick={openAddDialog}
-        >
-          {copy.library.addSource}
-        </Button>
+        <div className="tap-library-heading-actions">
+          <Button
+            type="primary"
+            icon={<PlusOutlined aria-hidden="true" />}
+            disabled={onAddSource === undefined}
+            onClick={openAddDialog}
+          >
+            {copy.library.addSource}
+          </Button>
+        </div>
       </header>
 
       <div className="tap-library-toolbar">
@@ -191,19 +213,6 @@ export function LibraryWorkspace({
           role="tablist"
           aria-label={copy.library.heading}
         >
-          <button
-            ref={listTabRef}
-            id="tap-library-list-tab"
-            type="button"
-            role="tab"
-            aria-selected={mode === "list"}
-            aria-controls="tap-library-list-panel"
-            tabIndex={mode === "list" ? 0 : -1}
-            onClick={() => setMode("list")}
-            onKeyDown={(event) => handleTabKeyDown(event, "list")}
-          >
-            {copy.library.all}
-          </button>
           <button
             ref={graphTabRef}
             id="tap-library-graph-tab"
@@ -217,15 +226,41 @@ export function LibraryWorkspace({
           >
             {copy.library.knowledgeGraph}
           </button>
+          <button
+            ref={listTabRef}
+            id="tap-library-list-tab"
+            type="button"
+            role="tab"
+            aria-selected={mode === "list"}
+            aria-controls="tap-library-list-panel"
+            tabIndex={mode === "list" ? 0 : -1}
+            onClick={() => setMode("list")}
+            onKeyDown={(event) => handleTabKeyDown(event, "list")}
+          >
+            {copy.library.all}
+          </button>
         </div>
         <div className="tap-library-filters">
-          <Input
-            className="tap-library-search"
-            aria-label={copy.library.search}
-            placeholder={copy.library.search}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+          <div className="tap-library-search-actions">
+            <Input
+              className="tap-library-search"
+              aria-label={copy.library.search}
+              placeholder={copy.library.search}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <Button
+              className="tap-library-clear"
+              disabled={!filtersActive}
+              onClick={() => {
+                setQuery("");
+                setTypeFilter("all");
+                setStatusFilter("all");
+              }}
+            >
+              {copy.library.clearFilters}
+            </Button>
+          </div>
           <label>
             <span>{copy.library.typeFilter}</span>
             <select
@@ -259,17 +294,6 @@ export function LibraryWorkspace({
           <span className="tap-library-result-count" aria-live="polite">
             {visibleSources.length}/{sources.length} {copy.library.sourceCount}
           </span>
-          <Button
-            type="text"
-            disabled={!filtersActive}
-            onClick={() => {
-              setQuery("");
-              setTypeFilter("all");
-              setStatusFilter("all");
-            }}
-          >
-            {copy.library.clearFilters}
-          </Button>
         </div>
       </div>
 
@@ -279,58 +303,111 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-list-tab"
         >
-          {loadState === "loading" ? (
-            <p role="status" aria-label={copy.sources.loading}>
-              {copy.sources.loading}
-            </p>
-          ) : loadState === "error" ? (
-            <div role="alert">
-              <p>{copy.sources.error}</p>
-              <Button onClick={onReload}>{copy.sources.retry}</Button>
+          <div
+            className="tap-library-view-switch"
+            role="group"
+            aria-label={copy.library.sources}
+          >
+            <Button
+              type="text"
+              aria-label={copy.library.cardView}
+              title={copy.library.cardView}
+              aria-pressed={view === "cards"}
+              icon={<AppstoreOutlined />}
+              onClick={() => setView("cards")}
+            />
+            <Button
+              type="text"
+              aria-label={copy.library.listView}
+              title={copy.library.listView}
+              aria-pressed={view === "list"}
+              icon={<BarsOutlined />}
+              onClick={() => setView("list")}
+            />
+          </div>
+          <div className="tap-library-browser">
+            <div>
+              {loadState === "loading" ? (
+                <p role="status" aria-label={copy.sources.loading}>
+                  {copy.sources.loading}
+                </p>
+              ) : loadState === "error" ? (
+                <div role="alert">
+                  <p>{copy.sources.error}</p>
+                  <Button onClick={onReload}>{copy.sources.retry}</Button>
+                </div>
+              ) : visibleSources.length === 0 ? (
+                <div className="tap-catalog-empty">
+                  {sources.length === 0
+                    ? copy.sources.empty
+                    : copy.library.noResults}
+                </div>
+              ) : (
+                <ul
+                  className={`tap-library-list tap-file-list${view === "cards" ? " tap-file-list--cards" : ""}`}
+                  aria-label={copy.library.sources}
+                >
+                  {visibleSources.map((source) => (
+                    <li key={source.id}>
+                      <div className="tap-file-summary">
+                        <FileTypeIcon type={source.type} />
+                        <span className="tap-library-source-copy">
+                          <strong>{source.name}</strong>
+                          <span>
+                            {source.isExample
+                              ? `${copy.library.example} · `
+                              : ""}
+                            {source.description}
+                          </span>
+                        </span>
+                        {view === "cards" ? (
+                          <div
+                            className="tap-file-card-content"
+                            aria-hidden="true"
+                          >
+                            <FileContent
+                              source={source}
+                              fallback={copy.library.noPreview}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="tap-file-actions">
+                        <span
+                          className="tap-library-status"
+                          data-status={source.status}
+                        >
+                          {sourceStatus(source)}
+                        </span>
+                        {source.downloadUrl ? (
+                          <a
+                            className="tap-file-download"
+                            href={source.downloadUrl}
+                            download={source.name}
+                            aria-label={`${copy.library.download} ${source.name}`}
+                            title={copy.library.download}
+                          >
+                            <DownloadOutlined aria-hidden="true" />
+                          </a>
+                        ) : null}
+                        {onInspectSource !== undefined ? (
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              onInspectSource(source.id, event.currentTarget)
+                            }
+                            aria-label={`${copy.sources.view} ${source.name}`}
+                          >
+                            {copy.sources.view}
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-          ) : visibleSources.length === 0 ? (
-            <div className="tap-catalog-empty">
-              {sources.length === 0
-                ? copy.sources.empty
-                : copy.library.noResults}
-            </div>
-          ) : (
-            <ul className="tap-library-list" aria-label={copy.library.sources}>
-              {visibleSources.map((source) => (
-                <li key={source.id}>
-                  <div className="tap-library-thumbnail" aria-hidden="true">
-                    {source.type === "MD" ? (
-                      <FileMarkdownOutlined />
-                    ) : (
-                      <FileTextOutlined />
-                    )}
-                    <span>{source.type}</span>
-                  </div>
-                  <div className="tap-library-source-copy">
-                    <strong>{source.name}</strong>
-                    <span>{source.description}</span>
-                    {onInspectSource !== undefined && (
-                      <button
-                        type="button"
-                        onClick={(event) =>
-                          onInspectSource(source.id, event.currentTarget)
-                        }
-                        aria-label={`${copy.sources.view} ${source.name}`}
-                      >
-                        {copy.sources.view}
-                      </button>
-                    )}
-                  </div>
-                  <span
-                    className="tap-library-status"
-                    data-status={source.status}
-                  >
-                    {sourceStatus(source)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+          </div>
         </div>
       ) : (
         <div
@@ -338,12 +415,21 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-graph-tab"
         >
-          {projectId === undefined ? (
-            <KnowledgeGraph copy={copy} query={query} sources={facetSources} />
+          {graphProjectId === undefined ? (
+            <KnowledgeGraph
+              copy={copy}
+              query={query}
+              sources={facetSources}
+              onViewSource={(source) => {
+                setQuery(source.name);
+                setMode("list");
+                listTabRef.current?.focus();
+              }}
+            />
           ) : (
-            <KnowledgeGraphExplorer
-              projectId={projectId}
-              sourceRevisionIds={graphRevisionIds}
+            <ProjectKnowledgeGraph
+              projectId={graphProjectId}
+              sources={visibleSources}
             />
           )}
         </div>
@@ -395,5 +481,28 @@ export function LibraryWorkspace({
         </AccessibleDialog>
       ) : null}
     </section>
+  );
+}
+
+function FileContent({
+  source,
+  fallback,
+}: {
+  source: LibrarySource;
+  fallback: string;
+}) {
+  if (source.preview?.imageUrl)
+    return <img src={source.preview.imageUrl} alt={source.name} />;
+  if (source.preview?.text)
+    return getFileTypeFamily(source.type) === "markdown" ? (
+      <ReactMarkdown>{source.preview.text}</ReactMarkdown>
+    ) : (
+      <pre>{source.preview.text}</pre>
+    );
+  return (
+    <div className="tap-file-unavailable">
+      <FileTypeIcon type={source.type} />
+      <p>{fallback}</p>
+    </div>
   );
 }

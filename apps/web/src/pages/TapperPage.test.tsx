@@ -350,9 +350,12 @@ describe("Tapper product prototype", () => {
     expect(screen.getByLabelText("TAP platform")).toHaveTextContent(/^TAP$/);
     const entry = screen.getByRole("button", { name: "Tapper" });
     expect(
-      entry.querySelector('img[src*="tapper-mark-ink.svg"]'),
+      entry.querySelector('img[src*="tapper-listening-avatar-color.svg"]'),
     ).not.toBeNull();
     const heading = screen.getByRole("heading", { name: "Tapper" });
+    expect(
+      heading.querySelector('img[src*="tapper-listening-avatar-color.svg"]'),
+    ).toBeNull();
     expect(
       heading.querySelector('img[src*="tapper-wordmark-ink.svg"]'),
     ).not.toBeNull();
@@ -371,7 +374,7 @@ describe("Tapper product prototype", () => {
       within(screen.getByRole("navigation", { name: "Tapper tools" }))
         .getAllByRole("button")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["New chat", "Agent", "Skills", "Library"]);
+    ).toEqual(["New chat", "Agents", "Skills", "Library"]);
     expect(
       screen.getByRole("heading", { name: "What can I do for you?" }),
     ).toBeVisible();
@@ -403,32 +406,35 @@ describe("Tapper product prototype", () => {
     const history = screen.getByRole("navigation", { name: "Chat history" });
     expect(
       within(history).getByRole("button", {
-        name: `${message} · Conversation 1`,
+        name: `${message}`,
       }),
     ).toHaveAttribute("aria-current", "page");
 
-    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
     expect(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
-      ).getByRole("button", { name: `${message} · Conversation 1` }),
+      ).getByRole("button", { name: `${message}` }),
     ).toHaveAttribute("aria-current", "page");
 
     await user.click(screen.getByRole("button", { name: "Test Management" }));
     await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
-      ).getByRole("button", { name: `${message} · Conversation 1` }),
+      ).getByRole("button", { name: `${message}` }),
     ).toHaveAttribute("aria-current", "page");
 
     firstRender.unmount();
     renderPrototype();
-    expect(screen.getByText(message)).toBeVisible();
+    expect(
+      screen.getByText(message, { selector: ".tap-user-message" }),
+    ).toBeVisible();
     expect(
       within(
         screen.getByRole("navigation", { name: "Chat history" }),
-      ).getByRole("button", { name: `${message} · Conversation 1` }),
+      ).getByRole("button", { name: `${message}` }),
     ).toHaveAttribute("aria-current", "page");
   });
 
@@ -596,7 +602,7 @@ describe("Tapper product prototype", () => {
       screen.getByRole("button", { name: /New automation/ }),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Open AUTO-101" }));
+    await user.click(screen.getByRole("row", { name: /AUTO-101/ }));
     expect(
       screen.getByRole("heading", {
         name: "Life insurance application automation",
@@ -827,7 +833,7 @@ describe("Tapper product prototype", () => {
     await user.click(
       screen.getByRole("button", { name: "Low Code Automation" }),
     );
-    await user.click(screen.getByRole("button", { name: "Open AUTO-102" }));
+    await user.click(screen.getByRole("row", { name: /AUTO-102/ }));
     const run = screen.getByRole("button", { name: "Run automation" });
     expect(run).toBeDisabled();
     await user.selectOptions(
@@ -887,7 +893,9 @@ describe("Tapper product prototype", () => {
     await sendMessage(user, "What is the life underwriting workflow?");
 
     expect(
-      screen.getByText("What is the life underwriting workflow?"),
+      screen.getByText("What is the life underwriting workflow?", {
+        selector: ".tap-user-message",
+      }),
     ).toBeVisible();
     expect(
       screen.queryByRole("article", { name: "Generated automation" }),
@@ -926,7 +934,11 @@ describe("Tapper product prototype", () => {
     );
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(screen.getByText("寿险投保需要什么资料？")).toBeVisible();
+    expect(
+      screen.getByText("寿险投保需要什么资料？", {
+        selector: ".tap-user-message",
+      }),
+    ).toBeVisible();
     expect(
       screen.getByText(/此轮对话未选择知识上下文。此原型输出使用内置演示内容/),
     ).toBeVisible();
@@ -989,8 +1001,11 @@ describe("Tapper product prototype", () => {
     await sendMessage(user, prompt);
     await user.click(screen.getByRole("button", { name: "中文" }));
 
-    expect(screen.getByText(prompt)).toBeVisible();
+    expect(
+      screen.getByText(prompt, { selector: ".tap-user-message" }),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "知识库" }));
+    await user.click(screen.getByRole("tab", { name: "文档列表" }));
     expect(screen.getAllByText("知识来源 · 已就绪")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "测试管理" }));
@@ -1009,12 +1024,18 @@ describe("Tapper product prototype", () => {
     expect(screen.getByRole("button", { name: /新建自动化/ })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(
-      screen.getByRole("button", {
-        name: /What evidence is needed for life underwriting\?/,
-      }),
+      within(screen.getByRole("navigation", { name: "对话历史" })).getByRole(
+        "button",
+        {
+          name: /What evidence is needed for life underwriting\?/,
+        },
+      ),
     );
-    expect(screen.getByText(prompt)).toBeVisible();
+    expect(
+      screen.getByText(prompt, { selector: ".tap-user-message" }),
+    ).toBeVisible();
   });
 
   it("moves the composer from the centered start state to the conversation dock", async () => {

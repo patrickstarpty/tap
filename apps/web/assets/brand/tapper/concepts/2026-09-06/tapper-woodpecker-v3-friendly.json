@@ -1,0 +1,22 @@
+{
+  "created": "2026-09-06",
+  "status": "character-refinement",
+  "generator": "built-in image_gen",
+  "image": "tapper-woodpecker-v3-friendly.png",
+  "sourceConcept": "tapper-woodpecker-v2.png",
+  "confirmedKeywords": [
+    "聪明",
+    "敏锐",
+    "好奇"
+  ],
+  "userPreference": "用户友好，希望用户一看就喜欢；避免高高在上、生人勿近的气质。",
+  "visualIntent": [
+    "缩短颈部，收紧比例",
+    "柔和的专注眼神",
+    "更厚实的嘴喙",
+    "低头探查与倾听的姿态",
+    "保留橙色后冠与侧脸白颊作为辨识线索"
+  ],
+  "reviewStatus": "候选图像，等待用户反馈；尚无用户偏好测试或真实尺寸验证。",
+  "prompt": "Use case: logo-brand / character refinement. Reimagine ONLY the Tapper woodpecker character in the reference as a WARM, LIKEABLE, SMART, OBSERVANT, CURIOUS little work companion. User's three exact personality priorities: smart, observant, curious. It must feel instantly approachable, like a helpful colleague at your side, never aloof, arrogant, intimidating, aggressive or superior. The reference is too sharp, long-necked, austere and sports-team-like; FIX THOSE ISSUES. Keep the woodpecker species and ink/orange palette, but decisively change expression, proportions, contour and pose. SINGLE CONSISTENT NEW CHARACTER, no alternative species. Flat polished 2D brand mascot, clean confident vector-like curves, mature-friendly charm, tasteful and memorable, designed to reduce to an icon. SOLID colours only: dark warm ink #14201D, warm orange #E87722 and warm ivory #FAF9F6. Absolutely no texture, gradient, shadow, glow, gloss, dimensional lighting or photo rendering. ANATOMY / SILHOUETTE: compact head-and-body, almost no exposed neck, head nested naturally into small rounded shoulders. Rounded cranium with a SHORT swept-back ORANGE CREST made of one or two softly angular lobes, not a huge flame, sword or spiky hairstyle. Moderate sturdy straight CHISEL BEAK, about half the skull width, broad root, short gently softened tip; unmistakably a woodpecker beak but not a spear, duck bill or tiny penguin beak. Small asymmetrical ivory CHEEK STRIPE, tapering BACK toward the neck and kept to the side of the face; never a big white circular face, white belly, lightning bolt, or long white neck stripe. Eyes carry the emotion: warm attentive moderate-size eye with a large calm dark pupil and one small highlight, softly curved upper lid, NO scowl or sharp eyebrow, NO giant baby eyes. Main portrait is a gentle three-quarter side view, facing right but turning slightly toward the viewer with a small inquisitive head tilt at equal eye level; gaze says 'show me, let us have a look'. Do not look down haughtily or point the beak upward. Smart through attentive expression, observant through focused gaze, curious through the gentle lean. A very subtle pleasant beak-line is welcome; no toothy smile, tongue or human mouth. Full character: small compact oval body, one clear folded wing, short supportive tail, simple sturdy feet, relaxed leaning/peeking stance. NO long crane legs, upright swan neck, pear-shaped penguin body, wide owl face, eagle sports crest, superhero pose, costumes, ties, glasses, magnifying glass or props. No copying any existing woodpecker cartoon or mascot. BOARD: ONE polished landscape 1536x1024 identity study. Title 'Tapper / Your curious companion', short subtitle 'Smart. Observant. Curious.' Left upper two-thirds: LARGE new friendly head-and-shoulders brand portrait, generous breathing room. Right upper third: the SAME small full character with inquisitive head tilt and relaxed one-wing gesture, not waving a human hand. Bottom row: three consistent small expressions/poses 'Listening', 'Exploring', 'Aha', with only gentle eye/head changes. Then two compact icon studies of the SAME primary portrait: one in a warm-white rounded-square with thin neutral border; one as an INK silhouette on white that retains clear crest, chisel beak and cheek cut. Label 'Icon studies'. Do not show numerical pixel labels or claim small-size testing. Character must remain identifiable across every repetition. The overall impression should be 'I would enjoy having this little helper beside my work', with intelligent warm personality, not a cute toy for children. Prioritize friendly appeal over anatomical detail while keeping distinctive woodpecker cues."
+}

@@ -1,4 +1,12 @@
-import { AimOutlined, MinusOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  AimOutlined,
+  MinusOutlined,
+  PlusOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
+  MenuFoldOutlined,
+  CloseOutlined,
+} from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
@@ -9,241 +17,23 @@ import type {
 import type { PrototypeCopy } from "./copy";
 import type { LibrarySource } from "./model";
 
-type GraphCommunity = "sources" | "application" | "underwriting" | "parties";
-type GraphNodeKind = "document" | "concept" | "entity";
-type GraphProvenance = "extracted" | "inferred";
+import {
+  buildKnowledgeGraph,
+  GRAPH_WIDTH,
+  GRAPH_HEIGHT,
+  GRAPH_CLUSTERS,
+  COMMUNITY_ORDER,
+  COMMUNITY_COLORS,
+  type GraphCommunity,
+  type GraphNodeKind,
+  type GraphProvenance,
+  type GraphNode,
+} from "./knowledgeGraphData";
 
-interface GraphNode {
-  community: GraphCommunity;
-  degree: number;
-  id: string;
-  kind: GraphNodeKind;
-  label: string;
-  secondary?: string;
-  x: number;
-  y: number;
-}
-
-interface GraphEdge {
-  id: string;
-  label: string;
-  provenance: GraphProvenance;
-  source: string;
-  target: string;
-}
-
-interface GraphData {
-  edges: GraphEdge[];
-  nodes: GraphNode[];
-}
-
-const GRAPH_WIDTH = 680;
-const GRAPH_HEIGHT = 460;
 const GRAPH_HORIZONTAL_MARGIN = 24;
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 1.75;
 const ZOOM_STEP = 0.25;
-
-const COMMUNITY_ORDER: readonly GraphCommunity[] = [
-  "sources",
-  "application",
-  "underwriting",
-  "parties",
-];
-
-const COMMUNITY_COLORS: Record<GraphCommunity, string> = {
-  sources: "#7c8ba5",
-  application: "#8b82f6",
-  underwriting: "#35c7a5",
-  parties: "#f2a65a",
-};
-
-const SOURCE_POSITIONS = [
-  { x: 72, y: 82 },
-  { x: 116, y: 190 },
-  { x: 70, y: 338 },
-  { x: 218, y: 58 },
-  { x: 198, y: 414 },
-] as const;
-
-function graphData(
-  copy: PrototypeCopy,
-  sources: readonly LibrarySource[],
-): GraphData {
-  const nodesWithoutDegree: Omit<GraphNode, "degree">[] = [
-    {
-      id: "application",
-      label: copy.library.application,
-      community: "application",
-      kind: "concept",
-      x: 334,
-      y: 232,
-    },
-    {
-      id: "policy",
-      label: copy.library.policy,
-      community: "application",
-      kind: "entity",
-      x: 350,
-      y: 78,
-    },
-    {
-      id: "coverage",
-      label: copy.library.coverage,
-      community: "application",
-      kind: "entity",
-      x: 468,
-      y: 58,
-    },
-    {
-      id: "premium",
-      label: copy.library.premium,
-      community: "application",
-      kind: "entity",
-      x: 604,
-      y: 372,
-    },
-    {
-      id: "health-disclosure",
-      label: copy.library.healthDisclosure,
-      community: "underwriting",
-      kind: "concept",
-      x: 466,
-      y: 184,
-    },
-    {
-      id: "underwriting",
-      label: copy.library.underwriting,
-      community: "underwriting",
-      kind: "concept",
-      x: 570,
-      y: 252,
-    },
-    {
-      id: "risk-assessment",
-      label: copy.library.riskAssessment,
-      community: "underwriting",
-      kind: "entity",
-      x: 596,
-      y: 122,
-    },
-    {
-      id: "beneficiary",
-      label: copy.library.beneficiary,
-      community: "parties",
-      kind: "concept",
-      x: 430,
-      y: 368,
-    },
-    {
-      id: "applicant",
-      label: copy.library.applicant,
-      community: "parties",
-      kind: "entity",
-      x: 266,
-      y: 356,
-    },
-    ...sources.map((source, index) => {
-      const position = SOURCE_POSITIONS[index % SOURCE_POSITIONS.length]!;
-      const lap = Math.floor(index / SOURCE_POSITIONS.length);
-      return {
-        id: `source-${source.id}`,
-        label: source.name,
-        secondary: source.type,
-        community: "sources" as const,
-        kind: "document" as const,
-        x: position.x + lap * 34,
-        y: Math.max(52, position.y - lap * 26),
-      };
-    }),
-  ];
-
-  const edges: GraphEdge[] = [
-    {
-      id: "application-health",
-      source: "application",
-      target: "health-disclosure",
-      label: copy.library.requires,
-      provenance: "extracted",
-    },
-    {
-      id: "health-underwriting",
-      source: "health-disclosure",
-      target: "underwriting",
-      label: copy.library.informs,
-      provenance: "extracted",
-    },
-    {
-      id: "application-beneficiary",
-      source: "application",
-      target: "beneficiary",
-      label: copy.library.names,
-      provenance: "extracted",
-    },
-    {
-      id: "applicant-application",
-      source: "applicant",
-      target: "application",
-      label: copy.library.submits,
-      provenance: "extracted",
-    },
-    {
-      id: "application-policy",
-      source: "application",
-      target: "policy",
-      label: copy.library.creates,
-      provenance: "inferred",
-    },
-    {
-      id: "coverage-underwriting",
-      source: "coverage",
-      target: "underwriting",
-      label: copy.library.informs,
-      provenance: "extracted",
-    },
-    {
-      id: "underwriting-risk",
-      source: "underwriting",
-      target: "risk-assessment",
-      label: copy.library.evaluates,
-      provenance: "inferred",
-    },
-    {
-      id: "risk-premium",
-      source: "risk-assessment",
-      target: "premium",
-      label: copy.library.determines,
-      provenance: "inferred",
-    },
-    ...sources.map((source) => {
-      const normalizedName = source.name.toLocaleLowerCase();
-      const target = normalizedName.includes("health")
-        ? "health-disclosure"
-        : "application";
-      return {
-        id: `document-${source.id}`,
-        source: `source-${source.id}`,
-        target,
-        label: copy.library.supports,
-        provenance: "extracted" as const,
-      };
-    }),
-  ];
-
-  const degreeByNode = new Map<string, number>();
-  for (const edge of edges) {
-    degreeByNode.set(edge.source, (degreeByNode.get(edge.source) ?? 0) + 1);
-    degreeByNode.set(edge.target, (degreeByNode.get(edge.target) ?? 0) + 1);
-  }
-
-  return {
-    edges,
-    nodes: nodesWithoutDegree.map((node) => ({
-      ...node,
-      degree: degreeByNode.get(node.id) ?? 0,
-    })),
-  };
-}
 
 function displayLabel(label: string): string {
   return label.length > 27 ? `${label.slice(0, 25)}…` : label;
@@ -253,18 +43,46 @@ export function KnowledgeGraph({
   copy,
   query,
   sources,
+  onViewSource,
 }: {
   copy: PrototypeCopy;
   query: string;
   sources: readonly LibrarySource[];
+  onViewSource: (source: LibrarySource) => void;
 }) {
-  const data = useMemo(() => graphData(copy, sources), [copy, sources]);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [communitiesOpen, setCommunitiesOpen] = useState(
+    () => !window.matchMedia("(max-width: 820px)").matches,
+  );
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState(false);
+  useEffect(() => {
+    const update = () =>
+      setFullscreen(document.fullscreenElement === workspaceRef.current);
+    document.addEventListener("fullscreenchange", update);
+    return () => document.removeEventListener("fullscreenchange", update);
+  }, []);
+  const toggleFullscreen = async () => {
+    setFullscreenError(false);
+    try {
+      if (document.fullscreenElement === workspaceRef.current)
+        await document.exitFullscreen();
+      else await workspaceRef.current?.requestFullscreen();
+    } catch {
+      setFullscreenError(true);
+    }
+  };
+  const data = useMemo(
+    () => buildKnowledgeGraph(copy, sources),
+    [copy, sources],
+  );
   const [activeCommunities, setActiveCommunities] = useState<
     ReadonlySet<GraphCommunity>
   >(() => new Set(COMMUNITY_ORDER));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{
     originX: number;
@@ -280,6 +98,11 @@ export function KnowledgeGraph({
     application: copy.library.applicationCommunity,
     underwriting: copy.library.underwritingCommunity,
     parties: copy.library.partiesCommunity,
+    testing: copy.library.testingCommunity,
+    "new-business": copy.library.newBusinessCommunity,
+    servicing: copy.library.servicingCommunity,
+    claims: copy.library.claimsCommunity,
+    codebase: copy.library.codebaseCommunity,
   };
   const kindLabels: Record<GraphNodeKind, string> = {
     document: copy.library.documentNode,
@@ -301,6 +124,51 @@ export function KnowledgeGraph({
   );
   const selectedNode =
     visibleNodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedSource = sources.find(
+    (source) => `source-${source.id}` === selectedNodeId,
+  );
+  const matchesQuery = (node: GraphNode) => {
+    const source = sources.find((item) => `source-${item.id}` === node.id);
+    return [
+      node.label,
+      node.secondary,
+      source?.description,
+      communityLabels[node.community],
+      kindLabels[node.kind],
+    ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
+  };
+  const matchingNodes = data.nodes.filter(matchesQuery);
+  const previousQuery = useRef(normalizedQuery);
+  useEffect(() => {
+    if (previousQuery.current && !normalizedQuery) {
+      setSelectedNodeId(null);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+    previousQuery.current = normalizedQuery;
+  }, [normalizedQuery]);
+  const locateNode = (node: GraphNode) => {
+    setActiveCommunities((current) => new Set([...current, node.community]));
+    setSelectedNodeId(node.id);
+    const nextZoom = 1.5;
+    setZoom(nextZoom);
+    setPan({
+      x: GRAPH_WIDTH / 2 - node.x * nextZoom,
+      y: GRAPH_HEIGHT / 2 - node.y * nextZoom,
+    });
+    requestAnimationFrame(() => {
+      const canvas =
+        workspaceRef.current?.querySelector<HTMLElement>(".tap-graph-canvas");
+      if (canvas)
+        canvas.scrollLeft = (canvas.scrollWidth - canvas.clientWidth) / 2;
+    });
+  };
+  const focusedNodeId = hoveredNodeId ?? selectedNode?.id;
+  const neighborhood = new Set([focusedNodeId]);
+  for (const edge of visibleEdges) {
+    if (edge.source === focusedNodeId) neighborhood.add(edge.target);
+    if (edge.target === focusedNodeId) neighborhood.add(edge.source);
+  }
   const selectedRelationships =
     selectedNode === null
       ? []
@@ -377,15 +245,47 @@ export function KnowledgeGraph({
     "underwriting",
     "health-disclosure",
     "beneficiary",
+    "approval",
+    "test-cases",
+    "exploration",
+    "new-business",
+    "policy-servicing",
+    "claims",
+    "codebase",
   ] as const;
 
+  const edgeLabelBoxes: { x: number; y: number; width: number }[] = [];
   return (
-    <div className="tap-graph-workspace">
+    <div
+      ref={workspaceRef}
+      className="tap-graph-workspace"
+      data-communities-open={communitiesOpen || normalizedQuery.length > 0}
+      data-inspector-open={selectedNode !== null}
+    >
       <aside
         className="tap-graph-communities"
+        hidden={!communitiesOpen || normalizedQuery.length > 0}
         aria-label={copy.library.communities}
       >
         <h2>{copy.library.communities}</h2>
+        <label className="tap-graph-select-all">
+          <input
+            type="checkbox"
+            checked={activeCommunities.size === COMMUNITY_ORDER.length}
+            ref={(input) => {
+              if (input)
+                input.indeterminate =
+                  activeCommunities.size > 0 &&
+                  activeCommunities.size < COMMUNITY_ORDER.length;
+            }}
+            onChange={(event) =>
+              setActiveCommunities(
+                new Set(event.target.checked ? COMMUNITY_ORDER : []),
+              )
+            }
+          />
+          <span>{copy.library.selectAllTopics}</span>
+        </label>
         <div className="tap-graph-community-list">
           {COMMUNITY_ORDER.map((community) => {
             const count = data.nodes.filter(
@@ -393,7 +293,14 @@ export function KnowledgeGraph({
             ).length;
             const label = communityLabels[community];
             return (
-              <label key={community}>
+              <label
+                key={community}
+                style={
+                  {
+                    "--tap-community-color": COMMUNITY_COLORS[community],
+                  } as CSSProperties
+                }
+              >
                 <input
                   type="checkbox"
                   checked={activeCommunities.has(community)}
@@ -409,7 +316,9 @@ export function KnowledgeGraph({
                   }
                   aria-hidden="true"
                 />
-                <span>{label}</span>
+                <span className="tap-graph-community-name" title={label}>
+                  {label}
+                </span>
                 <small>{count}</small>
               </label>
             );
@@ -418,9 +327,73 @@ export function KnowledgeGraph({
         <p>{copy.library.graphNavigationHint}</p>
       </aside>
 
+      {normalizedQuery ? (
+        <section
+          className="tap-graph-search-results"
+          role="region"
+          aria-label={copy.library.searchResults}
+        >
+          <h2>
+            {copy.library.searchResults}{" "}
+            <span aria-live="polite">{matchingNodes.length}</span>
+          </h2>
+          {matchingNodes.length === 0 ? (
+            <p>{copy.library.noMatchingNodes}</p>
+          ) : (
+            <ul>
+              {matchingNodes.map((node) => (
+                <li key={node.id}>
+                  <button
+                    type="button"
+                    aria-pressed={selectedNodeId === node.id}
+                    onClick={() => locateNode(node)}
+                  >
+                    <strong>{node.label}</strong>
+                    <span>
+                      {kindLabels[node.kind]} ·{" "}
+                      {communityLabels[node.community]}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
       <figure className="tap-knowledge-graph">
         <div className="tap-graph-toolbar">
           <div className="tap-graph-zoom-controls">
+            <button
+              type="button"
+              aria-label={copy.library.toggleCommunities}
+              title={copy.library.toggleCommunities}
+              aria-expanded={communitiesOpen}
+              disabled={normalizedQuery.length > 0}
+              onClick={() => setCommunitiesOpen(!communitiesOpen)}
+            >
+              <MenuFoldOutlined aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label={
+                fullscreen
+                  ? copy.library.exitFullscreen
+                  : copy.library.enterFullscreen
+              }
+              title={
+                fullscreen
+                  ? copy.library.exitFullscreen
+                  : copy.library.enterFullscreen
+              }
+              onClick={() => void toggleFullscreen()}
+            >
+              {fullscreen ? (
+                <FullscreenExitOutlined aria-hidden="true" />
+              ) : (
+                <FullscreenOutlined aria-hidden="true" />
+              )}
+            </button>
             <button
               type="button"
               aria-label={copy.library.zoomOut}
@@ -454,6 +427,9 @@ export function KnowledgeGraph({
           </div>
         </div>
 
+        {fullscreenError ? (
+          <p role="status">{copy.library.fullscreenUnavailable}</p>
+        ) : null}
         <div className="tap-graph-canvas" data-dragging={dragging}>
           <svg
             role="group"
@@ -483,6 +459,31 @@ export function KnowledgeGraph({
             </defs>
 
             <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
+              <g className="tap-graph-clusters" aria-hidden="true">
+                {GRAPH_CLUSTERS.filter((cluster) =>
+                  activeCommunities.has(cluster.community),
+                ).map((cluster) => (
+                  <g
+                    key={cluster.community}
+                    style={
+                      {
+                        "--tap-community-color":
+                          COMMUNITY_COLORS[cluster.community],
+                      } as CSSProperties
+                    }
+                  >
+                    <ellipse
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      rx={cluster.community === "testing" ? 310 : 240}
+                      ry="168"
+                    />
+                    <text x={cluster.x - 210} y={cluster.y - 149}>
+                      {communityLabels[cluster.community]}
+                    </text>
+                  </g>
+                ))}
+              </g>
               <g className="tap-graph-edges" aria-hidden="true">
                 {visibleEdges.map((edge, index) => {
                   const source = data.nodes.find(
@@ -493,36 +494,94 @@ export function KnowledgeGraph({
                   )!;
                   const middleX = (source.x + target.x) / 2;
                   const middleY = (source.y + target.y) / 2;
-                  const bend = index % 2 === 0 ? -18 : 18;
+                  const bend = index % 2 === 0 ? -28 : 28;
                   const active =
-                    selectedNodeId === edge.source ||
-                    selectedNodeId === edge.target;
-                  const showLabel = [
-                    "application-health",
-                    "health-underwriting",
-                    "application-beneficiary",
-                  ].includes(edge.id);
+                    focusedNodeId === edge.source ||
+                    focusedNodeId === edge.target;
+                  const showLabel =
+                    (active &&
+                      (source.kind !== "document" ||
+                        focusedNodeId === source.id)) ||
+                    (!focusedNodeId &&
+                      [
+                        "application-health",
+                        "health-underwriting",
+                        "application-beneficiary",
+                        "test-allocation",
+                        "execution-defect",
+                      ].includes(edge.id));
+                  let labelX = middleX;
+                  let labelY = middleY + bend / 2;
+                  const halfWidth = edge.label.length * 4 + 10;
+                  if (showLabel) {
+                    const dx = target.x - source.x,
+                      dy = target.y - source.y;
+                    const length = Math.hypot(dx, dy) || 1;
+                    const candidates = [0, 32, -32, 64, -64, 96, -96].map(
+                      (offset) => ({
+                        x: middleX - (dy / length) * offset,
+                        y: middleY + (dx / length) * offset,
+                      }),
+                    );
+                    const score = (point: { x: number; y: number }) =>
+                      visibleNodes.reduce((count, node) => {
+                        const doc = node.kind === "document";
+                        const overlapsMarker =
+                          Math.abs(point.x - node.x) <
+                            halfWidth + (doc ? 28 : 38) &&
+                          Math.abs(point.y - node.y) < (doc ? 32 : 48);
+                        const overlapsName =
+                          !doc &&
+                          Math.abs(point.x - node.x) <
+                            halfWidth +
+                              Math.min(node.label.length * 4.8, 140) &&
+                          Math.abs(point.y - node.y - 53) < 27;
+                        return count + Number(overlapsMarker || overlapsName);
+                      }, 0) +
+                      edgeLabelBoxes.filter(
+                        (box) =>
+                          Math.abs(box.x - point.x) <
+                            halfWidth + box.width + 8 &&
+                          Math.abs(box.y - point.y) < 32,
+                      ).length;
+                    candidates.sort((a, b) => score(a) - score(b));
+                    labelX = candidates[0]!.x;
+                    labelY = candidates[0]!.y;
+                    edgeLabelBoxes.push({
+                      x: labelX,
+                      y: labelY,
+                      width: halfWidth,
+                    });
+                  }
                   return (
                     <g
                       key={edge.id}
                       className="tap-graph-edge"
                       data-active={active}
+                      data-muted={Boolean(focusedNodeId) && !active}
+                      data-document={source.kind === "document"}
+                      style={
+                        {
+                          "--tap-edge-color":
+                            COMMUNITY_COLORS[target.community],
+                        } as CSSProperties
+                      }
                       data-provenance={edge.provenance}
                     >
                       <path
-                        d={`M ${source.x} ${source.y} Q ${middleX} ${middleY + bend} ${target.x} ${target.y}`}
+                        d={`M ${source.x} ${source.y} Q ${showLabel ? 2 * labelX - middleX : middleX} ${showLabel ? 2 * labelY - middleY : middleY + bend} ${target.x} ${target.y}`}
                       />
                       {showLabel ? (
                         <g
                           className="tap-graph-edge-label"
-                          transform={`translate(${middleX} ${middleY + bend / 2})`}
+                          transform={`translate(${labelX} ${labelY})`}
                         >
                           <rect
-                            x={-(edge.label.length * 3.1 + 8)}
-                            y="-9"
-                            width={edge.label.length * 6.2 + 16}
-                            height="18"
-                            rx="9"
+                            x={-(edge.label.length * 4 + 10)}
+                            y="-12"
+                            width={edge.label.length * 8 + 20}
+                            height="24"
+                            rx="12"
                           />
                           <text textAnchor="middle" dominantBaseline="middle">
                             {edge.label}
@@ -539,15 +598,28 @@ export function KnowledgeGraph({
                   const communityLabel = communityLabels[node.community];
                   const kindLabel = kindLabels[node.kind];
                   const highlighted =
-                    normalizedQuery.length > 0 &&
-                    [node.label, node.secondary, communityLabel, kindLabel]
-                      .filter((value): value is string => value !== undefined)
-                      .some((value) =>
-                        value.toLocaleLowerCase().includes(normalizedQuery),
-                      );
-                  const dimmed = normalizedQuery.length > 0 && !highlighted;
+                    normalizedQuery.length > 0 && matchesQuery(node);
+                  const dimmed =
+                    normalizedQuery.length > 0
+                      ? !highlighted
+                      : Boolean(focusedNodeId) && !neighborhood.has(node.id);
                   const selected = node.id === selectedNodeId;
-                  const radius = 13 + Math.min(node.degree * 2.7, 17);
+                  const document = node.kind === "document";
+                  const radius = document
+                    ? 17
+                    : 21 + Math.min(node.degree * 1.4, 10);
+                  const showName =
+                    !document ||
+                    sources.length <= 5 ||
+                    (node.id.startsWith("source-fwd-") &&
+                      [
+                        "new-business",
+                        "servicing",
+                        "claims",
+                        "codebase",
+                      ].includes(node.community)) ||
+                    highlighted ||
+                    node.id === focusedNodeId;
                   return (
                     <g
                       key={node.id}
@@ -556,7 +628,18 @@ export function KnowledgeGraph({
                       aria-label={`${node.label} · ${kindLabel} · ${communityLabel}`}
                       aria-pressed={selected}
                       className="tap-graph-node"
+                      style={
+                        {
+                          "--tap-community-color":
+                            COMMUNITY_COLORS[node.community],
+                        } as CSSProperties
+                      }
                       data-community={node.community}
+                      data-kind={node.kind}
+                      onMouseEnter={() => setHoveredNodeId(node.id)}
+                      onMouseLeave={() => setHoveredNodeId(null)}
+                      onFocus={() => setHoveredNodeId(node.id)}
+                      onBlur={() => setHoveredNodeId(null)}
                       data-highlighted={highlighted}
                       data-dimmed={dimmed}
                       data-selected={selected}
@@ -572,36 +655,61 @@ export function KnowledgeGraph({
                         cy={node.y}
                         r={radius + 7}
                       />
-                      <circle
-                        className="tap-graph-node-core"
-                        cx={node.x}
-                        cy={node.y}
-                        r={radius}
-                        style={
-                          {
-                            "--tap-community-color":
-                              COMMUNITY_COLORS[node.community],
-                          } as CSSProperties
-                        }
-                      />
-                      <text
-                        className="tap-graph-node-label"
-                        x={node.x}
-                        y={node.y + radius + 17}
-                        textAnchor="middle"
-                      >
-                        {displayLabel(node.label)}
-                      </text>
-                      {node.secondary === undefined ? null : (
-                        <text
-                          className="tap-graph-node-secondary"
-                          x={node.x}
-                          y={node.y + radius + 30}
-                          textAnchor="middle"
-                        >
-                          {node.secondary}
-                        </text>
+                      {document ? (
+                        <g className="tap-graph-document-marker">
+                          <rect
+                            x={node.x - 23}
+                            y={node.y - 16}
+                            width="46"
+                            height="32"
+                            rx="8"
+                          />
+                          <text
+                            x={node.x}
+                            y={node.y + 1}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                          >
+                            {node.secondary}
+                          </text>
+                        </g>
+                      ) : (
+                        <circle
+                          className="tap-graph-node-core"
+                          cx={node.x}
+                          cy={node.y}
+                          r={radius}
+                          style={
+                            {
+                              "--tap-community-color":
+                                COMMUNITY_COLORS[node.community],
+                            } as CSSProperties
+                          }
+                        />
                       )}
+
+                      {showName ? (
+                        <g className="tap-graph-label-group">
+                          {document ? (
+                            <rect
+                              className="tap-graph-file-label-bg"
+                              x={node.x - 133}
+                              y={node.y + radius + 6}
+                              width="266"
+                              height="30"
+                              rx="6"
+                            />
+                          ) : null}
+                          <text
+                            className="tap-graph-node-label"
+                            x={node.x}
+                            y={node.y + radius + 26}
+                            textAnchor="middle"
+                          >
+                            {displayLabel(node.label)}
+                          </text>
+                        </g>
+                      ) : null}
                     </g>
                   );
                 })}
@@ -658,10 +766,27 @@ export function KnowledgeGraph({
 
       <aside
         className="tap-graph-inspector"
+        hidden={selectedNode === null}
         role="region"
         aria-label={copy.library.nodeDetails}
       >
-        <h2>{copy.library.nodeDetails}</h2>
+        <header>
+          <h2>{copy.library.nodeDetails}</h2>
+          <button
+            type="button"
+            aria-label={copy.library.closeNodeDetails}
+            onClick={() => {
+              workspaceRef.current
+                ?.querySelector<SVGElement>(
+                  '.tap-graph-node[data-selected="true"]',
+                )
+                ?.focus();
+              setSelectedNodeId(null);
+            }}
+          >
+            <CloseOutlined aria-hidden="true" />
+          </button>
+        </header>
         {selectedNode === null ? (
           <p className="tap-graph-inspector-empty">{copy.library.selectNode}</p>
         ) : (
@@ -681,6 +806,17 @@ export function KnowledgeGraph({
                 <h3>{selectedNode.label}</h3>
               </div>
             </div>
+            {selectedSource ? (
+              <div className="tap-graph-source-detail">
+                <p>{selectedSource.description}</p>
+                <button
+                  type="button"
+                  onClick={() => onViewSource(selectedSource)}
+                >
+                  {copy.library.viewSource}
+                </button>
+              </div>
+            ) : null}
             <dl>
               <div>
                 <dt>{copy.library.community}</dt>

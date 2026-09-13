@@ -1,0 +1,16 @@
+{
+  "sample": true,
+  "requestId": "sample-request-042",
+  "policyId": "sample-policy-001",
+  "beneficiaries": [
+    {
+      "reference": "sample-person-a",
+      "allocationPercent": 60
+    },
+    {
+      "reference": "sample-person-b",
+      "allocationPercent": 40
+    }
+  ],
+  "expectedStatus": "pending_review"
+}

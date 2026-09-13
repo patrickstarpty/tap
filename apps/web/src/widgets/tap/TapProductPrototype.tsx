@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import {
+  useDocumentListQuery,
   useSourceListQuery,
   useUploadSourceMutation,
   useSourceDetailQuery,
@@ -19,6 +20,13 @@ import {
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat } from "./prototype/TapperChat";
+import { TapperFloatingAssistant } from "./prototype/TapperFloatingAssistant";
+import { ContextualAssistantResponse } from "./prototype/ContextualAssistantResponse";
+import {
+  createFloatingAssistantReply,
+  getFloatingAssistantContext,
+  type FloatingAssistantContext,
+} from "./prototype/floatingAssistantModel";
 import {
   createBlankAutomation,
   createGeneratedAutomation,
@@ -51,6 +59,8 @@ import {
 } from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
+import { FWD_REPRESENTATIVE_SOURCES } from "./prototype/fwdKnowledge";
+import { SAMPLE_FILES } from "./prototype/sampleFiles";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import { AccessibleDialog } from "./prototype/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
@@ -199,6 +209,9 @@ function AssistantResponse({
   onRetryConversation: () => void;
   onGenerateTestPlan?: () => void;
 }) {
+  if (turn.prototypeReply) {
+    return <ContextualAssistantResponse turn={turn} />;
+  }
   if (turn.intent === "answer") {
     if (turn.status === "canceled") {
       return <p role="status">Generation stopped.</p>;
@@ -522,12 +535,14 @@ function nextNumericId(
 
 function ProjectLibraryWorkspace({
   projectId,
+  graphProjectId,
   copy,
   sources,
   loadState,
   onReload,
 }: {
   projectId: string;
+  graphProjectId?: string;
   copy: PrototypeCopy;
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
@@ -561,6 +576,7 @@ function ProjectLibraryWorkspace({
     <>
       <LibraryWorkspace
         projectId={projectId}
+        graphProjectId={graphProjectId}
         copy={copy}
         sources={sources}
         loadState={loadState}
@@ -716,6 +732,7 @@ export function TapProductPrototype({
   const durable = conversationSource === "api";
   const knowledgeClient = useOptionalKnowledgeClient();
   const sourcesQuery = useSourceListQuery(projectId);
+  const documentsQuery = useDocumentListQuery(durable ? null : projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
       ? null
@@ -725,7 +742,11 @@ export function TapProductPrototype({
   );
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    durable && durableTestPlanPath() !== null ? "test-management" : "tapper",
+    durable && durableTestPlanPath() !== null
+      ? "test-management"
+      : initialSnapshot?.library?.open
+        ? "library"
+        : "tapper",
   );
   const lastTapperModule = useRef<ProductModule>("tapper");
   const [isNarrowViewport, setIsNarrowViewport] = useState(
@@ -892,6 +913,12 @@ export function TapProductPrototype({
     activeCitation?.id ?? null,
     activeCitation?.generation ?? 0,
   );
+  const [messageDraft, setMessageDraft] = useState("");
+  const [composerContext, setComposerContext] =
+    useState<FloatingAssistantContext | null>(null);
+  const [localSources, setLocalSources] = useState<
+    readonly Pick<LibrarySource, "id" | "name" | "type">[]
+  >(() => initialSnapshot?.library?.localSources ?? []);
   const nextConversationId = useRef(
     nextNumericId(
       (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
@@ -932,6 +959,13 @@ export function TapProductPrototype({
     ),
   );
   const nextCatalogId = useRef(1);
+  const nextLocalSourceId = useRef(
+    nextNumericId(
+      localSources.map(({ id }) => id),
+      "local-source",
+      0,
+    ),
+  );
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
@@ -1169,8 +1203,21 @@ export function TapProductPrototype({
       activeConversationId,
       conversations,
       artifacts: artifactState,
+      library: {
+        open: activeModule === "library",
+        examplesLoaded: true,
+        fwdLoaded: true,
+        localSources,
+      },
     });
-  }, [activeConversationId, artifactState, conversations, durable]);
+  }, [
+    activeConversationId,
+    artifactState,
+    conversations,
+    activeModule,
+    durable,
+    localSources,
+  ]);
 
   useEffect(
     () => () => {
@@ -1263,11 +1310,69 @@ export function TapProductPrototype({
       sourcesQuery.data?.items,
     ],
   );
-  const sources = sourceItems;
+  const documentSources = useMemo<readonly LibrarySource[]>(
+    () =>
+      (documentsQuery.data?.items ?? []).map((document) => ({
+        id: document.documentId,
+        name: document.filename,
+        origin: "knowledge-base",
+        type: document.filename.split(".").pop()?.toUpperCase() ?? "FILE",
+        status:
+          document.status === "ready"
+            ? "ready"
+            : document.status === "failed"
+              ? "failed"
+              : "processing",
+        description: `${copy.sources.knowledgeSource} · ${
+          document.status === "ready"
+            ? copy.library.ready
+            : document.status === "failed"
+              ? copy.library.failed
+              : copy.library.processing
+        }`,
+      })),
+    [
+      copy.library.failed,
+      copy.library.processing,
+      copy.library.ready,
+      copy.sources.knowledgeSource,
+      documentsQuery.data?.items,
+    ],
+  );
+  const sources = useMemo<readonly LibrarySource[]>(
+    () =>
+      durable
+        ? sourceItems
+        : [
+            ...documentSources,
+            ...SAMPLE_FILES,
+            ...FWD_REPRESENTATIVE_SOURCES,
+            ...localSources.map((source) => ({
+              ...source,
+              origin: "page-local" as const,
+              status: "ready" as const,
+              description: copy.library.localSourceDescription,
+            })),
+          ],
+    [
+      copy.library.localSourceDescription,
+      documentSources,
+      durable,
+      localSources,
+      sourceItems,
+    ],
+  );
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const floatingContext = getFloatingAssistantContext({
+    activeModule,
+    selectedPlanId,
+    automationView,
+    artifacts: artifactState,
+    locale,
+  });
 
   const updateActiveConversation = (
     update: (conversation: Conversation) => Conversation,
@@ -1282,6 +1387,8 @@ export function TapProductPrototype({
   };
 
   const createNewChat = () => {
+    setMessageDraft("");
+    setComposerContext(null);
     const id = durable ? "draft" : `chat-${nextConversationId.current++}`;
     pendingFocusTarget.current = {
       kind: "selector",
@@ -1293,18 +1400,20 @@ export function TapProductPrototype({
         : [...current, createConversation(id)],
     );
     setActiveConversationId(id);
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
 
   const selectConversation = (conversationId: string) => {
+    if (conversationId !== activeConversationId) {
+      setMessageDraft("");
+      setComposerContext(null);
+    }
     pendingFocusTarget.current = {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
     setActiveConversationId(conversationId);
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -1312,8 +1421,8 @@ export function TapProductPrototype({
   const selectModule = (module: ProductModule) => {
     if (module === "tapper") {
       if (isCompactViewport) setSourcesCollapsed(true);
-      setActiveModule(lastTapperModule.current);
-      setSidebarCollapsed(false);
+      setActiveModule("tapper");
+      if (isNarrowViewport) setSidebarCollapsed(true);
       return;
     }
     if (["agents", "skills", "library"].includes(module)) {
@@ -1324,9 +1433,8 @@ export function TapProductPrototype({
           selector: focusTarget,
         };
       }
-      lastTapperModule.current = module;
       setActiveModule(module);
-      setSidebarCollapsed(isNarrowViewport);
+      if (isNarrowViewport) setSidebarCollapsed(true);
       return;
     }
     if (module === "test-management") setSelectedPlanId(null);
@@ -1335,7 +1443,27 @@ export function TapProductPrototype({
     setSidebarCollapsed(true);
   };
 
+  const catalogReferencesFor = (conversation: Conversation) =>
+    [...agents, ...skills]
+      .filter((item) =>
+        (item.kind === "agent"
+          ? conversation.selectedAgentIds
+          : conversation.selectedSkillIds
+        ).includes(item.id),
+      )
+      .map(({ id, kind, name }) => ({ id, kind, name }));
+
   const sendMessage = async (prompt: string): Promise<boolean> => {
+    if (composerContext) {
+      sendFloatingMessage(
+        prompt,
+        composerContext,
+        activeConversationId,
+        locale,
+      );
+      setComposerContext(null);
+      return true;
+    }
     if (
       durable &&
       (knowledgeClient === null ||
@@ -1451,6 +1579,7 @@ export function TapProductPrototype({
         modelId: conversation.modelId,
         prompt,
         sourceReferences,
+        catalogReferences: catalogReferencesFor(conversation),
         automationWorkflow:
           intent === "automation"
             ? {
@@ -1463,6 +1592,56 @@ export function TapProductPrototype({
       }),
     );
     return true;
+  };
+
+  const sendFloatingMessage = (
+    prompt: string,
+    context: FloatingAssistantContext,
+    conversationId: string,
+    turnLocale: Locale,
+  ) => {
+    const turnId = `turn-${nextTurnId.current++}`;
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? appendTurn(conversation, {
+              id: turnId,
+              intent: "answer",
+              locale: turnLocale,
+              modelId: conversation.modelId,
+              prompt,
+              sourceReferences: sources
+                .filter((source) =>
+                  conversation.selectedSourceIds.includes(source.id),
+                )
+                .map(({ id, name, origin }) => ({ id, name, origin })),
+              catalogReferences: catalogReferencesFor(conversation),
+              pageContext: {
+                label: context.label,
+                summary: context.summary,
+                facts: context.facts,
+              },
+              prototypeReply: createFloatingAssistantReply(
+                prompt,
+                context,
+                turnLocale,
+              ),
+            })
+          : conversation,
+      ),
+    );
+    return turnId;
+  };
+
+  const continueFloatingConversation = (context: FloatingAssistantContext) => {
+    setComposerContext(context);
+    pendingFocusTarget.current = {
+      kind: "selector",
+      selector: ".tap-composer textarea",
+    };
+    setActiveModule("tapper");
+    setSidebarCollapsed(isNarrowViewport);
+    if (isCompactViewport) setSourcesCollapsed(true);
   };
 
   const updateAutomationTurn = (
@@ -1701,14 +1880,24 @@ export function TapProductPrototype({
         ? conversation
         : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
     });
-    lastTapperModule.current = "tapper";
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
 
+  const addLocalSource = (file: File) => {
+    setLocalSources((current) => [
+      ...current,
+      {
+        id: `local-source-${nextLocalSourceId.current++}`,
+        name: file.name,
+        type: file.name.split(".").pop()?.toUpperCase() ?? "FILE",
+      },
+    ]);
+  };
+
   return (
     <div
-      className={`tap-product-shell${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
+      className={`tap-product-shell${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
     >
       <ValidationModeBanner
         state={
@@ -1730,7 +1919,9 @@ export function TapProductPrototype({
         onModuleChange={selectModule}
         onNewChat={createNewChat}
         onSelectConversation={selectConversation}
-        onToggleCollapsed={dismissTapperSidebar}
+        onToggleCollapsed={
+          sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
+        }
         historyState={
           durable
             ? {
@@ -1765,18 +1956,6 @@ export function TapProductPrototype({
         aria-hidden={mobileTapperDrawerOpen ? true : undefined}
         inert={mobileTapperDrawerOpen ? true : undefined}
       >
-        {tapperWorkspaceActive && sidebarCollapsed ? (
-          <button
-            type="button"
-            className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--left-expand"
-            aria-controls="tap-tapper-sidebar"
-            aria-expanded="false"
-            aria-label={copy.navigation.expandSidebar}
-            onClick={expandTapperSidebar}
-          >
-            <PanelToggleIcon side="left" state="collapsed" />
-          </button>
-        ) : null}
         <div hidden={activeModule !== "tapper"}>
           <div
             className={`tap-tapper-layout${sourcesCollapsed ? " tap-tapper-layout--sources-collapsed" : ""}`}
@@ -1799,6 +1978,10 @@ export function TapProductPrototype({
               conversation={activeConversation}
               copy={copy}
               isInert={compactSourcesDrawerOpen}
+              message={messageDraft}
+              onMessageChange={setMessageDraft}
+              pageContext={composerContext ?? undefined}
+              onClearPageContext={() => setComposerContext(null)}
               onModelChange={(modelId: CodexModelId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -2001,12 +2184,13 @@ export function TapProductPrototype({
           />
         ) : null}
         {activeModule === "library" ? (
-          projectId === null ? (
+          durable && projectId === null ? (
             <LibraryWorkspace copy={copy} sources={sources} />
-          ) : (
+          ) : durable ? (
             <ProjectLibraryWorkspace
               key={projectId}
               projectId={projectId}
+              graphProjectId={durable ? projectId : undefined}
               copy={copy}
               sources={sources}
               loadState={
@@ -2019,6 +2203,12 @@ export function TapProductPrototype({
               onReload={() => {
                 void sourcesQuery.refetch();
               }}
+            />
+          ) : (
+            <LibraryWorkspace
+              copy={copy}
+              sources={sources}
+              onAddSource={addLocalSource}
             />
           )
         ) : null}
@@ -2104,6 +2294,16 @@ export function TapProductPrototype({
           </span>
         ) : null}
       </main>
+      <TapperFloatingAssistant
+        visible={!tapperWorkspaceActive}
+        context={floatingContext}
+        conversation={activeConversation}
+        draft={messageDraft}
+        locale={locale}
+        onDraftChange={setMessageDraft}
+        onSend={sendFloatingMessage}
+        onContinue={continueFloatingConversation}
+      />
     </div>
   );
 }
