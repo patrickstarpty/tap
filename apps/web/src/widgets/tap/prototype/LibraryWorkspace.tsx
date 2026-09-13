@@ -36,7 +36,6 @@ interface LibraryWorkspaceProps {
   sources: readonly LibrarySource[];
   loadState?: "loading" | "loaded" | "error";
   onReload?: () => void;
-  projectId?: string;
   graphProjectId?: string;
 }
 
@@ -84,7 +83,6 @@ export function LibraryWorkspace({
   sources,
   loadState = "loaded",
   onReload,
-  projectId,
   graphProjectId,
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);

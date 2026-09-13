@@ -274,14 +274,12 @@ export function PrototypeSidebar({
           <ConversationHistory
             activeId={activeConversationId}
             ariaLabel={copy.navigation.chatHistory}
-            conversations={conversationHistory.map(
-              ({ conversation, index }) => ({
-                conversationId: conversation.id,
-                title: getConversationLabel(conversation),
-                createdAt: "1970-01-01T00:00:00Z",
-                updatedAt: "1970-01-01T00:00:00Z",
-              }),
-            )}
+            conversations={conversationHistory.map(({ conversation }) => ({
+              conversationId: conversation.id,
+              title: getConversationLabel(conversation),
+              createdAt: "1970-01-01T00:00:00Z",
+              updatedAt: "1970-01-01T00:00:00Z",
+            }))}
             error={historyState?.error}
             hasMore={historyState?.hasMore}
             icon={<MessageOutlined aria-hidden="true" />}

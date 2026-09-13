@@ -158,17 +158,19 @@ test("Tapper durable state survives the selected restart boundary", async ({
   await expect(
     transcript.getByText(conversationState.prompt, { exact: true }),
   ).toBeVisible();
-  await expect(
-    transcript
-      .getByText(conversationState.sourceLabel, { exact: true })
-      .first(),
-  ).toBeVisible();
-  await expect(
-    transcript.getByText(conversationState.agentLabel, { exact: true }).first(),
-  ).toBeVisible();
-  await expect(
-    transcript.getByText(conversationState.skillLabel, { exact: true }).first(),
-  ).toBeVisible();
+  const persistedContext = [
+    conversationState.sourceLabel,
+    conversationState.agentLabel,
+    conversationState.skillLabel,
+  ];
+  const selectedContext = transcript.getByRole("list", {
+    name: "Selected context",
+  });
+  for (const label of persistedContext) {
+    const item = selectedContext.getByText(label, { exact: true }).first();
+    await item.scrollIntoViewIfNeeded();
+    await expect(item).toBeVisible();
+  }
   await expect(
     page.getByRole("button", {
       name: /Select model, current model GPT-5\.6 Sol/u,

@@ -89,8 +89,8 @@ test("ready knowledge is published as a bounded grounded graph", async ({
   await page.getByRole("textbox", { name: "Search library" }).fill(filename);
   await expect(
     page
-      .getByLabel("All", { exact: true })
-      .getByText(filename, { exact: true }),
+      .getByRole("tabpanel", { name: /Documents|文档列表/u })
+      .getByRole("button", { name: `View ${filename}`, exact: true }),
   ).toBeVisible();
   const activeGraphResponse = page.waitForResponse(
     (response) =>
@@ -122,7 +122,9 @@ test("ready knowledge is published as a bounded grounded graph", async ({
     await page.reload();
     await page.getByRole("button", { name: /Library|知识库/u }).click();
     await expect(
-      page.getByLabel("All", { exact: true }).getByText(filename),
+      page
+        .getByRole("tabpanel", { name: /Documents|文档列表/u })
+        .getByRole("button", { name: `View ${filename}`, exact: true }),
     ).toBeVisible();
     await page.getByRole("tab", { name: /Graph|图谱/u }).click();
     await expect(page.getByRole("alert")).toContainText(

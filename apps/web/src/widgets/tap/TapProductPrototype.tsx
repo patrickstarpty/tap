@@ -575,7 +575,6 @@ function ProjectLibraryWorkspace({
   return (
     <>
       <LibraryWorkspace
-        projectId={projectId}
         graphProjectId={graphProjectId}
         copy={copy}
         sources={sources}
@@ -748,7 +747,6 @@ export function TapProductPrototype({
         ? "library"
         : "tapper",
   );
-  const lastTapperModule = useRef<ProductModule>("tapper");
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -2184,13 +2182,11 @@ export function TapProductPrototype({
           />
         ) : null}
         {activeModule === "library" ? (
-          durable && projectId === null ? (
-            <LibraryWorkspace copy={copy} sources={sources} />
-          ) : durable ? (
+          durable && projectId !== null ? (
             <ProjectLibraryWorkspace
               key={projectId}
               projectId={projectId}
-              graphProjectId={durable ? projectId : undefined}
+              graphProjectId={projectId}
               copy={copy}
               sources={sources}
               loadState={
@@ -2204,6 +2200,8 @@ export function TapProductPrototype({
                 void sourcesQuery.refetch();
               }}
             />
+          ) : durable ? (
+            <LibraryWorkspace copy={copy} sources={sources} />
           ) : (
             <LibraryWorkspace
               copy={copy}

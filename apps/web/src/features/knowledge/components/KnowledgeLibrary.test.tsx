@@ -205,7 +205,7 @@ describe("KnowledgeLibrary", () => {
 
   it("aborts an in-flight upload when the library unmounts", async () => {
     const user = userEvent.setup();
-    const api = fakeKnowledgeClient();
+    const api = fakeKnowledgeClient().deferUpload();
     const { unmount } = renderKnowledgeApp(<KnowledgeLibrary />, { api });
     await user.click(await screen.findByRole("button", { name: "添加来源" }));
     await user.upload(screen.getByLabelText("选择文档"), markdownFile());
