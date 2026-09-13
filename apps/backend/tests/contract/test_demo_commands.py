@@ -396,6 +396,13 @@ def test_e2e_manifest_registers_grounded_graph_journey():
     assert source.count("test(") > 0
 
 
+def test_e2e_manifest_registers_test_plan_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/tapper-test-plan.spec.ts" in manifest["journey"]
+    source = (ROOT / "apps/web/tests/e2e/tapper-test-plan.spec.ts").read_text(encoding="utf-8")
+    assert source.count("test(") > 0
+
+
 def _load_yaml_as_json(path: Path) -> dict[str, object]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)
@@ -508,6 +515,7 @@ case " $* " in
   *" tap.entrypoints.relay_reconciler "*) exec tapper-child relay ;;
   *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
   *" tap.entrypoints.tapper_graph_worker "*) exec tapper-child graph ;;
+  *" tap.entrypoints.tapper_test_design_worker "*) exec tapper-child test-design ;;
   *" tap.entrypoints.tapper_generation_worker "*) exec tapper-child generation ;;
 esac
 exit 99
@@ -2707,6 +2715,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "relay",
         "worker",
         "graph",
+        "test-design",
         "generation",
         "web",
     }
@@ -2715,6 +2724,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "relay",
         "worker",
         "graph",
+        "test-design",
         "generation",
         "web",
     }
@@ -2760,7 +2770,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 7
+    assert len(_started_child_pids(log)) == 8
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2781,14 +2791,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 7 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 8 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all seven children")
+        raise AssertionError("supervisor did not start all eight children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2811,6 +2821,7 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         "relay",
         "worker",
         "graph",
+        "test-design",
         "generation",
         "web",
     }
@@ -2872,6 +2883,7 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "relay",
         "worker",
         "graph",
+        "test-design",
         "generation",
         "web",
         "validation",
@@ -2939,6 +2951,7 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "TAP_REDIS_URL",
         "AZURE_STORAGE_CONNECTION_STRING",
     } <= environment_names["graph"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["test-design"]
     assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["generation"]
     output = stdout + stderr + log.read_text(encoding="utf-8")
     assert "caller-" not in output
@@ -2969,7 +2982,7 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     # Start the shortened readiness window only after the stubs can record TERM.
     # This barrier is bounded separately and remains inside the 10-second cap.
     stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
-while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 6 ]; do
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 7 ]; do
   [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
   sleep 0.05
 done
@@ -3004,6 +3017,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
         "relay",
         "worker",
         "graph",
+        "test-design",
         "generation",
         "web",
     }

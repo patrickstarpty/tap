@@ -31,15 +31,25 @@ def _ordered(values: list[int], name: str) -> None:
         raise ValueError(f"{name} ordinals must be contiguous")
 
 
+def validate_draft_structure(revision: TestPlanRevision) -> str:
+    return _validate(revision, require_citations=False)
+
+
 def validate_publishable(revision: TestPlanRevision) -> str:
+    return _validate(revision, require_citations=True)
+
+
+def _validate(revision: TestPlanRevision, *, require_citations: bool) -> str:
     if revision.status not in {RevisionStatus.DRAFT, RevisionStatus.VALIDATING}:
         raise RevisionImmutable("published and superseded revisions are immutable")
     if revision.content_digest != revision.compute_content_digest():
         raise ValueError("test plan content digest is stale")
     if not revision.scope_items or not revision.prerequisites or not revision.risks:
         raise ValueError("objective, scope, prerequisites, and risks are required")
-    if not revision.cases or not revision.citations:
-        raise ValueError("test cases and grounded citations are required")
+    if not revision.cases:
+        raise ValueError("test cases are required")
+    if require_citations and not revision.citations:
+        raise ValueError("grounded citations are required")
 
     case_ids = [item.case_id for item in revision.cases]
     _unique(case_ids, "test case")

@@ -98,6 +98,11 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
         and getattr(services.conversations, "scope", None) != services.scope
     ):
         raise AuthorizationDenied("scope-mismatch")
+    if (
+        services.test_plans is not None
+        and getattr(services.test_plans, "scope", None) != services.scope
+    ):
+        raise AuthorizationDenied("scope-mismatch")
     scope = await services.scope_provider.current(RequestFacts(project_id=project_id))
     if not isinstance(scope, ProjectScopeContext) or scope != services.scope:
         raise AuthorizationDenied("scope-mismatch")
@@ -121,7 +126,13 @@ def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
             ResourceRef(
                 enterprise_id=scope.enterprise_id,
                 project_id=scope.project_id,
-                kind=("ai" if action.startswith("ai.") else "knowledge"),
+                kind=(
+                    "ai"
+                    if action.startswith("ai.")
+                    else "test-plan"
+                    if action.startswith("test-plans.")
+                    else "knowledge"
+                ),
             ),
         )
         request.state.project_scope = scope

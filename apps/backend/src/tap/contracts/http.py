@@ -860,3 +860,110 @@ class GraphPathRequest(ContractModel):
     source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class TestPlanGenerationRequestBody(ContractModel):
+    conversation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    turn_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    input_snapshot_digest: CanonicalSha256
+    answer_evidence_snapshot_digest: CanonicalSha256
+    model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    skill_revision_ids: Annotated[list[str], Field(min_length=1, max_length=16)]
+    objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+
+
+class TestPlanGenerationAccepted(ContractModel):
+    job_id: str
+    test_plan_id: str
+    revision_id: str
+    status: Literal["PENDING", "RUNNING", "DRAFT_READY", "FAILED"]
+    deep_link: str
+
+
+class TestPlanStepView(ContractModel):
+    step_id: str
+    ordinal: StrictInt
+    keyword: Literal["Given", "When", "Then", "And", "But"]
+    text: str
+    expected_result: str | None = None
+    critical: bool
+
+
+class TestPlanScenarioView(ContractModel):
+    scenario_id: str
+    ordinal: StrictInt
+    title: str
+    steps: list[TestPlanStepView]
+
+
+class TestPlanCaseView(ContractModel):
+    case_id: str
+    ordinal: StrictInt
+    title: str
+    objective: str
+    critical: bool
+    scenarios: list[TestPlanScenarioView]
+
+
+class TestPlanCitationView(ContractModel):
+    citation_id: str
+    source_revision_id: str
+    document_revision_id: str
+    chunk_id: str
+    content_digest: CanonicalSha256
+    claim_text: str
+    origin: Literal["SOURCE", "GRAPH_EXTRACTED"]
+
+
+class TestPlanTextFactView(ContractModel):
+    fact_id: str
+    text: str
+    graph_edge_id: str | None = None
+
+
+class TestPlanCoverageGapView(ContractModel):
+    gap_id: str
+    requirement_ref: str
+    reason: str
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
+class TestPlanRevisionView(ContractModel):
+    test_plan_id: str
+    revision_id: str
+    version: StrictInt
+    row_version: StrictInt
+    title: str
+    objective: str
+    scope_items: list[str]
+    prerequisites: list[str]
+    risks: list[str]
+    status: Literal["DRAFT", "VALIDATING", "PUBLISHED", "SUPERSEDED"]
+    origin: Literal["VALIDATION", "PRODUCT"]
+    adopted_from_revision_id: str | None = None
+    content_digest: CanonicalSha256
+    validation_digest: CanonicalSha256 | None = None
+    cases: list[TestPlanCaseView]
+    citations: list[TestPlanCitationView]
+    assumptions: list[TestPlanTextFactView]
+    unknowns: list[TestPlanTextFactView]
+    coverage_gaps: list[TestPlanCoverageGapView]
+    deep_link: str
+
+
+class TestPlanRevisionPage(ContractModel):
+    items: list[TestPlanRevisionView]
+
+
+class TestPlanRevisionUpdate(ContractModel):
+    title: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+    scope_items: list[str]
+    prerequisites: list[str]
+    risks: list[str]
+    cases: list[TestPlanCaseView]
+    citations: list[TestPlanCitationView]
+    assumptions: list[TestPlanTextFactView]
+    unknowns: list[TestPlanTextFactView]
+    coverage_gaps: list[TestPlanCoverageGapView]

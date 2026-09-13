@@ -98,8 +98,12 @@ async def test_generation_job_binds_exact_completed_turn_snapshots_and_replays(
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
         request = _request()
 
-        first = await repository.request_generation(request, now=datetime(2026, 9, 13, 12, 1))
-        replay = await repository.request_generation(request, now=datetime(2026, 9, 13, 12, 2))
+        first = await repository.request_generation(
+            VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 12, 1)
+        )
+        replay = await repository.request_generation(
+            VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 12, 2)
+        )
 
         assert replay == first
         assert first.request == request
@@ -146,7 +150,9 @@ async def test_generation_job_rejects_tampered_or_cross_turn_snapshots(
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
         with pytest.raises(ValueError, match="snapshot|Turn"):
             await repository.request_generation(
-                _request(**changes), now=datetime(2026, 9, 13, 12, 1)
+                VALIDATION_SCOPE,
+                _request(**changes),
+                now=datetime(2026, 9, 13, 12, 1),
             )
     finally:
         await engine.dispose()

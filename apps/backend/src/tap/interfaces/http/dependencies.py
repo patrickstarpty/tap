@@ -33,6 +33,7 @@ from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.modules.test_management.application.plans import TestPlanApplication
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,7 @@ class HttpServices:
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
     graph: GraphStorePort | None = None
+    test_plans: TestPlanApplication | None = None
 
 
 class GraphUnavailable(Exception):
@@ -149,6 +151,14 @@ def graph_service(request: Request) -> GraphStorePort:
     service = services.graph if isinstance(services, HttpServices) else None
     if service is None:
         raise GraphUnavailable
+    return service
+
+
+def test_plan_service(request: Request) -> TestPlanApplication:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.test_plans if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
     return service
 
 

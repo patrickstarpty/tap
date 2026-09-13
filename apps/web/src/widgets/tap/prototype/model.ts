@@ -54,6 +54,10 @@ export interface AssistantTurn {
   error?: string | null;
   evidenceStatus?: "loading" | "ready" | "missing" | "error";
   contextLabels?: readonly string[];
+  inputSnapshotDigest?: string;
+  answerEvidenceSnapshotDigest?: string | null;
+  agentRevisionId?: string | null;
+  skillRevisionIds?: readonly string[];
   automationSteps?: readonly AutomationStepSnapshot[];
   automationWorkflow?: {
     stage:

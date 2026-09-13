@@ -49,6 +49,7 @@ from tap.modules.knowledge.ports.errors import (
     SearchBoundsExceeded,
     SearchUnavailable,
 )
+from tap.modules.test_management.domain.validation import RevisionConflict, RevisionImmutable
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 
@@ -141,6 +142,13 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: GraphFactNotFound
     ) -> JSONResponse:
         return problem_response("graph-fact-not-found", request)
+
+    @app.exception_handler(RevisionConflict)
+    @app.exception_handler(RevisionImmutable)
+    async def test_plan_revision_conflict(
+        request: Request, _error: RevisionConflict | RevisionImmutable
+    ) -> JSONResponse:
+        return problem_response("revision-conflict", request)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_problem(

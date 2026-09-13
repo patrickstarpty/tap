@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -14,8 +16,11 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    delete,
     insert,
+    or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.mysql import DATETIME, JSON
@@ -27,6 +32,7 @@ from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import (
     conversation,
     turn_answer_evidence_snapshot,
+    turn_artifact_link,
     turn_input_snapshot,
 )
 from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
@@ -55,6 +61,10 @@ from tap.modules.test_management.domain.models import (
     TestScenario,
 )
 from tap.modules.test_management.domain.validation import RevisionConflict, RevisionImmutable
+from tap.modules.test_management.ports.generation import (
+    ClaimedTestDesignJob,
+    TestDesignContext,
+)
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -356,6 +366,88 @@ class MysqlTestPlanRepository:
             raise LookupError("test plan revision not found")
         return revision
 
+    async def replace_draft(
+        self,
+        scope: ProjectScopeContext,
+        revision: TestPlanRevision,
+        expected_version: int,
+        *,
+        now: datetime,
+    ) -> TestPlanRevision:
+        scope = self._matching_scope(scope)
+        if revision.status is not RevisionStatus.DRAFT:
+            raise RevisionImmutable("only Draft revisions can be edited")
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_revision)
+                        .where(
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.revision_id == revision.revision_id,
+                            test_plan_revision.c.test_plan_id == revision.test_plan_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("test plan revision not found")
+            if row["status"] != RevisionStatus.DRAFT.value:
+                raise RevisionImmutable("published and superseded revisions are immutable")
+            if row["row_version"] != expected_version:
+                raise RevisionConflict("revision version changed")
+            if revision.version != row["version"] or revision.origin.value != row["origin"]:
+                raise RevisionConflict("revision identity cannot be edited")
+            for table in (
+                test_plan_step,
+                test_scenario,
+                test_case,
+                test_plan_citation,
+                test_plan_assumption,
+                test_plan_unknown,
+                test_plan_coverage_gap,
+            ):
+                await session.execute(
+                    delete(table).where(
+                        *scope_predicates(table, scope),
+                        table.c.revision_id == revision.revision_id,
+                    )
+                )
+            result = await session.execute(
+                update(test_plan_revision)
+                .where(
+                    *scope_predicates(test_plan_revision, scope),
+                    test_plan_revision.c.revision_id == revision.revision_id,
+                    test_plan_revision.c.row_version == expected_version,
+                )
+                .values(
+                    title=revision.title,
+                    objective=revision.objective,
+                    scope_items=list(revision.scope_items),
+                    prerequisites=list(revision.prerequisites),
+                    risks=list(revision.risks),
+                    content_digest=revision.content_digest,
+                    row_version=expected_version + 1,
+                )
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("revision version changed")
+            await self._insert_revision_children(session, revision)
+            await session.execute(
+                update(test_plan)
+                .where(
+                    *scope_predicates(test_plan, scope),
+                    test_plan.c.test_plan_id == revision.test_plan_id,
+                )
+                .values(title=revision.title, updated_at=_naive(now))
+            )
+            updated = await self._load_revision(session, revision.revision_id)
+            assert updated is not None
+            return updated
+
     async def publish_revision(
         self,
         scope: ProjectScopeContext,
@@ -472,8 +564,13 @@ class MysqlTestPlanRepository:
             return published
 
     async def request_generation(
-        self, request: TestPlanGenerationRequest, *, now: datetime
+        self,
+        scope: ProjectScopeContext,
+        request: TestPlanGenerationRequest,
+        *,
+        now: datetime,
     ) -> TestPlanGenerationJob:
+        scope = self._matching_scope(scope)
         if request.project_id != self.scope.project_id:
             raise ValueError("generation request is outside Project scope")
         async with self._sessions() as session, session.begin():
@@ -507,6 +604,7 @@ class MysqlTestPlanRepository:
                                 "answer_input_digest"
                             ),
                         )
+                        .select_from(chat_turn)
                         .join(
                             conversation,
                             (conversation.c.project_id == chat_turn.c.project_id)
@@ -626,6 +724,359 @@ class MysqlTestPlanRepository:
             )
             return job
 
+    async def list_revisions(
+        self, scope: ProjectScopeContext, *, limit: int = 50
+    ) -> tuple[TestPlanRevision, ...]:
+        scope = self._matching_scope(scope)
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("test plan list limit must be between 1 and 50")
+        async with self._sessions() as session:
+            revision_ids = tuple(
+                (
+                    await session.scalars(
+                        select(test_plan_revision.c.revision_id)
+                        .where(*scope_predicates(test_plan_revision, scope))
+                        .order_by(test_plan_revision.c.created_at.desc())
+                        .limit(limit)
+                    )
+                ).all()
+            )
+            revisions = []
+            for revision_id in revision_ids:
+                revision = await self._load_revision(session, revision_id)
+                assert revision is not None
+                revisions.append(revision)
+        return tuple(revisions)
+
+    async def get_generation_job(
+        self, scope: ProjectScopeContext, job_id: str
+    ) -> TestPlanGenerationJob:
+        scope = self._matching_scope(scope)
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_generation_job).where(
+                            *scope_predicates(test_plan_generation_job, scope),
+                            test_plan_generation_job.c.job_id == job_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            raise LookupError("test design generation job not found")
+        return self._job(row)
+
+    async def is_authorized(self, scope: ProjectScopeContext, citation: TestPlanCitation) -> bool:
+        scope = self._matching_scope(scope)
+        async with self._sessions() as session:
+            row = await session.scalar(
+                text(
+                    "SELECT 1 FROM knowledge_citation_snapshot "
+                    "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
+                    "AND revision_id=:revision_id AND chunk_id=:chunk_id "
+                    "AND chunk_content_hash=:content_digest LIMIT 1"
+                ),
+                {
+                    "enterprise_id": scope.enterprise_id,
+                    "project_id": scope.project_id,
+                    "revision_id": citation.document_revision_id,
+                    "chunk_id": citation.chunk_id,
+                    "content_digest": citation.content_digest,
+                },
+            )
+        return row == 1
+
+    async def claim_generation_jobs(
+        self,
+        scope: ProjectScopeContext,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> tuple[ClaimedTestDesignJob, ...]:
+        scope = self._matching_scope(scope)
+        if not worker_id or not timedelta(0) < lease_duration <= timedelta(minutes=15):
+            raise ValueError("test design worker lease is invalid")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("test design claim limit must be between 1 and 50")
+        claims: list[ClaimedTestDesignJob] = []
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            rows = (
+                (
+                    await session.execute(
+                        select(test_plan_generation_job)
+                        .where(
+                            *scope_predicates(test_plan_generation_job, scope),
+                            or_(
+                                test_plan_generation_job.c.status
+                                == GenerationJobStatus.PENDING.value,
+                                (
+                                    test_plan_generation_job.c.status
+                                    == GenerationJobStatus.RUNNING.value
+                                )
+                                & (test_plan_generation_job.c.lease_expires_at < instant),
+                            ),
+                        )
+                        .order_by(test_plan_generation_job.c.created_at)
+                        .limit(limit)
+                        .with_for_update(skip_locked=True)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            for row in rows:
+                token = uuid4().hex
+                await session.execute(
+                    update(test_plan_generation_job)
+                    .where(
+                        *scope_predicates(test_plan_generation_job, scope),
+                        test_plan_generation_job.c.job_id == row["job_id"],
+                    )
+                    .values(
+                        status=GenerationJobStatus.RUNNING.value,
+                        lease_owner=worker_id,
+                        lease_token=token,
+                        lease_expires_at=instant + lease_duration,
+                        attempt_count=test_plan_generation_job.c.attempt_count + 1,
+                        updated_at=instant,
+                    )
+                )
+                claimed = dict(row)
+                claimed.update(
+                    status=GenerationJobStatus.RUNNING.value,
+                    lease_owner=worker_id,
+                    lease_token=token,
+                    lease_expires_at=instant + lease_duration,
+                    attempt_count=row["attempt_count"] + 1,
+                    updated_at=instant,
+                )
+                claims.append(ClaimedTestDesignJob(self._job(claimed), token))
+        return tuple(claims)
+
+    async def generation_context(
+        self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
+    ) -> TestDesignContext:
+        scope = self._matching_scope(scope)
+        request = claim.job.request
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(
+                            test_plan_generation_job.c.status,
+                            test_plan_generation_job.c.lease_token,
+                            turn_input_snapshot.c.snapshot.label("input_snapshot"),
+                            turn_answer_evidence_snapshot.c.snapshot.label("answer_snapshot"),
+                        )
+                        .select_from(test_plan_generation_job)
+                        .join(
+                            turn_input_snapshot,
+                            (
+                                turn_input_snapshot.c.project_id
+                                == test_plan_generation_job.c.project_id
+                            )
+                            & (turn_input_snapshot.c.turn_id == test_plan_generation_job.c.turn_id),
+                        )
+                        .join(
+                            turn_answer_evidence_snapshot,
+                            (
+                                turn_answer_evidence_snapshot.c.project_id
+                                == test_plan_generation_job.c.project_id
+                            )
+                            & (
+                                turn_answer_evidence_snapshot.c.turn_id
+                                == test_plan_generation_job.c.turn_id
+                            ),
+                        )
+                        .where(
+                            *scope_predicates(test_plan_generation_job, scope),
+                            test_plan_generation_job.c.job_id == request.job_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if (
+            row is None
+            or row["status"] != GenerationJobStatus.RUNNING.value
+            or row["lease_token"] != claim.lease_token
+        ):
+            raise RevisionConflict("test design worker lease was lost")
+        answer_snapshot = dict(row["answer_snapshot"])
+        citation_ids = tuple(
+            item.get("citation_snapshot_id")
+            for item in answer_snapshot.get("citations", [])
+            if isinstance(item, dict) and isinstance(item.get("citation_snapshot_id"), str)
+        )
+        authorized_evidence: list[dict[str, object]] = []
+        if citation_ids:
+            async with self._sessions() as session:
+                for citation_id in citation_ids:
+                    evidence = (
+                        (
+                            await session.execute(
+                                text(
+                                    "SELECT source_id,revision_id,chunk_id,chunk_content_hash "
+                                    "FROM knowledge_citation_snapshot "
+                                    "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
+                                    "AND citation_id=:citation_id"
+                                ),
+                                {
+                                    "enterprise_id": scope.enterprise_id,
+                                    "project_id": scope.project_id,
+                                    "citation_id": citation_id,
+                                },
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+                    if evidence is not None:
+                        authorized_evidence.append(
+                            {
+                                "citationSnapshotId": citation_id,
+                                "sourceRevisionId": evidence["revision_id"],
+                                "documentRevisionId": evidence["revision_id"],
+                                "chunkId": evidence["chunk_id"],
+                                "contentDigest": evidence["chunk_content_hash"],
+                            }
+                        )
+        answer_snapshot["authorizedEvidence"] = authorized_evidence
+        return TestDesignContext(
+            scope,
+            request,
+            row["input_snapshot"],
+            answer_snapshot,
+        )
+
+    async def complete_generation(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        revision: TestPlanRevision,
+        *,
+        now: datetime,
+    ) -> TestPlanRevision:
+        scope = self._matching_scope(scope)
+        request = claim.job.request
+        if (
+            revision.status is not RevisionStatus.DRAFT
+            or revision.revision_id != request.revision_id
+            or revision.test_plan_id != request.test_plan_id
+        ):
+            raise ValueError("generated draft identity or state is invalid")
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            job = (
+                (
+                    await session.execute(
+                        select(test_plan_generation_job)
+                        .where(
+                            *scope_predicates(test_plan_generation_job, scope),
+                            test_plan_generation_job.c.job_id == request.job_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                job is None
+                or job["status"] != GenerationJobStatus.RUNNING.value
+                or job["lease_token"] != claim.lease_token
+            ):
+                raise RevisionConflict("test design worker lease was lost")
+            if await self._load_revision(session, revision.revision_id) is not None:
+                raise RevisionConflict("generated revision already exists")
+            await session.execute(
+                insert(test_plan).values(
+                    **scope_values(scope),
+                    test_plan_id=revision.test_plan_id,
+                    title=revision.title,
+                    active_published_revision_id=None,
+                    created_at=instant,
+                    updated_at=instant,
+                )
+            )
+            await self._insert_revision(session, revision, now=instant)
+            link_material = f"{scope.project_id}:{request.turn_id}:{revision.test_plan_id}"
+            link_id = "tpl_" + hashlib.sha256(link_material.encode()).hexdigest()[:32]
+            await session.execute(
+                insert(turn_artifact_link).values(
+                    **scope_values(scope),
+                    link_id=link_id,
+                    turn_id=request.turn_id,
+                    artifact_kind="test-plan",
+                    artifact_id=revision.test_plan_id,
+                    artifact_digest=revision.content_digest,
+                    created_at=instant,
+                )
+            )
+            result = await session.execute(
+                update(test_plan_generation_job)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.job_id == request.job_id,
+                    test_plan_generation_job.c.lease_token == claim.lease_token,
+                )
+                .values(
+                    status=GenerationJobStatus.DRAFT_READY.value,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    updated_at=instant,
+                )
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("test design worker lease was lost")
+        return replace(revision, created_at=instant)
+
+    async def fail_generation(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        failure_code: str,
+        now: datetime,
+    ) -> None:
+        scope = self._matching_scope(scope)
+        if not failure_code or len(failure_code) > 64:
+            raise ValueError("test design failure code is invalid")
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(test_plan_generation_job)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.job_id == claim.job.request.job_id,
+                    test_plan_generation_job.c.status == GenerationJobStatus.RUNNING.value,
+                    test_plan_generation_job.c.lease_token == claim.lease_token,
+                )
+                .values(
+                    status=GenerationJobStatus.FAILED.value,
+                    failure_code=failure_code,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    updated_at=_naive(now),
+                )
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("test design worker lease was lost")
+
+    def _matching_scope(self, scope: ProjectScopeContext) -> ProjectScopeContext:
+        scope = require_project_scope(scope)
+        if scope != self.scope:
+            raise ValueError("repository is bound to a different Project")
+        return scope
+
     async def _insert_revision(
         self, session: AsyncSession, revision: TestPlanRevision, *, now: datetime
     ) -> None:
@@ -651,6 +1102,12 @@ class MysqlTestPlanRepository:
                 published_at=revision.published_at,
             )
         )
+        await self._insert_revision_children(session, revision)
+
+    async def _insert_revision_children(
+        self, session: AsyncSession, revision: TestPlanRevision
+    ) -> None:
+        values = scope_values(self.scope)
         for case in revision.cases:
             await session.execute(
                 insert(test_case).values(

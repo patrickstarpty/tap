@@ -26,6 +26,9 @@ _VALIDATION_ACTIONS = frozenset(
         ("ai.agents.read", "ai"),
         ("ai.models.read", "ai"),
         ("ai.skills.read", "ai"),
+        ("test-plans.read", "test-plan"),
+        ("test-plans.write", "test-plan"),
+        ("test-plans.publish", "test-plan"),
     }
 )
 

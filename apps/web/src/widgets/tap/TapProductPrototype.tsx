@@ -90,6 +90,9 @@ import {
 import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
 import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
 import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
+import { createTestPlanClient } from "../../features/testManagement/api/client";
+import { TestPlanLibrary } from "../../features/testManagement/components/TestPlanLibrary";
+import { TestPlanReview } from "../../features/testManagement/components/TestPlanReview";
 import "./TapProductPrototype.css";
 
 function BddPreview({ copy }: { copy: PrototypeCopy }) {
@@ -122,6 +125,19 @@ function BddPreview({ copy }: { copy: PrototypeCopy }) {
       </code>
     </pre>
   );
+}
+
+function durableTestPlanPath(): { planId: string; revisionId: string } | null {
+  if (typeof window === "undefined") return null;
+  const match = /^\/test-management\/([^/]+)\/revisions\/([^/]+)\/?$/u.exec(
+    window.location.pathname,
+  );
+  return match === null
+    ? null
+    : {
+        planId: decodeURIComponent(match[1]!),
+        revisionId: decodeURIComponent(match[2]!),
+      };
 }
 
 function TurnContext({
@@ -167,6 +183,7 @@ function AssistantResponse({
   onOpenAutomation,
   onOpenCitation,
   onRetryConversation,
+  onGenerateTestPlan,
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
@@ -180,6 +197,7 @@ function AssistantResponse({
   onOpenAutomation: () => void;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   onRetryConversation: () => void;
+  onGenerateTestPlan?: () => void;
 }) {
   if (turn.intent === "answer") {
     if (turn.status === "canceled") {
@@ -203,6 +221,13 @@ function AssistantResponse({
             onOpenCitation={onOpenCitation}
           />
           <TurnContext copy={contentCopy} turn={turn} />
+          {onGenerateTestPlan === undefined ? null : (
+            <div className="tap-artifact-actions">
+              <Button type="primary" onClick={onGenerateTestPlan}>
+                生成测试计划草稿
+              </Button>
+            </div>
+          )}
         </>
       );
     }
@@ -699,7 +724,9 @@ export function TapProductPrototype({
         : loadPrototypeSnapshot(window.localStorage),
   );
   const [locale, setLocale] = useState<Locale>("en");
-  const [activeModule, setActiveModule] = useState<ProductModule>("tapper");
+  const [activeModule, setActiveModule] = useState<ProductModule>(() =>
+    durable && durableTestPlanPath() !== null ? "test-management" : "tapper",
+  );
   const lastTapperModule = useRef<ProductModule>("tapper");
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
@@ -839,6 +866,10 @@ export function TapProductPrototype({
     { kind: "library" },
   );
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
+    planId: string;
+    revisionId: string;
+  } | null>(() => (durable ? durableTestPlanPath() : null));
   const [agents, setAgents] = useState<readonly CatalogItem[]>(() =>
     durable ? [] : BUILT_IN_AGENTS,
   );
@@ -1036,6 +1067,10 @@ export function TapProductPrototype({
           ...(turn.input.agentLabel == null ? [] : [turn.input.agentLabel]),
           ...(turn.input.skillLabels ?? []),
         ].filter((label): label is string => typeof label === "string"),
+        inputSnapshotDigest: turn.inputSnapshotDigest,
+        answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
+        agentRevisionId: turn.input.agentRevisionId,
+        skillRevisionIds: turn.input.skillRevisionIds,
       };
     });
     setConversations((current) =>
@@ -1853,6 +1888,39 @@ export function TapProductPrototype({
                     void conversationEvents.refetch();
                     void conversationDetail.refetch();
                   }}
+                  onGenerateTestPlan={
+                    durable &&
+                    projectId !== null &&
+                    turn.status === "completed" &&
+                    turn.answerEvidenceSnapshotDigest != null &&
+                    turn.inputSnapshotDigest !== undefined &&
+                    turn.agentRevisionId != null &&
+                    (turn.skillRevisionIds?.length ?? 0) > 0
+                      ? () => {
+                          const api = createTestPlanClient(projectId);
+                          void api
+                            .generate(
+                              {
+                                conversationId: activeConversation.id,
+                                turnId: turn.id,
+                                inputSnapshotDigest: turn.inputSnapshotDigest!,
+                                answerEvidenceSnapshotDigest:
+                                  turn.answerEvidenceSnapshotDigest!,
+                                modelAlias: turn.modelId,
+                                agentRevisionId: turn.agentRevisionId!,
+                                skillRevisionIds: [...turn.skillRevisionIds!],
+                                objective: `为“${turn.prompt}”设计测试计划`,
+                              },
+                              crypto.randomUUID(),
+                            )
+                            .then(() => {
+                              setSelectedDurablePlan(null);
+                              setActiveModule("test-management");
+                              setSidebarCollapsed(true);
+                            });
+                        }
+                      : undefined
+                  }
                 />
               )}
               skills={skills}
@@ -1954,7 +2022,31 @@ export function TapProductPrototype({
             />
           )
         ) : null}
-        {activeModule === "test-management" ? (
+        {activeModule === "test-management" && durable && projectId !== null ? (
+          selectedDurablePlan === null ? (
+            <TestPlanLibrary
+              projectId={projectId}
+              onOpen={(planId, revisionId) => {
+                window.history.pushState(
+                  null,
+                  "",
+                  `/test-management/${encodeURIComponent(planId)}/revisions/${encodeURIComponent(revisionId)}`,
+                );
+                setSelectedDurablePlan({ planId, revisionId });
+              }}
+            />
+          ) : (
+            <TestPlanReview
+              projectId={projectId}
+              planId={selectedDurablePlan.planId}
+              revisionId={selectedDurablePlan.revisionId}
+              onBack={() => {
+                window.history.pushState(null, "", "/");
+                setSelectedDurablePlan(null);
+              }}
+            />
+          )
+        ) : activeModule === "test-management" ? (
           <TestManagementWorkspace
             state={artifactState}
             selectedPlanId={selectedPlanId}

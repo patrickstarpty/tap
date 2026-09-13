@@ -691,6 +691,7 @@ async def create_api_runtime(
             asset_catalog=asset_catalog,
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
@@ -854,6 +855,61 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
+    """Construct the independently restartable durable Test Design worker."""
+
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper test design worker runtime requires validated settings")
+    resources = OwnedResources()
+    try:
+        engine, sessions = _open_database(settings)
+        resources.push(engine)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        redis = _create_redis(settings)
+        resources.push(redis)
+        models = _create_embeddings(settings)
+        _push_if_owned(resources, models)
+
+        from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+        from tap.modules.test_management.adapters.deterministic_generation import (
+            DeterministicTestDesign,
+        )
+        from tap.modules.test_management.adapters.model_gateway_generation import (
+            ModelGatewayTestDesign,
+        )
+        from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
+        from tap.modules.test_management.application.generation import TestDesignWorker
+        from tap.platform.messaging.redis_dispatch import AsyncRedisStream
+        from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
+
+        generator = (
+            DeterministicTestDesign()
+            if settings.e2e_mode
+            else ModelGatewayTestDesign(
+                models.gateway, timeout_seconds=settings.model_timeout_seconds
+            )
+        )
+        worker_id = settings.worker_id + "-test-design"
+        worker = TestDesignWorker(
+            jobs=MysqlTestPlanRepository(sessions, scope=scope),
+            generator=generator,
+            scope=scope,
+            worker_id=worker_id,
+        )
+        wakeups = RedisWakeupConsumer(
+            scope=scope,
+            redis=cast(AsyncRedisStream, redis),
+            stream_name=settings.redis_stream,
+            group_name="tapper-test-design",
+            consumer_name=worker_id,
+            aggregate_type="TestPlanRevision",
+        )
+        return WorkerRuntime(worker=worker, wakeups=wakeups, resources=(resources,))
+    except BaseException as error:
+        await resources.aclose(error)
+        raise AssertionError("test design worker resource settlement unexpectedly returned")
 
 
 def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
@@ -1340,6 +1396,7 @@ def _assemble_http_services(
     asset_catalog: object | None = None,
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
+    test_plan_sessions: object | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1401,6 +1458,14 @@ def _assemble_http_services(
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
         graph_enricher = GraphAnswerEnricher(graph)
+    test_plans = None
+    if test_plan_sessions is not None:
+        from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
+        from tap.modules.test_management.application.plans import TestPlanApplication
+
+        test_plans = TestPlanApplication(
+            MysqlTestPlanRepository(test_plan_sessions, scope=repository.scope)  # type: ignore[arg-type]
+        )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
@@ -1421,6 +1486,7 @@ def _assemble_http_services(
         scope=repository.scope,
         conversations=conversations,
         graph=graph,
+        test_plans=test_plans,
     )
 
 

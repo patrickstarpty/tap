@@ -449,6 +449,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/test-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Revisions */
+        get: operations["test_plan_list_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Generation */
+        post: operations["test_plan_request_generation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/generations/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Generation */
+        get: operations["test_plan_get_generation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Revision */
+        get: operations["test_plan_get_revision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Replace Draft */
+        patch: operations["test_plan_replace_draft"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Revision */
+        post: operations["test_plan_publish_revision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runtime-mode": {
         parameters: {
             query?: never;
@@ -2414,6 +2500,220 @@ export interface components {
          * @description A closed, structural location inside one authorized source family.
          */
         "StructuralAnchor-Input": components["schemas"]["DocumentAnchor-Input"] | components["schemas"]["CodeAnchor-Input"] | components["schemas"]["BddAnchor-Input"] | components["schemas"]["OpenApiAnchor-Input"] | components["schemas"]["FailureAnchor-Input"];
+        /** TestPlanCaseView */
+        "TestPlanCaseView-Input": {
+            /** Caseid */
+            caseId: string;
+            /** Critical */
+            critical: boolean;
+            /** Objective */
+            objective: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Scenarios */
+            scenarios: components["schemas"]["TestPlanScenarioView"][];
+            /** Title */
+            title: string;
+        };
+        /** TestPlanCaseView */
+        "TestPlanCaseView-Output": {
+            /** Caseid */
+            caseId: string;
+            /** Critical */
+            critical: boolean;
+            /** Objective */
+            objective: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Scenarios */
+            scenarios: components["schemas"]["TestPlanScenarioView"][];
+            /** Title */
+            title: string;
+        };
+        /** TestPlanCitationView */
+        TestPlanCitationView: {
+            /** Chunkid */
+            chunkId: string;
+            /** Citationid */
+            citationId: string;
+            /** Claimtext */
+            claimText: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Documentrevisionid */
+            documentRevisionId: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "SOURCE" | "GRAPH_EXTRACTED";
+            /** Sourcerevisionid */
+            sourceRevisionId: string;
+        };
+        /** TestPlanCoverageGapView */
+        TestPlanCoverageGapView: {
+            /** Gapid */
+            gapId: string;
+            /** Reason */
+            reason: string;
+            /** Requirementref */
+            requirementRef: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+        };
+        /** TestPlanGenerationAccepted */
+        TestPlanGenerationAccepted: {
+            /** Deeplink */
+            deepLink: string;
+            /** Jobid */
+            jobId: string;
+            /** Revisionid */
+            revisionId: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PENDING" | "RUNNING" | "DRAFT_READY" | "FAILED";
+            /** Testplanid */
+            testPlanId: string;
+        };
+        /** TestPlanGenerationRequestBody */
+        TestPlanGenerationRequestBody: {
+            /** Agentrevisionid */
+            agentRevisionId: string;
+            /** Answerevidencesnapshotdigest */
+            answerEvidenceSnapshotDigest: string;
+            /** Conversationid */
+            conversationId: string;
+            /** Inputsnapshotdigest */
+            inputSnapshotDigest: string;
+            /** Modelalias */
+            modelAlias: string;
+            /** Objective */
+            objective: string;
+            /** Skillrevisionids */
+            skillRevisionIds: string[];
+            /** Turnid */
+            turnId: string;
+        };
+        /** TestPlanRevisionPage */
+        TestPlanRevisionPage: {
+            /** Items */
+            items: components["schemas"]["TestPlanRevisionView"][];
+        };
+        /** TestPlanRevisionUpdate */
+        TestPlanRevisionUpdate: {
+            /** Assumptions */
+            assumptions: components["schemas"]["TestPlanTextFactView"][];
+            /** Cases */
+            cases: components["schemas"]["TestPlanCaseView-Input"][];
+            /** Citations */
+            citations: components["schemas"]["TestPlanCitationView"][];
+            /** Coveragegaps */
+            coverageGaps: components["schemas"]["TestPlanCoverageGapView"][];
+            /** Objective */
+            objective: string;
+            /** Prerequisites */
+            prerequisites: string[];
+            /** Risks */
+            risks: string[];
+            /** Scopeitems */
+            scopeItems: string[];
+            /** Title */
+            title: string;
+            /** Unknowns */
+            unknowns: components["schemas"]["TestPlanTextFactView"][];
+        };
+        /** TestPlanRevisionView */
+        TestPlanRevisionView: {
+            /** Adoptedfromrevisionid */
+            adoptedFromRevisionId?: string | null;
+            /** Assumptions */
+            assumptions: components["schemas"]["TestPlanTextFactView"][];
+            /** Cases */
+            cases: components["schemas"]["TestPlanCaseView-Output"][];
+            /** Citations */
+            citations: components["schemas"]["TestPlanCitationView"][];
+            /** Contentdigest */
+            contentDigest: string;
+            /** Coveragegaps */
+            coverageGaps: components["schemas"]["TestPlanCoverageGapView"][];
+            /** Deeplink */
+            deepLink: string;
+            /** Objective */
+            objective: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "VALIDATION" | "PRODUCT";
+            /** Prerequisites */
+            prerequisites: string[];
+            /** Revisionid */
+            revisionId: string;
+            /** Risks */
+            risks: string[];
+            /** Rowversion */
+            rowVersion: number;
+            /** Scopeitems */
+            scopeItems: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "DRAFT" | "VALIDATING" | "PUBLISHED" | "SUPERSEDED";
+            /** Testplanid */
+            testPlanId: string;
+            /** Title */
+            title: string;
+            /** Unknowns */
+            unknowns: components["schemas"]["TestPlanTextFactView"][];
+            /** Validationdigest */
+            validationDigest?: string | null;
+            /** Version */
+            version: number;
+        };
+        /** TestPlanScenarioView */
+        TestPlanScenarioView: {
+            /** Ordinal */
+            ordinal: number;
+            /** Scenarioid */
+            scenarioId: string;
+            /** Steps */
+            steps: components["schemas"]["TestPlanStepView"][];
+            /** Title */
+            title: string;
+        };
+        /** TestPlanStepView */
+        TestPlanStepView: {
+            /** Critical */
+            critical: boolean;
+            /** Expectedresult */
+            expectedResult?: string | null;
+            /**
+             * Keyword
+             * @enum {string}
+             */
+            keyword: "Given" | "When" | "Then" | "And" | "But";
+            /** Ordinal */
+            ordinal: number;
+            /** Stepid */
+            stepId: string;
+            /** Text */
+            text: string;
+        };
+        /** TestPlanTextFactView */
+        TestPlanTextFactView: {
+            /** Factid */
+            factId: string;
+            /** Graphedgeid */
+            graphEdgeId?: string | null;
+            /** Text */
+            text: string;
+        };
         /** TurnAbstainedEvent */
         TurnAbstainedEvent: {
             payload: components["schemas"]["TurnAbstainedPayload"];
@@ -4695,6 +4995,268 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_plan_list_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_request_generation: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestPlanGenerationRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanGenerationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_plan_get_generation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanGenerationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_get_revision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_replace_draft: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": number;
+            };
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestPlanRevisionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_publish_revision: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": number;
+                "idempotency-key": string;
+            };
+            path: {
+                test_plan_id: string;
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

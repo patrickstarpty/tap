@@ -22,6 +22,15 @@ class TestPlanRepository(Protocol):
         self, scope: ProjectScopeContext, test_plan_id: str, revision_id: str
     ) -> TestPlanRevision: ...
 
+    async def replace_draft(
+        self,
+        scope: ProjectScopeContext,
+        revision: TestPlanRevision,
+        expected_version: int,
+        *,
+        now: datetime,
+    ) -> TestPlanRevision: ...
+
     async def publish_revision(
         self,
         scope: ProjectScopeContext,
