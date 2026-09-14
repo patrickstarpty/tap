@@ -484,6 +484,67 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
+  it("keeps collapsed conversation history icon-only and restores its labels", async () => {
+    const style = installPrototypeStyles();
+    const user = userEvent.setup();
+
+    try {
+      renderPrototype();
+      await user.type(
+        screen.getByRole("textbox", { name: "Message Tapper" }),
+        "Review the beneficiary evidence",
+      );
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      const history = screen.getByRole("navigation", { name: "Chat history" });
+      const sectionTitle = within(history).getByText("Chat history");
+      const historyButton = within(history).getAllByRole("button")[0]!;
+      const historyLabel =
+        historyButton.querySelector<HTMLElement>("span:not(.anticon)")!;
+
+      await user.click(
+        screen.getByRole("button", { name: "Collapse sidebar" }),
+      );
+
+      expect(getComputedStyle(sectionTitle).display).toBe("none");
+      expect(getComputedStyle(historyLabel).display).toBe("none");
+      expect(getComputedStyle(historyButton).gridTemplateColumns).toBe("1fr");
+      expect(getComputedStyle(historyButton).width).toBe("44px");
+      expect(getComputedStyle(historyButton).justifyItems).toBe("center");
+
+      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
+
+      expect(getComputedStyle(sectionTitle).display).not.toBe("none");
+      expect(getComputedStyle(historyLabel).display).not.toBe("none");
+      expect(getComputedStyle(historyButton).gridTemplateColumns).toBe(
+        "20px minmax(0, 1fr)",
+      );
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("hides conversation history status copy while the sidebar is collapsed", async () => {
+    const style = installPrototypeStyles();
+    const user = userEvent.setup();
+
+    try {
+      renderPrototype("api");
+      const sidebar = screen.getByRole("complementary", {
+        name: "Tapper tools",
+      });
+      const historyStatus = within(sidebar).getByRole("status");
+
+      await user.click(
+        screen.getByRole("button", { name: "Collapse sidebar" }),
+      );
+
+      expect(getComputedStyle(historyStatus).display).toBe("none");
+    } finally {
+      style.remove();
+    }
+  });
+
   it("opens Test Observability from the product rail", async () => {
     const user = userEvent.setup();
     renderPrototype();
