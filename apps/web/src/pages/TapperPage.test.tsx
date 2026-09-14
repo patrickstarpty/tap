@@ -329,19 +329,20 @@ describe("Tapper product prototype", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps Validation Mode visible across product navigation", async () => {
+  it("keeps ready validation details out of the primary workspace", async () => {
     const user = userEvent.setup();
     renderPrototype();
-    const banner = await screen.findByRole("status", {
-      name: "Validation Mode",
-    });
-    expect(banner).toHaveTextContent(
-      "操作统一记录到固定 Validation Actor，不代表个人身份",
-    );
+    expect(
+      screen.queryByRole("status", { name: "Validation Mode" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Library" }));
-    expect(banner).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Validation Mode" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Test Management" }));
-    expect(banner).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Validation Mode" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows TAP platform and Tapper workspace identities", () => {
@@ -973,7 +974,7 @@ describe("Tapper product prototype", () => {
       }),
     ).toBeVisible();
     expect(
-      screen.getByText(/此轮对话未选择知识上下文。此原型输出使用内置演示内容/),
+      screen.getByText(/此轮对话未选择知识上下文。回答仅基于当前可用信息/),
     ).toBeVisible();
     expect(screen.getByRole("region", { name: "Tapper 助手" })).toBeVisible();
     expect(
@@ -1019,9 +1020,7 @@ describe("Tapper product prototype", () => {
     );
 
     expect(
-      screen.getByText(
-        /No knowledge context was selected for this turn. This prototype output uses built-in demo content/,
-      ),
+      screen.getByText(/No knowledge context was selected for this turn/),
     ).toBeVisible();
     expect(screen.queryByText(/此轮对话未选择知识上下文/)).toBeNull();
   });

@@ -225,79 +225,88 @@ export function PrototypeSidebar({
         </div>
       </aside>
 
-      <aside
-        id="tap-tapper-sidebar"
-        className="tap-tapper-sidebar"
-        aria-hidden={tapperWorkspaceActive ? undefined : true}
-        aria-label={copy.navigation.tapperTools}
-        data-collapsed={collapsed}
-        data-inactive={!tapperWorkspaceActive}
-        inert={tapperWorkspaceActive ? undefined : true}
-      >
-        <div className="tap-tapper-sidebar-header">
-          <h2 aria-label={copy.navigation.tapper}>
-            <img className="tap-tapper-wordmark" src={tapperWordmark} alt="" />
-          </h2>
-          <button
-            type="button"
-            className={`tap-panel-toggle tap-panel-toggle--left-${collapsed ? "expand" : "collapse"}`}
-            aria-controls="tap-tapper-sidebar"
-            aria-expanded={!collapsed}
-            aria-label={
-              collapsed
-                ? copy.navigation.expandSidebar
-                : copy.navigation.collapseSidebar
-            }
-            onClick={onToggleCollapsed}
-          >
-            <PanelToggleIcon
-              side="left"
-              state={collapsed ? "collapsed" : "expanded"}
-            />
-          </button>
-        </div>
-
-        <nav
-          id="tap-tapper-navigation"
+      {tapperSidebarVisible ? (
+        <aside
+          id="tap-tapper-sidebar"
+          className="tap-tapper-sidebar"
           aria-label={copy.navigation.tapperTools}
-          className="tap-tapper-navigation"
         >
-          <button
-            type="button"
-            className="tap-navigation-item tap-navigation-item--tapper"
-            aria-label={copy.navigation.newChat}
-            title={collapsed ? copy.navigation.newChat : undefined}
-            aria-current={activeModule === "tapper" ? "page" : undefined}
-            onClick={onNewChat}
-          >
-            <FormOutlined aria-hidden="true" />
-            <span className="tap-sidebar-label">{copy.navigation.newChat}</span>
-          </button>
-          {tapperModules.map((module) => moduleButton(module, "tapper"))}
-        </nav>
+          <div className="tap-tapper-sidebar-header">
+            <h2 aria-label={copy.navigation.tapper}>
+              <img
+                className="tap-tapper-wordmark"
+                src={tapperWordmark}
+                alt=""
+              />
+            </h2>
+            <button
+              type="button"
+              className="tap-panel-toggle tap-panel-toggle--left-collapse"
+              aria-controls="tap-tapper-sidebar"
+              aria-expanded="true"
+              aria-label={copy.navigation.collapseSidebar}
+              onClick={onToggleCollapsed}
+            >
+              <PanelToggleIcon side="left" state="expanded" />
+            </button>
+          </div>
 
-        {conversationHistory.length > 0 || historyState !== undefined ? (
-          <ConversationHistory
-            activeId={activeConversationId}
-            ariaLabel={copy.navigation.chatHistory}
-            conversations={conversationHistory.map(({ conversation }) => ({
-              conversationId: conversation.id,
-              title: getConversationLabel(conversation),
-              createdAt: "1970-01-01T00:00:00Z",
-              updatedAt: "1970-01-01T00:00:00Z",
-            }))}
-            error={historyState?.error}
-            hasMore={historyState?.hasMore}
-            icon={<MessageOutlined aria-hidden="true" />}
-            isLoading={historyState?.isLoading}
-            isLoadingMore={historyState?.isLoadingMore}
-            onLoadMore={historyState?.onLoadMore ?? (() => undefined)}
-            onRetry={historyState?.onRetry ?? (() => undefined)}
-            onSelect={onSelectConversation}
-            sectionTitle={copy.navigation.chatHistory}
-          />
-        ) : null}
-      </aside>
+          <nav
+            id="tap-tapper-navigation"
+            aria-label={copy.navigation.tapperTools}
+            className="tap-tapper-navigation"
+          >
+            <button
+              type="button"
+              className="tap-navigation-item tap-navigation-item--tapper"
+              aria-label={copy.navigation.newChat}
+              aria-current={activeModule === "tapper" ? "page" : undefined}
+              onClick={onNewChat}
+            >
+              <FormOutlined aria-hidden="true" />
+              <span className="tap-sidebar-label">
+                {copy.navigation.newChat}
+              </span>
+            </button>
+            {tapperModules.map((module) => moduleButton(module, "tapper"))}
+          </nav>
+
+          {conversationHistory.length > 0 || historyState !== undefined ? (
+            <ConversationHistory
+              activeId={activeConversationId}
+              ariaLabel={copy.navigation.chatHistory}
+              conversations={conversationHistory.map(({ conversation }) => ({
+                conversationId: conversation.id,
+                title: getConversationLabel(conversation),
+                createdAt: "1970-01-01T00:00:00Z",
+                updatedAt: "1970-01-01T00:00:00Z",
+              }))}
+              error={historyState?.error}
+              hasMore={historyState?.hasMore}
+              icon={<MessageOutlined aria-hidden="true" />}
+              isLoading={historyState?.isLoading}
+              isLoadingMore={historyState?.isLoadingMore}
+              onLoadMore={historyState?.onLoadMore ?? (() => undefined)}
+              onRetry={historyState?.onRetry ?? (() => undefined)}
+              onSelect={onSelectConversation}
+              sectionTitle={copy.navigation.chatHistory}
+            />
+          ) : null}
+        </aside>
+      ) : null}
+
+      {tapperWorkspaceActive && collapsed ? (
+        <button
+          type="button"
+          className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--left-expand tap-sidebar-expand-button"
+          aria-controls="tap-tapper-sidebar"
+          aria-expanded="false"
+          aria-label={copy.navigation.expandSidebar}
+          onClick={onToggleCollapsed}
+        >
+          <PanelToggleIcon side="left" state="collapsed" />
+        </button>
+      ) : null}
     </>
   );
 }

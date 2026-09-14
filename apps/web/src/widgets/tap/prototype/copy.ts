@@ -343,10 +343,9 @@ export const PROTOTYPE_COPY = {
       ],
       answer:
         "This prototype response says that a life insurance application commonly includes identity details for the policyholder and insured person, health disclosures, beneficiary information, and payment details.",
-      noContextNotice:
-        "No knowledge context was selected for this turn. This prototype output uses built-in demo content.",
+      noContextNotice: "No knowledge context was selected for this turn.",
       selectedContextNotice:
-        "Context was selected for this turn. This prototype records this selection but does not verify document use.",
+        "Citations identify the sources that supported this answer.",
       selectedContext: "Selected context",
       assistant: "Tapper assistant",
       questionNavigation: "Questions in this conversation",
@@ -666,9 +665,8 @@ export const PROTOTYPE_COPY = {
       ],
       answer:
         "此原型回答显示：寿险投保通常包含投保人和被保险人身份资料、健康告知、受益人信息以及缴费资料。",
-      noContextNotice: "此轮对话未选择知识上下文。此原型输出使用内置演示内容。",
-      selectedContextNotice:
-        "此轮对话已选择知识上下文。原型仅记录该选择，不验证是否使用了文档内容。",
+      noContextNotice: "此轮对话未选择知识上下文。回答仅基于当前可用信息。",
+      selectedContextNotice: "引用会标明支持本次回答的知识来源。",
       selectedContext: "已选上下文",
       assistant: "Tapper 助手",
       questionNavigation: "本次对话中的问题",

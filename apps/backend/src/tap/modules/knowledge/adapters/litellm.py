@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -22,6 +23,7 @@ from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
 from tap.modules.knowledge.ports.models import AnswerGeneration, Embedding, EmbeddingUsage
+from tap.modules.knowledge.ports.search import AnswerGenerationPort
 
 _ANSWER_PROMPT = (
     "Answer the query directly and minimally using only supplied evidence; omit ancillary "
@@ -81,6 +83,7 @@ class KnowledgeModelGateway:
         chat_alias: str,
         embedding_dimension: int,
         timeout_seconds: float,
+        alternate_answers: Mapping[str, AnswerGenerationPort] | None = None,
     ) -> None:
         self.gateway = gateway
         self.scope = scope
@@ -88,6 +91,10 @@ class KnowledgeModelGateway:
         self.embedding_model_id = embedding_alias
         self.embedding_dimension = embedding_dimension
         self.chat_alias = chat_alias
+        self.alternate_answers = dict(alternate_answers or {})
+        if chat_alias in self.alternate_answers:
+            raise ValueError("alternate answer aliases must not replace the default route")
+        self.chat_aliases = frozenset({chat_alias, *self.alternate_answers})
         self.timeout_seconds = timeout_seconds
 
     async def embed(self, query: str) -> Embedding:
@@ -151,12 +158,22 @@ class KnowledgeModelGateway:
         *,
         governance: GenerationGovernance | None = None,
         graph_context=(),
+        model_alias: str | None = None,
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
             or not 1 <= len(evidence) <= 20
         ):
             raise AnswerUnavailable("model-unavailable")
+        alias = model_alias or self.chat_alias
+        if alias not in self.chat_aliases:
+            raise AnswerUnavailable("model-unavailable")
+        alternate = self.alternate_answers.get(alias)
+        if alternate is not None:
+            if governance is not None:
+                raise AnswerUnavailable("model-unavailable")
+            generation = await alternate.answer(query, evidence, profile_id)
+            return replace(generation, model_id=alias)
         # Redact copies only; canonical evidence, hashes and citation authority stay intact.
         context_value = {
             "query": await self._redact(query),
@@ -189,11 +206,11 @@ class KnowledgeModelGateway:
         try:
             prompt = _ANSWER_PROMPT
             schema = _ANSWER_SCHEMA
-            alias = self.chat_alias
+            alias = model_alias or self.chat_alias
             tools: frozenset[str] = frozenset()
             governance_digests: tuple[str, ...] = ()
             if governance is not None:
-                if governance.model_alias != self.chat_alias:
+                if governance.model_alias != alias:
                     raise ModelGatewayRejected()
                 prompt = "\n\n".join(
                     (
@@ -233,7 +250,7 @@ class KnowledgeModelGateway:
             return AnswerGeneration(
                 answer,
                 claims,
-                self.chat_alias,
+                alias,
                 "grounded-answer-v1",
                 result.provider_request_id,
                 gateway_call_id=result.gateway_call_id,
@@ -245,6 +262,12 @@ class KnowledgeModelGateway:
             raise AnswerUnavailable("model-unavailable") from None
 
     async def aclose(self) -> None:
-        close = getattr(self.gateway, "aclose", None)
-        if close is not None:
-            await close()
+        try:
+            for answers in self.alternate_answers.values():
+                close_answers = getattr(answers, "aclose", None)
+                if close_answers is not None:
+                    await close_answers()
+        finally:
+            close = getattr(self.gateway, "aclose", None)
+            if close is not None:
+                await close()

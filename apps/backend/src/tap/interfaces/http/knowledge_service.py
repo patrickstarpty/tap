@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from tap.contracts.http import (
     CitationPreview,
@@ -94,6 +94,7 @@ class KnowledgeHttpService:
         sources: SourceService | None = None,
         corpus_version: str = "tapper-demo-v1",
         graph_enricher=None,
+        models: Any | None = None,
     ) -> None:
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
@@ -104,6 +105,7 @@ class KnowledgeHttpService:
         self._sources = sources
         self._corpus_version = corpus_version
         self._graph_enricher = graph_enricher
+        self._models = models
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -208,7 +210,10 @@ class KnowledgeHttpService:
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
-        if frozen_input.model_alias != "tapper-chat":
+        supported_aliases = (
+            frozenset({"tapper-chat"}) if self._models is None else self._models.chat_aliases
+        )
+        if frozen_input.model_alias not in supported_aliases:
             raise ValueError("accepted conversation model alias is unsupported")
         revisions = tuple(
             sorted(
@@ -281,6 +286,7 @@ class KnowledgeHttpService:
             policy,
             governance=governance,
             graph_context=() if graph_context is None else graph_context.facts,
+            model_alias=frozen_input.model_alias,
         )
         return answer_response_to_http(
             response,

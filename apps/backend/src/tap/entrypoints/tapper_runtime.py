@@ -7,11 +7,14 @@ import inspect
 import ipaddress
 import json
 import math
+import os
+import platform
 import re
+import shutil
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.contracts.http import (
@@ -73,6 +76,7 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
+    from tap.modules.knowledge.ports.search import AnswerGenerationPort
     from tap.modules.knowledge.ports.documents import JobStage
     from tap.operations.milvus.client import TapperDocumentMilvusClients
 
@@ -85,6 +89,7 @@ _FIXED_COLLECTION = "kb_doc_v1_tapper_demo"
 _FIXED_ALIAS = "kb_doc_tapper_demo_active"
 _FIXED_CORPUS = "tapper-demo-v1"
 _FIXED_CHAT_ALIAS = "tapper-chat"
+_FIXED_CODEX_CHAT_ALIAS = "tapper-chat-codex"
 _FIXED_EMBEDDING_ALIAS = "tapper-embedding"
 _FIXED_LITELLM_EMBEDDING_ROUTE = "dashscope/text-embedding-v4"
 _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
@@ -134,6 +139,9 @@ class TapperSettings:
     litellm_api_key: str = field(repr=False)
     litellm_model: str = field(repr=False)
     litellm_embedding_model: str = field(repr=False)
+    codex_model: str
+    codex_reasoning_effort: str
+    codex_timeout_seconds: float
     allowed_answer_model_labels: frozenset[str] = field(repr=False)
     allowed_embedding_model_labels: frozenset[str] = field(repr=False)
     milvus_uri: str
@@ -181,6 +189,13 @@ class TapperSettings:
             default="litellm",
             choices=frozenset({"litellm"}),
         )
+        codex_model = _fixed_value(values, "TAPPER_CODEX_MODEL", "gpt-5.6-sol")
+        codex_reasoning_effort = _fixed_value(values, "TAPPER_CODEX_REASONING_EFFORT", "ultra")
+        codex_timeout_seconds = _duration(
+            values, "TAPPER_CODEX_TIMEOUT_SECONDS", 300.0, maximum=900
+        )
+        if codex_timeout_seconds < 30:
+            raise ValueError("TAPPER_CODEX_TIMEOUT_SECONDS is outside the closed bound")
 
         api_host = _loopback_host(values, "TAPPER_API_HOST", "127.0.0.1")
         web_host = _loopback_host(values, "TAPPER_WEB_HOST", "127.0.0.1")
@@ -410,6 +425,9 @@ class TapperSettings:
             litellm_api_key=_secret(values, "LITELLM_MASTER_KEY", "tap-local-master-key"),
             litellm_model=litellm_model,
             litellm_embedding_model=litellm_embedding_model,
+            codex_model=codex_model,
+            codex_reasoning_effort=codex_reasoning_effort,
+            codex_timeout_seconds=codex_timeout_seconds,
             allowed_answer_model_labels=allowed_answer_labels,
             allowed_embedding_model_labels=allowed_embedding_labels,
             milvus_uri=milvus_uri,
@@ -653,7 +671,11 @@ async def create_api_runtime(
         redis = _create_redis(settings)
         resources.push(redis)
         failure_controller = _create_stage_controller(settings, redis)
-        embeddings = _create_embeddings(settings, max_retries=model_gateway_max_retries)
+        embeddings = _create_embeddings(
+            settings,
+            max_retries=model_gateway_max_retries,
+            include_codex=True,
+        )
         _push_if_owned(resources, embeddings)
         search, reader, target = await _create_search(
             settings,
@@ -977,7 +999,12 @@ async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
-def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> KnowledgeModelGateway:
+def _create_embeddings(
+    settings: TapperSettings,
+    *,
+    max_retries: int = 1,
+    include_codex: bool = False,
+) -> KnowledgeModelGateway:
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
@@ -1006,6 +1033,9 @@ def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> Kno
         )
     else:
         gateway = LiteLLMModelGateway(config, scope=VALIDATION_SCOPE, redact=_redact_model_context)
+    codex_answers = (
+        _create_codex_answers(settings) if include_codex and not settings.e2e_mode else None
+    )
     return KnowledgeModelGateway(
         gateway,
         scope=VALIDATION_SCOPE,
@@ -1014,7 +1044,52 @@ def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> Kno
         chat_alias=settings.chat_alias,
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
+        alternate_answers=(
+            {} if codex_answers is None else {_FIXED_CODEX_CHAT_ALIAS: codex_answers}
+        ),
     )
+
+
+def _create_codex_answers(settings: TapperSettings) -> AnswerGenerationPort | None:
+    from tap.modules.knowledge.adapters.codex_exec import (
+        CodexExecAnswerAdapter,
+        CodexExecConfig,
+    )
+    from tap.modules.knowledge.adapters.codex_target import (
+        CodexTargetRejected,
+        resolve_native_codex_target,
+    )
+
+    command = shutil.which("codex")
+    if command is None:
+        return None
+    try:
+        target = resolve_native_codex_target(
+            Path(command),
+            system=platform.system(),
+            machine=platform.machine(),
+            expected_version="0.149.0",
+            uid=os.getuid(),
+        )
+        codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).resolve(
+            strict=True
+        )
+        return CodexExecAnswerAdapter(
+            CodexExecConfig(
+                target=target,
+                codex_home=codex_home,
+                model_id=settings.codex_model,
+                reasoning_effort=cast(
+                    Literal["low", "medium", "high", "xhigh", "max", "ultra"],
+                    settings.codex_reasoning_effort,
+                ),
+                profile_id=settings.retrieval_profile,
+                allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
+                timeout_seconds=settings.codex_timeout_seconds,
+            )
+        )
+    except (CodexTargetRejected, OSError, RuntimeError, ValueError):
+        return None
 
 
 async def _create_document_index(
@@ -1402,6 +1477,7 @@ def _assemble_http_services(
     """Assemble the one approved Tapper application graph from existing services."""
 
     from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+    from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor
     from tap.modules.knowledge.api import KnowledgeAPI
     from tap.modules.knowledge.application.answers import AnswerService
     from tap.modules.knowledge.application.citations import CitationResolver
@@ -1469,7 +1545,20 @@ def _assemble_http_services(
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
-            embeddings.gateway, scope=embeddings.scope, default_alias=embeddings.chat_alias
+            embeddings.gateway,
+            scope=embeddings.scope,
+            default_alias=embeddings.chat_alias,
+            additional_models=(
+                (
+                    ModelDescriptor(
+                        _FIXED_CODEX_CHAT_ALIAS,
+                        "GPT-5.6 Sol · Codex",
+                        frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+                    ),
+                )
+                if _FIXED_CODEX_CHAT_ALIAS in embeddings.chat_aliases
+                else ()
+            ),
         ),
         knowledge=KnowledgeHttpService(
             documents=documents,
@@ -1479,6 +1568,7 @@ def _assemble_http_services(
             sources=SourceService(cast(SourceRepository, repository), documents),
             corpus_version=corpus_version,
             graph_enricher=graph_enricher,
+            models=embeddings,
         ),
         readiness=readiness,
         scope_provider=scope_provider,

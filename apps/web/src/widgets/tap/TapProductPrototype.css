@@ -1,5 +1,5 @@
 .tap-product-shell {
-  --tap-banner-height: 56px;
+  --tap-banner-height: 40px;
   --tap-workspace-height: calc(100dvh - var(--tap-banner-height));
   grid-template-rows: var(--tap-banner-height) minmax(0, 1fr);
   --tap-tapper-sidebar-width: 236px;
@@ -14,6 +14,10 @@
   color: var(--tap-ink);
   transition: grid-template-columns var(--tap-panel-motion-duration)
     var(--tap-panel-motion-easing);
+}
+
+.tap-product-shell--runtime-ready {
+  --tap-banner-height: 0px;
 }
 
 .tap-product-shell--tapper-open {
@@ -44,6 +48,8 @@
 }
 
 .tap-product-rail {
+  grid-column: 1;
+  grid-row: 2;
   z-index: 20;
   border-right: 1px solid var(--tap-line);
   background: var(--tap-soft);
@@ -51,6 +57,8 @@
 }
 
 .tap-tapper-sidebar {
+  grid-column: 2;
+  grid-row: 2;
   z-index: 10;
   width: var(--tap-tapper-sidebar-width);
   min-width: 0;
@@ -160,6 +168,12 @@
 
 .tap-panel-toggle--left-expand {
   left: 14px;
+}
+
+.tap-sidebar-expand-button {
+  position: fixed;
+  top: calc(var(--tap-banner-height) + 14px);
+  left: 82px;
 }
 
 .tap-panel-toggle--right-expand {
@@ -391,6 +405,7 @@
 .tap-product-main {
   position: relative;
   grid-column: 3;
+  grid-row: 2;
   min-width: 0;
   overflow-x: hidden;
 }
@@ -4160,34 +4175,16 @@
 
 @media (max-width: 640px) {
   .tap-product-shell {
-    --tap-banner-height: 88px;
+    --tap-banner-height: 48px;
   }
-}
 
-/* Keep collapsed navigation in its own column, clear of page headings. */
-.tap-product-shell--tapper-workspace:not(.tap-product-shell--tapper-open) {
-  grid-template-columns: 68px 60px minmax(0, 1fr);
-}
-.tap-tapper-sidebar[data-collapsed="true"][data-inactive="false"] {
-  width: 60px;
-  padding: 16px 8px;
-  transform: none;
-  visibility: visible;
-  pointer-events: auto;
-}
-.tap-tapper-sidebar[data-collapsed="true"] .tap-tapper-sidebar-header {
-  padding: 0 0 12px;
-}
-.tap-tapper-sidebar[data-collapsed="true"] .tap-tapper-sidebar-header h2,
-.tap-tapper-sidebar[data-collapsed="true"] .tap-sidebar-label {
-  display: none;
-}
-.tap-tapper-sidebar[data-collapsed="true"] .tap-navigation-item {
-  display: grid;
-  grid-template-columns: 1fr;
-  width: 44px;
-  padding: 0;
-  justify-items: center;
+  .tap-product-shell--runtime-ready {
+    --tap-banner-height: 0px;
+  }
+
+  .tap-sidebar-expand-button {
+    left: 76px;
+  }
 }
 .tap-library--graph {
   display: flex;
@@ -4295,15 +4292,6 @@
   }
 }
 @media (max-width: 640px) {
-  .tap-product-shell--tapper-workspace,
-  .tap-product-shell--tapper-workspace:not(.tap-product-shell--tapper-open) {
-    grid-template-columns: 64px 52px minmax(0, 1fr);
-  }
-  .tap-tapper-sidebar[data-collapsed="true"][data-inactive="false"] {
-    width: 52px;
-    padding: 14px 4px;
-    box-shadow: none;
-  }
   .tap-graph-workspace {
     --graph-communities-width: 0px;
   }

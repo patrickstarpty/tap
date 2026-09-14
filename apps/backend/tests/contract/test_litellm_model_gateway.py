@@ -310,6 +310,48 @@ async def test_knowledge_query_document_and_answer_calls_use_one_gateway():
 
 
 @pytest.mark.asyncio
+async def test_knowledge_answer_routes_the_codex_alias_to_its_bounded_adapter():
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.modules.knowledge.ports.models import AnswerGeneration
+
+    calls = []
+
+    class CodexAnswers:
+        async def answer(self, query, evidence, profile_id):
+            calls.append((query, evidence, profile_id))
+            return AnswerGeneration(
+                "Grounded",
+                (),
+                "gpt-5.6-sol",
+                profile_id,
+                None,
+            )
+
+    models = KnowledgeModelGateway(
+        configured_gateway(success),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        embedding_dimension=2,
+        timeout_seconds=1,
+        alternate_answers={"tapper-chat-codex": CodexAnswers()},
+    )
+
+    result = await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        model_alias="tapper-chat-codex",
+    )
+
+    assert len(calls) == 1
+    assert result.model_id == "tapper-chat-codex"
+
+
+@pytest.mark.asyncio
 async def test_knowledge_answer_applies_frozen_agent_and_skill_authority_to_model_request():
     from test_knowledge_api import _claim_resolution_evidence
 
@@ -548,7 +590,7 @@ async def test_actual_model_audit_normalizes_provider_mapping_and_rejects_aliase
 
 
 @pytest.mark.asyncio
-async def test_logical_sol_display_never_relabels_actual_qwen_evidence():
+async def test_qwen_display_matches_actual_qwen_evidence():
     def qwen(incoming):
         return httpx.Response(200, json=success(incoming).json() | {"model": "qwen-plus"})
 
@@ -556,7 +598,7 @@ async def test_logical_sol_display_never_relabels_actual_qwen_evidence():
     result = await gateway.chat(request())
     assert result.actual_provider == "dashscope"
     assert result.actual_model == result.audit.actual_model == "dashscope/qwen-plus"
-    assert (await gateway.catalog(VALIDATION_SCOPE))[0].display_name == "GPT-5.6 Sol"
+    assert (await gateway.catalog(VALIDATION_SCOPE))[0].display_name == "Qwen Plus"
     assert "Sol" not in repr(result) and "private-provider-key" not in repr(result)
 
 

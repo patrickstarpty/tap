@@ -142,7 +142,7 @@ class LiteLLMModelGateway:
         descriptors = (
             ModelDescriptor(
                 self._config.chat_alias,
-                "GPT-5.6 Sol",
+                "Qwen Plus",
                 frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
             ),
             ModelDescriptor(

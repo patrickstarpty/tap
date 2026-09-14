@@ -18,7 +18,7 @@ from tap.modules.chat.domain.models import ChatId, CommandId, TurnId
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_dispatch import RedisDispatchPublisher, Relay
 
-DATABASE_URL = os.getenv("TAP_DATABASE_URL", "")
+DATABASE_URL = os.getenv("TAP_RELAY_TEST_DATABASE_URL", "")
 OWNED_TABLES = ("outbox", "turn_snapshot", "chat_event", "chat_turn")
 
 
@@ -122,7 +122,7 @@ def _run_with_clean_database(
     scenario: Callable[[AsyncEngine, MysqlTurnRepository, OutboxStore], Awaitable[None]],
 ) -> None:
     if not DATABASE_URL:
-        pytest.skip("requires isolated TAP_DATABASE_URL")
+        pytest.skip("requires isolated TAP_RELAY_TEST_DATABASE_URL")
 
     async def run() -> None:
         engine, sessions = create_engine_and_session_factory(DATABASE_URL)
@@ -144,7 +144,7 @@ def _command(number: int, now: datetime) -> CreateTurnCommand:
         turn_id=TurnId(f"relay-turn-{number}"),
         chat_id=ChatId(f"relay-chat-{number}"),
         client_request_id=f"relay-request-{number}",
-        message="Dispatch this turn",
+        message="Relay recovery fixture",
         occurred_at=now,
     )
 

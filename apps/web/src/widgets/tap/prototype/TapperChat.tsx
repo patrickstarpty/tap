@@ -23,7 +23,7 @@ import type { PrototypeCopy } from "./copy";
 import type {
   AssistantTurn,
   CatalogItem,
-  CodexModelId,
+  ModelId,
   Conversation,
   LibrarySource,
 } from "./model";
@@ -44,7 +44,7 @@ interface TapperChatProps {
   onMessageChange: (message: string) => void;
   pageContext?: AssistantTurn["pageContext"];
   onClearPageContext: () => void;
-  onModelChange: (modelId: CodexModelId) => void;
+  onModelChange: (modelId: ModelId) => void;
   onSend: (prompt: string) => boolean | Promise<boolean>;
   onCancel?: (turnId: string) => void;
   cancelError?: boolean;
@@ -701,12 +701,14 @@ export function TapperChat({
       </div>
       {submitError ? (
         <p className="tap-context-notice" role="alert">
-          Message was not sent. Check the connection and try again.
+          Message was not sent. Your draft is still here. Check the connection
+          and try again.
         </p>
       ) : null}
       {cancelError ? (
         <p className="tap-context-notice" role="alert">
-          Generation could not be stopped. Check the connection and try again.
+          The response may still be running because the stop request failed.
+          Check the connection and try again.
         </p>
       ) : null}
     </form>

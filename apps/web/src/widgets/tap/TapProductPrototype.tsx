@@ -91,7 +91,7 @@ import {
   detectIntent,
   type AssistantTurn,
   type CatalogItem,
-  type CodexModelId,
+  type ModelId,
   type Conversation,
   type LibrarySource,
   type Locale,
@@ -1085,7 +1085,7 @@ export function TapProductPrototype({
         error:
           streamed?.error ??
           (conversationEvents.isError || conversationStream.error !== null
-            ? "Conversation updates are unavailable. Check access or connection, then try again."
+            ? "Conversation updates stopped. Your message is saved. Check access or connection, then retry."
             : null),
         evidenceStatus:
           conversationEvents.isLoading || conversationEvents.isFetching
@@ -1896,7 +1896,7 @@ export function TapProductPrototype({
 
   return (
     <div
-      className={`tap-product-shell${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
+      className={`tap-product-shell${runtime.isSuccess ? " tap-product-shell--runtime-ready" : ""}${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
     >
       <ValidationModeBanner
         state={
@@ -1981,7 +1981,7 @@ export function TapProductPrototype({
               onMessageChange={setMessageDraft}
               pageContext={composerContext ?? undefined}
               onClearPageContext={() => setComposerContext(null)}
-              onModelChange={(modelId: CodexModelId) =>
+              onModelChange={(modelId: ModelId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
                   modelId,

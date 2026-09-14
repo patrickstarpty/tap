@@ -2,11 +2,11 @@ import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/ty
 
 export type Locale = "en" | "zh";
 
-export type CodexModelId = string;
+export type ModelId = string;
 
-export const DEFAULT_CODEX_MODEL_ID: CodexModelId = "tapper-chat";
+export const DEFAULT_MODEL_ID: ModelId = "tapper-chat";
 
-export function isCodexModelId(value: unknown): value is CodexModelId {
+export function isModelId(value: unknown): value is ModelId {
   return typeof value === "string" && /^[a-z][a-z0-9._-]{0,127}$/.test(value);
 }
 
@@ -51,7 +51,7 @@ export interface AssistantTurn {
   id: string;
   intent: AssistantIntent;
   locale: Locale;
-  modelId: CodexModelId;
+  modelId: ModelId;
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   response?: RetrievalAnswerResponse | null;
@@ -92,7 +92,7 @@ export interface Conversation {
   id: string;
   title: string;
   turns: readonly AssistantTurn[];
-  modelId: CodexModelId;
+  modelId: ModelId;
   selectedSourceIds: readonly string[];
   selectedAgentIds: readonly string[];
   selectedSkillIds: readonly string[];
@@ -121,7 +121,7 @@ export interface LibrarySource {
 
 export interface CreateConversationOptions {
   title?: string;
-  modelId?: CodexModelId;
+  modelId?: ModelId;
   selectedSourceIds?: readonly string[];
   selectedAgentIds?: readonly string[];
   selectedSkillIds?: readonly string[];
@@ -317,7 +317,7 @@ export function createConversation(
     id,
     title: options.title ?? "New chat",
     turns: [],
-    modelId: options.modelId ?? DEFAULT_CODEX_MODEL_ID,
+    modelId: options.modelId ?? DEFAULT_MODEL_ID,
     selectedSourceIds: [...(options.selectedSourceIds ?? [])],
     selectedAgentIds: [...(options.selectedAgentIds ?? [])],
     selectedSkillIds: [...(options.selectedSkillIds ?? [])],

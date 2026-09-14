@@ -1,17 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ValidationModeBanner } from "./ValidationModeBanner";
 
 describe("ValidationModeBanner", () => {
-  it("persistently explains the fixed actor without offering dismissal", () => {
-    const { rerender } = render(<ValidationModeBanner state="ready" />);
-    const banner = screen.getByRole("status", { name: "Validation Mode" });
-    expect(banner).toHaveTextContent(
-      "操作统一记录到固定 Validation Actor，不代表个人身份",
-    );
-    expect(within(banner).queryByRole("button")).not.toBeInTheDocument();
-    rerender(<ValidationModeBanner state="ready" />);
-    expect(banner).toBeVisible();
+  it("stays out of the primary workspace when the runtime is ready", () => {
+    render(<ValidationModeBanner state="ready" />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("does not claim a resolved identity while connecting or unavailable", () => {
@@ -20,6 +14,8 @@ describe("ValidationModeBanner", () => {
     expect(screen.queryByText(/操作统一记录/)).not.toBeInTheDocument();
     rerender(<ValidationModeBanner state="unavailable" />);
     expect(screen.getByRole("status")).toHaveTextContent("运行环境连接失败");
-    expect(screen.getByRole("status")).toHaveTextContent("服务器操作暂不可用");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "当前无法使用服务器功能",
+    );
   });
 });
