@@ -1365,6 +1365,8 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
         ),
         "LITELLM_MASTER_KEY": "${LITELLM_MASTER_KEY:-tap-local-master-key}",
         "LITELLM_MODEL": "${LITELLM_MODEL:-dashscope/qwen-plus}",
+        "LITELLM_FLASH_MODEL": "${LITELLM_FLASH_MODEL:-dashscope/qwen-flash}",
+        "LITELLM_MAX_MODEL": "${LITELLM_MAX_MODEL:-dashscope/qwen-max}",
     }
     assert not any(key.startswith("LITELLM_EMBEDDING_") for key in compose_environment)
     chat_route = next(item for item in gateway["model_list"] if item["model_name"] == "tapper-chat")
@@ -1373,6 +1375,16 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
+    for alias, environment_name in (
+        ("tapper-chat-flash", "LITELLM_FLASH_MODEL"),
+        ("tapper-chat-max", "LITELLM_MAX_MODEL"),
+    ):
+        route = next(item for item in gateway["model_list"] if item["model_name"] == alias)
+        assert route["litellm_params"] == {
+            "model": f"os.environ/{environment_name}",
+            "api_key": "os.environ/DASHSCOPE_API_KEY",
+            "api_base": "os.environ/DASHSCOPE_API_BASE",
+        }
     embedding_route = next(
         item for item in gateway["model_list"] if item["model_name"] == "tapper-embedding"
     )

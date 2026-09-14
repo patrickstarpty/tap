@@ -2315,13 +2315,15 @@ def test_safe_models_probe_closes_all_owners_when_transport_fails(monkeypatch):
     assert events == ["embeddings"]
 
 
-def test_litellm_exposes_exactly_the_two_fixed_tapper_aliases() -> None:
+def test_litellm_exposes_only_the_fixed_tapper_aliases() -> None:
     """A legacy or provider-named route must not become part of the Demo model surface."""
 
     config = _load_yaml_as_json(ROOT / "deploy/local/litellm/config.yaml")
 
     assert [item["model_name"] for item in config["model_list"]] == [
         "tapper-chat",
+        "tapper-chat-flash",
+        "tapper-chat-max",
         "tapper-embedding",
     ]
     assert config["model_list"][0]["litellm_params"] == {
@@ -2329,7 +2331,7 @@ def test_litellm_exposes_exactly_the_two_fixed_tapper_aliases() -> None:
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",
     }
-    assert config["model_list"][1]["litellm_params"] == {
+    assert config["model_list"][3]["litellm_params"] == {
         "model": "os.environ/LITELLM_TAPPER_EMBEDDING_MODEL",
         "api_key": "os.environ/DASHSCOPE_API_KEY",
         "api_base": "os.environ/DASHSCOPE_API_BASE",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal, Protocol, cast
+from uuid import uuid4
 
 from tap.contracts.http import (
     CitationPreview,
@@ -203,15 +204,14 @@ class KnowledgeHttpService:
         return await resolver(revision_ids)
 
     async def answer_conversation(self, request: RetrievalAnswerRequest, frozen_input):
-        import json
-
-        from tap.modules.ai.domain.models import GenerationGovernance, schema_digest, text_digest
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
         supported_aliases = (
-            frozenset({"tapper-chat"}) if self._models is None else self._models.chat_aliases
+            frozenset({"tapper-chat"})
+            if self._models is None
+            else getattr(self._models, "chat_aliases", frozenset({"tapper-chat"}))
         )
         if frozen_input.model_alias not in supported_aliases:
             raise ValueError("accepted conversation model alias is unsupported")
@@ -229,6 +229,38 @@ class KnowledgeHttpService:
                 key=lambda item: item.document_id,
             )
         )
+        governance = self._generation_governance(frozen_input)
+        if not revisions:
+            if self._models is None:
+                raise ValueError("model-only conversation runtime is unavailable")
+            expected_acl = content_digest({"mode": "model-only", "resources": []})
+            expected_policy = content_digest({"mode": "model-only", "retrieval": "not-selected"})
+            if (
+                frozen_input.source_revision_ids
+                or frozen_input.document_revision_ids
+                or frozen_input.acl_digest != expected_acl
+                or frozen_input.retrieval_policy_digest != expected_policy
+            ):
+                raise ValueError("accepted model-only authority changed")
+            generation = await self._models.chat(
+                request.query,
+                model_alias=frozen_input.model_alias,
+                governance=governance,
+            )
+            identity = generation.gateway_call_id or generation.provider_request_id or uuid4().hex
+            return RetrievalAnswerResponse(
+                trace_id=identity,
+                query_plan_id=f"model-only-{identity}",
+                context_snapshot_id=f"model-only-{identity}",
+                corpus_version=self._corpus_version,
+                retrieval_profile_id="direct-chat-v1",
+                degraded_mode=False,
+                answer=generation.text,
+                abstained=False,
+                claims=[],
+                citations=[],
+                graph_context_status="NOT_SELECTED",
+            )
         policy = build_demo_policy_context(revisions, corpus_version=self._corpus_version)
         if frozen_input.acl_digest != policy.acl_digest or frozen_input.retrieval_policy_digest != (
             content_digest(
@@ -240,6 +272,37 @@ class KnowledgeHttpService:
             )
         ):
             raise ValueError("accepted retrieval authority changed")
+        domain_request = answer_request_from_http(request)
+        graph_context = None
+        if self._graph_enricher is not None:
+            graph_context = await self._graph_enricher.enrich(
+                self.scope,
+                tuple(frozen_input.source_revision_ids),
+                domain_request.query,
+            )
+        response = await self._answers.answer_frozen(
+            domain_request,
+            revisions,
+            policy,
+            governance=governance,
+            graph_context=() if graph_context is None else graph_context.facts,
+            model_alias=frozen_input.model_alias,
+        )
+        return answer_response_to_http(
+            response,
+            graph_context_status=cast(
+                Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"],
+                "UNAVAILABLE" if graph_context is None else graph_context.status.value,
+            ),
+            graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
+        )
+
+    @staticmethod
+    def _generation_governance(frozen_input):
+        import json
+
+        from tap.modules.ai.domain.models import GenerationGovernance, schema_digest, text_digest
+
         governance = None
         if frozen_input.agent_revision_id is not None:
             if (
@@ -272,30 +335,7 @@ class KnowledgeHttpService:
                     *frozen_input.skill_instruction_template_digests,
                 ),
             )
-        domain_request = answer_request_from_http(request)
-        graph_context = None
-        if self._graph_enricher is not None:
-            graph_context = await self._graph_enricher.enrich(
-                self.scope,
-                tuple(frozen_input.source_revision_ids),
-                domain_request.query,
-            )
-        response = await self._answers.answer_frozen(
-            domain_request,
-            revisions,
-            policy,
-            governance=governance,
-            graph_context=() if graph_context is None else graph_context.facts,
-            model_alias=frozen_input.model_alias,
-        )
-        return answer_response_to_http(
-            response,
-            graph_context_status=cast(
-                Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"],
-                "UNAVAILABLE" if graph_context is None else graph_context.status.value,
-            ),
-            graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
-        )
+        return governance
 
     async def search(self, request: RetrievalSearchRequest) -> RetrievalSearchResponse:
         """Expose real evidence only to trusted in-process verification, never an HTTP route."""

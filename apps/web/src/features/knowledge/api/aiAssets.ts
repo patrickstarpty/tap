@@ -4,6 +4,32 @@ import { useQuery } from "@tanstack/react-query";
 export type AiAgentRevision = components["schemas"]["AiAgentRevisionSummary"];
 export type SkillRevision = components["schemas"]["SkillRevisionSummary"];
 
+export function aiAssetPresentation(
+  kind: "agent" | "skill",
+  locale: "en" | "zh",
+) {
+  if (kind === "agent") {
+    return {
+      description:
+        locale === "zh"
+          ? "受控知识问答智能体"
+          : "Governed Knowledge answer agent",
+      instructions:
+        locale === "zh"
+          ? "由服务端批准并锁定版本"
+          : "Server-approved immutable revision",
+    };
+  }
+  return {
+    description:
+      locale === "zh" ? "为知识回答生成可追溯引用" : "Adds traceable citations",
+    instructions:
+      locale === "zh"
+        ? "由服务端批准并锁定版本"
+        : "Server-approved immutable revision",
+  };
+}
+
 async function readCatalog<T>(
   projectId: string,
   kind: "agents" | "skills",

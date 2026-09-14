@@ -51,6 +51,7 @@ export function ModelSelector({
     <div ref={root} className="tap-composer-model-control">
       <Button
         ref={trigger}
+        className="tap-model-trigger"
         aria-label={label?.(selected.displayName)}
         aria-expanded={open}
         aria-haspopup="menu"

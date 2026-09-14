@@ -81,6 +81,7 @@ class KnowledgeModelGateway:
         redact: Callable[[str], Awaitable[str]],
         embedding_alias: str,
         chat_alias: str,
+        chat_aliases: frozenset[str] | None = None,
         embedding_dimension: int,
         timeout_seconds: float,
         alternate_answers: Mapping[str, AnswerGenerationPort] | None = None,
@@ -94,8 +95,85 @@ class KnowledgeModelGateway:
         self.alternate_answers = dict(alternate_answers or {})
         if chat_alias in self.alternate_answers:
             raise ValueError("alternate answer aliases must not replace the default route")
-        self.chat_aliases = frozenset({chat_alias, *self.alternate_answers})
+        self.chat_aliases = (chat_aliases or frozenset({chat_alias})) | frozenset(
+            self.alternate_answers
+        )
+        if chat_alias not in self.chat_aliases:
+            raise ValueError("default chat alias must be in the approved chat catalog")
         self.timeout_seconds = timeout_seconds
+
+    async def chat(
+        self,
+        query: str,
+        *,
+        model_alias: str,
+        governance: GenerationGovernance | None = None,
+    ) -> AnswerGeneration:
+        """Generate a model-only answer when the user selected no Knowledge corpus."""
+
+        if model_alias not in self.chat_aliases or model_alias in self.alternate_answers:
+            raise AnswerUnavailable("model-unavailable")
+        context = await self._redact(query)
+        prompt = (
+            "Answer the user directly. No Knowledge corpus was selected; do not invent citations."
+        )
+        tools: frozenset[str] = frozenset()
+        governance_digests: tuple[str, ...] = ()
+        schema = None
+        schema_value = None
+        operation = ModelOperation.CHAT
+        if governance is not None:
+            if governance.model_alias != model_alias:
+                raise AnswerUnavailable("model-unavailable")
+            prompt = "\n\n".join(
+                (
+                    governance.system_instruction,
+                    *governance.skill_instructions,
+                    prompt,
+                )
+            )
+            tools = governance.tool_allowlist
+            governance_digests = governance.revision_digests
+            schema = governance.output_schema
+            schema_value = governance.output_schema_digest
+            operation = ModelOperation.STRUCTURED
+        try:
+            request = ModelRequest(
+                self.scope,
+                model_alias,
+                operation,
+                prompt,
+                text_digest(prompt),
+                context,
+                self.timeout_seconds,
+                str(uuid4()),
+                schema,
+                schema_value,
+                tools,
+                governance_digests,
+            )
+            result = (
+                await self.gateway.generate_structured(request)
+                if operation is ModelOperation.STRUCTURED
+                else await self.gateway.chat(request)
+            )
+            if isinstance(result.output, str):
+                answer = result.output
+            elif isinstance(result.output, dict) and isinstance(result.output.get("answer"), str):
+                answer = str(result.output["answer"])
+            else:
+                raise AnswerUnavailable("model-unavailable")
+            return AnswerGeneration(
+                answer,
+                (),
+                model_alias,
+                "direct-chat-v1",
+                result.provider_request_id,
+                gateway_call_id=result.gateway_call_id,
+                provider_model_id=result.actual_model,
+            )
+        except (ModelGatewayRejected, ModelGatewayUnavailable):
+            raise AnswerUnavailable("model-unavailable") from None
 
     async def embed(self, query: str) -> Embedding:
         context = await self._redact(query)

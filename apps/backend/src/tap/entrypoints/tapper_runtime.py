@@ -76,8 +76,8 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
-    from tap.modules.knowledge.ports.search import AnswerGenerationPort
     from tap.modules.knowledge.ports.documents import JobStage
+    from tap.modules.knowledge.ports.search import AnswerGenerationPort
     from tap.operations.milvus.client import TapperDocumentMilvusClients
 
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")

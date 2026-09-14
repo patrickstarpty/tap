@@ -78,6 +78,9 @@ describe("ModelSelector", () => {
       );
     }
     render(<Harness />);
+    expect(screen.getByRole("button", { name: "GPT-5.6 Sol" })).toHaveClass(
+      "tap-model-trigger",
+    );
     const user = userEvent.setup();
     await user.tab();
     await user.keyboard("{ArrowDown}{End}");
