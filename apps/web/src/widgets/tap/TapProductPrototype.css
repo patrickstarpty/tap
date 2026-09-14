@@ -4108,10 +4108,17 @@
   padding: 0 0 12px;
 }
 .tap-tapper-sidebar[data-collapsed="true"] .tap-tapper-sidebar-header h2,
-.tap-tapper-sidebar[data-collapsed="true"] .tap-sidebar-label {
+.tap-tapper-sidebar[data-collapsed="true"] .tap-sidebar-label,
+.tap-tapper-sidebar[data-collapsed="true"] .tap-sidebar-section-title,
+.tap-tapper-sidebar[data-collapsed="true"] .tap-chat-history-state,
+.tap-tapper-sidebar[data-collapsed="true"]
+  .tap-chat-history
+  button
+  > span:not(.anticon) {
   display: none;
 }
-.tap-tapper-sidebar[data-collapsed="true"] .tap-navigation-item {
+.tap-tapper-sidebar[data-collapsed="true"] .tap-navigation-item,
+.tap-tapper-sidebar[data-collapsed="true"] .tap-chat-history button {
   display: grid;
   grid-template-columns: 1fr;
   width: 44px;

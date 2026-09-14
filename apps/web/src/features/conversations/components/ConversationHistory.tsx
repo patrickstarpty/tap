@@ -32,10 +32,16 @@ export function ConversationHistory({
   ariaLabel?: string;
   icon?: ReactNode;
 }) {
-  if (isLoading) return <p role="status">Loading conversations…</p>;
+  if (isLoading) {
+    return (
+      <p className="tap-chat-history-state" role="status">
+        Loading conversations…
+      </p>
+    );
+  }
   if (error !== undefined) {
     return (
-      <div role="alert">
+      <div className="tap-chat-history-state" role="alert">
         <p>{error}</p>
         <button type="button" onClick={onRetry}>
           Try again
@@ -44,7 +50,11 @@ export function ConversationHistory({
     );
   }
   if (conversations.length === 0) {
-    return <p>Your conversations will appear here.</p>;
+    return (
+      <p className="tap-chat-history-state">
+        Your conversations will appear here.
+      </p>
+    );
   }
   return (
     <nav aria-label={ariaLabel} className="tap-chat-history">
