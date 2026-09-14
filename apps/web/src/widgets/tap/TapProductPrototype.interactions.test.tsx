@@ -266,8 +266,8 @@ describe("Tap product prototype interactions", () => {
     ).toEqual([
       "Tapper",
       "Test Management",
-      "Test Analytics",
       "Low Code Automation",
+      "Test Observability",
     ]);
     const tapperSidebar = screen.getByRole("complementary", {
       name: "Tapper tools",
@@ -326,14 +326,16 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
-  it("opens Test Analytics from the product rail", async () => {
+  it("opens Test Observability from the product rail", async () => {
     const user = userEvent.setup();
     renderPrototype();
 
-    await user.click(screen.getByRole("button", { name: "Test Analytics" }));
+    await user.click(
+      screen.getByRole("button", { name: "Test Observability" }),
+    );
 
     expect(
-      screen.getByRole("heading", { name: /Test analytics/i }),
+      screen.getByRole("heading", { name: /Demo Dashboard/i }),
     ).toBeVisible();
   });
 

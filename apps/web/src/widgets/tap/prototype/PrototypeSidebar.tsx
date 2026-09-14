@@ -78,14 +78,14 @@ export function PrototypeSidebar({
       icon: <FileTextOutlined aria-hidden="true" />,
     },
     {
-      key: "test-analytics",
-      label: copy.navigation["test-analytics"],
-      icon: <BarChartOutlined aria-hidden="true" />,
-    },
-    {
       key: "low-code",
       label: copy.navigation["low-code"],
       icon: <CodeOutlined aria-hidden="true" />,
+    },
+    {
+      key: "test-analytics",
+      label: copy.navigation["test-analytics"],
+      icon: <BarChartOutlined aria-hidden="true" />,
     },
   ];
   const tapperModules: typeof productModules = [

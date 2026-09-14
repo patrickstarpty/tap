@@ -3304,6 +3304,82 @@
   margin-top: 24px;
 }
 
+.tap-plan-quality-summary {
+  margin-top: 18px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px 16px 16px;
+}
+
+.tap-plan-quality-summary .tap-panel-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.tap-plan-quality-summary .tap-panel-heading h2,
+.tap-plan-quality-summary .tap-panel-heading p {
+  margin: 0;
+}
+
+.tap-plan-quality-summary .tap-panel-heading p {
+  color: var(--tap-workbench-muted);
+  font-size: 10px;
+}
+
+.tap-plan-quality-metrics {
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(100px, 1fr)) minmax(150px, 1.35fr)
+    auto;
+  align-items: center;
+  width: 100%;
+  margin-top: 12px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 10px;
+  background: var(--tap-canvas);
+  padding: 13px 15px;
+  color: var(--tap-workbench-ink);
+  text-align: left;
+}
+
+.tap-plan-quality-metrics:hover {
+  border-color: var(--tap-accent);
+  background: var(--tap-accent-soft);
+}
+
+.tap-plan-quality-metrics > span {
+  display: grid;
+  gap: 5px;
+  border-right: 1px solid var(--tap-workbench-line);
+  padding-inline: 14px;
+}
+
+.tap-plan-quality-metrics > span:first-child {
+  padding-left: 0;
+}
+
+.tap-plan-quality-metrics > span:nth-child(4) {
+  border-right: 0;
+}
+
+.tap-plan-quality-metrics small {
+  color: var(--tap-workbench-muted);
+  font-size: 10px;
+}
+
+.tap-plan-quality-metrics strong {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-plan-quality-metrics > .anticon {
+  color: var(--tap-accent);
+}
+
 .tap-test-plan-main {
   min-width: 0;
 }

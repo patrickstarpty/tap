@@ -1302,7 +1302,10 @@ export function TapProductPrototype() {
           />
         ) : null}
         {activeModule === "test-analytics" ? (
-          <TestAnalyticsWorkspace locale={locale} />
+          <TestAnalyticsWorkspace
+            locale={locale}
+            initialPlanId={selectedPlanId ?? undefined}
+          />
         ) : null}
         {activeModule === "test-management" ? (
           <TestManagementWorkspace
@@ -1314,6 +1317,10 @@ export function TapProductPrototype() {
             onOpenAutomation={(automationId) => {
               setAutomationView({ kind: "detail", automationId });
               setActiveModule("low-code");
+            }}
+            onOpenObservability={(testPlanId) => {
+              setSelectedPlanId(testPlanId);
+              setActiveModule("test-analytics");
             }}
             onLink={(automationId, testPlanId) =>
               dispatchArtifact({
