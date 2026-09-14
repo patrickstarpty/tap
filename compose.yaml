@@ -146,6 +146,8 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-tap-local-master-key}
       LITELLM_MODEL: ${LITELLM_MODEL:-dashscope/qwen-plus}
+      LITELLM_FLASH_MODEL: ${LITELLM_FLASH_MODEL:-dashscope/qwen-flash}
+      LITELLM_MAX_MODEL: ${LITELLM_MAX_MODEL:-dashscope/qwen-max}
       LITELLM_TAPPER_EMBEDDING_MODEL: ${LITELLM_TAPPER_EMBEDDING_MODEL:-dashscope/text-embedding-v4}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_API_BASE: ${DASHSCOPE_API_BASE:-https://ws-your-workspace-id.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}

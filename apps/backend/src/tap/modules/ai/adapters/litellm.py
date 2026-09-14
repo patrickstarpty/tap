@@ -61,6 +61,25 @@ class ProviderModelMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class ChatModelRoute:
+    """One approved browser-facing alias bound to one private upstream model."""
+
+    alias: str
+    display_name: str
+    target: ProviderModelMapping = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", self.alias) is None
+            or not isinstance(self.display_name, str)
+            or not self.display_name.strip()
+            or len(self.display_name) > 128
+            or not isinstance(self.target, ProviderModelMapping)
+        ):
+            raise ValueError("chat model route must be a bounded approved mapping")
+
+
+@dataclass(frozen=True, slots=True)
 class LiteLLMModelGatewayConfig:
     base_url: str
     api_key: str = field(repr=False)
@@ -72,6 +91,7 @@ class LiteLLMModelGatewayConfig:
     timeout_seconds: float = 15.0
     max_retries: int = 1
     disabled_aliases: frozenset[str] = frozenset()
+    additional_chat_models: tuple[ChatModelRoute, ...] = ()
 
     def __post_init__(self) -> None:
         url = urlsplit(self.base_url)
@@ -92,8 +112,19 @@ class LiteLLMModelGatewayConfig:
         for value in (self.chat_alias, self.embedding_alias):
             if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", value) is None:
                 raise ValueError("model gateway requires fixed bounded routes")
-        aliases = {self.chat_alias, self.embedding_alias}
-        for target in (self.chat_model, self.embedding_model):
+        chat_routes = (
+            ChatModelRoute(self.chat_alias, "Qwen Plus", self.chat_model),
+            *self.additional_chat_models,
+        )
+        aliases = {item.alias for item in chat_routes} | {self.embedding_alias}
+        if len(aliases) != len(chat_routes) + 1:
+            raise ValueError("model gateway aliases must be disjoint")
+        targets = (
+            self.chat_model,
+            self.embedding_model,
+            *(item.target for item in chat_routes[1:]),
+        )
+        for target in targets:
             if (
                 not isinstance(target, ProviderModelMapping)
                 or target.provider in aliases
@@ -102,10 +133,7 @@ class LiteLLMModelGatewayConfig:
                 or target.route in aliases
             ):
                 raise ValueError("provider/model mapping cannot use a logical alias")
-        if self.chat_alias == self.embedding_alias or not self.disabled_aliases <= {
-            self.chat_alias,
-            self.embedding_alias,
-        }:
+        if not self.disabled_aliases <= aliases:
             raise ValueError("model gateway aliases must be disjoint")
         if type(self.embedding_dimension) is not int or not 1 <= self.embedding_dimension <= 4096:
             raise ValueError("model gateway dimension is invalid")
@@ -139,12 +167,14 @@ class LiteLLMModelGateway:
 
     async def catalog(self, scope: ProjectScopeContext) -> tuple[ModelDescriptor, ...]:
         self._check_scope(scope)
-        descriptors = (
+        descriptors = tuple(
             ModelDescriptor(
-                self._config.chat_alias,
-                "GPT-5.6 Sol",
+                item.alias,
+                item.display_name,
                 frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
-            ),
+            )
+            for item in self._chat_routes()
+        ) + (
             ModelDescriptor(
                 self._config.embedding_alias,
                 "Tapper embeddings",
@@ -154,6 +184,15 @@ class LiteLLMModelGateway:
         return tuple(
             item for item in descriptors if item.alias not in self._config.disabled_aliases
         )
+
+    def _chat_routes(self) -> tuple[ChatModelRoute, ...]:
+        return (
+            ChatModelRoute(self._config.chat_alias, "Qwen Plus", self._config.chat_model),
+            *self._config.additional_chat_models,
+        )
+
+    def _chat_route(self, alias: str) -> ChatModelRoute | None:
+        return next((item for item in self._chat_routes() if item.alias == alias), None)
 
     async def chat(self, request: ModelRequest) -> ModelResult:
         return await self._execute(request, ModelOperation.CHAT)
@@ -182,14 +221,12 @@ class LiteLLMModelGateway:
 
     async def _validate(self, request: ModelRequest, operation: ModelOperation) -> None:
         self._check_scope(request.scope)
-        alias = (
-            self._config.embedding_alias
-            if operation is ModelOperation.EMBED
-            else self._config.chat_alias
-        )
+        alias = self._config.embedding_alias if operation is ModelOperation.EMBED else request.alias
+        chat_route = None if operation is ModelOperation.EMBED else self._chat_route(request.alias)
         if (
             request.operation is not operation
-            or request.alias != alias
+            or (operation is ModelOperation.EMBED and request.alias != alias)
+            or (operation is not ModelOperation.EMBED and chat_route is None)
             or alias in self._config.disabled_aliases
         ):
             raise ModelGatewayRejected()
@@ -361,16 +398,14 @@ class LiteLLMModelGateway:
     def _normalize(
         self, request: ModelRequest, body: dict[str, Any], headers: httpx.Headers
     ) -> ModelResult:
+        route = self._chat_route(request.alias)
         mapping = (
             self._config.embedding_model
             if request.operation is ModelOperation.EMBED
-            else self._config.chat_model
+            else (route.target if route is not None else self._config.chat_model)
         )
         returned_model = body["model"]
-        aliases = {
-            self._config.chat_alias,
-            self._config.embedding_alias,
-        }
+        aliases = {item.alias for item in self._chat_routes()} | {self._config.embedding_alias}
         deployment_id = headers.get("x-litellm-model-id")
         if returned_model in aliases:
             if returned_model != request.alias or deployment_id != mapping.route:

@@ -421,7 +421,12 @@ describe("Tap product prototype interactions", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Tapper", "Test Management", "Low Code Automation"]);
+    ).toEqual([
+      "Tapper",
+      "Test Management",
+      "Test Observability",
+      "Low Code Automation",
+    ]);
     const tapperSidebar = screen.getByRole("complementary", {
       name: "Tapper tools",
     });
@@ -477,6 +482,19 @@ describe("Tap product prototype interactions", () => {
         name: "Collapse sidebar",
       }),
     ).toHaveFocus();
+  });
+
+  it("opens Test Observability from the product rail", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(
+      screen.getByRole("button", { name: "Test Observability" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: /Test Observability/i }),
+    ).toBeVisible();
   });
 
   it("marks New chat as current only while the chat destination is active", async () => {

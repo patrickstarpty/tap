@@ -65,7 +65,10 @@ import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import { AccessibleDialog } from "./prototype/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
-import { useAiAssetCatalog } from "../../features/knowledge/api/aiAssets";
+import {
+  aiAssetPresentation,
+  useAiAssetCatalog,
+} from "../../features/knowledge/api/aiAssets";
 import {
   useAppendConversation,
   useCancelTurn,
@@ -101,8 +104,8 @@ import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
 import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
 import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
 import { createTestPlanClient } from "../../features/testManagement/api/client";
-import { TestPlanLibrary } from "../../features/testManagement/components/TestPlanLibrary";
 import { TestPlanReview } from "../../features/testManagement/components/TestPlanReview";
+import { TestAnalyticsWorkspace } from "./prototype/TestAnalyticsWorkspace";
 import "./TapProductPrototype.css";
 
 function BddPreview({ copy }: { copy: PrototypeCopy }) {
@@ -984,8 +987,7 @@ export function TapProductPrototype({
           kind: "agent",
           origin: "built-in",
           name: item.displayName,
-          description: item.contentDigest,
-          instructions: "Server-approved immutable revision",
+          ...aiAssetPresentation("agent", locale),
         })),
       );
     }
@@ -996,8 +998,7 @@ export function TapProductPrototype({
           kind: "skill",
           origin: "built-in",
           name: item.displayName,
-          description: item.contentDigest,
-          instructions: "Server-approved immutable revision",
+          ...aiAssetPresentation("skill", locale),
         })),
       );
     }
@@ -1029,6 +1030,7 @@ export function TapProductPrototype({
     aiAssets.skills.data,
     aiAssets.skills.isError,
     durable,
+    locale,
   ]);
 
   useEffect(() => {
@@ -1095,6 +1097,9 @@ export function TapProductPrototype({
                 ? "missing"
                 : "ready",
         contextLabels: [
+          ...(resolvedResources.length === 0
+            ? [locale === "zh" ? "未使用知识库" : "Knowledge not selected"]
+            : []),
           ...resolvedResources.map((item) => item.label),
           ...(turn.input.agentLabel == null ? [] : [turn.input.agentLabel]),
           ...(turn.input.skillLabels ?? []),
@@ -1538,6 +1543,9 @@ export function TapProductPrototype({
             prompt,
             sourceReferences,
             contextLabels: [
+              ...(sourceReferences.length === 0
+                ? [locale === "zh" ? "未使用知识库" : "Knowledge not selected"]
+                : []),
               ...sourceReferences.map((item) => item.name),
               ...agents
                 .filter((item) =>
@@ -2210,30 +2218,22 @@ export function TapProductPrototype({
             />
           )
         ) : null}
-        {activeModule === "test-management" && durable && projectId !== null ? (
-          selectedDurablePlan === null ? (
-            <TestPlanLibrary
-              projectId={projectId}
-              onOpen={(planId, revisionId) => {
-                window.history.pushState(
-                  null,
-                  "",
-                  `/test-management/${encodeURIComponent(planId)}/revisions/${encodeURIComponent(revisionId)}`,
-                );
-                setSelectedDurablePlan({ planId, revisionId });
-              }}
-            />
-          ) : (
-            <TestPlanReview
-              projectId={projectId}
-              planId={selectedDurablePlan.planId}
-              revisionId={selectedDurablePlan.revisionId}
-              onBack={() => {
-                window.history.pushState(null, "", "/");
-                setSelectedDurablePlan(null);
-              }}
-            />
-          )
+        {activeModule === "test-analytics" ? (
+          <TestAnalyticsWorkspace locale={locale} />
+        ) : null}
+        {activeModule === "test-management" &&
+        durable &&
+        projectId !== null &&
+        selectedDurablePlan !== null ? (
+          <TestPlanReview
+            projectId={projectId}
+            planId={selectedDurablePlan.planId}
+            revisionId={selectedDurablePlan.revisionId}
+            onBack={() => {
+              window.history.pushState(null, "", "/");
+              setSelectedDurablePlan(null);
+            }}
+          />
         ) : activeModule === "test-management" ? (
           <TestManagementWorkspace
             state={artifactState}
@@ -2293,7 +2293,11 @@ export function TapProductPrototype({
         ) : null}
       </main>
       <TapperFloatingAssistant
-        visible={!durable && !tapperWorkspaceActive}
+        visible={
+          !durable &&
+          !tapperWorkspaceActive &&
+          activeModule !== "test-analytics"
+        }
         context={floatingContext}
         conversation={activeConversation}
         draft={messageDraft}

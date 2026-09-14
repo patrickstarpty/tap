@@ -107,9 +107,25 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         raise KnowledgeRuntimeUnavailable
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
-    revisions, policy = await services.knowledge.resolve_conversation_selection(
-        tuple((*body.source_revision_ids, *body.document_revision_ids))
-    )
+    selected_revision_ids = tuple((*body.source_revision_ids, *body.document_revision_ids))
+    if selected_revision_ids:
+        revisions, policy = await services.knowledge.resolve_conversation_selection(
+            selected_revision_ids
+        )
+        acl_digest = policy.acl_digest
+        retrieval_policy_digest = content_digest(
+            {
+                "decisionId": policy.decision_id,
+                "policyVersion": policy.policy_version,
+                "corpusVersion": policy.active_corpus_version,
+            }
+        )
+    else:
+        revisions = ()
+        acl_digest = content_digest({"mode": "model-only", "resources": []})
+        retrieval_policy_digest = content_digest(
+            {"mode": "model-only", "retrieval": "not-selected"}
+        )
     return TurnInput(
         message=body.message,
         actor_id=scope.actor_id,
@@ -168,14 +184,8 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         skill_instruction_template_digests=tuple(
             item.instruction_template_digest for item in skills
         ),
-        acl_digest=policy.acl_digest,
-        retrieval_policy_digest=content_digest(
-            {
-                "decisionId": policy.decision_id,
-                "policyVersion": policy.policy_version,
-                "corpusVersion": policy.active_corpus_version,
-            }
-        ),
+        acl_digest=acl_digest,
+        retrieval_policy_digest=retrieval_policy_digest,
     )
 
 

@@ -845,6 +845,11 @@
   height: 44px;
 }
 
+.tap-composer-footer .tap-model-trigger {
+  width: auto;
+  min-width: 0;
+}
+
 .tap-composer-send-button {
   display: grid;
   flex: 0 0 auto;

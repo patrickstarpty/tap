@@ -11,7 +11,13 @@ export function isCodexModelId(value: unknown): value is CodexModelId {
 }
 
 export type ProductModule =
-  "tapper" | "agents" | "skills" | "library" | "test-management" | "low-code";
+  | "tapper"
+  | "agents"
+  | "skills"
+  | "library"
+  | "test-management"
+  | "low-code"
+  | "test-analytics";
 
 export type TapperSurface = "chat" | "agents" | "skills" | "library";
 

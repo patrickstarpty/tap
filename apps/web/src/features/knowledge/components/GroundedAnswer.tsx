@@ -266,6 +266,28 @@ export function GroundedAnswer({
     return <Alert type="info" showIcon title={message} />;
   }
 
+  if (response.retrievalProfileId === "direct-chat-v1") {
+    if (
+      typeof response.answer !== "string" ||
+      response.answer.length === 0 ||
+      !Array.isArray(response.claims) ||
+      response.claims.length !== 0 ||
+      !Array.isArray(response.citations) ||
+      response.citations.length !== 0 ||
+      response.graphContextStatus !== "NOT_SELECTED" ||
+      response.degradedMode !== false ||
+      (response.abstentionReason !== null &&
+        response.abstentionReason !== undefined)
+    ) {
+      return <FormatError />;
+    }
+    return (
+      <div className="tapper-direct-answer">
+        <SafeMarkdown>{response.answer}</SafeMarkdown>
+      </div>
+    );
+  }
+
   const graph = validateAnswerGraph(response);
   if (graph === null) {
     return <FormatError />;

@@ -35,6 +35,48 @@ def test_conversation_routes_are_registered_and_blank_first_message_is_rejected(
     assert "text/event-stream" in stream["responses"]["200"]["content"]
 
 
+def test_conversation_accepts_a_model_only_turn_without_knowledge_revisions():
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [SimpleNamespace(alias="tapper-chat")]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            raise AssertionError("Model-only chat must not enter Knowledge selection")
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "Hello", "modelAlias": "tapper-chat"},
+        headers={"Idempotency-Key": "model-only-chat"},
+    )
+
+    assert response.status_code == 202, response.text
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert frozen.resolved_resources == ()
+    assert frozen.source_revision_ids == ()
+    assert frozen.document_revision_ids == ()
+
+
 def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_resolution():
     class Allow:
         async def authorize(self, *_args):

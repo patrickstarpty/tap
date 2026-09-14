@@ -48,6 +48,39 @@ describe("Tapper product prototype", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it("keeps the Test Management and Test Observability prototypes in durable mode", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.url.endsWith("/ai/models")) {
+        return Response.json({
+          defaultAlias: "tapper-chat",
+          items: [
+            {
+              alias: "tapper-chat",
+              displayName: "Qwen Plus",
+              capabilities: ["chat", "structured"],
+            },
+          ],
+        });
+      }
+      if (request.url.includes("/conversations"))
+        return Response.json({ items: [], nextCursor: null });
+      return Response.json({ items: [], nextCursor: null });
+    });
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    expect(screen.getByRole("table", { name: "Test plan list" })).toBeVisible();
+
+    await user.click(
+      screen.getByRole("button", { name: "Test Observability" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Test Observability" }),
+    ).toBeVisible();
+  });
+
   it("restores the default Tapper page from durable Conversation APIs, not localStorage", async () => {
     window.localStorage.setItem(
       "tap.prototype.workspace.v2",
@@ -369,7 +402,12 @@ describe("Tapper product prototype", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Tapper", "Test Management", "Low Code Automation"]);
+    ).toEqual([
+      "Tapper",
+      "Test Management",
+      "Test Observability",
+      "Low Code Automation",
+    ]);
     expect(
       within(screen.getByRole("navigation", { name: "Tapper tools" }))
         .getAllByRole("button")

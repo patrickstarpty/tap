@@ -1,4 +1,5 @@
 import {
+  BarChartOutlined,
   BookOutlined,
   CodeOutlined,
   FileTextOutlined,
@@ -85,6 +86,11 @@ export function PrototypeSidebar({
       key: "test-management",
       label: copy.navigation["test-management"],
       icon: <FileTextOutlined aria-hidden="true" />,
+    },
+    {
+      key: "test-analytics",
+      label: copy.navigation["test-analytics"],
+      icon: <BarChartOutlined aria-hidden="true" />,
     },
     {
       key: "low-code",

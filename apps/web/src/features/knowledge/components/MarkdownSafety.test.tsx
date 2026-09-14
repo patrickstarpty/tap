@@ -102,6 +102,30 @@ describe("GroundedAnswer Markdown safety", () => {
   });
 });
 
+describe("GroundedAnswer model-only chat", () => {
+  it("renders a strict direct-chat response without fabricated citations", () => {
+    render(
+      <GroundedAnswer
+        response={answerResponse({
+          answer: "页面空语料对话已通过",
+          claims: [],
+          citations: [],
+          retrievalProfileId: "direct-chat-v1",
+          graphContextStatus: "NOT_SELECTED",
+          degradedMode: false,
+        })}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("页面空语料对话已通过")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /引用/u }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("GroundedAnswer closed graph", () => {
   it("fails closed when a claim omits its answer offsets", () => {
     const response = answerResponse() as unknown as {
@@ -175,6 +199,13 @@ describe("GroundedAnswer closed graph", () => {
     [
       "empty non-abstained graph",
       answerResponse({ answer: "", claims: [], citations: [] }),
+    ],
+    [
+      "direct chat with fabricated grounding",
+      answerResponse({
+        retrievalProfileId: "direct-chat-v1",
+        graphContextStatus: "NOT_SELECTED",
+      }),
     ],
     [
       "non-abstained response carrying an abstention reason",
