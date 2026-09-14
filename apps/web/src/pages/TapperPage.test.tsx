@@ -372,8 +372,8 @@ describe("Tapper product prototype", () => {
     ).toEqual([
       "Tapper",
       "Test Management",
-      "Test Analytics",
       "Low Code Automation",
+      "Test Observability",
     ]);
     expect(
       within(screen.getByRole("navigation", { name: "Tapper tools" }))
@@ -926,6 +926,34 @@ describe("Tapper product prototype", () => {
     expect(testDataTab).toHaveFocus();
     expect(testDataTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel", { name: "Test Data" })).toBeVisible();
+  });
+
+  it("opens plan-scoped Test Observability from a Test Plan quality summary", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    await user.click(
+      screen.getByRole("row", {
+        name: /Life insurance application underwriting/,
+      }),
+    );
+
+    const summary = screen.getByRole("region", { name: "Quality summary" });
+    expect(within(summary).getByText("Pass rate")).toBeVisible();
+    expect(within(summary).getByText("Failed tests")).toBeVisible();
+    expect(within(summary).getByText("Flaky tests")).toBeVisible();
+    expect(within(summary).getByText("Latest build")).toBeVisible();
+
+    await user.click(
+      within(summary).getByRole("button", {
+        name: "Open Test Observability",
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Demo Dashboard" }),
+    ).toBeVisible();
+    expect(screen.getByText("Test Plan: TP-101")).toBeVisible();
   });
 
   it("keeps ordinary questions in the chat conversation", async () => {

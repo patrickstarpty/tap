@@ -2211,6 +2211,12 @@ export function TapProductPrototype({
             />
           )
         ) : null}
+        {activeModule === "test-analytics" ? (
+          <TestAnalyticsWorkspace
+            locale={locale}
+            initialPlanId={selectedPlanId ?? undefined}
+          />
+        ) : null}
         {activeModule === "test-management" && durable && projectId !== null ? (
           selectedDurablePlan === null ? (
             <TestPlanLibrary
@@ -2246,6 +2252,10 @@ export function TapProductPrototype({
               setAutomationView({ kind: "detail", automationId });
               setActiveModule("low-code");
             }}
+            onOpenObservability={(testPlanId) => {
+              setSelectedPlanId(testPlanId);
+              setActiveModule("test-analytics");
+            }}
             onLink={(automationId, testPlanId) =>
               dispatchArtifact({
                 type: "association/set",
@@ -2255,9 +2265,6 @@ export function TapProductPrototype({
             }
             onRun={runAutomation}
           />
-        ) : null}
-        {activeModule === "test-analytics" ? (
-          <TestAnalyticsWorkspace locale={locale} />
         ) : null}
         {activeModule === "low-code" ? (
           <AutomationWorkspace

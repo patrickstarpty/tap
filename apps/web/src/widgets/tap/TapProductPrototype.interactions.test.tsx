@@ -424,8 +424,8 @@ describe("Tap product prototype interactions", () => {
     ).toEqual([
       "Tapper",
       "Test Management",
-      "Test Analytics",
       "Low Code Automation",
+      "Test Observability",
     ]);
     const tapperSidebar = screen.getByRole("complementary", {
       name: "Tapper tools",
@@ -484,6 +484,19 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
+  it("opens Test Observability from the product rail", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(
+      screen.getByRole("button", { name: "Test Observability" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: /Demo Dashboard/i }),
+    ).toBeVisible();
+  });
+
   it("marks New chat as current only while the chat destination is active", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -496,17 +509,6 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(newChatButton);
     expect(newChatButton).toHaveAttribute("aria-current", "page");
-  });
-
-  it("opens Test Analytics from the product rail", async () => {
-    const user = userEvent.setup();
-    renderPrototype();
-
-    await user.click(screen.getByRole("button", { name: "Test Analytics" }));
-
-    expect(
-      screen.getByRole("heading", { name: /Test analytics/i }),
-    ).toBeVisible();
   });
 
   it("shows Tapper tools only while the Tapper workspace is active", async () => {
