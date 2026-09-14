@@ -10,6 +10,7 @@ from model_gateway_conformance import assert_catalog_conformance, assert_gateway
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.litellm import (
+    ChatModelRoute,
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
     ProviderModelMapping,
@@ -406,6 +407,61 @@ async def test_knowledge_answer_applies_frozen_agent_and_skill_authority_to_mode
 
 
 @pytest.mark.asyncio
+async def test_knowledge_answer_routes_an_approved_alternate_chat_model():
+    from test_knowledge_api import _claim_resolution_evidence
+
+    from tap.modules.ai.domain.models import ModelCallAudit, ModelResult, ModelUsage, text_digest
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    captured = []
+
+    class CapturingGateway:
+        async def generate_structured(self, request):
+            captured.append(request)
+            return ModelResult(
+                output={
+                    "answer": "Grounded",
+                    "claims": [{"text": "Grounded", "evidenceLabels": ["S1"]}],
+                },
+                actual_model="qwen-flash",
+                usage=ModelUsage(),
+                actual_provider="dashscope",
+                audit=ModelCallAudit(
+                    request.scope,
+                    request.alias,
+                    request.operation,
+                    request.prompt_digest,
+                    request.schema_digest,
+                    text_digest(request.context),
+                    request.idempotency_key,
+                    "dashscope",
+                    "qwen-flash",
+                    ModelUsage(),
+                ),
+            )
+
+    models = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="tapper-embedding",
+        chat_alias="tapper-chat",
+        chat_aliases=frozenset({"tapper-chat", "tapper-chat-flash"}),
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+    result = await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        model_alias="tapper-chat-flash",
+    )
+
+    assert captured[0].alias == "tapper-chat-flash"
+    assert result.model_id == "tapper-chat-flash"
+
+
+@pytest.mark.asyncio
 async def test_litellm_gateway_exposes_governed_default_catalog() -> None:
     gateway = LiteLLMModelGateway(
         LiteLLMModelGatewayConfig(
@@ -428,6 +484,44 @@ async def test_litellm_gateway_exposes_governed_default_catalog() -> None:
         capabilities=frozenset({ModelCapability.EMBED}),
         enabled=True,
     ) in await gateway.catalog(VALIDATION_SCOPE)
+
+
+@pytest.mark.asyncio
+async def test_litellm_gateway_exposes_and_routes_each_approved_chat_model() -> None:
+    requested_models: list[str] = []
+
+    def routed(incoming):
+        payload = json.loads(incoming.content)
+        requested_models.append(payload["model"])
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-max",
+                "choices": [{"message": {"content": "Hello"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    gateway = configured_gateway(
+        routed,
+        additional_chat_models=(
+            ChatModelRoute(
+                alias="tapper-chat-max",
+                display_name="Qwen Max",
+                target=ProviderModelMapping("dashscope", "qwen-max"),
+            ),
+        ),
+    )
+    models = await gateway.catalog(VALIDATION_SCOPE)
+    assert [(item.alias, item.display_name) for item in models if "chat" in item.capabilities] == [
+        ("tapper-chat", "Qwen Plus"),
+        ("tapper-chat-max", "Qwen Max"),
+    ]
+
+    alternate = replace(request(), alias="tapper-chat-max")
+    result = await gateway.chat(alternate)
+    assert requested_models == ["tapper-chat-max"]
+    assert result.actual_model == "dashscope/qwen-max"
 
 
 @pytest.mark.asyncio
@@ -556,7 +650,7 @@ async def test_logical_sol_display_never_relabels_actual_qwen_evidence():
     result = await gateway.chat(request())
     assert result.actual_provider == "dashscope"
     assert result.actual_model == result.audit.actual_model == "dashscope/qwen-plus"
-    assert (await gateway.catalog(VALIDATION_SCOPE))[0].display_name == "GPT-5.6 Sol"
+    assert (await gateway.catalog(VALIDATION_SCOPE))[0].display_name == "Qwen Plus"
     assert "Sol" not in repr(result) and "private-provider-key" not in repr(result)
 
 

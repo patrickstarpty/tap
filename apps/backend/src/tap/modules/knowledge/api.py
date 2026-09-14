@@ -130,13 +130,16 @@ class KnowledgeAPI:
     ) -> AnswerResponse:
         return await self._retrieval.answer(request, policy)
 
-    async def answer_frozen(self, request, policy, *, governance, graph_context=()):
+    async def answer_frozen(
+        self, request, policy, *, governance, graph_context=(), model_alias: str | None = None
+    ):
         return await self._retrieval.answer(
             request,
             policy,
             frozen_policy=True,
             governance=governance,
             graph_context=graph_context,
+            model_alias=model_alias,
         )
 
 

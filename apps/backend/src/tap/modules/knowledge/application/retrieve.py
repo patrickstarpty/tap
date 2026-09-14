@@ -201,6 +201,7 @@ class AuthorizedRetrieval:
         frozen_policy: bool = False,
         governance=None,
         graph_context: tuple[Mapping[str, object], ...] = (),
+        model_alias: str | None = None,
     ) -> AnswerResponse:
         run = await self._retrieve(request.as_search_request(), policy, frozen_policy=frozen_policy)
         required = tuple(
@@ -222,8 +223,9 @@ class AuthorizedRetrieval:
                 run.response.retrieval_profile_id.value,
                 governance=governance,
                 graph_context=graph_context,
+                model_alias=model_alias,
             )
-            if governance is not None or graph_context
+            if governance is not None or graph_context or model_alias is not None
             else await self._answers.answer(
                 run.plan.sanitized_query,
                 run.response.evidence,

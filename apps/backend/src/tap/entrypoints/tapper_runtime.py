@@ -85,6 +85,8 @@ _FIXED_COLLECTION = "kb_doc_v1_tapper_demo"
 _FIXED_ALIAS = "kb_doc_tapper_demo_active"
 _FIXED_CORPUS = "tapper-demo-v1"
 _FIXED_CHAT_ALIAS = "tapper-chat"
+_FIXED_FLASH_CHAT_ALIAS = "tapper-chat-flash"
+_FIXED_MAX_CHAT_ALIAS = "tapper-chat-max"
 _FIXED_EMBEDDING_ALIAS = "tapper-embedding"
 _FIXED_LITELLM_EMBEDDING_ROUTE = "dashscope/text-embedding-v4"
 _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
@@ -133,6 +135,8 @@ class TapperSettings:
     litellm_base_url: str
     litellm_api_key: str = field(repr=False)
     litellm_model: str = field(repr=False)
+    litellm_flash_model: str = field(repr=False)
+    litellm_max_model: str = field(repr=False)
     litellm_embedding_model: str = field(repr=False)
     allowed_answer_model_labels: frozenset[str] = field(repr=False)
     allowed_embedding_model_labels: frozenset[str] = field(repr=False)
@@ -409,6 +413,8 @@ class TapperSettings:
             litellm_base_url=litellm_base_url,
             litellm_api_key=_secret(values, "LITELLM_MASTER_KEY", "tap-local-master-key"),
             litellm_model=litellm_model,
+            litellm_flash_model=_model_route(values, "LITELLM_FLASH_MODEL", "dashscope/qwen-flash"),
+            litellm_max_model=_model_route(values, "LITELLM_MAX_MODEL", "dashscope/qwen-max"),
             litellm_embedding_model=litellm_embedding_model,
             allowed_answer_model_labels=allowed_answer_labels,
             allowed_embedding_model_labels=allowed_embedding_labels,
@@ -978,6 +984,8 @@ async def _redact_model_context(text: str) -> str:
 
 
 def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> KnowledgeModelGateway:
+    from tap.modules.ai.adapters.litellm import ChatModelRoute
+
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
@@ -996,6 +1004,18 @@ def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> Kno
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
         max_retries=max_retries,
+        additional_chat_models=(
+            ChatModelRoute(
+                _FIXED_FLASH_CHAT_ALIAS,
+                "Qwen Flash",
+                ProviderModelMapping.from_route(settings.litellm_flash_model),
+            ),
+            ChatModelRoute(
+                _FIXED_MAX_CHAT_ALIAS,
+                "Qwen Max",
+                ProviderModelMapping.from_route(settings.litellm_max_model),
+            ),
+        ),
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:
@@ -1012,6 +1032,9 @@ def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> Kno
         redact=_redact_model_context,
         embedding_alias=settings.embedding_alias,
         chat_alias=settings.chat_alias,
+        chat_aliases=frozenset(
+            {settings.chat_alias, _FIXED_FLASH_CHAT_ALIAS, _FIXED_MAX_CHAT_ALIAS}
+        ),
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
     )
@@ -1479,6 +1502,7 @@ def _assemble_http_services(
             sources=SourceService(cast(SourceRepository, repository), documents),
             corpus_version=corpus_version,
             graph_enricher=graph_enricher,
+            models=embeddings,
         ),
         readiness=readiness,
         scope_provider=scope_provider,
@@ -1667,8 +1691,8 @@ def _identity(values: Mapping[str, str], name: str, default: str) -> str:
     return value
 
 
-def _model_route(values: Mapping[str, str], name: str) -> str:
-    value = _value(values, name, "dashscope/qwen-plus")
+def _model_route(values: Mapping[str, str], name: str, default: str = "dashscope/qwen-plus") -> str:
+    value = _value(values, name, default)
     if len(value) > 256 or _MODEL_ROUTE.fullmatch(value) is None:
         raise ValueError(f"{name} must be one bounded exact provider model route")
     return value

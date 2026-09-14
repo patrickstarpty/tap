@@ -79,6 +79,7 @@ class KnowledgeModelGateway:
         redact: Callable[[str], Awaitable[str]],
         embedding_alias: str,
         chat_alias: str,
+        chat_aliases: frozenset[str] | None = None,
         embedding_dimension: int,
         timeout_seconds: float,
     ) -> None:
@@ -88,7 +89,81 @@ class KnowledgeModelGateway:
         self.embedding_model_id = embedding_alias
         self.embedding_dimension = embedding_dimension
         self.chat_alias = chat_alias
+        self.chat_aliases = chat_aliases or frozenset({chat_alias})
+        if chat_alias not in self.chat_aliases:
+            raise ValueError("default chat alias must be in the approved chat catalog")
         self.timeout_seconds = timeout_seconds
+
+    async def chat(
+        self,
+        query: str,
+        *,
+        model_alias: str,
+        governance: GenerationGovernance | None = None,
+    ) -> AnswerGeneration:
+        """Generate a model-only answer when the user selected no Knowledge corpus."""
+
+        context = await self._redact(query)
+        prompt = (
+            "Answer the user directly. No Knowledge corpus was selected; do not invent citations."
+        )
+        tools: frozenset[str] = frozenset()
+        governance_digests: tuple[str, ...] = ()
+        schema = None
+        schema_value = None
+        operation = ModelOperation.CHAT
+        if governance is not None:
+            if governance.model_alias != model_alias:
+                raise AnswerUnavailable("model-unavailable")
+            prompt = "\n\n".join(
+                (
+                    governance.system_instruction,
+                    *governance.skill_instructions,
+                    prompt,
+                )
+            )
+            tools = governance.tool_allowlist
+            governance_digests = governance.revision_digests
+            schema = governance.output_schema
+            schema_value = governance.output_schema_digest
+            operation = ModelOperation.STRUCTURED
+        try:
+            request = ModelRequest(
+                self.scope,
+                model_alias,
+                operation,
+                prompt,
+                text_digest(prompt),
+                context,
+                self.timeout_seconds,
+                str(uuid4()),
+                schema,
+                schema_value,
+                tools,
+                governance_digests,
+            )
+            result = (
+                await self.gateway.generate_structured(request)
+                if operation is ModelOperation.STRUCTURED
+                else await self.gateway.chat(request)
+            )
+            if isinstance(result.output, str):
+                answer = result.output
+            elif isinstance(result.output, dict) and isinstance(result.output.get("answer"), str):
+                answer = str(result.output["answer"])
+            else:
+                raise AnswerUnavailable("model-unavailable")
+            return AnswerGeneration(
+                answer,
+                (),
+                model_alias,
+                "direct-chat-v1",
+                result.provider_request_id,
+                gateway_call_id=result.gateway_call_id,
+                provider_model_id=result.actual_model,
+            )
+        except (ModelGatewayRejected, ModelGatewayUnavailable):
+            raise AnswerUnavailable("model-unavailable") from None
 
     async def embed(self, query: str) -> Embedding:
         context = await self._redact(query)
@@ -151,6 +226,7 @@ class KnowledgeModelGateway:
         *,
         governance: GenerationGovernance | None = None,
         graph_context=(),
+        model_alias: str | None = None,
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -189,11 +265,13 @@ class KnowledgeModelGateway:
         try:
             prompt = _ANSWER_PROMPT
             schema = _ANSWER_SCHEMA
-            alias = self.chat_alias
+            alias = model_alias or self.chat_alias
+            if alias not in self.chat_aliases:
+                raise ModelGatewayRejected()
             tools: frozenset[str] = frozenset()
             governance_digests: tuple[str, ...] = ()
             if governance is not None:
-                if governance.model_alias != self.chat_alias:
+                if governance.model_alias != alias:
                     raise ModelGatewayRejected()
                 prompt = "\n\n".join(
                     (
@@ -233,7 +311,7 @@ class KnowledgeModelGateway:
             return AnswerGeneration(
                 answer,
                 claims,
-                self.chat_alias,
+                alias,
                 "grounded-answer-v1",
                 result.provider_request_id,
                 gateway_call_id=result.gateway_call_id,

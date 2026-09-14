@@ -137,6 +137,7 @@ class AnswerService:
         *,
         governance: GenerationGovernance | None,
         graph_context=(),
+        model_alias: str | None = None,
     ) -> AnswerResponse:
         if (
             not revisions
@@ -158,16 +159,23 @@ class AnswerService:
         }:
             raise DocumentStateChanged("accepted retrieval authority is invalid")
         frozen_answer = getattr(self._knowledge, "answer_frozen", None)
-        response = (
-            await frozen_answer(
+        if frozen_answer is None:
+            response = await self._knowledge.answer(trusted, policy)
+        elif model_alias is None:
+            response = await frozen_answer(
                 trusted,
                 policy,
                 governance=governance,
                 graph_context=graph_context,
             )
-            if frozen_answer is not None
-            else await self._knowledge.answer(trusted, policy)
-        )
+        else:
+            response = await frozen_answer(
+                trusted,
+                policy,
+                governance=governance,
+                graph_context=graph_context,
+                model_alias=model_alias,
+            )
         try:
             snapshot = AnswerSnapshot.from_response(
                 response=response,

@@ -22,7 +22,7 @@ async def assert_catalog_conformance(gateway: object) -> None:
     assert catalog[0] == (
         ModelDescriptor(
             alias="tapper-chat",
-            display_name="GPT-5.6 Sol",
+            display_name="Qwen Plus",
             capabilities=frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
             enabled=True,
         )
