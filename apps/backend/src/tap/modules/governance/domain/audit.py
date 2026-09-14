@@ -23,6 +23,13 @@ class AuditAction(StrEnum):
     SCAVENGE_STAGING = "scavenge-staging"
     REBUILD_MILVUS = "rebuild-milvus"
     RECONCILE_ALL = "reconcile-all"
+    CONVERSATION_TURN_REQUESTED = "conversation-turn-requested"
+    CONVERSATION_TURN_COMPLETED = "conversation-turn-completed"
+    GRAPH_SNAPSHOT_REQUESTED = "graph-snapshot-requested"
+    GRAPH_SNAPSHOT_READY = "graph-snapshot-ready"
+    GRAPH_SNAPSHOT_FAILED = "graph-snapshot-failed"
+    TEST_PLAN_GENERATION_REQUESTED = "test-plan-generation-requested"
+    TEST_PLAN_REVISION_PUBLISHED = "test-plan-revision-published"
 
 
 class AuditResource(StrEnum):
@@ -30,6 +37,9 @@ class AuditResource(StrEnum):
     KNOWLEDGE_SOURCE = "knowledge-source"
     DOCUMENT_REVISION = "document-revision"
     PROJECT_MAINTENANCE = "project-maintenance"
+    CONVERSATION_TURN = "conversation-turn"
+    GRAPH_SNAPSHOT = "graph-snapshot"
+    TEST_PLAN_REVISION = "test-plan-revision"
 
 
 class AuditOutcome(StrEnum):
@@ -102,7 +112,26 @@ def audit_content_digest(
     if type(safe_metadata) is not SafeAuditMetadata:
         raise TypeError("audit requires SafeAuditMetadata")
     expected_resource = (
-        AuditResource.KNOWLEDGE_SOURCE
+        AuditResource.TEST_PLAN_REVISION
+        if action
+        in {
+            AuditAction.TEST_PLAN_GENERATION_REQUESTED,
+            AuditAction.TEST_PLAN_REVISION_PUBLISHED,
+        }
+        else AuditResource.GRAPH_SNAPSHOT
+        if action
+        in {
+            AuditAction.GRAPH_SNAPSHOT_REQUESTED,
+            AuditAction.GRAPH_SNAPSHOT_READY,
+            AuditAction.GRAPH_SNAPSHOT_FAILED,
+        }
+        else AuditResource.CONVERSATION_TURN
+        if action
+        in {
+            AuditAction.CONVERSATION_TURN_REQUESTED,
+            AuditAction.CONVERSATION_TURN_COMPLETED,
+        }
+        else AuditResource.KNOWLEDGE_SOURCE
         if action in {AuditAction.SOURCE_CREATED, AuditAction.SOURCE_DELETED}
         else AuditResource.DOCUMENT_REVISION
         if action

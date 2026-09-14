@@ -27,3 +27,11 @@
 - [Tapper V1 知识来源账本验收](2026-09-06-tapper-v1-source-ledger-review.md)：Task6通过；记录0010/25表、事务Audit/Outbox、查询脱敏、两轮修正和最终Backend2880/Web294验证，V1质量出口仍待后续。
 
 - [Tapper V1 Source API 与 projection 验收](2026-09-08-tapper-v1-source-api-and-projection-review.md)：Task6A通过；记录0010a/26表、Source API/Picker、canonical Milvus v2、显式v1回滚、五份审查和最终隔离回归。
+- [Tapper V1 统一 ModelGateway 与模型目录验收](2026-09-08-tapper-v1-model-gateway-review.md)：Task 7 通过；记录唯一 LiteLLM Gateway、Project 模型目录、legacy Codex 隔离、一轮审查修正和完整隔离回归。
+- [Tapper V1 AI Agent 与 Skill Revision 验收](2026-09-09-tapper-v1-ai-agent-skill-catalog-review.md)：Task 7A 通过；记录不可变 Catalog Revision、并发幂等 Validation seed、只读 API、选择器恢复态、四轮审查修正与隔离回归。
+- [Tapper V1 Conversation 持久化与可恢复流验收](2026-09-09-tapper-v1-conversation-streaming-review.md)：Task 8 通过；记录不可变双快照、generation worker、lease/fencing、Evidence、可恢复 SSE、0012a 兼容迁移与五轮审查修正。
+- [Tapper V1 真实 Conversation Web 接线验收](2026-09-09-tapper-v1-durable-conversation-web-review.md)：Task 9 通过；记录默认 API 模式、历史 Context/Citation、可恢复多轮 SSE、页面级重启旅程、两轮审查修正和完整隔离回归。
+- [V1 可信知识质量门禁评审](2026-09-09-v1-trusted-knowledge-gate.md)：`pass`；100 条人工复核 case、11 份合成语料与批准的百炼实际路由通过全部硬阈值、zero-skip、真实 Milvus、隔离 E2E 和完整回归，V2 已放行。
+- [V2 Grounded Knowledge Graph 门禁评审](2026-09-13-v2-knowledge-graph-gate.md)：历史评审；原 `pass` 已被后续更正撤销。
+- [V3 AI 测试设计门禁评审](2026-09-14-v3-ai-test-design-gate.md)：历史评审；原 `pass` 已被后续更正撤销。
+- [V2/V3 门禁更正评审](2026-09-14-v2-v3-gate-correction.md)：V2/V3 `gate-reopened`；记录多 Revision Graph、真实质量复核和完整 Web 评审闭环缺口，V4 暂不放行。

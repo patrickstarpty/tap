@@ -1,0 +1,141 @@
+{
+  "dataset": {
+    "schemaVersion": "quality-kb-dataset-v1",
+    "profileId": "QUALITY-KB-01",
+    "dataset": {
+      "version": "red-cross-source-v2",
+      "labelingMethod": "human",
+      "provenance": "test-fixture:independently-reviewed-red-case"
+    },
+    "bindings": {
+      "policyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approvalDigest": "sha256:af2a4682299656a52f08dd172f1f325154277fac85d8cd96a1492421a8b3536b",
+      "modelAlias": "tapper-chat",
+      "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "agentRevisionDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "skillRevisionDigests": ["sha256:4444444444444444444444444444444444444444444444444444444444444444"],
+      "governanceDigests": ["sha256:3333333333333333333333333333333333333333333333333333333333333333", "sha256:4444444444444444444444444444444444444444444444444444444444444444"],
+      "schemaDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "cases": [
+      {
+        "caseId": "cross-source-red",
+        "caseType": "answerable",
+        "question": "Which approval is required?",
+        "projectId": "project-a",
+        "authorizedSourceIds": ["source-a"],
+        "selectedSourceIds": ["source-a"],
+        "authorizationExpected": "allow",
+        "shouldAbstain": false,
+        "conflictLabel": null,
+        "expectedEvidence": [
+          {
+            "evidenceId": "evidence-a",
+            "sourceId": "source-a",
+            "documentRevisionId": "revision-a",
+            "chunkId": "chunk-a",
+            "locator": {"type": "document", "page": 1},
+            "evidenceDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "expectedClaims": [
+          {
+            "claimId": "expected-claim-a",
+            "textDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "supportedEvidenceIds": ["evidence-a"]
+          }
+        ],
+        "labelProvenance": "human-label:red-cross-source"
+      }
+    ]
+  },
+  "observations": {
+    "schemaVersion": "quality-kb-observations-v1",
+    "datasetDigest": "sha256:ae440b63c8e08aa2b2d9ebba9e1361269884c918c15f1ce467a7db4827c41043",
+    "runId": "red-run-v2",
+    "execution": {
+      "startedAtUtc": "2026-09-09T00:00:00Z",
+      "finishedAtUtc": "2026-09-09T00:00:00.005Z",
+      "providerCallBudget": 1000,
+      "providerCalls": 1,
+      "cacheHits": 0,
+      "retryCount": 0,
+      "maxRetriesPerCase": 2
+    },
+    "cases": [
+      {
+        "caseId": "cross-source-red",
+        "authority": {
+          "actualEnterpriseId": "tenant",
+          "actualProjectId": "project-a",
+          "actualPolicyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "authorizedSourceIds": ["source-a"],
+          "decision": "allow",
+          "reason": null
+        },
+        "retrieved": [
+          {"rank": 1, "projectId": "project-a", "sourceId": "source-b", "documentRevisionId": "revision-b", "chunkId": "chunk-foreign"}
+        ],
+        "abstained": false,
+        "claims": [
+          {"claimId": "observed-claim-a", "textDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "citationIds": ["citation-foreign"]}
+        ],
+        "citations": [
+          {
+            "citationId": "citation-foreign",
+            "projectId": "project-a",
+            "sourceId": "source-b",
+            "documentRevisionId": "revision-b",
+            "chunkId": "chunk-foreign",
+            "locator": {"type": "document", "page": 1},
+            "resolvedEvidenceDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "execution": {
+          "timeoutMs": 1000,
+          "startedAtUtc": "2026-09-09T00:00:00Z",
+          "finishedAtUtc": "2026-09-09T00:00:00.005Z",
+          "durationMs": 5,
+          "cacheKey": "sha256:7c7213397e9fb23b507c1fe71cc8fe2c4819105e5ddc8f0f530f34f529a9011d",
+          "cacheEvidenceDigest": "sha256:dc0c1656db399299e216c0c01df5318d2b8617f9f76c5f42e366ee7d48c5e381",
+          "cacheHit": false,
+          "maxRetriesPerCase": 2,
+          "attempts": [
+            {
+              "attempt": 1,
+              "retryReason": null,
+              "startedAtUtc": "2026-09-09T00:00:00Z",
+              "durationMs": 4,
+              "providerCalls": [
+                {
+                  "runnerCallId": "runner-red-1",
+                  "requestedAlias": "tapper-chat",
+                  "requestedOperation": "structured",
+                  "requestedProvider": "approved-provider",
+                  "requestedModel": "approved-model",
+                  "startedAtUtc": "2026-09-09T00:00:00Z",
+                  "endedAtUtc": "2026-09-09T00:00:00.002Z",
+                  "status": "success",
+                  "retryable": false,
+                  "operation": "structured",
+                  "alias": "tapper-chat",
+                  "actualProvider": "approved-provider",
+                  "actualModel": "approved-model",
+                  "promptDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                  "schemaDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+                  "governanceDigests": [
+                    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                    "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+                  ],
+                  "providerRequestId": "provider-red-1",
+                  "gatewayCallId": "gateway-red-1",
+                  "durationMs": 2
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

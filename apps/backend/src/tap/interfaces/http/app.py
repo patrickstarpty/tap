@@ -16,11 +16,16 @@ from tap.interfaces.http.problems import (
     problem_response_metadata,
     register_problem_handlers,
 )
+from tap.interfaces.http.routes.ai_assets import router as ai_assets_router
 from tap.interfaces.http.routes.citations import router as citations_router
+from tap.interfaces.http.routes.conversations import router as conversations_router
 from tap.interfaces.http.routes.health import router as health_router
 from tap.interfaces.http.routes.knowledge_answers import router as knowledge_answers_router
 from tap.interfaces.http.routes.knowledge_documents import router as knowledge_documents_router
+from tap.interfaces.http.routes.knowledge_graph import router as knowledge_graph_router
 from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sources_router
+from tap.interfaces.http.routes.model_catalog import router as model_catalog_router
+from tap.interfaces.http.routes.test_plans import router as test_plans_router
 from tap.interfaces.http.scope import resolve_project_scope
 from tap.modules.access.domain.context import IdentityMode
 from tap.modules.access.domain.policy import AuthorizationDenied
@@ -92,6 +97,11 @@ def create_app(
         knowledge_documents_router,
         knowledge_answers_router,
         citations_router,
+        model_catalog_router,
+        ai_assets_router,
+        conversations_router,
+        knowledge_graph_router,
+        test_plans_router,
     ):
         app.include_router(
             router,

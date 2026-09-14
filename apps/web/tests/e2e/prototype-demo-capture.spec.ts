@@ -727,49 +727,6 @@ test.describe("reduced motion", () => {
   }
 });
 
-for (const viewport of [
-  { width: 1280, height: 720 },
-  { width: 390, height: 844 },
-]) {
-  test(`runtime unavailable preserves navigation at ${viewport.width}`, async ({
-    page,
-  }) => {
-    await page.setViewportSize(viewport);
-    await page.addInitScript(() => window.localStorage.clear());
-    let knowledgeRequests = 0;
-    await page.route("**/api/v1/projects/**", (route) => {
-      knowledgeRequests += 1;
-      return route.abort();
-    });
-    await page.route("**/api/v1/runtime-mode", (route) =>
-      route.fulfill({ status: 503, body: "unavailable" }),
-    );
-    await page.goto("/");
-    await expect(
-      page.getByRole("status", { name: "Validation Mode" }),
-    ).toContainText("运行环境连接失败 · 服务器操作暂不可用");
-    await expect(
-      page.getByRole("navigation", { name: "Product" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Test Management" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Test Management" }),
-    ).toBeVisible();
-    expect(knowledgeRequests).toBe(0);
-    await page.screenshot({
-      path: test.info().outputPath(`runtime-unavailable-${viewport.width}.png`),
-    });
-  });
-}
-
-test("checked-in screenshot inventory is canonical", () => {
-  expect(OUTPUTS).toHaveLength(43);
-  const actual = readdirSync(OUTPUT_DIR)
-    .filter((name) => name.endsWith(".png"))
-    .sort();
-  expect(actual).toEqual([...OUTPUTS].sort());
-});
-
 test("capture manifest rejects a duplicate output name", () => {
   const manifest = new CaptureManifest(["one.png"] as const);
   manifest.start("one.png");

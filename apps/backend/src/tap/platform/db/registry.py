@@ -3,8 +3,16 @@
 from sqlalchemy import MetaData
 
 from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
+from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision, skill, skill_revision
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
+from tap.modules.chat.adapters.mysql_conversations import (
+    conversation,
+    turn_answer_evidence_snapshot,
+    turn_artifact_link,
+    turn_input_snapshot,
+)
 from tap.modules.governance.adapters.schema import project_audit
+from tap.modules.graph.adapters.mysql import GRAPH_TABLES
 from tap.modules.knowledge.adapters.mysql_audit import knowledge_search_audit
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_answer_snapshot,
@@ -25,6 +33,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_lineage,
     knowledge_projection_state,
 )
+from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 
 # Explicit Project business inventory, separate from identity-registry ownership.
@@ -39,6 +48,10 @@ BUSINESS_TABLES = (
     chat_turn,
     chat_event,
     turn_snapshot,
+    conversation,
+    turn_input_snapshot,
+    turn_answer_evidence_snapshot,
+    turn_artifact_link,
     knowledge_document,
     knowledge_document_revision,
     knowledge_ingestion_job,
@@ -53,6 +66,12 @@ BUSINESS_TABLES = (
     knowledge_projection_fence,
     knowledge_projection_cleanup,
     knowledge_projection_lineage,
+    ai_agent,
+    ai_agent_revision,
+    skill,
+    skill_revision,
+    *GRAPH_TABLES,
+    *TEST_MANAGEMENT_TABLES,
 )
 
 

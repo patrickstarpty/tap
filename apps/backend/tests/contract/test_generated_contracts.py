@@ -173,11 +173,21 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "rerank.completed",
         "answer.delta",
         "citation.resolved",
+        "conversation.turn.requested",
+        "conversation.turn.completed",
         "turn.completed",
         "turn.abstained",
         "turn.degraded",
         "turn.canceled",
         "turn.failed",
+    }
+    answer_claim = event_schema["$defs"]["AnswerClaim"]
+    assert set(answer_claim["required"]) == {
+        "claimId",
+        "text",
+        "answerStart",
+        "answerEnd",
+        "citationIds",
     }
 
 
@@ -197,7 +207,7 @@ def test_exporter_emits_private_events_and_problem_registry_without_public_leak(
     for path in ("openapi/api.json", "events/chat-stream.schema.json"):
         content = (tmp_path / path).read_text()
         assert "ProjectEventEnvelope" not in content
-        assert "inputSnapshotDigest" not in content
+        assert "inputSnapshotDigest" in content
         assert "extractionProfileDigest" not in content
 
 
@@ -243,3 +253,33 @@ def test_exported_problem_component_matches_runtime_and_all_refs_resolve(tmp_pat
 
     check_refs(schema)
     assert "ProjectEventEnvelope" not in schema["components"]["schemas"]
+
+
+def test_catalog_generated_validation_response_is_problem_details(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    schema = json.loads((tmp_path / "openapi/api.json").read_bytes())
+    response = schema["paths"]["/api/v1/projects/{project_id}/ai/models"]["get"]["responses"]["422"]
+    assert response["content"] == {
+        "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}
+    }
+    typescript = (REPOSITORY_ROOT / "apps/web/src/shared/api/generated/schema.ts").read_text()
+    operation = typescript.split("    ai_list_models: {", 1)[1].split("\n    };", 1)[0]
+    validation = operation.split("422: {", 1)[1].split("\n            };", 1)[0]
+    assert '"application/problem+json": components["schemas"]["ProblemDetails"]' in validation
+    assert "HTTPValidationError" not in validation
+
+
+def test_generated_conversation_validation_responses_are_problem_details(tmp_path: Path) -> None:
+    export_contracts(tmp_path)
+    generated = json.loads((REPOSITORY_ROOT / "contracts/openapi/api.json").read_bytes())
+    for path, item in generated["paths"].items():
+        if "/conversations" not in path:
+            continue
+        for operation in item.values():
+            if not isinstance(operation, dict) or "operationId" not in operation:
+                continue
+            assert operation["responses"]["422"]["content"] == {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/ProblemDetails"}
+                }
+            }

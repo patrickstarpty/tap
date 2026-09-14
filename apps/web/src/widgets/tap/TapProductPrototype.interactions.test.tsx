@@ -32,7 +32,7 @@ const prototypeStyles = readFileSync(
   "utf8",
 );
 
-function renderPrototype() {
+function renderPrototype(conversationSource: "api" | "fixture" = "fixture") {
   const api = fakeKnowledgeClient().withDocuments([
     document({
       documentId: "life-underwriting-rules",
@@ -48,8 +48,31 @@ function renderPrototype() {
     }),
   ]);
 
-  return renderKnowledgeApp(<TapProductPrototype />, { api });
+  return renderKnowledgeApp(
+    <TapProductPrototype conversationSource={conversationSource} />,
+    { api },
+  );
 }
+
+it("preserves the draft and prevents sending when the governed model is unavailable", async () => {
+  const { queryClient } = renderKnowledgeApp(
+    <TapProductPrototype conversationSource="api" />,
+    { api: fakeKnowledgeClient() },
+  );
+  const user = userEvent.setup();
+  const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+  await user.type(composer, "Keep this draft");
+  await act(async () => {
+    queryClient.setQueriesData(
+      { queryKey: ["model-catalog"] },
+      { defaultAlias: "tapper-chat", items: [] },
+    );
+  });
+  expect(await screen.findByText("Model unavailable")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await user.keyboard("{Enter}");
+  expect(composer).toHaveValue("Keep this draft");
+});
 
 it("uses canonical Source API identities in the existing source panel", async () => {
   const api = fakeKnowledgeClient().withDocuments([
@@ -68,7 +91,10 @@ it("uses canonical Source API identities in the existing source panel", async ()
     ],
     nextCursor: null,
   });
-  const { queryClient } = renderKnowledgeApp(<TapProductPrototype />, { api });
+  const { queryClient } = renderKnowledgeApp(
+    <TapProductPrototype conversationSource="api" />,
+    { api },
+  );
   const checkbox = await screen.findByRole("checkbox", {
     name: /Canonical policy/,
   });
@@ -129,7 +155,9 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
     },
   });
   api.deleteSource = vi.fn().mockResolvedValue(undefined);
-  renderKnowledgeApp(<TapProductPrototype />, { api });
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api,
+  });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
   await userEvent.click(
     await screen.findByRole("button", { name: "View Canonical policy" }),
@@ -165,7 +193,9 @@ it("shows Source documents in Library and targets retry and confirmed deletion",
 
 it("distinguishes Library loading from an empty Source collection", async () => {
   const api = fakeKnowledgeClient().deferList();
-  renderKnowledgeApp(<TapProductPrototype />, { api });
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api,
+  });
   await userEvent.click(screen.getByRole("button", { name: "Library" }));
   expect(screen.getByRole("status", { name: "Loading sources" })).toBeVisible();
 });
@@ -288,7 +318,7 @@ describe("Tap product prototype interactions", () => {
     window.localStorage.clear();
   });
 
-  it("keeps Project sources in the document list after a page remount", async () => {
+  it("keeps representative knowledge in the default graph after a page remount", async () => {
     const user = userEvent.setup();
     const first = renderPrototype();
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -298,36 +328,22 @@ describe("Tap product prototype interactions", () => {
       }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Documents", selected: true }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", {
-        name: "View life-underwriting-rules.md",
-      }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", {
-        name: "View health-disclosure-guide.pdf",
-      }),
+      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
     ).toBeVisible();
     first.unmount();
 
     renderPrototype();
-    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
+    expect(
+      screen.getByRole("group", { name: "Life insurance knowledge graph" }),
+    ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Examples loaded" }),
     ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Documents" }));
     const list = screen.getByRole("list", { name: "Library sources" });
-    expect(
-      within(list).getByRole("button", {
-        name: "View life-underwriting-rules.md",
-      }),
-    ).toBeVisible();
-    expect(
-      within(list).getByRole("button", {
-        name: "View health-disclosure-guide.pdf",
-      }),
-    ).toBeVisible();
+    expect(within(list).getByText("Beneficiary test cases.xlsx")).toBeVisible();
+    expect(within(list).getByText("beneficiary.ts")).toBeVisible();
     expect(within(list).queryByText("settlement.ts")).not.toBeInTheDocument();
   });
 
@@ -468,17 +484,6 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
-  it("opens Test Analytics from the product rail", async () => {
-    const user = userEvent.setup();
-    renderPrototype();
-
-    await user.click(screen.getByRole("button", { name: "Test Analytics" }));
-
-    expect(
-      screen.getByRole("heading", { name: /Test analytics/i }),
-    ).toBeVisible();
-  });
-
   it("marks New chat as current only while the chat destination is active", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -491,6 +496,17 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(newChatButton);
     expect(newChatButton).toHaveAttribute("aria-current", "page");
+  });
+
+  it("opens Test Analytics from the product rail", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Test Analytics" }));
+
+    expect(
+      screen.getByRole("heading", { name: /Test analytics/i }),
+    ).toBeVisible();
   });
 
   it("shows Tapper tools only while the Tapper workspace is active", async () => {
@@ -2237,7 +2253,7 @@ describe("Tap product prototype interactions", () => {
 
   it("uploads a Library file without making processing documents selectable", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderPrototype("api");
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -2277,7 +2293,9 @@ describe("Tap product prototype interactions", () => {
   it("keeps uploads pending until the Project API receipt arrives", async () => {
     const user = userEvent.setup();
     const api = fakeKnowledgeClient().deferUpload();
-    renderKnowledgeApp(<TapProductPrototype />, { api });
+    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+      api,
+    });
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("button", { name: "Add source" }));
     const dialog = screen.getByRole("dialog", { name: "Add source" });
@@ -2304,7 +2322,9 @@ describe("Tap product prototype interactions", () => {
     const api = fakeKnowledgeClient().withUploadProblem(
       new Error("private provider details"),
     );
-    renderKnowledgeApp(<TapProductPrototype />, { api });
+    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+      api,
+    });
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("button", { name: "Add source" }));
     const dialog = screen.getByRole("dialog", { name: "Add source" });
@@ -2331,7 +2351,7 @@ describe("Tap product prototype interactions", () => {
       <RuntimeClientProvider
         client={{ getMode: () => new Promise(() => undefined) }}
       >
-        <TapProductPrototype />
+        <TapProductPrototype conversationSource="api" />
       </RuntimeClientProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Library" }));
@@ -2368,7 +2388,7 @@ describe("Tap product prototype interactions", () => {
 
   it("keeps an uploaded source description in the current interface language", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderPrototype("api");
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -2392,11 +2412,10 @@ describe("Tap product prototype interactions", () => {
     expect(screen.queryByText("Local source · page-only")).toBeNull();
   });
 
-  it("switches Library to the graph and locates search results before viewing their source", async () => {
+  it("opens Library on the graph and locates search results before viewing their source", async () => {
     const user = userEvent.setup();
     renderPrototype();
     await user.click(screen.getByRole("button", { name: "Library" }));
-    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
@@ -2439,7 +2458,7 @@ describe("Tap product prototype interactions", () => {
 
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
-    renderPrototype();
+    renderPrototype("api");
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -2462,24 +2481,16 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
-    const graph = screen.getByRole("group", {
-      name: "Life insurance knowledge graph",
-    });
-    expect(graph).toBeVisible();
-    expect(within(graph).getByText(/health-disclosure-guide/)).toBeVisible();
     expect(
-      within(graph).getByRole("button", {
-        name: /health-disclosure-guide\.pdf/,
-      }),
-    ).toHaveAttribute("data-highlighted", "true");
+      await screen.findByText(
+        "Select at least one ready source to explore its graph.",
+      ),
+    ).toBeVisible();
     expect(
-      within(graph).getByRole("button", {
-        name: /life-underwriting-rules\.md/,
+      screen.queryByRole("group", {
+        name: "Life insurance knowledge graph",
       }),
-    ).toHaveAttribute("data-dimmed", "true");
-    expect(screen.getByText(/Illustrative view/)).toBeVisible();
-    expect(within(graph).getByText("Health disclosure")).toBeVisible();
-    expect(within(graph).getByText("informs")).toBeVisible();
+    ).not.toBeInTheDocument();
 
     await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -2492,7 +2503,7 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Documents" }));
-    expect(screen.getByText("4/4 sources")).toBeVisible();
+    expect(screen.getByText("32/32 sources")).toBeVisible();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Type" }),
@@ -2512,10 +2523,10 @@ describe("Tap product prototype interactions", () => {
     expect(
       within(filteredSources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
-    expect(screen.getByText("1/4 sources")).toBeVisible();
+    expect(screen.getByText("1/32 sources")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(screen.getByText("4/4 sources")).toBeVisible();
+    expect(screen.getByText("32/32 sources")).toBeVisible();
     expect(
       within(screen.getByRole("list", { name: "Library sources" })).getByText(
         "application-checklist.docx",
@@ -2558,159 +2569,39 @@ describe("Tap product prototype interactions", () => {
     expect(input).toHaveValue("Keep this draft");
   });
 
-  it("can hide graph communities and close selected node details", async () => {
+  it("does not substitute the illustrative graph without a published revision", async () => {
     const user = userEvent.setup();
-    renderPrototypeWithManyDocuments();
+    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+      api: fakeKnowledgeClient(),
+    });
+
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-    await user.click(
-      screen.getByRole("button", { name: "Toggle topic groups" }),
-    );
+
     expect(
-      screen.queryByRole("checkbox", { name: /Sources · 5 nodes/ }),
-    ).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: "Toggle topic groups" }),
-    );
-    expect(
-      screen.getByRole("checkbox", { name: /Sources · 5 nodes/ }),
+      await screen.findByText(
+        "Select at least one ready source to explore its graph.",
+      ),
     ).toBeVisible();
-    await user.click(
-      screen.getByRole("button", {
-        name: "Health disclosure · Concept · Underwriting",
-      }),
-    );
-    expect(screen.getByRole("region", { name: "Node details" })).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "Close node details" }),
-    );
-    expect(screen.queryByRole("region", { name: "Node details" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Enter fullscreen" }),
-    ).toBeVisible();
+    expect(screen.queryByText("Illustrative view")).not.toBeInTheDocument();
   });
 
-  it("filters graph communities, inspects nodes, and controls the viewport", async () => {
+  it("omits illustrative graph summaries from the durable product path", async () => {
     const user = userEvent.setup();
-    renderPrototypeWithManyDocuments();
+    renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+      api: fakeKnowledgeClient(),
+    });
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
-    const graph = screen.getByRole("group", {
-      name: "Life insurance knowledge graph",
-    });
-    const sourcesCommunity = screen.getByRole("checkbox", {
-      name: /Sources · 5 nodes/,
-    });
-    expect(sourcesCommunity).toBeChecked();
-    await user.click(sourcesCommunity);
     expect(
-      within(graph).queryByRole("button", { name: /beneficiary-guide\.md/ }),
-    ).toBeNull();
-    await user.click(sourcesCommunity);
-
-    await user.click(
-      within(graph).getByRole("button", {
-        name: "Health disclosure · Concept · Underwriting",
-      }),
-    );
-    const inspector = screen.getByRole("region", { name: "Node details" });
-    expect(within(inspector).getByText("Health disclosure")).toBeVisible();
-    expect(within(inspector).getByText("4 connections")).toBeVisible();
-    expect(within(inspector).getByText("EXTRACTED")).toBeVisible();
-
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("100%");
-    await user.click(screen.getByRole("button", { name: "Zoom in" }));
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("125%");
-    await user.click(screen.getByRole("button", { name: "Reset view" }));
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("100%");
-    const zoomOut = screen.getByRole("button", { name: "Zoom out" });
-    await user.click(zoomOut);
-    await user.click(zoomOut);
-    expect(
-      screen.getByRole("status", { name: "Zoom level" }),
-    ).toHaveTextContent("75%");
-    expect(zoomOut).toBeDisabled();
-  });
-
-  it("summarizes every visible graph document, concept, and labeled relationship", async () => {
-    const user = userEvent.setup();
-    renderPrototypeWithManyDocuments();
-
-    await user.click(screen.getByRole("button", { name: "Library" }));
-    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-
-    const graph = screen.getByRole("group", {
-      name: "Life insurance knowledge graph",
-    });
-    const summary = screen.getByRole("region", {
-      name: "Knowledge graph summary",
-    });
-    const documents = within(summary).getByRole("list", {
-      name: "Visible documents",
-    });
-    expect(within(documents).getAllByRole("listitem")).toHaveLength(5);
-    expect(within(documents).getByText("beneficiary-guide.md")).toBeVisible();
-    expect(
-      within(graph).getByRole("button", { name: /beneficiary-guide\.md/ }),
+      await screen.findByText(
+        "Select at least one ready source to explore its graph.",
+      ),
     ).toBeVisible();
-
-    const concepts = within(summary).getByRole("list", {
-      name: "Concepts",
-    });
     expect(
-      within(concepts)
-        .getAllByRole("listitem")
-        .map((item) => item.textContent),
-    ).toEqual([
-      "Life insurance application",
-      "Underwriting",
-      "Health disclosure",
-      "Beneficiary",
-      "Approval",
-      "Test cases",
-      "Exploration",
-      "New business",
-      "Policy servicing",
-      "Claims",
-      "Codebase",
-    ]);
-
-    const relationships = within(summary).getByRole("list", {
-      name: "Labeled relationships",
-    });
-    expect(
-      within(relationships).getByText(
-        "Life insurance application requires Health disclosure",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      within(relationships).getByText("Health disclosure informs Underwriting"),
-    ).toBeInTheDocument();
-    expect(
-      within(relationships).getByText(
-        "Life insurance application names Beneficiary",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      within(relationships).getByText(
-        "beneficiary-guide.md supports Beneficiary",
-      ),
-    ).toBeInTheDocument();
-    expect(graph).toHaveAttribute(
-      "aria-describedby",
-      expect.stringContaining("tap-library-graph-summary"),
-    );
-    expect(within(graph).queryByText("寿险投保")).toBeNull();
-    expect(within(graph).queryByText("健康告知")).toBeNull();
-    expect(within(graph).queryByText("核保")).toBeNull();
-    expect(within(graph).queryByText("受益人")).toBeNull();
+      screen.queryByRole("region", { name: "Knowledge graph summary" }),
+    ).not.toBeInTheDocument();
   });
 });

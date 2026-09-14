@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import httpx
 import pytest
 
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.entrypoints.legacy_litellm import LiteLLMAdapter, LiteLLMConfig
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.documents import (
     BlockKind,
@@ -1220,6 +1220,23 @@ async def test_delete_failure_stays_deleting_and_automatically_retries_in_order(
         "artifact:chunks",
         "artifact:embeddings",
     }
+
+
+@pytest.mark.asyncio
+async def test_deletion_preserves_artifacts_linked_to_immutable_turn_evidence() -> None:
+    worker, repository, artifacts, _, index, _ = worker_parts(kind=JobKind.DELETION)
+    repository.work = replace(
+        repository.work,
+        preserve_evidence_artifacts=True,
+        normalized_locator=ArtifactLocator("artifact:normalized"),
+        chunks_locator=ArtifactLocator("artifact:chunks"),
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.deleted == 1
+    assert index.events[:3] == ["fence-index", "delete-index", "negative-probe"]
+    assert artifacts.deleted == set()
 
 
 @pytest.mark.parametrize("limit", [0, -1, 51, True, 1.5])

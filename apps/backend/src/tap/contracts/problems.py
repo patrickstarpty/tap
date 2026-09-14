@@ -204,6 +204,14 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "conversation-not-found",
+                "Conversation not found",
+                404,
+                "The Conversation is unavailable in this Project.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "scope-mismatch",
                 "Scope mismatch",
                 403,
@@ -244,12 +252,27 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "asset-revision-unavailable",
+                "Asset revision unavailable",
+                404,
+                "The approved asset revision is unavailable in this Project.",
+                False,
+                None,
+            ),
+            ProblemDefinition(
                 "automation-mapping-required",
                 "Automation mapping required",
                 409,
                 "The published revision requires a compatible step mapping.",
                 False,
                 None,
+            ),
+            ProblemDefinition(
+                "graph-fact-not-found",
+                "Graph fact not found",
+                404,
+                "The graph fact is unavailable in this Project snapshot.",
+                False,
             ),
             ProblemDefinition(
                 "graph-unavailable",

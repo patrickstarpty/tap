@@ -8,11 +8,7 @@
     "tapper-woodpecker-v3-friendly.png / bottom-row Aha"
   ],
   "userRequest": "很好。Aha 我也要这样一套",
-  "confirmedKeywords": [
-    "聪明",
-    "敏锐",
-    "好奇"
-  ],
+  "confirmedKeywords": ["聪明", "敏锐", "好奇"],
   "expression": "侧身单眼，微张喙，橙色口腔，三道橙色发现提示线；表达灵感来了或发现问题。",
   "vectorRefinements": [
     "清理生成参考中额头远侧眼点与缺口，使额头成为连续曲线，保留单眼侧脸。",
@@ -29,12 +25,7 @@
   "deliverables": {
     "svg": 17,
     "png": 96,
-    "families": [
-      "fullbody",
-      "avatar",
-      "launcher",
-      "lockup"
-    ],
+    "families": ["fullbody", "avatar", "launcher", "lockup"],
     "note": "最终SVG及导出的透明PNG包含额头清理；原始ImageGen PNG作为生成过程留档，并非最终资产。"
   },
   "generationHistory": [

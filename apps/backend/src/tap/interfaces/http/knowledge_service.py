@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 from tap.contracts.http import (
     CitationPreview,
@@ -62,12 +62,16 @@ class AnswerOperations(Protocol):
 
     async def answer(self, request: AnswerRequest) -> AnswerResponse: ...
 
+    async def answer_frozen(self, *args, **kwargs) -> AnswerResponse: ...
+
 
 class CitationOperations(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
 
     async def resolve(self, citation_id: str) -> CitationPreviewResult: ...
+
+    async def resolve_historical(self, citation_id: str) -> CitationPreviewResult: ...
 
 
 class SearchOperations(Protocol):
@@ -88,12 +92,18 @@ class KnowledgeHttpService:
         citations: CitationOperations,
         searches: SearchOperations | None = None,
         sources: SourceService | None = None,
+        corpus_version: str = "tapper-demo-v1",
+        graph_enricher=None,
     ) -> None:
+        if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
+            raise ValueError("unsupported projection corpus")
         self._documents = documents
         self._answers = answers
         self._citations = citations
         self._searches = searches
         self._sources = sources
+        self._corpus_version = corpus_version
+        self._graph_enricher = graph_enricher
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -182,6 +192,105 @@ class KnowledgeHttpService:
         response = await self._answers.answer(domain_request)
         return answer_response_to_http(response)
 
+    async def resolve_conversation_selection(self, revision_ids: tuple[str, ...]):
+        resolver = getattr(self._answers, "resolve_conversation_selection", None)
+        if resolver is None:
+            from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+
+            raise KnowledgeRuntimeUnavailable
+        return await resolver(revision_ids)
+
+    async def answer_conversation(self, request: RetrievalAnswerRequest, frozen_input):
+        import json
+
+        from tap.modules.ai.domain.models import GenerationGovernance, schema_digest, text_digest
+        from tap.modules.chat.domain.conversations import content_digest
+        from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+        from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
+
+        if frozen_input.model_alias != "tapper-chat":
+            raise ValueError("accepted conversation model alias is unsupported")
+        revisions = tuple(
+            sorted(
+                (
+                    ReadyDocumentRevision(
+                        item.document_id,
+                        item.revision_id,
+                        item.source_content_hash,
+                        item.source_id,
+                    )
+                    for item in frozen_input.resolved_resources
+                ),
+                key=lambda item: item.document_id,
+            )
+        )
+        policy = build_demo_policy_context(revisions, corpus_version=self._corpus_version)
+        if frozen_input.acl_digest != policy.acl_digest or frozen_input.retrieval_policy_digest != (
+            content_digest(
+                {
+                    "decisionId": policy.decision_id,
+                    "policyVersion": policy.policy_version,
+                    "corpusVersion": policy.active_corpus_version,
+                }
+            )
+        ):
+            raise ValueError("accepted retrieval authority changed")
+        governance = None
+        if frozen_input.agent_revision_id is not None:
+            if (
+                frozen_input.agent_system_instruction is None
+                or frozen_input.agent_system_instruction_digest
+                != text_digest(frozen_input.agent_system_instruction)
+                or frozen_input.agent_output_schema_json is None
+            ):
+                raise ValueError("accepted agent execution content is invalid")
+            output_schema = json.loads(frozen_input.agent_output_schema_json)
+            if (
+                not isinstance(output_schema, dict)
+                or schema_digest(output_schema) != frozen_input.agent_output_schema_digest
+            ):
+                raise ValueError("accepted agent output schema is invalid")
+            governance = GenerationGovernance(
+                model_alias=frozen_input.model_alias,
+                system_instruction=frozen_input.agent_system_instruction,
+                system_instruction_digest=frozen_input.agent_system_instruction_digest,
+                skill_instructions=frozen_input.skill_instruction_templates,
+                skill_instruction_digests=frozen_input.skill_instruction_template_digests,
+                tool_allowlist=frozenset(frozen_input.agent_tool_allowlist),
+                output_schema=output_schema,
+                output_schema_digest=frozen_input.agent_output_schema_digest,
+                revision_digests=(
+                    frozen_input.agent_revision_digest,
+                    frozen_input.agent_system_instruction_digest,
+                    frozen_input.agent_output_schema_digest,
+                    *frozen_input.skill_revision_digests,
+                    *frozen_input.skill_instruction_template_digests,
+                ),
+            )
+        domain_request = answer_request_from_http(request)
+        graph_context = None
+        if self._graph_enricher is not None:
+            graph_context = await self._graph_enricher.enrich(
+                self.scope,
+                tuple(frozen_input.source_revision_ids),
+                domain_request.query,
+            )
+        response = await self._answers.answer_frozen(
+            domain_request,
+            revisions,
+            policy,
+            governance=governance,
+            graph_context=() if graph_context is None else graph_context.facts,
+        )
+        return answer_response_to_http(
+            response,
+            graph_context_status=cast(
+                Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"],
+                "UNAVAILABLE" if graph_context is None else graph_context.status.value,
+            ),
+            graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
+        )
+
     async def search(self, request: RetrievalSearchRequest) -> RetrievalSearchResponse:
         """Expose real evidence only to trusted in-process verification, never an HTTP route."""
 
@@ -192,6 +301,14 @@ class KnowledgeHttpService:
 
     async def citation(self, citation_id: str) -> CitationPreview:
         preview = await self._citations.resolve(citation_id)
+        return self._citation_preview(preview)
+
+    async def historical_citation(self, citation_id: str) -> CitationPreview:
+        preview = await self._citations.resolve_historical(citation_id)
+        return self._citation_preview(preview)
+
+    @staticmethod
+    def _citation_preview(preview) -> CitationPreview:  # type: ignore[no-untyped-def]
         anchor = preview.anchor
         return CitationPreview(
             citation_id=preview.citation_id,

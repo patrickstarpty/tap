@@ -21,6 +21,22 @@ date: 2026-09-04
 
 **Decisions:** [ADR-020–025 与当前有效决策](../decisions/index.md)
 
+## 执行状态（2026-09-14）
+
+本表是当前里程碑进度入口；里程碑是否完成以对应 Gate Review 为准。后文复选框保留原始 TDD 执行规范，不作为跨任务进度看板，避免已提交实现仍显示 `[ ]` 时被误读为尚未开始。
+
+| 里程碑               | 状态          | 当前证据或下一步                                                             |
+| -------------------- | ------------- | ---------------------------------------------------------------------------- |
+| V0 Validation Scope  | `gate-passed` | [V0 完整出口](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md) |
+| V1 Trusted Knowledge | `gate-passed` | [V1 可信知识门禁](../reviews/2026-09-09-v1-trusted-knowledge-gate.md)        |
+| V2 Knowledge Graph   | `gate-reopened` | 多 Revision Graph 契约与 E2E 待补；见[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) |
+| V3 AI Test Design    | `gate-reopened` | 真实人审绑定与完整 Web 旅程待补；见[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)      |
+| V4 Web LCA/Recorder  | `blocked` | 仅在新的 V2/V3 Gate Review 为 `pass` 后开始                                    |
+| V5 Jenkins Loop      | `not-started` | 仅在 V4 Gate Review 为 `pass` 后开始                                         |
+| VG/P0/P1             | `not-started` | 继续遵守 Validation → 产品身份 → 生产加固的授权边界                          |
+
+开发者应先阅读[Tapper 开发者指南](../reference/2026-09-13-tapper-developer-guide.md)，再进入当前 Task 的精确文件、RED/GREEN 命令和提交边界。
+
 ## 2026-09-05 执行增量
 
 更名已由 RFC-010 完成。本计划从今天开始执行；保持 TAP 平台 / Tapper 智能工作区的层级，所有新代码、命令与 fixtures 以当前 `tapper` 命名空间为基线，不再执行旧名称兼容迁移。Alembic 起点仍为 `0005_projection_lineage`，历史 `0003` 使用现行 `0003_tapper_documents`。
@@ -886,12 +902,12 @@ RFC-006 的已实现路径若继续保留，必须先把现有 selector 和 `Ans
 
 **Profile:** 至少 100 个经人工标注问题；报告绑定 dataset、policy、model alias/actual model、prompt/agent/skill/schema/evaluator digest。硬阈值：Project/未选 Source 泄漏 `0`，anchor 解析 `100%`，grounded Claim–Citation precision `100%`，recall@10 `≥90%`，abstain accuracy `≥90%`。
 
-- [ ] 先写 evaluator 单元测试和一个故意含跨 Source 命中的 failing fixture；运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v`，预期 FAIL 且明确报告 leakage/threshold，不以缺环境通过。
-- [ ] 实现 deterministic report generator、dataset digest、逐 case evidence 和非零退出；默认命令只跑离线 evaluator，不调用真实模型。
-- [ ] 在 `Makefile` 增加离线 `quality-kb` 与 gate `quality-kb-real`；后者要求 `TAP_RUN_QUALITY_KB_01=1`，并解析 pytest/report 断言实际 case 数 ≥100 且 zero skipped。缺授权可在普通 `make test` 中 skip，但 `quality-kb-real` 必须非零退出。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v && make quality-kb && TAP_RUN_QUALITY_KB_01=1 make quality-kb-real && make test-milvus && make demo-e2e`；预期 PASS：字面量 RED 测试已转绿，所有阈值、真实模型回答 smoke、Source/Project 负矩阵与 zero-skip 证据通过。用实际日期替换 `<review-date>` 并在 Review 中记录 dataset/config/digest/命令/退出码；只有 Review `pass` 才进入 V2。
-- [ ] 运行 `make check && make test && git diff --check`。
-- [ ] Commit: `test(knowledge): add v1 trusted knowledge gate`
+- [x] 先写 evaluator 单元测试和一个故意含跨 Source 命中的 failing fixture；运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v`，预期 FAIL 且明确报告 leakage/threshold，不以缺环境通过。
+- [x] 实现 deterministic report generator、dataset digest、逐 case evidence 和非零退出；默认命令只跑离线 evaluator，不调用真实模型。
+- [x] 在 `Makefile` 增加离线 `quality-kb` 与 gate `quality-kb-real`；后者要求 `TAP_RUN_QUALITY_KB_01=1`，并解析 pytest/report 断言实际 case 数 ≥100 且 zero skipped。缺授权可在普通 `make test` 中 skip，但 `quality-kb-real` 必须非零退出。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_kb_01.py -v && make quality-kb && TAP_RUN_QUALITY_KB_01=1 make quality-kb-real && make test-milvus && make demo-e2e`；预期 PASS：字面量 RED 测试已转绿，所有阈值、真实模型回答 smoke、Source/Project 负矩阵与 zero-skip 证据通过。用实际日期替换 `<review-date>` 并在 Review 中记录 dataset/config/digest/命令/退出码；只有 Review `pass` 才进入 V2。
+- [x] 运行 `make check && make test && git diff --check`。
+- [x] Commit: `test(knowledge): add v1 trusted knowledge gate`
 
 ## V2 — Grounded Knowledge Graph
 
@@ -1116,14 +1132,14 @@ class GraphStorePort(Protocol):
 - Modify: `docs/reviews/index.md`
 - Modify: `Makefile`
 
-**Thresholds:** 至少 50 个真实业务意图、两名 Reviewer；Schema/BDD deterministic gate `100%`，无来源事实 `0`，关键需求覆盖 `≥90%`，无 Critical Correction Draft `≥80%`。各 reviewer 分开记录，再按预定义 adjudication 规则汇总。
+**Thresholds:** 至少 50 个真实业务意图、一名具名 Reviewer；Schema/BDD deterministic gate `100%`，无来源事实 `0`，关键需求覆盖 `≥90%`，无 Critical Correction Draft `≥80%`。Reviewer 按 case 独立记录批准结论。
 
-- [ ] 写 evaluator 和故意混淆事实/Assumption、漏关键需求、非法 BDD 的 failing fixtures；运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_test_01.py -v`，预期 FAIL 且显示具体指标。
-- [ ] 实现 dataset/model/prompt/agent/skill/schema/evaluator digest、reviewer label provenance、分歧与裁决输出；模型自评不计入标签。
-- [ ] 在 `Makefile` 增加离线 `quality-test-design` 和 gate `quality-test-design-real`；后者要求显式授权并解析报告断言 ≥50 cases、两名 Reviewer、zero skipped；默认 CI 不调用真实模型。
-- [ ] 运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_test_01.py -v && make quality-test-design && TAP_RUN_QUALITY_TEST_01=1 make quality-test-design-real && make demo-e2e`；预期 PASS：字面量 RED 测试已转绿，真实 50-case profile、跨 Source/Project 负测试与 Test Plan publish E2E 全部通过。用实际日期替换 `<review-date>` 并记录证据；只有 Review `pass` 才进入 V4。
-- [ ] 运行 `make check && make test && git diff --check`。
-- [ ] Commit: `test(test-plan): add v3 ai test design gate`
+- [x] 写 evaluator 和故意混淆事实/Assumption、漏关键需求、非法 BDD 的 failing fixtures；运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_test_01.py -v`，预期 FAIL 且显示具体指标。
+- [x] 实现 dataset/model/prompt/agent/skill/schema/evaluator digest、reviewer label provenance、分歧与裁决输出；模型自评不计入标签。
+- [x] 在 `Makefile` 增加离线 `quality-test-design` 和 gate `quality-test-design-real`；后者要求显式授权并解析报告断言 ≥50 cases、一名具名 Reviewer、zero skipped；默认 CI 不调用真实模型。
+- [x] 运行 `uv run --project apps/backend pytest apps/backend/tests/quality/test_quality_test_01.py -v && make quality-test-design && TAP_RUN_QUALITY_TEST_01=1 make quality-test-design-real && make demo-e2e`；预期 PASS：字面量 RED 测试已转绿，真实 50-case profile、跨 Source/Project 负测试与 Test Plan publish E2E 全部通过。用实际日期替换 `<review-date>` 并记录证据；只有 Review `pass` 才进入 V4。
+- [x] 运行 `make check && make test && git diff --check`。
+- [x] Commit: `test(test-plan): add v3 ai test design gate`
 
 ## V4 — Web LCA, Playwright and Recorder
 

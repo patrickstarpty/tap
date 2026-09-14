@@ -75,6 +75,10 @@ export function useKnowledgeClient(): KnowledgeClient {
   return client;
 }
 
+export function useOptionalKnowledgeClient(): KnowledgeClient | null {
+  return useContext(KnowledgeClientContext);
+}
+
 function useProjectKnowledgeClient(projectId: string): KnowledgeClient {
   const client = useKnowledgeClient();
   if (client.projectId !== projectId) {

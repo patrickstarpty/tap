@@ -503,6 +503,10 @@ def test_source_delete_answer_race_and_multisource_associations(
                 if deletion_first
                 else results[1] is None
             )
+            if deletion_first:
+                await repository.save_frozen_answer_with_citations(
+                    replace(next_answer, trace_id="frozen-after-delete")
+                )
             assert await repository.load_citation("citation-multi") is None
             assert await repository.load_ready_revisions((second.document_id,)) == (second,)
             async with sessions() as session:
@@ -512,6 +516,15 @@ def test_source_delete_answer_race_and_multisource_associations(
                     .where(knowledge_answer_snapshot.c.trace_id == "race-answer")
                 )
                 assert count == (0 if deletion_first else 1)
+                if deletion_first:
+                    assert (
+                        await session.scalar(
+                            select(func.count())
+                            .select_from(knowledge_answer_snapshot)
+                            .where(knowledge_answer_snapshot.c.trace_id == "frozen-after-delete")
+                        )
+                        == 1
+                    )
         finally:
             release.set()
             await engine.dispose()
@@ -637,7 +650,9 @@ def test_source_scope_and_cancelled_cleanup_preserve_other_source(owned_project_
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("failed_seam", ["audit", "outbox"], ids=["audit", "outbox"])
+@pytest.mark.parametrize(
+    "failed_seam", ["audit", "outbox", "graph"], ids=["audit", "outbox", "graph"]
+)
 def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_mysql, failed_seam):
     async def run():
         from datetime import timedelta
@@ -647,6 +662,8 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
 
         from tap.modules.governance.adapters.schema import project_audit
         from tap.modules.governance.domain.audit import AuditAction
+        from tap.modules.graph.adapters.mysql import graph_extraction_job
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphReadyProjection
         from tap.modules.knowledge.adapters.mysql_documents import (
             knowledge_document,
             knowledge_document_revision,
@@ -685,7 +702,24 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
                     )
                 return result
 
-        repository = Failing(sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit)
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+
+        graph_projection = MysqlGraphReadyProjection(
+            MysqlGraphJobStore(sessions), model_alias="tapper-chat"
+        )
+
+        class FailingGraphProjection:
+            async def after_ready(self, *args, **kwargs):
+                await graph_projection.after_ready(*args, **kwargs)
+                if failed_seam == "graph":
+                    raise RuntimeError("synthetic graph persistence failure")
+
+        repository = Failing(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            audit_factory=create_project_audit,
+            ready_projection=FailingGraphProjection(),
+        )
         try:
             reserved = await repository.reserve_upload(
                 ReserveUpload(
@@ -708,6 +742,9 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
             )[0]
             async with sessions.begin() as session:
                 await session.execute(update(knowledge_ingestion_job).values(stage="ready"))
+                await session.execute(
+                    update(knowledge_document_revision).values(chunks_blob_locator="chunks:ready")
+                )
             if failed_seam == "outbox":
                 async with engine.begin() as connection:
                     await connection.execute(
@@ -726,11 +763,17 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
                 projection_digest="sha256:" + "b" * 64,
             )
             with pytest.raises(
-                RuntimeError if failed_seam == "audit" else DBAPIError,
-                match="synthetic ready" if failed_seam == "audit" else "task6_fail_ready_outbox",
+                RuntimeError if failed_seam in {"audit", "graph"} else DBAPIError,
+                match=(
+                    "synthetic graph"
+                    if failed_seam == "graph"
+                    else "synthetic ready"
+                    if failed_seam == "audit"
+                    else "task6_fail_ready_outbox"
+                ),
             ):
                 await repository.commit_stage(commit)
-            assert repository.audit_appended is (failed_seam == "outbox")
+            assert repository.audit_appended is (failed_seam in {"outbox", "graph"})
             async with sessions() as session:
                 assert await session.scalar(select(knowledge_document.c.status)) != "ready"
                 assert (
@@ -759,6 +802,10 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
                     )
                     is None
                 )
+                assert (
+                    await session.scalar(select(func.count()).select_from(graph_extraction_job))
+                    == 0
+                )
                 job = (await session.execute(select(knowledge_ingestion_job))).mappings().one()
                 assert job["stage"] == "ready"
                 assert job["status"] == "processing"
@@ -769,9 +816,16 @@ def test_ready_failure_rolls_back_state_receipts_event_and_audit(owned_project_m
                         text("ALTER TABLE outbox DROP CHECK task6_fail_ready_outbox")
                     )
             await MysqlDocumentRepository(
-                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+                sessions,
+                scope=VALIDATION_SCOPE,
+                audit_factory=create_project_audit,
+                ready_projection=graph_projection,
             ).commit_stage(commit)
             assert len(await repository.load_ready_revisions((accepted.document_id,))) == 1
+            async with sessions() as session:
+                graph_job = (await session.execute(select(graph_extraction_job))).mappings().one()
+                assert graph_job["revision_id"] == accepted.revision_id
+                assert graph_job["status"] == "PENDING"
         finally:
             await engine.dispose()
 

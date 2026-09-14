@@ -1,9 +1,7 @@
 import {
   ArrowUpOutlined,
   BookOutlined,
-  CheckOutlined,
   CloseOutlined,
-  DownOutlined,
   PlusOutlined,
   RobotOutlined,
   ToolOutlined,
@@ -29,13 +27,15 @@ import type {
   Conversation,
   LibrarySource,
 } from "./model";
-import { CODEX_MODELS } from "./model";
+import { useModelCatalog } from "../../../features/knowledge/api/modelCatalog";
+import { ModelSelector } from "../../../features/knowledge/components/ModelSelector";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { AccessibleDialog } from "./AccessibleDialog";
 
 type PickerKind = "library" | "agents" | "skills";
 
 interface TapperChatProps {
+  projectId: string | null;
   agents: readonly CatalogItem[];
   conversation: Conversation;
   copy: PrototypeCopy;
@@ -45,7 +45,10 @@ interface TapperChatProps {
   pageContext?: AssistantTurn["pageContext"];
   onClearPageContext: () => void;
   onModelChange: (modelId: CodexModelId) => void;
-  onSend: (prompt: string) => void;
+  onSend: (prompt: string) => boolean | Promise<boolean>;
+  onCancel?: (turnId: string) => void;
+  cancelError?: boolean;
+  sending?: boolean;
   onToggleAgent: (agentId: string) => void;
   onToggleSkill: (skillId: string) => void;
   onToggleSource: (sourceId: string) => void;
@@ -101,6 +104,7 @@ function formatQuestionCount(
 }
 
 export function TapperChat({
+  projectId,
   agents,
   conversation,
   copy,
@@ -111,6 +115,9 @@ export function TapperChat({
   onClearPageContext,
   onModelChange,
   onSend,
+  onCancel,
+  cancelError = false,
+  sending = false,
   onToggleAgent,
   onToggleSkill,
   onToggleSource,
@@ -118,18 +125,23 @@ export function TapperChat({
   skills,
   sources,
 }: TapperChatProps) {
+  const catalog = useModelCatalog(projectId);
+  const allowedModels =
+    (catalog.isError ? undefined : catalog.data)?.items.filter((model) =>
+      model.capabilities.includes("chat"),
+    ) ?? [];
+  const modelAvailable = allowedModels.some(
+    (model) => model.alias === conversation.modelId,
+  );
+  const [submitError, setSubmitError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [picker, setPicker] = useState<PickerKind | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
   const composerRef = useRef<TextAreaRef>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const addTriggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
-  const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const wasMenuOpenRef = useRef(false);
-  const wasModelMenuOpenRef = useRef(false);
   const chatRef = useRef<HTMLElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const turnElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -154,7 +166,6 @@ export function TapperChat({
 
   useEffect(() => {
     setMenuOpen(false);
-    setModelMenuOpen(false);
     setPicker(null);
     setPickerQuery("");
   }, [conversation.id]);
@@ -239,17 +250,6 @@ export function TapperChat({
   }, [menuOpen, picker]);
 
   useEffect(() => {
-    if (modelMenuOpen) {
-      modelMenuRef.current
-        ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
-        ?.focus();
-    } else if (wasModelMenuOpenRef.current) {
-      modelTriggerRef.current?.focus();
-    }
-    wasModelMenuOpenRef.current = modelMenuOpen;
-  }, [modelMenuOpen]);
-
-  useEffect(() => {
     if (!menuOpen) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target;
@@ -267,28 +267,6 @@ export function TapperChat({
     return () =>
       document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
   }, [menuOpen]);
-
-  useEffect(() => {
-    if (!modelMenuOpen) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (
-        !modelMenuRef.current?.contains(target) &&
-        !modelTriggerRef.current?.contains(target)
-      ) {
-        setModelMenuOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () =>
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [modelMenuOpen]);
-
-  const selectedModel =
-    CODEX_MODELS.find((model) => model.id === conversation.modelId) ??
-    CODEX_MODELS[0]!;
-
   const selectedSources = sources.filter((source) =>
     conversation.selectedSourceIds.includes(source.id),
   );
@@ -385,12 +363,14 @@ export function TapperChat({
     );
   }, [pickerConfig, pickerQuery]);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0) return;
-    onSend(prompt);
-    setMessage("");
+    if (prompt.length === 0 || !modelAvailable || sending) return;
+    setSubmitError(false);
+    const accepted = await onSend(prompt);
+    if (accepted) setMessage("");
+    else setSubmitError(true);
     composerRef.current?.focus();
   };
 
@@ -536,40 +516,6 @@ export function TapperChat({
     }
   };
 
-  const handleModelMenuKeyDown = (
-    event: ReactKeyboardEvent<HTMLDivElement>,
-  ) => {
-    const items = Array.from(
-      modelMenuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitemradio"]',
-      ) ?? [],
-    );
-    const activeIndex = items.indexOf(
-      document.activeElement as HTMLButtonElement,
-    );
-    let nextIndex: number | null = null;
-
-    if (event.key === "ArrowDown") {
-      nextIndex = (activeIndex + 1) % items.length;
-    } else if (event.key === "ArrowUp") {
-      nextIndex = (activeIndex - 1 + items.length) % items.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = items.length - 1;
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setModelMenuOpen(false);
-      return;
-    }
-
-    if (nextIndex !== null && items.length > 0) {
-      event.preventDefault();
-      items[nextIndex]?.focus();
-    }
-  };
-
   const composer = (
     <form
       ref={composerFormRef}
@@ -678,7 +624,6 @@ export function TapperChat({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => {
-              setModelMenuOpen(false);
               setMenuOpen((current) => !current);
             }}
           >
@@ -719,62 +664,51 @@ export function TapperChat({
             </div>
           ) : null}
         </div>
-        <div className="tap-composer-model-control">
-          <button
-            ref={modelTriggerRef}
-            type="button"
-            className="tap-model-trigger"
-            aria-label={`${copy.composer.selectModel}, ${copy.composer.currentModel} ${selectedModel.label}`}
-            aria-haspopup="menu"
-            aria-expanded={modelMenuOpen}
-            onClick={() => {
-              setMenuOpen(false);
-              setModelMenuOpen((current) => !current);
-            }}
-          >
-            <span>{selectedModel.label}</span>
-            <DownOutlined aria-hidden="true" />
-          </button>
-          {modelMenuOpen ? (
-            <div
-              ref={modelMenuRef}
-              className="tap-model-menu"
-              role="menu"
-              aria-label={copy.composer.models}
-              onKeyDown={handleModelMenuKeyDown}
-            >
-              {CODEX_MODELS.map((model) => {
-                const selected = model.id === selectedModel.id;
-                return (
-                  <button
-                    key={model.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={selected}
-                    onClick={() => {
-                      onModelChange(model.id);
-                      setModelMenuOpen(false);
-                    }}
-                  >
-                    <span>{model.label}</span>
-                    {selected ? <CheckOutlined aria-hidden="true" /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
+        <span>{copy.chat.sourceHint}</span>
+        <ModelSelector
+          models={allowedModels}
+          value={conversation.modelId}
+          onChange={onModelChange}
+          label={(name) =>
+            `${copy.composer.selectModel}, ${copy.composer.currentModel} ${name}`
+          }
+          menuLabel={copy.composer.models}
+        />
         <button
           className="tap-composer-send-button"
           type="submit"
           aria-label={copy.chat.send}
-          disabled={message.trim().length === 0}
+          disabled={message.trim().length === 0 || !modelAvailable || sending}
         >
           <span className="tap-composer-send-face">
             <ArrowUpOutlined aria-hidden="true" />
           </span>
         </button>
+        {onCancel !== undefined &&
+        ["queued", "running"].includes(
+          conversation.turns[conversation.turns.length - 1]?.status ?? "",
+        ) ? (
+          <Button
+            danger
+            type="text"
+            onClick={() =>
+              onCancel(conversation.turns[conversation.turns.length - 1]!.id)
+            }
+          >
+            Stop
+          </Button>
+        ) : null}
       </div>
+      {submitError ? (
+        <p className="tap-context-notice" role="alert">
+          Message was not sent. Check the connection and try again.
+        </p>
+      ) : null}
+      {cancelError ? (
+        <p className="tap-context-notice" role="alert">
+          Generation could not be stopped. Check the connection and try again.
+        </p>
+      ) : null}
     </form>
   );
 

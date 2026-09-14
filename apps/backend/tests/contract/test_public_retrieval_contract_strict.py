@@ -203,6 +203,8 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "abstentionReason",
             "claims",
             "citations",
+            "graphContextStatus",
+            "graphSnapshotId",
         },
     ),
 )

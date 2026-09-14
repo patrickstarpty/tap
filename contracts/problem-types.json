@@ -28,6 +28,14 @@
       "type": "https://tap.example/problems/answer-unavailable"
     },
     {
+      "code": "asset-revision-unavailable",
+      "detail": "The approved asset revision is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Asset revision unavailable",
+      "type": "https://tap.example/problems/asset-revision-unavailable"
+    },
+    {
       "code": "association-conflict",
       "detail": "An asset is already associated with another asset.",
       "retryable": false,
@@ -66,6 +74,14 @@
       "status": 503,
       "title": "Citation unavailable",
       "type": "https://tap.example/problems/citation-unavailable"
+    },
+    {
+      "code": "conversation-not-found",
+      "detail": "The Conversation is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Conversation not found",
+      "type": "https://tap.example/problems/conversation-not-found"
     },
     {
       "code": "document-limit-reached",
@@ -132,6 +148,14 @@
       "status": 503,
       "title": "Execution provider unavailable",
       "type": "https://tap.example/problems/execution-provider-unavailable"
+    },
+    {
+      "code": "graph-fact-not-found",
+      "detail": "The graph fact is unavailable in this Project snapshot.",
+      "retryable": false,
+      "status": 404,
+      "title": "Graph fact not found",
+      "type": "https://tap.example/problems/graph-fact-not-found"
     },
     {
       "code": "graph-unavailable",

@@ -10,6 +10,157 @@
         "title": "AbstentionReason",
         "type": "string"
       },
+      "AiAgentRevisionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AiAgentRevisionSummary"
+            },
+            "maxItems": 64,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AiAgentRevisionPage",
+        "type": "object"
+      },
+      "AiAgentRevisionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "assetId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid",
+            "type": "string"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "outputSchemaDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Outputschemadigest",
+            "type": "string"
+          },
+          "revisionId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "toolAllowlist": {
+            "items": {
+              "enum": [
+                "knowledge.search",
+                "knowledge.answer"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "title": "Toolallowlist",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revisionId",
+          "assetId",
+          "displayName",
+          "contentDigest",
+          "toolAllowlist",
+          "outputSchemaDigest"
+        ],
+        "title": "AiAgentRevisionSummary",
+        "type": "object"
+      },
+      "AnswerClaim": {
+        "additionalProperties": false,
+        "properties": {
+          "answerEnd": {
+            "minimum": 0.0,
+            "title": "Answerend",
+            "type": "integer"
+          },
+          "answerStart": {
+            "minimum": 0.0,
+            "title": "Answerstart",
+            "type": "integer"
+          },
+          "citationIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Citationids",
+            "type": "array"
+          },
+          "claimId": {
+            "minLength": 1,
+            "title": "Claimid",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "text",
+          "answerStart",
+          "answerEnd",
+          "citationIds"
+        ],
+        "title": "AnswerClaim",
+        "type": "object"
+      },
+      "AnswerDeltaEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/AnswerDeltaPayload"
+          },
+          "type": {
+            "const": "answer.delta",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "AnswerDeltaEvent",
+        "type": "object"
+      },
+      "AnswerDeltaPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AnswerDeltaPayload",
+        "type": "object"
+      },
       "AnswerMode": {
         "enum": [
           "quick",
@@ -68,6 +219,54 @@
         "title": "BddAnchor",
         "type": "object"
       },
+      "BddAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
       "Body_knowledge_upload_document": {
         "properties": {
           "upload": {
@@ -94,6 +293,127 @@
           "upload"
         ],
         "title": "Body_knowledge_upload_source",
+        "type": "object"
+      },
+      "ChatEventEnvelope": {
+        "additionalProperties": false,
+        "description": "A recoverable, ordered event persisted for one chat turn.",
+        "properties": {
+          "chatId": {
+            "minLength": 1,
+            "title": "Chatid",
+            "type": "string"
+          },
+          "event": {
+            "discriminator": {
+              "mapping": {
+                "answer.delta": "#/components/schemas/AnswerDeltaEvent",
+                "citation.resolved": "#/components/schemas/CitationResolvedEvent",
+                "context.assembled": "#/components/schemas/ContextAssembledEvent",
+                "conversation.turn.completed": "#/components/schemas/ConversationTurnCompletedEvent",
+                "conversation.turn.requested": "#/components/schemas/ConversationTurnRequestedEvent",
+                "query.plan_ready": "#/components/schemas/QueryPlanReadyEvent",
+                "rerank.completed": "#/components/schemas/RerankCompletedEvent",
+                "retrieval.hits_ready": "#/components/schemas/RetrievalHitsReadyEvent",
+                "stage.completed": "#/components/schemas/StageCompletedEvent",
+                "stage.started": "#/components/schemas/StageStartedEvent",
+                "turn.abstained": "#/components/schemas/TurnAbstainedEvent",
+                "turn.canceled": "#/components/schemas/TurnCanceledEvent",
+                "turn.completed": "#/components/schemas/TurnCompletedEvent",
+                "turn.degraded": "#/components/schemas/TurnDegradedEvent",
+                "turn.failed": "#/components/schemas/TurnFailedEvent",
+                "turn.started": "#/components/schemas/TurnStartedEvent"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TurnStartedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/ContextAssembledEvent"
+              },
+              {
+                "$ref": "#/components/schemas/QueryPlanReadyEvent"
+              },
+              {
+                "$ref": "#/components/schemas/StageStartedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/StageCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/RetrievalHitsReadyEvent"
+              },
+              {
+                "$ref": "#/components/schemas/RerankCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/AnswerDeltaEvent"
+              },
+              {
+                "$ref": "#/components/schemas/CitationResolvedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnAbstainedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnDegradedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnCanceledEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TurnFailedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/ConversationTurnRequestedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/ConversationTurnCompletedEvent"
+              }
+            ],
+            "title": "Event"
+          },
+          "eventId": {
+            "minLength": 1,
+            "title": "Eventid",
+            "type": "string"
+          },
+          "occurredAt": {
+            "minLength": 1,
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "minimum": 1.0,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "turnId": {
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "eventId",
+          "sequence",
+          "chatId",
+          "turnId",
+          "occurredAt",
+          "schemaVersion",
+          "event"
+        ],
+        "title": "ChatEventEnvelope",
         "type": "object"
       },
       "ChatTurnAccepted": {
@@ -206,6 +526,67 @@
         "title": "ChatTurnRequest",
         "type": "object"
       },
+      "Citation": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkContentHash": {
+            "minLength": 1,
+            "title": "Chunkcontenthash",
+            "type": "string"
+          },
+          "chunkId": {
+            "minLength": 1,
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "citationId": {
+            "minLength": 1,
+            "title": "Citationid",
+            "type": "string"
+          },
+          "contentRole": {
+            "$ref": "#/components/schemas/ContentRole"
+          },
+          "derivedFromChunkIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivedfromchunkids"
+          },
+          "evidenceLabel": {
+            "minLength": 1,
+            "title": "Evidencelabel",
+            "type": "string"
+          },
+          "logicalChunkId": {
+            "minLength": 1,
+            "title": "Logicalchunkid",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRevisionRef"
+          }
+        },
+        "required": [
+          "citationId",
+          "evidenceLabel",
+          "chunkId",
+          "logicalChunkId",
+          "source",
+          "chunkContentHash",
+          "contentRole"
+        ],
+        "title": "Citation",
+        "type": "object"
+      },
       "CitationPreview": {
         "additionalProperties": false,
         "properties": {
@@ -282,6 +663,38 @@
         "title": "CitationPreview",
         "type": "object"
       },
+      "CitationResolvedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/CitationResolvedPayload"
+          },
+          "type": {
+            "const": "citation.resolved",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "CitationResolvedEvent",
+        "type": "object"
+      },
+      "CitationResolvedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "citation": {
+            "$ref": "#/components/schemas/Citation"
+          }
+        },
+        "required": [
+          "citation"
+        ],
+        "title": "CitationResolvedPayload",
+        "type": "object"
+      },
       "CodeAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -339,6 +752,62 @@
         "title": "CodeAnchor",
         "type": "object"
       },
+      "CodeAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "lineEnd": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "type": {
+            "const": "code",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
       "ContentRole": {
         "enum": [
           "source",
@@ -346,6 +815,636 @@
         ],
         "title": "ContentRole",
         "type": "string"
+      },
+      "ContextAssembledEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ContextAssembledPayload"
+          },
+          "type": {
+            "const": "context.assembled",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "ContextAssembledEvent",
+        "type": "object"
+      },
+      "ContextAssembledPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "tokenCount": {
+            "minimum": 0.0,
+            "title": "Tokencount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contextSnapshotId",
+          "tokenCount"
+        ],
+        "title": "ContextAssembledPayload",
+        "type": "object"
+      },
+      "ConversationAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "state": {
+            "const": "queued",
+            "title": "State",
+            "type": "string"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "turnId",
+          "state"
+        ],
+        "title": "ConversationAccepted",
+        "type": "object"
+      },
+      "ConversationCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "documentRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "message": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "modelAlias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Modelalias",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "sourceRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Sourcerevisionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message",
+          "modelAlias"
+        ],
+        "title": "ConversationCreateRequest",
+        "type": "object"
+      },
+      "ConversationDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "createdAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Createdat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationTurnSummary"
+            },
+            "title": "Turns",
+            "type": "array"
+          },
+          "updatedAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "title",
+          "createdAt",
+          "updatedAt",
+          "turns"
+        ],
+        "title": "ConversationDetail",
+        "type": "object"
+      },
+      "ConversationEventItem": {
+        "additionalProperties": false,
+        "properties": {
+          "eventId": {
+            "title": "Eventid",
+            "type": "string"
+          },
+          "eventType": {
+            "enum": [
+              "turn.started",
+              "context.assembled",
+              "query.plan_ready",
+              "stage.started",
+              "stage.completed",
+              "retrieval.hits_ready",
+              "rerank.completed",
+              "answer.delta",
+              "citation.resolved",
+              "turn.completed",
+              "turn.abstained",
+              "turn.degraded",
+              "turn.canceled",
+              "turn.failed",
+              "conversation.turn.requested",
+              "conversation.turn.completed"
+            ],
+            "title": "Eventtype",
+            "type": "string"
+          },
+          "occurredAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "eventId",
+          "sequence",
+          "turnId",
+          "eventType",
+          "payload",
+          "occurredAt"
+        ],
+        "title": "ConversationEventItem",
+        "type": "object"
+      },
+      "ConversationEventPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationEventItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ConversationEventPage",
+        "type": "object"
+      },
+      "ConversationPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ConversationPage",
+        "type": "object"
+      },
+      "ConversationResolvedResourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "title": "Documentid",
+            "type": "string"
+          },
+          "documentRevisionId": {
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcerevisionid"
+          }
+        },
+        "required": [
+          "sourceId",
+          "documentId",
+          "documentRevisionId",
+          "label"
+        ],
+        "title": "ConversationResolvedResourceView",
+        "type": "object"
+      },
+      "ConversationSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "createdAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Createdat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updatedAt": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "title",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ConversationSummary",
+        "type": "object"
+      },
+      "ConversationTurnCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ConversationTurnCompletedPayload"
+          },
+          "type": {
+            "const": "conversation.turn.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "ConversationTurnCompletedEvent",
+        "type": "object"
+      },
+      "ConversationTurnCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answerEvidenceSnapshotDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Answerevidencesnapshotdigest",
+            "type": "string"
+          },
+          "answerEvidenceSnapshotId": {
+            "minLength": 1,
+            "title": "Answerevidencesnapshotid",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "abstained",
+              "canceled",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "turnId": {
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turnId",
+          "answerEvidenceSnapshotId",
+          "answerEvidenceSnapshotDigest",
+          "outcome"
+        ],
+        "title": "ConversationTurnCompletedPayload",
+        "type": "object"
+      },
+      "ConversationTurnInputView": {
+        "additionalProperties": false,
+        "description": "Browser-safe immutable input facts; excludes instructions and policy internals.",
+        "properties": {
+          "agentLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentlabel"
+          },
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "documentRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "modelAlias": {
+            "title": "Modelalias",
+            "type": "string"
+          },
+          "resolvedResources": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationResolvedResourceView"
+            },
+            "title": "Resolvedresources",
+            "type": "array"
+          },
+          "skillLabels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skilllabels",
+            "type": "array"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "sourceRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourcerevisionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message",
+          "modelAlias",
+          "sourceRevisionIds",
+          "documentRevisionIds",
+          "resolvedResources",
+          "skillRevisionIds",
+          "skillLabels"
+        ],
+        "title": "ConversationTurnInputView",
+        "type": "object"
+      },
+      "ConversationTurnRequestedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ConversationTurnRequestedPayload"
+          },
+          "type": {
+            "const": "conversation.turn.requested",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "ConversationTurnRequestedEvent",
+        "type": "object"
+      },
+      "ConversationTurnRequestedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "minLength": 1,
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "inputSnapshotDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Inputsnapshotdigest",
+            "type": "string"
+          },
+          "turnId": {
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "turnId",
+          "inputSnapshotDigest"
+        ],
+        "title": "ConversationTurnRequestedPayload",
+        "type": "object"
+      },
+      "ConversationTurnSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "answerEvidenceSnapshotDigest": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 71,
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answerevidencesnapshotdigest"
+          },
+          "answerEvidenceSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answerevidencesnapshotid"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "graphContextStatus": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPLIED",
+                  "NOT_READY",
+                  "FAILED",
+                  "UNAVAILABLE",
+                  "NOT_SELECTED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphcontextstatus"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphsnapshotid"
+          },
+          "input": {
+            "$ref": "#/components/schemas/ConversationTurnInputView"
+          },
+          "inputSnapshotDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Inputsnapshotdigest",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "abstained",
+              "canceled",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turnId",
+          "state",
+          "attempt",
+          "inputSnapshotDigest",
+          "input"
+        ],
+        "title": "ConversationTurnSummary",
+        "type": "object"
       },
       "DocumentAccepted": {
         "additionalProperties": false,
@@ -450,6 +1549,93 @@
               }
             ],
             "default": null,
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "DocumentAnchor",
+        "type": "object"
+      },
+      "DocumentAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Startoffset"
           },
           "type": {
@@ -844,6 +2030,411 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "FailureAnchor-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
+      "GraphEdgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edgeId": {
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "evidenceIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidenceids",
+            "type": "array"
+          },
+          "origin": {
+            "enum": [
+              "EXTRACTED",
+              "INFERRED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "relationType": {
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edgeId",
+          "sourceNodeId",
+          "targetNodeId",
+          "relationType",
+          "origin",
+          "confidence"
+        ],
+        "title": "GraphEdgeView",
+        "type": "object"
+      },
+      "GraphEvidenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "additionalProperties": true,
+            "title": "Anchor",
+            "type": "object"
+          },
+          "chunkId": {
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "documentRevisionId": {
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "evidenceId": {
+            "title": "Evidenceid",
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidenceId",
+          "sourceRevisionId",
+          "documentRevisionId",
+          "chunkId",
+          "anchor",
+          "contentDigest"
+        ],
+        "title": "GraphEvidenceView",
+        "type": "object"
+      },
+      "GraphNeighborRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "depth": {
+            "default": 1,
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "snapshotId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId"
+        ],
+        "title": "GraphNeighborRequest",
+        "type": "object"
+      },
+      "GraphNodeView": {
+        "additionalProperties": false,
+        "properties": {
+          "canonicalKey": {
+            "title": "Canonicalkey",
+            "type": "string"
+          },
+          "evidenceIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidenceids",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "nodeType": {
+            "title": "Nodetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "label",
+          "nodeType",
+          "canonicalKey"
+        ],
+        "title": "GraphNodeView",
+        "type": "object"
+      },
+      "GraphPathRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "snapshotId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "sourceNodeId",
+          "targetNodeId"
+        ],
+        "title": "GraphPathRequest",
+        "type": "object"
+      },
+      "GraphSearchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeLimit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "snapshotId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "query"
+        ],
+        "title": "GraphSearchRequest",
+        "type": "object"
+      },
+      "GraphSnapshotPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GraphSnapshotView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GraphSnapshotPage",
+        "type": "object"
+      },
+      "GraphSnapshotView": {
+        "additionalProperties": false,
+        "properties": {
+          "documentRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sourcerevisionids",
+            "type": "array"
+          },
+          "sourceSetDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Sourcesetdigest",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "CANDIDATE",
+              "READY",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "sourceSetDigest",
+          "sourceRevisionIds",
+          "documentRevisionIds",
+          "status"
+        ],
+        "title": "GraphSnapshotView",
+        "type": "object"
+      },
+      "GraphSubgraphView": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphEvidenceView"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "nodes",
+          "edges"
+        ],
+        "title": "GraphSubgraphView",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthComponent": {
         "additionalProperties": false,
         "properties": {
@@ -929,7 +2520,106 @@
         "title": "LiveHealth",
         "type": "object"
       },
+      "ModelCatalogItem": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "enum": [
+                "chat",
+                "embed",
+                "structured"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias",
+          "displayName",
+          "capabilities"
+        ],
+        "title": "ModelCatalogItem",
+        "type": "object"
+      },
+      "ModelCatalogPage": {
+        "additionalProperties": false,
+        "properties": {
+          "defaultAlias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Defaultalias",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCatalogItem"
+            },
+            "maxItems": 32,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "defaultAlias",
+          "items"
+        ],
+        "title": "ModelCatalogPage",
+        "type": "object"
+      },
       "OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "OpenApiAnchor-Input": {
         "additionalProperties": false,
         "properties": {
           "jsonPointer": {
@@ -1018,6 +2708,28 @@
             "required": [
               "failureStage"
             ]
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The approved asset revision is unavailable in this Project."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 404
+              },
+              "title": {
+                "const": "Asset revision unavailable"
+              },
+              "type": {
+                "const": "https://tap.example/problems/asset-revision-unavailable"
+              }
+            }
           },
           {
             "properties": {
@@ -1126,6 +2838,28 @@
               },
               "type": {
                 "const": "https://tap.example/problems/citation-unavailable"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The Conversation is unavailable in this Project."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 404
+              },
+              "title": {
+                "const": "Conversation not found"
+              },
+              "type": {
+                "const": "https://tap.example/problems/conversation-not-found"
               }
             }
           },
@@ -1310,6 +3044,28 @@
             "required": [
               "failureStage"
             ]
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The graph fact is unavailable in this Project snapshot."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 404
+              },
+              "title": {
+                "const": "Graph fact not found"
+              },
+              "type": {
+                "const": "https://tap.example/problems/graph-fact-not-found"
+              }
+            }
           },
           {
             "properties": {
@@ -1768,11 +3524,13 @@
             "enum": [
               "https://tap.example/problems/answer-snapshot-unavailable",
               "https://tap.example/problems/answer-unavailable",
+              "https://tap.example/problems/asset-revision-unavailable",
               "https://tap.example/problems/association-conflict",
               "https://tap.example/problems/authorization-denied",
               "https://tap.example/problems/automation-mapping-required",
               "https://tap.example/problems/citation-stale",
               "https://tap.example/problems/citation-unavailable",
+              "https://tap.example/problems/conversation-not-found",
               "https://tap.example/problems/document-limit-reached",
               "https://tap.example/problems/document-not-found",
               "https://tap.example/problems/document-not-retryable",
@@ -1781,6 +3539,7 @@
               "https://tap.example/problems/embedding-unavailable",
               "https://tap.example/problems/empty-document",
               "https://tap.example/problems/execution-provider-unavailable",
+              "https://tap.example/problems/graph-fact-not-found",
               "https://tap.example/problems/graph-unavailable",
               "https://tap.example/problems/idempotency-conflict",
               "https://tap.example/problems/knowledge-runtime-unavailable",
@@ -1815,6 +3574,52 @@
         "title": "ProblemDetails",
         "type": "object"
       },
+      "QueryPlanReadyEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/QueryPlanReadyPayload"
+          },
+          "type": {
+            "const": "query.plan_ready",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "QueryPlanReadyEvent",
+        "type": "object"
+      },
+      "QueryPlanReadyPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answerMode": {
+            "$ref": "#/components/schemas/AnswerMode"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "sourceFamilies": {
+            "items": {
+              "$ref": "#/components/schemas/SourceFamily"
+            },
+            "title": "Sourcefamilies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryPlanId",
+          "answerMode",
+          "sourceFamilies"
+        ],
+        "title": "QueryPlanReadyPayload",
+        "type": "object"
+      },
       "ReadyHealth": {
         "additionalProperties": false,
         "properties": {
@@ -1841,6 +3646,46 @@
           "components"
         ],
         "title": "ReadyHealth",
+        "type": "object"
+      },
+      "RerankCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/RerankCompletedPayload"
+          },
+          "type": {
+            "const": "rerank.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "RerankCompletedEvent",
+        "type": "object"
+      },
+      "RerankCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateCount": {
+            "minimum": 0.0,
+            "title": "Candidatecount",
+            "type": "integer"
+          },
+          "durationMs": {
+            "minimum": 0.0,
+            "title": "Durationms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidateCount",
+          "durationMs"
+        ],
+        "title": "RerankCompletedPayload",
         "type": "object"
       },
       "ResourceMode": {
@@ -2062,6 +3907,30 @@
           "degradedMode": {
             "title": "Degradedmode",
             "type": "boolean"
+          },
+          "graphContextStatus": {
+            "default": "NOT_SELECTED",
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Graphcontextstatus",
+            "type": "string"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Graphsnapshotid"
           },
           "queryPlanId": {
             "minLength": 1,
@@ -2293,6 +4162,46 @@
           "embeddingModelVersion"
         ],
         "title": "RetrievalHit",
+        "type": "object"
+      },
+      "RetrievalHitsReadyEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/RetrievalHitsReadyPayload"
+          },
+          "type": {
+            "const": "retrieval.hits_ready",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "RetrievalHitsReadyEvent",
+        "type": "object"
+      },
+      "RetrievalHitsReadyPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "authorizedHitCount": {
+            "minimum": 0.0,
+            "title": "Authorizedhitcount",
+            "type": "integer"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "authorizedHitCount"
+        ],
+        "title": "RetrievalHitsReadyPayload",
         "type": "object"
       },
       "RetrievalScores": {
@@ -2615,6 +4524,77 @@
         "title": "RuntimeMode",
         "type": "object"
       },
+      "SkillRevisionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SkillRevisionSummary"
+            },
+            "maxItems": 64,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SkillRevisionPage",
+        "type": "object"
+      },
+      "SkillRevisionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "applicableTasks": {
+            "items": {
+              "enum": [
+                "knowledge.answer",
+                "test-plan.generate",
+                "automation.generate"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Applicabletasks",
+            "type": "array"
+          },
+          "assetId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid",
+            "type": "string"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "revisionId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revisionId",
+          "assetId",
+          "displayName",
+          "contentDigest",
+          "applicableTasks"
+        ],
+        "title": "SkillRevisionSummary",
+        "type": "object"
+      },
       "SourceAccepted": {
         "additionalProperties": false,
         "properties": {
@@ -2918,6 +4898,47 @@
         "title": "SourceRetryRequest",
         "type": "object"
       },
+      "SourceRevisionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__StructuralAnchor"
+          },
+          "revision": {
+            "minLength": 1,
+            "title": "Revision",
+            "type": "string"
+          },
+          "revisionKind": {
+            "$ref": "#/components/schemas/RevisionKind"
+          },
+          "sourceContentHash": {
+            "minLength": 1,
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "sourceId": {
+            "minLength": 1,
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "sourceType": {
+            "minLength": 1,
+            "title": "Sourcetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "sourceType",
+          "revisionKind",
+          "revision",
+          "sourceContentHash",
+          "anchor"
+        ],
+        "title": "SourceRevisionRef",
+        "type": "object"
+      },
       "SourceSummary": {
         "additionalProperties": false,
         "properties": {
@@ -2968,6 +4989,80 @@
         "title": "SourceSummary",
         "type": "object"
       },
+      "StageCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/StageCompletedPayload"
+          },
+          "type": {
+            "const": "stage.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "StageCompletedEvent",
+        "type": "object"
+      },
+      "StageCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "durationMs": {
+            "minimum": 0.0,
+            "title": "Durationms",
+            "type": "integer"
+          },
+          "stage": {
+            "minLength": 1,
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "durationMs"
+        ],
+        "title": "StageCompletedPayload",
+        "type": "object"
+      },
+      "StageStartedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/StageStartedPayload"
+          },
+          "type": {
+            "const": "stage.started",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "StageStartedEvent",
+        "type": "object"
+      },
+      "StageStartedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "minLength": 1,
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage"
+        ],
+        "title": "StageStartedPayload",
+        "type": "object"
+      },
       "StructuralAnchor": {
         "description": "A closed, structural location inside one authorized source family.",
         "discriminator": {
@@ -2998,6 +5093,1791 @@
           }
         ],
         "title": "StructuralAnchor"
+      },
+      "StructuralAnchor-Input": {
+        "description": "A closed, structural location inside one authorized source family.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/BddAnchor-Input",
+            "code": "#/components/schemas/CodeAnchor-Input",
+            "document": "#/components/schemas/DocumentAnchor-Input",
+            "failure": "#/components/schemas/FailureAnchor-Input",
+            "openapi": "#/components/schemas/OpenApiAnchor-Input"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DocumentAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/CodeAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/BddAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/OpenApiAnchor-Input"
+          },
+          {
+            "$ref": "#/components/schemas/FailureAnchor-Input"
+          }
+        ],
+        "title": "StructuralAnchor"
+      },
+      "TestPlanCaseView-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "caseId": {
+            "title": "Caseid",
+            "type": "string"
+          },
+          "critical": {
+            "title": "Critical",
+            "type": "boolean"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanScenarioView"
+            },
+            "title": "Scenarios",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "caseId",
+          "ordinal",
+          "title",
+          "objective",
+          "critical",
+          "scenarios"
+        ],
+        "title": "TestPlanCaseView",
+        "type": "object"
+      },
+      "TestPlanCaseView-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "caseId": {
+            "title": "Caseid",
+            "type": "string"
+          },
+          "critical": {
+            "title": "Critical",
+            "type": "boolean"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanScenarioView"
+            },
+            "title": "Scenarios",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "caseId",
+          "ordinal",
+          "title",
+          "objective",
+          "critical",
+          "scenarios"
+        ],
+        "title": "TestPlanCaseView",
+        "type": "object"
+      },
+      "TestPlanCitationView": {
+        "additionalProperties": false,
+        "properties": {
+          "chunkId": {
+            "title": "Chunkid",
+            "type": "string"
+          },
+          "citationId": {
+            "title": "Citationid",
+            "type": "string"
+          },
+          "claimText": {
+            "title": "Claimtext",
+            "type": "string"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "documentRevisionId": {
+            "title": "Documentrevisionid",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "SOURCE",
+              "GRAPH_EXTRACTED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citationId",
+          "sourceRevisionId",
+          "documentRevisionId",
+          "chunkId",
+          "contentDigest",
+          "claimText",
+          "origin"
+        ],
+        "title": "TestPlanCitationView",
+        "type": "object"
+      },
+      "TestPlanCoverageGapView": {
+        "additionalProperties": false,
+        "properties": {
+          "gapId": {
+            "title": "Gapid",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "requirementRef": {
+            "title": "Requirementref",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gapId",
+          "requirementRef",
+          "reason",
+          "severity"
+        ],
+        "title": "TestPlanCoverageGapView",
+        "type": "object"
+      },
+      "TestPlanGenerationAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "deepLink": {
+            "title": "Deeplink",
+            "type": "string"
+          },
+          "jobId": {
+            "title": "Jobid",
+            "type": "string"
+          },
+          "revisionId": {
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "RUNNING",
+              "DRAFT_READY",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "testPlanId": {
+            "title": "Testplanid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "testPlanId",
+          "revisionId",
+          "status",
+          "deepLink"
+        ],
+        "title": "TestPlanGenerationAccepted",
+        "type": "object"
+      },
+      "TestPlanGenerationRequestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "agentRevisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Agentrevisionid",
+            "type": "string"
+          },
+          "answerEvidenceSnapshotDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Answerevidencesnapshotdigest",
+            "type": "string"
+          },
+          "conversationId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "inputSnapshotDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Inputsnapshotdigest",
+            "type": "string"
+          },
+          "modelAlias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Modelalias",
+            "type": "string"
+          },
+          "objective": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Objective",
+            "type": "string"
+          },
+          "skillRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
+          "turnId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Turnid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversationId",
+          "turnId",
+          "inputSnapshotDigest",
+          "answerEvidenceSnapshotDigest",
+          "modelAlias",
+          "agentRevisionId",
+          "skillRevisionIds",
+          "objective"
+        ],
+        "title": "TestPlanGenerationRequestBody",
+        "type": "object"
+      },
+      "TestPlanRevisionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanRevisionView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TestPlanRevisionPage",
+        "type": "object"
+      },
+      "TestPlanRevisionUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "assumptions": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanTextFactView"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanCaseView-Input"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanCitationView"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "coverageGaps": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanCoverageGapView"
+            },
+            "title": "Coveragegaps",
+            "type": "array"
+          },
+          "objective": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Objective",
+            "type": "string"
+          },
+          "prerequisites": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "risks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Risks",
+            "type": "array"
+          },
+          "scopeItems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopeitems",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "unknowns": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanTextFactView"
+            },
+            "title": "Unknowns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "title",
+          "objective",
+          "scopeItems",
+          "prerequisites",
+          "risks",
+          "cases",
+          "citations",
+          "assumptions",
+          "unknowns",
+          "coverageGaps"
+        ],
+        "title": "TestPlanRevisionUpdate",
+        "type": "object"
+      },
+      "TestPlanRevisionView": {
+        "additionalProperties": false,
+        "properties": {
+          "adoptedFromRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adoptedfromrevisionid"
+          },
+          "assumptions": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanTextFactView"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanCaseView-Output"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanCitationView"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "coverageGaps": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanCoverageGapView"
+            },
+            "title": "Coveragegaps",
+            "type": "array"
+          },
+          "deepLink": {
+            "title": "Deeplink",
+            "type": "string"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "VALIDATION",
+              "PRODUCT"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "prerequisites": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "revisionId": {
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "risks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Risks",
+            "type": "array"
+          },
+          "rowVersion": {
+            "title": "Rowversion",
+            "type": "integer"
+          },
+          "scopeItems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopeitems",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "VALIDATING",
+              "PUBLISHED",
+              "SUPERSEDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "testPlanId": {
+            "title": "Testplanid",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unknowns": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanTextFactView"
+            },
+            "title": "Unknowns",
+            "type": "array"
+          },
+          "validationDigest": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 71,
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validationdigest"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "testPlanId",
+          "revisionId",
+          "version",
+          "rowVersion",
+          "title",
+          "objective",
+          "scopeItems",
+          "prerequisites",
+          "risks",
+          "status",
+          "origin",
+          "contentDigest",
+          "cases",
+          "citations",
+          "assumptions",
+          "unknowns",
+          "coverageGaps",
+          "deepLink"
+        ],
+        "title": "TestPlanRevisionView",
+        "type": "object"
+      },
+      "TestPlanScenarioView": {
+        "additionalProperties": false,
+        "properties": {
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "scenarioId": {
+            "title": "Scenarioid",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanStepView"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenarioId",
+          "ordinal",
+          "title",
+          "steps"
+        ],
+        "title": "TestPlanScenarioView",
+        "type": "object"
+      },
+      "TestPlanStepView": {
+        "additionalProperties": false,
+        "properties": {
+          "critical": {
+            "title": "Critical",
+            "type": "boolean"
+          },
+          "expectedResult": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedresult"
+          },
+          "keyword": {
+            "enum": [
+              "Given",
+              "When",
+              "Then",
+              "And",
+              "But"
+            ],
+            "title": "Keyword",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "stepId": {
+            "title": "Stepid",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stepId",
+          "ordinal",
+          "keyword",
+          "text",
+          "critical"
+        ],
+        "title": "TestPlanStepView",
+        "type": "object"
+      },
+      "TestPlanTextFactView": {
+        "additionalProperties": false,
+        "properties": {
+          "factId": {
+            "title": "Factid",
+            "type": "string"
+          },
+          "graphEdgeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphedgeid"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "factId",
+          "text"
+        ],
+        "title": "TestPlanTextFactView",
+        "type": "object"
+      },
+      "TurnAbstainedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnAbstainedPayload"
+          },
+          "type": {
+            "const": "turn.abstained",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnAbstainedEvent",
+        "type": "object"
+      },
+      "TurnAbstainedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__RetrievalAnswerResponse"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "title": "TurnAbstainedPayload",
+        "type": "object"
+      },
+      "TurnCanceledEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnCanceledPayload"
+          },
+          "type": {
+            "const": "turn.canceled",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnCanceledEvent",
+        "type": "object"
+      },
+      "TurnCanceledPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "partialAnswerRetained": {
+            "title": "Partialanswerretained",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "partialAnswerRetained"
+        ],
+        "title": "TurnCanceledPayload",
+        "type": "object"
+      },
+      "TurnCompletedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnCompletedPayload"
+          },
+          "type": {
+            "const": "turn.completed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnCompletedEvent",
+        "type": "object"
+      },
+      "TurnCompletedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/tap__contracts__chat_stream__RetrievalAnswerResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "anyOf": [
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "title": "TurnCompletedPayload",
+        "type": "object"
+      },
+      "TurnDegradedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnDegradedPayload"
+          },
+          "type": {
+            "const": "turn.degraded",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnDegradedEvent",
+        "type": "object"
+      },
+      "TurnDegradedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "availableStages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Availablestages",
+            "type": "array"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "availableStages"
+        ],
+        "title": "TurnDegradedPayload",
+        "type": "object"
+      },
+      "TurnFailedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnFailedPayload"
+          },
+          "type": {
+            "const": "turn.failed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnFailedEvent",
+        "type": "object"
+      },
+      "TurnFailedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "problem": {
+            "$ref": "#/components/schemas/ProblemDetails"
+          }
+        },
+        "required": [
+          "problem"
+        ],
+        "title": "TurnFailedPayload",
+        "type": "object"
+      },
+      "TurnStartedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TurnStartedPayload"
+          },
+          "type": {
+            "const": "turn.started",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TurnStartedEvent",
+        "type": "object"
+      },
+      "TurnStartedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "running",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "TurnStartedPayload",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__BddAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__CodeAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "lineEnd": {
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "type": {
+            "const": "code",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__DocumentAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "DocumentAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__FailureAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__RetrievalAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "abstentionReason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbstentionReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "corpusVersion": {
+            "minLength": 1,
+            "title": "Corpusversion",
+            "type": "string"
+          },
+          "degradationReasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degradationreasons"
+          },
+          "degradedMode": {
+            "title": "Degradedmode",
+            "type": "boolean"
+          },
+          "graphContextStatus": {
+            "default": "NOT_SELECTED",
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Graphcontextstatus",
+            "type": "string"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphsnapshotid"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "retrievalProfileId": {
+            "minLength": 1,
+            "title": "Retrievalprofileid",
+            "type": "string"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "queryPlanId",
+          "contextSnapshotId",
+          "corpusVersion",
+          "retrievalProfileId",
+          "degradedMode",
+          "answer",
+          "abstained",
+          "claims",
+          "citations"
+        ],
+        "title": "RetrievalAnswerResponse",
+        "type": "object"
+      },
+      "tap__contracts__chat_stream__StructuralAnchor": {
+        "description": "A closed source location retained in a browser-visible citation.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/tap__contracts__chat_stream__BddAnchor",
+            "code": "#/components/schemas/tap__contracts__chat_stream__CodeAnchor",
+            "document": "#/components/schemas/tap__contracts__chat_stream__DocumentAnchor",
+            "failure": "#/components/schemas/tap__contracts__chat_stream__FailureAnchor",
+            "openapi": "#/components/schemas/tap__contracts__chat_stream__OpenApiAnchor"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__DocumentAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__CodeAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__BddAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__OpenApiAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__chat_stream__FailureAnchor"
+          }
+        ],
+        "title": "StructuralAnchor"
+      },
+      "tap__contracts__http__BddAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "featureId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Featureid",
+            "type": "string"
+          },
+          "scenarioId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioid"
+          },
+          "stepId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stepid"
+          },
+          "type": {
+            "const": "bdd",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "featureId"
+        ],
+        "title": "BddAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__CodeAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "lineEnd": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "maximum": 2147483647.0,
+            "minimum": 1.0,
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "type": {
+            "const": "code",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "repo",
+          "path",
+          "lineStart",
+          "lineEnd"
+        ],
+        "title": "CodeAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__DocumentAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "endOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endoffset"
+          },
+          "headingPath": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headingpath"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "startOffset": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startoffset"
+          },
+          "type": {
+            "const": "document",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "DocumentAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__FailureAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "incidentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Incidentid",
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "timeEnd": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeend"
+          },
+          "timeStart": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestart"
+          },
+          "type": {
+            "const": "failure",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "incidentId"
+        ],
+        "title": "FailureAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__OpenApiAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "jsonPointer": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Jsonpointer",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "openapi",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "method",
+          "path",
+          "jsonPointer"
+        ],
+        "title": "OpenApiAnchor",
+        "type": "object"
+      },
+      "tap__contracts__http__RetrievalAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "abstentionReason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbstentionReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalCitation"
+            },
+            "maxItems": 20,
+            "title": "Citations",
+            "type": "array"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "contextSnapshotId": {
+            "minLength": 1,
+            "title": "Contextsnapshotid",
+            "type": "string"
+          },
+          "corpusVersion": {
+            "minLength": 1,
+            "title": "Corpusversion",
+            "type": "string"
+          },
+          "degradationReasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degradationreasons"
+          },
+          "degradedMode": {
+            "title": "Degradedmode",
+            "type": "boolean"
+          },
+          "graphContextStatus": {
+            "default": "NOT_SELECTED",
+            "enum": [
+              "APPLIED",
+              "NOT_READY",
+              "FAILED",
+              "UNAVAILABLE",
+              "NOT_SELECTED"
+            ],
+            "title": "Graphcontextstatus",
+            "type": "string"
+          },
+          "graphSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graphsnapshotid"
+          },
+          "queryPlanId": {
+            "minLength": 1,
+            "title": "Queryplanid",
+            "type": "string"
+          },
+          "retrievalProfileId": {
+            "minLength": 1,
+            "title": "Retrievalprofileid",
+            "type": "string"
+          },
+          "traceId": {
+            "minLength": 1,
+            "title": "Traceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceId",
+          "queryPlanId",
+          "contextSnapshotId",
+          "corpusVersion",
+          "retrievalProfileId",
+          "degradedMode",
+          "answer",
+          "abstained",
+          "claims",
+          "citations"
+        ],
+        "title": "RetrievalAnswerResponse",
+        "type": "object"
+      },
+      "tap__contracts__http__StructuralAnchor-Output": {
+        "description": "A closed, structural location inside one authorized source family.",
+        "discriminator": {
+          "mapping": {
+            "bdd": "#/components/schemas/tap__contracts__http__BddAnchor",
+            "code": "#/components/schemas/tap__contracts__http__CodeAnchor",
+            "document": "#/components/schemas/tap__contracts__http__DocumentAnchor",
+            "failure": "#/components/schemas/tap__contracts__http__FailureAnchor",
+            "openapi": "#/components/schemas/tap__contracts__http__OpenApiAnchor"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__DocumentAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__CodeAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__BddAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__OpenApiAnchor"
+          },
+          {
+            "$ref": "#/components/schemas/tap__contracts__http__FailureAnchor"
+          }
+        ],
+        "title": "StructuralAnchor"
       }
     }
   },
@@ -3007,6 +6887,1082 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/projects/{project_id}/ai/agents": {
+      "get": {
+        "operationId": "ai_list_agent_revisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "List Agents",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/{revision_id}": {
+      "get": {
+        "operationId": "ai_get_agent_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Agent revision unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Get Agent",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/models": {
+      "get": {
+        "operationId": "ai_list_models",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Model catalog unavailable"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills": {
+      "get": {
+        "operationId": "ai_list_skill_revisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRevisionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "List Skills",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills/{revision_id}": {
+      "get": {
+        "operationId": "ai_get_skill_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRevisionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill revision unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Get Skill",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations": {
+      "get": {
+        "operationId": "conversation_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid cursor"
+          }
+        },
+        "summary": "List Conversations",
+        "tags": [
+          "conversations"
+        ]
+      },
+      "post": {
+        "operationId": "conversation_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Approved revision unavailable"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Idempotency conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Runtime unavailable"
+          }
+        },
+        "summary": "Create",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}": {
+      "get": {
+        "operationId": "conversation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/events": {
+      "get": {
+        "operationId": "conversation_list_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationEventPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Events",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/stream": {
+      "get": {
+        "operationId": "conversation_stream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatEventEnvelope"
+                }
+              }
+            },
+            "description": "Recoverable conversation event stream"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Invalid Last-Event-ID"
+          }
+        },
+        "summary": "Stream",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns": {
+      "post": {
+        "operationId": "conversation_append_turn",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation or approved revision not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Idempotency conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Append",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/cancel": {
+      "post": {
+        "operationId": "conversation_cancel_turn",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationTurnSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation or Turn not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Cancel",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/turns/{turn_id}/citations/{citation_id}": {
+      "get": {
+        "operationId": "conversation_get_citation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "citation_id",
+            "required": true,
+            "schema": {
+              "title": "Citation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conversation Turn citation not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Citation evidence is stale"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Citation evidence unavailable"
+          }
+        },
+        "summary": "Citation",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/knowledge/answers": {
       "post": {
         "operationId": "knowledge_create_answer",
@@ -3038,7 +7994,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RetrievalAnswerResponse"
+                  "$ref": "#/components/schemas/tap__contracts__http__RetrievalAnswerResponse"
                 }
               }
             },
@@ -3671,6 +8627,429 @@
         "summary": "Retry Document",
         "tags": [
           "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/evidence/{evidence_id}": {
+      "get": {
+        "operationId": "graph_get_evidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "title": "Snapshotid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphEvidenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence Detail",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}": {
+      "get": {
+        "operationId": "graph_get_node",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "title": "Snapshotid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node Detail",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}/neighbors": {
+      "post": {
+        "operationId": "graph_get_neighbors",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphNeighborRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Neighbors",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/path": {
+      "post": {
+        "operationId": "graph_bounded_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bounded Path",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/query": {
+      "post": {
+        "operationId": "graph_search",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Graph",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/snapshots": {
+      "get": {
+        "operationId": "graph_list_active_snapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceRevisionId",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "title": "Sourcerevisionid",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSnapshotPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Graph unavailable"
+          }
+        },
+        "summary": "List Active Snapshots",
+        "tags": [
+          "knowledge-graph"
         ]
       }
     },
@@ -4370,6 +9749,453 @@
         "summary": "Retry Source",
         "tags": [
           "knowledge"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans": {
+      "get": {
+        "operationId": "test_plan_list_revisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanRevisionPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Revisions",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/generations": {
+      "post": {
+        "operationId": "test_plan_request_generation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanGenerationRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanGenerationAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Request Generation",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/generations/{job_id}": {
+      "get": {
+        "operationId": "test_plan_get_generation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanGenerationAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Generation",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}": {
+      "get": {
+        "operationId": "test_plan_get_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "test_plan_id",
+            "required": true,
+            "schema": {
+              "title": "Test Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Revision",
+        "tags": [
+          "test-management"
+        ]
+      },
+      "patch": {
+        "operationId": "test_plan_replace_draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "test_plan_id",
+            "required": true,
+            "schema": {
+              "title": "Test Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "If-Match",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanRevisionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace Draft",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/publish": {
+      "post": {
+        "operationId": "test_plan_publish_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "test_plan_id",
+            "required": true,
+            "schema": {
+              "title": "Test Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "If-Match",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Revision",
+        "tags": [
+          "test-management"
         ]
       }
     },

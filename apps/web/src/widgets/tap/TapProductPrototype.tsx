@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import {
+  useDocumentListQuery,
   useSourceListQuery,
   useUploadSourceMutation,
   useSourceDetailQuery,
@@ -58,9 +59,31 @@ import {
 } from "./prototype/CatalogWorkspace";
 import { PROTOTYPE_COPY, type PrototypeCopy } from "./prototype/copy";
 import { KnowledgeSourcesPanel } from "./prototype/KnowledgeSourcesPanel";
+import { FWD_REPRESENTATIVE_SOURCES } from "./prototype/fwdKnowledge";
+import { SAMPLE_FILES } from "./prototype/sampleFiles";
 import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import { AccessibleDialog } from "./prototype/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
+import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
+import { useAiAssetCatalog } from "../../features/knowledge/api/aiAssets";
+import {
+  useAppendConversation,
+  useCancelTurn,
+  useConversationCitation,
+  useConversationDetail,
+  useConversationEvents,
+  useConversationList,
+  useConversationStream,
+  useCreateConversation,
+} from "../../features/conversations/api/queries";
+import {
+  createStreamState,
+  isTargetTurnActive,
+  latestTurnState,
+  reduceStreamEvent,
+} from "../../features/conversations/model/stream";
+import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
+import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import {
   appendTurn,
   createConversation,
@@ -76,8 +99,11 @@ import {
 } from "./prototype/model";
 import { PanelToggleIcon } from "./prototype/PanelToggleIcon";
 import { PrototypeSidebar } from "./prototype/PrototypeSidebar";
-import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
 import { TestAnalyticsWorkspace } from "./prototype/TestAnalyticsWorkspace";
+import { TestManagementWorkspace } from "./prototype/testManagement/TestManagementWorkspace";
+import { createTestPlanClient } from "../../features/testManagement/api/client";
+import { TestPlanLibrary } from "../../features/testManagement/components/TestPlanLibrary";
+import { TestPlanReview } from "../../features/testManagement/components/TestPlanReview";
 import "./TapProductPrototype.css";
 
 function BddPreview({ copy }: { copy: PrototypeCopy }) {
@@ -112,6 +138,19 @@ function BddPreview({ copy }: { copy: PrototypeCopy }) {
   );
 }
 
+function durableTestPlanPath(): { planId: string; revisionId: string } | null {
+  if (typeof window === "undefined") return null;
+  const match = /^\/test-management\/([^/]+)\/revisions\/([^/]+)\/?$/u.exec(
+    window.location.pathname,
+  );
+  return match === null
+    ? null
+    : {
+        planId: decodeURIComponent(match[1]!),
+        revisionId: decodeURIComponent(match[2]!),
+      };
+}
+
 function TurnContext({
   copy,
   turn,
@@ -119,7 +158,9 @@ function TurnContext({
   copy: PrototypeCopy;
   turn: AssistantTurn;
 }) {
-  if (turn.sourceReferences.length === 0) {
+  const labels =
+    turn.contextLabels ?? turn.sourceReferences.map((item) => item.name);
+  if (labels.length === 0) {
     return <p className="tap-context-notice">{copy.chat.noContextNotice}</p>;
   }
 
@@ -127,16 +168,11 @@ function TurnContext({
     <div className="tap-turn-context">
       <p className="tap-context-notice">{copy.chat.selectedContextNotice}</p>
       <ol className="tap-citation-list" aria-label={copy.chat.selectedContext}>
-        {turn.sourceReferences.map((source, index) => (
-          <li key={source.id}>
+        {labels.map((label, index) => (
+          <li key={`${label}-${index}`}>
             <span className="tap-citation-reference">[{index + 1}]</span>
             <span>
-              <strong>{source.name}</strong>
-              <small>
-                {source.origin === "knowledge-base"
-                  ? copy.sources.knowledgeBaseDocument
-                  : copy.sources.pageLocalSource}
-              </small>
+              <strong>{label}</strong>
             </span>
           </li>
         ))}
@@ -156,6 +192,9 @@ function AssistantResponse({
   onChooseAutomationType,
   onOpenTestPlan,
   onOpenAutomation,
+  onOpenCitation,
+  onRetryConversation,
+  onGenerateTestPlan,
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
@@ -167,11 +206,74 @@ function AssistantResponse({
   onChooseAutomationType: (type: AutomationType) => void;
   onOpenTestPlan: () => void;
   onOpenAutomation: () => void;
+  onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  onRetryConversation: () => void;
+  onGenerateTestPlan?: () => void;
 }) {
   if (turn.prototypeReply) {
     return <ContextualAssistantResponse turn={turn} />;
   }
   if (turn.intent === "answer") {
+    if (turn.status === "canceled") {
+      return <p role="status">Generation stopped.</p>;
+    }
+    if (turn.status === "failed") {
+      return (
+        <div role="alert">
+          <p>{turn.error ?? "The answer could not be generated. Try again."}</p>
+          <Button size="small" onClick={onRetryConversation}>
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    if (turn.response !== undefined && turn.response !== null) {
+      return (
+        <>
+          <GroundedAnswer
+            response={turn.response}
+            onOpenCitation={onOpenCitation}
+          />
+          <TurnContext copy={contentCopy} turn={turn} />
+          {onGenerateTestPlan === undefined ? null : (
+            <div className="tap-artifact-actions">
+              <Button type="primary" onClick={onGenerateTestPlan}>
+                生成测试计划草稿
+              </Button>
+            </div>
+          )}
+        </>
+      );
+    }
+    if (turn.error !== null && turn.error !== undefined) {
+      return (
+        <div role="alert">
+          <p>{turn.error}</p>
+          <Button size="small" onClick={onRetryConversation}>
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    if (turn.status === "queued" || turn.status === "running") {
+      return <p role="status">Tapper is grounding the answer…</p>;
+    }
+    if (turn.response === null) {
+      if (turn.evidenceStatus === "loading") {
+        return <p role="status">Loading answer evidence…</p>;
+      }
+      return (
+        <div role="alert">
+          <p>
+            {turn.error ??
+              "Answer evidence is unavailable. Try loading the conversation again."}
+          </p>
+          <Button size="small" onClick={onRetryConversation}>
+            Retry
+          </Button>
+        </div>
+      );
+    }
     return (
       <div className="tap-answer-copy">
         <p>{contentCopy.chat.answer}</p>
@@ -434,12 +536,14 @@ function nextNumericId(
 
 function ProjectLibraryWorkspace({
   projectId,
+  graphProjectId,
   copy,
   sources,
   loadState,
   onReload,
 }: {
   projectId: string;
+  graphProjectId?: string;
   copy: PrototypeCopy;
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
@@ -472,6 +576,7 @@ function ProjectLibraryWorkspace({
   return (
     <>
       <LibraryWorkspace
+        graphProjectId={graphProjectId}
         copy={copy}
         sources={sources}
         loadState={loadState}
@@ -617,18 +722,31 @@ function ProjectLibraryWorkspace({
   );
 }
 
-export function TapProductPrototype() {
+export function TapProductPrototype({
+  conversationSource = "fixture",
+}: {
+  conversationSource?: "api" | "fixture";
+}) {
   const runtime = useRuntimeModeQuery();
   const projectId = runtime.isSuccess ? runtime.data.projectId : null;
+  const durable = conversationSource === "api";
+  const knowledgeClient = useOptionalKnowledgeClient();
   const sourcesQuery = useSourceListQuery(projectId);
+  const documentsQuery = useDocumentListQuery(durable ? null : projectId);
   const [initialSnapshot] = useState(() =>
     typeof window === "undefined"
       ? null
-      : loadPrototypeSnapshot(window.localStorage),
+      : durable
+        ? null
+        : loadPrototypeSnapshot(window.localStorage),
   );
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    initialSnapshot?.library?.open ? "library" : "tapper",
+    durable && durableTestPlanPath() !== null
+      ? "test-management"
+      : initialSnapshot?.library?.open
+        ? "library"
+        : "tapper",
   );
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
@@ -643,7 +761,10 @@ export function TapProductPrototype() {
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [conversations, setConversations] = useState<readonly Conversation[]>(
-    () => initialSnapshot?.conversations ?? [createConversation("chat-1")],
+    () =>
+      initialSnapshot?.conversations ?? [
+        createConversation(durable ? "draft" : "chat-1"),
+      ],
   );
   const selectionProject = useRef(projectId);
   useEffect(() => {
@@ -670,8 +791,93 @@ export function TapProductPrototype() {
     });
   }, [projectId, sourcesQuery.data, sourcesQuery.isSuccess]);
   const [activeConversationId, setActiveConversationId] = useState(
-    () => initialSnapshot?.activeConversationId ?? "chat-1",
+    () =>
+      initialSnapshot?.activeConversationId ?? (durable ? "draft" : "chat-1"),
   );
+  const conversationList = useConversationList(durable ? projectId : null);
+  const conversationDetail = useConversationDetail(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const [requestedStreamTarget, setRequestedStreamTarget] = useState<{
+    conversationId: string;
+    turnId: string;
+  } | null>(null);
+  const [pollConversationEvents, setPollConversationEvents] = useState(true);
+  const conversationEvents = useConversationEvents(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+    pollConversationEvents,
+  );
+  const recoveredStreamState = useMemo(() => {
+    let recovered = createStreamState();
+    for (const event of conversationEvents.data?.items ?? []) {
+      recovered = reduceStreamEvent(recovered, {
+        eventId: event.eventId,
+        sequence: event.sequence,
+        chatId: activeConversationId,
+        turnId: event.turnId,
+        occurredAt: event.occurredAt,
+        schemaVersion: 1,
+        event: { type: event.eventType, payload: event.payload },
+      });
+    }
+    return recovered;
+  }, [activeConversationId, conversationEvents.data?.items]);
+  const requestedTarget =
+    requestedStreamTarget?.conversationId === activeConversationId
+      ? requestedStreamTarget.turnId
+      : null;
+  const latestDetailTurn = conversationDetail.data?.turns.at(-1) ?? null;
+  const streamTargetTurnId =
+    requestedTarget ?? latestDetailTurn?.turnId ?? null;
+  const detailTargetStatus =
+    conversationDetail.data?.turns.find(
+      (turn) => turn.turnId === streamTargetTurnId,
+    )?.state ?? null;
+  const shouldStartConversationStream =
+    requestedTarget !== null ||
+    isTargetTurnActive({
+      detailStatus: detailTargetStatus,
+      recoveredState: recoveredStreamState,
+      streamState: createStreamState(),
+      targetTurnId: streamTargetTurnId,
+    });
+  const conversationStream = useConversationStream(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+    streamTargetTurnId,
+    recoveredStreamState.lastSequence,
+    shouldStartConversationStream,
+  );
+  const streamState = conversationStream.state;
+  const hasActiveConversationTurn = isTargetTurnActive({
+    detailStatus: detailTargetStatus,
+    recoveredState: recoveredStreamState,
+    streamState,
+    targetTurnId: streamTargetTurnId,
+  });
+  useEffect(() => {
+    setPollConversationEvents(hasActiveConversationTurn);
+  }, [hasActiveConversationTurn]);
+  useEffect(() => {
+    if (requestedTarget !== null && !hasActiveConversationTurn)
+      setRequestedStreamTarget(null);
+  }, [hasActiveConversationTurn, requestedTarget]);
+  const createConversationMutation = useCreateConversation(
+    durable ? projectId : null,
+  );
+  const appendConversationMutation = useAppendConversation(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const cancelTurnMutation = useCancelTurn(
+    durable ? projectId : null,
+    durable && activeConversationId !== "draft" ? activeConversationId : null,
+  );
+  const resetCancelTurn = cancelTurnMutation.reset;
+  const aiAssets = useAiAssetCatalog(durable ? projectId : null);
+  const initialDurableSelection = useRef(false);
   const [artifactState, dispatchArtifact] = useReducer(
     artifactReducer,
     initialSnapshot?.artifacts ?? createInitialArtifactState(),
@@ -680,11 +886,38 @@ export function TapProductPrototype() {
     { kind: "library" },
   );
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
+    planId: string;
+    revisionId: string;
+  } | null>(() => (durable ? durableTestPlanPath() : null));
+  const [agents, setAgents] = useState<readonly CatalogItem[]>(() =>
+    durable ? [] : BUILT_IN_AGENTS,
+  );
+  const [skills, setSkills] = useState<readonly CatalogItem[]>(() =>
+    durable ? [] : BUILT_IN_SKILLS,
+  );
+  const sendInFlight = useRef(false);
+  const [sendPending, setSendPending] = useState(false);
+  const [activeCitation, setActiveCitation] = useState<{
+    citation: NonNullable<AssistantTurn["response"]>["citations"][number];
+    conversationId: string | null;
+    generation: number;
+    id: string;
+    turnId: string | null;
+  } | null>(null);
+  const historicalCitationQuery = useConversationCitation(
+    durable ? projectId : null,
+    activeCitation?.conversationId ?? null,
+    activeCitation?.turnId ?? null,
+    activeCitation?.id ?? null,
+    activeCitation?.generation ?? 0,
+  );
   const [messageDraft, setMessageDraft] = useState("");
   const [composerContext, setComposerContext] =
     useState<FloatingAssistantContext | null>(null);
-  const [agents, setAgents] = useState<readonly CatalogItem[]>(BUILT_IN_AGENTS);
-  const [skills, setSkills] = useState<readonly CatalogItem[]>(BUILT_IN_SKILLS);
+  const [localSources, setLocalSources] = useState<
+    readonly Pick<LibrarySource, "id" | "name" | "type">[]
+  >(() => initialSnapshot?.library?.localSources ?? []);
   const nextConversationId = useRef(
     nextNumericId(
       (initialSnapshot?.conversations ?? [createConversation("chat-1")]).map(
@@ -725,10 +958,198 @@ export function TapProductPrototype() {
     ),
   );
   const nextCatalogId = useRef(1);
+  const nextLocalSourceId = useRef(
+    nextNumericId(
+      localSources.map(({ id }) => id),
+      "local-source",
+      0,
+    ),
+  );
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
   const copy = PROTOTYPE_COPY[locale];
+
+  useEffect(() => {
+    resetCancelTurn();
+  }, [activeConversationId, resetCancelTurn]);
+
+  useEffect(() => {
+    if (!durable) return;
+    if (aiAssets.agents.isError) setAgents([]);
+    if (aiAssets.skills.isError) setSkills([]);
+    if (aiAssets.agents.data !== undefined) {
+      setAgents(
+        aiAssets.agents.data.map((item) => ({
+          id: item.revisionId,
+          kind: "agent",
+          origin: "built-in",
+          name: item.displayName,
+          description: item.contentDigest,
+          instructions: "Server-approved immutable revision",
+        })),
+      );
+    }
+    if (aiAssets.skills.data !== undefined) {
+      setSkills(
+        aiAssets.skills.data.map((item) => ({
+          id: item.revisionId,
+          kind: "skill",
+          origin: "built-in",
+          name: item.displayName,
+          description: item.contentDigest,
+          instructions: "Server-approved immutable revision",
+        })),
+      );
+    }
+    if (
+      aiAssets.agents.data !== undefined ||
+      aiAssets.skills.data !== undefined
+    ) {
+      const allowedAgents = new Set(
+        (aiAssets.agents.data ?? []).map((item) => item.revisionId),
+      );
+      const allowedSkills = new Set(
+        (aiAssets.skills.data ?? []).map((item) => item.revisionId),
+      );
+      setConversations((current) =>
+        current.map((conversation) => ({
+          ...conversation,
+          selectedAgentIds: conversation.selectedAgentIds.filter((id) =>
+            allowedAgents.has(id),
+          ),
+          selectedSkillIds: conversation.selectedSkillIds.filter((id) =>
+            allowedSkills.has(id),
+          ),
+        })),
+      );
+    }
+  }, [
+    aiAssets.agents.data,
+    aiAssets.agents.isError,
+    aiAssets.skills.data,
+    aiAssets.skills.isError,
+    durable,
+  ]);
+
+  useEffect(() => {
+    if (!durable || conversationList.data === undefined) return;
+    const summaries = conversationList.data.pages.flatMap((page) => page.items);
+    setConversations((current) => {
+      const restored = summaries.map((summary) => {
+        const existing = current.find(
+          (item) => item.id === summary.conversationId,
+        );
+        return existing === undefined
+          ? createConversation(summary.conversationId, { title: summary.title })
+          : { ...existing, title: summary.title };
+      });
+      const draft = current.find((item) => item.id === "draft");
+      return (activeConversationId === "draft" || summaries.length === 0) &&
+        draft !== undefined
+        ? [draft, ...restored]
+        : restored;
+    });
+    if (!initialDurableSelection.current && summaries.length > 0) {
+      setActiveConversationId(summaries[0]!.conversationId);
+    }
+    initialDurableSelection.current = true;
+  }, [activeConversationId, conversationList.data, durable]);
+
+  useEffect(() => {
+    if (!durable || conversationDetail.data === undefined) return;
+    const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
+      const resolvedResources = turn.input.resolvedResources ?? [];
+      const streamed = latestTurnState(
+        turn.turnId,
+        recoveredStreamState,
+        streamState,
+      );
+      return {
+        id: turn.turnId,
+        intent: "answer",
+        locale: "en",
+        modelId: turn.input.modelAlias,
+        prompt: turn.input.message,
+        sourceReferences: resolvedResources.map((item) => ({
+          id: item.sourceId,
+          name: item.label,
+          origin: "knowledge-base" as const,
+        })),
+        response: streamed?.response ?? null,
+        status: ["completed", "abstained", "canceled", "failed"].includes(
+          turn.state,
+        )
+          ? turn.state
+          : (streamed?.status ?? turn.state),
+        error:
+          streamed?.error ??
+          (conversationEvents.isError || conversationStream.error !== null
+            ? "Conversation updates are unavailable. Check access or connection, then try again."
+            : null),
+        evidenceStatus:
+          conversationEvents.isLoading || conversationEvents.isFetching
+            ? "loading"
+            : conversationEvents.isError
+              ? "error"
+              : streamed?.response === undefined
+                ? "missing"
+                : "ready",
+        contextLabels: [
+          ...resolvedResources.map((item) => item.label),
+          ...(turn.input.agentLabel == null ? [] : [turn.input.agentLabel]),
+          ...(turn.input.skillLabels ?? []),
+        ].filter((label): label is string => typeof label === "string"),
+        inputSnapshotDigest: turn.inputSnapshotDigest,
+        answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
+        agentRevisionId: turn.input.agentRevisionId,
+        skillRevisionIds: turn.input.skillRevisionIds,
+      };
+    });
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationDetail.data.conversationId
+          ? {
+              ...conversation,
+              turns,
+              ...(conversationDetail.data.turns.at(-1) === undefined
+                ? {}
+                : {
+                    modelId:
+                      conversationDetail.data.turns.at(-1)!.input.modelAlias,
+                    selectedSourceIds:
+                      conversationDetail.data.turns
+                        .at(-1)!
+                        .input.resolvedResources?.map(
+                          (item) => item.sourceId,
+                        ) ?? [],
+                    selectedAgentIds:
+                      conversationDetail.data.turns.at(-1)!.input
+                        .agentRevisionId === null
+                        ? []
+                        : [
+                            conversationDetail.data.turns.at(-1)!.input
+                              .agentRevisionId!,
+                          ],
+                    selectedSkillIds:
+                      conversationDetail.data.turns.at(-1)!.input
+                        .skillRevisionIds,
+                  }),
+            }
+          : conversation,
+      ),
+    );
+  }, [
+    conversationDetail.data,
+    conversationEvents.data,
+    conversationEvents.isError,
+    conversationEvents.isFetching,
+    conversationEvents.isLoading,
+    conversationStream.error,
+    durable,
+    recoveredStreamState,
+    streamState,
+  ]);
   const tapperWorkspaceActive = [
     "tapper",
     "agents",
@@ -775,14 +1196,27 @@ export function TapProductPrototype() {
   }, [locale]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || durable) return;
     writePrototypeSnapshot(window.localStorage, {
       version: PROTOTYPE_SNAPSHOT_VERSION,
       activeConversationId,
       conversations,
       artifacts: artifactState,
+      library: {
+        open: activeModule === "library",
+        examplesLoaded: true,
+        fwdLoaded: true,
+        localSources,
+      },
     });
-  }, [activeConversationId, artifactState, conversations]);
+  }, [
+    activeConversationId,
+    artifactState,
+    conversations,
+    activeModule,
+    durable,
+    localSources,
+  ]);
 
   useEffect(
     () => () => {
@@ -875,7 +1309,58 @@ export function TapProductPrototype() {
       sourcesQuery.data?.items,
     ],
   );
-  const sources = sourceItems;
+  const documentSources = useMemo<readonly LibrarySource[]>(
+    () =>
+      (documentsQuery.data?.items ?? []).map((document) => ({
+        id: document.documentId,
+        name: document.filename,
+        origin: "knowledge-base",
+        type: document.filename.split(".").pop()?.toUpperCase() ?? "FILE",
+        status:
+          document.status === "ready"
+            ? "ready"
+            : document.status === "failed"
+              ? "failed"
+              : "processing",
+        description: `${copy.sources.knowledgeSource} · ${
+          document.status === "ready"
+            ? copy.library.ready
+            : document.status === "failed"
+              ? copy.library.failed
+              : copy.library.processing
+        }`,
+      })),
+    [
+      copy.library.failed,
+      copy.library.processing,
+      copy.library.ready,
+      copy.sources.knowledgeSource,
+      documentsQuery.data?.items,
+    ],
+  );
+  const sources = useMemo<readonly LibrarySource[]>(
+    () =>
+      durable
+        ? sourceItems
+        : [
+            ...documentSources,
+            ...SAMPLE_FILES,
+            ...FWD_REPRESENTATIVE_SOURCES,
+            ...localSources.map((source) => ({
+              ...source,
+              origin: "page-local" as const,
+              status: "ready" as const,
+              description: copy.library.localSourceDescription,
+            })),
+          ],
+    [
+      copy.library.localSourceDescription,
+      documentSources,
+      durable,
+      localSources,
+      sourceItems,
+    ],
+  );
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -903,12 +1388,16 @@ export function TapProductPrototype() {
   const createNewChat = () => {
     setMessageDraft("");
     setComposerContext(null);
-    const id = `chat-${nextConversationId.current++}`;
+    const id = durable ? "draft" : `chat-${nextConversationId.current++}`;
     pendingFocusTarget.current = {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    setConversations((current) => [...current, createConversation(id)]);
+    setConversations((current) =>
+      durable
+        ? [createConversation(id), ...current.filter((item) => item.id !== id)]
+        : [...current, createConversation(id)],
+    );
     setActiveConversationId(id);
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
@@ -963,7 +1452,7 @@ export function TapProductPrototype() {
       )
       .map(({ id, kind, name }) => ({ id, kind, name }));
 
-  const sendMessage = (prompt: string) => {
+  const sendMessage = async (prompt: string): Promise<boolean> => {
     if (composerContext) {
       sendFloatingMessage(
         prompt,
@@ -972,14 +1461,115 @@ export function TapProductPrototype() {
         locale,
       );
       setComposerContext(null);
-      return;
+      return true;
     }
+    if (
+      durable &&
+      (knowledgeClient === null ||
+        createConversationMutation.isPending ||
+        appendConversationMutation.isPending ||
+        sendInFlight.current)
+    )
+      return false;
     const intent = detectIntent(prompt);
     const sourceReferences = sources
       .filter((source) =>
         activeConversation.selectedSourceIds.includes(source.id),
       )
       .map(({ id, name, origin }) => ({ id, name, origin }));
+    if (durable) {
+      sendInFlight.current = true;
+      setSendPending(true);
+      try {
+        if (knowledgeClient === null) return false;
+        const api = knowledgeClient;
+        const readySourceIds = new Set(
+          sourceItems
+            .filter((item) => item.status === "ready")
+            .map((item) => item.id),
+        );
+        const allowedAgentIds = new Set(agents.map((item) => item.id));
+        const allowedSkillIds = new Set(skills.map((item) => item.id));
+        const futureSourceIds = activeConversation.selectedSourceIds.filter(
+          (id) => readySourceIds.has(id),
+        );
+        const selectedDetails = await Promise.all(
+          futureSourceIds.map((id) => api.getSource(id)),
+        );
+        const input = {
+          message: prompt,
+          modelAlias: activeConversation.modelId,
+          sourceRevisionIds: selectedDetails.flatMap((detail) =>
+            detail.documents.items
+              .filter((item) => item.status === "ready")
+              .map((item) => item.revisionId),
+          ),
+          documentRevisionIds: [],
+          agentRevisionId:
+            activeConversation.selectedAgentIds.find((id) =>
+              allowedAgentIds.has(id),
+            ) ?? null,
+          skillRevisionIds: activeConversation.selectedSkillIds.filter((id) =>
+            allowedSkillIds.has(id),
+          ),
+        };
+        const key = crypto.randomUUID();
+        const accepted =
+          activeConversation.id === "draft"
+            ? await createConversationMutation.mutateAsync({
+                input,
+                idempotencyKey: key,
+              })
+            : await appendConversationMutation.mutateAsync({
+                input,
+                idempotencyKey: key,
+              });
+        setRequestedStreamTarget({
+          conversationId: accepted.conversationId,
+          turnId: accepted.turnId,
+        });
+        setPollConversationEvents(true);
+        const optimistic = appendTurn(
+          { ...activeConversation, id: accepted.conversationId },
+          {
+            id: accepted.turnId,
+            intent: "answer",
+            locale,
+            modelId: activeConversation.modelId,
+            prompt,
+            sourceReferences,
+            contextLabels: [
+              ...sourceReferences.map((item) => item.name),
+              ...agents
+                .filter((item) =>
+                  activeConversation.selectedAgentIds.includes(item.id),
+                )
+                .map((item) => item.name),
+              ...skills
+                .filter((item) =>
+                  activeConversation.selectedSkillIds.includes(item.id),
+                )
+                .map((item) => item.name),
+            ],
+            status: "queued",
+          },
+        );
+        setConversations((current) => [
+          optimistic,
+          ...current.filter(
+            (item) =>
+              item.id !== "draft" && item.id !== accepted.conversationId,
+          ),
+        ]);
+        setActiveConversationId(accepted.conversationId);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        sendInFlight.current = false;
+        setSendPending(false);
+      }
+    }
     updateActiveConversation((conversation) =>
       appendTurn(conversation, {
         id: `turn-${nextTurnId.current++}`,
@@ -1000,6 +1590,7 @@ export function TapProductPrototype() {
             : undefined,
       }),
     );
+    return true;
   };
 
   const sendFloatingMessage = (
@@ -1292,6 +1883,17 @@ export function TapProductPrototype() {
     setSidebarCollapsed(isNarrowViewport);
   };
 
+  const addLocalSource = (file: File) => {
+    setLocalSources((current) => [
+      ...current,
+      {
+        id: `local-source-${nextLocalSourceId.current++}`,
+        name: file.name,
+        type: file.name.split(".").pop()?.toUpperCase() ?? "FILE",
+      },
+    ]);
+  };
+
   return (
     <div
       className={`tap-product-shell${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
@@ -1318,6 +1920,25 @@ export function TapProductPrototype() {
         onSelectConversation={selectConversation}
         onToggleCollapsed={
           sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
+        }
+        historyState={
+          durable
+            ? {
+                ...(conversationList.isError
+                  ? { error: "Conversation history is unavailable." }
+                  : {}),
+                hasMore: conversationList.hasNextPage,
+                isLoading: conversationList.isPending,
+                isLoadingMore: conversationList.isFetchingNextPage,
+                onLoadMore: () => {
+                  if (conversationList.hasNextPage)
+                    void conversationList.fetchNextPage();
+                },
+                onRetry: () => {
+                  void conversationList.refetch();
+                },
+              }
+            : undefined
         }
       />
       {mobileTapperDrawerOpen ? (
@@ -1351,6 +1972,7 @@ export function TapProductPrototype() {
               </button>
             ) : null}
             <TapperChat
+              projectId={projectId}
               agents={agents}
               conversation={activeConversation}
               copy={copy}
@@ -1366,6 +1988,20 @@ export function TapProductPrototype() {
                 }))
               }
               onSend={sendMessage}
+              sending={
+                sendPending ||
+                createConversationMutation.isPending ||
+                appendConversationMutation.isPending
+              }
+              cancelError={cancelTurnMutation.isError}
+              onCancel={
+                durable
+                  ? (turnId) => {
+                      if (!cancelTurnMutation.isPending)
+                        cancelTurnMutation.mutate(turnId);
+                    }
+                  : undefined
+              }
               onToggleAgent={(agentId) =>
                 updateActiveConversation((conversation) => ({
                   ...conversation,
@@ -1414,6 +2050,59 @@ export function TapProductPrototype() {
                     }
                   }}
                   onOpenAutomation={() => openAutomation(turn)}
+                  onOpenCitation={(citationId) => {
+                    const citation = turn.response?.citations.find(
+                      (item) => item.citationId === citationId,
+                    );
+                    if (citation !== undefined) {
+                      setSourcesCollapsed(false);
+                      setActiveCitation((current) => ({
+                        citation,
+                        conversationId: durable ? activeConversation.id : null,
+                        generation: (current?.generation ?? 0) + 1,
+                        id: citationId,
+                        turnId: durable ? turn.id : null,
+                      }));
+                    }
+                  }}
+                  onRetryConversation={() => {
+                    conversationStream.retry();
+                    void conversationEvents.refetch();
+                    void conversationDetail.refetch();
+                  }}
+                  onGenerateTestPlan={
+                    durable &&
+                    projectId !== null &&
+                    turn.status === "completed" &&
+                    turn.answerEvidenceSnapshotDigest != null &&
+                    turn.inputSnapshotDigest !== undefined &&
+                    turn.agentRevisionId != null &&
+                    (turn.skillRevisionIds?.length ?? 0) > 0
+                      ? () => {
+                          const api = createTestPlanClient(projectId);
+                          void api
+                            .generate(
+                              {
+                                conversationId: activeConversation.id,
+                                turnId: turn.id,
+                                inputSnapshotDigest: turn.inputSnapshotDigest!,
+                                answerEvidenceSnapshotDigest:
+                                  turn.answerEvidenceSnapshotDigest!,
+                                modelAlias: turn.modelId,
+                                agentRevisionId: turn.agentRevisionId!,
+                                skillRevisionIds: [...turn.skillRevisionIds!],
+                                objective: `为“${turn.prompt}”设计测试计划`,
+                              },
+                              crypto.randomUUID(),
+                            )
+                            .then(() => {
+                              setSelectedDurablePlan(null);
+                              setActiveModule("test-management");
+                              setSidebarCollapsed(true);
+                            });
+                        }
+                      : undefined
+                  }
                 />
               )}
               skills={skills}
@@ -1434,26 +2123,36 @@ export function TapProductPrototype() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              <KnowledgeSourcesPanel
-                copy={copy}
-                isLoading={projectId !== null && sourcesQuery.isPending}
-                isError={sourcesQuery.isError}
-                onRetry={() => {
-                  void sourcesQuery.refetch();
-                }}
-                onCollapse={dismissKnowledgeSources}
-                onToggleSource={(sourceId) =>
-                  updateActiveConversation((conversation) => ({
-                    ...conversation,
-                    selectedSourceIds: toggleSelection(
-                      conversation.selectedSourceIds,
-                      sourceId,
-                    ),
-                  }))
-                }
-                selectedSourceIds={activeConversation.selectedSourceIds}
-                sources={sources}
-              />
+              {activeCitation !== null ? (
+                <CitationViewer
+                  active={activeCitation}
+                  historicalQuery={
+                    durable ? historicalCitationQuery : undefined
+                  }
+                  onClose={() => setActiveCitation(null)}
+                />
+              ) : (
+                <KnowledgeSourcesPanel
+                  copy={copy}
+                  isLoading={projectId !== null && sourcesQuery.isPending}
+                  isError={sourcesQuery.isError}
+                  onRetry={() => {
+                    void sourcesQuery.refetch();
+                  }}
+                  onCollapse={dismissKnowledgeSources}
+                  onToggleSource={(sourceId) =>
+                    updateActiveConversation((conversation) => ({
+                      ...conversation,
+                      selectedSourceIds: toggleSelection(
+                        conversation.selectedSourceIds,
+                        sourceId,
+                      ),
+                    }))
+                  }
+                  selectedSourceIds={activeConversation.selectedSourceIds}
+                  sources={sources}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1467,6 +2166,7 @@ export function TapProductPrototype() {
               updateCatalogItem("agent", itemId, draft)
             }
             onUse={(itemId) => useCatalogItem("agent", itemId)}
+            readOnly={durable}
           />
         ) : null}
         {activeModule === "skills" ? (
@@ -1479,15 +2179,15 @@ export function TapProductPrototype() {
               updateCatalogItem("skill", itemId, draft)
             }
             onUse={(itemId) => useCatalogItem("skill", itemId)}
+            readOnly={durable}
           />
         ) : null}
         {activeModule === "library" ? (
-          projectId === null ? (
-            <LibraryWorkspace copy={copy} sources={sources} />
-          ) : (
+          durable && projectId !== null ? (
             <ProjectLibraryWorkspace
               key={projectId}
               projectId={projectId}
+              graphProjectId={projectId}
               copy={copy}
               sources={sources}
               loadState={
@@ -1501,12 +2201,41 @@ export function TapProductPrototype() {
                 void sourcesQuery.refetch();
               }}
             />
+          ) : durable ? (
+            <LibraryWorkspace copy={copy} sources={sources} />
+          ) : (
+            <LibraryWorkspace
+              copy={copy}
+              sources={sources}
+              onAddSource={addLocalSource}
+            />
           )
         ) : null}
-        {activeModule === "test-analytics" ? (
-          <TestAnalyticsWorkspace locale={locale} />
-        ) : null}
-        {activeModule === "test-management" ? (
+        {activeModule === "test-management" && durable && projectId !== null ? (
+          selectedDurablePlan === null ? (
+            <TestPlanLibrary
+              projectId={projectId}
+              onOpen={(planId, revisionId) => {
+                window.history.pushState(
+                  null,
+                  "",
+                  `/test-management/${encodeURIComponent(planId)}/revisions/${encodeURIComponent(revisionId)}`,
+                );
+                setSelectedDurablePlan({ planId, revisionId });
+              }}
+            />
+          ) : (
+            <TestPlanReview
+              projectId={projectId}
+              planId={selectedDurablePlan.planId}
+              revisionId={selectedDurablePlan.revisionId}
+              onBack={() => {
+                window.history.pushState(null, "", "/");
+                setSelectedDurablePlan(null);
+              }}
+            />
+          )
+        ) : activeModule === "test-management" ? (
           <TestManagementWorkspace
             state={artifactState}
             selectedPlanId={selectedPlanId}
@@ -1526,6 +2255,9 @@ export function TapProductPrototype() {
             }
             onRun={runAutomation}
           />
+        ) : null}
+        {activeModule === "test-analytics" ? (
+          <TestAnalyticsWorkspace locale={locale} />
         ) : null}
         {activeModule === "low-code" ? (
           <AutomationWorkspace
@@ -1565,7 +2297,7 @@ export function TapProductPrototype() {
         ) : null}
       </main>
       <TapperFloatingAssistant
-        visible={!tapperWorkspaceActive && activeModule !== "test-analytics"}
+        visible={!durable && !tapperWorkspaceActive}
         context={floatingContext}
         conversation={activeConversation}
         draft={messageDraft}

@@ -518,6 +518,7 @@ class IngestionWork:
     source_id: str | None = None
     enterprise_id: str | None = None
     project_id: str | None = None
+    preserve_evidence_artifacts: bool = False
 
 
 @dataclass(frozen=True, slots=True)

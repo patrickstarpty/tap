@@ -4,16 +4,16 @@ TAP_TAPPER_COMPOSE_PROJECT ?= tap-tapper-demo
 export TAP_TAPPER_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
+.PHONY: gate-v0 schema-drift migration-check bootstrap check brand-check test contracts quality-kb quality-kb-real quality-graph quality-graph-real quality-test-design quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev legacy-tapper-codex-dev demo-e2e demo-down demo-reset
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
 	corepack pnpm install --frozen-lockfile
 
 check: ## lint, format-check, typecheck, architecture checks
-	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
-	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend ruff check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend ruff format --check apps/backend/src apps/backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
+	uv run --project apps/backend mypy apps/backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/backend mypy --explicit-package-bases --follow-imports=silent scripts/tapper_v0_gate.py
 	bash -n scripts/run-tapper-v0-gate.sh scripts/run-tapper-dev.sh scripts/run-tapper-e2e.sh scripts/build-tapper-object-store.sh
 	uv run --project apps/backend python scripts/export_contracts.py --check
@@ -31,6 +31,65 @@ test: ## unit, integration, and contract tests
 contracts: ## export OpenAPI/SSE schema and generate TypeScript
 	uv run --project apps/backend python scripts/export_contracts.py
 	corepack pnpm --filter @tap/web run contracts
+
+TAP_QUALITY_KB_PROFILE ?= apps/backend/tests/fixtures/quality/kb/profile-v1.json
+TAP_QUALITY_KB_REPORT ?= .local/quality-kb/report.json
+TAP_QUALITY_KB_OBSERVATIONS ?= .local/quality-kb/observations.json
+TAP_QUALITY_KB_PROVIDER_CALL_BUDGET ?= 500
+TAP_QUALITY_KB_MAX_RETRIES_PER_CASE ?= 2
+
+quality-kb: ## deterministically evaluate the committed QUALITY-KB-01 profile offline
+	uv run --project apps/backend python scripts/evaluate-quality-kb.py "$(TAP_QUALITY_KB_PROFILE)" --observations "$(TAP_QUALITY_KB_OBSERVATIONS)" --report "$(TAP_QUALITY_KB_REPORT)" --provider-call-budget "$(TAP_QUALITY_KB_PROVIDER_CALL_BUDGET)" --max-retries-per-case "$(TAP_QUALITY_KB_MAX_RETRIES_PER_CASE)"
+
+quality-kb-real: ## require an opted-in real, human-labeled QUALITY-KB-01 run
+	@if [ "$${TAP_RUN_QUALITY_KB_01:-}" != "1" ]; then \
+		echo "quality-kb-real requires TAP_RUN_QUALITY_KB_01=1" >&2; \
+		exit 2; \
+	fi
+	@if [ -z "$${TAP_QUALITY_KB_MODEL_APPROVAL_DIGEST:-}" ] || [ -z "$${TAP_QUALITY_KB_MODEL_APPROVAL_ARTIFACT:-}" ]; then \
+		echo "quality-kb-real requires an explicit approved actual provider/model/operation mapping and approval artifact" >&2; \
+		exit 2; \
+	fi
+	@mkdir -p .local/quality-kb
+	uv run --project apps/backend python scripts/run-quality-kb-real.py "$(TAP_QUALITY_KB_PROFILE)" --observations "$(TAP_QUALITY_KB_OBSERVATIONS)" --report "$(TAP_QUALITY_KB_REPORT)"
+
+TAP_QUALITY_GRAPH_PROFILE ?= apps/backend/tests/fixtures/quality/graph/profile-v1.json
+TAP_QUALITY_GRAPH_OBSERVATIONS ?= .local/quality-graph/observations.json
+TAP_QUALITY_GRAPH_REPORT ?= .local/quality-graph/report.json
+
+quality-graph: ## deterministically evaluate the committed QUALITY-GRAPH-01 candidate profile
+	uv run --project apps/backend python scripts/evaluate-quality-graph.py "$(TAP_QUALITY_GRAPH_PROFILE)" --report "$(TAP_QUALITY_GRAPH_REPORT)"
+
+quality-graph-real: ## require opted-in real model, Graph stores, and approved human labels
+	@if [ "$${TAP_RUN_QUALITY_GRAPH_01:-}" != "1" ]; then \
+		echo "quality-graph-real requires TAP_RUN_QUALITY_GRAPH_01=1" >&2; \
+		exit 2; \
+	fi
+	@if [ "$${TAPPER_GRAPH_EXTRACTION_MODE:-}" != "model" ]; then \
+		echo "quality-graph-real requires TAPPER_GRAPH_EXTRACTION_MODE=model" >&2; \
+		exit 2; \
+	fi
+	@if [ -z "$${TAP_DATABASE_URL:-}" ] || [ -z "$${MILVUS_URI:-}" ]; then \
+		echo "quality-graph-real requires explicit MySQL and Milvus endpoints" >&2; \
+		exit 2; \
+	fi
+	uv run --project apps/backend python scripts/run-quality-graph-candidate.py "$(TAP_QUALITY_GRAPH_PROFILE)" --observations "$(TAP_QUALITY_GRAPH_OBSERVATIONS)" --require-approved-review
+	uv run --project apps/backend python scripts/evaluate-quality-graph.py "$(TAP_QUALITY_GRAPH_OBSERVATIONS)" --report "$(TAP_QUALITY_GRAPH_REPORT)" --real
+
+TAP_QUALITY_TEST_PROFILE ?= apps/backend/tests/fixtures/quality/test-design/profile-v1.json
+TAP_QUALITY_TEST_OBSERVATIONS ?= .local/quality-test-design/observations.json
+TAP_QUALITY_TEST_REPORT ?= .local/quality-test-design/report.json
+
+quality-test-design: ## deterministically evaluate the committed QUALITY-TEST-01 candidate profile
+	uv run --project apps/backend python scripts/evaluate-quality-test-design.py "$(TAP_QUALITY_TEST_PROFILE)" --report "$(TAP_QUALITY_TEST_REPORT)"
+
+quality-test-design-real: ## require opted-in real model observations and one approved named reviewer
+	@if [ "$${TAP_RUN_QUALITY_TEST_01:-}" != "1" ]; then \
+		echo "quality-test-design-real requires TAP_RUN_QUALITY_TEST_01=1" >&2; \
+		exit 2; \
+	fi
+	TAPPER_MODEL_TIMEOUT_SECONDS=60 uv run --project apps/backend python scripts/run-quality-test-design-candidate.py "$(TAP_QUALITY_TEST_PROFILE)" --observations "$(TAP_QUALITY_TEST_OBSERVATIONS)"
+	uv run --project apps/backend python scripts/evaluate-quality-test-design.py "$(TAP_QUALITY_TEST_OBSERVATIONS)" --report "$(TAP_QUALITY_TEST_REPORT)" --real
 
 milvus-preflight: ## require Docker with at least 2 vCPU and 8 GiB memory
 	@set -eu; \
@@ -68,6 +127,7 @@ test-milvus: ## run the non-skippable real Milvus correctness gate with committe
 	$(MAKE) milvus-up TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	$(MAKE) milvus-bootstrap TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	$(MAKE) milvus-health TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
+	$(MAKE) milvus-bootstrap TAP_MILVUS_COMPOSE_PROJECT="$(TAP_MILVUS_COMPOSE_PROJECT)"
 	uv run --project apps/backend python scripts/milvus_fixture.py publish --fixture apps/backend/tests/fixtures/milvus/doc-fixture-v1.json --queries apps/backend/tests/fixtures/milvus/query-cases-v1.json --vectors apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json
 	MILVUS_URI="$${MILVUS_URI:-http://127.0.0.1:19530}" \
 	MILVUS_DATABASE="$${MILVUS_DATABASE:-default}" \
@@ -128,12 +188,15 @@ demo-check: ## check exact Tapper dependencies without exposing provider details
 	export TAP_TAPPER_COMPOSE_PROJECT="$$tapper_demo_project"; \
 	uv run --project apps/backend python scripts/check-tapper-demo.py
 
-demo-dev: ## run API, relay, ingestion worker, and Web on strict loopback ports
+demo-dev: ## run API, relay, ingestion, graph, generation, and Web on loopback ports
 	@set -eu; \
 	project="$${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"; \
 	case "$$project" in ''|[-_]*|*[!a-z0-9_-]*) echo "invalid Tapper Compose project" >&2; exit 2;; esac; \
 	[ "$${#project}" -ge 3 ] && [ "$${#project}" -le 63 ] || { echo "invalid Tapper Compose project" >&2; exit 2; }; \
 	bash scripts/run-tapper-dev.sh
+
+legacy-tapper-codex-dev: ## run only the retired loopback Codex answer composition
+	bash scripts/run-tapper-legacy-codex-dev.sh
 
 demo-e2e: ## run the isolated deterministic browser and persistence journey
 	@set -eu; \

@@ -185,3 +185,19 @@ def test_runtime_openapi_uses_one_resolvable_problem_component_for_every_respons
                     }
                     assert "application/json" not in content
     assert count > 1
+
+
+def test_all_conversation_operations_declare_problem_details_for_validation_errors() -> None:
+    schema = create_app().openapi()
+    operations = [
+        operation
+        for path, item in schema["paths"].items()
+        if "/conversations" in path
+        for operation in item.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    ]
+    assert operations
+    for operation in operations:
+        assert operation["responses"]["422"]["content"] == {
+            "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}
+        }

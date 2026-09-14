@@ -120,6 +120,7 @@ export MILVUS_PROVISIONER_PASSWORD='tap-e2e-Provisioner1!'
 export TAPPER_COLLECTION=kb_doc_v1_tapper_demo
 export TAPPER_ALIAS=kb_doc_tapper_demo_active
 export TAPPER_CORPUS_VERSION=tapper-demo-v1
+export TAPPER_SCHEMA_VERSION=doc-schema-v1
 export TAPPER_CHAT_ALIAS=tapper-chat
 export TAPPER_EMBEDDING_ALIAS=tapper-embedding
 export TAPPER_RETRIEVAL_PROFILE=quick-hybrid-v1
@@ -152,6 +153,7 @@ readonly MILVUS_INITIAL_ROOT_PASSWORD MILVUS_ROOT_PASSWORD MILVUS_READER_USERNAM
 readonly MILVUS_READER_PASSWORD MILVUS_WRITER_USERNAME MILVUS_WRITER_PASSWORD
 readonly MILVUS_PROVISIONER_USERNAME MILVUS_PROVISIONER_PASSWORD
 readonly TAPPER_COLLECTION TAPPER_ALIAS TAPPER_CORPUS_VERSION TAPPER_CHAT_ALIAS
+readonly TAPPER_SCHEMA_VERSION
 readonly TAPPER_EMBEDDING_ALIAS TAPPER_RETRIEVAL_PROFILE TAPPER_EMBEDDING_DIMENSION
 readonly TAPPER_INDEX_VERSION TAPPER_PIPELINE_VERSION TAPPER_WORKER_ID
 readonly TAPPER_POLL_SECONDS TAPPER_JOB_BATCH_SIZE TAPPER_READY_TIMEOUT_SECONDS
@@ -391,6 +393,7 @@ start_apps() {
       if wait "$tapper_e2e_apps_pid"; then app_status=1; else app_status=$?; fi
       tapper_e2e_apps_pid=""
       echo "Tapper E2E applications did not become ready at supervisor." >&2
+      tail -n 200 "$tapper_e2e_state_dir/apps.log" >&2 || true
       return "$app_status"
     fi
     tapper_e2e_ready_stage="api-http"
@@ -412,6 +415,7 @@ start_apps() {
       if wait "$tapper_e2e_apps_pid"; then app_status=1; else app_status=$?; fi
       tapper_e2e_apps_pid=""
       echo "Tapper E2E applications did not become ready at supervisor." >&2
+      tail -n 200 "$tapper_e2e_state_dir/apps.log" >&2 || true
       return "$app_status"
     fi
     sleep 0.2
@@ -421,6 +425,7 @@ start_apps() {
     *) tapper_e2e_ready_stage="supervisor" ;;
   esac
   echo "Tapper E2E applications did not become ready at $tapper_e2e_ready_stage." >&2
+  tail -n 200 "$tapper_e2e_state_dir/apps.log" >&2 || true
   return 1
 }
 
@@ -435,11 +440,35 @@ run_playwright() {
   [ "${#specs[@]}" -gt 0 ] || return 1
   if TAPPER_E2E_PHASE="$phase" \
     corepack pnpm --filter @tap/web exec playwright test "${specs[@]}" \
-      --config=playwright.config.ts --reporter=json >"$report_file" 2>"$error_file"; then
+      --config=playwright.config.ts --reporter=json --workers=1 >"$report_file" 2>"$error_file"; then
     :
   else
     phase_status=$?
     echo "Tapper E2E phase $phase failed." >&2
+    python3 - "$report_file" >&2 <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_text()
+report, _ = json.JSONDecoder().raw_decode(raw.lstrip())
+messages = []
+
+def visit(value):
+    if isinstance(value, dict):
+        error = value.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            messages.append(error["message"])
+        for item in value.values():
+            visit(item)
+    elif isinstance(value, list):
+        for item in value:
+            visit(item)
+
+visit(report)
+print("\n".join(dict.fromkeys(messages))[:20000])
+PY
+    tail -n 100 "$error_file" >&2 || true
     return "$phase_status"
   fi
   python3 "$tapper_e2e_script_dir/tapper_e2e_report.py" validate "$phase" "$report_file" \
@@ -452,6 +481,8 @@ run_journey() {
   bootstrap_middleware
   start_apps
   run_playwright tests/e2e/tapper.spec.ts journey
+
+  uv run --project apps/backend python scripts/disable-tapper-e2e-assets.py
 
   stop_apps
   start_apps

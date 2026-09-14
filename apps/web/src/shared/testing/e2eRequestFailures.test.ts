@@ -29,6 +29,36 @@ describe("E2ERequestFailureAudit", () => {
       "GET",
       "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/documents/doc_0123456789abcdef0123456789abcdef",
     ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources?limit=50",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources/src_0123456789abcdef0123456789abcdef?limit=50",
+    ],
+    ["GET", "http://127.0.0.1:15173/api/v1/projects/project-e2e/ai/agents"],
+    ["GET", "http://127.0.0.1:15173/api/v1/projects/project-e2e/ai/skills"],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/snapshots?sourceRevisionId=rev_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations?limit=20",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations/0123456789abcdef0123456789abcdef",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations/0123456789abcdef0123456789abcdef/events",
+    ],
+    [
+      "GET",
+      "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations/0123456789abcdef0123456789abcdef/stream",
+    ],
   ])("ignores only an approved GET cancellation for %s", (method, url) => {
     const request = {};
     const audit = new E2ERequestFailureAudit<object>("project-e2e");
@@ -165,6 +195,42 @@ describe("E2ERequestFailureAudit", () => {
       errorText: "net::ERR_ABORTED",
       method: "GET",
       url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/answers",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/graph/snapshots?sourceRevisionId=secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations?limit=20&cursor=secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-other/ai/agents",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources/src_secret",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/knowledge/sources/src_0123456789abcdef0123456789abcdef",
+      expected: "GET outside-allowlist net::ERR_ABORTED",
+    },
+    {
+      errorText: "net::ERR_ABORTED",
+      method: "GET",
+      url: "http://127.0.0.1:15173/api/v1/projects/project-e2e/conversations/not-an-id/stream",
       expected: "GET outside-allowlist net::ERR_ABORTED",
     },
     {

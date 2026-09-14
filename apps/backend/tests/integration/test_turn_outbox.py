@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
@@ -23,8 +22,10 @@ from tap.modules.chat.application.ports import CreateTurnCommand, SequenceConfli
 from tap.modules.chat.domain.models import ChatId, CommandId, EventId, TurnId, TurnState
 from tap.platform.db.session import create_engine_and_session_factory
 
-DATABASE_URL = os.getenv("TAP_DATABASE_URL", "")
-OWNED_TABLES = ("outbox", "turn_snapshot", "chat_event", "chat_turn")
+# Kept only for the ownership guard's hostile-environment probe. Test execution uses the
+# fixture-owned receipt directly and never reads this value as a connection target.
+DATABASE_URL = ""
+OWNED_TABLES = ("outbox", "turn_snapshot", "chat_event", "chat_turn", "conversation")
 
 
 async def _clean_owned_tables(engine: AsyncEngine) -> None:
@@ -34,13 +35,11 @@ async def _clean_owned_tables(engine: AsyncEngine) -> None:
 
 
 def _run_with_clean_database(
+    database: IsolatedMysql,
     scenario: Callable[[AsyncEngine, MysqlTurnRepository], Awaitable[None]],
 ) -> None:
-    if not DATABASE_URL:
-        pytest.skip("requires isolated TAP_DATABASE_URL")
-
     async def run() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_project_database_url(database))
         repository = MysqlTurnRepository(sessions, scope=VALIDATION_SCOPE)
         await _clean_owned_tables(engine)
         try:
@@ -86,7 +85,9 @@ def _started_event(
     )
 
 
-def test_create_turn_commits_turn_and_dispatch_command_together() -> None:
+def test_create_turn_commits_turn_and_dispatch_command_together(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
     async def scenario(engine: AsyncEngine, repository: MysqlTurnRepository) -> None:
         command = _command(
             command_id="command-create-1",
@@ -138,10 +139,12 @@ def test_create_turn_commits_turn_and_dispatch_command_together() -> None:
             "message_type": "turn.process_requested",
         }
 
-    _run_with_clean_database(scenario)
+    _run_with_clean_database(owned_project_mysql, scenario)
 
 
-def test_outbox_constraint_failure_rolls_back_the_new_turn() -> None:
+def test_outbox_constraint_failure_rolls_back_the_new_turn(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
     async def scenario(engine: AsyncEngine, repository: MysqlTurnRepository) -> None:
         await repository.create_with_outbox(
             _command(
@@ -173,10 +176,12 @@ def test_outbox_constraint_failure_rolls_back_the_new_turn() -> None:
         assert rolled_back_turns == 0
         assert shared_commands == 1
 
-    _run_with_clean_database(scenario)
+    _run_with_clean_database(owned_project_mysql, scenario)
 
 
-def test_duplicate_client_request_in_one_chat_returns_original_turn() -> None:
+def test_duplicate_client_request_in_one_chat_returns_original_turn(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
     async def scenario(engine: AsyncEngine, repository: MysqlTurnRepository) -> None:
         original = await repository.create_with_outbox(
             _command(
@@ -210,10 +215,12 @@ def test_duplicate_client_request_in_one_chat_returns_original_turn() -> None:
         assert turn_count == 1
         assert outbox_count == 1
 
-    _run_with_clean_database(scenario)
+    _run_with_clean_database(owned_project_mysql, scenario)
 
 
-def test_append_events_requires_the_current_monotonic_sequence() -> None:
+def test_append_events_requires_the_current_monotonic_sequence(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
     async def scenario(engine: AsyncEngine, repository: MysqlTurnRepository) -> None:
         await repository.create_with_outbox(
             _command(
@@ -263,7 +270,7 @@ def test_append_events_requires_the_current_monotonic_sequence() -> None:
         assert last_sequence == 2
         assert event_outbox_count == 2
 
-    _run_with_clean_database(scenario)
+    _run_with_clean_database(owned_project_mysql, scenario)
 
 
 def test_project_scopes_isolate_turn_idempotency_events_and_outbox_leases(

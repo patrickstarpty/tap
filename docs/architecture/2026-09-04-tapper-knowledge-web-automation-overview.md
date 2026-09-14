@@ -9,7 +9,7 @@
 | 目标产品形态 | 单一企业、多 Project、多用户；P0 才实施身份/RBAC/多 Project                                                                  |
 | 应用技术栈   | React + TypeScript；Python 3.13 + FastAPI/ASGI；MySQL、Redis、MinIO、Milvus、LiteLLM                                         |
 | 部署基线     | 企业内网 Linux + Docker Compose；Jenkins Controller/Agent 外置                                                               |
-| 当前实现事实 | 已有 loopback Tapper `doc` 切片；原型已接 Project Runtime/Library 真实上传，其余平台能力分阶段实施                                                  |
+| 当前实现事实 | V0/V1 Gate 已通过；V2/V3 主体已实现但 Gate 重新打开；V4 Web LCA/Recorder 暂不放行                                               |
 
 ## 1. 架构目标与边界
 
@@ -34,19 +34,19 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 
 ## 2. 当前事实与目标状态
 
-| 能力            | 当前仓库事实                                                                | v0.4 目标                                                                     |
-| --------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Knowledge       | 上传、隔离解析、Source SQL账本、有序引用关联、查询脱敏与Search Audit已实现 | Source API/Picker、canonical Milvus、持久Conversation/全上下文治理与质量门禁         |
-| Knowledge Graph | 前端确定性 fixture                                                          | MySQL Snapshot/Node/Edge/Evidence、真实抽取 Worker 与 WebGL 探索              |
-| Test Management | 浏览器内 fixture                                                            | Test Plan/Test Case/BDD Draft、人工发布与不可变 Revision                      |
-| LCA             | 浏览器内 fixture、模拟 Run                                                  | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder      |
-| Execution       | Azure DevOps/Mobile 仅为旧原型探索                                          | Jenkins-first Provider、Published Revision、Evidence 和 Test Plan 结果投影    |
-| Identity        | 固定 Validation Scope、共同实时 Policy 与 Project 隔离                                                   | V0 typed Validation Actor/Project；P0 User/Session/Membership/RBAC            |
-| Deployment      | 开发 Compose 已有独立 TAP MinIO、私有 Parser supervisor/每任务容器，保留 Azurite 兼容                        | TAP 独立 MinIO、Milvus、LiteLLM、自托管 Compose 与外置 Jenkins；P1 后才可生产 |
+| 能力            | 当前仓库事实                                                                                             | 下一目标                                                                   |
+| --------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Knowledge       | V1 Gate 已通过：Source、Milvus、ModelGateway、Conversation/SSE、Citation、脱敏/审计与真实 Web 已实现     | 在 V4/V5 中保持同一 Project、快照和 Citation 契约                          |
+| Knowledge Graph | 主体已实现；多 Document Revision 的 Snapshot 一致性与 E2E 证据待补，V2 Gate 重新打开          | 关闭更正项后再为后续里程碑提供可核验 Graph Context                         |
+| Test Management | 主体已实现；真实质量人审绑定与生成、编辑、冲突恢复 Web 旅程待补，V3 Gate 重新打开            | 关闭更正项后再由 Test IR 和 Automation Revision 消费 Published Test Plan   |
+| LCA             | 浏览器内 fixture、模拟 Run                                                                               | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder   |
+| Execution       | Azure DevOps/Mobile 仅为旧原型探索                                                                       | Jenkins-first Provider、Published Revision、Evidence 和 Test Plan 结果投影 |
+| Identity        | V0 固定 Validation Scope、共同实时 Policy 与 Project 隔离已通过                                          | P0 User/Session/Membership/RBAC                                            |
+| Deployment      | 开发 Compose 已有独立 TAP MinIO、私有 Parser supervisor/每任务容器、Milvus、LiteLLM，并保留 Azurite 兼容 | 外置 Jenkins 后完成 VG；P1 才允许声明生产就绪                              |
 
 任何页面 fixture、模拟 `Passed`、fake Adapter 或单次本地 smoke 都不能被表述为目标能力已完成。
 
-[Task 5A 隔离解析验收](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)已完成：固定资源预算、流式上传防护、精确 owner/image 冷恢复及原子关联记录；同宿主用户/Docker 管理员仍属可信边界，[V0 总门禁](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md)现已通过。
+[Task 5A 隔离解析验收](../reviews/2026-09-06-tapper-v0-parser-isolation-review.md)已完成：固定资源预算、流式上传防护、精确 owner/image 冷恢复及原子关联记录；同宿主用户/Docker 管理员仍属可信边界。[V0](../reviews/2026-09-06-v0-validation-scope-reliability-gate.md)和[V1](../reviews/2026-09-09-v1-trusted-knowledge-gate.md)门禁已通过；V2/V3 的原通过结论已由[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)撤销，V4 暂不放行。
 
 ## 3. 逻辑架构
 

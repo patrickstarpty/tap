@@ -21,7 +21,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from pymilvus.decorators import _log_rpc_error  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.engine import RowMapping, make_url
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionmaker
 
 from tap.contracts.http import (
     RetrievalAnswerRequest,
@@ -48,6 +48,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusQueryRequest,
     MilvusReader,
 )
+from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_chunk_manifest,
     knowledge_document,
@@ -110,6 +111,7 @@ class DocumentState:
     document_id: str
     job_id: str
     revision_id: str
+    source_id: str
     source_content_hash: str
 
 
@@ -187,13 +189,14 @@ def _digest(value: object, code: str) -> str:
 def _document_state(value: object) -> DocumentState:
     item = _exact_mapping(
         value,
-        {"documentId", "jobId", "revisionId", "sourceContentHash"},
+        {"documentId", "jobId", "revisionId", "sourceId", "sourceContentHash"},
         "state-document-shape",
     )
     return DocumentState(
         document_id=_identity(item["documentId"], "state-document-id"),
         job_id=_identity(item["jobId"], "state-job-id"),
         revision_id=_identity(item["revisionId"], "state-revision-id"),
+        source_id=_identity(item["sourceId"], "state-source-id"),
         source_content_hash=_digest(item["sourceContentHash"], "state-source-hash"),
     )
 
@@ -946,11 +949,12 @@ async def _verify_composed_runtime(
         "runtime-citation-binding",
     )
 
-    dual_ids = (state.policy.document_id, state.reference.document_id)
-    dual_documents = {
-        document.document_id: document for document in (state.policy, state.reference)
+    dual_ids = (state.policy.source_id, state.reference.source_id)
+    dual_documents = {document.source_id: document for document in (state.policy, state.reference)}
+    dual_manifests = {
+        document.source_id: evidence[document.document_id].manifest
+        for document in (state.policy, state.reference)
     }
-    dual_manifests = {document_id: evidence[document_id].manifest for document_id in dual_ids}
     dual_request = _scope_request(state, dual_ids)
     dual_search = await service.search(dual_request)
     _require(
@@ -970,9 +974,9 @@ async def _verify_composed_runtime(
         "answer-dual-scope",
     )
 
-    policy_request = _scope_request(state, (state.policy.document_id,))
-    policy_documents = {state.policy.document_id: state.policy}
-    policy_manifests = {state.policy.document_id: evidence[state.policy.document_id].manifest}
+    policy_request = _scope_request(state, (state.policy.source_id,))
+    policy_documents = {state.policy.source_id: state.policy}
+    policy_manifests = {state.policy.source_id: evidence[state.policy.document_id].manifest}
     policy_search = await service.search(policy_request)
     _require(
         _require_hit_provenance(
@@ -981,14 +985,14 @@ async def _verify_composed_runtime(
             policy_manifests,
             "search-policy-provenance",
         )
-        == {state.policy.document_id},
+        == {state.policy.source_id},
         "search-policy-scope",
     )
     policy_answer = await service.answer(_answer_request(policy_request))
     _require(
         not policy_answer.abstained
         and _answer_contributors(policy_answer, policy_documents, policy_manifests)
-        == {state.policy.document_id},
+        == {state.policy.source_id},
         "answer-policy-scope",
     )
 
@@ -1065,11 +1069,19 @@ def _exact_e2e_settings() -> TapperSettings:
 async def _run_verifier(settings: TapperSettings, state: JourneyState) -> None:
     resources = OwnedResources()
     try:
-        engine, _repository = await _create_database(settings)
+        engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
         resources.push(artifacts)
-        search, reader, target = await _create_search(settings)
+        search, reader, target = await _create_search(
+            settings,
+            owners=repository,
+            audit_sink=MysqlSearchAuditSink(
+                async_sessionmaker(engine, expire_on_commit=False),
+                scope=repository.scope,
+                policy_version="tapper-demo-policy-v1",
+            ),
+        )
         resources.push(search)
         evidence = await _verify_database(engine, settings, state)
         await _verify_blobs(artifacts, settings, state, evidence)
@@ -1111,6 +1123,7 @@ def _closed_state_payload() -> dict[str, object]:
             "documentId": f"doc-{index}",
             "jobId": f"job-{index}",
             "revisionId": f"rev-{index}",
+            "sourceId": "src_" + f"{index:x}" * 32,
             "sourceContentHash": "sha256:" + f"{index:x}" * 64,
         }
 
@@ -1187,6 +1200,7 @@ def test_verifier_rejects_revision_version_drift(drifted_field: str) -> None:
         document_id="doc-1",
         job_id="job-1",
         revision_id="rev-1",
+        source_id="src_" + "1" * 32,
         source_content_hash="sha256:" + "1" * 64,
     )
 
@@ -1209,6 +1223,7 @@ def test_verifier_rejects_unlinked_answer_citations() -> None:
         document_id="doc-1",
         job_id="job-1",
         revision_id="rev-1",
+        source_id="src_" + "1" * 32,
         source_content_hash="sha256:" + "1" * 64,
     )
     manifest = ManifestEvidence(
@@ -1339,7 +1354,9 @@ async def test_selected_verifier_suppresses_worker_thread_rpc_details_and_restor
 def _minio_verifier_fixture() -> tuple[DocumentState, TapperSettings, dict[str, str]]:
     import base64
 
-    document = DocumentState("doc-1", "job-1", "rev-1", canonical_sha256(b"source"))
+    document = DocumentState(
+        "doc-1", "job-1", "rev-1", "src_" + "1" * 32, canonical_sha256(b"source")
+    )
     settings = cast(
         TapperSettings,
         SimpleNamespace(

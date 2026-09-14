@@ -12,6 +12,7 @@ export interface SafeDocumentState {
   documentId: string;
   jobId: string;
   revisionId: string;
+  sourceId: string;
   sourceContentHash: string;
 }
 
@@ -36,6 +37,18 @@ export interface JourneyState {
   reference: SafeDocumentState;
   runId: string;
   schemaVersion: 1;
+}
+
+export interface ConversationJourneyState {
+  agentLabel: string;
+  citationId: string;
+  conversationId: string;
+  modelAlias: string;
+  prompt: string;
+  skillLabel: string;
+  sourceId: string;
+  sourceLabel: string;
+  turnId: string;
 }
 
 export interface TapperFixtures {
@@ -192,11 +205,13 @@ function isDocumentState(value: unknown): value is SafeDocumentState {
       "documentId",
       "jobId",
       "revisionId",
+      "sourceId",
       "sourceContentHash",
     ]) &&
     isIdentity((value as SafeDocumentState).documentId) &&
     isIdentity((value as SafeDocumentState).jobId) &&
     isIdentity((value as SafeDocumentState).revisionId) &&
+    isIdentity((value as SafeDocumentState).sourceId) &&
     SHA256.test((value as SafeDocumentState).sourceContentHash)
   );
 }
@@ -362,6 +377,64 @@ function statePath(): string {
   if (value === undefined || value.length === 0) {
     throw new Error("TAPPER_E2E_STATE_FILE is required");
   }
+  return value;
+}
+
+function conversationStatePath(): string {
+  return `${statePath()}.conversation.json`;
+}
+
+function validateConversationState(
+  value: unknown,
+): value is ConversationJourneyState {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !exactKeys(value, [
+      "agentLabel",
+      "citationId",
+      "conversationId",
+      "modelAlias",
+      "prompt",
+      "skillLabel",
+      "sourceId",
+      "sourceLabel",
+      "turnId",
+    ])
+  )
+    return false;
+  const state = value as ConversationJourneyState;
+  return (
+    isIdentity(state.citationId) &&
+    isIdentity(state.conversationId) &&
+    isIdentity(state.modelAlias) &&
+    isIdentity(state.sourceId) &&
+    isIdentity(state.turnId) &&
+    [state.agentLabel, state.prompt, state.skillLabel, state.sourceLabel].every(
+      (item) =>
+        typeof item === "string" && item.length > 0 && item.length <= 512,
+    )
+  );
+}
+
+export async function writeConversationState(
+  state: ConversationJourneyState,
+): Promise<void> {
+  if (!validateConversationState(state))
+    throw new Error("unsafe Conversation E2E state");
+  await writeFile(conversationStatePath(), `${JSON.stringify(state)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "wx",
+  });
+}
+
+export async function readConversationState(): Promise<ConversationJourneyState> {
+  const value: unknown = JSON.parse(
+    await readFile(conversationStatePath(), "utf8"),
+  );
+  if (!validateConversationState(value))
+    throw new Error("invalid Conversation E2E state");
   return value;
 }
 

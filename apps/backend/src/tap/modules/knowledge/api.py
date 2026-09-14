@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 from uuid import uuid4
 
 from tap.contracts.http import AbstentionReason as HttpAbstentionReason
@@ -76,6 +77,7 @@ from tap.modules.knowledge.domain.models import (
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
+    GovernedKnowledgeModels,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -97,8 +99,9 @@ class KnowledgeAPI:
         self,
         *,
         search: SearchPort,
-        embeddings: QueryEmbeddingPort,
-        answers: AnswerGenerationPort,
+        embeddings: QueryEmbeddingPort | None = None,
+        answers: AnswerGenerationPort | None = None,
+        models: GovernedKnowledgeModels | None = None,
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str] | None = None,
@@ -107,6 +110,7 @@ class KnowledgeAPI:
             search=search,
             embeddings=embeddings,
             answers=answers,
+            models=models,
             policy_verifier=policy_verifier,
             redactor=redactor,
             id_factory=id_factory or (lambda: str(uuid4())),
@@ -125,6 +129,15 @@ class KnowledgeAPI:
         policy: RetrievalPolicyContext,
     ) -> AnswerResponse:
         return await self._retrieval.answer(request, policy)
+
+    async def answer_frozen(self, request, policy, *, governance, graph_context=()):
+        return await self._retrieval.answer(
+            request,
+            policy,
+            frozen_policy=True,
+            governance=governance,
+            graph_context=graph_context,
+        )
 
 
 def search_request_from_http(request: HttpSearchRequest) -> SearchRequest:
@@ -169,7 +182,14 @@ def search_response_to_http(response: SearchResponse) -> HttpSearchResponse:
     )
 
 
-def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
+def answer_response_to_http(
+    response: AnswerResponse,
+    *,
+    graph_context_status: Literal[
+        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+    ] = "NOT_SELECTED",
+    graph_snapshot_id: str | None = None,
+) -> HttpAnswerResponse:
     return HttpAnswerResponse(
         trace_id=response.trace_id,
         query_plan_id=response.query_plan_id,
@@ -196,6 +216,8 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
             for item in response.claims
         ],
         citations=[_citation_to_http(item) for item in response.citations],
+        graph_context_status=graph_context_status,
+        graph_snapshot_id=graph_snapshot_id,
     )
 
 

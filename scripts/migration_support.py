@@ -36,6 +36,11 @@ AUDIT_REVISION = "0008_project_audit"
 OPERATIONS_REVISION = "0009_outbox_operations"
 SOURCES_REVISION = "0010_knowledge_sources"
 SOURCE_COMMANDS_REVISION = "0010a_source_commands"
+AI_ASSET_CATALOG_REVISION = "0011_ai_agent_skill_catalog"
+CONVERSATION_REVISION = "0012_conversations"
+CONVERSATION_GOVERNANCE_REVISION = "0012a_conversation_governance"
+GRAPH_REVISION = "0013_knowledge_graph"
+TEST_MANAGEMENT_REVISION = "0014_test_management"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -577,6 +582,11 @@ def assert_preserved(
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
+        CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
+        TEST_MANAGEMENT_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -614,6 +624,11 @@ def assert_preserved(
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
+        CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
+        TEST_MANAGEMENT_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -622,6 +637,11 @@ def assert_preserved(
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
+        CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
+        TEST_MANAGEMENT_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1127,6 +1147,11 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         OPERATIONS_REVISION,
         SOURCES_REVISION,
         SOURCE_COMMANDS_REVISION,
+        AI_ASSET_CATALOG_REVISION,
+        CONVERSATION_REVISION,
+        CONVERSATION_GOVERNANCE_REVISION,
+        GRAPH_REVISION,
+        TEST_MANAGEMENT_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1141,6 +1166,186 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             with engine.connect() as connection:
                 counts = assert_preserved(connection, before, revision)
             identity_result: dict[str, Any] = {}
+            if revision in {CONVERSATION_REVISION, CONVERSATION_GOVERNANCE_REVISION}:
+                with engine.connect() as connection:
+                    row = connection.execute(
+                        text(
+                            "SELECT conversation_id, project_id FROM conversation "
+                            "WHERE conversation_id='legacy-chat'"
+                        )
+                    ).one()
+                    if tuple(row) != ("legacy-chat", "tapper-demo"):
+                        raise ValueError(
+                            "legacy chat was not preserved as a Conversation"
+                        )
+                    if {
+                        "turn_input_snapshot",
+                        "turn_answer_evidence_snapshot",
+                        "turn_artifact_link",
+                    } - set(inspect(connection).get_table_names()):
+                        raise ValueError("Conversation evidence tables are missing")
+                downgrade_target = (
+                    CONVERSATION_REVISION
+                    if revision == CONVERSATION_GOVERNANCE_REVISION
+                    else AI_ASSET_CATALOG_REVISION
+                )
+                database.downgrade(downgrade_target)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, downgrade_target)
+                    if (
+                        revision == CONVERSATION_REVISION
+                        and "conversation" in inspect(connection).get_table_names()
+                    ):
+                        raise ValueError("Conversation downgrade retained owned tables")
+                database.upgrade(revision)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, revision)
+                identity_result.update(
+                    conversation_backfill="passed",
+                    conversation_downgrade_replay="passed",
+                )
+            if revision == GRAPH_REVISION:
+                graph_tables = {
+                    "graph_snapshot",
+                    "graph_snapshot_revision",
+                    "graph_active_snapshot",
+                    "graph_snapshot_document_revision",
+                    "graph_node",
+                    "graph_edge",
+                    "graph_node_evidence",
+                    "graph_edge_evidence",
+                    "graph_inference_provenance",
+                    "graph_extraction_job",
+                }
+                with engine.connect() as connection:
+                    if graph_tables - set(inspect(connection).get_table_names()):
+                        raise ValueError("Graph migration tables are missing")
+                    if any(
+                        connection.execute(
+                            text(f"SELECT 1 FROM {name} LIMIT 1")
+                        ).first()
+                        is not None
+                        for name in graph_tables
+                    ):
+                        raise ValueError("Graph migration fabricated snapshot facts")
+                database.downgrade(CONVERSATION_GOVERNANCE_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(
+                        connection, before, CONVERSATION_GOVERNANCE_REVISION
+                    )
+                    if graph_tables & set(inspect(connection).get_table_names()):
+                        raise ValueError("Graph downgrade retained owned tables")
+                database.upgrade(GRAPH_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, GRAPH_REVISION)
+                identity_result["graph_downgrade_replay"] = "passed"
+            if revision == TEST_MANAGEMENT_REVISION:
+                test_plan_tables = {
+                    "test_plan",
+                    "test_plan_revision",
+                    "test_case",
+                    "test_scenario",
+                    "test_plan_step",
+                    "test_plan_citation",
+                    "test_plan_assumption",
+                    "test_plan_unknown",
+                    "test_plan_coverage_gap",
+                    "test_plan_generation_job",
+                }
+                with engine.connect() as connection:
+                    if test_plan_tables - set(inspect(connection).get_table_names()):
+                        raise ValueError("Test Plan migration tables are missing")
+                    if any(
+                        connection.execute(
+                            text(f"SELECT 1 FROM {name} LIMIT 1")
+                        ).first()
+                        is not None
+                        for name in test_plan_tables
+                    ):
+                        raise ValueError(
+                            "Test Plan migration fabricated business facts"
+                        )
+                database.downgrade(GRAPH_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, GRAPH_REVISION)
+                    if test_plan_tables & set(inspect(connection).get_table_names()):
+                        raise ValueError("Test Plan downgrade retained owned tables")
+                database.upgrade(TEST_MANAGEMENT_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, TEST_MANAGEMENT_REVISION)
+                identity_result["test_plan_downgrade_replay"] = "passed"
+            if revision == AI_ASSET_CATALOG_REVISION:
+                with engine.connect() as connection:
+                    assert_source_backfill(connection)
+                    assert_scope_backfill(connection)
+                    if {
+                        "ai_agent",
+                        "ai_agent_revision",
+                        "skill",
+                        "skill_revision",
+                    } - set(inspect(connection).get_table_names()):
+                        raise ValueError(
+                            "AI asset catalog migration tables are missing"
+                        )
+                    for table in (
+                        "ai_agent",
+                        "ai_agent_revision",
+                        "skill",
+                        "skill_revision",
+                    ):
+                        if (
+                            connection.execute(
+                                text(f"SELECT COUNT(*) FROM {table}")
+                            ).scalar_one()
+                            != 0
+                        ):
+                            raise ValueError(
+                                "migration fabricated approved AI asset facts"
+                            )
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "INSERT INTO ai_agent (agent_id, display_name, created_at, "
+                            "enterprise_id, project_id, actor_id, identity_mode, identity_origin) "
+                            "VALUES ('migration-downgrade-guard', 'Guard', UTC_TIMESTAMP(6), "
+                            "'local', 'tapper-demo', 'tapper-local-user', 'validation', 'VALIDATION')"
+                        )
+                    )
+                try:
+                    database.downgrade(SOURCE_COMMANDS_REVISION)
+                except RuntimeError as error:
+                    if "local gate command failed" not in str(error):
+                        raise
+                    identity_result["ai_asset_nonempty_downgrade"] = "rejected"
+                else:
+                    raise ValueError("nonempty AI asset downgrade was accepted")
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "DELETE FROM ai_agent WHERE agent_id='migration-downgrade-guard'"
+                        )
+                    )
+                database.downgrade(SOURCE_COMMANDS_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, SOURCE_COMMANDS_REVISION)
+                    if {
+                        "ai_agent",
+                        "ai_agent_revision",
+                        "skill",
+                        "skill_revision",
+                    } & set(inspect(connection).get_table_names()):
+                        raise ValueError(
+                            "AI asset catalog downgrade retained owned tables"
+                        )
+                database.upgrade(AI_ASSET_CATALOG_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, AI_ASSET_CATALOG_REVISION)
+                    assert_source_backfill(connection)
+                identity_result.update(
+                    source_backfill="passed",
+                    scope_backfill="passed",
+                    ai_asset_downgrade_replay="passed",
+                )
             if revision == SOURCE_COMMANDS_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)
@@ -1253,12 +1458,9 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
             if revision == PROJECT_SCOPE_REVISION:
                 with engine.connect() as connection:
                     assert_scope_constraints(connection)
+                identity_result.update(scope_backfill="passed", constraints="passed")
                 assert_scope_rejection_paths(database, engine)
-                identity_result.update(
-                    scope_backfill="passed",
-                    constraints="passed",
-                    pre_ddl_rejection="passed",
-                )
+                identity_result["pre_ddl_rejection"] = "passed"
             return {
                 **identity_result,
                 "status": "passed",
@@ -1288,8 +1490,22 @@ def assert_source_backfill(connection: Connection) -> None:
         "knowledge_source_legacy_map",
         "knowledge_answer_source",
     ):
-        rows = connection.execute(text(f"SELECT source_id FROM {table}")).all()
-        if rows != [(source_id,)]:
+        rows = connection.execute(
+            text(
+                "SELECT source_id, enterprise_id, project_id, actor_id, "
+                f"identity_mode, identity_origin FROM {table}"
+            )
+        ).all()
+        if rows != [
+            (
+                source_id,
+                "local",
+                "tapper-demo",
+                "tapper-local-user",
+                "validation",
+                "VALIDATION",
+            )
+        ]:
             raise ValueError("source backfill identity mismatch")
     row = connection.execute(
         text(

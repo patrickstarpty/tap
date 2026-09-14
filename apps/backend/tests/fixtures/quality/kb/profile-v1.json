@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "quality-kb-dataset-v1",
+  "profileId": "QUALITY-KB-01",
+  "dataset": {
+    "version": "not-provided",
+    "labelingMethod": "not-provided",
+    "provenance": null
+  },
+  "bindings": {
+    "policyDigest": null,
+    "approvalDigest": null,
+    "modelAlias": "tapper-chat",
+    "promptDigest": null,
+    "agentRevisionDigest": null,
+    "skillRevisionDigests": [],
+    "governanceDigests": [],
+    "schemaDigest": null
+  },
+  "cases": []
+}

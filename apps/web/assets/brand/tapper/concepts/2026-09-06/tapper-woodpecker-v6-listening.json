@@ -5,11 +5,7 @@
   "image": "tapper-woodpecker-v6-listening.png",
   "sourceConcept": "tapper-woodpecker-v6-listening-reference.png",
   "userFeedback": "不要正脸看过来的，看起来不聪明。Listening的这个不错。",
-  "confirmedKeywords": [
-    "聪明",
-    "敏锐",
-    "好奇"
-  ],
+  "confirmedKeywords": ["聪明", "敏锐", "好奇"],
   "direction": "以用户附件Listening姿态为准；侧身右向单眼、微抬头、自然倾听；不再以正面双眼对视为目标。",
   "changes": [
     "去除Listening标题，输出独立全身形象",

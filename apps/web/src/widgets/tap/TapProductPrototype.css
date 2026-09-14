@@ -4082,6 +4082,12 @@
   }
 }
 
+@media (max-width: 640px) {
+  .tap-product-shell {
+    --tap-banner-height: 88px;
+  }
+}
+
 /* Keep collapsed navigation in its own column, clear of page headings. */
 .tap-product-shell--tapper-workspace:not(.tap-product-shell--tapper-open) {
   grid-template-columns: 68px 60px minmax(0, 1fr);
@@ -4714,10 +4720,4 @@
 .tap-automation-row[tabindex]:focus-visible {
   outline: 2px solid var(--tap-accent, #b44800);
   outline-offset: -2px;
-}
-
-@media (max-width: 640px) {
-  .tap-product-shell {
-    --tap-banner-height: 88px;
-  }
 }

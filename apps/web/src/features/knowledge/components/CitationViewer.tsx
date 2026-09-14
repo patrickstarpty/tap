@@ -94,7 +94,6 @@ function exactPreview(
   if (
     preview.citationId !== requestedId ||
     expectedCitation.citationId !== requestedId ||
-    preview.documentId !== expectedSource.sourceId ||
     preview.revisionId !== expectedSource.revision ||
     preview.sourceContentHash !== expectedSource.sourceContentHash ||
     preview.chunkContentHash !== expectedCitation.chunkContentHash
@@ -109,6 +108,7 @@ function exactPreview(
 
 export function CitationViewer({
   active,
+  historicalQuery,
   onClose,
 }: {
   active: {
@@ -116,14 +116,22 @@ export function CitationViewer({
     generation: number;
     id: string;
   } | null;
+  historicalQuery?: {
+    data?: CitationPreview;
+    error: unknown;
+    isError: boolean;
+    isFetching: boolean;
+    refetch: () => Promise<unknown>;
+  };
   onClose: () => void;
 }) {
   const { projectId } = useKnowledgeClient();
-  const citationQuery = useCitationQuery(
+  const currentCitationQuery = useCitationQuery(
     projectId,
-    active?.id ?? null,
+    historicalQuery === undefined ? (active?.id ?? null) : null,
     active?.generation ?? 0,
   );
+  const citationQuery = historicalQuery ?? currentCitationQuery;
   const preview =
     active !== null &&
     !citationQuery.isFetching &&
@@ -184,10 +192,18 @@ export function CitationViewer({
       {invalidPreview ? (
         <Alert type="error" showIcon title={COPY.citationInvalid} />
       ) : null}
-      {preview !== null ? (
+      {preview !== null && active !== null ? (
         <div className="tapper-citation-content">
           <Typography.Title level={4}>{COPY.citationEvidence}</Typography.Title>
           <Typography.Text strong>{preview.filename}</Typography.Text>
+          <p>
+            <a
+              href={`#source-${encodeURIComponent(String(expectedSourceId(active.citation)))}`}
+              onClick={onClose}
+            >
+              {COPY.citationOpen}
+            </a>
+          </p>
           <Descriptions column={1} size="small" bordered>
             <Descriptions.Item label={COPY.revisionId}>
               <code>{preview.revisionId}</code>
@@ -222,4 +238,8 @@ export function CitationViewer({
       ) : null}
     </section>
   );
+}
+
+function expectedSourceId(citation: RetrievalCitation): string {
+  return citation.source.sourceId;
 }

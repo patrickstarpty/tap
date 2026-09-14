@@ -12,8 +12,16 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from tap.contracts.problems import ProblemDetails, build_problem
-from tap.interfaces.http.dependencies import KnowledgeRuntimeUnavailable
+from tap.interfaces.http.dependencies import GraphUnavailable, KnowledgeRuntimeUnavailable
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.ai.domain.assets import AssetRevisionRejected
+from tap.modules.ai.domain.models import ModelGatewayRejected, ModelGatewayUnavailable
+from tap.modules.chat.application.conversations import (
+    ConversationConflict,
+    ConversationNotFound,
+    InvalidConversationCursor,
+)
+from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.modules.knowledge.application.answers import (
     AnswerSelectionRejected,
     AnswerSnapshotUnavailable,
@@ -41,6 +49,7 @@ from tap.modules.knowledge.ports.errors import (
     SearchBoundsExceeded,
     SearchUnavailable,
 )
+from tap.modules.test_management.domain.validation import RevisionConflict, RevisionImmutable
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 
@@ -124,6 +133,23 @@ def register_problem_handlers(app: FastAPI) -> None:
     app.openapi = openapi_with_problems  # type: ignore[method-assign]
     app.add_middleware(RequestCorrelationMiddleware)
 
+    @app.exception_handler(GraphUnavailable)
+    async def graph_unavailable_problem(request: Request, _error: GraphUnavailable) -> JSONResponse:
+        return problem_response("graph-unavailable", request)
+
+    @app.exception_handler(GraphFactNotFound)
+    async def graph_fact_not_found_problem(
+        request: Request, _error: GraphFactNotFound
+    ) -> JSONResponse:
+        return problem_response("graph-fact-not-found", request)
+
+    @app.exception_handler(RevisionConflict)
+    @app.exception_handler(RevisionImmutable)
+    async def test_plan_revision_conflict(
+        request: Request, _error: RevisionConflict | RevisionImmutable
+    ) -> JSONResponse:
+        return problem_response("revision-conflict", request)
+
     @app.exception_handler(RequestValidationError)
     async def request_validation_problem(
         _request: Request, _error: RequestValidationError
@@ -150,8 +176,19 @@ def register_problem_handlers(app: FastAPI) -> None:
         return problem_response(document_parse_problem(error), _request)
 
     @app.exception_handler(SourceCommandConflict)
+    @app.exception_handler(ConversationConflict)
     async def source_conflict(request: Request, error: SourceCommandConflict) -> JSONResponse:
         return problem_response("idempotency-conflict", request)
+
+    @app.exception_handler(ConversationNotFound)
+    async def conversation_not_found(request: Request, error: ConversationNotFound) -> JSONResponse:
+        return problem_response("conversation-not-found", request)
+
+    @app.exception_handler(InvalidConversationCursor)
+    async def conversation_cursor_invalid(
+        request: Request, error: InvalidConversationCursor
+    ) -> JSONResponse:
+        return problem_response("request-validation", request)
 
     @app.exception_handler(SourceCommandPending)
     async def source_pending(request: Request, error: SourceCommandPending) -> JSONResponse:
@@ -227,6 +264,24 @@ def register_problem_handlers(app: FastAPI) -> None:
         _request: Request, _error: PolicyUnavailable
     ) -> JSONResponse:
         return problem_response("search-unavailable", _request)
+
+    @app.exception_handler(ModelGatewayUnavailable)
+    async def model_gateway_unavailable_problem(
+        request: Request, _error: ModelGatewayUnavailable
+    ) -> JSONResponse:
+        return problem_response("model-unavailable", request)
+
+    @app.exception_handler(ModelGatewayRejected)
+    async def model_gateway_rejected_problem(
+        request: Request, _error: ModelGatewayRejected
+    ) -> JSONResponse:
+        return problem_response("request-validation", request)
+
+    @app.exception_handler(AssetRevisionRejected)
+    async def asset_revision_rejected_problem(
+        request: Request, _error: AssetRevisionRejected
+    ) -> JSONResponse:
+        return problem_response("asset-revision-unavailable", request)
 
     @app.exception_handler(ModelUnavailable)
     async def embedding_unavailable_problem(

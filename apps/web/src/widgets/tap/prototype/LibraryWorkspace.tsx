@@ -5,6 +5,7 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
+import { useQueries } from "@tanstack/react-query";
 import {
   useMemo,
   useRef,
@@ -21,6 +22,8 @@ import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
+import { KnowledgeGraphExplorer } from "../../../features/graph/components/KnowledgeGraphExplorer";
+import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
@@ -28,11 +31,49 @@ type LibraryStatusFilter = "all" | LibrarySource["status"];
 
 interface LibraryWorkspaceProps {
   copy: PrototypeCopy;
-  onAddSource?: (file: File) => Promise<void>;
+  onAddSource?: (file: File) => Promise<void> | void;
   onInspectSource?: (sourceId: string, opener: HTMLElement) => void;
   sources: readonly LibrarySource[];
   loadState?: "loading" | "loaded" | "error";
   onReload?: () => void;
+  graphProjectId?: string;
+}
+
+function ProjectKnowledgeGraph({
+  projectId,
+  sources,
+}: {
+  projectId: string;
+  sources: readonly LibrarySource[];
+}) {
+  const graphSources = useQueries({
+    queries: sources
+      .filter((source) => source.status === "ready")
+      .map((source) => ({
+        queryKey: [
+          "knowledge",
+          projectId,
+          "source",
+          source.id,
+          "graph",
+        ] as const,
+        queryFn: ({ signal }: { signal: AbortSignal }) =>
+          createKnowledgeClient({ projectId }).getSource(source.id, signal),
+        retry: false,
+      })),
+  });
+  const revisionIds = graphSources.flatMap((detail) =>
+    (detail.data?.documents.items ?? [])
+      .filter((document) => document.status === "ready")
+      .map((document) => document.revisionId),
+  );
+
+  return (
+    <KnowledgeGraphExplorer
+      projectId={projectId}
+      sourceRevisionIds={revisionIds}
+    />
+  );
 }
 
 export function LibraryWorkspace({
@@ -42,13 +83,14 @@ export function LibraryWorkspace({
   sources,
   loadState = "loaded",
   onReload,
+  graphProjectId,
 }: LibraryWorkspaceProps) {
-  const [view, setView] = useState<"list" | "cards">("cards");
-  const [mode, setMode] = useState<LibraryMode>(() =>
-    onInspectSource === undefined ? "graph" : "list",
-  );
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
+  const [view, setView] = useState<"list" | "cards">("cards");
+  const [mode, setMode] = useState<LibraryMode>(() =>
+    graphProjectId === undefined ? "graph" : "list",
+  );
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
@@ -259,118 +301,111 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-list-tab"
         >
-          {loadState === "loading" ? (
-            <p role="status" aria-label={copy.sources.loading}>
-              {copy.sources.loading}
-            </p>
-          ) : loadState === "error" ? (
-            <div role="alert">
-              <p>{copy.sources.error}</p>
-              <Button onClick={onReload}>{copy.sources.retry}</Button>
-            </div>
-          ) : (
-            <>
-              <div
-                className="tap-library-view-switch"
-                role="group"
-                aria-label={copy.library.sources}
-              >
-                <Button
-                  type="text"
-                  aria-label={copy.library.cardView}
-                  title={copy.library.cardView}
-                  aria-pressed={view === "cards"}
-                  icon={<AppstoreOutlined />}
-                  onClick={() => setView("cards")}
-                />
-                <Button
-                  type="text"
-                  aria-label={copy.library.listView}
-                  title={copy.library.listView}
-                  aria-pressed={view === "list"}
-                  icon={<BarsOutlined />}
-                  onClick={() => setView("list")}
-                />
-              </div>
-              <div className="tap-library-browser">
-                <div>
-                  {visibleSources.length === 0 ? (
-                    <div className="tap-catalog-empty">
-                      {sources.length === 0
-                        ? copy.sources.empty
-                        : copy.library.noResults}
-                    </div>
-                  ) : (
-                    <ul
-                      className={`tap-library-list tap-file-list${view === "cards" ? " tap-file-list--cards" : ""}`}
-                      aria-label={copy.library.sources}
-                    >
-                      {visibleSources.map((source) => (
-                        <li key={source.id}>
-                          <div className="tap-file-summary">
-                            <FileTypeIcon type={source.type} />
-                            <span className="tap-library-source-copy">
-                              <strong>{source.name}</strong>
-                              <span>
-                                {source.isExample
-                                  ? `${copy.library.example} · `
-                                  : ""}
-                                {source.description}
-                              </span>
-                            </span>
-                            {view === "cards" ? (
-                              <div
-                                className="tap-file-card-content"
-                                aria-hidden="true"
-                              >
-                                <FileContent
-                                  source={source}
-                                  fallback={copy.library.noPreview}
-                                />
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="tap-file-actions">
-                            <span
-                              className="tap-library-status"
-                              data-status={source.status}
-                            >
-                              {sourceStatus(source)}
-                            </span>
-                            {onInspectSource !== undefined ? (
-                              <Button
-                                type="link"
-                                onClick={(event) =>
-                                  onInspectSource(
-                                    source.id,
-                                    event.currentTarget,
-                                  )
-                                }
-                                aria-label={`${copy.sources.view} ${source.name}`}
-                              >
-                                {copy.sources.view}
-                              </Button>
-                            ) : null}
-                            {source.downloadUrl ? (
-                              <a
-                                className="tap-file-download"
-                                href={source.downloadUrl}
-                                download={source.name}
-                                aria-label={`${copy.library.download} ${source.name}`}
-                                title={copy.library.download}
-                              >
-                                <DownloadOutlined aria-hidden="true" />
-                              </a>
-                            ) : null}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+          <div
+            className="tap-library-view-switch"
+            role="group"
+            aria-label={copy.library.sources}
+          >
+            <Button
+              type="text"
+              aria-label={copy.library.cardView}
+              title={copy.library.cardView}
+              aria-pressed={view === "cards"}
+              icon={<AppstoreOutlined />}
+              onClick={() => setView("cards")}
+            />
+            <Button
+              type="text"
+              aria-label={copy.library.listView}
+              title={copy.library.listView}
+              aria-pressed={view === "list"}
+              icon={<BarsOutlined />}
+              onClick={() => setView("list")}
+            />
+          </div>
+          <div className="tap-library-browser">
+            <div>
+              {loadState === "loading" ? (
+                <p role="status" aria-label={copy.sources.loading}>
+                  {copy.sources.loading}
+                </p>
+              ) : loadState === "error" ? (
+                <div role="alert">
+                  <p>{copy.sources.error}</p>
+                  <Button onClick={onReload}>{copy.sources.retry}</Button>
                 </div>
-              </div>
-            </>
-          )}
+              ) : visibleSources.length === 0 ? (
+                <div className="tap-catalog-empty">
+                  {sources.length === 0
+                    ? copy.sources.empty
+                    : copy.library.noResults}
+                </div>
+              ) : (
+                <ul
+                  className={`tap-library-list tap-file-list${view === "cards" ? " tap-file-list--cards" : ""}`}
+                  aria-label={copy.library.sources}
+                >
+                  {visibleSources.map((source) => (
+                    <li key={source.id}>
+                      <div className="tap-file-summary">
+                        <FileTypeIcon type={source.type} />
+                        <span className="tap-library-source-copy">
+                          <strong>{source.name}</strong>
+                          <span>
+                            {source.isExample
+                              ? `${copy.library.example} · `
+                              : ""}
+                            {source.description}
+                          </span>
+                        </span>
+                        {view === "cards" ? (
+                          <div
+                            className="tap-file-card-content"
+                            aria-hidden="true"
+                          >
+                            <FileContent
+                              source={source}
+                              fallback={copy.library.noPreview}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="tap-file-actions">
+                        <span
+                          className="tap-library-status"
+                          data-status={source.status}
+                        >
+                          {sourceStatus(source)}
+                        </span>
+                        {source.downloadUrl ? (
+                          <a
+                            className="tap-file-download"
+                            href={source.downloadUrl}
+                            download={source.name}
+                            aria-label={`${copy.library.download} ${source.name}`}
+                            title={copy.library.download}
+                          >
+                            <DownloadOutlined aria-hidden="true" />
+                          </a>
+                        ) : null}
+                        {onInspectSource !== undefined ? (
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              onInspectSource(source.id, event.currentTarget)
+                            }
+                            aria-label={`${copy.sources.view} ${source.name}`}
+                          >
+                            {copy.sources.view}
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         </div>
       ) : (
         <div
@@ -378,16 +413,23 @@ export function LibraryWorkspace({
           role="tabpanel"
           aria-labelledby="tap-library-graph-tab"
         >
-          <KnowledgeGraph
-            copy={copy}
-            query={query}
-            sources={facetSources}
-            onViewSource={(source) => {
-              setQuery(source.name);
-              setMode("list");
-              listTabRef.current?.focus();
-            }}
-          />
+          {graphProjectId === undefined ? (
+            <KnowledgeGraph
+              copy={copy}
+              query={query}
+              sources={facetSources}
+              onViewSource={(source) => {
+                setQuery(source.name);
+                setMode("list");
+                listTabRef.current?.focus();
+              }}
+            />
+          ) : (
+            <ProjectKnowledgeGraph
+              projectId={graphProjectId}
+              sources={visibleSources}
+            />
+          )}
         </div>
       )}
 

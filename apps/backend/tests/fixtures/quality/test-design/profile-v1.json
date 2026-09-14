@@ -1,0 +1,922 @@
+{
+  "schemaVersion": "quality-test-profile-v1",
+  "profileId": "QUALITY-TEST-01",
+  "dataset": {
+    "version": "candidate-v1",
+    "reviewStatus": "pending",
+    "labelingMethod": "named-review-with-deterministic-adjudication"
+  },
+  "bindings": {
+    "modelAlias": "tapper-chat",
+    "actualModel": "pending/real-model-run",
+    "agentRevisionId": "validation-test-design-agent-v1",
+    "skillRevisionIds": [
+      "validation-test-design-skill-v1"
+    ],
+    "promptDigest": "sha256:37001c112a5f9ca449a907dcea76b770203eb9f98ef91aec462f02b1a113fbfe",
+    "schemaDigest": "sha256:4ef670689e4c1e6e970ba9de97298895e0738f373a0f3f186b16a3cebadbce27",
+    "evaluatorDigest": "sha256:9ba19b3a961817413856e84acfae4937ba93324469825599fb36f4a9500ed8de"
+  },
+  "cases": [
+    {
+      "caseId": "business-intent-001",
+      "intent": "Verify checkout rule 1 from approved enterprise knowledge",
+      "source": "For checkout rule 1, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-002",
+      "intent": "Verify refund rule 2 from approved enterprise knowledge",
+      "source": "For refund rule 2, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-003",
+      "intent": "Verify claims rule 3 from approved enterprise knowledge",
+      "source": "For claims rule 3, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-004",
+      "intent": "Verify underwriting rule 4 from approved enterprise knowledge",
+      "source": "For underwriting rule 4, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-005",
+      "intent": "Verify onboarding rule 5 from approved enterprise knowledge",
+      "source": "For onboarding rule 5, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-006",
+      "intent": "Verify invoice rule 6 from approved enterprise knowledge",
+      "source": "For invoice rule 6, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-007",
+      "intent": "Verify shipment rule 7 from approved enterprise knowledge",
+      "source": "For shipment rule 7, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-008",
+      "intent": "Verify subscription rule 8 from approved enterprise knowledge",
+      "source": "For subscription rule 8, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-009",
+      "intent": "Verify access review rule 9 from approved enterprise knowledge",
+      "source": "For access review rule 9, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-010",
+      "intent": "Verify incident rule 10 from approved enterprise knowledge",
+      "source": "For incident rule 10, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-011",
+      "intent": "Verify checkout rule 11 from approved enterprise knowledge",
+      "source": "For checkout rule 11, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-012",
+      "intent": "Verify refund rule 12 from approved enterprise knowledge",
+      "source": "For refund rule 12, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-013",
+      "intent": "Verify claims rule 13 from approved enterprise knowledge",
+      "source": "For claims rule 13, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-014",
+      "intent": "Verify underwriting rule 14 from approved enterprise knowledge",
+      "source": "For underwriting rule 14, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-015",
+      "intent": "Verify onboarding rule 15 from approved enterprise knowledge",
+      "source": "For onboarding rule 15, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-016",
+      "intent": "Verify invoice rule 16 from approved enterprise knowledge",
+      "source": "For invoice rule 16, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-017",
+      "intent": "Verify shipment rule 17 from approved enterprise knowledge",
+      "source": "For shipment rule 17, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-018",
+      "intent": "Verify subscription rule 18 from approved enterprise knowledge",
+      "source": "For subscription rule 18, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-019",
+      "intent": "Verify access review rule 19 from approved enterprise knowledge",
+      "source": "For access review rule 19, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-020",
+      "intent": "Verify incident rule 20 from approved enterprise knowledge",
+      "source": "For incident rule 20, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-021",
+      "intent": "Verify checkout rule 21 from approved enterprise knowledge",
+      "source": "For checkout rule 21, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-022",
+      "intent": "Verify refund rule 22 from approved enterprise knowledge",
+      "source": "For refund rule 22, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-023",
+      "intent": "Verify claims rule 23 from approved enterprise knowledge",
+      "source": "For claims rule 23, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-024",
+      "intent": "Verify underwriting rule 24 from approved enterprise knowledge",
+      "source": "For underwriting rule 24, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-025",
+      "intent": "Verify onboarding rule 25 from approved enterprise knowledge",
+      "source": "For onboarding rule 25, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-026",
+      "intent": "Verify invoice rule 26 from approved enterprise knowledge",
+      "source": "For invoice rule 26, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-027",
+      "intent": "Verify shipment rule 27 from approved enterprise knowledge",
+      "source": "For shipment rule 27, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-028",
+      "intent": "Verify subscription rule 28 from approved enterprise knowledge",
+      "source": "For subscription rule 28, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-029",
+      "intent": "Verify access review rule 29 from approved enterprise knowledge",
+      "source": "For access review rule 29, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-030",
+      "intent": "Verify incident rule 30 from approved enterprise knowledge",
+      "source": "For incident rule 30, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-031",
+      "intent": "Verify checkout rule 31 from approved enterprise knowledge",
+      "source": "For checkout rule 31, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-032",
+      "intent": "Verify refund rule 32 from approved enterprise knowledge",
+      "source": "For refund rule 32, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-033",
+      "intent": "Verify claims rule 33 from approved enterprise knowledge",
+      "source": "For claims rule 33, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-034",
+      "intent": "Verify underwriting rule 34 from approved enterprise knowledge",
+      "source": "For underwriting rule 34, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-035",
+      "intent": "Verify onboarding rule 35 from approved enterprise knowledge",
+      "source": "For onboarding rule 35, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-036",
+      "intent": "Verify invoice rule 36 from approved enterprise knowledge",
+      "source": "For invoice rule 36, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-037",
+      "intent": "Verify shipment rule 37 from approved enterprise knowledge",
+      "source": "For shipment rule 37, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-038",
+      "intent": "Verify subscription rule 38 from approved enterprise knowledge",
+      "source": "For subscription rule 38, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-039",
+      "intent": "Verify access review rule 39 from approved enterprise knowledge",
+      "source": "For access review rule 39, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-040",
+      "intent": "Verify incident rule 40 from approved enterprise knowledge",
+      "source": "For incident rule 40, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-041",
+      "intent": "Verify checkout rule 41 from approved enterprise knowledge",
+      "source": "For checkout rule 41, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-042",
+      "intent": "Verify refund rule 42 from approved enterprise knowledge",
+      "source": "For refund rule 42, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-043",
+      "intent": "Verify claims rule 43 from approved enterprise knowledge",
+      "source": "For claims rule 43, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-044",
+      "intent": "Verify underwriting rule 44 from approved enterprise knowledge",
+      "source": "For underwriting rule 44, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-045",
+      "intent": "Verify onboarding rule 45 from approved enterprise knowledge",
+      "source": "For onboarding rule 45, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-046",
+      "intent": "Verify invoice rule 46 from approved enterprise knowledge",
+      "source": "For invoice rule 46, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-047",
+      "intent": "Verify shipment rule 47 from approved enterprise knowledge",
+      "source": "For shipment rule 47, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-048",
+      "intent": "Verify subscription rule 48 from approved enterprise knowledge",
+      "source": "For subscription rule 48, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-049",
+      "intent": "Verify access review rule 49 from approved enterprise knowledge",
+      "source": "For access review rule 49, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    },
+    {
+      "caseId": "business-intent-050",
+      "intent": "Verify incident rule 50 from approved enterprise knowledge",
+      "source": "For incident rule 50, a valid request must be approved before one immutable result is recorded.",
+      "criticalRequirements": [
+        "approval precedes recording",
+        "exactly one immutable result"
+      ],
+      "observation": {
+        "schemaValid": false,
+        "bddValid": false,
+        "unsupportedFactCount": 1,
+        "criticalCovered": 0,
+        "criticalTotal": 2,
+        "criticalCorrectionRequired": true
+      },
+      "reviewerJudgments": []
+    }
+  ]
+}

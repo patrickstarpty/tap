@@ -7,15 +7,11 @@ import inspect
 import ipaddress
 import json
 import math
-import os
-import platform
 import re
-import shutil
-import stat
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.contracts.http import (
@@ -30,30 +26,23 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationS
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.knowledge.adapters.codex_exec import (
-    CodexExecAnswerAdapter,
-    CodexExecConfig,
+from tap.modules.ai.adapters.litellm import (
+    LiteLLMModelGateway,
+    LiteLLMModelGatewayConfig,
+    ProviderModelMapping,
 )
-from tap.modules.knowledge.adapters.codex_target import (
-    CodexTargetRejected,
-    NativeCodexTarget,
-    resolve_native_codex_target,
-)
-from tap.modules.knowledge.adapters.litellm import LiteLLMAdapter, LiteLLMConfig
+from tap.modules.ai.application.catalog import ModelCatalog
+from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
 )
 from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
-from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import (
     DocumentEmbeddingPort,
 )
-from tap.modules.knowledge.ports.errors import AnswerUnavailable
-from tap.modules.knowledge.ports.models import AnswerGeneration
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
-    AnswerGenerationPort,
     QueryEmbeddingPort,
     SearchPort,
 )
@@ -92,8 +81,6 @@ _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _MODEL_ROUTE = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?:/[A-Za-z0-9][A-Za-z0-9._:-]{0,127})*\Z"
 )
-_CODEX_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
-_CODEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
 _FIXED_COLLECTION = "kb_doc_v1_tapper_demo"
 _FIXED_ALIAS = "kb_doc_tapper_demo_active"
 _FIXED_CORPUS = "tapper-demo-v1"
@@ -119,9 +106,7 @@ class TapperSettings:
     web_port: int
     model_backend: str
     answer_backend: str
-    codex_model: str
-    codex_reasoning_effort: str
-    codex_timeout_seconds: float
+    graph_extraction_mode: str
     embedding_dimension: int
     poll_seconds: float
     job_batch_size: int
@@ -188,33 +173,14 @@ class TapperSettings:
             raise ValueError(
                 "TAPPER_MODEL_BACKEND=fake requires exact TAP_DEMO_MODE=e2e and vice versa"
             )
+        if values.get("TAPPER_ANSWER_BACKEND") == "codex":
+            raise ValueError("TAPPER_ANSWER_BACKEND=codex is unavailable in the V1 runtime")
         answer_backend = _fixed_choice(
             values,
             "TAPPER_ANSWER_BACKEND",
             default="litellm",
-            choices=frozenset({"litellm", "codex"}),
+            choices=frozenset({"litellm"}),
         )
-        if backend == "fake" and answer_backend == "codex":
-            raise ValueError(
-                "TAPPER_ANSWER_BACKEND=codex is unavailable with the fake model backend"
-            )
-        codex_model = _value(values, "TAPPER_CODEX_MODEL", "gpt-5.6-sol")
-        if _CODEX_MODEL.fullmatch(codex_model) is None:
-            raise ValueError("TAPPER_CODEX_MODEL is outside the closed syntax")
-        codex_reasoning_effort = _fixed_choice(
-            values,
-            "TAPPER_CODEX_REASONING_EFFORT",
-            default="ultra",
-            choices=_CODEX_REASONING_EFFORTS,
-        )
-        codex_timeout_seconds = _duration(
-            values,
-            "TAPPER_CODEX_TIMEOUT_SECONDS",
-            300.0,
-            maximum=900,
-        )
-        if codex_timeout_seconds < 30:
-            raise ValueError("TAPPER_CODEX_TIMEOUT_SECONDS is outside the closed bound")
 
         api_host = _loopback_host(values, "TAPPER_API_HOST", "127.0.0.1")
         web_host = _loopback_host(values, "TAPPER_WEB_HOST", "127.0.0.1")
@@ -391,9 +357,12 @@ class TapperSettings:
             web_port=_integer(values, "TAPPER_WEB_PORT", 5173, minimum=1, maximum=65535),
             model_backend=backend,
             answer_backend=answer_backend,
-            codex_model=codex_model,
-            codex_reasoning_effort=codex_reasoning_effort,
-            codex_timeout_seconds=codex_timeout_seconds,
+            graph_extraction_mode=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_EXTRACTION_MODE",
+                default="fake",
+                choices=frozenset({"fake", "model"}),
+            ),
             embedding_dimension=dimension,
             poll_seconds=_duration(values, "TAPPER_POLL_SECONDS", 1.0, maximum=60),
             job_batch_size=_integer(
@@ -468,37 +437,6 @@ CloseCallback = Callable[[], Awaitable[object] | object]
 
 class TapperEmbeddingPort(QueryEmbeddingPort, DocumentEmbeddingPort, Protocol):
     """The one real or fake adapter shared by query and document Embedding."""
-
-
-@dataclass(frozen=True, slots=True)
-class TapperAnswerBackend:
-    """Selected generator plus its optional readiness and ownership boundaries."""
-
-    generator: AnswerGenerationPort
-    readiness: Callable[[], Awaitable[None]] | None
-    owner: object | None
-
-
-class _UnavailableCodexAnswers:
-    """Fail closed without retaining startup discovery or login details."""
-
-    _MESSAGE = "Codex answer backend is unavailable"
-
-    async def answer(
-        self,
-        query: str,
-        evidence: tuple[Evidence, ...],
-        profile_id: str,
-    ) -> AnswerGeneration:
-        del query, evidence, profile_id
-        raise AnswerUnavailable(self._MESSAGE)
-
-    async def check_ready(self) -> None:
-        raise AnswerUnavailable(self._MESSAGE)
-
-
-class _CodexConfigurationUnavailable(RuntimeError):
-    """Expected local login-location failure without sensitive detail retention."""
 
 
 class TapperFailureController(Protocol):
@@ -687,6 +625,7 @@ class TapperApiRuntime:
     """One API process graph with a single outer ownership boundary."""
 
     http_services: HttpServices
+    quality_models: KnowledgeModelGateway
     _resources: OwnedResources
     failure_controller: TapperFailureController | None = None
 
@@ -694,11 +633,15 @@ class TapperApiRuntime:
         await self._resources.aclose()
 
 
-async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
+async def create_api_runtime(
+    settings: TapperSettings, *, model_gateway_max_retries: int = 1
+) -> TapperApiRuntime:
     """Construct the API graph only after one complete settings snapshot validates."""
 
     if not isinstance(settings, TapperSettings):
         raise TypeError("Tapper API runtime requires validated settings")
+    if settings.answer_backend != "litellm":
+        raise ValueError("Tapper V1 requires the governed model gateway")
     resources = OwnedResources()
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -710,10 +653,8 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
         redis = _create_redis(settings)
         resources.push(redis)
         failure_controller = _create_stage_controller(settings, redis)
-        embeddings = _create_embeddings(settings)
+        embeddings = _create_embeddings(settings, max_retries=model_gateway_max_retries)
         _push_if_owned(resources, embeddings)
-        answer_backend = _create_answer_backend(settings, embeddings=embeddings)
-        _push_if_owned(resources, answer_backend.owner)
         search, reader, target = await _create_search(
             settings,
             owners=repository,
@@ -732,26 +673,30 @@ async def create_api_runtime(settings: TapperSettings) -> TapperApiRuntime:
             redis=redis,
             artifacts=artifacts,
             embeddings=embeddings,
-            answer_backend=answer_backend,
             milvus_reader=reader,
             milvus_target=target,
             models_probe_client=models_probe_client,
         )
         scope_provider, authorization_policy = _create_validation_authority(engine)
+        asset_catalog = await _create_asset_catalog(engine, repository.scope)
         services = _assemble_http_services(
             repository=repository,
             artifacts=artifacts,
             search=search,
             embeddings=embeddings,
-            answers=answer_backend.generator,
             readiness=readiness,
             redactor=PatternEgressRedactor(),
             scope_provider=scope_provider,
             authorization_policy=authorization_policy,
+            asset_catalog=asset_catalog,
+            conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
             http_services=services,
+            quality_models=embeddings,
             _resources=resources,
             failure_controller=failure_controller,
         )
@@ -765,6 +710,8 @@ async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
 
     if not isinstance(settings, TapperSettings):
         raise TypeError("Tapper worker runtime requires validated settings")
+    if settings.answer_backend != "litellm":
+        raise ValueError("Tapper V1 requires the governed model gateway")
     resources = OwnedResources()
     try:
         engine, repository = await _create_database(settings)
@@ -844,9 +791,125 @@ def _build_document_repository(
     *,
     scope: ProjectScopeContext,
 ) -> MysqlDocumentRepository:
+    from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore, MysqlGraphReadyProjection
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
-    return MysqlDocumentRepository(sessions, scope=scope, audit_factory=create_project_audit)
+    graph_jobs = MysqlGraphJobStore(sessions)
+    return MysqlDocumentRepository(
+        sessions,
+        scope=scope,
+        audit_factory=create_project_audit,
+        ready_projection=MysqlGraphReadyProjection(graph_jobs, model_alias="tapper-chat"),
+    )
+
+
+async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
+    """Construct the independently restartable durable Graph worker."""
+
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper graph worker runtime requires validated settings")
+    resources = OwnedResources()
+    try:
+        engine, sessions = _open_database(settings)
+        resources.push(engine)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        artifacts = _create_blob(settings)
+        resources.push(artifacts)
+        redis = _create_redis(settings)
+        resources.push(redis)
+
+        from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+        from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
+        from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.application.worker import GraphWorker
+        from tap.modules.graph.ports.extraction import GraphExtractionPort
+        from tap.modules.knowledge.ports.documents import ArtifactStore
+        from tap.platform.messaging.redis_dispatch import AsyncRedisStream
+        from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
+
+        if settings.graph_extraction_mode == "model":
+            embeddings = _create_embeddings(settings)
+            _push_if_owned(resources, embeddings)
+            extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
+                embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
+            )
+        else:
+            extractor = DeterministicGraphExtraction()
+        worker = GraphWorker(
+            jobs=MysqlGraphJobStore(sessions),
+            artifacts=cast(ArtifactStore, artifacts),
+            extractor=extractor,
+            scope=scope,
+            worker_id=settings.worker_id + "-graph",
+        )
+        wakeups = RedisWakeupConsumer(
+            scope=scope,
+            redis=cast(AsyncRedisStream, redis),
+            stream_name=settings.redis_stream,
+            group_name="tapper-graph",
+            consumer_name=settings.worker_id + "-graph",
+            aggregate_type="GraphSnapshot",
+        )
+        return WorkerRuntime(worker=worker, wakeups=wakeups, resources=(resources,))
+    except BaseException as error:
+        await resources.aclose(error)
+        raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
+    """Construct the independently restartable durable Test Design worker."""
+
+    if not isinstance(settings, TapperSettings):
+        raise TypeError("Tapper test design worker runtime requires validated settings")
+    resources = OwnedResources()
+    try:
+        engine, sessions = _open_database(settings)
+        resources.push(engine)
+        scope = await ValidationScopeProvider().current(RequestFacts())
+        redis = _create_redis(settings)
+        resources.push(redis)
+        models = _create_embeddings(settings)
+        _push_if_owned(resources, models)
+
+        from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+        from tap.modules.test_management.adapters.deterministic_generation import (
+            DeterministicTestDesign,
+        )
+        from tap.modules.test_management.adapters.model_gateway_generation import (
+            ModelGatewayTestDesign,
+        )
+        from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
+        from tap.modules.test_management.application.generation import TestDesignWorker
+        from tap.platform.messaging.redis_dispatch import AsyncRedisStream
+        from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
+
+        generator = (
+            DeterministicTestDesign()
+            if settings.e2e_mode
+            else ModelGatewayTestDesign(
+                models.gateway, timeout_seconds=settings.model_timeout_seconds
+            )
+        )
+        worker_id = settings.worker_id + "-test-design"
+        worker = TestDesignWorker(
+            jobs=MysqlTestPlanRepository(sessions, scope=scope),
+            generator=generator,
+            scope=scope,
+            worker_id=worker_id,
+        )
+        wakeups = RedisWakeupConsumer(
+            scope=scope,
+            redis=cast(AsyncRedisStream, redis),
+            stream_name=settings.redis_stream,
+            group_name="tapper-test-design",
+            consumer_name=worker_id,
+            aggregate_type="TestPlanRevision",
+        )
+        return WorkerRuntime(worker=worker, wakeups=wakeups, resources=(resources,))
+    except BaseException as error:
+        await resources.aclose(error)
+        raise AssertionError("test design worker resource settlement unexpectedly returned")
 
 
 def _create_blob(settings: TapperSettings) -> AzureBlobArtifactStore | KnowledgeArtifactStore:
@@ -910,109 +973,47 @@ def _create_redis(settings: TapperSettings) -> Redis:
     )
 
 
-def _create_litellm_adapter(settings: TapperSettings) -> LiteLLMAdapter:
-    return LiteLLMAdapter(
-        LiteLLMConfig(
-            base_url=settings.litellm_base_url,
-            api_key=settings.litellm_api_key,
-            embedding_model_id=settings.embedding_alias,
-            answer_model_id=settings.chat_alias,
-            answer_profile_id=settings.retrieval_profile,
-            embedding_dimension=settings.embedding_dimension,
-            allowed_embedding_model_labels=settings.allowed_embedding_model_labels,
-            allowed_answer_model_labels=settings.allowed_answer_model_labels,
-            allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
-            deadline_seconds=settings.model_timeout_seconds,
-            read_timeout_seconds=min(10.0, settings.model_timeout_seconds),
-        )
-    )
+async def _redact_model_context(text: str) -> str:
+    return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
 
-def _create_embeddings(settings: TapperSettings) -> TapperEmbeddingPort:
-    if settings.e2e_mode:
-        from tap.testing.deterministic_model import DeterministicTapperModel
-
-        return cast(TapperEmbeddingPort, DeterministicTapperModel())
-
-    return cast(TapperEmbeddingPort, _create_litellm_adapter(settings))
-
-
-def _codex_config(
-    settings: TapperSettings,
-    target: NativeCodexTarget,
-) -> CodexExecConfig:
-    codex_home = _resolve_codex_home()
-    return CodexExecConfig(
-        target=target,
-        codex_home=codex_home,
-        model_id=settings.codex_model,
-        reasoning_effort=cast(
-            Literal["low", "medium", "high", "xhigh", "max", "ultra"],
-            settings.codex_reasoning_effort,
+def _create_embeddings(settings: TapperSettings, *, max_retries: int = 1) -> KnowledgeModelGateway:
+    config = LiteLLMModelGatewayConfig(
+        base_url=settings.litellm_base_url,
+        api_key=settings.litellm_api_key,
+        chat_alias=settings.chat_alias,
+        embedding_alias=settings.embedding_alias,
+        chat_model=(
+            ProviderModelMapping("fake", "deterministic-chat-v1")
+            if settings.e2e_mode
+            else ProviderModelMapping.from_route(settings.litellm_model)
         ),
-        profile_id=settings.retrieval_profile,
-        allowed_retrieval_profile_ids=frozenset({settings.retrieval_profile}),
-        timeout_seconds=settings.codex_timeout_seconds,
+        embedding_model=(
+            ProviderModelMapping("fake", "deterministic-embedding-v1")
+            if settings.e2e_mode
+            else ProviderModelMapping.from_route(settings.litellm_embedding_model)
+        ),
+        embedding_dimension=settings.embedding_dimension,
+        timeout_seconds=settings.model_timeout_seconds,
+        max_retries=max_retries,
     )
+    gateway: LiteLLMModelGateway
+    if settings.e2e_mode:
+        from tap.testing.deterministic_model_gateway import DeterministicModelGateway
 
-
-def _resolve_codex_home() -> Path:
-    try:
-        configured_home = os.environ.get("CODEX_HOME")
-        candidate = Path(configured_home) if configured_home is not None else Path.home() / ".codex"
-        codex_home = candidate.resolve(strict=True)
-        codex_home_stat = codex_home.lstat()
-    except (OSError, RuntimeError, ValueError):
-        raise _CodexConfigurationUnavailable("Codex login location is unavailable") from None
-    if not stat.S_ISDIR(codex_home_stat.st_mode):
-        raise _CodexConfigurationUnavailable("Codex login location is unavailable")
-    return codex_home
-
-
-def _create_answer_backend(
-    settings: TapperSettings,
-    *,
-    embeddings: TapperEmbeddingPort,
-) -> TapperAnswerBackend:
-    if settings.e2e_mode or settings.answer_backend == "litellm":
-        return TapperAnswerBackend(
-            generator=cast(AnswerGenerationPort, embeddings),
-            readiness=None,
-            owner=None,
+        gateway = DeterministicModelGateway(
+            config, scope=VALIDATION_SCOPE, redact=_redact_model_context
         )
-
-    command = shutil.which("codex")
-    if command is None:
-        return _unavailable_codex_backend()
-    try:
-        target = resolve_native_codex_target(
-            Path(command),
-            system=platform.system(),
-            machine=platform.machine(),
-            expected_version="0.149.0",
-            uid=os.getuid(),
-        )
-    except CodexTargetRejected:
-        return _unavailable_codex_backend()
-    try:
-        config = _codex_config(settings, target)
-    except _CodexConfigurationUnavailable:
-        return _unavailable_codex_backend()
-    adapter = CodexExecAnswerAdapter(config)
-
-    return TapperAnswerBackend(
-        generator=adapter,
-        readiness=adapter.check_ready,
-        owner=adapter,
-    )
-
-
-def _unavailable_codex_backend() -> TapperAnswerBackend:
-    unavailable = _UnavailableCodexAnswers()
-    return TapperAnswerBackend(
-        generator=unavailable,
-        readiness=unavailable.check_ready,
-        owner=None,
+    else:
+        gateway = LiteLLMModelGateway(config, scope=VALIDATION_SCOPE, redact=_redact_model_context)
+    return KnowledgeModelGateway(
+        gateway,
+        scope=VALIDATION_SCOPE,
+        redact=_redact_model_context,
+        embedding_alias=settings.embedding_alias,
+        chat_alias=settings.chat_alias,
+        embedding_dimension=settings.embedding_dimension,
+        timeout_seconds=settings.model_timeout_seconds,
     )
 
 
@@ -1218,7 +1219,6 @@ def _create_readiness(
     redis: Redis,
     artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     embeddings: QueryEmbeddingPort,
-    answer_backend: TapperAnswerBackend,
     milvus_reader: MilvusReader,
     milvus_target: MilvusIndexTarget,
     models_probe_client: httpx.AsyncClient | None,
@@ -1274,13 +1274,9 @@ def _create_readiness(
         if models_probe_client is None:
             return False
         labels = await _read_models_labels(models_probe_client)
-        required_labels = {settings.embedding_alias}
-        if settings.answer_backend == "litellm":
-            required_labels.add(settings.chat_alias)
+        required_labels = {settings.embedding_alias, settings.chat_alias}
         if labels is None or not required_labels <= labels:
             return False
-        if answer_backend.readiness is not None:
-            await answer_backend.readiness()
         return True
 
     return ReadinessService(
@@ -1374,17 +1370,33 @@ def _create_validation_authority(engine: AsyncEngine) -> tuple[ScopeProvider, Au
     return ValidationScopeProvider(), ValidationAuthorizationPolicy(registry)
 
 
+async def _create_asset_catalog(engine: AsyncEngine, scope: ProjectScopeContext) -> object:
+    """Create and seed the only server-approved, project-scoped AI catalog."""
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import validation_asset_seed
+
+    catalog = MysqlAssetCatalog(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
+    await catalog.seed(validation_asset_seed(scope))
+    return catalog
+
+
 def _assemble_http_services(
     *,
     repository: MysqlDocumentRepository,
     artifacts: AzureBlobArtifactStore | KnowledgeArtifactStore,
     search: SearchPort,
-    embeddings: QueryEmbeddingPort,
-    answers: AnswerGenerationPort,
+    embeddings: KnowledgeModelGateway,
     readiness: ReadinessHttpService,
     redactor: EgressRedactionPort,
     scope_provider: ScopeProvider,
     authorization_policy: AuthorizationPolicy,
+    asset_catalog: object | None = None,
+    conversation_sessions: object | None = None,
+    graph_sessions: object | None = None,
+    test_plan_sessions: object | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1410,8 +1422,7 @@ def _assemble_http_services(
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
         search=search,
-        embeddings=embeddings,
-        answers=answers,
+        models=embeddings,
         policy_verifier=DemoCurrentPolicyVerifier(
             repository,
             scope_provider=scope_provider,
@@ -1430,18 +1441,52 @@ def _assemble_http_services(
         repository=cast(CitationRepository, repository),
         artifacts=cast(CitationArtifactStore, artifacts),
     )
+    conversations = None
+    if conversation_sessions is not None:
+        from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+        from tap.modules.chat.application.conversations import ConversationService
+
+        conversations = ConversationService(
+            MysqlConversationRepository(conversation_sessions, scope=repository.scope),  # type: ignore[arg-type]
+            scope=repository.scope,
+        )
+    graph = None
+    graph_enricher = None
+    if graph_sessions is not None:
+        from tap.modules.graph.adapters.mysql import MysqlGraphStore
+        from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
+
+        graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
+        graph_enricher = GraphAnswerEnricher(graph)
+    test_plans = None
+    if test_plan_sessions is not None:
+        from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
+        from tap.modules.test_management.application.plans import TestPlanApplication
+
+        test_plans = TestPlanApplication(
+            MysqlTestPlanRepository(test_plan_sessions, scope=repository.scope)  # type: ignore[arg-type]
+        )
     return HttpServices(
+        asset_catalog=asset_catalog,  # type: ignore[arg-type]
+        model_catalog=ModelCatalog(
+            embeddings.gateway, scope=embeddings.scope, default_alias=embeddings.chat_alias
+        ),
         knowledge=KnowledgeHttpService(
             documents=documents,
             answers=answer_service,
             citations=citations,
             searches=search_service,
             sources=SourceService(cast(SourceRepository, repository), documents),
+            corpus_version=corpus_version,
+            graph_enricher=graph_enricher,
         ),
         readiness=readiness,
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,
         scope=repository.scope,
+        conversations=conversations,
+        graph=graph,
+        test_plans=test_plans,
     )
 
 

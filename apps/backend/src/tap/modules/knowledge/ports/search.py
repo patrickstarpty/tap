@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.models import (
     AnswerGeneration,
@@ -42,3 +44,13 @@ class AnswerGenerationPort(Protocol):
 
 class ModelPort(QueryEmbeddingPort, AnswerGenerationPort, Protocol):
     """Compatibility intersection for adapters/fakes that implement both narrow ports."""
+
+
+class GovernedKnowledgeModels(ModelPort, Protocol):
+    """Domain mapping of one Project-bound ModelGateway, with no provider authority."""
+
+    @property
+    def gateway(self) -> ModelGateway: ...
+
+    @property
+    def scope(self) -> ProjectScopeContext: ...

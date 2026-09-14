@@ -44,12 +44,12 @@ related-adrs:
   → 用户 / 认证 / RBAC / 多 Project 产品化
 ```
 
-本文描述的是**已接受但尚未实现的目标设计**，不是当前完成状态。当前仓库真实实现仍是较窄的 Tapper 本地知识切片，以及使用浏览器状态和 fixture 的产品交互原型：
+本文是已接受的目标设计，不等同于全部完成状态。截至 2026-09-14，仓库已实现 V2/V3 主体，但相应 Gate 已重新打开：
 
-- Backend 已实现文档摄取、MySQL 账本、Outbox/Redis 唤醒、Milvus `doc` 检索、LiteLLM 模型端口、grounded answer 和引用核验基础。
-- Web 已实现 Tapper、Library、Knowledge Graph、Test Management 和 Low Code Automation 的交互原型。
-- 当前默认 `TapperPage` 挂载的是 `TapProductPrototype`；它只复用真实文档列表，发送消息、Graph、Test Plan、Automation 和 Run 仍是本地原型状态。真正调用 Knowledge Answer/Citation API 的 `TapperWorkspace` 尚未接回默认产品壳。
-- 当前运行时已有固定的 `tenant_id`、`project_id`、`user_id` 和服务端策略校验器，可作为隔离的 Validation Scope 起点；可配置多 Project、用户认证、Membership/RBAC、服务端 Conversation、真实 Knowledge Graph 抽取、正式 Test Plan/Automation 后端、Recorder Worker、Jenkins Provider 和真实 Execution Evidence 尚未完成。
+- V0、V1 Gate Review 已通过；Knowledge Graph、AI Test Design 与默认产品壳接线已有主体实现。
+- V2 多 Revision Graph 一致性、V3 真实候选人审绑定与完整 Web 评审旅程仍需补证；原 V2/V3 `pass` 已由[更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)撤销，V4 暂不放行。
+- `TapperPage` 继续挂载 `TapProductPrototype` 作为产品壳，但通过 `conversationSource="api"` 使用真实 Project、Conversation、Knowledge、Graph 和 Test Plan API；未实施模块继续使用明确的 fixture。
+- 可配置多 Project、用户认证、Membership/RBAC、正式 Automation/Recorder、Jenkins Provider 和真实 Execution Evidence 尚未完成。
 - 在对应发布门禁通过前，原型中的 `Passed`、Run、Graph、Agent 和资产都不得描述为生产实现或真实执行证据。
 - Validation Mode 不等于匿名生产模式：它只能运行在 loopback 或有独立基础设施访问控制的隔离验证环境，不能直接晋级为 Staging/Production，也不能宣称具有个人身份归因或多 Project 隔离能力。
 
@@ -1161,11 +1161,11 @@ QUEUED → RUNNING → SUCCEEDED | FAILED | CANCELLED | TIMED_OUT
 
 Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每个 Quality Report 固定数据集版本、Project Policy、模型 alias/实际模型、Prompt/Agent/Skill、Schema 和评测代码 digest；不满足最小样本量即视为门禁未执行。
 
-| Profile            | 最小评测集                                                                 | 通过阈值                                                                                                                                                                                  |
-| ------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `QUALITY-KB-01`    | 至少 100 个代表性问题，包含可回答、冲突、越权和应 abstain 项，人工标注来源 | 当前 Scope 外或未选 Source 泄漏 0；Citation anchor 可解析 100%；已输出 grounded Claim–Citation 语义支持 precision 100%；retrieval recall@10 ≥90%；应 abstain 项准确率 ≥90%                |
-| `QUALITY-GRAPH-01` | 至少 20 份真实结构文档、200 条人工标注 Node/Edge/归并判断                  | 可见 Evidence/Provenance 可解析 100%；已发布 `EXTRACTED` Edge–Evidence 语义支持 precision 100%；关系类型 precision ≥90%；错误实体合并率 ≤1%；`INFERRED` 标识及输入 provenance 完整率 100% |
-| `QUALITY-TEST-01`  | 至少 50 个带风险、正/负路径和边界条件的真实业务意图，由两名 Reviewer 判定  | Schema/BDD deterministic gate 100%；无来源事实 0；关键需求覆盖率 ≥90%；无需 Critical Correction 的 Draft ≥80%                                                                             |
+| Profile            | 最小评测集                                                                    | 通过阈值                                                                                                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QUALITY-KB-01`    | 至少 100 个代表性问题，包含可回答、冲突、越权和应 abstain 项，人工标注来源    | 当前 Scope 外或未选 Source 泄漏 0；Citation anchor 可解析 100%；已输出 grounded Claim–Citation 语义支持 precision 100%；retrieval recall@10 ≥90%；应 abstain 项准确率 ≥90%                |
+| `QUALITY-GRAPH-01` | 至少 20 份真实结构文档、200 条人工标注 Node/Edge/归并判断                     | 可见 Evidence/Provenance 可解析 100%；已发布 `EXTRACTED` Edge–Evidence 语义支持 precision 100%；关系类型 precision ≥90%；错误实体合并率 ≤1%；`INFERRED` 标识及输入 provenance 完整率 100% |
+| `QUALITY-TEST-01`  | 至少 50 个带风险、正/负路径和边界条件的真实业务意图，由一名具名 Reviewer 判定 | Schema/BDD deterministic gate 100%；无来源事实 0；关键需求覆盖率 ≥90%；无需 Critical Correction 的 Draft ≥80%                                                                             |
 
 阈值按每个 Profile 分开报告，不能用高分数据集抵消低分数据集，也不能把模型自评当作人工标签。数据或模型变更超过已批准兼容范围时必须重跑相应 Profile。Validation Mode 的单 Project 评测只能证明固定 Scope/Source 边界，不能证明多 Project 隔离；P0/P1 必须另行通过跨 Project 泄漏为 `0` 的负矩阵。
 
@@ -1209,6 +1209,8 @@ Fake Model 只用于确定性回归，不能通过 V1–V3 的质量出口。每
 - `apps/web/src/widgets/tap/prototype/` 已确认的信息架构和交互语言。
 
 ### 20.2 必须迁移而非误当已完成
+
+本节记录 RFC 接受时必须完成的迁移清单，不是当前进度表。原文中的完成表述保留用于追溯；现行状态以[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-14)和[门禁更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md)为准。
 
 - 当前 `demo_policy`、loopback 信任和固定 local actor 只能作为 V0 Validation Adapter 的起点，不能进入 P0/P1 多用户生产路径，也不能作为已完成认证的证据。
 - 当前页面级 Answer 和原型 local storage 不能作为持久 Conversation。仓库虽已有 MySQL Turn/Outbox primitive，但运行时未组装 Chat Processor、SSE 和 History，现有 Turn HTTP 路径仍不是可用产品接口。
@@ -1270,9 +1272,9 @@ Mobile、SSO、Azure DevOps、Git Sync、专用 Graph DB 和 Kubernetes HA 只�
 ### 22.2 相关文档
 
 - 产品交互事实源：[RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。冲突范围以本 RFC 为准：`AUT-003` 的 Web Provider 从 Azure DevOps 改为 Jenkins，其 Mobile 部分以及 `AUT-005` 的 Web/Mobile 类型推断、`AUT-007` 全部后移到 P1 之后；`AUT-008` 保留 AI Agent 与 Pipeline Agent 分离，但首个 Pipeline Provider 改为 Jenkins。`ATH-008` 与最近一次消息上键召回语义继续有效。
-- 当前实现事实源：[RFC-005：Tapper 本地知识工作区 Demo](../proposals/2026-08-27-rfc-005-tapper-local-knowledge-demo.md)。
+- 当前实现与进度入口：[Tapper 开发者指南](../reference/2026-09-13-tapper-developer-guide.md)和[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-13)；RFC-005 仅记录最初本地知识切片。
 - 当前 Backend 装配入口：[`tapper_runtime.py`](../../apps/backend/src/tap/entrypoints/tapper_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
-- 当前默认 Web 产品壳：[`TapperPage.tsx`](../../apps/web/src/pages/TapperPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/web/src/widgets/tap/TapProductPrototype.tsx)；真实知识组件入口：[`TapperWorkspace.tsx`](../../apps/web/src/widgets/tapper/TapperWorkspace.tsx)。
+- 当前默认 Web 产品壳：[`TapperPage.tsx`](../../apps/web/src/pages/TapperPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/web/src/widgets/tap/TapProductPrototype.tsx)；真实 API client/state 分布在 `apps/web/src/features/{runtime,knowledge,conversations,graph,testManagement}/`，旧 [`TapperWorkspace.tsx`](../../apps/web/src/widgets/tapper/TapperWorkspace.tsx)只保留兼容用途。
 - Milvus 实验证据：[Milvus 本地检索实验评审](../reviews/2026-08-27-milvus-local-search-experiment.md)。
 - 文档治理：[TAP 文档治理规范](../reference/2026-08-22-document-governance.md)。
 - 本 RFC 的接受动作同步创建替代 ADR，并更新[架构决策索引](../decisions/index.md)、总体架构、README 和路线图；既有 Azure/Git/Intelligence 决策仅通过生命周期元数据进入历史，不静默改写原语义。

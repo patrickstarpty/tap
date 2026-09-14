@@ -14,6 +14,7 @@ test("Library rejects hostile uploads and accepts a subsequent safe document", a
   const runtime = await page.request.get("/api/v1/runtime-mode");
   const { projectId } = (await runtime.json()) as { projectId: string };
   const path = `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge/documents`;
+  const uploadPath = `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge/sources`;
   const ids: string[] = [];
 
   async function upload(page: Page, name: string): Promise<string> {
@@ -28,7 +29,7 @@ test("Library rejects hostile uploads and accepts a subsequent safe document", a
     const pending = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
-        new URL(response.url()).pathname === path,
+        new URL(response.url()).pathname === uploadPath,
     );
     await dialog
       .getByRole("button", { name: "Add source", exact: true })
@@ -36,10 +37,10 @@ test("Library rejects hostile uploads and accepts a subsequent safe document", a
     const accepted = await pending;
     expect(accepted.status()).toBe(202);
     const result = (await accepted.json()) as {
-      document: { documentId: string };
+      accepted: { document: { documentId: string } };
     };
-    ids.push(result.document.documentId);
-    return result.document.documentId;
+    ids.push(result.accepted.document.documentId);
+    return result.accepted.document.documentId;
   }
 
   try {
@@ -77,7 +78,10 @@ test("Library rejects hostile uploads and accepts a subsequent safe document", a
       expect(
         (
           await page.request.delete(`${path}/${id}`, {
-            headers: { Origin: ORIGIN },
+            headers: {
+              Origin: ORIGIN,
+              "Idempotency-Key": `cleanup-${id}`,
+            },
           })
         ).status(),
       ).toBe(204);

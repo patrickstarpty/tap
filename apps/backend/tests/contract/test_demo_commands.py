@@ -382,6 +382,27 @@ def _make_dry_run(target: str, *assignments: str) -> subprocess.CompletedProcess
     )
 
 
+def test_e2e_manifest_registers_durable_conversation_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/knowledge-conversation.spec.ts" in manifest["journey"]
+
+
+def test_e2e_manifest_registers_grounded_graph_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/knowledge-graph.spec.ts" in manifest["journey"]
+    source = (ROOT / "apps/web/tests/e2e/knowledge-conversation.spec.ts").read_text(
+        encoding="utf-8"
+    )
+    assert source.count("test(") > 0
+
+
+def test_e2e_manifest_registers_test_plan_journey():
+    manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
+    assert "tests/e2e/tapper-test-plan.spec.ts" in manifest["journey"]
+    source = (ROOT / "apps/web/tests/e2e/tapper-test-plan.spec.ts").read_text(encoding="utf-8")
+    assert source.count("test(") > 0
+
+
 def _load_yaml_as_json(path: Path) -> dict[str, object]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)
@@ -493,6 +514,9 @@ case " $* " in
   *" tap.entrypoints.tapper_api "*) exec tapper-child api ;;
   *" tap.entrypoints.relay_reconciler "*) exec tapper-child relay ;;
   *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
+  *" tap.entrypoints.tapper_graph_worker "*) exec tapper-child graph ;;
+  *" tap.entrypoints.tapper_test_design_worker "*) exec tapper-child test-design ;;
+  *" tap.entrypoints.tapper_generation_worker "*) exec tapper-child generation ;;
 esac
 exit 99
 """,
@@ -612,6 +636,7 @@ def _e2e_runner_fixture(
         "tapper_e2e_report.py",
         "tapper-e2e-specs.json",
         "build-hostile-document-fixtures.py",
+        "disable-tapper-e2e-assets.py",
     ):
         (scripts / filename).write_bytes((ROOT / "scripts" / filename).read_bytes())
     runner.write_text(runner_source, encoding="utf-8")
@@ -703,7 +728,7 @@ case " $* " in
 import json, os
 names=['persistence.spec.ts']
 if os.environ['TAPPER_E2E_PHASE']=='journey':
-    names=['tapper.spec.ts','knowledge-upload-security.spec.ts']
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts']
 print(json.dumps({
     'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
     'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{
@@ -749,6 +774,10 @@ case " $* " in
   *" build-hostile-document-fixtures.py "*|*"/build-hostile-document-fixtures.py "*)
     shift 4
     exec "$TAPPER_TEST_PYTHON" "$@"
+    ;;
+  *" scripts/disable-tapper-e2e-assets.py "*)
+    [ "$TAP_DEMO_MODE:$TAP_TAPPER_COMPOSE_PROJECT" = e2e:tap-tapper-e2e ] || exit 80
+    printf 'uv|disable-assets\n' >> "$TAPPER_E2E_STUB_LOG"
     ;;
   *" alembic "*) printf 'uv|alembic\n' >> "$TAPPER_E2E_STUB_LOG" ;;
   *" scripts/milvus_bootstrap.py "*)
@@ -1524,7 +1553,7 @@ def test_tapper_ensure_cli_reports_configuration_failure_before_any_resource_sta
     assert "provider-secret-invalid-host" not in output.err
 
 
-def test_tapper_ensure_parses_codex_selection_without_discovery(
+def test_tapper_ensure_rejects_codex_selection_without_discovery(
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1558,10 +1587,12 @@ def test_tapper_ensure_parses_codex_selection_without_discovery(
     )
 
     output = capsys.readouterr()
-    assert result == 0
-    assert seen == ["codex"]
-    assert output.out == "Tapper resources ready.\n"
-    assert output.err == ""
+    assert result == 1
+    assert seen == []
+    assert output.out == ""
+    assert output.err == (
+        "Tapper resource ensure failed at configuration; check local middleware configuration.\n"
+    )
 
 
 def test_tapper_ensure_cli_redacts_provider_failures(
@@ -2183,6 +2214,10 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
     from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
+    if answer_backend == "codex":
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping({"TAPPER_ANSWER_BACKEND": answer_backend})
+        return
     settings = TapperSettings.from_mapping(
         {
             "TAPPER_ANSWER_BACKEND": answer_backend,
@@ -2202,181 +2237,82 @@ def test_safe_models_provider_gate_fails_before_construction_or_network(
 
 
 @pytest.mark.parametrize(
-    ("labels", "expected", "readiness_calls"),
+    ("labels", "expected"),
     [
-        (("tapper-embedding",), True, 1),
-        (("tapper-chat",), False, 0),
+        (("tapper-embedding", "tapper-chat"), True),
+        (("tapper-embedding",), False),
+        (("tapper-chat",), False),
     ],
 )
-def test_safe_codex_models_probe_checks_embedding_first_and_closes_all_owners(
-    monkeypatch,
-    labels: tuple[str, ...],
-    expected: bool,
-    readiness_calls: int,
-) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
+def test_safe_models_probe_requires_both_aliases_and_closes_all_owners(
+    monkeypatch, labels, expected
+):
+    import httpx
+
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
-    )
-    events: list[str] = []
-
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": label,
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    }
-                    for label in labels
-                ],
-            }
-        ).encode()
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            events.append("models")
-            yield self.content
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class ModelsClient:
-        def stream(self, method: str, path: str) -> ResponseContext:
-            assert (method, path) == ("GET", "v1/models")
-            return ResponseContext()
-
-        async def aclose(self) -> None:
-            events.append("close:models")
+    settings = TapperSettings.from_mapping({})
+    closed = []
 
     class Embeddings:
-        async def aclose(self) -> None:
-            events.append("close:embeddings")
+        async def aclose(self):
+            closed.append("embeddings")
 
-    class Codex:
-        async def check_ready(self) -> None:
-            events.append("codex-ready")
+    def handler(request):
+        assert request.method == "GET" and request.url.path == "/v1/models"
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": alias, "object": "model", "created": 0, "owned_by": "tap"}
+                    for alias in labels
+                ],
+            },
+        )
 
-        async def aclose(self) -> None:
-            events.append("close:codex")
-
-    embeddings = Embeddings()
-    codex = Codex()
-    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
-    monkeypatch.setattr(
-        safe_check,
-        "_create_answer_backend",
-        lambda _settings, *, embeddings: TapperAnswerBackend(
-            generator=codex,
-            readiness=codex.check_ready,
-            owner=codex,
-        ),
+    client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(handler)
     )
-    monkeypatch.setattr(
-        safe_check,
-        "_create_models_probe_client",
-        lambda _settings: ModelsClient(),
-    )
-
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
     assert (
         asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
         is expected
     )
-    assert events.count("codex-ready") == readiness_calls
-    assert events[-3:] == ["close:models", "close:codex", "close:embeddings"]
+    assert client.is_closed
+    assert closed == ["embeddings"]
 
 
-def test_safe_codex_models_probe_closes_all_owners_when_readiness_fails(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    from tap.entrypoints.tapper_runtime import TapperAnswerBackend, TapperSettings
+def test_safe_models_probe_closes_all_owners_when_transport_fails(monkeypatch):
+    import httpx
+
+    from tap.entrypoints.tapper_runtime import TapperSettings
 
     safe_check = _load_safe_check_module()
-    settings = TapperSettings.from_mapping(
-        {
-            "TAPPER_ANSWER_BACKEND": "codex",
-            "LITELLM_MODEL": "openai/test-chat",
-            "LITELLM_EMBEDDING_MODEL": "dashscope/text-embedding-v4",
-        }
+    events = []
+
+    class Embeddings:
+        async def aclose(self):
+            events.append("embeddings")
+
+    def fail(request):
+        raise RuntimeError("private provider detail")
+
+    client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:4000/", transport=httpx.MockTransport(fail)
     )
-    events: list[str] = []
-
-    class Response:
-        status_code = 200
-        content = json.dumps(
-            {
-                "object": "list",
-                "data": [
-                    {
-                        "id": "tapper-embedding",
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": "tap",
-                    }
-                ],
-            }
-        ).encode()
-
-        async def aiter_bytes(self):  # type: ignore[no-untyped-def]
-            yield self.content
-
-    class ResponseContext:
-        async def __aenter__(self) -> Response:
-            return Response()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    class Owner:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        async def aclose(self) -> None:
-            events.append(f"close:{self.name}")
-
-    class ModelsClient(Owner):
-        def stream(self, _method: str, _path: str) -> ResponseContext:
-            return ResponseContext()
-
-    class Codex(Owner):
-        async def check_ready(self) -> None:
-            raise RuntimeError("login=/private/auth.json provider-secret")
-
-    embeddings = Owner("embeddings")
-    codex = Codex("codex")
-    monkeypatch.setattr(safe_check, "_create_embeddings", lambda _settings: embeddings)
-    monkeypatch.setattr(
-        safe_check,
-        "_create_answer_backend",
-        lambda _settings, *, embeddings: TapperAnswerBackend(
-            generator=codex,
-            readiness=codex.check_ready,
-            owner=codex,
-        ),
-    )
-    monkeypatch.setattr(
-        safe_check,
-        "_create_models_probe_client",
-        lambda _settings: ModelsClient("models"),
-    )
-
-    with pytest.raises(RuntimeError, match="provider-secret"):
-        asyncio.run(safe_check._check_models(settings, {"DASHSCOPE_API_KEY": "configured"}))
-
-    assert events == ["close:models", "close:codex", "close:embeddings"]
+    monkeypatch.setattr(safe_check, "_create_embeddings", lambda settings: Embeddings())
+    monkeypatch.setattr(safe_check, "_create_models_probe_client", lambda settings: client)
+    with pytest.raises(RuntimeError, match="private provider detail"):
+        asyncio.run(
+            safe_check._check_models(
+                TapperSettings.from_mapping({}), {"DASHSCOPE_API_KEY": "configured"}
+            )
+        )
+    assert client.is_closed
+    assert events == ["embeddings"]
 
 
 def test_litellm_exposes_exactly_the_two_fixed_tapper_aliases() -> None:
@@ -2778,12 +2714,18 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "api",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     assert {line.split()[1] for line in events if line.startswith("term ")} == {
         "parser",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -2828,7 +2770,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 5
+    assert len(_started_child_pids(log)) == 8
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2849,14 +2791,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 5 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 8 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all five children")
+        raise AssertionError("supervisor did not start all eight children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2878,6 +2820,9 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         "api",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))
@@ -2933,7 +2878,18 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    expected_roles = {"api", "relay", "worker", "web", "validation", "readiness", "curl"}
+    expected_roles = {
+        "api",
+        "relay",
+        "worker",
+        "graph",
+        "test-design",
+        "generation",
+        "web",
+        "validation",
+        "readiness",
+        "curl",
+    }
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if log.exists():
@@ -2970,7 +2926,7 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "DASHSCOPE_API_BASE",
         "CODEX_API_BASE",
     }
-    assert "CODEX_HOME" in environment_names["api"]
+    assert "CODEX_HOME" not in environment_names["api"]
     for role, names in environment_names.items():
         assert not forbidden_provider_names & names
         if role != "api":
@@ -2990,6 +2946,13 @@ CODEX_API_BASE=https://provider-secret.invalid/codex-api
         "LITELLM_MASTER_KEY",
         "MILVUS_WRITER_PASSWORD",
     } <= environment_names["worker"]
+    assert {
+        "TAP_DATABASE_URL",
+        "TAP_REDIS_URL",
+        "AZURE_STORAGE_CONNECTION_STRING",
+    } <= environment_names["graph"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["test-design"]
+    assert {"TAP_DATABASE_URL", "TAP_REDIS_URL"} <= environment_names["generation"]
     output = stdout + stderr + log.read_text(encoding="utf-8")
     assert "caller-" not in output
     assert "provider-secret" not in output
@@ -3019,7 +2982,7 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
     # Start the shortened readiness window only after the stubs can record TERM.
     # This barrier is bounded separately and remains inside the 10-second cap.
     stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
-while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 4 ]; do
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 7 ]; do
   [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
   sleep 0.05
 done
@@ -3053,6 +3016,9 @@ ready_deadline=$(( SECONDS + 2 ))"""
         "api",
         "relay",
         "worker",
+        "graph",
+        "test-design",
+        "generation",
         "web",
     }
     _assert_processes_are_gone(_started_child_pids(log))

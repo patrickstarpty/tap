@@ -47,6 +47,8 @@ class ReadyDocumentRevision:
     revision_id: str
     source_content_hash: str
     source_id: str | None = None
+    source_name: str | None = None
+    filename: str | None = None
 
     def __post_init__(self) -> None:
         _bounded("ready document ID", self.document_id, maximum=64)
@@ -229,6 +231,10 @@ class AnswerSnapshotRepository(Protocol):
 
     async def load_ready_revisions(
         self, document_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]: ...
+
+    async def load_revision_selection(
+        self, revision_ids: tuple[str, ...]
     ) -> tuple[ReadyDocumentRevision, ...]: ...
 
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None: ...

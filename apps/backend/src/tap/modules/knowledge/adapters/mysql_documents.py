@@ -725,6 +725,18 @@ class ProjectAuditFactory(Protocol):
     ) -> ProjectAuditPort: ...
 
 
+class ReadyRevisionProjection(Protocol):
+    async def after_ready(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        revision: RowMapping,
+        *,
+        now: datetime,
+        ingestion_job_id: str,
+    ) -> None: ...
+
+
 class MysqlDocumentRepository:
     """The MySQL document/revision/job facts and their transaction boundaries."""
 
@@ -734,9 +746,11 @@ class MysqlDocumentRepository:
         *,
         scope: ProjectScopeContext,
         audit_factory: ProjectAuditFactory,
+        ready_projection: ReadyRevisionProjection | None = None,
     ) -> None:
         self._scope = require_project_scope(scope)
         self._audit_factory = audit_factory
+        self._ready_projection = ready_projection
         self._answer_snapshot_lock_name = (
             "tap:answer:"
             + sha256(f"{scope.enterprise_id}/{scope.project_id}".encode()).hexdigest()[:48]
@@ -1052,6 +1066,8 @@ class MysqlDocumentRepository:
                         select(
                             knowledge_document.c.document_id,
                             knowledge_document.c.source_id,
+                            knowledge_document.c.filename,
+                            knowledge_source.c.name.label("source_name"),
                             knowledge_document.c.current_revision_id,
                             knowledge_document.c.source_content_hash.label(
                                 "document_source_content_hash"
@@ -1069,11 +1085,17 @@ class MysqlDocumentRepository:
                                     knowledge_document_revision.c.document_id
                                     == knowledge_document.c.document_id,
                                 ),
+                            ).join(
+                                knowledge_source,
+                                and_(
+                                    knowledge_source.c.source_id == knowledge_document.c.source_id,
+                                    *scope_predicates(knowledge_source, self._scope),
+                                ),
                             )
                         )
                         .where(
                             *scope_predicates(knowledge_document, self._scope),
-                            self._active_source(),
+                            knowledge_source.c.deleted_at.is_(None),
                             *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_document.c.document_id.in_(ordered_ids),
                             knowledge_document.c.status == DocumentState.READY.value,
@@ -1091,12 +1113,59 @@ class MysqlDocumentRepository:
                     source_id=cast(str, row["source_id"]),
                     revision_id=cast(str, row["current_revision_id"]),
                     source_content_hash=cast(str, row["document_source_content_hash"]),
+                    source_name=cast(str, row["source_name"]),
+                    filename=cast(str, row["filename"]),
                 )
                 for row in rows
                 if row["document_source_content_hash"] == row["revision_source_content_hash"]
             )
 
+    async def load_revision_selection(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[ReadyDocumentRevision, ...]:
+        if not 1 <= len(revision_ids) <= 20 or len(set(revision_ids)) != len(revision_ids):
+            raise DocumentStateChanged("revision selection must be unique and bounded")
+        async with self._sessions() as session:
+            document_ids = tuple(
+                (
+                    await session.execute(
+                        select(knowledge_document.c.document_id)
+                        .join(
+                            knowledge_document_revision,
+                            and_(
+                                knowledge_document_revision.c.document_id
+                                == knowledge_document.c.document_id,
+                                knowledge_document_revision.c.revision_id
+                                == knowledge_document.c.current_revision_id,
+                            ),
+                        )
+                        .where(
+                            *scope_predicates(knowledge_document, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            self._active_source(),
+                            knowledge_document.c.current_revision_id.in_(revision_ids),
+                            knowledge_document.c.status == DocumentState.READY.value,
+                            knowledge_document.c.activated_at.is_not(None),
+                            knowledge_document.c.deleted_at.is_(None),
+                        )
+                        .order_by(knowledge_document.c.document_id)
+                    )
+                ).scalars()
+            )
+        rows = await self.load_ready_revisions(document_ids) if document_ids else ()
+        if {row.revision_id for row in rows} != set(revision_ids):
+            raise DocumentStateChanged("selected revision is not current and ready")
+        return rows
+
     async def save_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
+        await self._save_answer_with_citations(snapshot, allow_historical=False)
+
+    async def save_frozen_answer_with_citations(self, snapshot: AnswerSnapshot) -> None:
+        await self._save_answer_with_citations(snapshot, allow_historical=True)
+
+    async def _save_answer_with_citations(
+        self, snapshot: AnswerSnapshot, *, allow_historical: bool
+    ) -> None:
         if not isinstance(snapshot, AnswerSnapshot):
             raise TypeError("answer snapshot repository requires AnswerSnapshot")
         try:
@@ -1128,7 +1197,12 @@ class MysqlDocumentRepository:
                     # lock; the finally also covers cancellation during this boundary commit.
                     await connection.commit()
                     async with self._sessions(bind=connection) as session, session.begin():
-                        await self._save_answer_snapshot(session, snapshot)
+                        if allow_historical:
+                            await self._save_answer_snapshot(
+                                session, snapshot, allow_historical=True
+                            )
+                        else:
+                            await self._save_answer_snapshot(session, snapshot)
                 except asyncio.CancelledError as cancellation:
                     first_cancellation = cancellation
                 finally:
@@ -1216,7 +1290,13 @@ class MysqlDocumentRepository:
             raise failure from outcome.error
         return outcome.value
 
-    async def _save_answer_snapshot(self, session: AsyncSession, snapshot: AnswerSnapshot) -> None:
+    async def _save_answer_snapshot(
+        self,
+        session: AsyncSession,
+        snapshot: AnswerSnapshot,
+        *,
+        allow_historical: bool = False,
+    ) -> None:
         expected = snapshot.selected_revisions
         source_rows = (
             (
@@ -1232,11 +1312,12 @@ class MysqlDocumentRepository:
             .scalars()
             .all()
         )
-        try:
-            for source_id in sorted(set(source_rows)):
-                await self._require_source(session, source_id)
-        except SourceUnavailable as error:
-            raise DocumentStateChanged("selected source changed") from error
+        if not allow_historical:
+            try:
+                for source_id in sorted(set(source_rows)):
+                    await self._require_source(session, source_id)
+            except SourceUnavailable as error:
+                raise DocumentStateChanged("selected source changed") from error
         document_ids = tuple(item.document_id for item in expected)
         rows = list(
             (
@@ -1252,8 +1333,8 @@ class MysqlDocumentRepository:
                     )
                     .where(
                         *scope_predicates(knowledge_document, self._scope),
-                        self._active_source(),
                         knowledge_document.c.document_id.in_(document_ids),
+                        *(() if allow_historical else (self._active_source(),)),
                     )
                     .order_by(knowledge_document.c.document_id)
                     .with_for_update()
@@ -1282,10 +1363,12 @@ class MysqlDocumentRepository:
             )
             for item in expected
         )
-        if actual != wanted or any(
-            item.source_id is not None and item.source_id != row["source_id"]
+        identity_changed = len(rows) != len(expected) or any(
+            item.document_id != row["document_id"]
+            or (item.source_id is not None and item.source_id != row["source_id"])
             for item, row in zip(expected, rows, strict=False)
-        ):
+        )
+        if identity_changed or (not allow_historical and actual != wanted):
             raise DocumentStateChanged("selected document state changed before snapshot commit")
         revision_rows = list(
             (
@@ -1440,7 +1523,9 @@ class MysqlDocumentRepository:
                     )
                 )
 
-    async def load_citation(self, citation_id: str) -> CitationLookup | None:
+    async def load_citation(
+        self, citation_id: str, *, historical: bool = False
+    ) -> CitationLookup | None:
         if not isinstance(citation_id, str) or not citation_id or len(citation_id) > 64:
             return None
         citation = knowledge_citation_snapshot
@@ -1551,7 +1636,7 @@ class MysqlDocumentRepository:
                     knowledge_document.c.document_id == row["citation_document_id"],
                 )
             )
-        if row is None or source_active is None:
+        if row is None or (source_active is None and not historical):
             return None
         try:
             citation_anchor = _canonical_json_object(row["citation_anchor"])
@@ -3580,12 +3665,13 @@ class MysqlDocumentRepository:
                 )
             )
             if row["kind"] == JobKind.DELETION.value and is_complete:
-                await session.execute(
-                    delete(knowledge_chunk_manifest).where(
-                        *scope_predicates(knowledge_chunk_manifest, self._scope),
-                        knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                if not await self._revision_has_turn_evidence(session, row["revision_id"]):
+                    await session.execute(
+                        delete(knowledge_chunk_manifest).where(
+                            *scope_predicates(knowledge_chunk_manifest, self._scope),
+                            knowledge_chunk_manifest.c.revision_id == row["revision_id"],
+                        )
                     )
-                )
                 await session.execute(
                     update(knowledge_document)
                     .where(
@@ -3655,6 +3741,14 @@ class MysqlDocumentRepository:
                 await self._revision_event(
                     session, ready_revision, ready=True, now=database_now, job_id=commit.job_id
                 )
+                if self._ready_projection is not None:
+                    await self._ready_projection.after_ready(
+                        session,
+                        self._scope,
+                        ready_revision,
+                        now=database_now,
+                        ingestion_job_id=commit.job_id,
+                    )
             # Source/fact/FK/Audit/Outbox writes above may have waited after the
             # initial lease check. This final mutation still owns the locked job.
             terminal_now = await _database_now(session)
@@ -3768,6 +3862,9 @@ class MysqlDocumentRepository:
                     )
                 ).mappings()
             )
+            preserve_evidence_artifacts = await self._revision_has_turn_evidence(
+                session, revision["revision_id"]
+            )
             if job["lease_until"] is None or job["lease_until"] <= await _database_now(session):
                 self._raise_lease_lost(job_id)
             return IngestionWork(
@@ -3793,7 +3890,30 @@ class MysqlDocumentRepository:
                 manifest=_manifest_from_rows(manifest_rows),
                 chunk_manifest_digest=revision["chunk_manifest_digest"],
                 projection_digest=revision["projection_digest"],
+                preserve_evidence_artifacts=preserve_evidence_artifacts,
             )
+
+    async def _revision_has_turn_evidence(self, session, revision_id: str) -> bool:
+        return bool(
+            await session.scalar(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM turn_artifact_link AS link "
+                    "JOIN knowledge_citation_snapshot AS citation "
+                    "ON citation.enterprise_id=link.enterprise_id "
+                    "AND citation.project_id=link.project_id "
+                    "AND citation.citation_id=link.artifact_id "
+                    "WHERE link.enterprise_id=:enterprise_id "
+                    "AND link.project_id=:project_id "
+                    "AND link.artifact_kind='citation' "
+                    "AND citation.revision_id=:revision_id)"
+                ),
+                {
+                    "enterprise_id": self._scope.enterprise_id,
+                    "project_id": self._scope.project_id,
+                    "revision_id": revision_id,
+                },
+            )
+        )
 
     async def retry_job(self, retry: JobRetry) -> None:
         async with self._sessions() as session, session.begin():

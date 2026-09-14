@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 import unicodedata
@@ -19,6 +20,8 @@ _DIMENSION = 1536
 _EMBEDDING_ALIAS = "tapper-embedding"
 _ANSWER_ALIAS = "tapper-chat"
 _PROFILE = "quick-hybrid-v1"
+_ANSWER_DELAY_SECONDS = 5.0
+_CANCELLATION_QUERY_SUFFIX = " [e2e-cancel]"
 
 
 def deterministic_vector(text: str, dimension: int = _DIMENSION) -> tuple[float, ...]:
@@ -46,10 +49,22 @@ def deterministic_vector(text: str, dimension: int = _DIMENSION) -> tuple[float,
 class DeterministicTapperModel:
     """Implement query, document, and answer model ports without any network path."""
 
-    def __init__(self, *, dimension: int = _DIMENSION) -> None:
+    def __init__(
+        self,
+        *,
+        dimension: int = _DIMENSION,
+        answer_delay_seconds: float = _ANSWER_DELAY_SECONDS,
+    ) -> None:
         if type(dimension) is not int or dimension != _DIMENSION:
             raise ValueError("deterministic E2E dimension must equal 1536")
+        if (
+            isinstance(answer_delay_seconds, bool)
+            or not isinstance(answer_delay_seconds, int | float)
+            or not 0 <= answer_delay_seconds <= 5
+        ):
+            raise ValueError("deterministic E2E answer delay must be zero to five seconds")
         self._dimension = dimension
+        self._answer_delay_seconds = float(answer_delay_seconds)
 
     @property
     def embedding_model_id(self) -> str:
@@ -119,6 +134,8 @@ class DeterministicTapperModel:
             or profile_id != _PROFILE
         ):
             raise ValueError("deterministic answer input is outside the closed E2E contract")
+        if self._answer_delay_seconds and query.endswith(_CANCELLATION_QUERY_SUFFIX):
+            await asyncio.sleep(self._answer_delay_seconds)
         claims: list[GeneratedClaim] = []
         used: set[str] = set()
         for item in evidence:

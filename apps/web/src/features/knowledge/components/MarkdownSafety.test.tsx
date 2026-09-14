@@ -103,6 +103,26 @@ describe("GroundedAnswer Markdown safety", () => {
 });
 
 describe("GroundedAnswer closed graph", () => {
+  it("fails closed when a claim omits its answer offsets", () => {
+    const response = answerResponse() as unknown as {
+      claims: Array<Record<string, unknown>>;
+    };
+    response.claims = [
+      {
+        claimId: "claim-a",
+        text: "Grounded answer.",
+        citationIds: ["citation-a"],
+      },
+    ];
+    render(
+      <GroundedAnswer
+        response={response as never}
+        onOpenCitation={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("alert")).toBeVisible();
+  });
+
   it.each([
     [
       "duplicate claim IDs",
