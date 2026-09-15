@@ -35,3 +35,4 @@
 - [V2 Grounded Knowledge Graph 门禁评审](2026-09-13-v2-knowledge-graph-gate.md)：历史评审；原 `pass` 已被后续更正撤销。
 - [V3 AI 测试设计门禁评审](2026-09-14-v3-ai-test-design-gate.md)：历史评审；原 `pass` 已被后续更正撤销。
 - [V2/V3 门禁更正评审](2026-09-14-v2-v3-gate-correction.md)：V2/V3 `gate-reopened`；记录多 Revision Graph、真实质量复核和完整 Web 评审闭环缺口，V4 暂不放行。
+- [IBM Bob COBOL 采购与 Tapper 能力评估](2026-09-15-ibm-bob-cobol-procurement-assessment.md)：基于 IBM 官方资料及有限外部证据，评估 Bob Premium Package for Z、采购试点、风险、成本与 Tapper 选择性借鉴路径。
