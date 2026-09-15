@@ -208,6 +208,13 @@ class KnowledgeHttpService:
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
+        supported_aliases = (
+            frozenset({"tapper-chat"})
+            if self._models is None
+            else getattr(self._models, "chat_aliases", frozenset({"tapper-chat"}))
+        )
+        if frozen_input.model_alias not in supported_aliases:
+            raise ValueError("accepted conversation model alias is unsupported")
         revisions = tuple(
             sorted(
                 (
@@ -222,6 +229,7 @@ class KnowledgeHttpService:
                 key=lambda item: item.document_id,
             )
         )
+        governance = self._generation_governance(frozen_input)
         if not revisions:
             if self._models is None:
                 raise ValueError("model-only conversation runtime is unavailable")
@@ -234,7 +242,6 @@ class KnowledgeHttpService:
                 or frozen_input.retrieval_policy_digest != expected_policy
             ):
                 raise ValueError("accepted model-only authority changed")
-            governance = self._generation_governance(frozen_input)
             generation = await self._models.chat(
                 request.query,
                 model_alias=frozen_input.model_alias,
@@ -265,7 +272,6 @@ class KnowledgeHttpService:
             )
         ):
             raise ValueError("accepted retrieval authority changed")
-        governance = self._generation_governance(frozen_input)
         domain_request = answer_request_from_http(request)
         graph_context = None
         if self._graph_enricher is not None:
@@ -280,9 +286,7 @@ class KnowledgeHttpService:
             policy,
             governance=governance,
             graph_context=() if graph_context is None else graph_context.facts,
-            model_alias=(
-                None if frozen_input.model_alias == "tapper-chat" else frozen_input.model_alias
-            ),
+            model_alias=frozen_input.model_alias,
         )
         return answer_response_to_http(
             response,

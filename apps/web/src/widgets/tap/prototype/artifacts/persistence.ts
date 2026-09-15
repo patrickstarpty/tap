@@ -1,6 +1,6 @@
 import {
-  DEFAULT_CODEX_MODEL_ID,
-  isCodexModelId,
+  DEFAULT_MODEL_ID,
+  isModelId,
   type Conversation,
   type LibrarySource,
 } from "../model";
@@ -53,17 +53,15 @@ export function readPrototypeSnapshot(
     if (!hasActiveConversation) return null;
     const conversations = value.conversations.map((conversation) => {
       if (!isRecord(conversation)) return conversation;
-      const modelId = isCodexModelId(conversation.modelId)
+      const modelId = isModelId(conversation.modelId)
         ? conversation.modelId
-        : DEFAULT_CODEX_MODEL_ID;
+        : DEFAULT_MODEL_ID;
       const turns = Array.isArray(conversation.turns)
         ? conversation.turns.map((turn) =>
             isRecord(turn)
               ? {
                   ...turn,
-                  modelId: isCodexModelId(turn.modelId)
-                    ? turn.modelId
-                    : modelId,
+                  modelId: isModelId(turn.modelId) ? turn.modelId : modelId,
                 }
               : turn,
           )

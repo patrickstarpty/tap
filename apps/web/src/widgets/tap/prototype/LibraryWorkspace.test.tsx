@@ -13,7 +13,7 @@ describe("Library file browsing", () => {
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
         sources={SAMPLE_FILES}
-        onAddSource={() => {}}
+        onAddSource={async () => undefined}
       />,
     );
     const all = screen.getByRole("checkbox", { name: "Select all" });
@@ -44,7 +44,7 @@ describe("Library file browsing", () => {
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
         sources={SAMPLE_FILES}
-        onAddSource={() => {}}
+        onAddSource={async () => undefined}
       />,
     );
     const search = screen.getByRole("textbox", { name: "Search library" });
@@ -72,7 +72,7 @@ describe("Library file browsing", () => {
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
         sources={SAMPLE_FILES}
-        onAddSource={() => {}}
+        onAddSource={async () => undefined}
       />,
     );
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -117,7 +117,7 @@ describe("Library file browsing", () => {
     render(
       <LibraryWorkspace
         copy={PROTOTYPE_COPY.en}
-        onAddSource={() => {}}
+        onAddSource={async () => undefined}
         sources={[
           {
             id: "real",

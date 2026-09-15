@@ -131,7 +131,7 @@ class KnowledgeAPI:
         return await self._retrieval.answer(request, policy)
 
     async def answer_frozen(
-        self, request, policy, *, governance, graph_context=(), model_alias: str | None = None
+        self, request, policy, *, governance, graph_context=(), model_alias=None
     ):
         return await self._retrieval.answer(
             request,

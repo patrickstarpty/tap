@@ -1,5 +1,6 @@
 import {
   ArrowLeftOutlined,
+  ArrowRightOutlined,
   CheckCircleFilled,
   CodeOutlined,
   DatabaseOutlined,
@@ -26,6 +27,12 @@ import {
   selectTestPlanRuns,
 } from "../artifacts/state";
 import { AutomationRunPanel } from "../automation/AutomationWorkspace";
+import {
+  filterExecutions,
+  getBuild,
+  recovered,
+  summarize,
+} from "../testAnalyticsModel";
 
 type TestManagementSection = "plans" | "data";
 
@@ -65,6 +72,15 @@ const TEXT = {
     linkToRun: "Link an Automation to run this plan",
     scenarioCoverage: "Scenario coverage",
     mapped: "Mapped",
+    qualitySummary: "Quality summary",
+    observabilityHint: "Execution health for this Test Plan",
+    viewObservability: "View in Test Observability",
+    openObservability: "Open Test Observability",
+    passRate: "Pass rate",
+    failedTests: "Failed tests",
+    flakyTests: "Flaky tests",
+    latestBuild: "Latest build",
+    noBuild: "No build",
   },
   zh: {
     heading: "测试管理",
@@ -100,6 +116,15 @@ const TEXT = {
     linkToRun: "关联一个自动化后即可执行此测试计划",
     scenarioCoverage: "场景覆盖",
     mapped: "已映射",
+    qualitySummary: "质量摘要",
+    observabilityHint: "当前测试计划的执行健康度",
+    viewObservability: "在 Test Observability 中查看",
+    openObservability: "打开 Test Observability",
+    passRate: "通过率",
+    failedTests: "失败测试",
+    flakyTests: "不稳定测试",
+    latestBuild: "最近构建",
+    noBuild: "暂无构建",
   },
 } as const;
 
@@ -109,6 +134,7 @@ function TestPlanDetail({
   locale,
   onBack,
   onOpenAutomation,
+  onOpenObservability,
   onLink,
   onRun,
 }: {
@@ -117,6 +143,7 @@ function TestPlanDetail({
   locale: Locale;
   onBack: () => void;
   onOpenAutomation: (automationId: string) => void;
+  onOpenObservability: (testPlanId: string) => void;
   onLink: (automationId: string, testPlanId: string | null) => void;
   onRun: (
     automation: Automation,
@@ -140,6 +167,19 @@ function TestPlanDetail({
   );
   const availableAutomations = selectAvailableAutomations(state, plan.id);
   const runs = selectTestPlanRuns(state, plan.id);
+  const analyticsRows = filterExecutions({
+    days: 30,
+    plan: plan.id,
+    environment: "all",
+    date: "",
+    build: "",
+  });
+  const analyticsStats = summarize(analyticsRows);
+  const passRate = analyticsStats.finalRate;
+  const flakyCount = analyticsRows.filter(recovered).length;
+  const latestBuild = analyticsRows.length
+    ? getBuild(analyticsRows.at(-1)!).id
+    : text.noBuild;
 
   return (
     <section
@@ -162,6 +202,52 @@ function TestPlanDetail({
           {plan.scenarios.length} {text.scenarios}
         </span>
       </header>
+
+      <section
+        className="tap-plan-quality-summary"
+        aria-label={text.qualitySummary}
+      >
+        <div className="tap-panel-heading">
+          <div>
+            <h2>{text.qualitySummary}</h2>
+            <p>{text.observabilityHint}</p>
+          </div>
+          <Button
+            type="text"
+            iconPlacement="end"
+            icon={<ArrowRightOutlined />}
+            onClick={() => onOpenObservability(plan.id)}
+          >
+            {text.viewObservability}
+          </Button>
+        </div>
+        <button
+          type="button"
+          className="tap-plan-quality-metrics"
+          aria-label={text.openObservability}
+          onClick={() => onOpenObservability(plan.id)}
+        >
+          <span>
+            <small>{text.passRate}</small>
+            <strong>
+              {passRate === null ? "—" : `${passRate.toFixed(1)}%`}
+            </strong>
+          </span>
+          <span>
+            <small>{text.failedTests}</small>
+            <strong>{analyticsStats.failed}</strong>
+          </span>
+          <span>
+            <small>{text.flakyTests}</small>
+            <strong>{flakyCount}</strong>
+          </span>
+          <span>
+            <small>{text.latestBuild}</small>
+            <strong>{latestBuild}</strong>
+          </span>
+          <ArrowRightOutlined aria-hidden="true" />
+        </button>
+      </section>
 
       <div className="tap-test-plan-layout">
         <div className="tap-test-plan-main">
@@ -291,6 +377,7 @@ export function TestManagementWorkspace({
   onOpenPlan,
   onBack,
   onOpenAutomation,
+  onOpenObservability,
   onLink,
   onRun,
 }: {
@@ -300,6 +387,7 @@ export function TestManagementWorkspace({
   onOpenPlan: (planId: string) => void;
   onBack: () => void;
   onOpenAutomation: (automationId: string) => void;
+  onOpenObservability: (testPlanId: string) => void;
   onLink: (automationId: string, testPlanId: string | null) => void;
   onRun: (
     automation: Automation,
@@ -321,6 +409,7 @@ export function TestManagementWorkspace({
         locale={locale}
         onBack={onBack}
         onOpenAutomation={onOpenAutomation}
+        onOpenObservability={onOpenObservability}
         onLink={onLink}
         onRun={onRun}
       />

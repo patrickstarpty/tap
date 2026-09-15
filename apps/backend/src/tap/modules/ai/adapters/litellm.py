@@ -119,12 +119,11 @@ class LiteLLMModelGatewayConfig:
         aliases = {item.alias for item in chat_routes} | {self.embedding_alias}
         if len(aliases) != len(chat_routes) + 1:
             raise ValueError("model gateway aliases must be disjoint")
-        targets = (
+        for target in (
             self.chat_model,
             self.embedding_model,
             *(item.target for item in chat_routes[1:]),
-        )
-        for target in targets:
+        ):
             if (
                 not isinstance(target, ProviderModelMapping)
                 or target.provider in aliases

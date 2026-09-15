@@ -424,8 +424,8 @@ describe("Tap product prototype interactions", () => {
     ).toEqual([
       "Tapper",
       "Test Management",
-      "Test Observability",
       "Low Code Automation",
+      "Test Observability",
     ]);
     const tapperSidebar = screen.getByRole("complementary", {
       name: "Tapper tools",
@@ -462,15 +462,18 @@ describe("Tap product prototype interactions", () => {
     ).toHaveAttribute("data-panel-state", "expanded");
     await user.click(collapseSidebar);
     expect(
-      screen.getByRole("complementary", { name: "Tapper tools" }),
-    ).toHaveAttribute("data-collapsed", "true");
+      screen.queryByRole("complementary", { name: "Tapper tools" }),
+    ).not.toBeInTheDocument();
     const expandSidebar = screen.getByRole("button", {
       name: "Expand sidebar",
     });
     expect(expandSidebar).toHaveFocus();
     expect(
-      expandSidebar.querySelector('[data-panel-icon="left"]'),
-    ).toHaveAttribute("data-panel-state", "collapsed");
+      globalThis.document.querySelectorAll(".tap-sidebar-expand-button"),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("navigation", { name: "Chat history" }),
+    ).not.toBeInTheDocument();
 
     await user.click(expandSidebar);
     const restoredSidebar = screen.getByRole("complementary", {
@@ -484,67 +487,6 @@ describe("Tap product prototype interactions", () => {
     ).toHaveFocus();
   });
 
-  it("keeps collapsed conversation history icon-only and restores its labels", async () => {
-    const style = installPrototypeStyles();
-    const user = userEvent.setup();
-
-    try {
-      renderPrototype();
-      await user.type(
-        screen.getByRole("textbox", { name: "Message Tapper" }),
-        "Review the beneficiary evidence",
-      );
-      await user.click(screen.getByRole("button", { name: "Send" }));
-
-      const history = screen.getByRole("navigation", { name: "Chat history" });
-      const sectionTitle = within(history).getByText("Chat history");
-      const historyButton = within(history).getAllByRole("button")[0]!;
-      const historyLabel =
-        historyButton.querySelector<HTMLElement>("span:not(.anticon)")!;
-
-      await user.click(
-        screen.getByRole("button", { name: "Collapse sidebar" }),
-      );
-
-      expect(getComputedStyle(sectionTitle).display).toBe("none");
-      expect(getComputedStyle(historyLabel).display).toBe("none");
-      expect(getComputedStyle(historyButton).gridTemplateColumns).toBe("1fr");
-      expect(getComputedStyle(historyButton).width).toBe("44px");
-      expect(getComputedStyle(historyButton).justifyItems).toBe("center");
-
-      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
-
-      expect(getComputedStyle(sectionTitle).display).not.toBe("none");
-      expect(getComputedStyle(historyLabel).display).not.toBe("none");
-      expect(getComputedStyle(historyButton).gridTemplateColumns).toBe(
-        "20px minmax(0, 1fr)",
-      );
-    } finally {
-      style.remove();
-    }
-  });
-
-  it("hides conversation history status copy while the sidebar is collapsed", async () => {
-    const style = installPrototypeStyles();
-    const user = userEvent.setup();
-
-    try {
-      renderPrototype("api");
-      const sidebar = screen.getByRole("complementary", {
-        name: "Tapper tools",
-      });
-      const historyStatus = within(sidebar).getByRole("status");
-
-      await user.click(
-        screen.getByRole("button", { name: "Collapse sidebar" }),
-      );
-
-      expect(getComputedStyle(historyStatus).display).toBe("none");
-    } finally {
-      style.remove();
-    }
-  });
-
   it("opens Test Observability from the product rail", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -554,7 +496,7 @@ describe("Tap product prototype interactions", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: /Test Observability/i }),
+      screen.getByRole("heading", { name: /Demo Dashboard/i }),
     ).toBeVisible();
   });
 
@@ -593,7 +535,10 @@ describe("Tap product prototype interactions", () => {
 
     expect(tapperButton).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.getByRole("navigation", { name: "Tapper tools" }),
+      screen.queryByRole("navigation", { name: "Tapper tools" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
     ).toBeVisible();
   });
 
@@ -610,9 +555,9 @@ describe("Tap product prototype interactions", () => {
     expect(
       screen.getByRole("textbox", { name: "Message Tapper" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Skills" })).not.toHaveAttribute(
-      "aria-current",
-    );
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ).toBeVisible();
   });
 
   it("keeps the composer usable at tablet width by opening sources in a drawer", async () => {
@@ -661,8 +606,8 @@ describe("Tap product prototype interactions", () => {
       const main = screen.getByRole("main");
 
       expect(
-        screen.getByRole("complementary", { name: "Tapper tools" }),
-      ).toHaveAttribute("data-collapsed", "true");
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
+      ).not.toBeInTheDocument();
       expect(main).not.toHaveAttribute("aria-hidden");
 
       await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
@@ -682,8 +627,8 @@ describe("Tap product prototype interactions", () => {
       await user.keyboard("{Escape}");
 
       expect(
-        screen.getByRole("complementary", { name: "Tapper tools" }),
-      ).toHaveAttribute("data-collapsed", "true");
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
+      ).not.toBeInTheDocument();
       expect(main).not.toHaveAttribute("aria-hidden");
       expect(main).not.toHaveAttribute("inert");
       expect(globalThis.document.body).not.toHaveStyle({
@@ -703,8 +648,8 @@ describe("Tap product prototype interactions", () => {
       await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
       await user.click(screen.getByRole("button", { name: "New chat" }));
       expect(
-        screen.getByRole("complementary", { name: "Tapper tools" }),
-      ).toHaveAttribute("data-collapsed", "true");
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("textbox", { name: "Message Tapper" }),
       ).toHaveFocus();
@@ -722,25 +667,30 @@ describe("Tap product prototype interactions", () => {
       const tapperButton = screen.getByRole("button", { name: "Tapper" });
 
       await user.click(tapperButton);
+      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
       await user.click(screen.getByRole("button", { name: "Skills" }));
 
       expect(
-        screen.getByRole("complementary", { name: "Tapper tools" }),
-      ).toHaveAttribute("data-collapsed", "true");
+        screen.queryByRole("complementary", { name: "Tapper tools" }),
+      ).not.toBeInTheDocument();
       const skillsHeading = screen.getByRole("heading", { name: "Skills" });
       expect(skillsHeading).toHaveFocus();
 
       await user.click(tapperButton);
+      await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
 
       expect(
         screen.getByRole("complementary", { name: "Tapper tools" }),
       ).toBeVisible();
+      await user.click(
+        screen.getByRole("button", { name: "Collapse sidebar" }),
+      );
       expect(
         screen.getByRole("textbox", { name: "Message Tapper" }),
       ).toBeVisible();
       expect(
-        screen.getByRole("button", { name: "Skills" }),
-      ).not.toHaveAttribute("aria-current");
+        screen.queryByRole("button", { name: "Skills" }),
+      ).not.toBeInTheDocument();
     } finally {
       matchMedia.mockRestore();
     }
@@ -1011,10 +961,10 @@ describe("Tap product prototype interactions", () => {
 
     const composer = screen.getByRole("form", { name: "Message composer" });
     const trigger = within(composer).getByRole("button", {
-      name: "Select model, current model GPT-5.6 Sol",
+      name: "Select model, current model Qwen Plus",
     });
 
-    expect(trigger).toHaveTextContent("GPT-5.6 Sol");
+    expect(trigger).toHaveTextContent("Qwen Plus");
     expect(trigger.querySelector(".anticon-thunderbolt")).toBeNull();
     expect(within(composer).queryByText(/Fast|Ultra/)).toBeNull();
 
@@ -1025,22 +975,18 @@ describe("Tap product prototype interactions", () => {
       within(menu)
         .getAllByRole("menuitemradio")
         .map((option) => option.textContent?.trim()),
-    ).toEqual([
-      "GPT-5.6 Sol",
-      "GPT-5.6 Terra",
-      "GPT-5.6 Luna",
-      "GPT-5.5",
-      "GPT-5.4",
-    ]);
+    ).toEqual(["Qwen Plus", "GPT-5.6 Sol · Codex"]);
     expect(within(menu).queryByText(/Fast|Ultra/)).toBeNull();
 
     await user.click(
-      within(menu).getByRole("menuitemradio", { name: "GPT-5.6 Terra" }),
+      within(menu).getByRole("menuitemradio", {
+        name: "GPT-5.6 Sol · Codex",
+      }),
     );
 
     expect(
       within(composer).getByRole("button", {
-        name: "Select model, current model GPT-5.6 Terra",
+        name: "Select model, current model GPT-5.6 Sol · Codex",
       }),
     ).toBeVisible();
     expect(screen.queryByRole("menu", { name: "Models" })).toBeNull();
@@ -1053,7 +999,7 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol",
+        name: "Select model, current model Qwen Plus",
       }),
     );
     await user.click(composer);
@@ -1069,11 +1015,11 @@ describe("Tap product prototype interactions", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol",
+        name: "Select model, current model Qwen Plus",
       }),
     );
     await user.click(
-      screen.getByRole("menuitemradio", { name: "GPT-5.6 Luna" }),
+      screen.getByRole("menuitemradio", { name: "GPT-5.6 Sol · Codex" }),
     );
     await user.type(
       screen.getByRole("textbox", { name: "Message Tapper" }),
@@ -1084,7 +1030,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Sol",
+        name: "Select model, current model Qwen Plus",
       }),
     ).toBeVisible();
 
@@ -1095,7 +1041,7 @@ describe("Tap product prototype interactions", () => {
     );
     expect(
       screen.getByRole("button", {
-        name: "Select model, current model GPT-5.6 Luna",
+        name: "Select model, current model GPT-5.6 Sol · Codex",
       }),
     ).toBeVisible();
   });
@@ -1854,8 +1800,11 @@ describe("Tap product prototype interactions", () => {
       }),
     ).toHaveTextContent("life-underwriting-rules.md");
     expect(
+      within(turns[0] as HTMLElement).queryByText(/prototype/i),
+    ).toBeNull();
+    expect(
       within(turns[0] as HTMLElement).getByText(
-        /records this selection but does not verify document use/,
+        "Citations identify the sources that supported this answer.",
       ),
     ).toBeVisible();
     expect(
@@ -2617,17 +2566,19 @@ describe("Tap product prototype interactions", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
   });
 
-  it("keeps collapsed tool navigation available and returns to the same Tapper draft", async () => {
+  it("fully hides collapsed tool navigation and restores the same Tapper draft", async () => {
     const user = userEvent.setup();
     renderPrototypeWithManyDocuments();
     const input = screen.getByRole("textbox", { name: "Message Tapper" });
     await user.type(input, "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    await user.click(screen.getByRole("button", { name: "Library" }));
+    expect(
+      screen.queryByRole("button", { name: "Library" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Expand sidebar" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(input).toBeVisible();
     expect(input).toHaveValue("Keep this draft");
   });

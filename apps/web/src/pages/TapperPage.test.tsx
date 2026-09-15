@@ -48,39 +48,6 @@ describe("Tapper product prototype", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("keeps the Test Management and Test Observability prototypes in durable mode", async () => {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (request.url.endsWith("/ai/models")) {
-        return Response.json({
-          defaultAlias: "tapper-chat",
-          items: [
-            {
-              alias: "tapper-chat",
-              displayName: "Qwen Plus",
-              capabilities: ["chat", "structured"],
-            },
-          ],
-        });
-      }
-      if (request.url.includes("/conversations"))
-        return Response.json({ items: [], nextCursor: null });
-      return Response.json({ items: [], nextCursor: null });
-    });
-    const user = userEvent.setup();
-    renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
-
-    await user.click(screen.getByRole("button", { name: "Test Management" }));
-    expect(screen.getByRole("table", { name: "Test plan list" })).toBeVisible();
-
-    await user.click(
-      screen.getByRole("button", { name: "Test Observability" }),
-    );
-    expect(
-      screen.getByRole("heading", { name: "Test Observability" }),
-    ).toBeVisible();
-  });
-
   it("restores the default Tapper page from durable Conversation APIs, not localStorage", async () => {
     window.localStorage.setItem(
       "tap.prototype.workspace.v2",
@@ -362,19 +329,20 @@ describe("Tapper product prototype", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps Validation Mode visible across product navigation", async () => {
+  it("keeps ready validation details out of the primary workspace", async () => {
     const user = userEvent.setup();
     renderPrototype();
-    const banner = await screen.findByRole("status", {
-      name: "Validation Mode",
-    });
-    expect(banner).toHaveTextContent(
-      "操作统一记录到固定 Validation Actor，不代表个人身份",
-    );
+    expect(
+      screen.queryByRole("status", { name: "Validation Mode" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Library" }));
-    expect(banner).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Validation Mode" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Test Management" }));
-    expect(banner).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Validation Mode" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows TAP platform and Tapper workspace identities", () => {
@@ -405,8 +373,8 @@ describe("Tapper product prototype", () => {
     ).toEqual([
       "Tapper",
       "Test Management",
-      "Test Observability",
       "Low Code Automation",
+      "Test Observability",
     ]);
     expect(
       within(screen.getByRole("navigation", { name: "Tapper tools" }))
@@ -961,6 +929,34 @@ describe("Tapper product prototype", () => {
     expect(screen.getByRole("tabpanel", { name: "Test Data" })).toBeVisible();
   });
 
+  it("opens plan-scoped Test Observability from a Test Plan quality summary", async () => {
+    const user = userEvent.setup();
+    renderPrototype();
+
+    await user.click(screen.getByRole("button", { name: "Test Management" }));
+    await user.click(
+      screen.getByRole("row", {
+        name: /Life insurance application underwriting/,
+      }),
+    );
+
+    const summary = screen.getByRole("region", { name: "Quality summary" });
+    expect(within(summary).getByText("Pass rate")).toBeVisible();
+    expect(within(summary).getByText("Failed tests")).toBeVisible();
+    expect(within(summary).getByText("Flaky tests")).toBeVisible();
+    expect(within(summary).getByText("Latest build")).toBeVisible();
+
+    await user.click(
+      within(summary).getByRole("button", {
+        name: "Open Test Observability",
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Demo Dashboard" }),
+    ).toBeVisible();
+    expect(screen.getByText("Test Plan: TP-101")).toBeVisible();
+  });
+
   it("keeps ordinary questions in the chat conversation", async () => {
     const user = userEvent.setup();
     renderPrototype();
@@ -978,7 +974,7 @@ describe("Tapper product prototype", () => {
       }),
     ).toBeVisible();
     expect(
-      screen.getByText(/此轮对话未选择知识上下文。此原型输出使用内置演示内容/),
+      screen.getByText(/此轮对话未选择知识上下文。回答仅基于当前可用信息/),
     ).toBeVisible();
     expect(screen.getByRole("region", { name: "Tapper 助手" })).toBeVisible();
     expect(
@@ -1024,9 +1020,7 @@ describe("Tapper product prototype", () => {
     );
 
     expect(
-      screen.getByText(
-        /No knowledge context was selected for this turn. This prototype output uses built-in demo content/,
-      ),
+      screen.getByText(/No knowledge context was selected for this turn/),
     ).toBeVisible();
     expect(screen.queryByText(/此轮对话未选择知识上下文/)).toBeNull();
   });

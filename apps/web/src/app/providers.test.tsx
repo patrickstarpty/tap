@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { fakeKnowledgeClient } from "../features/knowledge/testing/fakeKnowledgeClient";
@@ -32,21 +32,19 @@ describe("runtime composition", () => {
         <TapperPage />
       </AppProviders>,
     );
-    expect(
-      screen.getByRole("status", { name: "Validation Mode" }),
-    ).toHaveTextContent("正在连接运行环境");
+    expect(screen.getByRole("status", { name: "运行环境" })).toHaveTextContent(
+      "正在连接运行环境",
+    );
     expect(list).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Library" }));
     expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
     await act(async () => {
       resolve(mode);
     });
+    await waitFor(() => expect(list).toHaveBeenCalledOnce());
     expect(
-      await screen.findByText(
-        "操作统一记录到固定 Validation Actor，不代表个人身份",
-      ),
-    ).toBeVisible();
-    expect(list).toHaveBeenCalledOnce();
+      screen.queryByRole("status", { name: "运行环境" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps an honest failure state without inventing Project or Actor authority", async () => {
@@ -62,7 +60,9 @@ describe("runtime composition", () => {
       </AppProviders>,
     );
     expect(
-      await screen.findByText("运行环境连接失败 · 服务器操作暂不可用"),
+      await screen.findByText(
+        "运行环境连接失败 · 当前无法使用服务器功能，请稍后重试",
+      ),
     ).toBeVisible();
     expect(
       screen.queryByText("操作统一记录到固定 Validation Actor，不代表个人身份"),
