@@ -722,6 +722,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  max-width: min(48vw, 220px);
   min-height: 44px;
   border: 0;
   border-radius: 10px;
@@ -733,6 +734,12 @@
   font-size: 14px;
   font-weight: 540;
   white-space: nowrap;
+}
+
+.tap-model-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tap-model-trigger:hover,
@@ -1237,6 +1244,187 @@
 
 .tap-turn-context {
   min-width: 0;
+}
+
+.tap-answer-context {
+  margin-top: 14px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tap-answer-context summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--tap-muted);
+}
+
+.tap-answer-context[open] > div,
+.tap-answer-context[open] > p {
+  margin: 10px 0 0 17px;
+}
+
+.tap-answer-context ul {
+  margin: 4px 0 0;
+  padding-inline-start: 17px;
+}
+
+.tap-answer-activity {
+  max-width: 76ch;
+  margin-bottom: 12px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tap-answer-activity summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.tap-answer-activity ol {
+  margin: 8px 0 0;
+  padding-inline-start: 20px;
+}
+
+.tap-answer-activity li + li {
+  margin-top: 4px;
+}
+
+.tap-answer-progress {
+  width: fit-content;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 10px;
+  background: var(--tap-surface);
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tap-catalog-markdown-preview {
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.tap-catalog-markdown-preview > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--tap-ink);
+  font-size: 12px;
+}
+
+.tap-catalog-markdown-preview pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 10px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tap-project-graph-source {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-project-graph-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tap-project-graph-view {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 10px;
+  background: var(--tap-surface);
+}
+
+.tap-project-graph-view button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--tap-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tap-project-graph-view button[aria-pressed="true"] {
+  background: var(--tap-soft);
+  color: var(--tap-ink);
+  font-weight: 700;
+}
+
+.tap-project-graph-view button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-project-graph {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.tap-graph-live-workspace > .tap-graph-explorer {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.tap-graph-live-workspace .tap-graph-toolbar {
+  position: static;
+}
+
+.tap-graph-live-workspace > .tap-graph-inspector {
+  grid-column: 2;
+  grid-row: 1;
+  position: static;
+  width: auto;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--tap-line);
+  border-radius: 0;
+  contain: none;
+}
+
+@media (max-width: 700px) {
+  .tap-graph-live-workspace > .tap-graph-inspector {
+    grid-column: 1;
+    grid-row: 2;
+    border-left: 0;
+    border-top: 1px solid var(--tap-line);
+  }
+}
+
+.tap-project-graph-source select {
+  width: min(100%, 380px);
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 9px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
 }
 
 .tap-citation-reference {
@@ -2485,7 +2673,8 @@
 .tap-new-automation,
 .tap-automation-detail,
 .tap-test-management,
-.tap-test-plan-detail {
+.tap-test-plan-detail,
+.tap-durable-review {
   --tap-workbench-ink: var(--tap-ink);
   --tap-workbench-muted: var(--tap-muted);
   --tap-workbench-line: var(--tap-line);
@@ -2571,7 +2760,8 @@
 }
 
 .tap-automation-row [role="cell"]:first-child,
-.tap-plan-row--automation [role="cell"]:first-child {
+.tap-plan-row--automation [role="cell"]:first-child,
+.tap-plan-row--durable [role="cell"]:first-child {
   display: flex;
   align-items: center;
   gap: 11px;
@@ -2580,21 +2770,24 @@
 }
 
 .tap-automation-row [role="cell"]:first-child > .anticon,
-.tap-plan-row--automation [role="cell"]:first-child > .anticon {
+.tap-plan-row--automation [role="cell"]:first-child > .anticon,
+.tap-plan-row--durable [role="cell"]:first-child > .anticon {
   flex: 0 0 auto;
   color: var(--tap-workbench-teal);
   font-size: 17px;
 }
 
 .tap-automation-row [role="cell"]:first-child > span,
-.tap-plan-row--automation [role="cell"]:first-child > span {
+.tap-plan-row--automation [role="cell"]:first-child > span,
+.tap-plan-row--durable [role="cell"]:first-child > span {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
 .tap-automation-row strong,
-.tap-plan-row--automation strong {
+.tap-plan-row--automation strong,
+.tap-plan-row--durable strong {
   overflow: hidden;
   color: var(--tap-workbench-ink);
   font-size: 13px;
@@ -2603,10 +2796,14 @@
 }
 
 .tap-automation-row small,
-.tap-plan-row--automation small {
+.tap-plan-row--automation small,
+.tap-plan-row--durable small {
   color: var(--tap-muted);
   font-size: 10px;
   letter-spacing: 0.025em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tap-type-badge,
@@ -3312,6 +3509,18 @@
   grid-template-columns:
     minmax(280px, 1.5fr) 88px minmax(116px, 0.65fr)
     minmax(125px, 0.7fr) 106px;
+}
+
+.tap-durable-plan-scroll {
+  overflow-x: auto;
+}
+
+.tap-plan-row--durable {
+  grid-template-columns: minmax(300px, 2fr) 80px 80px 110px 110px 88px;
+}
+
+.tap-plan-row--durable [role="cell"]:last-child {
+  justify-self: end;
 }
 
 .tap-test-plan-layout {
@@ -4784,4 +4993,233 @@
 .tap-automation-row[tabindex]:focus-visible {
   outline: 2px solid var(--tap-accent, #b44800);
   outline-offset: -2px;
+}
+.tap-durable-review {
+  max-width: 1120px;
+  margin-inline: auto;
+}
+
+.tap-plan-review-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.tap-plan-detail {
+  display: grid;
+  gap: 24px;
+  color: var(--tap-workbench-ink);
+}
+
+.tap-plan-detail-header,
+.tap-plan-detail-context-card,
+.tap-plan-case,
+.tap-plan-evidence,
+.tap-plan-detail-notes {
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: var(--tap-surface);
+}
+
+.tap-plan-detail-header {
+  padding: clamp(22px, 3vw, 34px);
+}
+
+.tap-plan-status,
+.tap-plan-critical {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: var(--tap-workbench-teal-soft);
+  color: var(--tap-workbench-teal);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tap-plan-detail-header h1 {
+  margin: 12px 0 8px;
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.15;
+  text-transform: capitalize;
+}
+
+.tap-plan-detail-header p,
+.tap-plan-case-heading p {
+  margin: 0;
+  color: var(--tap-muted);
+  line-height: 1.55;
+}
+
+.tap-plan-detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--tap-workbench-line);
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-plan-detail-stats strong {
+  color: var(--tap-workbench-ink);
+  font-size: 19px;
+}
+
+.tap-plan-detail-context {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.tap-plan-detail-context-card {
+  padding: 18px 20px;
+}
+
+.tap-plan-detail h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.tap-plan-detail-context-card h2 {
+  font-size: 13px;
+}
+
+.tap-plan-detail-context-card ul,
+.tap-plan-detail-notes ul {
+  margin: 0;
+  padding-left: 19px;
+  color: var(--tap-muted);
+  line-height: 1.6;
+}
+
+.tap-plan-detail-section {
+  min-width: 0;
+}
+
+.tap-plan-case-list,
+.tap-plan-evidence-list {
+  display: grid;
+  gap: 12px;
+}
+
+.tap-plan-case {
+  padding: 22px;
+}
+
+.tap-plan-case-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.tap-plan-case-number,
+.tap-plan-evidence-number {
+  flex: 0 0 auto;
+  color: var(--tap-workbench-teal);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tap-plan-case-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.tap-plan-case h3,
+.tap-plan-scenario h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  text-transform: capitalize;
+}
+
+.tap-plan-scenario {
+  margin: 18px 0 0 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--tap-workbench-line);
+}
+
+.tap-plan-scenario ol {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-plan-scenario li {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 8px 10px;
+  line-height: 1.5;
+}
+
+.tap-plan-keyword {
+  color: var(--tap-workbench-teal);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.tap-plan-scenario li small {
+  grid-column: 2;
+  color: var(--tap-muted);
+}
+
+.tap-plan-evidence {
+  display: flex;
+  gap: 14px;
+  padding: 18px 22px;
+}
+
+.tap-plan-evidence p {
+  margin: 0 0 9px;
+  line-height: 1.55;
+}
+
+.tap-plan-evidence-origin {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--tap-workbench-teal);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tap-plan-evidence details {
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-plan-evidence summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.tap-plan-evidence code {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+}
+
+.tap-plan-detail-notes {
+  padding: 20px 22px;
+}
+
+.tap-plan-gap-severity {
+  margin-right: 6px;
+  color: var(--tap-workbench-ink);
+}
+
+@media (max-width: 600px) {
+  .tap-plan-case,
+  .tap-plan-evidence {
+    padding: 16px;
+  }
+
+  .tap-plan-scenario {
+    margin-left: 0;
+  }
 }

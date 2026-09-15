@@ -65,7 +65,10 @@ import { LibraryWorkspace } from "./prototype/LibraryWorkspace";
 import { AccessibleDialog } from "./prototype/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
-import { useAiAssetCatalog } from "../../features/knowledge/api/aiAssets";
+import {
+  aiAssetPresentation,
+  useAiAssetCatalog,
+} from "../../features/knowledge/api/aiAssets";
 import {
   useAppendConversation,
   useCancelTurn,
@@ -164,6 +167,46 @@ function TurnContext({
     return <p className="tap-context-notice">{copy.chat.noContextNotice}</p>;
   }
 
+  if (turn.contextLabels !== undefined) {
+    const sourceCount = turn.sourceReferences.length;
+    const agentLabel =
+      turn.agentRevisionId == null ? null : labels[sourceCount];
+    const skillLabels = labels.slice(
+      sourceCount + (agentLabel === null ? 0 : 1),
+    );
+    return (
+      <details className="tap-turn-context tap-answer-context">
+        <summary>
+          {turn.locale === "zh"
+            ? "本次回答使用的资料与配置"
+            : "Sources and settings used for this answer"}
+        </summary>
+        {sourceCount > 0 ? (
+          <div>
+            <strong>
+              {turn.locale === "zh" ? "知识来源" : "Knowledge sources"}
+            </strong>
+            <ul>
+              {turn.sourceReferences.map((source) => (
+                <li key={source.id}>{source.name}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {agentLabel ? (
+          <p>
+            <strong>Agent:</strong> {agentLabel}
+          </p>
+        ) : null}
+        {skillLabels.length > 0 ? (
+          <p>
+            <strong>Skills:</strong> {skillLabels.join(", ")}
+          </p>
+        ) : null}
+      </details>
+    );
+  }
+
   return (
     <div className="tap-turn-context">
       <p className="tap-context-notice">{copy.chat.selectedContextNotice}</p>
@@ -181,6 +224,141 @@ function TurnContext({
   );
 }
 
+type ActivityEvent = {
+  eventType: string;
+  payload: { [key: string]: unknown };
+};
+
+export function AnswerActivity({
+  events,
+  locale,
+  sourceCount,
+  shownCitationCount,
+}: {
+  events: readonly ActivityEvent[];
+  locale: "en" | "zh";
+  sourceCount: number;
+  shownCitationCount: number;
+}) {
+  const context = events.find(
+    (event) => event.eventType === "context.assembled",
+  );
+  const stage = events.find(
+    (event) =>
+      event.eventType === "stage.completed" &&
+      event.payload.stage === "knowledge.answer",
+  );
+  const hits = events.find(
+    (event) => event.eventType === "retrieval.hits_ready",
+  );
+  const citations = events.filter(
+    (event) => event.eventType === "citation.resolved",
+  ).length;
+  const assembledCount =
+    context && typeof context.payload.sourceCount === "number"
+      ? context.payload.sourceCount
+      : sourceCount;
+  const answerRecorded = events.some(
+    (event) => event.eventType === "answer.delta",
+  );
+  const rows = [
+    assembledCount > 0
+      ? context
+        ? locale === "zh"
+          ? `整理 ${assembledCount} 份已选来源`
+          : `Assembled ${assembledCount} selected sources`
+        : locale === "zh"
+          ? `本次选择 ${assembledCount} 份来源`
+          : `${assembledCount} source${assembledCount === 1 ? "" : "s"} selected for this turn`
+      : null,
+    stage
+      ? locale === "zh"
+        ? "Knowledge answer 调用完成"
+        : "Knowledge answer call completed"
+      : answerRecorded
+        ? locale === "zh"
+          ? "回答正文已记录"
+          : "Answer text recorded"
+        : null,
+    hits && typeof hits.payload.authorizedHitCount === "number"
+      ? locale === "zh"
+        ? `检索结果：${hits.payload.authorizedHitCount} 处授权证据`
+        : `Retrieval: ${hits.payload.authorizedHitCount} authorized evidence hits`
+      : null,
+    citations > 0
+      ? locale === "zh"
+        ? `${citations} 条引用记录已解析；${shownCitationCount} 条用于展示的结论`
+        : `${citations} citation records resolved; ${shownCitationCount} used by displayed claims`
+      : null,
+  ].filter((row): row is string => row !== null);
+  if (rows.length === 0) return null;
+  const compact = [
+    assembledCount > 0
+      ? locale === "zh"
+        ? `${assembledCount} 份来源`
+        : `${assembledCount} source${assembledCount === 1 ? "" : "s"}`
+      : null,
+    stage
+      ? locale === "zh"
+        ? "Knowledge answer"
+        : "Knowledge answer"
+      : answerRecorded
+        ? locale === "zh"
+          ? "回答已记录"
+          : "Answer recorded"
+        : null,
+    shownCitationCount > 0
+      ? locale === "zh"
+        ? `${shownCitationCount} 处引用`
+        : `${shownCitationCount} citation${shownCitationCount === 1 ? "" : "s"}`
+      : null,
+  ].filter((item): item is string => item !== null);
+  return (
+    <details className="tap-answer-activity">
+      <summary>
+        {locale === "zh" ? "执行记录" : "Activity"}
+        {compact.length > 0 ? ` · ${compact.join(" · ")}` : ""}
+      </summary>
+      <ol>
+        {rows.map((row) => (
+          <li key={row}>{row}</li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+export function AnswerProgress({
+  locale,
+  sourceCount,
+  status = "running",
+}: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  status?: "queued" | "running";
+}) {
+  const sources =
+    sourceCount > 0
+      ? locale === "zh"
+        ? `使用 ${sourceCount} 份已选来源 · `
+        : `Using ${sourceCount} selected source${sourceCount === 1 ? "" : "s"} · `
+      : "";
+  const action =
+    status === "queued"
+      ? locale === "zh"
+        ? "等待开始…"
+        : "Waiting to start…"
+      : locale === "zh"
+        ? "正在生成回答…"
+        : "Generating answer…";
+  return (
+    <p className="tap-answer-progress" role="status">
+      {sources}
+      {action}
+    </p>
+  );
+}
+
 function AssistantResponse({
   actionCopy,
   contentCopy,
@@ -195,12 +373,13 @@ function AssistantResponse({
   onOpenCitation,
   onRetryConversation,
   onGenerateTestPlan,
+  activityEvents = [],
 }: {
   actionCopy: PrototypeCopy;
   contentCopy: PrototypeCopy;
   turn: AssistantTurn;
-  onImportPlan: () => void;
-  onCreateTestPlanFirst: () => void;
+  onImportPlan?: () => void;
+  onCreateTestPlanFirst?: () => void;
   onGenerateLinkedAutomation: () => void;
   onSkipTestPlan: () => void;
   onChooseAutomationType: (type: AutomationType) => void;
@@ -209,6 +388,7 @@ function AssistantResponse({
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   onRetryConversation: () => void;
   onGenerateTestPlan?: () => void;
+  activityEvents?: readonly ActivityEvent[];
 }) {
   if (turn.prototypeReply) {
     return <ContextualAssistantResponse turn={turn} />;
@@ -230,15 +410,29 @@ function AssistantResponse({
     if (turn.response !== undefined && turn.response !== null) {
       return (
         <>
+          <AnswerActivity
+            events={activityEvents}
+            locale={turn.locale}
+            sourceCount={turn.sourceReferences.length}
+            shownCitationCount={
+              new Set(
+                turn.response.claims.flatMap((claim) => claim.citationIds),
+              ).size
+            }
+          />
           <GroundedAnswer
             response={turn.response}
+            locale={turn.locale}
+            citationNumbering="shown-order"
             onOpenCitation={onOpenCitation}
           />
           <TurnContext copy={contentCopy} turn={turn} />
           {onGenerateTestPlan === undefined ? null : (
             <div className="tap-artifact-actions">
               <Button type="primary" onClick={onGenerateTestPlan}>
-                生成测试计划草稿
+                {turn.locale === "zh"
+                  ? "生成测试计划草稿"
+                  : "Generate Test Plan draft"}
               </Button>
             </div>
           )}
@@ -256,7 +450,13 @@ function AssistantResponse({
       );
     }
     if (turn.status === "queued" || turn.status === "running") {
-      return <p role="status">Tapper is grounding the answer…</p>;
+      return (
+        <AnswerProgress
+          locale={turn.locale}
+          sourceCount={turn.sourceReferences.length}
+          status={turn.status}
+        />
+      );
     }
     if (turn.response === null) {
       if (turn.evidenceStatus === "loading") {
@@ -299,11 +499,13 @@ function AssistantResponse({
         </div>
         <BddPreview copy={contentCopy} />
         <TurnContext copy={contentCopy} turn={turn} />
-        <div className="tap-artifact-actions">
-          <Button type="primary" onClick={onImportPlan}>
-            {actionCopy.testManagement.importToTestPlan}
-          </Button>
-        </div>
+        {onImportPlan ? (
+          <div className="tap-artifact-actions">
+            <Button type="primary" onClick={onImportPlan}>
+              {actionCopy.testManagement.importToTestPlan}
+            </Button>
+          </div>
+        ) : null}
       </article>
     );
   }
@@ -351,7 +553,7 @@ function AssistantResponse({
         </div>
       </div>
       <TurnContext copy={contentCopy} turn={turn} />
-      {workflow.stage === "ask-test-plan" ? (
+      {workflow.stage === "ask-test-plan" && onCreateTestPlanFirst ? (
         <div className="tap-artifact-actions">
           <Button onClick={onSkipTestPlan}>
             {isChinese ? "暂不创建测试计划" : "Skip Test Plan"}
@@ -537,6 +739,7 @@ function nextNumericId(
 function ProjectLibraryWorkspace({
   projectId,
   graphProjectId,
+  locale,
   copy,
   sources,
   loadState,
@@ -544,6 +747,7 @@ function ProjectLibraryWorkspace({
 }: {
   projectId: string;
   graphProjectId?: string;
+  locale: "en" | "zh";
   copy: PrototypeCopy;
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
@@ -577,6 +781,7 @@ function ProjectLibraryWorkspace({
     <>
       <LibraryWorkspace
         graphProjectId={graphProjectId}
+        locale={locale}
         copy={copy}
         sources={sources}
         loadState={loadState}
@@ -890,6 +1095,8 @@ export function TapProductPrototype({
     planId: string;
     revisionId: string;
   } | null>(() => (durable ? durableTestPlanPath() : null));
+  const [generationJobId, setGenerationJobId] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(() =>
     durable ? [] : BUILT_IN_AGENTS,
   );
@@ -980,26 +1187,40 @@ export function TapProductPrototype({
     if (aiAssets.skills.isError) setSkills([]);
     if (aiAssets.agents.data !== undefined) {
       setAgents(
-        aiAssets.agents.data.map((item) => ({
-          id: item.revisionId,
-          kind: "agent",
-          origin: "built-in",
-          name: item.displayName,
-          description: item.contentDigest,
-          instructions: "Server-approved immutable revision",
-        })),
+        aiAssets.agents.data.map((item) => {
+          const presentation = aiAssetPresentation(
+            "agent",
+            locale,
+            item.toolAllowlist,
+          );
+          return {
+            id: item.revisionId,
+            kind: "agent",
+            origin: "built-in",
+            name: item.displayName,
+            description: presentation.description,
+            instructions: presentation.instructions,
+          };
+        }),
       );
     }
     if (aiAssets.skills.data !== undefined) {
       setSkills(
-        aiAssets.skills.data.map((item) => ({
-          id: item.revisionId,
-          kind: "skill",
-          origin: "built-in",
-          name: item.displayName,
-          description: item.contentDigest,
-          instructions: "Server-approved immutable revision",
-        })),
+        aiAssets.skills.data.map((item) => {
+          const presentation = aiAssetPresentation(
+            "skill",
+            locale,
+            item.applicableTasks,
+          );
+          return {
+            id: item.revisionId,
+            kind: "skill",
+            origin: "built-in",
+            name: item.displayName,
+            description: presentation.description,
+            instructions: presentation.instructions,
+          };
+        }),
       );
     }
     if (
@@ -1029,6 +1250,7 @@ export function TapProductPrototype({
     aiAssets.agents.isError,
     aiAssets.skills.data,
     aiAssets.skills.isError,
+    locale,
     durable,
   ]);
 
@@ -1068,7 +1290,7 @@ export function TapProductPrototype({
       return {
         id: turn.turnId,
         intent: "answer",
-        locale: "en",
+        locale,
         modelId: turn.input.modelAlias,
         prompt: turn.input.message,
         sourceReferences: resolvedResources.map((item) => ({
@@ -2034,8 +2256,17 @@ export function TapProductPrototype({
                   actionCopy={copy}
                   contentCopy={PROTOTYPE_COPY[turn.locale]}
                   turn={turn}
-                  onImportPlan={importPlan}
-                  onCreateTestPlanFirst={() => createTestPlanFirst(turn)}
+                  activityEvents={
+                    durable
+                      ? (conversationEvents.data?.items ?? []).filter(
+                          (event) => event.turnId === turn.id,
+                        )
+                      : []
+                  }
+                  onImportPlan={durable ? undefined : importPlan}
+                  onCreateTestPlanFirst={
+                    durable ? undefined : () => createTestPlanFirst(turn)
+                  }
                   onGenerateLinkedAutomation={() =>
                     generateLinkedAutomation(turn)
                   }
@@ -2080,6 +2311,8 @@ export function TapProductPrototype({
                     (turn.skillRevisionIds?.length ?? 0) > 0
                       ? () => {
                           const api = createTestPlanClient(projectId);
+                          setGenerationJobId(null);
+                          setGenerationError(null);
                           void api
                             .generate(
                               {
@@ -2095,7 +2328,18 @@ export function TapProductPrototype({
                               },
                               crypto.randomUUID(),
                             )
-                            .then(() => {
+                            .then((job) => {
+                              setGenerationJobId(job.jobId);
+                              setSelectedDurablePlan(null);
+                              setActiveModule("test-management");
+                              setSidebarCollapsed(true);
+                            })
+                            .catch(() => {
+                              setGenerationError(
+                                locale === "zh"
+                                  ? "无法启动测试计划生成，请返回 Tapper 重试。"
+                                  : "Test Plan generation could not start. Try again from Tapper.",
+                              );
                               setSelectedDurablePlan(null);
                               setActiveModule("test-management");
                               setSidebarCollapsed(true);
@@ -2126,6 +2370,7 @@ export function TapProductPrototype({
               {activeCitation !== null ? (
                 <CitationViewer
                   active={activeCitation}
+                  locale={locale}
                   historicalQuery={
                     durable ? historicalCitationQuery : undefined
                   }
@@ -2166,7 +2411,8 @@ export function TapProductPrototype({
               updateCatalogItem("agent", itemId, draft)
             }
             onUse={(itemId) => useCatalogItem("agent", itemId)}
-            readOnly={durable}
+            durableDrafts={durable}
+            projectId={projectId ?? undefined}
           />
         ) : null}
         {activeModule === "skills" ? (
@@ -2179,7 +2425,8 @@ export function TapProductPrototype({
               updateCatalogItem("skill", itemId, draft)
             }
             onUse={(itemId) => useCatalogItem("skill", itemId)}
-            readOnly={durable}
+            durableDrafts={durable}
+            projectId={projectId ?? undefined}
           />
         ) : null}
         {activeModule === "library" ? (
@@ -2188,6 +2435,7 @@ export function TapProductPrototype({
               key={projectId}
               projectId={projectId}
               graphProjectId={projectId}
+              locale={locale}
               copy={copy}
               sources={sources}
               loadState={
@@ -2221,6 +2469,13 @@ export function TapProductPrototype({
           selectedDurablePlan === null ? (
             <TestPlanLibrary
               projectId={projectId}
+              locale={locale}
+              generationJobId={generationJobId}
+              generationError={generationError}
+              onGoTapper={() => {
+                setActiveModule("tapper");
+                setSidebarCollapsed(isNarrowViewport);
+              }}
               onOpen={(planId, revisionId) => {
                 window.history.pushState(
                   null,
@@ -2235,6 +2490,7 @@ export function TapProductPrototype({
               projectId={projectId}
               planId={selectedDurablePlan.planId}
               revisionId={selectedDurablePlan.revisionId}
+              locale={locale}
               onBack={() => {
                 window.history.pushState(null, "", "/");
                 setSelectedDurablePlan(null);

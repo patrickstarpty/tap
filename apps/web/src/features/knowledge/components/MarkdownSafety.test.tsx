@@ -83,7 +83,9 @@ describe("GroundedAnswer Markdown safety", () => {
     expect(
       screen.queryByRole("button", { name: "引用 99" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "引用 1" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "打开来源引用 1" }),
+    ).toBeVisible();
     expect(onOpen).not.toHaveBeenCalled();
   });
 
@@ -100,6 +102,61 @@ describe("GroundedAnswer Markdown safety", () => {
     expect(pre).not.toBeNull();
     expect(pre?.textContent).toContain(code);
   });
+});
+
+it("renders an English answer with compact inline source references", () => {
+  const onOpen = vi.fn();
+  render(
+    <GroundedAnswer
+      locale="en"
+      response={markdownAnswer("Age 17 is rejected at submission.")}
+      onOpenCitation={onOpen}
+    />,
+  );
+  expect(screen.getByRole("heading", { name: "Answer" })).toBeVisible();
+  expect(screen.getByText("Age 17 is rejected at submission.")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Open source citation 1" }),
+  ).toHaveTextContent("[1]");
+  expect(screen.queryByText(/引用/u)).not.toBeInTheDocument();
+});
+
+it("keeps references at the end of their paragraph and numbers only visible sources", () => {
+  const { container } = render(
+    <GroundedAnswer
+      locale="en"
+      citationNumbering="shown-order"
+      response={answerResponse({
+        answer: "Age 17 is rejected at submission.",
+        claims: [
+          {
+            claimId: "age-boundary",
+            text: "Age 17 is rejected at submission.",
+            answerStart: 0,
+            answerEnd: 33,
+            citationIds: ["citation-a"],
+          },
+        ],
+        citations: [
+          retrievalCitation("unused"),
+          retrievalCitation("citation-a"),
+        ],
+      })}
+      onOpenCitation={() => undefined}
+    />,
+  );
+  const citation = screen.getByRole("button", {
+    name: "Open source citation 1",
+  });
+  expect(citation.closest(".tapper-markdown--with-citation")).toHaveTextContent(
+    /Age 17 is rejected at submission\.\s*\[1\]/u,
+  );
+  expect(
+    container.querySelector(".tapper-grounded-claim > .tapper-claim-citations"),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Open source citation 2" }),
+  ).toBeNull();
 });
 
 describe("GroundedAnswer model-only chat", () => {

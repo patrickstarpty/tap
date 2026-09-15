@@ -3,7 +3,7 @@ import { Alert, Button, Descriptions, Skeleton, Typography } from "antd";
 
 import { useCitationQuery } from "../api/queries";
 import type { CitationPreview, RetrievalAnswerResponse } from "../api/types";
-import { COPY, safeCitationProblem } from "../copy";
+import { CITATION_EN, COPY, safeCitationProblem } from "../copy";
 
 type RetrievalCitation = RetrievalAnswerResponse["citations"][number];
 type DocumentAnchor = Extract<CitationPreview["anchor"], { type: "document" }>;
@@ -110,6 +110,7 @@ export function CitationViewer({
   active,
   historicalQuery,
   onClose,
+  locale = "zh",
 }: {
   active: {
     citation: RetrievalCitation;
@@ -124,7 +125,9 @@ export function CitationViewer({
     refetch: () => Promise<unknown>;
   };
   onClose: () => void;
+  locale?: "en" | "zh";
 }) {
+  const text = locale === "zh" ? COPY : CITATION_EN;
   const { projectId } = useKnowledgeClient();
   const currentCitationQuery = useCitationQuery(
     projectId,
@@ -147,7 +150,7 @@ export function CitationViewer({
     citationQuery.data !== undefined &&
     preview === null;
   const problem = citationQuery.isError
-    ? safeCitationProblem(citationQuery.error)
+    ? safeCitationProblem(citationQuery.error, locale)
     : null;
 
   return (
@@ -157,21 +160,21 @@ export function CitationViewer({
     >
       <header className="tapper-panel-header">
         <Typography.Title level={3} id="citation-heading">
-          {COPY.citationTitle}
+          {text.citationTitle}
         </Typography.Title>
         {active !== null ? (
-          <Button onClick={onClose} aria-label={COPY.closeCitation}>
-            {COPY.close}
+          <Button onClick={onClose} aria-label={text.closeCitation}>
+            {text.close}
           </Button>
         ) : null}
       </header>
 
       {active === null ? (
-        <p className="tapper-panel-placeholder">{COPY.citationEmpty}</p>
+        <p className="tapper-panel-placeholder">{text.citationEmpty}</p>
       ) : null}
       {active !== null && citationQuery.isFetching ? (
         <div aria-live="polite">
-          <span>{COPY.citationLoading}</span>
+          <span>{text.citationLoading}</span>
           <Skeleton active paragraph={{ rows: 7 }} />
         </div>
       ) : null}
@@ -183,44 +186,44 @@ export function CitationViewer({
           action={
             problem.kind === "retryable" ? (
               <Button size="small" onClick={() => void citationQuery.refetch()}>
-                {COPY.retryCitation}
+                {text.retryCitation}
               </Button>
             ) : undefined
           }
         />
       ) : null}
       {invalidPreview ? (
-        <Alert type="error" showIcon title={COPY.citationInvalid} />
+        <Alert type="error" showIcon title={text.citationInvalid} />
       ) : null}
       {preview !== null && active !== null ? (
         <div className="tapper-citation-content">
-          <Typography.Title level={4}>{COPY.citationEvidence}</Typography.Title>
+          <Typography.Title level={4}>{text.citationEvidence}</Typography.Title>
           <Typography.Text strong>{preview.filename}</Typography.Text>
           <p>
             <a
               href={`#source-${encodeURIComponent(String(expectedSourceId(active.citation)))}`}
               onClick={onClose}
             >
-              {COPY.citationOpen}
+              {text.citationOpen}
             </a>
           </p>
           <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={COPY.revisionId}>
+            <Descriptions.Item label={text.revisionId}>
               <code>{preview.revisionId}</code>
             </Descriptions.Item>
-            <Descriptions.Item label={COPY.sourceContentHash}>
+            <Descriptions.Item label={text.sourceContentHash}>
               <code>{preview.sourceContentHash}</code>
             </Descriptions.Item>
-            <Descriptions.Item label={COPY.chunkContentHash}>
+            <Descriptions.Item label={text.chunkContentHash}>
               <code>{preview.chunkContentHash}</code>
             </Descriptions.Item>
-            <Descriptions.Item label={COPY.headingPath}>
+            <Descriptions.Item label={text.headingPath}>
               {preview.anchor.headingPath?.join(" / ") ?? "—"}
             </Descriptions.Item>
-            <Descriptions.Item label={COPY.page}>
+            <Descriptions.Item label={text.page}>
               {preview.anchor.page ?? "—"}
             </Descriptions.Item>
-            <Descriptions.Item label={COPY.offsets}>
+            <Descriptions.Item label={text.offsets}>
               {preview.anchor.startOffset === null ||
               preview.anchor.startOffset === undefined ||
               preview.anchor.endOffset === null ||

@@ -323,6 +323,51 @@ def test_conflict_detection_matches_same_document_heading_across_sources() -> No
             item("legacy", "sha256:" + "2" * 64, "2"),
         )
     )
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            item("current", "sha256:" + "1" * 64, "1"),
+            item("current", "sha256:" + "2" * 64, "2"),
+            item("legacy", "sha256:" + "1" * 64, "3"),
+        )
+    )
+
+
+def test_chunks_under_one_heading_in_one_revision_are_not_conflicting_sources() -> None:
+    def item(logical_id: str, content_hash: str) -> Evidence:
+        return Evidence(
+            family=SourceFamily.DOC,
+            chunk_id="h_" + logical_id * 64,
+            logical_chunk_id="h_" + logical_id * 64,
+            title="policy.md",
+            content="One paragraph in the same section.",
+            source=SourceRevisionRef(
+                source_id="current",
+                source_type="doc",
+                revision_kind=RevisionKind.BLOB_VERSION,
+                revision="rev-current",
+                source_content_hash=SOURCE_HASH,
+                anchor=DocumentAnchor(heading_path=("Policy", "AG-01 Joiner access")),
+            ),
+            chunk_content_hash=content_hash,
+            content_role=ContentRole.SOURCE,
+            citation_id=f"citation-{logical_id}",
+            evidence_label=f"S{logical_id}",
+            index_revision=IndexRevision(
+                physical_index="kb-doc-v1-20260828",
+                schema_version="search-schema-v1",
+                corpus_version="tapper-demo-v1",
+            ),
+            embedding_model_version="tap-embedding-v1",
+            acl_decision_id="decision-17",
+            score=1 / 61,
+        )
+
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            item("1", "sha256:" + "1" * 64),
+            item("2", "sha256:" + "2" * 64),
+        )
+    )
 
 
 class FakeSearchPort:

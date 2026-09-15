@@ -136,7 +136,7 @@ def _milvus_reader(
         alias=settings.alias,
         physical_name_prefix=settings.collection,
         schema_version=settings.schema_version,
-        schema_sha256=doc_schema_sha256(),
+        schema_sha256=doc_schema_sha256(settings.schema_version),
         corpus_version=settings.corpus_version,
         embedding_model_version=settings.embedding_alias,
         vector_dimension=settings.embedding_dimension,

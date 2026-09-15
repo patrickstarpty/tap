@@ -9,6 +9,8 @@ import {
 
 export const testPlanKeys = {
   all: (projectId: string) => ["test-plans", projectId] as const,
+  generation: (projectId: string, jobId: string) =>
+    ["test-plans", projectId, "generation", jobId] as const,
   revision: (projectId: string, planId: string, revisionId: string) =>
     ["test-plans", projectId, planId, revisionId] as const,
 };
@@ -18,6 +20,20 @@ export function useTestPlans(projectId: string) {
   return useQuery({
     queryKey: testPlanKeys.all(projectId),
     queryFn: ({ signal }) => client.list(signal),
+  });
+}
+
+export function useTestPlanGeneration(projectId: string, jobId: string | null) {
+  const client = useMemo(() => createTestPlanClient(projectId), [projectId]);
+  return useQuery({
+    queryKey: testPlanKeys.generation(projectId, jobId ?? ""),
+    queryFn: ({ signal }) => client.generation(jobId!, signal),
+    enabled: jobId !== null,
+    refetchInterval: (query) =>
+      query.state.data?.status === "DRAFT_READY" ||
+      query.state.data?.status === "FAILED"
+        ? false
+        : 2000,
   });
 }
 

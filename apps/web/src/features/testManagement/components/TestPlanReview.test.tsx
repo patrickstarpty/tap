@@ -118,12 +118,14 @@ describe("TestPlanReview", () => {
         projectId="tapper-demo"
         planId="tp_checkout"
         revisionId="tpr_checkout"
+        locale="zh"
         onBack={vi.fn()}
       />,
     );
     expect(screen.getByText("Given")).toBeVisible();
-    expect(screen.getByText(/1 条来源依据/)).toBeVisible();
-    expect(screen.getByText("Cards are accepted")).toBeVisible();
+    expect(screen.getByText("来源依据")).toBeVisible();
+    expect(screen.getByText(/Cards are accepted/)).toBeVisible();
+    fireEvent.click(screen.getByText("查看证据标识"));
     expect(screen.getByText(/source_checkout/)).toBeVisible();
     expect(screen.getByText("The payment provider is available")).toBeVisible();
     expect(screen.getByText("Whether retry is supported")).toBeVisible();

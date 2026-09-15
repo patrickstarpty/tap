@@ -18,6 +18,7 @@ export class ConversationClientError extends Error {
   constructor(
     readonly status: number,
     readonly retryable: boolean,
+    readonly code: string | null = null,
   ) {
     super(`Conversation request failed (${status}).`);
     this.name = "ConversationClientError";
@@ -77,13 +78,34 @@ function baseOrigin(): string {
 async function checkedJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let retryable = response.status >= 500;
+    let code: string | null = null;
     try {
-      const body = (await response.json()) as { retryable?: unknown };
+      const body = (await response.json()) as {
+        retryable?: unknown;
+        type?: unknown;
+      };
       if (typeof body.retryable === "boolean") retryable = body.retryable;
+      if (
+        typeof body.type === "string" &&
+        body.type.startsWith("https://tap.example/problems/")
+      ) {
+        const problemCode = body.type.slice(
+          "https://tap.example/problems/".length,
+        );
+        if (
+          [
+            "citation-stale",
+            "citation-unavailable",
+            "knowledge-runtime-unavailable",
+          ].includes(problemCode)
+        ) {
+          code = problemCode;
+        }
+      }
     } catch {
       // The status is sufficient; never expose an untrusted response body.
     }
-    throw new ConversationClientError(response.status, retryable);
+    throw new ConversationClientError(response.status, retryable, code);
   }
   return (await response.json()) as T;
 }

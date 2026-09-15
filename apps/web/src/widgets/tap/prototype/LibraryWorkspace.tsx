@@ -5,7 +5,7 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
-import { useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   useMemo,
   useRef,
@@ -22,7 +22,11 @@ import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { PrototypeCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
-import { KnowledgeGraphExplorer } from "../../../features/graph/components/KnowledgeGraphExplorer";
+import {
+  useActiveGraph,
+  useGraphSearch,
+} from "../../../features/graph/api/queries";
+import { publishedGraphData } from "./publishedGraphData";
 import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import type { LibrarySource } from "./model";
 
@@ -37,42 +41,152 @@ interface LibraryWorkspaceProps {
   loadState?: "loading" | "loaded" | "error";
   onReload?: () => void;
   graphProjectId?: string;
+  locale?: "en" | "zh";
 }
 
 function ProjectKnowledgeGraph({
   projectId,
   sources,
+  locale,
+  copy,
+  query,
+  onViewSource,
 }: {
   projectId: string;
   sources: readonly LibrarySource[];
+  locale: "en" | "zh";
+  copy: PrototypeCopy;
+  query: string;
+  onViewSource: (source: LibrarySource) => void;
 }) {
-  const graphSources = useQueries({
-    queries: sources
-      .filter((source) => source.status === "ready")
-      .map((source) => ({
-        queryKey: [
-          "knowledge",
-          projectId,
-          "source",
-          source.id,
-          "graph",
-        ] as const,
-        queryFn: ({ signal }: { signal: AbortSignal }) =>
-          createKnowledgeClient({ projectId }).getSource(source.id, signal),
-        retry: false,
-      })),
-  });
-  const revisionIds = graphSources.flatMap((detail) =>
-    (detail.data?.documents.items ?? [])
-      .filter((document) => document.status === "ready")
-      .map((document) => document.revisionId),
+  const readySources = sources.filter((source) => source.status === "ready");
+  const [graphView, setGraphView] = useState<"overview" | "published">(
+    "overview",
   );
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const selectedId = readySources.some(
+    (source) => source.id === selectedSourceId,
+  )
+    ? selectedSourceId
+    : (readySources[0]?.id ?? null);
+  const detail = useQuery({
+    queryKey: ["knowledge", projectId, "source", selectedId, "graph"],
+    queryFn: ({ signal }) =>
+      createKnowledgeClient({ projectId }).getSource(selectedId!, signal),
+    enabled: selectedId !== null && graphView === "published",
+    retry: false,
+  });
+  const revisionId = detail.data?.documents.items.find(
+    (document) => document.status === "ready",
+  )?.revisionId;
+  const active = useActiveGraph(projectId, revisionId ? [revisionId] : []);
+  const snapshotId = active.data?.items[0]?.snapshotId ?? null;
+  const graph = useGraphSearch(projectId, snapshotId, "*");
+  const selectedSource = readySources.find(
+    (source) => source.id === selectedId,
+  );
+  const published =
+    selectedSource && graph.data
+      ? publishedGraphData(graph.data, selectedSource)
+      : null;
 
   return (
-    <KnowledgeGraphExplorer
-      projectId={projectId}
-      sourceRevisionIds={revisionIds}
-    />
+    <div className="tap-project-graph">
+      {readySources.length > 0 ? (
+        <div className="tap-project-graph-controls">
+          <div
+            className="tap-project-graph-view"
+            role="group"
+            aria-label={locale === "zh" ? "图谱视图" : "Graph view"}
+          >
+            <button
+              type="button"
+              aria-pressed={graphView === "overview"}
+              onClick={() => setGraphView("overview")}
+            >
+              {locale === "zh" ? "领域总览" : "Domain overview"}
+            </button>
+            <button
+              type="button"
+              aria-pressed={graphView === "published"}
+              onClick={() => setGraphView("published")}
+            >
+              {locale === "zh" ? "已发布来源图谱" : "Published source graph"}
+            </button>
+          </div>
+          {graphView === "published" ? (
+            <label className="tap-project-graph-source">
+              <span>{locale === "zh" ? "图谱来源" : "Graph source"}</span>
+              <select
+                value={selectedId ?? ""}
+                onChange={(event) => setSelectedSourceId(event.target.value)}
+              >
+                {readySources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+      {selectedId === null ? (
+        <p role="status">
+          {locale === "zh"
+            ? "请选择已就绪来源查看图谱。"
+            : "Select a ready source to view its graph."}
+        </p>
+      ) : graphView === "overview" ? (
+        <KnowledgeGraph
+          copy={copy}
+          query={query}
+          sources={readySources}
+          onViewSource={onViewSource}
+        />
+      ) : detail.isError ? (
+        <p role="alert">
+          {locale === "zh"
+            ? "无法加载图谱来源，请重试。"
+            : "The graph source could not be loaded. Try again."}
+        </p>
+      ) : detail.isPending ? (
+        <p role="status">
+          {locale === "zh" ? "正在加载图谱来源…" : "Loading graph source…"}
+        </p>
+      ) : active.isError || graph.isError ? (
+        <p role="alert">
+          {locale === "zh"
+            ? "已发布图谱暂时无法加载。"
+            : "The published graph is temporarily unavailable."}
+        </p>
+      ) : active.isPending || (snapshotId && graph.isPending) ? (
+        <p role="status">
+          {locale === "zh"
+            ? "正在加载已发布图谱…"
+            : "Loading the published graph…"}
+        </p>
+      ) : published ? (
+        <KnowledgeGraph
+          copy={copy}
+          query={query}
+          sources={selectedSource ? [selectedSource] : []}
+          onViewSource={onViewSource}
+          publishedData={published}
+          publishedCaption={
+            locale === "zh"
+              ? "已发布的来源图谱 · 节点与关系来自服务，布局沿用已确认的原型。"
+              : "Published source graph · nodes and relationships come from the service, arranged in the established prototype layout."
+          }
+        />
+      ) : (
+        <p role="status">
+          {locale === "zh"
+            ? "此来源尚无已发布图谱。"
+            : "No published graph is ready for this source yet."}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -84,6 +198,7 @@ export function LibraryWorkspace({
   loadState = "loaded",
   onReload,
   graphProjectId,
+  locale = "en",
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
@@ -428,6 +543,14 @@ export function LibraryWorkspace({
             <ProjectKnowledgeGraph
               projectId={graphProjectId}
               sources={visibleSources}
+              locale={locale}
+              copy={copy}
+              query={query}
+              onViewSource={(source) => {
+                setQuery(source.name);
+                setMode("list");
+                listTabRef.current?.focus();
+              }}
             />
           )}
         </div>
