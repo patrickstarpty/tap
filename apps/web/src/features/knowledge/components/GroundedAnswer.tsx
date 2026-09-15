@@ -34,11 +34,30 @@ const answerSchema = {
   protocols: {},
 };
 
-const ABSTENTION_COPY = {
-  insufficient_evidence: "所选来源中没有足够证据回答这个问题。",
-  conflicting_sources: "所选来源之间存在冲突，暂时无法给出可靠回答。",
-  revision_mismatch: "来源版本已经变化，请重新提交问题。",
+const ANSWER_COPY = {
+  en: {
+    heading: "Answer",
+    formatError: "The answer format could not be verified. Ask again.",
+    insufficient_evidence:
+      "The selected sources do not contain enough evidence to answer this question.",
+    conflicting_sources:
+      "The selected sources conflict, so a reliable answer is unavailable.",
+    revision_mismatch: "A source revision changed. Submit the question again.",
+    degraded:
+      "Some retrieval capabilities are unavailable. Only verified evidence is shown.",
+    citation: (number: number) => `Open source citation ${number}`,
+  },
+  zh: {
+    heading: "回答",
+    formatError: "回答格式无法核验，请重新提问。",
+    insufficient_evidence: "所选来源中没有足够证据回答这个问题。",
+    conflicting_sources: "所选来源之间存在冲突，暂时无法给出可靠回答。",
+    revision_mismatch: "来源版本已经变化，请重新提交问题。",
+    degraded: "部分检索能力暂时受限，回答仍仅显示已核验依据。",
+    citation: (number: number) => `打开来源引用 ${number}`,
+  },
 } as const;
+type AnswerLocale = keyof typeof ANSWER_COPY;
 
 type RetrievalClaim = RetrievalAnswerResponse["claims"][number];
 type RetrievalCitation = RetrievalAnswerResponse["citations"][number];
@@ -50,8 +69,10 @@ interface ValidAnswerGraph {
   points: readonly string[];
 }
 
-function FormatError() {
-  return <Alert type="error" showIcon title="回答格式无法核验，请重新提问。" />;
+function FormatError({ locale }: { locale: AnswerLocale }) {
+  return (
+    <Alert type="error" showIcon title={ANSWER_COPY[locale].formatError} />
+  );
 }
 
 function hasValidCitationIdentities(
@@ -87,6 +108,7 @@ function isParagraphBoundary(
 
 function validateAnswerGraph(
   response: RetrievalAnswerResponse,
+  numbering: "source-order" | "shown-order",
 ): ValidAnswerGraph | null {
   if (
     typeof response.answer !== "string" ||
@@ -115,7 +137,8 @@ function validateAnswerGraph(
       return null;
     }
     citationById.set(citation.citationId, citation);
-    citationNumberById.set(citation.citationId, index + 1);
+    if (numbering === "source-order")
+      citationNumberById.set(citation.citationId, index + 1);
   }
 
   let previousEnd = 0;
@@ -154,6 +177,16 @@ function validateAnswerGraph(
     previousEnd = end;
   }
 
+  if (numbering === "shown-order") {
+    for (const claim of response.claims) {
+      for (const citationId of claim.citationIds) {
+        if (!citationNumberById.has(citationId)) {
+          citationNumberById.set(citationId, citationNumberById.size + 1);
+        }
+      }
+    }
+  }
+
   return {
     citationById,
     citationNumberById,
@@ -162,16 +195,25 @@ function validateAnswerGraph(
   };
 }
 
-function SafeMarkdown({ children }: { children: string }) {
+function SafeMarkdown({
+  children,
+  trailing,
+}: {
+  children: string;
+  trailing?: ReactNode;
+}) {
   if (children.length === 0) return null;
   return (
-    <div className="tapper-markdown">
+    <div
+      className={`tapper-markdown${trailing ? " tapper-markdown--with-citation" : ""}`}
+    >
       <ReactMarkdown
         rehypePlugins={[[rehypeSanitize, answerSchema]]}
         components={{ a: ({ children: label }) => <span>{label}</span> }}
       >
         {children}
       </ReactMarkdown>
+      {trailing}
     </div>
   );
 }
@@ -180,26 +222,36 @@ function CitedClaim({
   claim,
   graph,
   onOpenCitation,
+  locale,
 }: {
   claim: RetrievalClaim;
   graph: ValidAnswerGraph;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  locale: AnswerLocale;
 }) {
+  const citations = (
+    <span
+      className="tapper-claim-citations"
+      aria-label={locale === "zh" ? "本段引用" : "Sources for this paragraph"}
+    >
+      {claim.citationIds.map((citationId) => (
+        <Button
+          key={citationId}
+          type="text"
+          size="small"
+          aria-label={ANSWER_COPY[locale].citation(
+            graph.citationNumberById.get(citationId)!,
+          )}
+          onClick={(event) => onOpenCitation(citationId, event.currentTarget)}
+        >
+          {`[${String(graph.citationNumberById.get(citationId))}]`}
+        </Button>
+      ))}
+    </span>
+  );
   return (
     <div className="tapper-grounded-claim">
-      <SafeMarkdown>{claim.text}</SafeMarkdown>
-      <span className="tapper-claim-citations" aria-label="本段引用">
-        {claim.citationIds.map((citationId) => (
-          <Button
-            key={citationId}
-            type="link"
-            size="small"
-            onClick={(event) => onOpenCitation(citationId, event.currentTarget)}
-          >
-            {`引用 ${String(graph.citationNumberById.get(citationId))}`}
-          </Button>
-        ))}
-      </span>
+      <SafeMarkdown trailing={citations}>{claim.text}</SafeMarkdown>
     </div>
   );
 }
@@ -207,6 +259,7 @@ function CitedClaim({
 function groundedSegments(
   graph: ValidAnswerGraph,
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void,
+  locale: AnswerLocale,
 ): ReactNode[] {
   const segments: ReactNode[] = [];
   let cursor = 0;
@@ -223,6 +276,7 @@ function groundedSegments(
         claim={claim}
         graph={graph}
         onOpenCitation={onOpenCitation}
+        locale={locale}
       />,
     );
     cursor = claim.answerEnd;
@@ -237,16 +291,20 @@ function groundedSegments(
 export function GroundedAnswer({
   response,
   onOpenCitation,
+  locale = "zh",
+  citationNumbering = "source-order",
 }: {
   response: RetrievalAnswerResponse | null | undefined;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
+  locale?: AnswerLocale;
+  citationNumbering?: "source-order" | "shown-order";
 }) {
   if (
     typeof response !== "object" ||
     response === null ||
     typeof response.abstained !== "boolean"
   ) {
-    return <FormatError />;
+    return <FormatError locale={locale} />;
   }
   if (response.abstained) {
     const reason = response.abstentionReason;
@@ -258,11 +316,15 @@ export function GroundedAnswer({
       !Array.isArray(response.citations) ||
       !hasValidCitationIdentities(response.citations) ||
       typeof reason !== "string" ||
-      !Object.hasOwn(ABSTENTION_COPY, reason)
+      !Object.hasOwn(ANSWER_COPY[locale], reason)
     ) {
-      return <FormatError />;
+      return <FormatError locale={locale} />;
     }
-    const message = ABSTENTION_COPY[reason as keyof typeof ABSTENTION_COPY];
+    const message =
+      ANSWER_COPY[locale][
+        reason as
+          "insufficient_evidence" | "conflicting_sources" | "revision_mismatch"
+      ];
     return <Alert type="info" showIcon title={message} />;
   }
 
@@ -279,7 +341,7 @@ export function GroundedAnswer({
       (response.abstentionReason !== null &&
         response.abstentionReason !== undefined)
     ) {
-      return <FormatError />;
+      return <FormatError locale={locale} />;
     }
     return (
       <div className="tapper-direct-answer">
@@ -288,22 +350,23 @@ export function GroundedAnswer({
     );
   }
 
-  const graph = validateAnswerGraph(response);
+  const graph = validateAnswerGraph(response, citationNumbering);
   if (graph === null) {
-    return <FormatError />;
+    return <FormatError locale={locale} />;
   }
 
   return (
     <div className="tapper-grounded-answer">
+      <h3 className="tapper-answer-heading">{ANSWER_COPY[locale].heading}</h3>
       {response.degradedMode ? (
         <Alert
           className="tapper-answer-note"
           type="warning"
           showIcon
-          title="部分检索能力暂时受限，回答仍仅显示已核验依据。"
+          title={ANSWER_COPY[locale].degraded}
         />
       ) : null}
-      {groundedSegments(graph, onOpenCitation)}
+      {groundedSegments(graph, onOpenCitation, locale)}
     </div>
   );
 }

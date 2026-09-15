@@ -698,15 +698,37 @@ class AuthorizedRetrieval:
 
     @staticmethod
     def _has_conflicting_sources(evidence: tuple[Evidence, ...]) -> bool:
-        hashes_by_identity: dict[tuple[str, str], set[str]] = {}
+        values_by_identity: dict[tuple[str, str], set[tuple[tuple[str, str, str], str]]] = {}
         for item in evidence:
+            source_revision = (
+                item.source.source_id,
+                item.source.revision,
+                item.source.source_content_hash,
+            )
             identities = [("logical-chunk", item.logical_chunk_id)]
             anchor = item.source.anchor
             if isinstance(anchor, DocumentAnchor) and anchor.heading_path:
                 identities.append(("document-heading", anchor.heading_path[-1].casefold()))
             for identity in identities:
-                hashes_by_identity.setdefault(identity, set()).add(item.chunk_content_hash)
-        return any(len(hashes) > 1 for hashes in hashes_by_identity.values())
+                values_by_identity.setdefault(identity, set()).add(
+                    (source_revision, item.chunk_content_hash)
+                )
+        for identity, values in values_by_identity.items():
+            if identity[0] == "logical-chunk":
+                if len({content_hash for _, content_hash in values}) > 1:
+                    return True
+                continue
+            hashes_by_source: dict[tuple[str, str, str], set[str]] = {}
+            for source, content_hash in values:
+                hashes_by_source.setdefault(source, set()).add(content_hash)
+            source_hashes = list(hashes_by_source.values())
+            if any(
+                source_hashes[left].isdisjoint(source_hashes[right])
+                for left in range(len(source_hashes))
+                for right in range(left + 1, len(source_hashes))
+            ):
+                return True
+        return False
 
     @staticmethod
     def _embedding_provenance(embedding: Embedding) -> ModelCallProvenance:

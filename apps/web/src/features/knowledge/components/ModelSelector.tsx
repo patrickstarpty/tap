@@ -1,4 +1,4 @@
-import { Button } from "antd";
+import { DownOutlined } from "@ant-design/icons";
 import { useEffect, useRef, useState } from "react";
 
 export interface GovernedModel {
@@ -49,7 +49,8 @@ export function ModelSelector({
     return <span role="status">Model unavailable</span>;
   return (
     <div ref={root} className="tap-composer-model-control">
-      <Button
+      <button
+        type="button"
         ref={trigger}
         className="tap-model-trigger"
         aria-label={label?.(selected.displayName)}
@@ -63,8 +64,9 @@ export function ModelSelector({
           }
         }}
       >
-        {selected.displayName}
-      </Button>
+        <span className="tap-model-trigger-label">{selected.displayName}</span>
+        <DownOutlined aria-hidden="true" />
+      </button>
       {open && (
         <div
           ref={menu}

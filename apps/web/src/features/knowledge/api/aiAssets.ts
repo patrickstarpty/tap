@@ -7,13 +7,26 @@ export type SkillRevision = components["schemas"]["SkillRevisionSummary"];
 export function aiAssetPresentation(
   kind: "agent" | "skill",
   locale: "en" | "zh",
+  capabilities: readonly string[],
 ) {
+  const labels = capabilities.flatMap((capability) => {
+    if (kind === "agent" && capability === "knowledge.search")
+      return [locale === "zh" ? "检索知识来源" : "Searches sources"];
+    if (kind === "agent" && capability === "knowledge.answer")
+      return [locale === "zh" ? "回答知识问题" : "Answers questions"];
+    if (kind === "skill" && capability === "knowledge.answer")
+      return [locale === "zh" ? "用于知识回答" : "For knowledge answers"];
+    return [];
+  });
+  const description =
+    labels.length > 0
+      ? labels.join(" · ")
+      : locale === "zh"
+        ? "已批准的能力"
+        : "Approved capability";
   if (kind === "agent") {
     return {
-      description:
-        locale === "zh"
-          ? "受控知识问答智能体"
-          : "Governed Knowledge answer agent",
+      description,
       instructions:
         locale === "zh"
           ? "由服务端批准并锁定版本"
@@ -21,8 +34,7 @@ export function aiAssetPresentation(
     };
   }
   return {
-    description:
-      locale === "zh" ? "为知识回答生成可追溯引用" : "Adds traceable citations",
+    description,
     instructions:
       locale === "zh"
         ? "由服务端批准并锁定版本"

@@ -88,6 +88,27 @@ class GenerationWorker:
                         ),
                     )
                     return
+                await self.conversations.emit(
+                    chat,
+                    identity,
+                    "context.assembled",
+                    {"sourceCount": len(turn.input_snapshot.value.resolved_resources)},
+                    lease_token=turn.lease_token,
+                )
+                await self.conversations.emit(
+                    chat,
+                    identity,
+                    "stage.completed",
+                    {"stage": "knowledge.answer", "outcome": evidence.outcome},
+                    lease_token=turn.lease_token,
+                )
+                await self.conversations.emit(
+                    chat,
+                    identity,
+                    "retrieval.hits_ready",
+                    {"authorizedHitCount": evidence.retrieval_summary.authorized_hit_count},
+                    lease_token=turn.lease_token,
+                )
                 if evidence.answer:
                     await self.conversations.emit(
                         chat,

@@ -1991,6 +1991,18 @@ def _load_safe_check_module():  # type: ignore[no-untyped-def]
     return module
 
 
+def test_safe_check_milvus_reader_uses_configured_schema() -> None:
+    from tap.entrypoints.tapper_runtime import TapperSettings
+    from tap.operations.milvus.doc_schema import doc_schema_sha256
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping({"TAPPER_SCHEMA_VERSION": "doc-schema-v2"})
+
+    _reader, target = safe_check._milvus_reader(settings)
+
+    assert target.schema_sha256 == doc_schema_sha256("doc-schema-v2")
+
+
 def test_safe_check_runs_all_five_probes_independently(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createConversationClient } from "./client";
+import { ConversationClientError, createConversationClient } from "./client";
 
 describe("ConversationClient", () => {
   it("creates the first turn and appends later turns with stable idempotency keys", async () => {
@@ -145,5 +145,27 @@ describe("ConversationClient", () => {
     expect(request.url).toContain(
       "/conversations/conversation-1/turns/turn-1/citations/citation-1",
     );
+  });
+
+  it("reports a stale historical citation using an allowlisted problem code", async () => {
+    const client = createConversationClient({
+      projectId: "project-1",
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            type: "https://tap.example/problems/citation-stale",
+            retryable: false,
+          }),
+          {
+            status: 404,
+            headers: { "content-type": "application/problem+json" },
+          },
+        ),
+    });
+    const error = await client
+      .citation("conversation-1", "turn-1", "citation-1")
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(ConversationClientError);
+    expect(error).toMatchObject({ status: 404, code: "citation-stale" });
   });
 });

@@ -28,6 +28,7 @@ import {
   type GraphNodeKind,
   type GraphProvenance,
   type GraphNode,
+  type GraphEdge,
 } from "./knowledgeGraphData";
 
 const GRAPH_HORIZONTAL_MARGIN = 24;
@@ -44,11 +45,15 @@ export function KnowledgeGraph({
   query,
   sources,
   onViewSource,
+  publishedData,
+  publishedCaption,
 }: {
   copy: PrototypeCopy;
   query: string;
   sources: readonly LibrarySource[];
   onViewSource: (source: LibrarySource) => void;
+  publishedData?: { nodes: GraphNode[]; edges: GraphEdge[] };
+  publishedCaption?: string;
 }) {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [communitiesOpen, setCommunitiesOpen] = useState(
@@ -73,8 +78,8 @@ export function KnowledgeGraph({
     }
   };
   const data = useMemo(
-    () => buildKnowledgeGraph(copy, sources),
-    [copy, sources],
+    () => publishedData ?? buildKnowledgeGraph(copy, sources),
+    [copy, publishedData, sources],
   );
   const [activeCommunities, setActiveCommunities] = useState<
     ReadonlySet<GraphCommunity>
@@ -113,6 +118,22 @@ export function KnowledgeGraph({
     extracted: copy.library.extracted,
     inferred: copy.library.inferred,
   };
+  const shownCommunities = publishedData
+    ? COMMUNITY_ORDER.filter((community) =>
+        data.nodes.some((node) => node.community === community),
+      )
+    : COMMUNITY_ORDER;
+  const shownClusters = publishedData
+    ? [
+        {
+          community:
+            data.nodes.find((node) => node.kind !== "document")?.community ??
+            "application",
+          x: GRAPH_WIDTH / 2,
+          y: GRAPH_HEIGHT / 2,
+        },
+      ]
+    : GRAPH_CLUSTERS;
 
   const visibleNodes = data.nodes.filter((node) =>
     activeCommunities.has(node.community),
@@ -124,9 +145,9 @@ export function KnowledgeGraph({
   );
   const selectedNode =
     visibleNodes.find((node) => node.id === selectedNodeId) ?? null;
-  const selectedSource = sources.find(
-    (source) => `source-${source.id}` === selectedNodeId,
-  );
+  const selectedSource = publishedData
+    ? sources[0]
+    : sources.find((source) => `source-${source.id}` === selectedNodeId);
   const matchesQuery = (node: GraphNode) => {
     const source = sources.find((item) => `source-${item.id}` === node.id);
     return [
@@ -271,23 +292,29 @@ export function KnowledgeGraph({
         <label className="tap-graph-select-all">
           <input
             type="checkbox"
-            checked={activeCommunities.size === COMMUNITY_ORDER.length}
+            checked={shownCommunities.every((community) =>
+              activeCommunities.has(community),
+            )}
             ref={(input) => {
               if (input)
                 input.indeterminate =
-                  activeCommunities.size > 0 &&
-                  activeCommunities.size < COMMUNITY_ORDER.length;
+                  shownCommunities.some((community) =>
+                    activeCommunities.has(community),
+                  ) &&
+                  !shownCommunities.every((community) =>
+                    activeCommunities.has(community),
+                  );
             }}
             onChange={(event) =>
               setActiveCommunities(
-                new Set(event.target.checked ? COMMUNITY_ORDER : []),
+                new Set(event.target.checked ? shownCommunities : []),
               )
             }
           />
           <span>{copy.library.selectAllTopics}</span>
         </label>
         <div className="tap-graph-community-list">
-          {COMMUNITY_ORDER.map((community) => {
+          {shownCommunities.map((community) => {
             const count = data.nodes.filter(
               (node) => node.community === community,
             ).length;
@@ -460,29 +487,35 @@ export function KnowledgeGraph({
 
             <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
               <g className="tap-graph-clusters" aria-hidden="true">
-                {GRAPH_CLUSTERS.filter((cluster) =>
-                  activeCommunities.has(cluster.community),
-                ).map((cluster) => (
-                  <g
-                    key={cluster.community}
-                    style={
-                      {
-                        "--tap-community-color":
-                          COMMUNITY_COLORS[cluster.community],
-                      } as CSSProperties
-                    }
-                  >
-                    <ellipse
-                      cx={cluster.x}
-                      cy={cluster.y}
-                      rx={cluster.community === "testing" ? 310 : 240}
-                      ry="168"
-                    />
-                    <text x={cluster.x - 210} y={cluster.y - 149}>
-                      {communityLabels[cluster.community]}
-                    </text>
-                  </g>
-                ))}
+                {shownClusters
+                  .filter((cluster) => activeCommunities.has(cluster.community))
+                  .map((cluster) => (
+                    <g
+                      key={cluster.community}
+                      style={
+                        {
+                          "--tap-community-color":
+                            COMMUNITY_COLORS[cluster.community],
+                        } as CSSProperties
+                      }
+                    >
+                      <ellipse
+                        cx={cluster.x}
+                        cy={cluster.y}
+                        rx={
+                          publishedData
+                            ? 500
+                            : cluster.community === "testing"
+                              ? 310
+                              : 240
+                        }
+                        ry={publishedData ? 375 : 168}
+                      />
+                      <text x={cluster.x - 210} y={cluster.y - 149}>
+                        {communityLabels[cluster.community]}
+                      </text>
+                    </g>
+                  ))}
               </g>
               <g className="tap-graph-edges" aria-hidden="true">
                 {visibleEdges.map((edge, index) => {
@@ -760,7 +793,7 @@ export function KnowledgeGraph({
         </section>
 
         <figcaption id="tap-library-graph-caption">
-          {copy.library.illustrative}
+          {publishedCaption ?? copy.library.illustrative}
         </figcaption>
       </figure>
 

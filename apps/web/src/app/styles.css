@@ -310,8 +310,15 @@ button:focus-visible,
 }
 
 .tapper-grounded-answer {
-  display: grid;
-  gap: 14px;
+  max-width: 76ch;
+  color: #292b2c;
+}
+
+.tapper-answer-heading {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.4;
 }
 
 .tapper-answer-note {
@@ -320,8 +327,7 @@ button:focus-visible,
 
 .tapper-grounded-claim {
   min-width: 0;
-  border-left: 3px solid #d9d5f2;
-  padding-left: 14px;
+  margin: 0 0 14px;
 }
 
 .tapper-grounded-claim .tapper-markdown > :last-child,
@@ -329,21 +335,46 @@ button:focus-visible,
   margin-bottom: 0;
 }
 
+.tapper-markdown--with-citation > p:has(+ .tapper-claim-citations) {
+  display: inline;
+  margin: 0;
+}
+
+.tapper-markdown--with-citation > p + .tapper-claim-citations {
+  margin-inline-start: 5px;
+}
+
 .tapper-claim-citations {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 2px 5px;
-  margin-top: 6px;
+  gap: 2px;
+  margin-inline-start: 4px;
+  vertical-align: baseline;
 }
 
 .tapper-claim-citations .ant-btn {
-  padding-inline: 4px;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  padding: 0 2px;
+  color: #a34a12;
+  font-size: 0.78em;
+  font-weight: 650;
+  line-height: inherit;
+}
+
+.tapper-claim-citations .ant-btn:hover,
+.tapper-claim-citations .ant-btn:focus-visible {
+  color: #70300a;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .tapper-markdown {
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.7;
+  font-size: 15px;
 }
 
 .tapper-markdown pre {

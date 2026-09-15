@@ -102,7 +102,15 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
     assert knowledge.requests[0].resource_refs[0].source_id == "src_" + "1" * 32
     assert knowledge.requests[0].resource_refs[0].mode.value == "scope"
     assert conversations.events == [
-        ("conversation-1", "turn-1", "answer.delta", {"text": "grounded"})
+        ("conversation-1", "turn-1", "context.assembled", {"sourceCount": 1}),
+        (
+            "conversation-1",
+            "turn-1",
+            "stage.completed",
+            {"stage": "knowledge.answer", "outcome": "completed"},
+        ),
+        ("conversation-1", "turn-1", "retrieval.hits_ready", {"authorizedHitCount": 0}),
+        ("conversation-1", "turn-1", "answer.delta", {"text": "grounded"}),
     ]
     assert conversations.completed[0][2].outcome == "completed"
 
@@ -307,7 +315,12 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
 
     conversations = Conversations()
     await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
-    assert conversations.emitted == ["answer.delta"]
+    assert conversations.emitted == [
+        "context.assembled",
+        "stage.completed",
+        "retrieval.hits_ready",
+        "answer.delta",
+    ]
     assert conversations.terminal_event == (
         "turn.completed",
         {"answer": {"answer": "grounded", "citations": []}},

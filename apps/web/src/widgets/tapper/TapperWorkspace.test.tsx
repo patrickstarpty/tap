@@ -372,7 +372,7 @@ describe("TapperWorkspace answer lifecycle", () => {
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
     expect(await screen.findByText("😀退款需要两人审批。")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "引用 1" }));
+    await user.click(screen.getByRole("button", { name: "打开来源引用 1" }));
     expect(await screen.findByText("原文依据")).toBeVisible();
 
     act(() => {
@@ -571,12 +571,12 @@ describe("TapperWorkspace claim and citation integrity", () => {
       within(claims[0] as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["引用 2", "引用 1"]);
+    ).toEqual(["[2]", "[1]"]);
     expect(
       within(claims[1] as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["引用 1"]);
+    ).toEqual(["[1]"]);
   });
 
   it.each([
@@ -688,8 +688,10 @@ describe("TapperWorkspace claim and citation integrity", () => {
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
 
-    await user.click(await screen.findByRole("button", { name: "引用 1" }));
-    await user.click(screen.getByRole("button", { name: "引用 2" }));
+    await user.click(
+      await screen.findByRole("button", { name: "打开来源引用 1" }),
+    );
+    await user.click(screen.getByRole("button", { name: "打开来源引用 2" }));
     expect(api.citationSignals[0]?.aborted).toBe(true);
     act(() =>
       api.finishCitation(
@@ -723,7 +725,7 @@ describe("TapperWorkspace claim and citation integrity", () => {
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
     const citationButton = await screen.findByRole("button", {
-      name: "引用 1",
+      name: "打开来源引用 1",
     });
 
     await user.click(citationButton);
@@ -751,7 +753,9 @@ describe("TapperWorkspace claim and citation integrity", () => {
     const { queryClient } = renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
-    await user.click(await screen.findByRole("button", { name: "引用 1" }));
+    await user.click(
+      await screen.findByRole("button", { name: "打开来源引用 1" }),
+    );
     expect(await screen.findByText("原文依据")).toBeVisible();
 
     api.withCitationProblem(
@@ -792,7 +796,9 @@ describe("TapperWorkspace claim and citation integrity", () => {
     renderKnowledgeApp(<TapperWorkspace />, { api });
     await selectSource(user, /doc-a/u);
     await ask(user, "退款规则是什么？");
-    await user.click(await screen.findByRole("button", { name: "引用 1" }));
+    await user.click(
+      await screen.findByRole("button", { name: "打开来源引用 1" }),
+    );
 
     expect(
       await screen.findByText("原文校验失败，请重新提交问题。"),

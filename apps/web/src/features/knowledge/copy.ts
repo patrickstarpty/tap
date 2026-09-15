@@ -96,6 +96,28 @@ export const COPY = {
   offsets: "字符范围",
 } as const;
 
+export const CITATION_EN = {
+  citationTitle: "Source text",
+  citationEmpty: "Select an answer citation to check the original text.",
+  citationEvidence: "Cited source",
+  citationOpen: "Open source",
+  citationLoading: "Checking source text…",
+  closeCitation: "Close source text",
+  close: "Close",
+  retryCitation: "Retry verification",
+  citationStale:
+    "This citation no longer resolves to its original source revision. Ask again using a ready source.",
+  citationUnavailable: "Source text is temporarily unavailable. Try again.",
+  citationInvalid: "The source preview does not match the citation. Ask again.",
+  citationGenericFailure: "Source text could not be checked. Try again.",
+  revisionId: "Revision ID",
+  sourceContentHash: "Source content SHA-256",
+  chunkContentHash: "Chunk content SHA-256",
+  headingPath: "Heading path",
+  page: "Page",
+  offsets: "Character range",
+} as const;
+
 export const STATUS_COPY: Readonly<Record<DocumentStatus, string>> = {
   queued: "等待处理",
   processing: "处理中",
@@ -174,23 +196,32 @@ export function safeAnswerProblemCopy(error: unknown): string {
 
 export type CitationProblemKind = "stale" | "retryable" | "generic";
 
-export function safeCitationProblem(error: unknown): {
+export function safeCitationProblem(
+  error: unknown,
+  locale: "en" | "zh" = "zh",
+): {
   kind: CitationProblemKind;
   message: string;
 } {
-  if (error instanceof KnowledgeClientError) {
-    if (error.status === 404 && error.code === "citation-stale") {
-      return { kind: "stale", message: COPY.citationStale };
+  const text = locale === "zh" ? COPY : CITATION_EN;
+  const clientError =
+    error instanceof KnowledgeClientError ||
+    (error instanceof Error && error.name === "ConversationClientError");
+  const status = clientError && "status" in error ? error.status : null;
+  const code = clientError && "code" in error ? error.code : null;
+  if (typeof status === "number" && typeof code === "string") {
+    if (status === 404 && code === "citation-stale") {
+      return { kind: "stale", message: text.citationStale };
     }
     if (
-      error.status === 503 &&
-      (error.code === "citation-unavailable" ||
-        error.code === "knowledge-runtime-unavailable")
+      status === 503 &&
+      (code === "citation-unavailable" ||
+        code === "knowledge-runtime-unavailable")
     ) {
-      return { kind: "retryable", message: COPY.citationUnavailable };
+      return { kind: "retryable", message: text.citationUnavailable };
     }
   }
-  return { kind: "generic", message: COPY.citationGenericFailure };
+  return { kind: "generic", message: text.citationGenericFailure };
 }
 
 export function mediaTypeCopy(mediaType: string): string {

@@ -17,7 +17,10 @@ import {
   fakeKnowledgeClient,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
-import { renderApp } from "../../shared/testing/renderApp";
+import {
+  createTestQueryClient,
+  renderApp,
+} from "../../shared/testing/renderApp";
 import { RuntimeClientProvider } from "../../features/runtime/api/queries";
 import { TapProductPrototype } from "./TapProductPrototype";
 import { createInitialArtifactState } from "./prototype/artifacts/fixtures";
@@ -53,6 +56,51 @@ function renderPrototype(conversationSource: "api" | "fixture" = "fixture") {
     { api },
   );
 }
+
+it("shows approved Agent and Skill meaning instead of integrity digests", async () => {
+  const api = fakeKnowledgeClient();
+  const queryClient = createTestQueryClient();
+  queryClient.setQueryData(
+    ["ai-agent-catalog", api.projectId],
+    [
+      {
+        revisionId: "validation-knowledge-agent-v2",
+        assetId: "validation-knowledge-agent",
+        displayName: "Knowledge agent",
+        contentDigest: `sha256:${"a".repeat(64)}`,
+        toolAllowlist: ["knowledge.search", "knowledge.answer"],
+        outputSchemaDigest: `sha256:${"b".repeat(64)}`,
+      },
+    ],
+  );
+  queryClient.setQueryData(
+    ["skill-catalog", api.projectId],
+    [
+      {
+        revisionId: "validation-citation-skill-v2",
+        assetId: "validation-citation-skill",
+        displayName: "Citation skill",
+        contentDigest: `sha256:${"c".repeat(64)}`,
+        applicableTasks: ["knowledge.answer"],
+      },
+    ],
+  );
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, {
+    api,
+    queryClient,
+  });
+  const user = userEvent.setup();
+
+  await user.click(screen.getByRole("button", { name: "Agents" }));
+  expect(
+    await screen.findByText("Searches sources · Answers questions"),
+  ).toBeVisible();
+  expect(screen.queryByText(/sha256:/)).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Skills" }));
+  expect(await screen.findByText("For knowledge answers")).toBeVisible();
+  expect(screen.queryByText(/sha256:/)).toBeNull();
+});
 
 it("preserves the draft and prevents sending when the governed model is unavailable", async () => {
   const { queryClient } = renderKnowledgeApp(
@@ -2494,15 +2542,14 @@ describe("Tap product prototype interactions", () => {
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
     expect(
-      await screen.findByText(
-        "Select at least one ready source to explore its graph.",
-      ),
+      screen.getByRole("tabpanel", { name: "Knowledge Graph" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("group", {
+      screen.getByRole("group", {
         name: "Life insurance knowledge graph",
       }),
-    ).not.toBeInTheDocument();
+    ).toBeVisible();
+    expect(screen.getByText(/Illustrative view/i)).toBeVisible();
 
     await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));
@@ -2593,9 +2640,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
     expect(
-      await screen.findByText(
-        "Select at least one ready source to explore its graph.",
-      ),
+      await screen.findByText("Select a ready source to view its graph."),
     ).toBeVisible();
     expect(screen.queryByText("Illustrative view")).not.toBeInTheDocument();
   });
@@ -2610,9 +2655,7 @@ describe("Tap product prototype interactions", () => {
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
 
     expect(
-      await screen.findByText(
-        "Select at least one ready source to explore its graph.",
-      ),
+      await screen.findByText("Select a ready source to view its graph."),
     ).toBeVisible();
     expect(
       screen.queryByRole("region", { name: "Knowledge graph summary" }),
