@@ -10,6 +10,8 @@ Tap AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-
 
 产品边界与验收见 [Tap AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。下方客户原型演示记录的是拆分前的组合式平台页面。
 
+旧版浏览器中的 Automation 编辑和模拟 Run 需按[浏览器原型工作区升级](docs/architecture/2026-09-15-tap-ai-product-boundary.md#浏览器原型工作区升级)迁移：同源可自动恢复；默认端口从 5173 变为 5174 时，使用 TAP 自有的 `Local workspace` 导出/导入功能转移。
+
 ## 客户原型演示
 
 截至 2026-09-06，当前前端交互原型以 Tapper 为统一助手入口，组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Automation。BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。

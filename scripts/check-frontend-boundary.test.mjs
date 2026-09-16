@@ -59,7 +59,7 @@ for (const [product, source, expected] of [
         writeFileSync(path, content);
       }
       symlinkSync(
-        join(repository, "apps", product, "node_modules"),
+        join(repository, "apps", "tap-ai-frontend", "node_modules"),
         join(app, "node_modules"),
       );
       const result = spawnSync(process.execPath, [checker], {

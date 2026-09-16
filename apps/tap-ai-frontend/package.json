@@ -11,7 +11,7 @@
     "test": "vitest",
     "lint": "eslint .",
     "format:check": "prettier --check .",
-    "architecture": "node scripts/check-architecture.mjs && node ../../scripts/check-frontend-boundary.mjs && node --test ../../scripts/check-frontend-boundary.test.mjs",
+    "architecture": "node scripts/check-architecture.mjs && node ../../scripts/check-frontend-boundary.mjs && node --test ../../scripts/check-frontend-boundary.test.mjs ../../scripts/check-frontend-isolation.test.mjs",
     "prototype:capture": "playwright test --config playwright.prototype.config.ts",
     "check": "corepack pnpm run lint && corepack pnpm run format:check && corepack pnpm run architecture && corepack pnpm run build"
   },

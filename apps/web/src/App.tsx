@@ -15,6 +15,7 @@ import {
   type AutomationWorkspaceView,
 } from "./legacy/automation/AutomationWorkspace";
 import { TestAnalyticsWorkspace } from "./legacy/TestAnalyticsWorkspace";
+import { WorkspaceTransfer } from "./WorkspaceTransfer";
 import "./styles.css";
 import "./legacy/automation/AutomationWorkspace.css";
 
@@ -55,6 +56,14 @@ export function App() {
         </nav>
       </header>
       <main>
+        <WorkspaceTransfer
+          state={state}
+          onRestore={(restored) => {
+            dispatch({ type: "workspace/restore", state: restored });
+            setView({ kind: "library" });
+            setSection("automation");
+          }}
+        />
         {section === "analytics" ? (
           <TestAnalyticsWorkspace locale="en" />
         ) : (

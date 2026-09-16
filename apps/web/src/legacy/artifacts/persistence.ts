@@ -2,6 +2,7 @@ import { createInitialArtifactState } from "./fixtures";
 import type { ArtifactState } from "./model";
 
 export const AUTOMATION_STORAGE_KEY = "tap.automation.workspace.v1";
+const AUTOMATION_BACKUP_PREFIX = "tap.automation.workspace.backup.";
 
 type Validator = (value: unknown) => boolean;
 const string: Validator = (value) => typeof value === "string";
@@ -127,18 +128,44 @@ const validState = object({
   ),
 });
 
-export function loadAutomationState(): ArtifactState {
+export function readAutomationSnapshot(
+  serialized: string | null,
+): ArtifactState | null {
   try {
-    const snapshot: unknown = JSON.parse(
-      window.localStorage.getItem(AUTOMATION_STORAGE_KEY) ?? "null",
-    );
+    const snapshot: unknown = JSON.parse(serialized ?? "null");
     if (object({ version: oneOf(1), state: validState })(snapshot)) {
       return (snapshot as { state: ArtifactState }).state;
     }
+    if (object({ version: oneOf(2), artifacts: validState })(snapshot)) {
+      return (snapshot as { artifacts: ArtifactState }).artifacts;
+    }
+  } catch {
+    // Malformed imports and browser snapshots must not reach the workspace.
+  }
+  return null;
+}
+
+export function loadAutomationState(): ArtifactState {
+  try {
+    const current = window.localStorage.getItem(AUTOMATION_STORAGE_KEY);
+    const restored = readAutomationSnapshot(
+      current ?? window.localStorage.getItem("tap.prototype.workspace.v2"),
+    );
+    if (restored !== null) return restored;
   } catch {
     // Storage may be unavailable, or a previous snapshot may be corrupt.
   }
   return createInitialArtifactState();
+}
+
+export function loadLegacyAutomationState(): ArtifactState | null {
+  try {
+    return readAutomationSnapshot(
+      window.localStorage.getItem("tap.prototype.workspace.v2"),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export function saveAutomationState(state: ArtifactState): void {
@@ -149,5 +176,40 @@ export function saveAutomationState(state: ArtifactState): void {
     );
   } catch {
     // Editing and simulated execution remain available without browser storage.
+  }
+}
+
+export function backupAndRestoreAutomationState(
+  current: ArtifactState,
+  restored: ArtifactState,
+): boolean {
+  try {
+    const backupKey = `${AUTOMATION_BACKUP_PREFIX}${new Date().toISOString()}.${crypto.randomUUID()}`;
+    window.localStorage.setItem(
+      backupKey,
+      JSON.stringify({ version: 1, state: current }),
+    );
+    window.localStorage.setItem(
+      AUTOMATION_STORAGE_KEY,
+      JSON.stringify({ version: 1, state: restored }),
+    );
+    return true;
+  } catch {
+    // Never replace the visible state unless both backup and replacement persisted.
+    return false;
+  }
+}
+
+export function loadPreviousAutomationState(): ArtifactState | null {
+  try {
+    const last = Object.keys(window.localStorage)
+      .filter((key) => key.startsWith(AUTOMATION_BACKUP_PREFIX))
+      .sort()
+      .at(-1);
+    return last === undefined
+      ? null
+      : readAutomationSnapshot(window.localStorage.getItem(last));
+  } catch {
+    return null;
   }
 }

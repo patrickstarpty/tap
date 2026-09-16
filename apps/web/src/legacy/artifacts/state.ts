@@ -8,6 +8,7 @@ import type {
 } from "./model";
 
 export type ArtifactAction =
+  | { type: "workspace/restore"; state: ArtifactState }
   | { type: "automation/create"; automation: Automation }
   | { type: "automation/update"; automation: Automation }
   | { type: "test-plan/create"; testPlan: TestPlan }
@@ -34,6 +35,7 @@ export function artifactReducer(
   state: ArtifactState,
   action: ArtifactAction,
 ): ArtifactState {
+  if (action.type === "workspace/restore") return action.state;
   if (action.type === "automation/create") {
     if (state.automations.some(({ id }) => id === action.automation.id)) {
       return state;
