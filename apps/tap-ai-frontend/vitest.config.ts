@@ -5,7 +5,11 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
-    exclude: [...configDefaults.exclude, "tests/e2e/**"],
+    exclude: [
+      ...configDefaults.exclude,
+      "tests/e2e/**",
+      "scripts/**/*.test.mjs",
+    ],
     setupFiles: ["./src/shared/testing/setup.ts"],
   },
 });
