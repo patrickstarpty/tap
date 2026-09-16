@@ -15,6 +15,10 @@ apps/web/dist/
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/tsconfig.tsbuildinfo
+apps/tap-ai-frontend/dist/
+apps/tap-ai-frontend/test-results/
+apps/tap-ai-frontend/playwright-report/
+apps/tap-ai-frontend/tsconfig.tsbuildinfo
 .pytest_cache/
 .ruff_cache/
 __pycache__/

@@ -9,7 +9,8 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "tap-backend",
+    "tap-ai-backend",
+    "tap-platform-backend",
 ]
 
 [[package]]
@@ -1142,9 +1143,9 @@ wheels = [
 ]
 
 [[package]]
-name = "tap-backend"
+name = "tap-ai-backend"
 version = "0.1.0"
-source = { editable = "apps/backend" }
+source = { editable = "apps/tap-ai-backend" }
 dependencies = [
     { name = "aiobotocore" },
     { name = "aiohttp" },
@@ -1208,6 +1209,35 @@ dev = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "reportlab", specifier = "==5.0.1" },
     { name = "ruff", specifier = "==0.12.10" },
+]
+
+[[package]]
+name = "tap-platform-backend"
+version = "0.1.0"
+source = { editable = "apps/backend" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = "==0.116.1" },
+    { name = "uvicorn", specifier = "==0.52.4" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "pytest", specifier = "==8.4.1" },
+    { name = "pytest-asyncio", specifier = "==1.1.0" },
 ]
 
 [[package]]

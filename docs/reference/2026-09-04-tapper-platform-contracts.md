@@ -2,6 +2,8 @@
 
 本页把 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 中跨模块、必须在实现期间保持稳定的契约集中列出。它不是手写的最终 OpenAPI；HTTP DTO 仍由 Backend 定义并生成 TypeScript。若本页与 RFC-009 冲突，以 RFC 为准。
 
+> **2026-09-15 应用归属**：当前公开 HTTP DTO 由 `apps/tap-ai-backend` 定义，TypeScript 合同生成到 `apps/tap-ai-frontend`。目录迁移不改变本页稳定 DTO、路径、事件或问题类型；TAP 非 AI 应用之间的未来跨产品合同另行定义。
+
 ## 1. 身份与范围
 
 ```python

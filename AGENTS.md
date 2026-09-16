@@ -10,7 +10,7 @@
 
 ## Project Structure & Module Organization
 
-TAP contains a Python 3.13 FastAPI Backend (`apps/backend/`), React/TypeScript/Vite Web app (`apps/web/`), generated contracts (`contracts/`), runtime tooling (`scripts/`, `deploy/`) and documentation (`docs/`). The Tapper local slice uses MySQL, Redis, Azurite, LiteLLM and Milvus; API, Relay and worker entrypoints remain separate. Place docs in `architecture/`, `proposals/`, `decisions/`, `plans/`, `reviews/` or `reference/`. Except for indexes and templates, use `YYYY-MM-DD-<lower-kebab-case>.md` filenames.
+Tap AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, Azurite, LiteLLM and Milvus; API, Relay and worker entrypoints remain separate. Place docs in `architecture/`, `proposals/`, `decisions/`, `plans/`, `reviews/` or `reference/`. Except for indexes and templates, use `YYYY-MM-DD-<lower-kebab-case>.md` filenames.
 
 ## Documentation Governance
 
@@ -30,6 +30,8 @@ make demo-check    # run five redacted dependency checks
 make demo-dev      # loopback API, Relay, worker and Web
 make demo-e2e      # isolated deterministic browser/persistence journey
 make demo-down     # stop the project and preserve volumes
+make tap-ai-dev     # run only Tap AI app processes with configured local services
+make tap-web-dev    # run the TAP non-AI frontend separately
 git diff --check
 git diff -- README.md docs/ AGENTS.md
 ```
@@ -42,7 +44,7 @@ Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links a
 
 ## Testing Guidelines
 
-Backend tests are in `apps/backend/tests/{unit,contract,integration,smoke}/`; Web tests live beside features and in `apps/web/tests/e2e/`. Use TDD for behavior changes: run the narrow test, then `make check` and `make test` in proportion to risk. `make demo-e2e` owns isolated middleware and must not mutate shared/default services. Real-model smoke requires `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1`; otherwise expect one skip. Review docs, links, lifecycle metadata and Phase boundaries. Never present local `doc` Milvus as enterprise Azure four-index completion or fake E2E as real-model validation.
+Tap AI Backend tests are in `apps/tap-ai-backend/tests/{unit,contract,integration,smoke}/`; Tap AI Web tests live beside features and in `apps/tap-ai-frontend/tests/e2e/`. TAP non-AI tests live in `apps/backend/tests/` and beside `apps/web/src/`. Use TDD for behavior changes: run the narrow test, then `make check` and `make test` in proportion to risk. `make demo-e2e` owns isolated middleware and must not mutate shared/default services. Real-model smoke requires `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1`; otherwise expect one skip. Review docs, links, lifecycle metadata and Phase boundaries. Never present local `doc` Milvus as enterprise Azure four-index completion or fake E2E as real-model validation.
 
 Tapper Demo is loopback-only, unauthenticated and supports text-extractable PDF/DOCX/MD/TXT without OCR. The rendered answer is page-local and not restored as history. Do not widen binds or make LAN/production claims without a separate security design.
 

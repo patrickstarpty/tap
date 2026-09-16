@@ -1,0 +1,7 @@
+body { margin: 0; font-family: Inter, Arial, sans-serif; background: #f5f7fa; color: #17212f; }
+.tap-app-header { display: flex; align-items: center; gap: 2rem; padding: 1rem 1.5rem; background: #fff; border-bottom: 1px solid #dce3ea; }
+.tap-app-header strong { font-size: 1.35rem; letter-spacing: .04em; }
+.tap-app-header nav { display: flex; gap: .5rem; }
+.tap-app-header button { border: 0; border-radius: .5rem; background: transparent; padding: .6rem .8rem; cursor: pointer; color: inherit; }
+.tap-app-header button[aria-current="page"] { background: #e9f1ff; color: #174a9a; }
+.tap-app main { padding: 1.5rem; max-width: 1440px; margin: auto; }

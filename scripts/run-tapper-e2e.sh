@@ -161,14 +161,14 @@ readonly TAPPER_MODEL_TIMEOUT_SECONDS TAPPER_BLOB_TIMEOUT_SECONDS TAPPER_MILVUS_
 
 cd "$tapper_e2e_repo_root"
 
-if ! uv run --project apps/backend python -c \
+if ! uv run --project apps/tap-ai-backend python -c \
   'import os; from tap.entrypoints.tapper_runtime import TapperSettings; TapperSettings.from_mapping(dict(os.environ))' \
   >/dev/null 2>&1; then
   echo "Tapper E2E configuration is invalid." >&2
   exit 2
 fi
 
-if ! uv run --project apps/backend python - \
+if ! uv run --project apps/tap-ai-backend python - \
   13306 16379 11000 14000 29530 19091 18000 15173 29000 <<'PY'
 import socket
 import sys
@@ -190,14 +190,14 @@ fi
 
 chromium_path="$(
   cd "$tapper_e2e_repo_root" &&
-    corepack pnpm --filter @tap/web exec node --input-type=module -e \
+    corepack pnpm --filter @tap/ai-frontend exec node --input-type=module -e \
       'import { chromium } from "@playwright/test"; process.stdout.write(chromium.executablePath())'
 )" || {
-  echo "Chromium is missing; run: corepack pnpm --filter @tap/web exec playwright install chromium" >&2
+  echo "Chromium is missing; run: corepack pnpm --filter @tap/ai-frontend exec playwright install chromium" >&2
   exit 2
 }
 if [ -z "$chromium_path" ] || [ ! -x "$chromium_path" ]; then
-  echo "Chromium is missing; run: corepack pnpm --filter @tap/web exec playwright install chromium" >&2
+  echo "Chromium is missing; run: corepack pnpm --filter @tap/ai-frontend exec playwright install chromium" >&2
   exit 2
 fi
 
@@ -332,7 +332,7 @@ tapper_e2e_state_dir="$(mktemp -d "$tapper_e2e_state_root/tap-tapper-e2e.XXXXXX"
 chmod 700 "$tapper_e2e_state_dir"
 export TAPPER_E2E_STATE_FILE="$tapper_e2e_state_dir/state.json"
 export TAPPER_E2E_HOSTILE_DIR="$tapper_e2e_state_dir/hostile"
-uv run --project apps/backend python "$tapper_e2e_script_dir/build-hostile-document-fixtures.py" "$TAPPER_E2E_HOSTILE_DIR"
+uv run --project apps/tap-ai-backend python "$tapper_e2e_script_dir/build-hostile-document-fixtures.py" "$TAPPER_E2E_HOSTILE_DIR"
 TAPPER_OBJECT_STORE_IMAGE="$("$tapper_e2e_script_dir/build-tapper-object-store.sh" verify)"
 export TAPPER_OBJECT_STORE_IMAGE
 readonly TAPPER_OBJECT_STORE_IMAGE
@@ -341,10 +341,10 @@ bootstrap_middleware() {
   compose up -d --wait --wait-timeout 180
   object_container="$(docker --context "$docker_context" ps --filter label=com.docker.compose.project=tap-tapper-e2e --filter label=com.docker.compose.service=tap-minio --format '{{.ID}}')"
   "$tapper_e2e_script_dir/build-tapper-object-store.sh" verify-container "$object_container"
-  uv run --project apps/backend alembic -c apps/backend/alembic.ini upgrade head
+  uv run --project apps/tap-ai-backend alembic -c apps/tap-ai-backend/alembic.ini upgrade head
   TAP_ALLOW_INITIAL_MILVUS_ROOT=1 \
-    uv run --project apps/backend python scripts/milvus_bootstrap.py
-  uv run --project apps/backend python scripts/tapper_collection.py ensure
+    uv run --project apps/tap-ai-backend python scripts/milvus_bootstrap.py
+  uv run --project apps/tap-ai-backend python scripts/tapper_collection.py ensure
 }
 
 tapper_e2e_api_http_ready() {
@@ -353,7 +353,7 @@ tapper_e2e_api_http_ready() {
 }
 
 tapper_e2e_api_body_ready() {
-  uv run --project apps/backend python - "$1" >/dev/null 2>&1 <<'PY'
+  uv run --project apps/tap-ai-backend python - "$1" >/dev/null 2>&1 <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -383,7 +383,7 @@ tapper_e2e_apps_job_is_running() {
 
 start_apps() {
   local tapper_e2e_ready_stage="supervisor"
-  TAPPER_SUPERVISOR_ENV=preloaded \
+  TAPPER_SUPERVISOR_ENV=preloaded TAPPER_COMPOSE_OBJECT_STORE_VERIFY=1 \
     /bin/bash scripts/run-tapper-dev.sh >"$tapper_e2e_state_dir/apps.log" 2>&1 &
   tapper_e2e_apps_pid=$!
   ready_file="$tapper_e2e_state_dir/ready.json"
@@ -439,7 +439,7 @@ run_playwright() {
   )
   [ "${#specs[@]}" -gt 0 ] || return 1
   if TAPPER_E2E_PHASE="$phase" \
-    corepack pnpm --filter @tap/web exec playwright test "${specs[@]}" \
+    corepack pnpm --filter @tap/ai-frontend exec playwright test "${specs[@]}" \
       --config=playwright.config.ts --reporter=json --workers=1 >"$report_file" 2>"$error_file"; then
     :
   else
@@ -482,7 +482,7 @@ run_journey() {
   start_apps
   run_playwright tests/e2e/tapper.spec.ts journey
 
-  uv run --project apps/backend python scripts/disable-tapper-e2e-assets.py
+  uv run --project apps/tap-ai-backend python scripts/disable-tapper-e2e-assets.py
 
   stop_apps
   start_apps
@@ -495,8 +495,8 @@ run_journey() {
   run_playwright tests/e2e/persistence.spec.ts compose-restart
 
   TAPPER_E2E_PHASE=verify TAP_RUN_TAPPER_E2E=1 \
-    uv run --project apps/backend pytest -q \
-      apps/backend/tests/integration/test_tapper_persistence_restart.py \
+    uv run --project apps/tap-ai-backend pytest -q \
+      apps/tap-ai-backend/tests/integration/test_tapper_persistence_restart.py \
       --junitxml="$tapper_e2e_state_dir/pytest-verify.xml"
 }
 

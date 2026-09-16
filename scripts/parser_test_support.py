@@ -160,7 +160,7 @@ def isolated_probe():
         docker = ["docker", "--config", str(config), "--host", endpoint]
         build = state / "context"
         build.mkdir()
-        probe = (root / "apps/backend/tests/fixtures/parser_probe.py").read_bytes()
+        probe = (root / "apps/tap-ai-backend/tests/fixtures/parser_probe.py").read_bytes()
         digest = hashlib.sha256(probe).hexdigest()
         (build / "child.py").write_bytes(probe)
         # This non-secret test source must be readable by the image's fixed UID.

@@ -9,13 +9,13 @@
   },
   "packages": ["pypdf", "python-docx", "lxml", "typing-extensions"],
   "sources": [
-    "apps/backend/src/tap/__init__.py",
-    "apps/backend/src/tap/modules/access/domain/context.py",
-    "apps/backend/src/tap/modules/knowledge/domain/documents.py",
-    "apps/backend/src/tap/modules/knowledge/ports/documents.py",
-    "apps/backend/src/tap/modules/knowledge/ports/errors.py",
-    "apps/backend/src/tap/modules/knowledge/adapters/document_parsers.py",
-    "apps/backend/src/tap/modules/knowledge/adapters/artifact_codecs.py",
-    "apps/backend/src/tap/modules/knowledge/adapters/parser_protocol.py"
+    "apps/tap-ai-backend/src/tap/__init__.py",
+    "apps/tap-ai-backend/src/tap/modules/access/domain/context.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/domain/documents.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/ports/documents.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/ports/errors.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/document_parsers.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/artifact_codecs.py",
+    "apps/tap-ai-backend/src/tap/modules/knowledge/adapters/parser_protocol.py"
   ]
 }

@@ -84,7 +84,7 @@ def project_report(
     }
 
 
-VERIFY_SPEC = "apps/backend/tests/integration/test_tapper_persistence_restart.py"
+VERIFY_SPEC = "apps/tap-ai-backend/tests/integration/test_tapper_persistence_restart.py"
 
 
 def project_pytest(raw: bytes) -> dict[str, Any]:

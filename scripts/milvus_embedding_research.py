@@ -26,8 +26,8 @@ from tap.operations.milvus.embeddings import (
     write_vector_snapshot_at,
 )
 
-_DOC_FIXTURE = Path("apps/backend/tests/fixtures/milvus/doc-fixture-v1.json")
-_QUERY_FIXTURE = Path("apps/backend/tests/fixtures/milvus/query-cases-v1.json")
+_DOC_FIXTURE = Path("apps/tap-ai-backend/tests/fixtures/milvus/doc-fixture-v1.json")
+_QUERY_FIXTURE = Path("apps/tap-ai-backend/tests/fixtures/milvus/query-cases-v1.json")
 _CACHE_DIRECTORY = Path(".local/milvus-embedding-cache")
 _REPORT_PATH = Path(".local/milvus-research/report.json")
 _CANDIDATE_SNAPSHOT_PATH = Path(

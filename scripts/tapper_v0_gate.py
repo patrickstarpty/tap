@@ -131,7 +131,9 @@ PHASES = {
     ],
     "app-restart": ["tests/e2e/persistence.spec.ts"],
     "compose-restart": ["tests/e2e/persistence.spec.ts"],
-    "verify": ["apps/backend/tests/integration/test_tapper_persistence_restart.py"],
+    "verify": [
+        "apps/tap-ai-backend/tests/integration/test_tapper_persistence_restart.py"
+    ],
 }
 E2E_TITLES = {
     "tests/e2e/tapper.spec.ts": "Library uploads/status and Project API recovery, answers, citations, scope, digests and deletion",
@@ -182,10 +184,10 @@ def command_registry(output: Path) -> list[dict[str, Any]]:
                     "uv",
                     "run",
                     "--project",
-                    "apps/backend",
+                    "apps/tap-ai-backend",
                     "pytest",
                     "-q",
-                    *["apps/backend/tests/" + file for file in files],
+                    *["apps/tap-ai-backend/tests/" + file for file in files],
                     "--junitxml=" + str(output / (name + ".xml")),
                     "-o",
                     "xfail_strict=true",
@@ -723,7 +725,7 @@ def clean_environment() -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in allowed}
     env.update(
         UV_NO_SYNC="1",
-        PYTHONPATH=str(ROOT / "apps/backend/src") + os.pathsep + str(ROOT),
+        PYTHONPATH=str(ROOT / "apps/tap-ai-backend/src") + os.pathsep + str(ROOT),
     )
     return env
 

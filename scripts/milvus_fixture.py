@@ -45,9 +45,11 @@ from tap.operations.milvus.fixtures import (
 from tap.operations.milvus.publish import finalize_old_physical, publish_fixture
 
 _TIMEOUT_SECONDS = 10.0
-_FIXTURE = Path("apps/backend/tests/fixtures/milvus/doc-fixture-v1.json")
-_QUERIES = Path("apps/backend/tests/fixtures/milvus/query-cases-v1.json")
-_VECTORS = Path("apps/backend/tests/fixtures/milvus/vectors-research-embedding-v1.json")
+_FIXTURE = Path("apps/tap-ai-backend/tests/fixtures/milvus/doc-fixture-v1.json")
+_QUERIES = Path("apps/tap-ai-backend/tests/fixtures/milvus/query-cases-v1.json")
+_VECTORS = Path(
+    "apps/tap-ai-backend/tests/fixtures/milvus/vectors-research-embedding-v1.json"
+)
 _ACTIVE_MARKER = Path(".local/milvus-active-corpus.json")
 _ANALYZER_TEXTS = (
     "退款申请须由付款组审批。",
