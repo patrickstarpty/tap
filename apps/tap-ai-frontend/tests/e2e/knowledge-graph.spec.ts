@@ -98,16 +98,21 @@ test("ready knowledge is published as a bounded grounded graph", async ({
       new URL(response.url()).pathname.endsWith("/knowledge/graph/snapshots"),
   );
   await page.getByRole("tab", { name: /Graph|图谱/u }).click();
+  await page
+    .getByRole("button", { name: /Published source graph|已发布来源图谱/u })
+    .click();
   const activeGraph = await activeGraphResponse;
   expect(activeGraph.status(), await activeGraph.text()).toBe(200);
   expect(
     ((await activeGraph.json()) as { items: unknown[] }).items.length,
   ).toBeGreaterThan(0);
-  const explorer = page.getByRole("region", {
-    name: "Knowledge graph explorer",
+  const explorer = page.getByRole("figure", {
+    name: /Published source graph|已发布的来源图谱/u,
   });
   await expect(explorer).toBeVisible();
-  await expect(explorer.getByText(/nodes in this bounded view/u)).toBeVisible();
+  await expect(
+    explorer.getByRole("button", { name: new RegExp(filename, "u") }),
+  ).toBeVisible();
 
   const unavailable = async (route: Route) => {
     await route.fulfill({
@@ -127,8 +132,11 @@ test("ready knowledge is published as a bounded grounded graph", async ({
         .getByRole("button", { name: `View ${filename}`, exact: true }),
     ).toBeVisible();
     await page.getByRole("tab", { name: /Graph|图谱/u }).click();
+    await page
+      .getByRole("button", { name: /Published source graph|已发布来源图谱/u })
+      .click();
     await expect(page.getByRole("alert")).toContainText(
-      "knowledge graph is temporarily unavailable",
+      /published graph is temporarily unavailable|已发布图谱暂时无法加载/u,
     );
   } finally {
     await page.unroute(graphSnapshotPattern, unavailable);

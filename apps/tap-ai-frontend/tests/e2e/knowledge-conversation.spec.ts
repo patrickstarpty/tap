@@ -184,11 +184,19 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   expect(resumed.status).toBe(200);
   expect(resumed.text).not.toContain(`id: ${resumeFrom}\n`);
 
-  const citationButton = page.getByRole("button", { name: "引用 1" }).first();
+  const citationButton = page
+    .getByRole("button", {
+      name: /Open source citation 1|打开来源引用 1/u,
+    })
+    .first();
   await expect(citationButton).toBeVisible();
   await citationButton.click();
-  await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
-  const sourceLink = page.getByRole("link", { name: "打开来源" });
+  await expect(
+    page.getByRole("heading", { name: /Cited source|原文依据/u }),
+  ).toBeVisible();
+  const sourceLink = page.getByRole("link", {
+    name: /Open source|打开来源/u,
+  });
   await expect(sourceLink).toHaveAttribute(
     "href",
     `#source-${createdSourceId}`,
@@ -232,7 +240,9 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   const appendedTurn = page.locator(".tap-turn").filter({ hasText: followUp });
   await expect(appendedTurn).toHaveCount(1);
   await expect(
-    appendedTurn.getByRole("button", { name: "引用 1" }),
+    appendedTurn.getByRole("button", {
+      name: /Open source citation 1|打开来源引用 1/u,
+    }),
   ).toBeVisible({ timeout: 45_000 });
   await expect(
     appendedTurn.getByText("Tapper is grounding the answer…", { exact: true }),
@@ -297,14 +307,23 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     })
     .toBe(false);
 
-  await page.getByRole("button", { name: "引用 1" }).first().click();
-  await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: /Open source citation 1|打开来源引用 1/u,
+    })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("heading", { name: /Cited source|原文依据/u }),
+  ).toBeVisible();
   await expect(
     page
-      .getByLabel("原文", { exact: true })
+      .getByLabel(/Source text|原文/u)
       .getByText("verified identity evidence", { exact: false }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "关闭原文" }).click();
+  await page
+    .getByRole("button", { name: /Close source text|关闭原文/u })
+    .click();
 
   const history = page.getByRole("navigation", { name: "Chat history" });
   await expect(

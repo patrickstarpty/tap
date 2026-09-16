@@ -174,7 +174,9 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
   await expect(
     page.getByRole("heading", { name: "Generated Test Plan" }),
   ).toBeVisible();
-  await expect(page.getByText(/1 条来源依据/u)).toBeVisible();
+  await expect(
+    page.getByText(/1 source citations|1 条来源依据/u),
+  ).toBeVisible();
   const publish = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -184,7 +186,11 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
           `/test-plans/${job.testPlanId}/revisions/${job.revisionId}/publish`,
         ),
   );
-  await page.getByRole("button", { name: "批准并发布" }).click();
+  await page
+    .getByRole("button", { name: /Approve and publish|批准并发布/u })
+    .click();
   expect((await publish).status()).toBe(200);
-  await expect(page.getByRole("button", { name: "已发布" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /Published|已发布/u }),
+  ).toBeDisabled();
 });

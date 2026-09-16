@@ -169,32 +169,53 @@ test("Tapper durable state survives the selected restart boundary", async ({
   await expect(
     transcript.getByText(conversationState.prompt, { exact: true }),
   ).toBeVisible();
-  const persistedContext = [
-    conversationState.sourceLabel,
+  const persistedTurn = transcript
+    .locator(".tap-turn")
+    .filter({ hasText: conversationState.prompt })
+    .first();
+  const messageContext = persistedTurn.locator(".tap-message-context");
+  await messageContext
+    .getByText(/Message context|本轮上下文/u, { exact: false })
+    .click();
+  await expect(
+    messageContext.getByText(conversationState.sourceLabel, { exact: true }),
+  ).toBeVisible();
+  const answerContext = persistedTurn.locator(".tap-answer-context");
+  await answerContext
+    .getByText(
+      /Sources and settings used for this answer|本次回答使用的资料与配置/u,
+    )
+    .click();
+  for (const label of [
     conversationState.agentLabel,
     conversationState.skillLabel,
-  ];
-  const selectedContext = transcript.getByRole("list", {
-    name: "Selected context",
-  });
-  for (const label of persistedContext) {
-    const item = selectedContext.getByText(label, { exact: true }).first();
-    await item.scrollIntoViewIfNeeded();
-    await expect(item).toBeVisible();
+  ]) {
+    await expect(
+      answerContext.getByText(new RegExp(label, "u"), { exact: false }),
+    ).toBeVisible();
   }
   await expect(
     page.getByRole("button", {
       name: `Select model, current model ${selectedModel!.displayName}`,
     }),
   ).toBeVisible();
-  await transcript.getByRole("button", { name: "引用 1" }).first().click();
-  await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
+  await transcript
+    .getByRole("button", {
+      name: /Open source citation 1|打开来源引用 1/u,
+    })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("heading", { name: /Cited source|原文依据/u }),
+  ).toBeVisible();
   await expect(
     page
-      .getByLabel("原文", { exact: true })
+      .getByLabel(/Source text|原文/u)
       .getByText("verified identity evidence", { exact: false }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "关闭原文" }).click();
+  await page
+    .getByRole("button", { name: /Close source text|关闭原文/u })
+    .click();
 
   await page
     .getByRole("checkbox", { name: new RegExp(policyFilename!, "u") })
