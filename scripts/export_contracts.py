@@ -13,7 +13,7 @@ from pydantic.json_schema import models_json_schema
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-BACKEND_SOURCE = REPOSITORY_ROOT / "apps" / "backend" / "src"
+BACKEND_SOURCE = REPOSITORY_ROOT / "apps" / "tap-ai-backend" / "src"
 
 if str(BACKEND_SOURCE) not in sys.path:
     sys.path.insert(0, str(BACKEND_SOURCE))

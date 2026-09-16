@@ -2,7 +2,19 @@
 
 TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。当前已接受的路线先在固定 Validation Scope 中验证知识问答、Knowledge Graph、Test Plan、Web LCA/Recorder、Playwright/Jenkins 与结果闭环；验证通过后再实现用户、RBAC、多 Project 和生产治理。
 
-## 客户原型演示
+## Tap AI 独立应用
+
+Tap AI 的前后端分别位于 `apps/tap-ai-frontend` 和 `apps/tap-ai-backend`，拥有 Tapper 问答、知识文档/图谱、模型与 Agent/Skill 资产，以及 AI 测试方案的生成、保存和评审。TAP 非 AI 应用入口保留在 `apps/web` 和 `apps/backend`；现有低代码与测试分析原型由 TAP Web 承载。公开 API 路径、数据库表、迁移链和 `TAPPER_*` 配置名在本次目录迁移中保持不变，因此已有 Tapper 数据和对象引用无需重建。
+
+Tap AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-bootstrap` 安装 Tap AI 冻结依赖，按 `.env.example` 配置并启动本机基础服务（现有 Demo 可用 `make demo-up`，或连接自行配置的服务），执行 `make tap-ai-migrate`，再执行 `make tap-ai-dev`；这会在回环地址启动 Tap AI API、Relay、后台任务和前端。结束 `tap-ai-dev` 会清理这些应用进程；现有 Demo 的基础服务可用 `make demo-down` 停止并保留卷。`make tap-ai-api` 与 `make tap-ai-web` 可分别启动两端；`make tap-web-dev`、`make tap-backend-dev` 则分别启动 TAP 非 AI 应用。`make tap-ai-check` 和 `make tap-ai-test` 只检查 Tap AI。当前入口仍是本机无认证 Demo，不承担局域网或生产访问。
+
+产品边界与验收见 [Tap AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。下方客户原型演示记录的是拆分前的组合式平台页面。
+
+当前 AI 页面截图可运行 `corepack pnpm --dir apps/tap-ai-frontend run prototype:capture`：仅使用隔离的示例 API 响应，输出 6 张截图到应用的 `test-results/prototype-capture/`，不改写下方历史截图；追加 `--list` 可查看采集范围。
+
+旧版浏览器中的 Automation 编辑和模拟 Run 需按[浏览器原型工作区升级](docs/architecture/2026-09-15-tap-ai-product-boundary.md#浏览器原型工作区升级)迁移：同源可自动恢复；默认端口从 5173 变为 5174 时，使用 TAP 自有的 `Local workspace` 导出/导入功能转移。
+
+## 客户原型演示（2026-09-06 历史记录）
 
 截至 2026-09-06，当前前端交互原型以 Tapper 为统一助手入口，组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Automation。BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。
 
@@ -15,7 +27,7 @@ TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能�
 从仓库根目录启动原型：
 
 ```sh
-corepack pnpm --dir apps/web dev --port 4175
+corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
 ```
 
 打开 `http://127.0.0.1:4175/`。下图为 2026-09-06 从当前原型重新采集的六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
@@ -273,10 +285,10 @@ make demo-e2e
 set -a
 . ./.env
 set +a
-TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 uv run --project apps/backend pytest \
-  apps/backend/tests/smoke/test_tapper_real_model.py -v -rs
-TAP_RUN_TAPPER_CODEX_CONFORMANCE=1 uv run --project apps/backend pytest \
-  apps/backend/tests/smoke/test_tapper_codex_smoke.py -v -rs
+TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 uv run --project apps/tap-ai-backend pytest \
+  apps/tap-ai-backend/tests/smoke/test_tapper_real_model.py -v -rs
+TAP_RUN_TAPPER_CODEX_CONFORMANCE=1 uv run --project apps/tap-ai-backend pytest \
+  apps/tap-ai-backend/tests/smoke/test_tapper_codex_smoke.py -v -rs
 ```
 
 2026-09-01 的验收证据为：阿里 `tapper-embedding` 的 zh→en 与 en→zh 门禁均通过且维度为 `1536`，`elapsed_ms=669`；Codex bootstrap 和未打补丁的生产配置均通过，最新生产复验输出 `version=0.149.0 model=gpt-5.6-sol reasoning=ultra single_agent=true grounded=true cited=true sanitized=true cleanup=true elapsed_ms=21652`，pytest 为 `1 passed in 21.71s`、exit `0`。默认无授权执行为 `2 skipped in 0.63s`、exit `0`。证据不保存 query、Evidence、回答、向量、JSONL 或登录信息。
@@ -314,4 +326,4 @@ make test
 
 `make contracts` 从 FastAPI 路由元数据和公共 Pydantic 模型确定性导出并检查 `contracts/openapi/api.json` 与 `contracts/events/chat-stream.schema.json`：JSON 使用排序键、两空格缩进、一个末尾换行，且不写入时间戳。HTTP DTO 与 SSE event models 是彼此独立的模型图；浏览器可见的 SSE schema 不描述 `text/event-stream` framing。
 
-`make contracts` 同时更新并检查 `apps/web/src/shared/api/generated/` 的 TypeScript client/type。冻结安装使用 `uv sync --frozen --all-groups` 和 `corepack pnpm install --frozen-lockfile`，不依赖全局 pnpm。
+`make contracts` 同时更新并检查 `apps/tap-ai-frontend/src/shared/api/generated/` 的 TypeScript client/type。冻结安装使用 `uv sync --frozen --all-groups` 和 `corepack pnpm install --frozen-lockfile`，不依赖全局 pnpm。

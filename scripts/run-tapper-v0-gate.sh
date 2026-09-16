@@ -5,4 +5,4 @@ umask 077
 tapper_gate_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$tapper_gate_root"
 export UV_NO_SYNC=1
-exec uv run --project apps/backend python scripts/tapper_v0_gate.py run
+exec uv run --project apps/tap-ai-backend python scripts/tapper_v0_gate.py run

@@ -77,7 +77,7 @@ def main() -> None:
         "scripts/build-tapper-parser.sh",
         "scripts/parser_build.py",
         "uv.lock",
-        "apps/backend/pyproject.toml",
+        "apps/tap-ai-backend/pyproject.toml",
         ".python-version",
     ]
     hashes = {}
@@ -127,7 +127,7 @@ def main() -> None:
             build = work / "context"
             build.mkdir()
             for name in inputs["sources"]:
-                dest = build / "src" / Path(name).relative_to("apps/backend/src")
+                dest = build / "src" / Path(name).relative_to("apps/tap-ai-backend/src")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(root / name, dest)
             shutil.copyfile(root / "deploy/parser/worker.py", build / "worker.py")
@@ -191,7 +191,7 @@ def main() -> None:
             if baked != expected:
                 raise ValueError("parser image provenance mismatch")
             for name in inputs["sources"]:
-                actual = extracted / "src" / Path(name).relative_to("apps/backend/src")
+                actual = extracted / "src" / Path(name).relative_to("apps/tap-ai-backend/src")
                 if sha(actual.read_bytes()) != hashes[name]:
                     raise ValueError("parser image source digest mismatch")
             if (

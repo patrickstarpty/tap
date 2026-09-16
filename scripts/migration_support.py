@@ -219,7 +219,7 @@ BASELINE_ROWS: dict[str, list[dict[str, Any]]] = {
 
 def validate_revision(revision: str) -> str:
     """Accept a literal revision at/after 0005 on a single linear ancestry."""
-    config = Config(str(ROOT / "apps/backend/alembic.ini"))
+    config = Config(str(ROOT / "apps/tap-ai-backend/alembic.ini"))
     config.set_main_option("path_separator", "os")
     scripts = ScriptDirectory.from_config(config)
     try:
@@ -403,7 +403,7 @@ def _local_environment() -> dict[str, str]:
         "LC_ALL",
     }
     env = {key: value for key, value in os.environ.items() if key in allowed}
-    env["PYTHONPATH"] = str(ROOT / "apps/backend/src")
+    env["PYTHONPATH"] = str(ROOT / "apps/tap-ai-backend/src")
     env["UV_NO_SYNC"] = "1"
     return env
 
@@ -429,10 +429,10 @@ class IsolatedMysql:
                 "uv",
                 "run",
                 "--project",
-                "apps/backend",
+                "apps/tap-ai-backend",
                 "alembic",
                 "-c",
-                "apps/backend/alembic.ini",
+                "apps/tap-ai-backend/alembic.ini",
                 direction,
                 revision,
             ],

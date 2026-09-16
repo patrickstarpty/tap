@@ -1,0 +1,1019 @@
+:root {
+  color-scheme: light;
+  --tap-canvas: #faf9f6;
+  --tap-surface: #ffffff;
+  --tap-soft: #f3f2ee;
+  --tap-ink: #232b2b;
+  --tap-muted: #626b68;
+  --tap-line: #e4e6e1;
+  --tap-line-strong: #c4cbc5;
+  --tap-brand: #e87722;
+  --tap-accent: #a9470b;
+  --tap-accent-dark: #893807;
+  --tap-accent-soft: #fff1e5;
+  --tap-accent-line: #efc7a7;
+  --tap-focus: #a9470b;
+  --tap-font:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  accent-color: var(--tap-accent);
+  caret-color: var(--tap-accent);
+  scrollbar-color: var(--tap-line-strong) transparent;
+  text-underline-offset: 0.2em;
+  color: var(--tap-ink);
+  background: var(--tap-canvas);
+  font-family: var(--tap-font);
+  font-size: 14px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+.tap-module {
+  min-height: var(--tap-workspace-height);
+  padding: 34px clamp(26px, 4vw, 62px) 54px;
+}
+
+.tap-module-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.tap-module-heading h1 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-family: var(--tap-font);
+  font-size: clamp(26px, 3vw, 32px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.tap-module-heading p {
+  margin: 8px 0 0;
+  color: var(--tap-muted);
+}
+
+.tap-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tap-saved-state {
+  color: #257154;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Automation and traceability workspaces */
+
+.tap-automation-library,
+.tap-new-automation,
+.tap-automation-detail {
+  --tap-workbench-ink: var(--tap-ink);
+  --tap-workbench-muted: var(--tap-muted);
+  --tap-workbench-line: var(--tap-line);
+  --tap-workbench-soft: var(--tap-soft);
+  --tap-workbench-teal: var(--tap-accent);
+  --tap-workbench-teal-soft: var(--tap-accent-soft);
+  --tap-workbench-coral: var(--tap-accent);
+  max-width: 1600px;
+  margin-inline: auto;
+  background: var(--tap-canvas);
+}
+
+.tap-automation-library .tap-module-heading,
+.tap-new-automation > header {
+  border-bottom: 1px solid var(--tap-workbench-line);
+  padding-bottom: 24px;
+}
+
+.tap-library-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(220px, 320px);
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 16px;
+}
+
+.tap-library-summary > strong {
+  color: var(--tap-workbench-ink);
+  font-family: var(--tap-font);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.tap-library-summary > span {
+  color: var(--tap-workbench-muted);
+  font-size: 12px;
+}
+
+.tap-library-summary .ant-input-search {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+}
+
+.tap-automation-table {
+  min-width: 820px;
+  overflow: hidden;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.tap-automation-row {
+  display: grid;
+  grid-template-columns:
+    minmax(270px, 1.7fr) 96px minmax(110px, 0.65fr) 92px
+    minmax(120px, 0.75fr);
+  align-items: center;
+  min-height: 72px;
+  border-top: 1px solid var(--tap-workbench-line);
+  padding-inline: 15px;
+  color: var(--tap-workbench-muted);
+  font-size: 12px;
+}
+
+.tap-automation-row:first-child {
+  border-top: 0;
+}
+
+.tap-automation-row--header {
+  min-height: 44px;
+  background: #fff;
+  color: var(--tap-muted);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tap-automation-row [role="cell"]:first-child {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  color: var(--tap-workbench-ink);
+}
+
+.tap-automation-row [role="cell"]:first-child > .anticon {
+  flex: 0 0 auto;
+  color: var(--tap-workbench-teal);
+  font-size: 17px;
+}
+
+.tap-automation-row [role="cell"]:first-child > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.tap-automation-row strong {
+  overflow: hidden;
+  color: var(--tap-workbench-ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-automation-row small {
+  color: var(--tap-muted);
+  font-size: 10px;
+  letter-spacing: 0.025em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-type-badge,
+.tap-trace-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 25px;
+  border-radius: 999px;
+  background: var(--tap-workbench-teal-soft);
+  padding: 3px 9px;
+  color: var(--tap-accent-dark);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.025em;
+}
+
+.tap-type-badge[data-type="web"] {
+  background: #eaf2ff;
+  color: #2458a6;
+}
+
+.tap-type-badge[data-type="mobile"] {
+  background: #f2ecff;
+  color: #7043aa;
+}
+
+.tap-automation-detail-header {
+  border-bottom: 1px solid var(--tap-workbench-line);
+  padding-bottom: 20px;
+}
+
+.tap-automation-detail-header > .ant-btn,
+.tap-new-automation > .ant-btn:first-child {
+  margin: -7px 0 9px -15px;
+  color: var(--tap-workbench-muted);
+}
+
+.tap-automation-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.tap-automation-title-row h1,
+.tap-new-automation > header h1 {
+  margin: 5px 0 0;
+  color: var(--tap-workbench-ink);
+  font-family: var(--tap-font);
+  font-size: clamp(26px, 3vw, 32px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+}
+
+.tap-automation-title-row p,
+.tap-new-automation > header p {
+  margin: 9px 0 0;
+  color: var(--tap-workbench-muted);
+  font-size: 12px;
+}
+
+.tap-asset-id {
+  color: var(--tap-workbench-coral);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tap-asset-relation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 48px;
+  margin-top: 18px;
+  border: 1px solid var(--tap-accent-soft);
+  border-radius: 10px;
+  background: var(--tap-workbench-teal-soft);
+  padding: 7px 10px;
+  color: var(--tap-accent);
+  font-size: 11px;
+}
+
+.tap-asset-relation > .anticon {
+  color: var(--tap-workbench-teal);
+}
+
+.tap-asset-relation select {
+  min-width: min(300px, 100%);
+}
+
+.tap-automation-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(620px, 1fr) minmax(290px, 340px);
+  align-items: start;
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.tap-bdd-workbench {
+  display: grid;
+  grid-template-columns: 204px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.tap-scenario-navigation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--tap-workbench-line);
+  background: var(--tap-soft);
+  padding: 16px 10px;
+}
+
+.tap-scenario-navigation > span {
+  padding: 0 9px 10px;
+  color: var(--tap-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.tap-scenario-navigation button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 7px;
+  width: 100%;
+  min-height: 56px;
+  border: 0;
+  border-left: 0;
+  background: transparent;
+  padding: 9px 8px;
+  color: var(--tap-muted);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.tap-scenario-navigation button:hover {
+  background: var(--tap-line);
+}
+
+.tap-scenario-navigation button[aria-current="page"] {
+  background: #fff;
+  box-shadow: inset 2px 0 var(--tap-accent);
+  color: var(--tap-workbench-ink);
+}
+
+.tap-scenario-navigation button:focus-visible,
+.tap-action-editor select:focus-visible,
+.tap-run-target select:focus-visible,
+.tap-asset-relation select:focus-visible,
+.tap-new-automation-form select:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+
+.tap-scenario-navigation button small {
+  color: var(--tap-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.tap-scenario-navigation button span {
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.tap-bdd-canvas {
+  min-width: 0;
+  background: var(--tap-surface);
+}
+
+.tap-bdd-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 92px;
+  border-bottom: 1px solid var(--tap-workbench-line);
+  background: #fff;
+  padding: 17px 18px;
+}
+
+.tap-bdd-heading > div:first-child > span {
+  color: var(--tap-workbench-coral);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.tap-bdd-heading h2 {
+  margin: 5px 0 0;
+  color: var(--tap-workbench-ink);
+  font-family: var(--tap-font);
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.tap-bdd-heading-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tap-bdd-step-list,
+.tap-bdd-step-list > li,
+.tap-action-chain,
+.tap-run-history ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-bdd-step-list {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.tap-bdd-step {
+  overflow: hidden;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.tap-bdd-step-copy {
+  display: grid;
+  gap: 6px;
+  padding: 13px 14px 11px;
+}
+
+.tap-bdd-step-copy label {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.tap-bdd-keyword {
+  color: var(--tap-workbench-coral);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+}
+
+.tap-bdd-step-copy .ant-input {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+  color: var(--tap-workbench-ink);
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.tap-bdd-step-copy .ant-input:hover,
+.tap-bdd-step-copy .ant-input:focus {
+  border-color: var(--tap-line-strong);
+  background: var(--tap-surface);
+  padding-inline: 8px;
+}
+
+.tap-bdd-step-copy small {
+  padding-left: 74px;
+  color: var(--tap-muted);
+  font-size: 9px;
+}
+
+.tap-action-binding {
+  border-top: 1px solid var(--tap-accent-soft);
+  background: var(--tap-accent-soft);
+  padding: 10px 12px 12px;
+}
+
+.tap-action-binding-heading,
+.tap-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tap-action-binding-heading > div {
+  display: grid;
+  gap: 1px;
+}
+
+.tap-action-binding-heading strong {
+  color: var(--tap-accent-dark);
+  font-size: 10px;
+}
+
+.tap-action-binding-heading span {
+  color: var(--tap-muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.tap-action-binding-heading .ant-btn {
+  height: 32px;
+  padding-inline: 7px;
+  color: var(--tap-accent-dark);
+  font-size: 10px;
+}
+
+.tap-action-chain {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tap-action-chain > li {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid var(--tap-accent-soft);
+  border-radius: 8px;
+  background: #fff;
+  padding: 5px 8px;
+}
+
+.tap-action-type {
+  color: var(--tap-accent-dark);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.tap-action-target,
+.tap-action-chain code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-action-chain code {
+  max-width: 128px;
+  border-radius: 4px;
+  background: var(--tap-line);
+  padding: 3px 5px;
+}
+
+.tap-action-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 120px minmax(150px, 1fr) minmax(110px, 0.7fr);
+  gap: 7px;
+  border-top: 1px solid var(--tap-line);
+  padding-top: 8px;
+}
+
+.tap-action-editor label,
+.tap-run-target label,
+.tap-new-automation-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--tap-muted);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+}
+
+.tap-action-editor select,
+.tap-run-target select,
+.tap-asset-relation select,
+.tap-new-automation-form select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--tap-line-strong);
+  border-radius: 6px;
+  background: #fff;
+  padding: 5px 9px;
+  color: var(--tap-ink);
+  font: inherit;
+}
+
+.tap-automation-side-panel {
+  position: sticky;
+  top: 18px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.tap-run-panel {
+  min-width: 0;
+}
+
+.tap-run-target {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--tap-workbench-line);
+  padding: 16px;
+}
+
+.tap-run-target label > span,
+.tap-new-automation-form label > span {
+  text-transform: uppercase;
+}
+
+.tap-run-target label small {
+  color: var(--tap-muted);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.tap-simulation-note {
+  margin: 0;
+  color: #8a664f;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.tap-run-history {
+  padding: 14px 16px 18px;
+}
+
+.tap-panel-heading h2,
+.tap-panel-heading h3 {
+  margin: 0;
+  color: var(--tap-workbench-ink);
+  font-family: var(--tap-font);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.tap-panel-heading > span {
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--tap-soft);
+  padding-inline: 6px;
+  color: var(--tap-muted);
+  font-size: 9px;
+  font-weight: 800;
+  place-items: center;
+}
+
+.tap-run-history > ol {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.tap-run-history details {
+  border-top: 1px solid var(--tap-workbench-line);
+}
+
+.tap-run-history summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-block: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tap-run-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.tap-run-history summary > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.tap-run-history summary strong {
+  color: var(--tap-workbench-ink);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.tap-run-history summary small {
+  color: var(--tap-muted);
+  font-size: 9px;
+}
+
+.tap-run-status {
+  color: #1f6b53;
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.tap-run-detail {
+  border: 1px solid var(--tap-accent-soft);
+  border-radius: 9px;
+  background: var(--tap-accent-soft);
+  padding: 10px;
+}
+
+.tap-run-detail > p:first-child {
+  margin: 0 0 9px;
+  color: var(--tap-muted);
+  font-size: 9px;
+}
+
+.tap-run-scenario {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.tap-run-scenario > strong {
+  color: var(--tap-ink);
+  font-size: 10px;
+}
+
+.tap-run-step {
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid var(--tap-line);
+  padding-top: 5px;
+  color: var(--tap-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.tap-run-step small {
+  color: #187067;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+}
+
+.tap-empty-note {
+  margin: 14px 0 0;
+  color: var(--tap-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.tap-script-disclosure {
+  margin-top: 22px;
+  overflow: hidden;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.tap-script-disclosure summary {
+  padding: 14px 16px;
+  color: var(--tap-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.tap-script-disclosure pre {
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  background: var(--tap-soft);
+  padding: 18px;
+  color: var(--tap-ink);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.tap-new-automation {
+  max-width: 900px;
+}
+
+.tap-new-automation > header {
+  margin-bottom: 24px;
+}
+
+.tap-new-automation-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 20px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 22px;
+}
+
+.tap-new-automation-form > label:nth-child(-n + 2),
+.tap-new-automation-form > [role="alert"],
+.tap-new-automation-form > div:last-child {
+  grid-column: 1 / -1;
+}
+
+.tap-new-automation-form > [role="alert"] {
+  margin: 0;
+  color: #a63f31;
+  font-size: 11px;
+}
+
+.tap-new-automation-form > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--tap-workbench-line);
+  padding-top: 16px;
+}
+
+.tap-not-found {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 14px;
+}
+
+.tap-not-found h1 {
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .tap-automation-workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-automation-side-panel {
+    position: static;
+  }
+
+  .tap-run-panel {
+    display: grid;
+    grid-template-columns: minmax(250px, 0.7fr) minmax(320px, 1.3fr);
+  }
+
+  .tap-run-target {
+    border-right: 1px solid var(--tap-workbench-line);
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 820px) {
+  .tap-automation-library {
+    overflow-x: auto;
+  }
+
+  .tap-bdd-workbench {
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .tap-module {
+    padding: 24px 12px 38px;
+  }
+
+  .tap-module-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .tap-module-heading h1 {
+    font-size: 30px;
+  }
+
+  .tap-heading-actions {
+    justify-content: space-between;
+  }
+
+  .tap-library-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .tap-library-summary .ant-input-search {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    width: 100%;
+  }
+
+  .tap-automation-table {
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .tap-automation-library {
+    overflow-x: visible;
+  }
+
+  .tap-automation-library .tap-automation-row--header {
+    display: none;
+  }
+
+  .tap-automation-library .tap-automation-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    min-width: 0;
+    min-height: 0;
+    padding: 14px 12px;
+  }
+
+  .tap-automation-library .tap-automation-row [role="cell"]:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .tap-automation-library .tap-automation-row [role="cell"]:nth-child(2) {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .tap-automation-library .tap-automation-row [role="cell"]:nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    color: var(--tap-muted);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+  }
+
+  .tap-automation-library .tap-automation-row [role="cell"]:nth-child(4),
+  .tap-automation-library .tap-automation-row [role="cell"]:nth-child(5) {
+    display: none;
+  }
+
+  .tap-automation-library .tap-automation-row [role="cell"]:nth-child(6) {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .tap-automation-library
+    .tap-automation-row
+    [role="cell"]:nth-child(6)
+    .ant-btn {
+    width: 100%;
+  }
+
+  .tap-automation-title-row,
+  .tap-bdd-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tap-bdd-heading-actions {
+    justify-content: space-between;
+  }
+
+  .tap-bdd-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-scenario-navigation {
+    display: grid;
+    grid-auto-columns: minmax(165px, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--tap-workbench-line);
+  }
+
+  .tap-scenario-navigation > span {
+    display: none;
+  }
+
+  .tap-run-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-run-target {
+    border-right: 0;
+    border-bottom: 1px solid var(--tap-workbench-line);
+  }
+
+  .tap-action-editor,
+  .tap-new-automation-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-new-automation-form > label,
+  .tap-new-automation-form > [role="alert"],
+  .tap-new-automation-form > div:last-child {
+    grid-column: 1;
+  }
+
+  .tap-action-chain > li {
+    grid-template-columns: 70px minmax(0, 1fr);
+  }
+
+  .tap-action-chain code {
+    grid-column: 2;
+    max-width: 100%;
+  }
+}
+
+/* File browsing shares one type icon across lists, cards and previews. */
+
+/* Topic clusters and selective labels keep document-heavy graphs readable. */
+
+.tap-automation-row[tabindex] {
+  cursor: pointer;
+}
+
+.tap-automation-row[tabindex]:hover {
+  background: var(--tap-workbench-surface-soft, #f5f4f1);
+}
+
+.tap-automation-row[tabindex]:focus-visible {
+  outline: 2px solid var(--tap-accent, #b44800);
+  outline-offset: -2px;
+}
+
+.tap-app .tap-automation-library {
+  overflow-x: auto;
+}

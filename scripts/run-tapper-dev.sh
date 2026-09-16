@@ -50,14 +50,15 @@ fi
 
 cd "$tapper_dev_repo_root"
 
-if ! uv run --project apps/backend python -c \
+if ! uv run --project apps/tap-ai-backend python -c \
   'import os; from tap.entrypoints.tapper_runtime import TapperSettings; TapperSettings.from_mapping(dict(os.environ))' \
   >/dev/null 2>&1; then
   echo "Tapper configuration is invalid; check .env.example." >&2
   exit 2
 fi
 
-if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then
+if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ] && \
+  [ "${TAPPER_COMPOSE_OBJECT_STORE_VERIFY:-0}" = 1 ]; then
   TAPPER_OBJECT_STORE_IMAGE="$(bash "$tapper_dev_script_dir/build-tapper-object-store.sh" verify)"
   export TAPPER_OBJECT_STORE_IMAGE
   tapper_dev_object_container="$(docker compose -f "$tapper_dev_repo_root/compose.yaml" \
@@ -66,7 +67,7 @@ if [ "${TAPPER_OBJECT_STORE_PROVIDER:-azure}" = minio ]; then
     verify-container "$tapper_dev_object_container" >/dev/null
 fi
 
-tapper_dev_web_root="$tapper_dev_repo_root/apps/web"
+tapper_dev_web_root="$tapper_dev_repo_root/apps/tap-ai-frontend"
 tapper_dev_vite_bin="$tapper_dev_web_root/node_modules/.bin/vite"
 tapper_dev_vite_config="$tapper_dev_web_root/vite.config.ts"
 readonly tapper_dev_web_root tapper_dev_vite_bin tapper_dev_vite_config
@@ -205,17 +206,17 @@ while [ ! -S "$TAPPER_PARSER_SOCKET" ] || \
   sleep 0.1
 done
 
-(exec uv run --project apps/backend python -m tap.entrypoints.tapper_api) &
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_api) &
 tapper_dev_api_pid=$!
-(exec uv run --project apps/backend python -m tap.entrypoints.relay_reconciler) &
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.relay_reconciler) &
 tapper_dev_relay_pid=$!
-(exec uv run --project apps/backend python -m tap.entrypoints.tapper_ingestion_worker) &
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_ingestion_worker) &
 tapper_dev_worker_pid=$!
-(exec uv run --project apps/backend python -m tap.entrypoints.tapper_graph_worker) &
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_graph_worker) &
 tapper_dev_graph_pid=$!
-(exec uv run --project apps/backend python -m tap.entrypoints.tapper_test_design_worker) &
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_test_design_worker) &
 tapper_dev_test_design_pid=$!
-(exec uv run --project apps/backend python -m tap.entrypoints.tapper_generation_worker) &
+(exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_generation_worker) &
 tapper_dev_generation_pid=$!
 (exec "$tapper_dev_vite_bin" "$tapper_dev_web_root" \
   --config "$tapper_dev_vite_config" \
@@ -291,7 +292,7 @@ while [ "$SECONDS" -lt "$ready_deadline" ]; do
   if curl --fail --silent --show-error --max-time 2 --max-filesize 65536 \
     "http://$TAPPER_API_HOST:$TAPPER_API_PORT/health/ready" \
       >"$tapper_dev_ready_file" 2>/dev/null && \
-    uv run --project apps/backend python - "$tapper_dev_ready_file" >/dev/null 2>&1 <<'PY'
+    uv run --project apps/tap-ai-backend python - "$tapper_dev_ready_file" >/dev/null 2>&1 <<'PY'
 import json
 import sys
 from pathlib import Path

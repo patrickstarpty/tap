@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["apps/backend"]
+members = ["apps/backend", "apps/tap-ai-backend"]
 
 [tool.uv]
 required-version = "==0.10.8"

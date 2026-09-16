@@ -141,7 +141,7 @@ check_litellm() {
 
 check_milvus() {
   run_with_timeout "$DOCKER_CHECK_TIMEOUT_SECONDS" \
-    uv run --project apps/backend python scripts/milvus_health_probe.py --reader-canary
+    uv run --project apps/tap-ai-backend python scripts/milvus_health_probe.py --reader-canary
 }
 
 run_or_capture "mysql" check_mysql || true

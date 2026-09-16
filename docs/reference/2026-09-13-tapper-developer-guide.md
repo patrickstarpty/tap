@@ -64,26 +64,26 @@ Runtime Mode / Validation Project
 默认页面入口为：
 
 ```text
-apps/web/src/app/App.tsx
-  → apps/web/src/pages/TapperPage.tsx
-  → apps/web/src/widgets/tap/TapProductPrototype.tsx
+apps/tap-ai-frontend/src/app/App.tsx
+  → apps/tap-ai-frontend/src/pages/TapAiPage.tsx
+  → apps/tap-ai-frontend/src/widgets/tap/TapProductPrototype.tsx
 ```
 
-当前产品壳通过 `conversationSource="api"` 使用真实 Conversation、Knowledge、Graph 和 Test Plan API。`apps/web/src/widgets/tapper/TapperWorkspace.tsx` 是旧兼容入口，不应作为新页面或视觉基线。
+Tap AI 产品入口通过 `conversationSource="api"` 使用真实 Conversation、Knowledge、Graph 和 Test Plan API。`apps/tap-ai-frontend/src/widgets/tapper/TapperWorkspace.tsx` 是旧兼容入口，不应作为新页面或视觉基线。
 
 ## 5. 代码入口
 
 | 关注点                    | Backend                                                                         | Web                                           |
 | ------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
-| Runtime/装配              | `apps/backend/src/tap/entrypoints/tapper_runtime.py`                            | `apps/web/src/app/providers.tsx`              |
-| HTTP 与 Scope             | `apps/backend/src/tap/interfaces/http/app.py`、`dependencies.py`                | `apps/web/src/features/runtime/`              |
-| Knowledge/Source          | `apps/backend/src/tap/modules/knowledge/`                                       | `apps/web/src/features/knowledge/`            |
-| Conversation/SSE          | `apps/backend/src/tap/modules/chat/`、`routes/conversations.py`                 | `apps/web/src/features/conversations/`        |
-| Model Gateway/Agent/Skill | `apps/backend/src/tap/modules/ai/`                                              | Tapper composer/context picker                |
-| Knowledge Graph           | `apps/backend/src/tap/modules/graph/`、`tapper_graph_worker.py`                 | `apps/web/src/features/graph/`                |
-| Test Plan                 | `apps/backend/src/tap/modules/test_management/`、`tapper_test_design_worker.py` | `apps/web/src/features/testManagement/`       |
-| 公共契约                  | `apps/backend/src/tap/contracts/`                                               | `apps/web/src/shared/api/generated/schema.ts` |
-| 浏览器 E2E                | `scripts/run-tapper-e2e.sh`                                                     | `apps/web/tests/e2e/`                         |
+| Runtime/装配              | `apps/tap-ai-backend/src/tap/entrypoints/tapper_runtime.py`                            | `apps/tap-ai-frontend/src/app/providers.tsx`              |
+| HTTP 与 Scope             | `apps/tap-ai-backend/src/tap/interfaces/http/app.py`、`dependencies.py`                | `apps/tap-ai-frontend/src/features/runtime/`              |
+| Knowledge/Source          | `apps/tap-ai-backend/src/tap/modules/knowledge/`                                       | `apps/tap-ai-frontend/src/features/knowledge/`            |
+| Conversation/SSE          | `apps/tap-ai-backend/src/tap/modules/chat/`、`routes/conversations.py`                 | `apps/tap-ai-frontend/src/features/conversations/`        |
+| Model Gateway/Agent/Skill | `apps/tap-ai-backend/src/tap/modules/ai/`                                              | Tapper composer/context picker                |
+| Knowledge Graph           | `apps/tap-ai-backend/src/tap/modules/graph/`、`tapper_graph_worker.py`                 | `apps/tap-ai-frontend/src/features/graph/`                |
+| Test Plan                 | `apps/tap-ai-backend/src/tap/modules/test_management/`、`tapper_test_design_worker.py` | `apps/tap-ai-frontend/src/features/testManagement/`       |
+| 公共契约                  | `apps/tap-ai-backend/src/tap/contracts/`                                               | `apps/tap-ai-frontend/src/shared/api/generated/schema.ts` |
+| 浏览器 E2E                | `scripts/run-tapper-e2e.sh`                                                     | `apps/tap-ai-frontend/tests/e2e/`                         |
 
 Backend 依赖方向保持 `domain → application/ports ← adapters/interfaces`。Domain 不得依赖 FastAPI、Pydantic HTTP DTO、SQLAlchemy 或 Provider SDK。Web 保持 `app/pages → widgets → features → shared`，Feature 不读取 Prototype 状态。
 
@@ -91,7 +91,7 @@ Backend 依赖方向保持 `domain → application/ports ← adapters/interfaces
 
 ### 修改模型或生成能力
 
-- 从 `apps/backend/src/tap/modules/ai/ports/gateway.py` 的统一 `ModelGateway` 进入。
+- 从 `apps/tap-ai-backend/src/tap/modules/ai/ports/gateway.py` 的统一 `ModelGateway` 进入。
 - Knowledge、Graph 和 Test Design 共用 Gateway 的 alias、超时、脱敏和审计边界；不得增加绕过 LiteLLM 的第二个正式模型出口。
 - 结构化输出必须有封闭 Schema、确定性 Validator 和契约测试。模型只能创建 Draft/Proposal，不能直接发布 Revision。
 

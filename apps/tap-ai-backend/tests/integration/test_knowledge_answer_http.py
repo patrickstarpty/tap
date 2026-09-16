@@ -1,0 +1,621 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from typing import Any, cast
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from tap.interfaces.http.app import create_app
+from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.knowledge.application.answers import (
+    AnswerSnapshotUnavailable,
+    DocumentStateChanged,
+)
+from tap.modules.knowledge.application.citations import (
+    CitationPreviewResult,
+    CitationStale,
+    CitationUnavailable,
+)
+from tap.modules.knowledge.application.documents import DocumentService
+from tap.modules.knowledge.application.sources import SourceService
+from tap.modules.knowledge.domain.documents import DocumentParseRejected
+from tap.modules.knowledge.domain.models import (
+    AbstentionReason,
+    AnswerResponse,
+    ModelCallProvenance,
+    RetrievalProfileId,
+)
+from tap.modules.knowledge.domain.sources import SourceCommand
+from tap.modules.knowledge.ports.documents import (
+    ArtifactStore,
+    DocumentCapacityExceeded,
+    DocumentNotFound,
+    DocumentRepository,
+    InvalidDocumentCursor,
+    ReservationState,
+    RetryNotAllowed,
+    StagedOriginal,
+    UploadReservation,
+)
+from tap.modules.knowledge.ports.errors import (
+    AnswerUnavailable,
+    ArtifactUnavailable,
+    ModelUnavailable,
+    SearchUnavailable,
+)
+from tap.modules.knowledge.ports.sources import SourceRepository
+from tests.conftest import validation_http_services
+
+SOURCE_ID = "src_" + "a" * 32
+
+
+class Documents:
+    scope = VALIDATION_SCOPE
+
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+
+    def _fail(self) -> None:
+        if self.error is not None:
+            raise self.error
+
+    async def upload(self, upload, command: SourceCommand | None = None):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(upload)
+
+    async def list_documents(self, cursor, limit):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError((cursor, limit))
+
+    async def get_document(self, document_id):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(document_id)
+
+    async def retry_document(self, document_id):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(document_id)
+
+    async def delete_document(self, document_id):  # type: ignore[no-untyped-def]
+        self._fail()
+        raise AssertionError(document_id)
+
+
+class SourceCommandRepository:
+    scope = VALIDATION_SCOPE
+
+    def __init__(self, documents: Documents) -> None:
+        self.documents = documents
+
+    async def retry_failed(self, document_id, now, *, command):  # type: ignore[no-untyped-def]
+        self.documents._fail()
+        raise AssertionError((document_id, now, command))
+
+    async def request_delete(self, document_id, now, *, command):  # type: ignore[no-untyped-def]
+        self.documents._fail()
+        raise AssertionError((document_id, now, command))
+
+
+class Answers:
+    scope = VALIDATION_SCOPE
+
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+        self.requests = []
+
+    async def answer(self, request):  # type: ignore[no-untyped-def]
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return AnswerResponse(
+            trace_id="trace-a",
+            query_plan_id="plan-a",
+            context_snapshot_id="context-a",
+            corpus_version="tapper-demo-v1",
+            retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+            answer="",
+            abstained=True,
+            abstention_reason=AbstentionReason.INSUFFICIENT_EVIDENCE,
+            claims=(),
+            citations=(),
+            embedding_provenance=ModelCallProvenance("tapper-embedding", "embed-a"),
+            answer_provenance=None,
+        )
+
+
+class Citations:
+    scope = VALIDATION_SCOPE
+
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+
+    async def resolve(self, citation_id: str) -> CitationPreviewResult:
+        if self.error is not None:
+            raise self.error
+        from tap.modules.knowledge.domain.models import DocumentAnchor
+
+        return CitationPreviewResult(
+            citation_id=citation_id,
+            document_id="doc-a",
+            revision_id="rev-a",
+            filename="policy.md",
+            source_content_hash="sha256:" + "a" * 64,
+            chunk_content_hash="sha256:" + "b" * 64,
+            anchor=DocumentAnchor(heading_path=("Policy",), start_offset=0, end_offset=8),
+            quote="Evidence",
+        )
+
+
+@dataclass
+class Harness:
+    client: TestClient
+    documents: Documents
+    answers: Answers
+    citations: Citations
+
+
+def harness() -> Harness:
+    documents = Documents()
+    answers = Answers()
+    citations = Citations()
+    service = KnowledgeHttpService(
+        documents=documents,
+        answers=answers,
+        citations=citations,
+        sources=SourceService(
+            cast(SourceRepository, SourceCommandRepository(documents)),
+            cast(DocumentService, documents),
+        ),
+    )
+    return Harness(
+        client=TestClient(
+            create_app(
+                validation_http_services(knowledge=service),
+                allowed_origins=frozenset({"http://127.0.0.1:15175"}),
+            ),
+            raise_server_exceptions=False,
+            headers={"Origin": "http://127.0.0.1:15175"},
+        ),
+        documents=documents,
+        answers=answers,
+        citations=citations,
+    )
+
+
+def answer_payload(*source_ids: str) -> dict[str, object]:
+    return {
+        "query": "What is the rule?",
+        "resourceRefs": [
+            {"family": "doc", "sourceId": source_id, "mode": "scope"} for source_id in source_ids
+        ],
+    }
+
+
+def test_http_normalizes_selection_and_maps_answer_and_citation_dtos() -> None:
+    app = harness()
+
+    answer = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
+    )
+    citation = app.client.get("/api/v1/projects/tapper-demo/knowledge/citations/citation-a")
+
+    assert answer.status_code == 200
+    assert answer.json()["abstained"] is True
+    assert app.answers.requests[0].resource_refs[0].source_id == SOURCE_ID
+    assert citation.status_code == 200
+    assert citation.json() == {
+        "citationId": "citation-a",
+        "documentId": "doc-a",
+        "revisionId": "rev-a",
+        "filename": "policy.md",
+        "sourceContentHash": "sha256:" + "a" * 64,
+        "chunkContentHash": "sha256:" + "b" * 64,
+        "anchor": {
+            "type": "document",
+            "headingPath": ["Policy"],
+            "page": None,
+            "bbox": None,
+            "startOffset": 0,
+            "endOffset": 8,
+        },
+        "quote": "Evidence",
+        "prefix": "",
+        "suffix": "",
+    }
+
+
+def test_empty_duplicate_and_hidden_controls_are_stable_400_problems() -> None:
+    app = harness()
+    empty = app.client.post("/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload())
+    duplicate = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID, SOURCE_ID)
+    )
+    control = answer_payload(SOURCE_ID) | {"topK": 1}
+    hidden = app.client.post("/api/v1/projects/tapper-demo/knowledge/answers", json=control)
+
+    assert (empty.status_code, empty.json()["type"]) == (
+        400,
+        "https://tap.example/problems/source-selection-required",
+    )
+    assert (duplicate.status_code, duplicate.json()["type"]) == (
+        400,
+        "https://tap.example/problems/source-selection-required",
+    )
+    assert (hidden.status_code, hidden.json()["type"]) == (
+        400,
+        "https://tap.example/problems/unsupported-answer-control",
+    )
+    assert app.answers.requests == []
+
+
+def test_twenty_one_browser_refs_remain_contract_validation_422() -> None:
+    app = harness()
+    response = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers",
+        json=answer_payload(*(f"src_{index:032x}" for index in range(21))),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "https://tap.example/problems/request-validation"
+    assert app.answers.requests == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        answer_payload(SOURCE_ID) | {"query": " \n\t "},
+        answer_payload(SOURCE_ID) | {"sources": ["doc", "doc"]},
+    ],
+)
+def test_domain_invalid_request_shape_is_contract_validation_422(
+    payload: dict[str, object],
+) -> None:
+    app = harness()
+
+    response = app.client.post("/api/v1/projects/tapper-demo/knowledge/answers", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "https://tap.example/problems/request-validation"
+    assert app.answers.requests == []
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "problem_type"),
+    [
+        (
+            DocumentParseRejected("unsupported-document"),
+            400,
+            "https://tap.example/problems/unsupported-document",
+        ),
+        (
+            DocumentParseRejected("empty-document"),
+            400,
+            "https://tap.example/problems/empty-document",
+        ),
+        (
+            DocumentParseRejected("document-too-large"),
+            413,
+            "https://tap.example/problems/document-too-large",
+        ),
+        (
+            DocumentCapacityExceeded("secret"),
+            429,
+            "https://tap.example/problems/document-limit-reached",
+        ),
+    ],
+)
+def test_upload_failures_are_redacted_stable_problems(
+    error: Exception, status: int, problem_type: str
+) -> None:
+    app = harness()
+    app.documents.error = error
+
+    response = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/documents",
+        headers={"Idempotency-Key": "upload-intent"},
+        files={"upload": ("policy.md", b"# Policy", "text/markdown")},
+    )
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "method", "path", "status", "problem_type"),
+    [
+        (
+            DocumentNotFound("secret"),
+            "get",
+            "/api/v1/projects/tapper-demo/knowledge/documents/missing",
+            404,
+            "https://tap.example/problems/document-not-found",
+        ),
+        (
+            RetryNotAllowed("secret"),
+            "post",
+            "/api/v1/projects/tapper-demo/knowledge/documents/doc-a/retry",
+            409,
+            "https://tap.example/problems/document-not-retryable",
+        ),
+        (
+            InvalidDocumentCursor("secret"),
+            "get",
+            "/api/v1/projects/tapper-demo/knowledge/documents?cursor=opaque",
+            422,
+            "https://tap.example/problems/request-validation",
+        ),
+    ],
+)
+def test_document_command_failures_are_redacted_stable_problems(
+    error: Exception,
+    method: str,
+    path: str,
+    status: int,
+    problem_type: str,
+) -> None:
+    app = harness()
+    app.documents.error = error
+
+    response = app.client.request(method, path, headers={"Idempotency-Key": "command-intent"})
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "problem_type"),
+    [
+        (
+            DocumentStateChanged("secret"),
+            409,
+            "https://tap.example/problems/document-state-changed",
+        ),
+        (
+            AuthorizationDenied("secret"),
+            403,
+            "https://tap.example/problems/authorization-denied",
+        ),
+        (
+            PolicyUnavailable("secret"),
+            503,
+            "https://tap.example/problems/search-unavailable",
+        ),
+        (
+            ModelUnavailable("litellm key=secret"),
+            503,
+            "https://tap.example/problems/embedding-unavailable",
+        ),
+        (
+            SearchUnavailable("milvus password=secret"),
+            503,
+            "https://tap.example/problems/search-unavailable",
+        ),
+        (
+            AnswerSnapshotUnavailable("mysql password=secret"),
+            503,
+            "https://tap.example/problems/answer-snapshot-unavailable",
+        ),
+    ],
+)
+def test_answer_failures_are_redacted_stable_problems(
+    error: Exception, status: int, problem_type: str
+) -> None:
+    app = harness()
+    app.answers.error = error
+
+    response = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
+    )
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+def test_litellm_answer_failure_is_not_reported_as_embedding_failure() -> None:
+    app = harness()
+    app.answers.error = AnswerUnavailable("private provider detail")
+
+    response = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "correlationId": response.headers["x-correlation-id"],
+        "retryable": True,
+        "failureStage": "answer",
+        "type": "https://tap.example/problems/answer-unavailable",
+        "title": "Answer unavailable",
+        "status": 503,
+        "detail": "The answer service is currently unavailable.",
+    }
+    assert "private provider detail" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "problem_type"),
+    [
+        (CitationStale("secret"), 404, "https://tap.example/problems/citation-stale"),
+        (
+            CitationUnavailable("secret"),
+            503,
+            "https://tap.example/problems/citation-unavailable",
+        ),
+    ],
+)
+def test_citation_failures_are_redacted_stable_problems(
+    error: Exception, status: int, problem_type: str
+) -> None:
+    app = harness()
+    app.citations.error = error
+
+    response = app.client.get("/api/v1/projects/tapper-demo/knowledge/citations/citation-a")
+
+    assert response.status_code == status
+    assert response.json()["type"] == problem_type
+    assert "secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("post", "/api/v1/projects/tapper-demo/knowledge/documents"),
+        ("get", "/api/v1/projects/tapper-demo/knowledge/documents"),
+        ("get", "/api/v1/projects/tapper-demo/knowledge/documents/doc-a"),
+        ("post", "/api/v1/projects/tapper-demo/knowledge/documents/doc-a/retry"),
+        ("delete", "/api/v1/projects/tapper-demo/knowledge/documents/doc-a"),
+    ],
+)
+def test_document_provider_outages_are_redacted_rfc9457_503(
+    method: str,
+    path: str,
+) -> None:
+    app = harness()
+    app.documents.error = ArtifactUnavailable("azure credential=secret")
+
+    kwargs = (
+        {"files": {"upload": ("policy.md", b"# Policy", "text/markdown")}}
+        if method == "post" and path == "/api/v1/projects/tapper-demo/knowledge/documents"
+        else {}
+    )
+    response = app.client.request(
+        method, path, headers={"Idempotency-Key": "provider-outage-intent"}, **kwargs
+    )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"] == ("https://tap.example/problems/knowledge-runtime-unavailable")
+    assert "secret" not in response.text
+
+
+def test_unexpected_rest_failure_is_a_redacted_rfc9457_fallback() -> None:
+    app = harness()
+    app.answers.error = RuntimeError("provider token=secret")
+
+    response = app.client.post(
+        "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
+    )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"] == ("https://tap.example/problems/knowledge-runtime-unavailable")
+    assert "secret" not in response.text
+
+
+def test_unexpected_rest_fallback_does_not_consume_caller_cancellation() -> None:
+    async def scenario() -> None:
+        documents = Documents()
+        answers = Answers()
+        answers.error = asyncio.CancelledError("caller disconnected")
+        service = KnowledgeHttpService(
+            documents=documents,
+            answers=answers,
+            citations=Citations(),
+        )
+        transport = httpx.ASGITransport(
+            app=create_app(
+                validation_http_services(knowledge=service),
+                allowed_origins=frozenset({"http://127.0.0.1:15175"}),
+            )
+        )
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Origin": "http://127.0.0.1:15175"},
+        ) as client:
+            with pytest.raises(asyncio.CancelledError, match="caller disconnected"):
+                await client.post(
+                    "/api/v1/projects/tapper-demo/knowledge/answers", json=answer_payload(SOURCE_ID)
+                )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("phase", "message"),
+    [
+        ("reserve", "reserve caller disconnected"),
+        ("duplicate-commit", "commit caller disconnected"),
+    ],
+)
+def test_upload_cleanup_failure_does_not_replace_cancellation_through_asgi(
+    phase: str,
+    message: str,
+) -> None:
+    async def scenario() -> None:
+        cancellation = asyncio.CancelledError(message)
+
+        class Artifacts:
+            async def stage_original(self, _upload: object, *, max_bytes: int) -> StagedOriginal:
+                assert max_bytes > 0
+                return StagedOriginal(
+                    staging_key="staging-cancel",
+                    filename="policy.md",
+                    media_type="text/markdown",
+                    size=1,
+                    source_content_hash="sha256:" + "a" * 64,
+                )
+
+            async def commit_original(self, _staged: StagedOriginal, _revision_id: str) -> None:
+                raise cancellation
+
+            async def discard_staged(self, _staged: StagedOriginal) -> None:
+                raise RuntimeError("cleanup credential=secret")
+
+        class Repository:
+            scope = VALIDATION_SCOPE
+
+            async def reserve_upload(self, _command: object) -> UploadReservation:
+                if phase == "reserve":
+                    raise cancellation
+                return UploadReservation(
+                    state=ReservationState.DUPLICATE_PENDING,
+                    reservation_id="reservation-a",
+                    owner_token="",
+                    document_id="doc-a",
+                    revision_id="rev-a",
+                    dedupe_key="sha256:" + "b" * 64,
+                    document=None,
+                    staging_key="staging-owner",
+                )
+
+        repository = Repository()
+        documents = DocumentService(
+            repository=cast(DocumentRepository, repository),
+            artifacts=cast(ArtifactStore, Artifacts()),
+        )
+        service = KnowledgeHttpService(
+            documents=documents,
+            answers=cast(Any, Answers()),
+            citations=cast(Any, Citations()),
+            sources=SourceService(cast(SourceRepository, repository), documents),
+        )
+        transport = httpx.ASGITransport(
+            app=create_app(
+                validation_http_services(knowledge=service),
+                allowed_origins=frozenset({"http://127.0.0.1:15175"}),
+            )
+        )
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Origin": "http://127.0.0.1:15175"},
+        ) as client:
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await client.post(
+                    "/api/v1/projects/tapper-demo/knowledge/documents",
+                    headers={"Idempotency-Key": "cancel-upload-intent"},
+                    files={"upload": ("policy.md", b"# Policy", "text/markdown")},
+                )
+
+        assert caught.value is cancellation
+        assert caught.value.args == (message,)
+
+    asyncio.run(scenario())

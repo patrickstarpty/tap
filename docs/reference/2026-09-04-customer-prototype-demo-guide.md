@@ -1,6 +1,8 @@
 # TAP 客户原型演示指南
 
-更新日期：2026-09-06。
+更新日期：2026-09-16（补充拆分后的采集入口；正文与截图保留 2026-09-06 历史状态）。
+
+> **历史记录**：以下组合式平台旅程属于拆分前的原型，不是当前独立 Tap AI 的操作手册。现行产品入口与范围见 [Tap AI 产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md)。当前 Tap AI 不提供本文的 Low Code Automation、模拟本地 Test Plan 或悬浮助手旅程。
 
 本文用于向客户演示 TAP 当前前端交互原型。它按实际演示顺序覆盖 Tapper、Library、Test Management 和 Low Code Automation 的页面、弹窗、关键状态与跨模块旅程，并给出演示话术和能力边界。
 
@@ -14,25 +16,25 @@
 
 本文 **44 张截图均于 2026-09-06 从当前原型以 2× 像素密度重新采集**，包含 Listening 品牌、`Agents` 导航、`Documents` 标签、折叠图标栏，以及图谱搜索、悬浮助手上下文、Aha 未读状态和会话交接。截图统一为 **2560×1440 无损 PNG**，页面布局视口保持 1280×720，可点击图片查看原尺寸细节。截图使用隔离浏览器和确定性示例数据，不连接真实执行服务；Mobile 与 ADO 屏幕虽从当前代码采集，仍只代表遗留模拟交互。
 
-重新采集命令（仓库根目录）：
+当前 Tap AI 截图采集命令（仓库根目录；不重建本文历史截图）：
 
 ```sh
-corepack pnpm --dir apps/web run prototype:capture
+corepack pnpm --dir apps/tap-ai-frontend run prototype:capture
 ```
 
-该命令启动独立的 loopback 原型服务，使用隔离浏览器状态替换 `docs/assets/prototype-demo/` 中的截图，并检查截图清单、尺寸与内容不重复。
+该命令启动独立的 loopback 服务，使用隔离浏览器和确定性 HTTP 示例响应，采集 Tapper、模型选择器、Agent/Skill 目录、Library 图谱与文档页，共 6 张 2560×1440 PNG。输出在 `apps/tap-ai-frontend/test-results/prototype-capture/`，不会改写 `docs/assets/prototype-demo/` 的 44 张历史截图。它不调用真实模型，不验证服务端持久化或自动化执行。可追加 `--list` 查看 3 个现行采集场景。首次运行需安装 Playwright Chromium：`corepack pnpm --dir apps/tap-ai-frontend exec playwright install chromium`。
 
 ## 演示前须知
 
 ### 启动方式
 
-从仓库根目录启动纯前端原型：
+从仓库根目录启动当前 Tap AI 前端（不包含下文历史的混合产品旅程）：
 
 ```sh
-corepack pnpm --dir apps/web dev --port 4175
+corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
 ```
 
-然后访问 `http://127.0.0.1:4175/`，浏览器标题应显示 `TAP`。端口以启动输出为准；当前开发会话若已在其他 loopback 端口运行，可直接使用该地址。该服务只用于本机原型演示。
+然后访问 `http://127.0.0.1:4175/`，浏览器标题应显示 `Tap AI`。端口以启动输出为准；当前开发会话若已在其他 loopback 端口运行，可直接使用该地址。该服务只用于本机原型演示；真实 API 仍需按 README 启动 Tap AI 后端。
 
 演示前确认来源目录是否已有数据。没有来源时，可以通过 `Add source` 添加页面级示例文件；默认图谱仍显示编排的领域概念，不能把这些节点讲成已从上传文件自动抽取。若要演示真实文档 ingestion 与问答，使用 [README 的本地知识工作区说明](../../README.md#tapper-本地知识工作区)，不要与产品壳原型混为一谈。
 
