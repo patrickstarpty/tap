@@ -11,6 +11,11 @@ bootstrap: ## install frozen Python and Node dependencies
 	corepack pnpm install --frozen-lockfile
 
 check: ## lint, format-check, typecheck, architecture checks
+	uv run --project apps/tap-ai-backend python scripts/check_backend_boundary.py
+	uv run --project apps/tap-ai-backend ruff check scripts/check_backend_boundary.py
+	uv run --project apps/tap-ai-backend ruff format --check scripts/check_backend_boundary.py
+	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_product_boundary.py -q
+	uv run --project apps/backend pytest apps/backend/tests/test_app.py -q
 	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend ruff format --check apps/tap-ai-backend/src apps/tap-ai-backend/tests scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/tapper_v0_gate.py scripts/check-schema-drift.py scripts/check-migration.py
 	uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/export_contracts.py scripts/evaluate-quality-kb.py scripts/evaluate-quality-graph.py scripts/evaluate-quality-test-design.py scripts/generate-quality-graph-candidate.py scripts/generate-quality-test-design-profile.py scripts/run-quality-graph-candidate.py scripts/run-quality-test-design-candidate.py scripts/run-quality-kb-real.py scripts/milvus_bootstrap.py scripts/milvus_health_probe.py scripts/milvus_embedding_research.py scripts/milvus_fixture.py scripts/tapper_collection.py scripts/check-tapper-demo.py scripts/migration_support.py scripts/check-schema-drift.py scripts/check-migration.py
@@ -28,6 +33,7 @@ brand-check:
 	uv run --project apps/tap-ai-backend python scripts/check_brand_namespace.py
 
 test: ## unit, integration, and contract tests
+	uv run --project apps/tap-ai-backend python scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests -v
 	corepack pnpm --filter @tap/ai-frontend test -- --run
 	uv run --project apps/backend pytest apps/backend/tests -q
@@ -42,6 +48,8 @@ tap-ai-bootstrap: ## install only Tap AI frozen dependencies
 	corepack pnpm --filter @tap/ai-frontend install --frozen-lockfile
 
 tap-ai-check: ## verify Tap AI contracts, backend and frontend
+	uv run --project apps/tap-ai-backend python scripts/check_backend_boundary.py --product ai
+	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_product_boundary.py -q
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
 	corepack pnpm --filter @tap/ai-frontend run contracts:check
 	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests

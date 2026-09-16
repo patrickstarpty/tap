@@ -23,6 +23,10 @@ Tap AI 前端仅调用 Tap AI 后端；不依赖 TAP 前后端进程。Tap AI �
 
 两个前端、两个后端分别构建或导入。仅启动 Tap AI 应用进程与已配置的基础服务，可完成知识问答、文档操作、图谱、AI 资产和 AI 测试方案关键路径。原 TAP 非 AI 页面仍能启动。迁移检查、契约生成、目标测试、仓库检查和差异检查通过，并且保留工作区已有未提交改动。
 
+`make check` 和 `make test` 执行双向 Python 产品导入检查，禁止 `tap_platform` 与 `tap` 相互导入，也禁止通过对方源码目录导入。检查器只解析源码，不加载另一产品包；`make tap-ai-check` 只扫描 AI 源码，并用临时独立产品目录执行正反例。TAP 后端测试对完整路由表、处理器归属和公开 OpenAPI 做显式白名单校验，目前只允许 `/health/live` 和 FastAPI 文档入口；隐藏路由、挂载子应用与 WebSocket 也不能绕过。新增 TAP API 必须同时更新归属白名单。
+
+`corepack pnpm --dir apps/tap-ai-frontend run prototype:capture` 仅采集当前 AI 自有页面，在隔离浏览器中使用确定性 API 示例。产物位于该应用的 `test-results/prototype-capture/`，不覆盖拆分前的客户演示截图。它是 UI 截图 smoke，不是后端或真实模型验证；现行采集说明见[历史演示指南顶部](../reference/2026-09-04-customer-prototype-demo-guide.md)。
+
 ## 浏览器原型工作区升级
 
 TAP 的 Automation、BDD 编辑和模拟 Run 属于浏览器本地原型数据，不是后端生产数据。旧版保存在 `tap.prototype.workspace.v2.artifacts`。TAP 现在使用 `tap.automation.workspace.v1`；当前源没有新快照时，会校验并恢复旧版 artifacts，随后仅写入新键，保留旧键原文。已存在的新快照优先；如果此前已保存过初始工作区，可在 `Local workspace` 中选择 `Review pre-split workspace`，预览后明确恢复旧版。
