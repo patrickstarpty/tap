@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1580" height="1030" viewBox="0 0 1580 1030" role="img"><title>Skills 与 Agents 资源管理</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="470.0,172.0 570.0,172.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="570.00,172.00 561.00,176.35 561.00,167.65" fill="#555"/>
+<polyline points="1000.0,172.0 1100.0,172.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1100.00,172.00 1091.00,176.35 1091.00,167.65" fill="#555"/>
+<polyline points="470.0,525.0 570.0,525.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="570.00,525.00 561.00,529.35 561.00,520.65" fill="#555"/>
+<polygon points="470.00,525.00 479.00,520.65 479.00,529.35" fill="#555"/>
+<polyline points="1000.0,525.0 1100.0,525.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1100.00,525.00 1091.00,529.35 1091.00,520.65" fill="#555"/>
+<polygon points="1000.00,525.00 1009.00,520.65 1009.00,529.35" fill="#555"/>
+<polyline points="785.0,615.0 785.0,770.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="785.00,770.00 780.65,761.00 789.35,761.00" fill="#555"/>
+<polygon points="785.00,615.00 789.35,624.00 780.65,624.00" fill="#555"/>
+<polyline points="1000.0,842.0 1100.0,842.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1100.00,842.00 1091.00,846.35 1091.00,837.65" fill="#555"/>
+<polygon points="1000.00,842.00 1009.00,837.65 1009.00,846.35" fill="#555"/>
+<rect x="40.0" y="100.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="255.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">上传文件夹 / ZIP / Git / 市场</text>
+<text x="255.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保留完整目录、模板与脚本</text>
+<text x="255.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">市场更新生成候选版本</text>
+<rect x="570.0" y="100.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="785.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">文件树中预览和编辑</text>
+<text x="785.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查依赖、权限与宿主兼容性</text>
+<text x="785.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存草稿，固定快照试运行</text>
+<rect x="1100.0" y="100.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1315.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布并启用固定版本</text>
+<text x="1315.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Agent 按配置使用 Skills</text>
+<text x="1315.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">定制创建副本，更新可回滚</text>
+<rect x="40.0" y="435.0" width="430.0" height="180.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="255.0" y="481.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 前端 · 现有技能/智能体入口</text>
+<text x="255.0" y="512.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MDXEditor：Markdown 可视化</text>
+<text x="255.0" y="543.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Monaco：源码与差异</text>
+<text x="255.0" y="574.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">react-markdown：预览</text>
+<rect x="570.0" y="435.0" width="430.0" height="180.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="785.0" y="481.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 资源管理 · FastAPI</text>
+<text x="785.0" y="512.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">来源 / 草稿 / 文件 / 依赖 / 版本</text>
+<text x="785.0" y="543.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">兼容报告 / 发布 / 项目权限</text>
+<text x="785.0" y="574.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">任务绑定固定包与资源版本</text>
+<rect x="1100.0" y="435.0" width="430.0" height="180.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1315.0" y="465.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">沿用 MySQL + 对象存储</text>
+<text x="1315.0" y="496.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">市场目录 / 插件 / 依赖分别锁版本</text>
+<text x="1315.0" y="527.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">来源与版本、文件清单及校验值</text>
+<text x="1315.0" y="558.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">完整包、原始文件、执行证据</text>
+<text x="1315.0" y="589.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不默认进入知识向量索引</text>
+<rect x="570.0" y="770.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="785.0" y="814.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">现有后台任务 + Redis</text>
+<text x="785.0" y="845.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">拉取 / 安全解包 / 校验 / 导出</text>
+<text x="785.0" y="876.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">市场同步不覆盖当前启用版本</text>
+<rect x="1100.0" y="770.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1315.0" y="814.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 隔离执行任务</text>
+<text x="1315.0" y="845.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按需读文件，脚本在容器运行</text>
+<text x="1315.0" y="876.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定依赖、权限、预算与超时</text>
+<text x="785.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">业务流程：完整包进入草稿，验证后才发布使用</text>
+<text x="785.0" y="310.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">不兼容能力明确标出；定制内容不被上游覆盖；运行任务不随更新漂移</text>
+<text x="785.0" y="380.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">技术分工：沿用现有应用与存储，不引入 docu.md</text>
+<text x="785.0" y="993.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">导入不执行脚本；脚本运行须隔离；前端预览不执行 MDX / JSX / HTML</text>
+</svg>

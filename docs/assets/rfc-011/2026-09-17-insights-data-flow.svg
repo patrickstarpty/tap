@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="910" viewBox="0 0 1660 910" role="img"><title>测试分析数据流</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="360,155 450,155" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="450.00,155.00 441.00,159.35 441.00,150.65" fill="#555"/>
+<polyline points="360,405 405,405 405,190 450,190" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="450.00,190.00 441.00,194.35 441.00,185.65" fill="#555"/>
+<polyline points="770,155 860,155" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="860.00,155.00 851.00,159.35 851.00,150.65" fill="#555"/>
+<polyline points="1180,155 1270,155" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1270.00,155.00 1261.00,159.35 1261.00,150.65" fill="#555"/>
+<polyline points="610,220 610,340" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="610.00,340.00 605.65,331.00 614.35,331.00" fill="#555"/>
+<polyline points="710,220 710,280 1020,280 1020,340" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1020.00,340.00 1015.65,331.00 1024.35,331.00" fill="#555"/>
+<polyline points="1430,220 1430,340" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1430.00,340.00 1425.65,331.00 1434.35,331.00" fill="#555"/>
+<polyline points="1430,470 1430,650" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1430.00,650.00 1425.65,641.00 1434.35,641.00" fill="#555"/>
+<polyline points="1270,405 1220,405 1220,550 1020,550 1020,650" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1020.00,650.00 1015.65,641.00 1024.35,641.00" fill="#555"/>
+<polyline points="860,715 800,715 800,525 610,525 610,470" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="610.00,470.00 614.35,479.00 605.65,479.00" fill="#555"/>
+<polyline points="1180,715 1270,715" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1270.00,715.00 1261.00,719.35 1261.00,710.65" fill="#555"/>
+<polyline points="1430,780 1430,860 610,860 610,780" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="610.00,780.00 614.35,789.00 605.65,789.00" fill="#555"/>
+<polygon points="1430.00,780.00 1434.35,789.00 1425.65,789.00" fill="#555"/>
+<rect x="40" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="200.0" y="142.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">手工 / 自动化 / 负载报告</text>
+<text x="200.0" y="173.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Jenkins / JUnit / Allure</text>
+<rect x="450" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="610.0" y="126.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">接收、检查与保存</text>
+<text x="610.0" y="157.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">项目权限 / 报告格式</text>
+<text x="610.0" y="188.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存成功后安排处理</text>
+<rect x="860" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1020.0" y="126.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">确认对应关系 / 排除重复</text>
+<text x="1020.0" y="157.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">项目 / 发布 / 用例 / 运行</text>
+<text x="1020.0" y="188.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">每次重试单独记录</text>
+<rect x="1270" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1430.0" y="126.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse</text>
+<text x="1430.0" y="157.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">测试 / 工程 / 压测事实</text>
+<text x="1430.0" y="188.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">明细记录与统一统计结果</text>
+<rect x="40" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="200.0" y="392.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">工程数据来源</text>
+<text x="200.0" y="423.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Jira / 测试管理 / SonarQube</text>
+<rect x="450" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="610.0" y="376.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MySQL</text>
+<text x="610.0" y="407.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">接收记录 / 任务进度</text>
+<text x="610.0" y="438.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">对应关系 / 规则 / 检查结果</text>
+<rect x="860" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1020.0" y="376.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">对象存储</text>
+<text x="1020.0" y="407.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原始报告 / 日志 / 附件</text>
+<text x="1020.0" y="438.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">可查看、重新处理</text>
+<rect x="1270" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1430.0" y="376.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">统一指标查询接口</text>
+<text x="1430.0" y="407.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">先检查权限，再查询</text>
+<text x="1430.0" y="438.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">返回计算范围和更新时间</text>
+<rect x="450" y="650" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="610.0" y="686.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI + LiteLLM</text>
+<text x="610.0" y="717.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">根据获准指标和证据解释</text>
+<text x="610.0" y="748.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">提出改进建议</text>
+<rect x="860" y="650" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1020.0" y="686.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">质量检查与通知</text>
+<text x="1020.0" y="717.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定规则判断，保存原因</text>
+<text x="1020.0" y="748.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">用户启用后发送通知</text>
+<rect x="1270" y="650" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1430.0" y="686.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Test Insights 看板</text>
+<text x="1430.0" y="717.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">执行排错 / 整体质量</text>
+<text x="1430.0" y="748.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">门禁 / 趋势 / 查看原始记录</text>
+<text x="830.0" y="48" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">统一接入：缺失、迟到、重复和更正均保留处理记录</text>
+<text x="1545.0" y="283" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">补录后重算</text>
+<text x="605.0" y="568" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">保存判定记录</text>
+<text x="1070.0" y="838" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">用户经后端请求解释；后端查询指标与证据，AI 返回建议</text>
+</svg>
