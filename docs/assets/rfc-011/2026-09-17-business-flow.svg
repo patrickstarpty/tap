@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1540" height="1270" viewBox="0 0 1540 1270" role="img"><title>业务主流程</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="320,140 420,140" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="420.00,140.00 411.00,144.35 411.00,135.65" fill="#555"/>
+<polyline points="700,140 800,140" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="800.00,140.00 791.00,144.35 791.00,135.65" fill="#555"/>
+<polyline points="1080,140 1180,140" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1180.00,140.00 1171.00,144.35 1171.00,135.65" fill="#555"/>
+<polyline points="940,190 940,250 560,250 560,310" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="560.00,310.00 555.65,301.00 564.35,301.00" fill="#555"/>
+<polyline points="700,360 800,360" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="800.00,360.00 791.00,364.35 791.00,355.65" fill="#555"/>
+<polyline points="1080,360 1180,360" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1180.00,360.00 1171.00,364.35 1171.00,355.65" fill="#555"/>
+<polyline points="180,410 180,530" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="180.00,530.00 175.65,521.00 184.35,521.00" fill="#555"/>
+<polyline points="1320,410 1320,470 180,470 180,530" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="180.00,530.00 175.65,521.00 184.35,521.00" fill="#555"/>
+<polyline points="320,580 420,580" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="420.00,580.00 411.00,584.35 411.00,575.65" fill="#555"/>
+<polyline points="700,580 800,580" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="800.00,580.00 791.00,584.35 791.00,575.65" fill="#555"/>
+<polyline points="1080,580 1180,580" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1180.00,580.00 1171.00,584.35 1171.00,575.65" fill="#555"/>
+<polyline points="1320,630 1320,750" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1320.00,750.00 1315.65,741.00 1324.35,741.00" fill="#555"/>
+<polyline points="320,800 420,800" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="420.00,800.00 411.00,804.35 411.00,795.65" fill="#555"/>
+<polyline points="1320,850 1320,940 560,940 560,850" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="560.00,850.00 564.35,859.00 555.65,859.00" fill="#555"/>
+<polyline points="700,800 800,800" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="800.00,800.00 791.00,804.35 791.00,795.65" fill="#555"/>
+<polyline points="940,750 940,630" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="940.00,630.00 944.35,639.00 935.65,639.00" fill="#555"/>
+<polyline points="40,360 15,360 15,800 40,800" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="40.00,800.00 31.00,804.35 31.00,795.65" fill="#555"/>
+<polyline points="1460,360 1500,360 1500,1190 180,1190 180,1150" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="180.00,1150.00 184.35,1159.00 175.65,1159.00" fill="#555"/>
+<polyline points="320,1100 460,1100 460,850" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="460.00,850.00 464.35,859.00 455.65,859.00" fill="#555"/>
+<rect x="40" y="90" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="180.0" y="127.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 工具区 · 知识库</text>
+<text x="180.0" y="158.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">上传或替换资料</text>
+<rect x="420" y="90" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="560.0" y="127.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按内容解析与完整性检查</text>
+<text x="560.0" y="158.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">文字 / 图片 / 表格 / 连线</text>
+<rect x="800" y="90" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="940.0" y="127.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">核对审批后发布知识</text>
+<text x="940.0" y="158.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保留原文、适用范围与版本</text>
+<rect x="1180" y="90" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1320.0" y="127.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 对话中提问</text>
+<text x="1320.0" y="158.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选择来源，回答附带出处</text>
+<rect x="40" y="310" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="180.0" y="347.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">已有用例</text>
+<text x="180.0" y="378.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选择已发布版本</text>
+<rect x="420" y="310" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="560.0" y="347.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">确认需求清单</text>
+<text x="560.0" y="378.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">范围 / 版本 / 缺失项</text>
+<rect x="800" y="310" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="940.0" y="347.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">生成或编辑</text>
+<text x="940.0" y="378.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">测试计划与用例</text>
+<rect x="1180" y="310" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1320.0" y="347.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">人工评审</text>
+<text x="1320.0" y="378.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布用例版本</text>
+<rect x="40" y="530" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="180.0" y="567.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选择应用与平台</text>
+<text x="180.0" y="598.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">网址 / 安装包 / 设备</text>
+<rect x="420" y="530" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="560.0" y="567.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">录制或 AI 生成</text>
+<text x="560.0" y="598.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">自动化步骤</text>
+<rect x="800" y="530" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="940.0" y="567.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">真实应用试跑</text>
+<text x="940.0" y="598.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查操作与预期结果</text>
+<rect x="1180" y="530" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1320.0" y="567.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布脚本版本</text>
+<text x="1320.0" y="598.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">导出或安排正式运行</text>
+<rect x="40" y="750" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="180.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">手工结果与外部报告</text>
+<text x="180.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">缺陷 / CI / 代码质量</text>
+<rect x="420" y="750" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="560.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Test Insights</text>
+<text x="560.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">报告 / 指标 / 质量检查</text>
+<rect x="800" y="750" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="940.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">处理问题与复核</text>
+<text x="940.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">修复后重新验证</text>
+<rect x="1180" y="750" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1320.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式执行</text>
+<text x="1320.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定版本 / 参数 / 设备</text>
+<rect x="40" y="1050" width="280" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="180.0" y="1087.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Load Testing 负载测试</text>
+<text x="180.0" y="1118.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">场景 / 负载 / 独立执行</text>
+<text x="180.0" y="43" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Tapper：资料与对话</text>
+<text x="560.0" y="223" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">测试管理：设计与评审</text>
+<text x="775.0" y="452" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">选定用例，准备自动化</text>
+<text x="175.0" y="704" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">手工执行与外部接入</text>
+<text x="1020.0" y="698" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">修复后复跑</text>
+<text x="950.0" y="920" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">运行结果与证据</text>
+</svg>

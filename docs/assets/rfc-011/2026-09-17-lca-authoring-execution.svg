@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="1070" viewBox="0 0 1850 1070" role="img"><title>LCA 创作与执行</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="410,172 500,172" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="500.00,172.00 491.00,176.35 491.00,167.65" fill="#555"/>
+<polyline points="870,172 960,172" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,172.00 951.00,176.35 951.00,167.65" fill="#555"/>
+<polyline points="1330,172 1420,172" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1420.00,172.00 1411.00,176.35 1411.00,167.65" fill="#555"/>
+<polyline points="1145,245 1145,380" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1145.00,380.00 1140.65,371.00 1149.35,371.00" fill="#555"/>
+<polygon points="1145.00,245.00 1149.35,254.00 1140.65,254.00" fill="#555"/>
+<polyline points="1605,245 1605,380" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1605.00,380.00 1600.65,371.00 1609.35,371.00" fill="#555"/>
+<polyline points="1500,525 1500,630 225,630 225,710" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="225.00,710.00 220.65,701.00 229.35,701.00" fill="#555"/>
+<polyline points="1605,525 1605,660 685,660 685,710" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="685.00,710.00 680.65,701.00 689.35,701.00" fill="#555"/>
+<polyline points="225,855 225,955 1060,955 1060,855" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1060.00,855.00 1064.35,864.00 1055.65,864.00" fill="#555"/>
+<polyline points="870,782 960,782" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,782.00 951.00,786.35 951.00,777.65" fill="#555"/>
+<polyline points="1790,172 1820,172 1820,782 1790,782" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1790.00,782.00 1799.00,777.65 1799.00,786.35" fill="#555"/>
+<polyline points="1145,710 1145,595 1360,595 1360,310 1250,310 1250,245" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1250.00,245.00 1254.35,254.00 1245.65,254.00" fill="#555"/>
+<rect x="40" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP 自动化工作台</text>
+<text x="225.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">从用例 / 空白 / 模板开始</text>
+<text x="225.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选择 Web、Android 或 iOS</text>
+<rect x="500" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">连接真实应用</text>
+<text x="685.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Web：托管或本地浏览器</text>
+<text x="685.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">App：包版本、设备与签名</text>
+<text x="685.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">预检能力、权限及网络</text>
+<rect x="960" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">录制 / 手工 / AI 生成</text>
+<text x="1145.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">左：步骤，中：应用，右：参数</text>
+<text x="1145.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存定位、变量与检查条件</text>
+<text x="1145.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定步骤 / 动态 AI 块分开</text>
+<rect x="1420" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">调试并核对结果</text>
+<text x="1605.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">单步 / 到此 / 完整 / 数据行</text>
+<text x="1605.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本问题修订；缺陷保留失败</text>
+<text x="1605.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">可执行性评审后发布固定版本</text>
+<rect x="960" y="380" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="408.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI + LangGraph</text>
+<text x="1145.0" y="439.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">已批准知识与用例 + 真实界面</text>
+<text x="1145.0" y="470.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LiteLLM 生成 / 提出修复建议</text>
+<text x="1145.0" y="501.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不改变已确认业务预期</text>
+<rect x="1420" y="380" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="408.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">安排正式运行</text>
+<text x="1605.0" y="439.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">套件、数据、环境与设备矩阵</text>
+<text x="1605.0" y="470.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">顺序 / 并发 / 依赖 / 定时</text>
+<text x="1605.0" y="501.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP 校验 → Jenkins 调度</text>
+<rect x="40" y="710" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="738.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Web 执行</text>
+<text x="225.0" y="769.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Playwright + TypeScript</text>
+<text x="225.0" y="800.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">本地连接器：Electron</text>
+<text x="225.0" y="831.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">视觉 / 无障碍结果单独保存</text>
+<rect x="500" y="710" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="738.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">App 执行</text>
+<text x="685.0" y="769.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Appium + WebdriverIO TS</text>
+<text x="685.0" y="800.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Android：UiAutomator2</text>
+<text x="685.0" y="831.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">iOS：XCUITest / macOS</text>
+<rect x="960" y="710" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="738.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Test Insights</text>
+<text x="1145.0" y="769.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">步骤 / 数据行 / 设备 / 重试</text>
+<text x="1145.0" y="800.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse 分析，原始证据留存</text>
+<text x="1145.0" y="831.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本问题回到原测试修订</text>
+<rect x="1420" y="710" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="738.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本导出</text>
+<text x="1605.0" y="769.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查平台与服务依赖</text>
+<text x="1605.0" y="800.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定步骤导出可复跑项目</text>
+<text x="1605.0" y="831.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不支持的能力明确阻断或说明</text>
+<text x="915.0" y="53" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">同一套步骤、数据与模块；平台差异由明确的能力清单控制</text>
+<text x="1295.0" y="576" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">脚本问题修订</text>
+<text x="595.0" y="593" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">独立调试会话用于创作；正式任务由 Jenkins 分配执行机器</text>
+<text x="925.0" y="1010" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">执行结果与截图、视频、日志相互关联；调试不混入正式回归通过率</text>
+</svg>

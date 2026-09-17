@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="940" viewBox="0 0 1480 940" role="img"><title>生成与异常处理</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="330,140 400,140" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="400.00,140.00 391.00,144.35 391.00,135.65" fill="#555"/>
+<polyline points="690,140 760,140" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="760.00,140.00 751.00,144.35 751.00,135.65" fill="#555"/>
+<polyline points="1050,140 1120,140" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1120.00,140.00 1111.00,144.35 1111.00,135.65" fill="#555"/>
+<polyline points="545,190 545,280" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="545.00,280.00 540.65,271.00 549.35,271.00" fill="#555"/>
+<polyline points="400,330 185,330 185,190" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="185.00,190.00 189.35,199.00 180.65,199.00" fill="#555"/>
+<polyline points="905,190 905,280" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="905.00,280.00 900.65,271.00 909.35,271.00" fill="#555"/>
+<polygon points="905.00,190.00 909.35,199.00 900.65,199.00" fill="#555"/>
+<polyline points="1050,170 1090,170 1090,330 1120,330" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1120.00,330.00 1111.00,334.35 1111.00,325.65" fill="#555"/>
+<polygon points="1050.00,170.00 1059.00,165.65 1059.00,174.35" fill="#555"/>
+<polyline points="330,590 400,590" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="400.00,590.00 391.00,594.35 391.00,585.65" fill="#555"/>
+<polyline points="690,590 760,590" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="760.00,590.00 751.00,594.35 751.00,585.65" fill="#555"/>
+<polyline points="1050,590 1120,590" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1120.00,590.00 1111.00,594.35 1111.00,585.65" fill="#555"/>
+<polyline points="185,640 185,750" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="185.00,750.00 180.65,741.00 189.35,741.00" fill="#555"/>
+<polyline points="545,640 545,750" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="545.00,750.00 540.65,741.00 549.35,741.00" fill="#555"/>
+<polygon points="545.00,640.00 549.35,649.00 540.65,649.00" fill="#555"/>
+<polyline points="905,640 905,750" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="905.00,750.00 900.65,741.00 909.35,741.00" fill="#555"/>
+<polyline points="905,850 905,895 720,895 720,690 620,690 620,640" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="620.00,640.00 624.35,649.00 615.65,649.00" fill="#555"/>
+<rect x="40" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="185.0" y="142.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">确认资料、需求与平台</text>
+<rect x="400" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="545.0" y="127.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">生成计划与用例草稿</text>
+<text x="545.0" y="158.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">逐项检查需求覆盖</text>
+<rect x="760" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="905.0" y="142.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">人工编辑与评审</text>
+<rect x="1120" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1265.0" y="142.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布用例版本</text>
+<rect x="400" y="280" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="545.0" y="317.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">资料不足或生成失败</text>
+<text x="545.0" y="348.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">补充资料 / 重试失败阶段</text>
+<rect x="760" y="280" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="905.0" y="317.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">评审退回</text>
+<text x="905.0" y="348.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">修改草稿，保留已完成内容</text>
+<rect x="1120" y="280" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1265.0" y="317.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">等待人工确认</text>
+<text x="1265.0" y="348.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存进度，不占后台资源</text>
+<rect x="40" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="185.0" y="577.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选择用例、应用与设备</text>
+<text x="185.0" y="608.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">连接并确认测试环境</text>
+<rect x="400" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="545.0" y="577.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">录制或 AI 生成步骤</text>
+<text x="545.0" y="608.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">设置操作目标与检查条件</text>
+<rect x="760" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="905.0" y="577.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查步骤并真实试跑</text>
+<text x="905.0" y="608.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">区分脚本问题与产品缺陷</text>
+<rect x="1120" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1265.0" y="561.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本可执行性评审后发布</text>
+<text x="1265.0" y="592.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正确发现缺陷仍可发布</text>
+<text x="1265.0" y="623.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保留失败，导出或正式执行</text>
+<rect x="40" y="750" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="185.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">取消 / 超时</text>
+<text x="185.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存状态，释放设备</text>
+<rect x="400" y="750" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="545.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">设备离线 / 画面断连</text>
+<text x="545.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">重连后检查当前界面</text>
+<rect x="760" y="750" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="905.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本问题：保存证据</text>
+<text x="905.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">人工或 AI 提出修改</text>
+<text x="325.0" y="48" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">计划生成：缺失、失败与评审退回</text>
+<text x="1085.0" y="118" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">通过</text>
+<text x="1275.0" y="241" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">发布前等待 / 确认后继续</text>
+<text x="325.0" y="484" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">自动化：连接、生成、试跑与修正</text>
+<text x="1085.0" y="568" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">评审</text>
+<text x="1085.0" y="912" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">脚本修改后重新验证；限制次数与费用</text>
+</svg>

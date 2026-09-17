@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="1030" viewBox="0 0 1850 1030" role="img"><title>负载测试闭环</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="410,170 500,170" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="500.00,170.00 491.00,174.35 491.00,165.65" fill="#555"/>
+<polyline points="870,170 960,170" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,170.00 951.00,174.35 951.00,165.65" fill="#555"/>
+<polyline points="1330,170 1420,170" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1420.00,170.00 1411.00,174.35 1411.00,165.65" fill="#555"/>
+<polyline points="1605,240 1605,320 1145,320 1145,410" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1145.00,410.00 1140.65,401.00 1149.35,401.00" fill="#555"/>
+<polyline points="960,480 870,480" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="870.00,480.00 879.00,475.65 879.00,484.35" fill="#555"/>
+<polyline points="225,550 225,645 1145,645 1145,550" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1145.00,550.00 1149.35,559.00 1140.65,559.00" fill="#555"/>
+<polyline points="500,480 410,480" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="410.00,480.00 419.00,475.65 419.00,484.35" fill="#555"/>
+<polyline points="685,550 685,740" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="685.00,740.00 680.65,731.00 689.35,731.00" fill="#555"/>
+<polyline points="870,810 960,810" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,810.00 951.00,814.35 951.00,805.65" fill="#555"/>
+<polyline points="1330,810 1420,810" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1420.00,810.00 1411.00,814.35 1411.00,805.65" fill="#555"/>
+<polyline points="1605,740 1605,615 1380,615 1380,290 1250,290 1250,240" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1250.00,240.00 1254.35,249.00 1245.65,249.00" fill="#555"/>
+<rect x="40" y="100" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="141.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">性能需求与范围</text>
+<text x="225.0" y="172.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">吞吐 / 延迟 / 错误预算</text>
+<text x="225.0" y="203.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">已批准目标、环境及测试数据</text>
+<rect x="500" y="100" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="141.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">场景草稿与低负载调试</text>
+<text x="685.0" y="172.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">API / HAR / 脚本 / 录制</text>
+<text x="685.0" y="203.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">关联变量、业务检查及清理</text>
+<rect x="960" y="100" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="141.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布固定配置</text>
+<text x="1145.0" y="172.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本 / 负载 / 数据 / 引擎</text>
+<text x="1145.0" y="203.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">阶段、测量窗、门槛、预算</text>
+<rect x="1420" y="100" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="141.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP → Jenkins</text>
+<text x="1605.0" y="172.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">预检目标、配额及节点</text>
+<text x="1605.0" y="203.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">分配独立执行池与负载清单</text>
+<rect x="40" y="410" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="451.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">实时监控与停止</text>
+<text x="225.0" y="482.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">人工 / 红线 / 预算 / 失联</text>
+<text x="225.0" y="513.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">节点停新请求，限时收尾</text>
+<rect x="500" y="410" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="451.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">采集与确认完整性</text>
+<text x="685.0" y="482.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原始批次编号、保存及补传</text>
+<text x="685.0" y="513.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">记录实际负载与节点健康</text>
+<rect x="960" y="410" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="436.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">独立压测执行池</text>
+<text x="1145.0" y="467.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">k6 协议 + Playwright 浏览器</text>
+<text x="1145.0" y="498.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">私网节点 / 固定分片</text>
+<text x="1145.0" y="529.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式测量不由 AI 改写</text>
+<rect x="500" y="740" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="781.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse + 对象存储</text>
+<text x="685.0" y="812.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">指标明细 / 可合并统计量</text>
+<text x="685.0" y="843.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原始批次、日志及脱敏样本</text>
+<rect x="960" y="740" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="781.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Test Insights 报告</text>
+<text x="1145.0" y="812.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">完成 ≠ 达标；缺数据不通过</text>
+<text x="1145.0" y="843.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">全局 p95 / 错误率 / 基线对比</text>
+<rect x="1420" y="740" width="370" height="140" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="781.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">复核与改进</text>
+<text x="1605.0" y="812.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">AI 解释证据，用户修订配置</text>
+<text x="1605.0" y="843.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">新版本重新调试和发布</text>
+<text x="930.0" y="53" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">目标并发与到达率分开；多节点分配总负载，不复制整份负载</text>
+<text x="925.0" y="978" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">全局百分位从样本或可合并统计量计算，不能平均各节点 p95；阶段与实际测量窗口一致</text>
+</svg>

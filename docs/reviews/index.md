@@ -8,7 +8,6 @@
 - [Low Code Automation 交互原型评审](2026-09-03-low-code-automation-prototype-review.md)：记录调整前的结构性问题，以及同日完成的 Automation 资产、BDD/动作映射、执行配置、Test Plan 关联、Tapper 编排与 Conversation 恢复复核。
 - [Tapper 知识与 Web 自动化平台设计基线评审](2026-09-05-tapper-platform-design-baseline-review.md)：确认 RFC-009、当前架构、核心契约与 55 项实施计划已经收口，可从 V0 开始方案验证；该结论不代表功能已实现或已达到生产就绪。
 - [Tapper 品牌与运行命名空间迁移评审](2026-09-05-tapper-brand-migration-review.md)：`pass`；记录零残留守卫、全量构建测试、隔离 Demo E2E、桌面/移动及真实 reduced-motion 浏览器验收、40 张截图与旧资源非删除证据。
-
 - [TAP 原型浅色改造与 V0 启动验收](2026-09-05-tap-fwd-and-v0-start-review.md)：记录原型 FWD 浅色改造、40 张截图、V0 Task 1、隔离数据库门禁与回归环境修正。
 - [Tapper V0 固定验证身份验收](2026-09-05-tapper-v0-identity-review.md)：Task 2A 通过；记录固定 Scope、共同授权、0006 迁移、隔离全量回归及测试隔离复审。
 - [Tapper V0 Project 数据隔离验收](2026-09-05-tapper-v0-project-scope-review.md)：Task 2B 实现与定向验收通过；记录 0007 多批次迁移、仓储隔离、两项审查修正及完整回归中一项待复核失败。
@@ -36,3 +35,7 @@
 - [V3 AI 测试设计门禁评审](2026-09-14-v3-ai-test-design-gate.md)：历史评审；原 `pass` 已被后续更正撤销。
 - [V2/V3 门禁更正评审](2026-09-14-v2-v3-gate-correction.md)：V2/V3 `gate-reopened`；记录多 Revision Graph、真实质量复核和完整 Web 评审闭环缺口，V4 暂不放行。
 - [IBM Bob COBOL 采购与 Tapper 能力评估](2026-09-15-ibm-bob-cobol-procurement-assessment.md)：基于 IBM 官方资料及有限外部证据，评估 Bob Premium Package for Z、采购试点、风险、成本与 Tapper 选择性借鉴路径。
+- [BrowserStack App / Web LCA 逐页分析](2026-09-17-browserstack-lca-page-analysis.md)：30 篇 App、104 篇 Web 正文及跳转/支撑页的能力、限制、冲突与 TAP 设计映射；视频受访问验证阻挡，未列为已核实来源。
+- [BrowserStack Test Management / Jira App 逐页分析](2026-09-17-browserstack-test-management-page-analysis.md)：269 篇正文、22 个跳转与 4 个坏链；独立用例库、评审、手工执行、Jira 及来源迁移的能力边界与设计映射。
+- [BrowserStack Test Insights 逐页分析](2026-09-17-browserstack-test-insights-page-analysis.md)：Reporting & Analytics / QEI 共 252 个正文 URL 已读（精确去重 251 份），另列 35 个跳转与 1 个坏链；执行诊断、五类质量分析、接口和 SDK 限制及设计映射。
+- [BrowserStack Load Testing 逐页分析](2026-09-17-browserstack-load-testing-page-analysis.md)：128 篇正文、11 个旧跳转与 3 个坏链；记录 API/浏览器/混合模式、负载语义、统计与执行边界，并映射 k6/Playwright 目标设计。

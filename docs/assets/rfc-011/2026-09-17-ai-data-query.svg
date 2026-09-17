@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="1010" viewBox="0 0 1850 1010" role="img"><title>AI 数据查询</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="410.0,165.0 500.0,165.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="500.00,165.00 491.00,169.35 491.00,160.65" fill="#555"/>
+<polyline points="870.0,172.0 960.0,172.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,172.00 951.00,176.35 951.00,167.65" fill="#555"/>
+<polyline points="1330.0,172.0 1420.0,172.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1420.00,172.00 1411.00,176.35 1411.00,167.65" fill="#555"/>
+<polyline points="1145.0,245.0 1145.0,415.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1145.00,415.00 1140.65,406.00 1149.35,406.00" fill="#555"/>
+<polyline points="960.0,210.0 920.0,210.0 920.0,320.0 685.0,320.0 685.0,415.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="685.00,415.00 680.65,406.00 689.35,406.00" fill="#555"/>
+<polyline points="870.0,487.0 960.0,487.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,487.00 951.00,491.35 951.00,482.65" fill="#555"/>
+<polyline points="1605.0,245.0 1605.0,415.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1605.00,415.00 1600.65,406.00 1609.35,406.00" fill="#555"/>
+<polyline points="1420.0,487.0 1330.0,487.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1330.00,487.00 1339.00,482.65 1339.00,491.35" fill="#555"/>
+<polyline points="1145.0,560.0 1145.0,760.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1145.00,760.00 1140.65,751.00 1149.35,751.00" fill="#555"/>
+<polyline points="1605.0,560.0 1605.0,660.0 1240.0,660.0 1240.0,760.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1240.00,760.00 1235.65,751.00 1244.35,751.00" fill="#555"/>
+<polyline points="960.0,832.0 870.0,832.0" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="870.00,832.00 879.00,827.65 879.00,836.35" fill="#555"/>
+<rect x="40.0" y="100.0" width="370.0" height="130.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper / Insights 提问</text>
+<text x="225.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">先核对项目与来源权限</text>
+<text x="225.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">明确时间、版本与指标口径</text>
+<rect x="500.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 查询计划</text>
+<text x="685.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Milvus 找文字 / 图像证据</text>
+<text x="685.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LiteLLM 理解问题与字段</text>
+<text x="685.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">模型只给允许的查询结构</text>
+<rect x="960.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">后台授权与查询编译</text>
+<text x="1145.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按用途检查范围、版本与映射</text>
+<text x="1145.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式生成只用发布内容</text>
+<rect x="1420.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP Insights 查询 API</text>
+<text x="1605.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">服务端项目权限、只读及限额</text>
+<text x="1605.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse 平台历史指标</text>
+<rect x="500.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">获准的结构化数据</text>
+<text x="685.0" y="490.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式发布 / 会话临时分析</text>
+<text x="685.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原件、行号与单元格映射</text>
+<rect x="960.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="443.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">chDB 隔离分析任务</text>
+<text x="1145.0" y="474.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">只读获准文件与结果快照</text>
+<text x="1145.0" y="505.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">查数 / 比较 / 关联 / 汇总</text>
+<text x="1145.0" y="536.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">无任意网络或模型代码执行</text>
+<rect x="1420.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">获准指标或明细快照</text>
+<text x="1605.0" y="490.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">查询 ID、口径和数据截至时间</text>
+<text x="1605.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">大规模计算留在 ClickHouse</text>
+<rect x="500.0" y="760.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">核对并返回有据可查的回答</text>
+<text x="685.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">数字来自计算，模型负责解释</text>
+<text x="685.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">再次检查权限、有效期与撤回</text>
+<rect x="960.0" y="760.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存计算与来源证据</text>
+<text x="1145.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">输入版本 / 筛选 / 单位 / 行数</text>
+<text x="1145.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">显示缺数据、歧义与超限</text>
+<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">明确采用 chDB + ClickHouse；Milvus 仍检索知识，MySQL 仍保存业务状态和审核记录</text>
+<text x="925.0" y="971.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">文件与快照用 chDB；共享历史查 ClickHouse；需要对照时才联合查询，临时分析不自动发布为知识</text>
+</svg>

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="1040" viewBox="0 0 1850 1040" role="img"><title>复杂文件与知识检索</title><rect width="100%" height="100%" fill="white"/>
+<polyline points="410,172 500,172" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="500.00,172.00 491.00,176.35 491.00,167.65" fill="#555"/>
+<polyline points="870,172 960,172" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,172.00 951.00,176.35 951.00,167.65" fill="#555"/>
+<polyline points="1330,172 1420,172" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1420.00,172.00 1411.00,176.35 1411.00,167.65" fill="#555"/>
+<polyline points="225,245 225,370" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="225.00,370.00 220.65,361.00 229.35,361.00" fill="#555"/>
+<polyline points="410,442 500,442" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="500.00,442.00 491.00,446.35 491.00,437.65" fill="#555"/>
+<polyline points="870,412 915,412 915,205 960,205" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,205.00 951.00,209.35 951.00,200.65" fill="#555"/>
+<polyline points="1145,245 1145,370" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1145.00,370.00 1140.65,361.00 1149.35,361.00" fill="#555"/>
+<polygon points="1145.00,245.00 1149.35,254.00 1140.65,254.00" fill="#555"/>
+<polyline points="1605,245 1605,370" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1605.00,370.00 1600.65,361.00 1609.35,361.00" fill="#555"/>
+<polyline points="410,802 500,802" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="500.00,802.00 491.00,806.35 491.00,797.65" fill="#555"/>
+<polyline points="870,802 960,802" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="960.00,802.00 951.00,806.35 951.00,797.65" fill="#555"/>
+<polyline points="1330,802 1420,802" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="1420.00,802.00 1411.00,806.35 1411.00,797.65" fill="#555"/>
+<polyline points="1605,515 1605,635 685,635 685,730" fill="none" stroke="#555" stroke-width="1.5"/>
+<polygon points="685.00,730.00 680.65,721.00 689.35,721.00" fill="#555"/>
+<rect x="40" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 工具区 · 知识库</text>
+<text x="225.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">文档 / 扫描 PDF / 图片 / Excel</text>
+<text x="225.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">清点页、表、图形及版本</text>
+<rect x="500" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按内容解析</text>
+<text x="685.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原生文字 / 版面与 OCR</text>
+<text x="685.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Excel 单元格 + 原生图形连线</text>
+<rect x="960" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查完整性与关系</text>
+<text x="1145.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">缺页 / 缺表头 / 箭头与条件</text>
+<text x="1145.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">记录已解析、失败、待确认</text>
+<rect x="1420" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存证据与索引</text>
+<text x="1605.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">对象存储：原件、图、表</text>
+<text x="1605.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MySQL：关系与定位</text>
+<text x="1605.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Milvus：文字 / 图像独立索引</text>
+<rect x="40" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原件与页面预览</text>
+<text x="225.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">pypdfium2 / LibreOffice</text>
+<text x="225.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">全图 + 局部放大，保留坐标</text>
+<rect x="500" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">复杂图片理解</text>
+<text x="685.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">OCR + Qwen3-VL-Plus</text>
+<text x="685.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">节点 / 方向 / 条件 / 疑点</text>
+<rect x="960" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">知识库内核对与审批</text>
+<text x="1145.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原件与结果对照，修正或重试</text>
+<text x="1145.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">严格模式由独立人员复核</text>
+<rect x="1420" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按审核规则发布可检索版本</text>
+<text x="1605.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">同一版本的各路索引就绪</text>
+<text x="1605.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">严格模式缺关键内容不能发布</text>
+<rect x="40" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="225.0" y="774.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 对话提问</text>
+<text x="225.0" y="805.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">先检查权限、来源与版本</text>
+<text x="225.0" y="836.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">判断是否查图、查数或查流程</text>
+<rect x="500" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="685.0" y="774.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">同时查找候选证据</text>
+<text x="685.0" y="805.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">关键词 + 文字向量 + 图像向量</text>
+<text x="685.0" y="836.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">表格查数 / 流程查关系</text>
+<rect x="960" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1145.0" y="758.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">合并、重排与补齐</text>
+<text x="1145.0" y="789.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Qwen3-VL-Reranker-2B</text>
+<text x="1145.0" y="820.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">补表头、上下文、分支路径</text>
+<text x="1145.0" y="851.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">只用获准区域图像，按范围查表</text>
+<rect x="1420" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
+<text x="1605.0" y="774.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">回答或生成测试内容</text>
+<text x="1605.0" y="805.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">结论附原页 / 图块 / 单元格</text>
+<text x="1605.0" y="836.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">缺失、冲突和待确认明确提示</text>
+<text x="500.0" y="53" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">入库：按内容处理，不把向量化成功当作解析完整</text>
+<text x="620.0" y="321" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">疑难区域补充识别</text>
+<text x="1252.5" y="318" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">复核与修正</text>
+<text x="1150.0" y="606" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">按证据编号取回内容，并再次检查权限</text>
+<text x="340.0" y="680" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">查询：先找证据，再组织回答</text>
+<text x="935.0" y="968" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">图像向量：Qwen3-VL-Embedding-2B；文字向量沿用现有模型。按来源版本增量更新，检索结果可追溯。</text>
+</svg>
