@@ -171,8 +171,8 @@ export function PrototypeSidebar({
         className="tap-product-rail"
         aria-label={copy.navigation.product}
       >
-        <div className="tap-brand" role="img" aria-label="Tap AI">
-          <span aria-hidden="true">Tap AI</span>
+        <div className="tap-brand" role="img" aria-label="TAP AI">
+          <span aria-hidden="true">TAP AI</span>
         </div>
 
         <nav

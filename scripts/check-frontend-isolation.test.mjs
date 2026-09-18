@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-test("all product fixtures run with only the Tap AI dependency installation", () => {
+test("all product fixtures run with only the TAP AI dependency installation", () => {
   const repository = fileURLToPath(new URL("..", import.meta.url));
   const isolated = mkdtempSync(join(tmpdir(), "tap-ai-only-check-"));
   try {

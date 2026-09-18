@@ -7,7 +7,7 @@ superseded-by: []
 related-rfcs: [RFC-009]
 ---
 
-# ADR-027：Tap AI 采用独立前后端应用边界
+# ADR-027：TAP AI 采用独立前后端应用边界
 
 ## 背景
 
@@ -15,7 +15,7 @@ related-rfcs: [RFC-009]
 
 ## 决策
 
-将全部现有 AI 用户面迁到 `apps/tap-ai-frontend`，其 API、迁移链、Relay 和 workers 迁到 `apps/tap-ai-backend`。`apps/web` 和 `apps/backend` 保留 TAP 非 AI 应用入口。Tap AI 前后端可以在不启动 TAP 前后端的情况下本机运行；MySQL、Redis、对象存储、LiteLLM 和 Milvus 仍通过配置连接。公开 HTTP 路径、数据库表名、事件格式和 `TAPPER_*` 配置名保持稳定；迁移不重置现有数据。当前运行仍遵守回环、无认证 Demo 边界，远程与生产部署另行设计安全入口。
+将全部现有 AI 用户面迁到 `apps/tap-ai-frontend`，其 API、迁移链、Relay 和 workers 迁到 `apps/tap-ai-backend`。`apps/web` 和 `apps/backend` 保留 TAP 非 AI 应用入口。TAP AI 前后端可以在不启动 TAP 前后端的情况下本机运行；MySQL、Redis、对象存储、LiteLLM 和 Milvus 仍通过配置连接。公开 HTTP 路径、数据库表名、事件格式和 `TAPPER_*` 配置名保持稳定；迁移不重置现有数据。当前运行仍遵守回环、无认证 Demo 边界，远程与生产部署另行设计安全入口。
 
 ## 考虑过的方案
 
@@ -24,4 +24,4 @@ related-rfcs: [RFC-009]
 
 ## 后果
 
-两个产品分别声明依赖并构建。既有 Python 包和 Alembic 链由 Tap AI 持有；TAP 非 AI 后端当前仅保留独立应用入口，不宣称已有未实现的业务 API。原组合式 Web 原型必须按产品导航拆分；跨产品的未来数据和身份集成需要正式合同。
+两个产品分别声明依赖并构建。既有 Python 包和 Alembic 链由 TAP AI 持有；TAP 非 AI 后端当前仅保留独立应用入口，不宣称已有未实现的业务 API。原组合式 Web 原型必须按产品导航拆分；跨产品的未来数据和身份集成需要正式合同。

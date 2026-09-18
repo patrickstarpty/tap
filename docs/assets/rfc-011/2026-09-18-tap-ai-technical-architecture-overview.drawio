@@ -1,284 +1,84 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mxfile host="app.diagrams.net" modified="2026-09-18T00:00:00.000Z" agent="Codex" version="24.7.17" type="device" compressed="false">
   <diagram id="tap-ai-architecture-overview" name="TAP AI 技术架构总览">
-    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="8" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" background="#F8FAFC" math="0" shadow="0">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="8" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" background="#F7F8FA" math="0" shadow="0">
       <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
+        <mxCell id="0" /><mxCell id="1" parent="0" />
 
-        <mxCell id="title" value="TAP AI 目标技术架构总览" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=28;fontStyle=1;fontColor=#0F172A;" vertex="1" parent="1">
-          <mxGeometry x="48" y="20" width="820" height="38" as="geometry" />
-        </mxCell>
-        <mxCell id="subtitle" value="统一编排 · 三种执行剖面 · 可恢复状态 · 可追溯证据" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=14;fontColor=#475569;" vertex="1" parent="1">
-          <mxGeometry x="48" y="58" width="760" height="26" as="geometry" />
-        </mxCell>
-        <mxCell id="status" value="&lt;div style=&quot;font-size:11px;color:#2563EB;font-weight:700;letter-spacing:.6px;&quot;&gt;TARGET ARCHITECTURE&lt;/div&gt;&lt;div style=&quot;font-size:12px;color:#334155;margin-top:4px;&quot;&gt;ADR-029 accepted · RFC-011 draft / 分阶段目标&lt;/div&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=18;spacingRight=14;" vertex="1" parent="1">
-          <mxGeometry x="1175" y="22" width="377" height="56" as="geometry" />
-        </mxCell>
-        <mxCell id="status-accent" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=none;" vertex="1" parent="1">
-          <mxGeometry x="1175" y="22" width="4" height="56" as="geometry" />
-        </mxCell>
-        <mxCell id="header-rule" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#CBD5E1;strokeColor=none;" vertex="1" parent="1">
-          <mxGeometry x="48" y="96" width="1504" height="1" as="geometry" />
-        </mxCell>
+        <mxCell id="title" value="TAP AI 目标技术架构" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=28;fontStyle=1;fontColor=#172033;" vertex="1" parent="1"><mxGeometry x="48" y="24" width="720" height="38" as="geometry" /></mxCell>
+        <mxCell id="subtitle" value="统一 LangGraph 编排 · 三种执行剖面 · 受治理的领域端口" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=14;fontColor=#586174;" vertex="1" parent="1"><mxGeometry x="48" y="62" width="760" height="22" as="geometry" /></mxCell>
+        <mxCell id="status" value="ADR-029  ACCEPTED&#10;RFC-011  TARGET ARCHITECTURE" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#586174;" vertex="1" parent="1"><mxGeometry x="1240" y="28" width="312" height="42" as="geometry" /></mxCell>
+        <mxCell id="header-rule" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#26344A;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="48" y="96" width="1504" height="2" as="geometry" /></mxCell>
 
-        <mxCell id="channel-label" value="INTERACTION / TASK ENTRY" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=11;fontStyle=1;fontColor=#64748B;" vertex="1" parent="1">
-          <mxGeometry x="56" y="132" width="180" height="20" as="geometry" />
-        </mxCell>
-        <mxCell id="ui" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#0F172A;&quot;&gt;TAP AI UI · Chat / Tasks&lt;/div&gt;&lt;div style=&quot;font-size:12px;line-height:1.45;color:#475569;margin-top:10px;&quot;&gt;Fast Chat · 长任务 · 复杂任务&lt;br&gt;进度、引用与核验后结果&lt;/div&gt;" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#94A3B8;strokeWidth=1.25;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=18;spacingRight=16;" vertex="1" parent="1">
-          <mxGeometry x="56" y="160" width="244" height="122" as="geometry" />
-        </mxCell>
+        <mxCell id="entry-label" value="USER ENTRY" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;fontStyle=1;fontColor=#748096;" vertex="1" parent="1"><mxGeometry x="48" y="144" width="160" height="18" as="geometry" /></mxCell>
+        <mxCell id="ui" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#172033;&quot;&gt;TAP AI UI&lt;/div&gt;&lt;div style=&quot;font-size:12px;line-height:1.55;color:#586174;margin-top:8px;&quot;&gt;Chat · AI Tasks&lt;br&gt;进度 · 引用 · 结果&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8994A7;strokeWidth=1.25;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=16;spacingRight=14;" vertex="1" parent="1"><mxGeometry x="48" y="176" width="176" height="104" as="geometry" /></mxCell>
 
-        <mxCell id="backend-boundary" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#0F172A;&quot;&gt;TAP AI Backend&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#64748B;strokeWidth=1.5;fontFamily=Arial;align=left;verticalAlign=top;spacingTop=8;spacingLeft=18;spacingRight=16;" vertex="1" parent="1">
-          <mxGeometry x="340" y="120" width="866" height="350" as="geometry" />
-        </mxCell>
-        <mxCell id="backend-accent" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=none;" vertex="1" parent="1">
-          <mxGeometry x="340" y="120" width="866" height="4" as="geometry" />
-        </mxCell>
+        <mxCell id="backend-boundary" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#26344A;strokeWidth=1.5;" vertex="1" parent="1"><mxGeometry x="256" y="128" width="1040" height="308" as="geometry" /></mxCell>
+        <mxCell id="backend-heading" value="TAP AI BACKEND" style="text;html=1;strokeColor=none;fillColor=#E9EEF6;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#26344A;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="257" y="129" width="1038" height="30" as="geometry" /></mxCell>
+        <mxCell id="api" value="&lt;div style=&quot;font-size:15px;font-weight:700;color:#172033;&quot;&gt;API &amp;amp; Access&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.5;color:#586174;margin-top:8px;&quot;&gt;Identity · Project · Conversation&lt;br&gt;Turn / Task · Authorization · Idempotency&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#AAB2C0;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="284" y="184" width="188" height="112" as="geometry" /></mxCell>
 
-        <mxCell id="api-boundary" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;API &amp;amp; Access Boundary&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:8px;&quot;&gt;Identity · Project · Conversation&lt;br&gt;Turn / Task · 授权 · 幂等键&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="374" y="176" width="216" height="102" as="geometry" />
-        </mxCell>
+        <mxCell id="langgraph" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#203B5B;strokeColor=#203B5B;strokeWidth=1.5;" vertex="1" parent="1"><mxGeometry x="504" y="168" width="516" height="176" as="geometry" /></mxCell>
+        <mxCell id="langgraph-title" value="&lt;div style=&quot;font-size:18px;font-weight:700;color:#FFFFFF;&quot;&gt;LangGraph Orchestrator&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#C8D5E6;margin-top:5px;&quot;&gt;Task Classification &amp;amp; Admission · graph version · budget&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;spacingLeft=16;" vertex="1" parent="1"><mxGeometry x="504" y="178" width="516" height="54" as="geometry" /></mxCell>
+        <mxCell id="langgraph-rule" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#6481A3;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="520" y="238" width="484" height="1" as="geometry" /></mxCell>
+        <mxCell id="fast" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#FFFFFF;&quot;&gt;Fast Chat&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#D8E2EF;margin-top:7px;&quot;&gt;inline · direct&lt;br&gt;低延迟、有限工具&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;spacingLeft=16;" vertex="1" parent="1"><mxGeometry x="504" y="244" width="166" height="88" as="geometry" /></mxCell>
+        <mxCell id="profile-rule-1" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#6481A3;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="670" y="250" width="1" height="72" as="geometry" /></mxCell>
+        <mxCell id="durable" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#FFFFFF;&quot;&gt;Durable Workflow&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#D8E2EF;margin-top:7px;&quot;&gt;durable · workflow&lt;br&gt;暂停、恢复、等待&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;spacingLeft=16;" vertex="1" parent="1"><mxGeometry x="671" y="244" width="165" height="88" as="geometry" /></mxCell>
+        <mxCell id="profile-rule-2" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#6481A3;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="836" y="250" width="1" height="72" as="geometry" /></mxCell>
+        <mxCell id="agentic" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#FFFFFF;&quot;&gt;Bounded Agentic Task&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#D8E2EF;margin-top:7px;&quot;&gt;inline / durable · agentic&lt;br&gt;有界规划与工具循环&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="837" y="244" width="183" height="88" as="geometry" /></mxCell>
 
-        <mxCell id="langgraph" value="&lt;div style=&quot;font-size:11px;color:#BFDBFE;font-weight:700;letter-spacing:.5px;&quot;&gt;«LIBRARY» ORCHESTRATOR&lt;/div&gt;&lt;div style=&quot;font-size:17px;font-weight:700;color:#FFFFFF;margin-top:6px;&quot;&gt;LangGraph&lt;/div&gt;&lt;div style=&quot;font-size:12px;line-height:1.45;color:#E2E8F0;margin-top:8px;&quot;&gt;Task Classification &amp;amp; Admission&lt;br&gt;Fast Chat / Durable Workflow&lt;br&gt;Bounded Agentic Task · 暂停 / 恢复&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#1E3A5F;strokeColor=#1E3A5F;strokeWidth=1.5;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=16;spacingRight=14;" vertex="1" parent="1">
-          <mxGeometry x="626" y="166" width="304" height="142" as="geometry" />
-        </mxCell>
+        <mxCell id="verification" value="&lt;div style=&quot;font-size:15px;font-weight:700;color:#172033;&quot;&gt;Response Verification&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.5;color:#586174;margin-top:8px;&quot;&gt;事实 / 假设分离&lt;br&gt;Citation · Query ID&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#AAB2C0;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="1052" y="184" width="216" height="112" as="geometry" /></mxCell>
+        <mxCell id="runtime" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;Durable Runtime&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#586174;margin-top:5px;&quot;&gt;Task · GraphRun · Checkpoint · Lease · Progress&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EEF2F7;strokeColor=#AAB2C0;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="504" y="368" width="324" height="48" as="geometry" /></mxCell>
+        <mxCell id="model-gateway" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;ModelGateway&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#586174;margin-top:5px;&quot;&gt;tier · budget · audit&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EEF2F7;strokeColor=#557AAB;strokeWidth=1.25;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="844" y="368" width="220" height="48" as="geometry" /></mxCell>
+        <mxCell id="policy" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;Execution Guard&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#586174;margin-top:5px;&quot;&gt;limits · approval · effects&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EEF2F7;strokeColor=#AAB2C0;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=10;" vertex="1" parent="1"><mxGeometry x="1080" y="368" width="188" height="48" as="geometry" /></mxCell>
 
-        <mxCell id="response-guard" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;Response Verification&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:8px;&quot;&gt;事实 / 假设 / 缺失信息分离&lt;br&gt;引用可达 · Query ID 可追溯&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="966" y="176" width="206" height="102" as="geometry" />
-        </mxCell>
+        <mxCell id="model-plane" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8994A7;strokeWidth=1.25;" vertex="1" parent="1"><mxGeometry x="1328" y="128" width="224" height="308" as="geometry" /></mxCell>
+        <mxCell id="model-plane-heading" value="MODEL ACCESS" style="text;html=1;strokeColor=none;fillColor=#EEF2F7;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#26344A;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="1329" y="129" width="222" height="30" as="geometry" /></mxCell>
+        <mxCell id="litellm" value="&lt;div style=&quot;font-size:15px;font-weight:700;color:#172033;&quot;&gt;LiteLLM&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#586174;margin-top:7px;&quot;&gt;获准别名 → Provider deployment&lt;br&gt;统一传输与故障策略&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#AAB2C0;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="1352" y="184" width="176" height="88" as="geometry" /></mxCell>
+        <mxCell id="provider" value="&lt;div style=&quot;font-size:15px;font-weight:700;color:#172033;&quot;&gt;Model Providers&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#586174;margin-top:7px;&quot;&gt;云端 / 自托管模型&lt;br&gt;可替换部署&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#AAB2C0;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="1352" y="312" width="176" height="82" as="geometry" /></mxCell>
 
-        <mxCell id="state-control" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;Durable Runtime&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;Task / GraphRun · Checkpoint&lt;br&gt;Lease · Progress · Outbox&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="374" y="338" width="216" height="88" as="geometry" />
-        </mxCell>
+        <mxCell id="capability-boundary" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4A6D67;strokeWidth=1.25;" vertex="1" parent="1"><mxGeometry x="256" y="472" width="1040" height="174" as="geometry" /></mxCell>
+        <mxCell id="capability-heading" value="GOVERNED CAPABILITY PORTS  ·  typed request / typed result" style="text;html=1;strokeColor=none;fillColor=#E8F1EF;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#315953;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="257" y="473" width="1038" height="30" as="geometry" /></mxCell>
+        <mxCell id="knowledge" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#172033;&quot;&gt;Knowledge Search Tool&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#586174;margin-top:7px;&quot;&gt;SearchPort · Milvus hybrid search&lt;br&gt;active MySQL Graph 有界扩展 · Citation&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F7F6;strokeColor=#89A9A3;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="284" y="526" width="300" height="94" as="geometry" /></mxCell>
+        <mxCell id="actions" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#172033;&quot;&gt;TAP Domain Tools&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#586174;margin-top:7px;&quot;&gt;Test · Git · API · Execution&lt;br&gt;领域授权 · 业务规则 · 审计&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F7F6;strokeColor=#89A9A3;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="626" y="526" width="300" height="94" as="geometry" /></mxCell>
+        <mxCell id="insights" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#172033;&quot;&gt;Insights Tool&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#586174;margin-top:7px;&quot;&gt;TAP Insights API contract&lt;br&gt;metric definition · Query ID · as-of time&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F7F6;strokeColor=#89A9A3;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="968" y="526" width="300" height="94" as="geometry" /></mxCell>
 
-        <mxCell id="model-gateway" value="&lt;div style=&quot;font-size:11px;color:#475569;font-weight:700;letter-spacing:.5px;&quot;&gt;STABLE PORT&lt;/div&gt;&lt;div style=&quot;font-size:15px;font-weight:700;color:#0F172A;margin-top:5px;&quot;&gt;ModelGateway&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#475569;margin-top:6px;&quot;&gt;fast / standard / reasoning / coding&lt;br&gt;策略 · 用量审计&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=16;spacingRight=14;" vertex="1" parent="1">
-          <mxGeometry x="626" y="338" width="304" height="88" as="geometry" />
-        </mxCell>
+        <mxCell id="chdb" value="&lt;div style=&quot;font-size:10px;font-weight:700;color:#748096;&quot;&gt;OPTIONAL / ISOLATED&lt;/div&gt;&lt;div style=&quot;font-size:13px;font-weight:700;color:#26344A;margin-top:6px;&quot;&gt;File Analysis / chDB&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#586174;margin-top:6px;&quot;&gt;仅分析获准文件或快照&lt;br&gt;非 Chat / RCA 默认主链&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#8994A7;strokeWidth=1;dashed=1;dashPattern=5 4;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1"><mxGeometry x="48" y="680" width="176" height="116" as="geometry" /></mxCell>
+        <mxCell id="foundation-boundary" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8994A7;strokeWidth=1.25;" vertex="1" parent="1"><mxGeometry x="256" y="680" width="1040" height="156" as="geometry" /></mxCell>
+        <mxCell id="foundation-heading" value="TAP AI DATA &amp;amp; RUNTIME FOUNDATION" style="text;html=1;strokeColor=none;fillColor=#EEF2F7;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#26344A;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="257" y="681" width="1038" height="30" as="geometry" /></mxCell>
+        <mxCell id="mysql" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;MySQL · Source of Truth&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:5px;&quot;&gt;Conversation · Turn · Task · GraphRun&lt;br&gt;Checkpoint · Event + Outbox · Audit&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#8994A7;strokeWidth=1;fontFamily=Helvetica;align=center;verticalAlign=middle;spacingTop=7;" vertex="1" parent="1"><mxGeometry x="284" y="738" width="270" height="76" as="geometry" /></mxCell>
+        <mxCell id="milvus" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;Milvus&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:5px;&quot;&gt;BM25 + vector&lt;br&gt;rebuildable projection&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#8994A7;strokeWidth=1;fontFamily=Helvetica;align=center;verticalAlign=middle;spacingTop=7;" vertex="1" parent="1"><mxGeometry x="578" y="738" width="190" height="76" as="geometry" /></mxCell>
+        <mxCell id="redis" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;Redis&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:5px;&quot;&gt;at-least-once wakeup&lt;br&gt;rebuildable coordination&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#8994A7;strokeWidth=1;fontFamily=Helvetica;align=center;verticalAlign=middle;spacingTop=7;" vertex="1" parent="1"><mxGeometry x="792" y="738" width="190" height="76" as="geometry" /></mxCell>
+        <mxCell id="objects" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#172033;&quot;&gt;Object Storage&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:5px;&quot;&gt;documents · reports&lt;br&gt;evidence · media&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F7F8FA;strokeColor=#8994A7;strokeWidth=1;fontFamily=Helvetica;align=center;verticalAlign=middle;spacingTop=7;" vertex="1" parent="1"><mxGeometry x="1006" y="738" width="262" height="76" as="geometry" /></mxCell>
 
-        <mxCell id="execution-policy" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;Execution Policy&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;Tool allowlist · 预算 · 审计&lt;br&gt;外部副作用幂等 / 人工确认&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="966" y="338" width="206" height="88" as="geometry" />
-        </mxCell>
+        <mxCell id="platform-boundary" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4A6D67;strokeWidth=1.25;" vertex="1" parent="1"><mxGeometry x="1328" y="472" width="224" height="364" as="geometry" /></mxCell>
+        <mxCell id="platform-heading" value="TAP PLATFORM" style="text;html=1;strokeColor=none;fillColor=#E8F1EF;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#315953;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="1329" y="473" width="222" height="30" as="geometry" /></mxCell>
+        <mxCell id="insights-api" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#172033;&quot;&gt;TAP Insights API&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:6px;&quot;&gt;service identity&lt;br&gt;Project authorization&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F7F6;strokeColor=#89A9A3;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="1352" y="528" width="176" height="76" as="geometry" /></mxCell>
+        <mxCell id="domain-api" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#172033;&quot;&gt;TAP Domain APIs&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:6px;&quot;&gt;Test · Git · Execution&lt;br&gt;business authority&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F2F7F6;strokeColor=#89A9A3;strokeWidth=1;fontFamily=Helvetica;align=left;verticalAlign=middle;spacingLeft=14;" vertex="1" parent="1"><mxGeometry x="1352" y="632" width="176" height="76" as="geometry" /></mxCell>
+        <mxCell id="clickhouse" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#172033;&quot;&gt;ClickHouse&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#586174;margin-top:5px;&quot;&gt;test · defect · CI&lt;br&gt;quality · performance facts&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F2F7F6;strokeColor=#89A9A3;strokeWidth=1;fontFamily=Helvetica;align=center;verticalAlign=middle;spacingTop=7;" vertex="1" parent="1"><mxGeometry x="1352" y="744" width="176" height="70" as="geometry" /></mxCell>
 
-        <mxCell id="model-boundary" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#0F172A;&quot;&gt;Model Access Plane&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#64748B;margin-top:4px;&quot;&gt;TAP-managed · 路由模型，不处理业务授权&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.25;fontFamily=Arial;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=14;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="120" width="304" height="170" as="geometry" />
-        </mxCell>
-        <mxCell id="external-tag" value="EXTERNAL PROVIDER" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=10;fontStyle=1;fontColor=#64748B;" vertex="1" parent="1">
-          <mxGeometry x="1406" y="316" width="120" height="18" as="geometry" />
-        </mxCell>
-        <mxCell id="litellm" value="&lt;div style=&quot;font-size:15px;font-weight:700;color:#0F172A;&quot;&gt;LiteLLM&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;获准别名 → 当前 Provider 部署&lt;br&gt;统一 Provider transport&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=15;spacingRight=13;" vertex="1" parent="1">
-          <mxGeometry x="1274" y="184" width="252" height="86" as="geometry" />
-        </mxCell>
-        <mxCell id="provider" value="&lt;div style=&quot;font-size:15px;font-weight:700;color:#0F172A;&quot;&gt;Model Providers&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;配置的云端 / 自托管模型部署&lt;br&gt;可替换，不改变领域契约&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=15;spacingRight=13;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="310" width="304" height="98" as="geometry" />
-        </mxCell>
+        <mxCell id="edge-ui-api" value="HTTPS / SSE" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#356AA0;strokeWidth=1.75;fontFamily=Helvetica;fontSize=10;fontColor=#586174;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ui" target="api"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-api-graph" value="authorized request" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#356AA0;strokeWidth=1.75;fontFamily=Helvetica;fontSize=10;fontColor=#586174;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.4;" edge="1" parent="1" source="api" target="langgraph"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-graph-verify" value="candidate result" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#356AA0;strokeWidth=1.75;fontFamily=Helvetica;fontSize=10;fontColor=#586174;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.4;entryX=0;entryY=0.5;" edge="1" parent="1" source="langgraph" target="verification"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-verify-ui" value="answer / progress / next step" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#356AA0;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontColor=#586174;labelBackgroundColor=#F7F8FA;exitX=0.5;exitY=0;entryX=0.5;entryY=0;" edge="1" parent="1" source="verification" target="ui"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1160" y="112" /><mxPoint x="136" y="112" /></Array></mxGeometry></mxCell>
+        <mxCell id="edge-graph-runtime" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#728096;strokeWidth=1.25;exitX=0.34;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="langgraph" target="runtime"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-graph-gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#356AA0;strokeWidth=1.25;exitX=0.72;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="langgraph" target="model-gateway"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-graph-policy" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#728096;strokeWidth=1.25;exitX=0.94;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="langgraph" target="policy"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-gateway-litellm" value="approved alias" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#356AA0;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontColor=#586174;labelBackgroundColor=#F7F8FA;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="model-gateway" target="litellm"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="954" y="448" /><mxPoint x="1308" y="448" /><mxPoint x="1308" y="228" /></Array></mxGeometry></mxCell>
+        <mxCell id="edge-litellm-provider" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#356AA0;strokeWidth=1.25;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="litellm" target="provider"><mxGeometry relative="1" as="geometry" /></mxCell>
 
-        <mxCell id="capability-boundary" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#0F172A;&quot;&gt;TAP AI · Governed Capability Ports&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#64748B;margin-top:4px;&quot;&gt;模型与图节点不直连数据库或外部执行系统&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#64748B;strokeWidth=1.25;fontFamily=Arial;align=left;verticalAlign=top;spacingTop=12;spacingLeft=18;spacingRight=16;" vertex="1" parent="1">
-          <mxGeometry x="340" y="500" width="866" height="202" as="geometry" />
-        </mxCell>
-        <mxCell id="capability-accent" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0F766E;strokeColor=none;" vertex="1" parent="1">
-          <mxGeometry x="340" y="500" width="866" height="3" as="geometry" />
-        </mxCell>
-        <mxCell id="tool-bus-label" value="INVOKE / TYPED RESULT" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=10;fontStyle=1;fontColor=#64748B;" vertex="1" parent="1">
-          <mxGeometry x="824" y="544" width="220" height="18" as="geometry" />
-        </mxCell>
-        <mxCell id="tool-bus" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#64748B;strokeColor=none;" vertex="1" parent="1">
-          <mxGeometry x="492" y="566" width="568" height="2" as="geometry" />
-        </mxCell>
+        <mxCell id="tool-bus" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#4A6D67;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="432" y="510" width="684" height="2" as="geometry" /></mxCell>
+        <mxCell id="edge-graph-bus" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;strokeColor=#4A6D67;strokeWidth=1.25;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="langgraph" target="tool-bus"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="762" y="456" /><mxPoint x="774" y="456" /></Array></mxGeometry></mxCell>
+        <mxCell id="edge-bus-knowledge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.25;exitX=0;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool-bus" target="knowledge"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-bus-actions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.25;exitX=0.5;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool-bus" target="actions"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-bus-insights" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.25;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool-bus" target="insights"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-actions-domain" value="authorized action" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontColor=#315953;labelBackgroundColor=#F7F8FA;exitX=0.75;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="actions" target="domain-api"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="851" y="660" /><mxPoint x="1308" y="660" /><mxPoint x="1308" y="670" /></Array></mxGeometry></mxCell>
+        <mxCell id="edge-insights-api" value="versioned contract" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.5;fontFamily=Helvetica;fontSize=10;fontColor=#315953;labelBackgroundColor=#F7F8FA;exitX=1;exitY=0.45;entryX=0;entryY=0.5;" edge="1" parent="1" source="insights" target="insights-api"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-api-clickhouse" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.25;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="insights-api" target="clickhouse"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-knowledge-mysql" value="active graph snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.25;fontFamily=Helvetica;fontSize=10;fontColor=#315953;labelBackgroundColor=#F7F8FA;exitX=0.35;exitY=1;entryX=0.7;entryY=0;" edge="1" parent="1" source="knowledge" target="mysql"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edge-knowledge-milvus" value="hybrid search" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#4A6D67;strokeWidth=1.25;fontFamily=Helvetica;fontSize=10;fontColor=#315953;labelBackgroundColor=#F7F8FA;exitX=0.72;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="knowledge" target="milvus"><mxGeometry relative="1" as="geometry" /></mxCell>
 
-        <mxCell id="knowledge" value="&lt;div style=&quot;font-size:11px;color:#0F766E;font-weight:700;letter-spacing:.4px;&quot;&gt;KNOWLEDGE&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;margin-top:5px;&quot;&gt;Knowledge Search Tool&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;SearchPort · Project / Source / Version&lt;br&gt;引用定位 · Active Graph 有界扩展&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F3F8F6;strokeColor=#99B8AD;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="372" y="588" width="250" height="104" as="geometry" />
-        </mxCell>
-        <mxCell id="insights" value="&lt;div style=&quot;font-size:11px;color:#0F766E;font-weight:700;letter-spacing:.4px;&quot;&gt;ANALYTICS / RCA&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;margin-top:5px;&quot;&gt;Insights Tool&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;Versioned TAP Insights API contract&lt;br&gt;指标口径 · Query ID · 数据截至时间&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F3F8F6;strokeColor=#99B8AD;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="932" y="588" width="242" height="104" as="geometry" />
-        </mxCell>
-        <mxCell id="actions" value="&lt;div style=&quot;font-size:11px;color:#0F766E;font-weight:700;letter-spacing:.4px;&quot;&gt;BUSINESS ACTIONS&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;margin-top:5px;&quot;&gt;TAP Tools&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;经 TAP 领域接口执行&lt;br&gt;Test · Git · API · Execution&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F3F8F6;strokeColor=#99B8AD;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="652" y="588" width="250" height="104" as="geometry" />
-        </mxCell>
-
-        <mxCell id="platform-boundary" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#0F172A;&quot;&gt;TAP Platform&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#64748B;margin-top:4px;&quot;&gt;独立产品边界 · Project 再授权&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.25;fontFamily=Arial;align=left;verticalAlign=top;spacingTop=12;spacingLeft=16;spacingRight=14;" vertex="1" parent="1">
-          <mxGeometry x="1248" y="470" width="304" height="382" as="geometry" />
-        </mxCell>
-        <mxCell id="platform-tag" value="CROSS-PRODUCT CONTRACT" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=10;fontStyle=1;fontColor=#0F766E;" vertex="1" parent="1">
-          <mxGeometry x="1374" y="486" width="152" height="18" as="geometry" />
-        </mxCell>
-        <mxCell id="insights-api" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;TAP Insights API&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;Service identity · Project authorization&lt;br&gt;Metric catalog · fail closed&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F3F8F6;strokeColor=#99B8AD;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="1274" y="526" width="252" height="88" as="geometry" />
-        </mxCell>
-        <mxCell id="domain-api" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;TAP Domain APIs&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#475569;margin-top:7px;&quot;&gt;Test · Git · Execution services&lt;br&gt;领域授权 · 业务规则 · 审计&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F3F8F6;strokeColor=#99B8AD;strokeWidth=1;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=14;spacingRight=12;" vertex="1" parent="1">
-          <mxGeometry x="1274" y="638" width="252" height="88" as="geometry" />
-        </mxCell>
-        <mxCell id="clickhouse" value="&lt;div style=&quot;font-size:14px;font-weight:700;color:#0F172A;&quot;&gt;ClickHouse&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.4;color:#475569;margin-top:5px;&quot;&gt;历史测试、缺陷、CI、质量与性能指标&lt;br&gt;RFC-011 target · 非当前 Compose 基线&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;whiteSpace=wrap;html=1;fillColor=#F3F8F6;strokeColor=#99B8AD;strokeWidth=1;fontFamily=Arial;align=center;verticalAlign=middle;spacingTop=9;spacingLeft=10;spacingRight=10;" vertex="1" parent="1">
-          <mxGeometry x="1274" y="752" width="252" height="76" as="geometry" />
-        </mxCell>
-
-        <mxCell id="foundation-boundary" value="&lt;div style=&quot;font-size:16px;font-weight:700;color:#0F172A;&quot;&gt;Tap AI Data &amp;amp; Runtime Foundation&lt;/div&gt;&lt;div style=&quot;font-size:11px;color:#64748B;margin-top:3px;&quot;&gt;State of record, retrieval projection, coordination and evidence&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#64748B;strokeWidth=1.25;fontFamily=Arial;align=left;verticalAlign=top;spacingTop=10;spacingLeft=18;spacingRight=16;" vertex="1" parent="1">
-          <mxGeometry x="340" y="724" width="866" height="140" as="geometry" />
-        </mxCell>
-        <mxCell id="mysql" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#0F172A;&quot;&gt;MySQL · Source of Truth&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.3;color:#475569;margin-top:4px;&quot;&gt;Conversation / Turn / Task / GraphRun&lt;br&gt;Checkpoint · Event + Outbox（同事务）&lt;br&gt;审计 · 幂等 · Active Graph Snapshot&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;fontFamily=Arial;align=center;verticalAlign=middle;spacingTop=8;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="370" y="778" width="268" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="milvus" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#0F172A;&quot;&gt;Milvus&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.3;color:#475569;margin-top:4px;&quot;&gt;Hybrid search&lt;br&gt;BM25 + vector projection&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;fontFamily=Arial;align=center;verticalAlign=middle;spacingTop=8;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="654" y="778" width="164" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="redis" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#0F172A;&quot;&gt;Redis&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.3;color:#475569;margin-top:4px;&quot;&gt;At-least-once wakeup&lt;br&gt;可重建，非事实源&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;fontFamily=Arial;align=center;verticalAlign=middle;spacingTop=8;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="834" y="778" width="154" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="objects" value="&lt;div style=&quot;font-size:13px;font-weight:700;color:#0F172A;&quot;&gt;Object Storage&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.3;color:#475569;margin-top:4px;&quot;&gt;文档 · 报告 · 媒体证据&lt;br&gt;Project 授权 · 引用定位&lt;/div&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;fontFamily=Arial;align=center;verticalAlign=middle;spacingTop=8;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="1004" y="778" width="172" height="70" as="geometry" />
-        </mxCell>
-
-        <mxCell id="chdb" value="&lt;div style=&quot;font-size:10px;color:#64748B;font-weight:700;letter-spacing:.5px;&quot;&gt;OPTIONAL / ISOLATED&lt;/div&gt;&lt;div style=&quot;font-size:14px;font-weight:700;color:#334155;margin-top:5px;&quot;&gt;File Analysis Tool → chDB&lt;/div&gt;&lt;div style=&quot;font-size:11px;line-height:1.45;color:#64748B;margin-top:6px;&quot;&gt;仅分析获准文件 / 快照&lt;br&gt;非 Chat / RCA 主链 · 非事实源&lt;/div&gt;" style="rounded=1;arcSize=5;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=1;dashed=1;dashPattern=5 4;fontFamily=Arial;align=left;verticalAlign=middle;spacingLeft=16;spacingRight=14;" vertex="1" parent="1">
-          <mxGeometry x="56" y="568" width="244" height="126" as="geometry" />
-        </mxCell>
-
-        <mxCell id="edge-ui-api" value="HTTPS request / SSE events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;startSize=8;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.75;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#F8FAFC;exitX=1;exitY=0.42;entryX=0;entryY=0.42;" edge="1" parent="1" source="ui" target="api-boundary">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-api-graph" value="enter graph" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.75;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="api-boundary" target="langgraph">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-graph-response" value="verified output" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.75;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="langgraph" target="response-guard">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-response-api" value="answer / next step" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.75;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0.5;entryY=0;" edge="1" parent="1" source="response-guard" target="api-boundary">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1069" y="154" />
-              <mxPoint x="482" y="154" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-graph-modelgateway" value="model request / result" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.5;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="langgraph" target="model-gateway">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-modelgateway-litellm" value="approved alias" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.5;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#F8FAFC;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="model-gateway" target="litellm">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="778" y="440" />
-              <mxPoint x="1218" y="440" />
-              <mxPoint x="1218" y="227" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-litellm-provider" value="provider route" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=8;strokeColor=#2563EB;strokeWidth=1.5;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="litellm" target="provider">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-graph-state" value="checkpoint" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#94A3B8;strokeWidth=1.25;dashed=1;dashPattern=5 4;fontFamily=Arial;fontSize=11;fontColor=#64748B;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.78;entryX=1;entryY=0.5;" edge="1" parent="1" source="langgraph" target="state-control">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="600" y="277" />
-              <mxPoint x="600" y="382" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-graph-policy" value="policy check" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#475569;strokeWidth=1.25;fontFamily=Arial;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.78;entryX=0;entryY=0.5;" edge="1" parent="1" source="langgraph" target="execution-policy">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="948" y="277" />
-              <mxPoint x="948" y="382" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-graph-bus" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#475569;strokeWidth=1.25;exitX=0;exitY=0.9;entryX=1;entryY=0.5;" edge="1" parent="1" source="langgraph" target="tool-bus">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="612" y="294" />
-              <mxPoint x="612" y="488" />
-              <mxPoint x="1180" y="488" />
-              <mxPoint x="1180" y="567" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-bus-knowledge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#475569;strokeWidth=1.25;exitX=0.01;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool-bus" target="knowledge">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-bus-insights" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#475569;strokeWidth=1.25;exitX=0.99;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool-bus" target="insights">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-bus-actions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#475569;strokeWidth=1.25;exitX=0.5;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="tool-bus" target="actions">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge-insights-api" value="versioned contract" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#0F766E;strokeWidth=1.5;fontFamily=Arial;fontSize=11;fontColor=#0F766E;labelBackgroundColor=#F8FAFC;exitX=1;exitY=0.15;entryX=0;entryY=0.5;" edge="1" parent="1" source="insights" target="insights-api">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1228" y="604" />
-              <mxPoint x="1228" y="570" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-actions-domain" value="authorized action" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#0F766E;strokeWidth=1.5;fontFamily=Arial;fontSize=11;fontColor=#0F766E;labelBackgroundColor=#F8FAFC;exitX=1;exitY=0.65;entryX=0;entryY=0.5;" edge="1" parent="1" source="actions" target="domain-api">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="916" y="656" />
-              <mxPoint x="916" y="694" />
-              <mxPoint x="1228" y="694" />
-              <mxPoint x="1228" y="682" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-api-clickhouse" value="metric query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#0F766E;strokeWidth=1.5;fontFamily=Arial;fontSize=11;fontColor=#0F766E;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="insights-api" target="clickhouse">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="1540" y="570" />
-              <mxPoint x="1540" y="740" />
-              <mxPoint x="1400" y="740" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-knowledge-mysql" value="bounded graph expansion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#0F766E;strokeWidth=1.25;fontFamily=Arial;fontSize=11;fontColor=#0F766E;labelBackgroundColor=#F8FAFC;exitX=0.35;exitY=1;entryX=0;entryY=0.35;" edge="1" parent="1" source="knowledge" target="mysql">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="460" y="714" />
-              <mxPoint x="332" y="714" />
-              <mxPoint x="332" y="803" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-knowledge-milvus" value="hybrid search" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#0F766E;strokeWidth=1.25;fontFamily=Arial;fontSize=11;fontColor=#0F766E;labelBackgroundColor=#F8FAFC;exitX=0.75;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="knowledge" target="milvus">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="560" y="714" />
-              <mxPoint x="826" y="714" />
-              <mxPoint x="826" y="813" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-knowledge-objects" value="evidence / citation" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#0F766E;strokeWidth=1.1;dashed=1;dashPattern=5 4;fontFamily=Arial;fontSize=11;fontColor=#0F766E;labelBackgroundColor=#F8FAFC;exitX=1;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="knowledge" target="objects">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="622" y="704" />
-              <mxPoint x="1090" y="704" />
-              <mxPoint x="1090" y="778" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-state-mysql" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#94A3B8;strokeWidth=1.25;dashed=1;dashPattern=5 4;exitX=0;exitY=0.5;entryX=0;entryY=0.7;" edge="1" parent="1" source="state-control" target="mysql">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="324" y="382" />
-              <mxPoint x="324" y="827" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-mysql-redis" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#94A3B8;strokeWidth=1.1;dashed=1;dashPattern=5 4;exitX=0.85;exitY=1;entryX=0.5;entryY=1;" edge="1" parent="1" source="mysql" target="redis">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="598" y="858" />
-              <mxPoint x="911" y="858" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="edge-chdb-optional" value="explicitly authorized only" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;endSize=7;strokeColor=#94A3B8;strokeWidth=1.1;dashed=1;dashPattern=5 4;fontFamily=Arial;fontSize=11;fontColor=#64748B;labelBackgroundColor=#F8FAFC;exitX=0;exitY=0.78;entryX=1;entryY=0.5;" edge="1" parent="1" source="capability-boundary" target="chdb">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-
-        <mxCell id="footer-legend" value="&lt;span style=&quot;color:#2563EB;font-weight:700;&quot;&gt;━━&lt;/span&gt; 主请求 / 模型调用　&lt;span style=&quot;color:#0F766E;font-weight:700;&quot;&gt;━━&lt;/span&gt; 领域契约 / 数据查询　&lt;span style=&quot;color:#94A3B8;font-weight:700;&quot;&gt;┄┄&lt;/span&gt; 持久化 / 可选旁路" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=11;fontColor=#64748B;" vertex="1" parent="1">
-          <mxGeometry x="48" y="872" width="650" height="22" as="geometry" />
-        </mxCell>
-        <mxCell id="footer-principle" value="边界原则：图与模型只提出请求；权限、指标口径和外部副作用由后端领域接口裁定。" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=11;fontStyle=1;fontColor=#475569;" vertex="1" parent="1">
-          <mxGeometry x="810" y="872" width="742" height="22" as="geometry" />
-        </mxCell>
+        <mxCell id="legend" value="主请求 / 模型调用     领域能力 / 数据查询     · · ·  持久化 / 可选旁路" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;fontColor=#586174;" vertex="1" parent="1"><mxGeometry x="48" y="858" width="620" height="22" as="geometry" /></mxCell>
+        <mxCell id="boundary-note" value="边界原则：LangGraph 只通过稳定端口调用能力；模型不直连 Milvus、MySQL、ClickHouse 或执行系统。" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;fontColor=#586174;" vertex="1" parent="1"><mxGeometry x="770" y="858" width="782" height="22" as="geometry" /></mxCell>
       </root>
     </mxGraphModel>
   </diagram>

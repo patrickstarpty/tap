@@ -1899,7 +1899,7 @@ export function TapProductPrototype({
           )
         ) : activeModule === "test-management" ? (
           <p role="status">
-            Test plans are available when the Tap AI API is ready.
+            Test plans are available when the TAP AI API is ready.
           </p>
         ) : null}
       </main>

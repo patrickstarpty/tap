@@ -137,5 +137,5 @@
 <text x="530.0" y="483.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Conversation / Task / GraphRun / Checkpoint 归 MySQL</text>
 <text x="1268.0" y="768.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">操作与画面</text>
 <text x="1650.0" y="768.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">脚本执行</text>
-<text x="955.0" y="1643.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Tap AI Chat 与 AI Task 进入统一 LangGraph；Fast Chat、Durable Workflow、Bounded Agentic Task 共享领域端口；chDB 仅用于可选隔离文件分析。</text>
+<text x="955.0" y="1643.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">TAP AI Chat 与 AI Task 进入统一 LangGraph；Fast Chat、Durable Workflow、Bounded Agentic Task 共享领域端口；chDB 仅用于可选隔离文件分析。</text>
 </svg>

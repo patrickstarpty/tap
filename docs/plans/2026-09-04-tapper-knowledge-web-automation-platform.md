@@ -5,7 +5,7 @@ date: 2026-09-04
 
 # Tapper Knowledge and Web Automation Platform Implementation Plan
 
-> **2026-09-15 应用边界附注**：本计划后文的 `apps/backend`、`apps/web` 和 `@tap/web` 字面量路径记录了拆分前的任务执行，不能直接用于新任务。当前 V0–V3 的 AI 实现和验证入口已迁到 `apps/tap-ai-backend`、`apps/tap-ai-frontend` 与 `@tap/ai-frontend`；低代码与测试分析原型留在 TAP `apps/web`。V4 起涉及 TAP 非 AI 业务和跨产品关联时，先按 [Tap AI 产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md) 更新精确文件与合同，再执行对应任务；里程碑门禁顺序及现有 Review 结论不因目录迁移而变化。
+> **2026-09-15 应用边界附注**：本计划后文的 `apps/backend`、`apps/web` 和 `@tap/web` 字面量路径记录了拆分前的任务执行，不能直接用于新任务。当前 V0–V3 的 AI 实现和验证入口已迁到 `apps/tap-ai-backend`、`apps/tap-ai-frontend` 与 `@tap/ai-frontend`；低代码与测试分析原型留在 TAP `apps/web`。V4 起涉及 TAP 非 AI 业务和跨产品关联时，先按 [TAP AI 产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md) 更新精确文件与合同，再执行对应任务；里程碑门禁顺序及现有 Review 结论不因目录迁移而变化。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -2,13 +2,13 @@
 
 TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。当前已接受的路线先在固定 Validation Scope 中验证知识问答、Knowledge Graph、Test Plan、Web LCA/Recorder、Playwright/Jenkins 与结果闭环；验证通过后再实现用户、RBAC、多 Project 和生产治理。
 
-## Tap AI 独立应用
+## TAP AI 独立应用
 
-Tap AI 的前后端分别位于 `apps/tap-ai-frontend` 和 `apps/tap-ai-backend`，拥有 Tapper 问答、知识文档/图谱、模型与 Agent/Skill 资产，以及 AI 测试方案的生成、保存和评审。TAP 非 AI 应用入口保留在 `apps/web` 和 `apps/backend`；现有低代码与测试分析原型由 TAP Web 承载。公开 API 路径、数据库表、迁移链和 `TAPPER_*` 配置名在本次目录迁移中保持不变，因此已有 Tapper 数据和对象引用无需重建。
+TAP AI 的前后端分别位于 `apps/tap-ai-frontend` 和 `apps/tap-ai-backend`，拥有 Tapper 问答、知识文档/图谱、模型与 Agent/Skill 资产，以及 AI 测试方案的生成、保存和评审。TAP 非 AI 应用入口保留在 `apps/web` 和 `apps/backend`；现有低代码与测试分析原型由 TAP Web 承载。公开 API 路径、数据库表、迁移链和 `TAPPER_*` 配置名在本次目录迁移中保持不变，因此已有 Tapper 数据和对象引用无需重建。
 
-Tap AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-bootstrap` 安装 Tap AI 冻结依赖，按 `.env.example` 配置并启动本机基础服务（现有 Demo 可用 `make demo-up`，或连接自行配置的服务），执行 `make tap-ai-migrate`，再执行 `make tap-ai-dev`；这会在回环地址启动 Tap AI API、Relay、后台任务和前端。结束 `tap-ai-dev` 会清理这些应用进程；现有 Demo 的基础服务可用 `make demo-down` 停止并保留卷。`make tap-ai-api` 与 `make tap-ai-web` 可分别启动两端；`make tap-web-dev`、`make tap-backend-dev` 则分别启动 TAP 非 AI 应用。`make tap-ai-check` 和 `make tap-ai-test` 只检查 Tap AI。当前入口仍是本机无认证 Demo，不承担局域网或生产访问。
+TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-bootstrap` 安装 TAP AI 冻结依赖，按 `.env.example` 配置并启动本机基础服务（现有 Demo 可用 `make demo-up`，或连接自行配置的服务），执行 `make tap-ai-migrate`，再执行 `make tap-ai-dev`；这会在回环地址启动 TAP AI API、Relay、后台任务和前端。结束 `tap-ai-dev` 会清理这些应用进程；现有 Demo 的基础服务可用 `make demo-down` 停止并保留卷。`make tap-ai-api` 与 `make tap-ai-web` 可分别启动两端；`make tap-web-dev`、`make tap-backend-dev` 则分别启动 TAP 非 AI 应用。`make tap-ai-check` 和 `make tap-ai-test` 只检查 TAP AI。当前入口仍是本机无认证 Demo，不承担局域网或生产访问。
 
-产品边界与验收见 [Tap AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。下方客户原型演示记录的是拆分前的组合式平台页面。
+产品边界与验收见 [TAP AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。下方客户原型演示记录的是拆分前的组合式平台页面。
 
 当前 AI 页面截图可运行 `corepack pnpm --dir apps/tap-ai-frontend run prototype:capture`：仅使用隔离的示例 API 响应，输出 6 张截图到应用的 `test-results/prototype-capture/`，不改写下方历史截图；追加 `--list` 可查看采集范围。
 
@@ -62,7 +62,7 @@ corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
 
 TAP 以 **可信知识 + 统一测试模型（Test IR）+ TAP-managed Revision + 统一执行证据** 为核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。MySQL 保存权威业务状态与 Outbox，Redis 只作可重建唤醒，MinIO 保存原件/Bundle/Evidence，Milvus 保存可重建 `doc` 检索投影，MySQL 同时保存 Knowledge Graph；模型经 LiteLLM，首个 Execution Provider 是外置 Jenkins。Git 是可选导出/同步 Adapter，不是发布和执行的必要事实源。
 
-目标 AI 编排由 [ADR-029](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 固定：Tap AI 的 Chat 与 AI Task 进入同一版本化 LangGraph，分别支持低延迟 Fast Chat、可恢复 Durable Workflow 和受预算限制的 Bounded Agentic Task；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。任务分类位于图内，模型选择位于 ModelGateway，不部署独立 Query Router 或 Model Router 服务。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
+目标 AI 编排由 [ADR-029](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 固定：TAP AI 的 Chat 与 AI Task 进入同一版本化 LangGraph，分别支持低延迟 Fast Chat、可恢复 Durable Workflow 和受预算限制的 Bounded Agentic Task；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。任务分类位于图内，模型选择位于 ModelGateway，不部署独立 Query Router 或 Model Router 服务。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
 ### Test IR 是什么？
 
@@ -106,7 +106,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 目标
 
 - 先让用户基于企业知识获得带引用、可核验、可恢复历史的回答和 Knowledge Graph。
-- 让 Tap AI 的 Chat 与 AI Task 共用一个 LangGraph 入口、状态和审计边界：Fast Chat 保持低延迟，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受控复杂工具循环。
+- 让 TAP AI 的 Chat 与 AI Task 共用一个 LangGraph 入口、状态和审计边界：Fast Chat 保持低延迟，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受控复杂工具循环。
 - 让用户用自然语言或 BDD 创建 Test Plan 与 Web Automation，也能基于已有资产做定向更新。
 - 用稳定的统一测试模型（Test IR）连接需求、BDD、脚本、Locator、Fixture、Hook、测试数据和运行证据。
 - 在同一条 Run 时间线中关联 TAP Revision、Jenkins Attempt、测试结果、证据和人工审批。
@@ -128,7 +128,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 
 - [Tapper 知识与 Web 自动化平台架构](docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)：当前边界、组件、数据、流程、安全、可靠性与部署。
 - [RFC-011：跨平台测试与 AI 编排目标设计](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：统一 LangGraph、Milvus 知识工具、Insights API/ClickHouse 指标工具与可选 chDB 文件分析。
-- [ADR-029：LangGraph 统一编排 Tap AI 的 AI 交互与任务](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)：记录 Fast Chat、Durable Workflow、Bounded Agentic Task 及工具、模型、指标边界。
+- [ADR-029：LangGraph 统一编排 TAP AI 的 AI 交互与任务](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)：记录 Fast Chat、Durable Workflow、Bounded Agentic Task 及工具、模型、指标边界。
 - [RFC-009：平台设计](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)：完整产品旅程、数据模型、API、事件、质量门禁和阶段边界。
 - [Tapper 知识与 Web 自动化平台实施计划](docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md)：V0–P1 的精确文件、TDD 步骤、命令与提交边界。
 - [Tapper 平台设计基线评审](docs/reviews/2026-09-05-tapper-platform-design-baseline-review.md)：记录已关闭的关键问题、最终 READY 结论和“可进入 V0、尚未实现或生产就绪”的授权边界。

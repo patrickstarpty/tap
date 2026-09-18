@@ -63,6 +63,6 @@ if (violations.length) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    `${product === "ai" ? "Tap AI" : "TAP"} frontend product boundary passed.\n`,
+    `${product === "ai" ? "TAP AI" : "TAP"} frontend product boundary passed.\n`,
   );
 }

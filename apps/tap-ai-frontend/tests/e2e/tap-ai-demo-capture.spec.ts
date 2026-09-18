@@ -42,7 +42,7 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto("/");
   await expect(
-    page.getByRole("img", { name: "Tap AI", exact: true }),
+    page.getByRole("img", { name: "TAP AI", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", {

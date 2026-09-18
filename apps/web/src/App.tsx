@@ -95,7 +95,7 @@ export function App() {
               dispatch({ type: "association/set", automationId, testPlanId })
             }
             onOpenTestPlan={(testPlanId) =>
-              setNotice(`Test plan ${testPlanId} is managed in Tap AI.`)
+              setNotice(`Test plan ${testPlanId} is managed in TAP AI.`)
             }
             onRun={(
               automation,
