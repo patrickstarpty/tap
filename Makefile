@@ -43,11 +43,11 @@ contracts: ## export OpenAPI/SSE schema and generate TypeScript
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py
 	corepack pnpm --filter @tap/ai-frontend run contracts
 
-tap-ai-bootstrap: ## install only Tap AI frozen dependencies
+tap-ai-bootstrap: ## install only TAP AI frozen dependencies
 	uv sync --package tap-ai-backend --frozen --all-groups
 	corepack pnpm --filter @tap/ai-frontend install --frozen-lockfile
 
-tap-ai-check: ## verify Tap AI contracts, backend and frontend
+tap-ai-check: ## verify TAP AI contracts, backend and frontend
 	uv run --project apps/tap-ai-backend python scripts/check_backend_boundary.py --product ai
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_product_boundary.py -q
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check
@@ -55,22 +55,22 @@ tap-ai-check: ## verify Tap AI contracts, backend and frontend
 	uv run --project apps/tap-ai-backend ruff check apps/tap-ai-backend/src apps/tap-ai-backend/tests
 	corepack pnpm --filter @tap/ai-frontend run check
 
-tap-ai-test: ## run Tap AI backend and frontend suites
+tap-ai-test: ## run TAP AI backend and frontend suites
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests -q
 	corepack pnpm --filter @tap/ai-frontend exec vitest run
 
-tap-ai-migrate: ## migrate configured Tap AI MySQL without resetting data
+tap-ai-migrate: ## migrate configured TAP AI MySQL without resetting data
 	@set -eu; if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	uv run --project apps/tap-ai-backend alembic -c apps/tap-ai-backend/alembic.ini upgrade head
 
-tap-ai-dev: ## run only Tap AI app processes against configured loopback services
+tap-ai-dev: ## run only TAP AI app processes against configured loopback services
 	bash scripts/run-tapper-dev.sh
 
-tap-ai-api: ## run Tap AI API on the configured loopback address
+tap-ai-api: ## run TAP AI API on the configured loopback address
 	@set -eu; if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_api
 
-tap-ai-web: ## run Tap AI frontend on the configured loopback address
+tap-ai-web: ## run TAP AI frontend on the configured loopback address
 	@set -eu; if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	corepack pnpm --filter @tap/ai-frontend run dev
 

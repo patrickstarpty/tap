@@ -6,12 +6,12 @@ import { fakeKnowledgeClient } from "../features/knowledge/testing/fakeKnowledge
 import { renderKnowledgeApp } from "../features/knowledge/testing/renderKnowledgeApp";
 import { TapAiPage } from "./TapAiPage";
 
-it("shows only Tap AI product modules", () => {
+it("shows only TAP AI product modules", () => {
   renderKnowledgeApp(<TapAiPage conversationSource="fixture" />, {
     api: fakeKnowledgeClient(),
   });
   const product = screen.getByRole("navigation", { name: "Product" });
-  expect(screen.getByRole("img", { name: "Tap AI" })).toBeVisible();
+  expect(screen.getByRole("img", { name: "TAP AI" })).toBeVisible();
   expect(
     within(product)
       .getAllByRole("button")
@@ -32,7 +32,7 @@ it("does not expose the legacy TAP automation and analytics workspace", async ()
   ).not.toBeInTheDocument();
 });
 
-it("does not offer the legacy automation workflow in Tap AI chat", async () => {
+it("does not offer the legacy automation workflow in TAP AI chat", async () => {
   renderKnowledgeApp(<TapAiPage conversationSource="fixture" />, {
     api: fakeKnowledgeClient(),
   });

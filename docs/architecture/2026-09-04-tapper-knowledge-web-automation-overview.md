@@ -1,8 +1,8 @@
 # Tapper 知识与 Web 自动化平台架构
 
-> **2026-09-15 应用边界更新**：现有 AI 能力已按 [Tap AI 产品边界](2026-09-15-tap-ai-product-boundary.md) 与 [ADR-027](../decisions/2026-09-15-adr-027-tap-ai-product-app-boundary.md) 迁入独立前后端应用；TAP 非 AI 原型保留独立入口。下文的企业内网 Compose 与 TLS Proxy 仍是后续目标设计，不能作为当前回环、无认证应用的生产部署声明。
+> **2026-09-15 应用边界更新**：现有 AI 能力已按 [TAP AI 产品边界](2026-09-15-tap-ai-product-boundary.md) 与 [ADR-027](../decisions/2026-09-15-adr-027-tap-ai-product-app-boundary.md) 迁入独立前后端应用；TAP 非 AI 原型保留独立入口。下文的企业内网 Compose 与 TLS Proxy 仍是后续目标设计，不能作为当前回环、无认证应用的生产部署声明。
 >
-> **2026-09-18 AI 编排更新**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已接受 Tap AI 的 Chat 与 AI Task 进入同一版本化 LangGraph 的目标架构：Fast Chat 走低延迟路径，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受预算限制的复杂工具循环。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不在该 Project API 作用域内。这不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
+> **2026-09-18 AI 编排更新**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已接受 TAP AI 的 Chat 与 AI Task 进入同一版本化 LangGraph 的目标架构：Fast Chat 走低延迟路径，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受预算限制的复杂工具循环。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不在该 Project API 作用域内。这不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
 | 字段         | 值                                                                                                                           |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -41,7 +41,7 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 | 能力            | 当前仓库事实                                                                                             | 下一目标                                                                                    |
 | --------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Knowledge       | V1 Gate 已通过：Source、Milvus、ModelGateway、Conversation/SSE、Citation、脱敏/审计与真实 Web 已实现     | 在 V4/V5 中保持同一 Project、快照和 Citation 契约                                           |
-| AI 编排         | Conversation generation 使用现有固定链路；尚无 LangGraph 三种执行剖面                                    | Tap AI Chat 与 AI Task 进入统一图；Fast Chat、Durable Workflow、Bounded Agentic Task 共享状态、审计与恢复契约 |
+| AI 编排         | Conversation generation 使用现有固定链路；尚无 LangGraph 三种执行剖面                                    | TAP AI Chat 与 AI Task 进入统一图；Fast Chat、Durable Workflow、Bounded Agentic Task 共享状态、审计与恢复契约 |
 | Knowledge Graph | 主体已实现；多 Document Revision 的 Snapshot 一致性与 E2E 证据待补，V2 Gate 重新打开                     | 关闭更正项后再为后续里程碑提供可核验 Graph Context                                          |
 | Test Management | 主体已实现；真实质量人审绑定与生成、编辑、冲突恢复 Web 旅程待补，V3 Gate 重新打开                        | 关闭更正项后再由 Test IR 和 Automation Revision 消费 Published Test Plan                    |
 | LCA             | 浏览器内 fixture、模拟 Run                                                                               | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder                    |

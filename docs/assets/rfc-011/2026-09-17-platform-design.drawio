@@ -504,7 +504,7 @@
         <mxCell id="label-5" value="脚本执行" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="1570" y="750" width="160" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="label-6" value="Tap AI Chat 与 AI Task 进入统一 LangGraph；Fast Chat、Durable Workflow、Bounded Agentic Task 共享领域端口；chDB 仅用于可选隔离文件分析。" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-6" value="TAP AI Chat 与 AI Task 进入统一 LangGraph；Fast Chat、Durable Workflow、Bounded Agentic Task 共享领域端口；chDB 仅用于可选隔离文件分析。" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="205" y="1625" width="1500" height="30" as="geometry" />
         </mxCell>
       </root>
@@ -1191,7 +1191,7 @@
         <mxCell id="edge-10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#555555;strokeWidth=1.5;exitX=0.0;exitY=0.496551724137931;exitDx=0;exitDy=0;entryX=1.0;entryY=0.496551724137931;entryDx=0;entryDy=0;" edge="1" parent="1" source="evidence" target="answer">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="label-0" value="Tap AI Chat 与 AI Task 进入一个版本化 LangGraph；任务路由在图内，模型选择在 ModelGateway，不部署独立 Router 服务" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-0" value="TAP AI Chat 与 AI Task 进入一个版本化 LangGraph；任务路由在图内，模型选择在 ModelGateway，不部署独立 Router 服务" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="145" y="35" width="1560" height="30" as="geometry" />
         </mxCell>
         <mxCell id="label-1" value="RCA 主链：Milvus / MySQL Graph 知识 + Insights API / ClickHouse 指标；chDB 仅用于本 RCA 主链外的可选隔离文件或快照分析" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">

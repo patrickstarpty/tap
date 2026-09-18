@@ -59,6 +59,6 @@
 <text x="1145.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Graph Node → ModelGateway → LiteLLM</text>
 <text x="1145.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">reasoning：综合事实 / 假设 / 引用</text>
 <text x="1145.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不部署独立 Model Router</text>
-<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Tap AI Chat 与 AI Task 进入一个版本化 LangGraph；任务路由在图内，模型选择在 ModelGateway，不部署独立 Router 服务</text>
+<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">TAP AI Chat 与 AI Task 进入一个版本化 LangGraph；任务路由在图内，模型选择在 ModelGateway，不部署独立 Router 服务</text>
 <text x="925.0" y="971.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">RCA 主链：Milvus / MySQL Graph 知识 + Insights API / ClickHouse 指标；chDB 仅用于本 RCA 主链外的可选隔离文件或快照分析</text>
 </svg>

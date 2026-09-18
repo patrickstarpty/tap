@@ -345,10 +345,10 @@ describe("Tapper product prototype", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows Tap AI and Tapper workspace identities", () => {
+  it("shows TAP AI and Tapper workspace identities", () => {
     renderKnowledgeApp(<TapperPage />, { api: fakeKnowledgeClient() });
 
-    expect(screen.getByLabelText("Tap AI")).toHaveTextContent(/^Tap AI$/);
+    expect(screen.getByLabelText("TAP AI")).toHaveTextContent(/^TAP AI$/);
     const entry = screen.getByRole("button", { name: "Tapper" });
     expect(
       entry.querySelector('img[src*="tapper-listening-avatar-color.svg"]'),
@@ -512,7 +512,7 @@ describe("Tapper product prototype", () => {
 
     await user.click(screen.getByRole("button", { name: "测试管理" }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Test plans are available when the Tap AI API is ready.",
+      "Test plans are available when the TAP AI API is ready.",
     );
 
     await user.click(screen.getByRole("button", { name: "Tapper" }));

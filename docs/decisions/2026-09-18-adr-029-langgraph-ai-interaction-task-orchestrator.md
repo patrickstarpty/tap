@@ -9,17 +9,17 @@ related-rfcs:
   - RFC-011
 ---
 
-# ADR-029：LangGraph 统一编排 Tap AI 的 AI 交互与任务
+# ADR-029：LangGraph 统一编排 TAP AI 的 AI 交互与任务
 
 ## 背景
 
-Tap AI 不只有低延迟知识问答，还包括测试方案生成、完整文件分析、根因分析、等待外部结果或人工确认等任务。这些任务有两个彼此独立的变化维度：执行可能在线立即完成，也可能需要异步、持久化和恢复；推理可能是直接生成、固定工作流，也可能需要受预算约束的 Agentic Loop。
+TAP AI 不只有低延迟知识问答，还包括测试方案生成、完整文件分析、根因分析、等待外部结果或人工确认等任务。这些任务有两个彼此独立的变化维度：执行可能在线立即完成，也可能需要异步、持久化和恢复；推理可能是直接生成、固定工作流，也可能需要受预算约束的 Agentic Loop。
 
-[ADR-028](2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 确定了统一 LangGraph、稳定领域端口、ModelGateway/LiteLLM 及 MySQL 检查点方向，但只区分 Simple fast path 与 Complex agentic loop，并把外部等待和长时间执行隐含在复杂路径中。这会把“耗时长”错误等同于“推理复杂”，也把测试管理等 Tap AI 页面发起的 AI 任务排除在 Project Chat 字面作用域之外。
+[ADR-028](2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 确定了统一 LangGraph、稳定领域端口、ModelGateway/LiteLLM 及 MySQL 检查点方向，但只区分 Simple fast path 与 Complex agentic loop，并把外部等待和长时间执行隐含在复杂路径中。这会把“耗时长”错误等同于“推理复杂”，也把测试管理等 TAP AI 页面发起的 AI 任务排除在 Project Chat 字面作用域之外。
 
 ## 决策
 
-Tap AI 用户从 Project Chat、测试管理或其他 Tap AI 自有入口发起的 AI 交互与 AI 任务，统一进入 Tap AI 后端内的版本化 LangGraph。后端在入图前完成身份、Project、资源范围、幂等键和基础输入校验；图内的 Task Classification & Admission 节点记录任务类型、执行剖面、推理方式、模型层级建议和预算，并由确定性策略最终裁定。
+TAP AI 用户从 Project Chat、测试管理或其他 TAP AI 自有入口发起的 AI 交互与 AI 任务，统一进入 TAP AI 后端内的版本化 LangGraph。后端在入图前完成身份、Project、资源范围、幂等键和基础输入校验；图内的 Task Classification & Admission 节点记录任务类型、执行剖面、推理方式、模型层级建议和预算，并由确定性策略最终裁定。
 
 统一图提供三种明确、可观测的执行剖面：
 
@@ -34,22 +34,22 @@ Tap AI 用户从 Project Chat、测试管理或其他 Tap AI 自有入口发起�
 - Task Classification & Admission 是 LangGraph 内的节点和条件边，不部署独立 Query Router 服务。
 - 图内的理解、计划、推理和生成节点经 `ModelGateway → LiteLLM → 模型供应商`。ModelGateway 根据能力、数据范围、逻辑模型层级、预算和策略裁定调用；LiteLLM 只把获准别名映射到供应商部署，不部署独立 Model Router 服务。
 - 知识获取经 `Knowledge Search Tool → SearchPort → Milvus hybrid search → 可选的已授权 active MySQL Graph Snapshot 有界扩展`。
-- 平台历史指标和 RCA 经 `Insights Tool → TAP Insights API → ClickHouse`；Tap AI 不直连或改写指标事实。
+- 平台历史指标和 RCA 经 `Insights Tool → TAP Insights API → ClickHouse`；TAP AI 不直连或改写指标事实。
 - 业务动作经 TAP Domain APIs；发布、审批、执行和质量规则继续由所属业务模块裁定。
 - chDB 仅用于明确授权的隔离文件或快照计算，不是 Chat、Durable Workflow 或 RCA 的默认主链。
 
 MySQL 保存 Conversation、Turn、Task、GraphRun、图版本、checkpoint、租约、策略、工具调用、模型用量、审计与幂等信息。状态、checkpoint、Domain Event 与 Outbox 在同一事务提交；Redis 只负责可重建的至少一次唤醒。等待期间释放 Worker，恢复前检查租约和外部副作用，避免重复执行。每个 GraphRun 固定创建时的图版本；旧 checkpoint 只能由兼容版本恢复或经过显式、可测试、可审计的迁移。
 
-LangGraph 是 Tap AI 后端内部的编排库和运行契约，不建设为面向其他产品或任意租户的通用 Agent/Workflow 平台。TAP 非 AI 产品的自动化执行、负载执行和 Insights 数据处理继续由其领域服务与 Worker 管理；Tap AI 只能通过正式跨产品接口请求这些能力。
+LangGraph 是 TAP AI 后端内部的编排库和运行契约，不建设为面向其他产品或任意租户的通用 Agent/Workflow 平台。TAP 非 AI 产品的自动化执行、负载执行和 Insights 数据处理继续由其领域服务与 Worker 管理；TAP AI 只能通过正式跨产品接口请求这些能力。
 
-[ADR-018](2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md) 的 RFC-006 legacy loopback Codex 回答组合不挂载 Tap AI Project API，是本决策作用域外的显式例外。本决策描述目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
+[ADR-018](2026-09-01-adr-018-tapper-local-codex-tool-free-answer.md) 的 RFC-006 legacy loopback Codex 回答组合不挂载 TAP AI Project API，是本决策作用域外的显式例外。本决策描述目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
 ## 考虑过的方案
 
 - **继续只分 fast path 与 complex loop**：无法表达长时间但确定性的解析、生成、等待和审批任务，会迫使这些任务错误进入 Agentic Loop。
 - **Fast Chat、长任务和复杂任务分别建设服务**：可以分别优化，但会复制权限、状态、事件、审计、引用和恢复合同，使同一任务升级或切换路径难以追溯。
 - **新增 Query Router 与 Model Router 微服务**：增加网络跳数、可用性依赖和第二套策略状态；图内 Admission 节点与 ModelGateway 已覆盖所需职责。
-- **把 LangGraph 建成全公司的通用 Agent 平台**：扩大产品、租户、插件、安全和运维责任，超出 Tap AI 当前范围，并会模糊 TAP 领域服务的权威边界。
+- **把 LangGraph 建成全公司的通用 Agent 平台**：扩大产品、租户、插件、安全和运维责任，超出 TAP AI 当前范围，并会模糊 TAP 领域服务的权威边界。
 - **所有任务都使用 Agentic Loop**：增加延迟、成本和不可预测性，也无法替代确定性长任务所需的可靠队列、租约、检查点与幂等语义。
 
 ## 后果

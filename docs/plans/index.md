@@ -2,7 +2,7 @@
 
 本目录保存实施、交付和路线图计划。
 
-- [Tap AI 产品拆分实施计划](2026-09-15-tap-ai-product-separation.md)（`completed`）：迁移 AI 前后端、保留 TAP 非 AI 应用并提供本机独立启动入口。
+- [TAP AI 产品拆分实施计划](2026-09-15-tap-ai-product-separation.md)（`completed`）：迁移 AI 前后端、保留 TAP 非 AI 应用并提供本机独立启动入口。
 
 - [TAP 交付路线图](2026-08-20-roadmap.md)（`active`）：按 RFC-009 定义 V0–VG、P0、P1 的 Validation-first、Knowledge-first、Web-only、Jenkins-first 顺序与出口。
 - [文档信息架构迁移实施计划](2026-08-22-document-information-architecture-migration.md)（`completed`）：定义本次文档迁移的任务、约束与验收方式。

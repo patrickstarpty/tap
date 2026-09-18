@@ -2,7 +2,7 @@
 
 本目录保存当前规范性的系统架构与领域设计。
 
-- [Tap AI 产品边界与本机独立部署](2026-09-15-tap-ai-product-boundary.md)：定义 AI 功能迁入独立前后端应用及 TAP 非 AI 应用保留范围，并区分当前运行事实与 ADR-029 统一 LangGraph AI 交互/任务目标。
+- [TAP AI 产品边界与本机独立部署](2026-09-15-tap-ai-product-boundary.md)：定义 AI 功能迁入独立前后端应用及 TAP 非 AI 应用保留范围，并区分当前运行事实与 ADR-029 统一 LangGraph AI 交互/任务目标。
 
 - [Tapper 知识与 Web 自动化平台架构 v0.4](2026-09-04-tapper-knowledge-web-automation-overview.md)：当前规范性总体架构；采用 Validation-first、Knowledge-first、Web-only、Jenkins-first 与自托管 Compose 基线，并记录统一 Chat 编排的后续目标边界。
 - [总体技术架构 v0.3](2026-08-20-overview.md)（历史）：保留 Azure/Git/Intelligence-first 的演进记录，不再作为当前基线。
