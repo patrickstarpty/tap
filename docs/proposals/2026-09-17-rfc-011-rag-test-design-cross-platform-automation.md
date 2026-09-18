@@ -150,6 +150,8 @@ chDB 是可选的嵌入式分析引擎，只用于明确获准的文件或快照
 
 #### 3.1 模块和调用关系
 
+TAP AI 后端编排、能力端口、模型访问与数据底座的单页总览：[打开可编辑 draw.io](../assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)。该图面向技术与产品/管理联合评审，与下方覆盖 TAP AI、TAP Platform 及执行能力的全平台技术架构图配套使用。
+
 ![技术架构图](../assets/rfc-011/2026-09-17-technical-architecture.png)
 
 [查看 SVG](../assets/rfc-011/2026-09-17-technical-architecture.svg)。图为目标架构。统一 LangGraph、Insights Tool/API、ClickHouse、复杂文件处理、图像检索、本地连接器及负载执行均有新增工作；chDB 仅是可选文件分析能力。ClickHouse 是本 RFC 的目标能力，不属于 ADR-022 当前 Compose 基线。图中没有“新增”标记也不代表已经实现，现状以本文章节及代码核对入口为准。
