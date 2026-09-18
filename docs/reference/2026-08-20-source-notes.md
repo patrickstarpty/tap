@@ -33,6 +33,8 @@
 
 2026-09-04 的正式决策确认：以 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 和 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 作为当前基线。交付先在固定 Validation Scope 中按 V0–VG 完成可信知识问答、MySQL Knowledge Graph、测试资产、Web Low Code/Recorder 和 Jenkins 结果闭环；通过 VG 后才进入 P0 用户/认证/RBAC/多 Project，再由 P1 完成生产加固。部署基线是自托管 Docker Compose、MySQL、Redis、Milvus、MinIO、LiteLLM 与外置 Jenkins；Automation Revision 由 TAP/MySQL 管理、Bundle 存 MinIO，Git 仅为可选同步。Mobile 与 Azure DevOps Provider 均在 P1 之后另行设计。
 
+2026-09-18 的后续确认以 Milvus 取代 Azure AI Search 作为当前文档检索投影，并确定所有 Tap AI Project Chat 进入同一版本化 LangGraph：简单请求在图内走 fast path，复杂任务走受预算限制的 agentic loop。图节点经 `ModelGateway → LiteLLM` 调用模型，经 `Knowledge Search Tool → SearchPort → Milvus hybrid search → 可选的已授权 active MySQL Graph Snapshot 有界扩展` 查知识，经 `Insights Tool → TAP Insights API → ClickHouse` 查历史指标；MySQL 承载 Conversation、Turn、图状态/checkpoint、幂等与审计。不新建独立 Query Router 或 Model Router 服务；chDB 只作明确授权的可选文件/快照计算，不进入 Project Chat/RCA 核心链路。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。该决策见 [ADR-028](../decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md)，完整目标设计在 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 继续闭合；未表示当前代码已实现。
+
 ```text
 历史 Azure 目标栈（2026-08-20/21，已被当前 Compose 基线替代）：
 AKS + PaaS MySQL + PaaS Redis + Azure AI Search

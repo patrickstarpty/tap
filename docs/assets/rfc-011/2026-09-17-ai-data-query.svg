@@ -22,43 +22,43 @@
 <polyline points="960.0,832.0 870.0,832.0" fill="none" stroke="#555" stroke-width="1.5"/>
 <polygon points="870.00,832.00 879.00,827.65 879.00,836.35" fill="#555"/>
 <rect x="40.0" y="100.0" width="370.0" height="130.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper / Insights 提问</text>
-<text x="225.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">先核对项目与来源权限</text>
-<text x="225.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">明确时间、版本与指标口径</text>
+<text x="225.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">User · Android Regression RCA</text>
+<text x="225.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">核对项目、用户与来源权限</text>
+<text x="225.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">明确时间范围和指标口径</text>
 <rect x="500.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 查询计划</text>
-<text x="685.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Milvus 找文字 / 图像证据</text>
-<text x="685.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LiteLLM 理解问题与字段</text>
-<text x="685.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">模型只给允许的查询结构</text>
+<text x="685.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">版本化 LangGraph Orchestrator</text>
+<text x="685.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">首节点 → ModelGateway</text>
+<text x="685.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LiteLLM standard：意图 / Planning</text>
+<text x="685.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">fast path / 有界 complex loop</text>
 <rect x="960.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">后台授权与查询编译</text>
-<text x="1145.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按用途检查范围、版本与映射</text>
-<text x="1145.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式生成只用发布内容</text>
+<text x="1145.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">图内受控工具调度</text>
+<text x="1145.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">工具白名单 / 授权范围 / 预算</text>
+<text x="1145.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">步骤上限 / 停止条件 / 人工确认</text>
 <rect x="1420.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP Insights 查询 API</text>
-<text x="1605.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">服务端项目权限、只读及限额</text>
-<text x="1605.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse 平台历史指标</text>
+<text x="1605.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Insights Tool → TAP Insights API</text>
+<text x="1605.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">项目权限 / 只读 / 指标口径</text>
+<text x="1605.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse 趋势与失败分布</text>
 <rect x="500.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">获准的结构化数据</text>
-<text x="685.0" y="490.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式发布 / 会话临时分析</text>
-<text x="685.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原件、行号与单元格映射</text>
+<text x="685.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Knowledge Search Tool → SearchPort</text>
+<text x="685.0" y="490.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Milvus 混合检索 + 有界 MySQL Graph</text>
+<text x="685.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Defect / KB / Release 文档与引用</text>
 <rect x="960.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="443.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">chDB 隔离分析任务</text>
-<text x="1145.0" y="474.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">只读获准文件与结果快照</text>
-<text x="1145.0" y="505.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">查数 / 比较 / 关联 / 汇总</text>
-<text x="1145.0" y="536.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">无任意网络或模型代码执行</text>
+<text x="1145.0" y="443.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LangGraph State + MySQL</text>
+<text x="1145.0" y="474.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Conversation / Turn / Checkpoint</text>
+<text x="1145.0" y="505.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">指标事实 / 知识证据 / 引用</text>
+<text x="1145.0" y="536.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">预算 / 幂等 / 工具与模型审计</text>
 <rect x="1420.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">获准指标或明细快照</text>
-<text x="1605.0" y="490.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">查询 ID、口径和数据截至时间</text>
-<text x="1605.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">大规模计算留在 ClickHouse</text>
+<text x="1605.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">指标事实与查询证据</text>
+<text x="1605.0" y="490.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Query ID / 口径 / 数据截至时间</text>
+<text x="1605.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">趋势 / Module / Error 分布</text>
 <rect x="500.0" y="760.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">核对并返回有据可查的回答</text>
-<text x="685.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">数字来自计算，模型负责解释</text>
-<text x="685.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">再次检查权限、有效期与撤回</text>
+<text x="685.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">后端校验 → Final Answer</text>
+<text x="685.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">事实与假设明确分离</text>
+<text x="685.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">指标查询与知识引用可追溯</text>
 <rect x="960.0" y="760.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存计算与来源证据</text>
-<text x="1145.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">输入版本 / 筛选 / 单位 / 行数</text>
-<text x="1145.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">显示缺数据、歧义与超限</text>
-<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">明确采用 chDB + ClickHouse；Milvus 仍检索知识，MySQL 仍保存业务状态和审核记录</text>
-<text x="925.0" y="971.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">文件与快照用 chDB；共享历史查 ClickHouse；需要对照时才联合查询，临时分析不自动发布为知识</text>
+<text x="1145.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Graph Node → ModelGateway → LiteLLM</text>
+<text x="1145.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">reasoning：综合事实 / 假设 / 引用</text>
+<text x="1145.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不部署独立 Model Router</text>
+<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">所有 Tap AI Project Chat 进入一个版本化 LangGraph；不部署独立 Query Router 或 Model Router</text>
+<text x="925.0" y="971.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">RCA 主链：Milvus / MySQL Graph 知识 + Insights API / ClickHouse 指标；chDB 仅用于本 RCA 主链外的可选隔离文件或快照分析</text>
 </svg>

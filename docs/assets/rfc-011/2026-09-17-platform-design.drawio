@@ -301,13 +301,13 @@
         <mxCell id="tapweb" value="TAP 前端&#10;React / TypeScript / ECharts&#10;LCA / Load Testing / Test Insights" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1030" y="60" width="730" height="130" as="geometry" />
         </mxCell>
-        <mxCell id="aiapi" value="TAP AI 后端 · FastAPI&#10;知识 / 用例 / 手工执行 / 资源包与版本&#10;AI 生成与受控数据查询 / Jira 连接" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="aiapi" value="TAP AI 后端 · FastAPI&#10;Chat 入口：鉴权 / Conversation / Turn&#10;Knowledge / Insights / TAP Tools" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="40" y="280" width="730" height="140" as="geometry" />
         </mxCell>
-        <mxCell id="tapapi" value="TAP 后端 · FastAPI&#10;脚本版本 / 调试 / 功能与负载执行&#10;Insights 指标 API / 质量规则 / 权限" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="tapapi" value="TAP 后端 · FastAPI&#10;TAP Insights API / 质量规则 / 权限&#10;脚本版本 / 调试 / 功能与负载执行" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1030" y="280" width="730" height="140" as="geometry" />
         </mxCell>
-        <mxCell id="aiwork" value="TAP AI 后台任务&#10;解析 / 检索 / LangGraph 生成&#10;资源包导入、校验与市场同步" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="aiwork" value="统一 LangGraph Chat Orchestrator&#10;Simple fast path / 有界 Complex loop&#10;图版本 / 条件边 / 暂停与恢复" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="40" y="540" width="450" height="140" as="geometry" />
         </mxCell>
         <mxCell id="session" value="调试与本地连接服务&#10;录制 / 单步 / 画面&#10;独占设备 / 断线恢复" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
@@ -316,16 +316,16 @@
         <mxCell id="execution" value="正式执行服务&#10;固定运行清单 / 项目配额&#10;Jenkins 调度 / 取消" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1440" y="540" width="320" height="140" as="geometry" />
         </mxCell>
-        <mxCell id="models" value="统一模型接口&#10;LiteLLM：生成 / 视觉 / 文字向量&#10;本地：图像向量 / 模型重排&#10;能力校验 / 超时 / 用量" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="models" value="ModelGateway → LiteLLM&#10;fast / standard / reasoning / coding&#10;能力 / 超时 / 重试 / 用量&#10;别名映射到模型供应商" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="40" y="800" width="450" height="140" as="geometry" />
         </mxCell>
-        <mxCell id="milvus" value="Milvus&#10;关键词 / 文字向量 / 图像向量&#10;文档证据检索" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="milvus" value="Knowledge Search Tool → SearchPort&#10;Milvus 混合检索 + 有界 MySQL Graph&#10;发布范围 / 项目权限 / 引用定位" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="40" y="1080" width="450" height="140" as="geometry" />
         </mxCell>
-        <mxCell id="chdb" value="chDB 隔离分析任务&#10;获准文件 / 数据快照&#10;查数 / 比较 / 关联 / 汇总&#10;按任务限制范围与资源" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="chdb" value="可选 File Analysis Tool → chDB&#10;获准文件 / 结果快照&#10;隔离计算；非 Chat / RCA 主链&#10;按任务限制范围与资源" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="40" y="1370" width="450" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="mysql" value="MySQL&#10;资产与版本 / 审批 / 运行&#10;映射 / 接收账本 / 规则与判定&#10;各产品只修改自己的业务表" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="mysql" value="MySQL&#10;业务资产 / Knowledge Graph&#10;Conversation / Turn / Checkpoint&#10;幂等 / 工具与模型调用 / 审计" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="610" y="540" width="350" height="155" as="geometry" />
         </mxCell>
         <mxCell id="redis" value="Redis&#10;任务提示 / 短期缓存&#10;设备占用 / 执行租约" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
@@ -340,7 +340,7 @@
         <mxCell id="load" value="独立负载执行池&#10;k6 协议压测 / Playwright 浏览器负载&#10;独立 CPU、内存、网络 / 私网节点&#10;指标采集 / 心跳与本地停止" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1030" y="1140" width="730" height="160" as="geometry" />
         </mxCell>
-        <mxCell id="insights" value="Insights 后台任务与查询&#10;接入 / 映射 / 去重 / 重算&#10;指标 / 质量检查 / 通知" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="insights" value="Insights 后台任务与查询&#10;TAP Insights API / 项目权限 / 口径&#10;接入 / 映射 / 去重 / 重算" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1030" y="1400" width="360" height="150" as="geometry" />
         </mxCell>
         <mxCell id="clickhouse" value="ClickHouse（新增）&#10;测试 / 缺陷 / 研发 / 性能&#10;共享明细与历史分析" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
@@ -393,7 +393,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#555555;strokeWidth=1.5;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.0;entryY=0.5;entryDx=0;entryDy=0;startArrow=block;startFill=1;" edge="1" parent="1" source="aiwork" target="chdb">
+        <mxCell id="edge-10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#555555;strokeWidth=1.5;dashed=1;dashPattern=4 4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.0;entryY=0.5;entryDx=0;entryDy=0;startArrow=block;startFill=1;" edge="1" parent="1" source="aiwork" target="chdb">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="15" y="610" />
@@ -492,10 +492,10 @@
         <mxCell id="label-1" value="HTTPS / SSE / WebSocket" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="1410" y="220" width="370" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="label-2" value="接口 / 更新通知" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-2" value="Insights Tool → TAP Insights API" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="770" y="240" width="260" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="label-3" value="业务记录归 MySQL，Redis 提醒处理" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-3" value="业务记录、图状态与 Checkpoint 归 MySQL" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="300" y="465" width="460" height="30" as="geometry" />
         </mxCell>
         <mxCell id="label-4" value="操作与画面" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
@@ -504,7 +504,7 @@
         <mxCell id="label-5" value="脚本执行" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="1570" y="750" width="160" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="label-6" value="chDB 分析任务内数据；ClickHouse 支撑共享历史分析；两者都经后台授权，AI 根据实际结果解释。" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-6" value="所有 Tap AI Project Chat 进入统一 LangGraph；知识经 Milvus / MySQL Graph，RCA 指标经 TAP Insights API / ClickHouse；chDB 仅用于可选隔离文件分析。" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="205" y="1625" width="1500" height="30" as="geometry" />
         </mxCell>
       </root>
@@ -1120,31 +1120,31 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="ask" value="Tapper / Insights 提问&#10;先核对项目与来源权限&#10;明确时间、版本与指标口径" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="ask" value="User · Android Regression RCA&#10;核对项目、用户与来源权限&#10;明确时间范围和指标口径" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="40" y="100" width="370" height="130" as="geometry" />
         </mxCell>
-        <mxCell id="plan" value="TAP AI 查询计划&#10;Milvus 找文字 / 图像证据&#10;LiteLLM 理解问题与字段&#10;模型只给允许的查询结构" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="plan" value="版本化 LangGraph Orchestrator&#10;首节点 → ModelGateway&#10;LiteLLM standard：意图 / Planning&#10;fast path / 有界 complex loop" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="500" y="100" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="authorize" value="后台授权与查询编译&#10;按用途检查范围、版本与映射&#10;正式生成只用发布内容" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="authorize" value="图内受控工具调度&#10;工具白名单 / 授权范围 / 预算&#10;步骤上限 / 停止条件 / 人工确认" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="960" y="100" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="api" value="TAP Insights 查询 API&#10;服务端项目权限、只读及限额&#10;ClickHouse 平台历史指标" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="api" value="Insights Tool → TAP Insights API&#10;项目权限 / 只读 / 指标口径&#10;ClickHouse 趋势与失败分布" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1420" y="100" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="files" value="获准的结构化数据&#10;正式发布 / 会话临时分析&#10;原件、行号与单元格映射" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="files" value="Knowledge Search Tool → SearchPort&#10;Milvus 混合检索 + 有界 MySQL Graph&#10;Defect / KB / Release 文档与引用" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="500" y="415" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="chdb" value="chDB 隔离分析任务&#10;只读获准文件与结果快照&#10;查数 / 比较 / 关联 / 汇总&#10;无任意网络或模型代码执行" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="chdb" value="LangGraph State + MySQL&#10;Conversation / Turn / Checkpoint&#10;指标事实 / 知识证据 / 引用&#10;预算 / 幂等 / 工具与模型审计" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="960" y="415" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="snapshot" value="获准指标或明细快照&#10;查询 ID、口径和数据截至时间&#10;大规模计算留在 ClickHouse" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="snapshot" value="指标事实与查询证据&#10;Query ID / 口径 / 数据截至时间&#10;趋势 / Module / Error 分布" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="1420" y="415" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="answer" value="核对并返回有据可查的回答&#10;数字来自计算，模型负责解释&#10;再次检查权限、有效期与撤回" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="answer" value="后端校验 → Final Answer&#10;事实与假设明确分离&#10;指标查询与知识引用可追溯" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="500" y="760" width="370" height="145" as="geometry" />
         </mxCell>
-        <mxCell id="evidence" value="保存计算与来源证据&#10;输入版本 / 筛选 / 单位 / 行数&#10;显示缺数据、歧义与超限" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
+        <mxCell id="evidence" value="Graph Node → ModelGateway → LiteLLM&#10;reasoning：综合事实 / 假设 / 引用&#10;不部署独立 Model Router" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#444444;strokeWidth=1.5;fontColor=#222222;fontSize=20;fontFamily=Helvetica;" vertex="1" parent="1">
           <mxGeometry x="960" y="760" width="370" height="145" as="geometry" />
         </mxCell>
         <mxCell id="edge-0" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#555555;strokeWidth=1.5;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.0;entryY=0.4482758620689655;entryDx=0;entryDy=0;" edge="1" parent="1" source="ask" target="plan">
@@ -1191,10 +1191,10 @@
         <mxCell id="edge-10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#555555;strokeWidth=1.5;exitX=0.0;exitY=0.496551724137931;exitDx=0;exitDy=0;entryX=1.0;entryY=0.496551724137931;entryDx=0;entryDy=0;" edge="1" parent="1" source="evidence" target="answer">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="label-0" value="明确采用 chDB + ClickHouse；Milvus 仍检索知识，MySQL 仍保存业务状态和审核记录" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-0" value="所有 Tap AI Project Chat 进入一个版本化 LangGraph；不部署独立 Query Router 或 Model Router" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="145" y="35" width="1560" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="label-1" value="文件与快照用 chDB；共享历史查 ClickHouse；需要对照时才联合查询，临时分析不自动发布为知识" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
+        <mxCell id="label-1" value="RCA 主链：Milvus / MySQL Graph 知识 + Insights API / ClickHouse 指标；chDB 仅用于本 RCA 主链外的可选隔离文件或快照分析" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#444444;" vertex="1" parent="1">
           <mxGeometry x="165" y="953" width="1520" height="30" as="geometry" />
         </mxCell>
       </root>

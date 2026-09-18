@@ -1,11 +1,11 @@
 # TAP 架构决策
 
-本文记录当前有效决策及被后续决策替代的历史。RFC-009 已在 2026-09-04 接受，当前交付、部署、知识、资产版本和执行基线以 ADR-020–025 为准；ADR-026–027 补充产品命名与应用边界。
+本文记录当前有效决策及被后续决策替代的历史。RFC-009 已在 2026-09-04 接受，当前交付、部署、知识、资产版本和执行基线以 ADR-020–025 为准；ADR-026–028 补充产品命名、应用边界与统一 Chat 编排。
 
 ## 当前平台基线
 
+- [ADR-028：LangGraph 作为统一 Chat Orchestrator](2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md)（`accepted`，目标架构，当前 V1 未实现）：所有 Tap AI Project Chat 进入同一版本化图；普通请求走 fast path，复杂请求走受预算约束的 agentic loop，经 ModelGateway、SearchPort 和 TAP Insights API 访问模型、知识与指标。
 - [ADR-027：Tap AI 采用独立前后端应用边界](2026-09-15-adr-027-tap-ai-product-app-boundary.md)（`accepted`）：AI 功能独立应用运行，TAP 保留非 AI 边界。
-
 - [ADR-020：采用 Validation-first 交付顺序](2026-09-04-adr-020-validation-first-delivery.md)（`accepted`）：先在固定可信 Scope 中完成 V0–VG，之后才实施 P0 身份/RBAC/多 Project和 P1 生产加固。
 - [ADR-021：当前交付主线采用 Knowledge-first Web Automation](2026-09-04-adr-021-knowledge-first-web-automation-delivery.md)（`accepted`）：替代 ADR-014/019 的当前交付授权；知识问答、Graph、测试设计、Web LCA/Recorder、Playwright/Jenkins 和结果闭环依次交付，隔离 Runtime 仅保留为 P1 后可重新决策的原则。
 - [ADR-022：首个正式交付采用自托管 Docker Compose 基线](2026-09-04-adr-022-self-hosted-compose-delivery-baseline.md)（`accepted`）：Compose、MySQL、Redis、MinIO、Milvus、LiteLLM 与外置 Jenkins 组成当前交付拓扑。

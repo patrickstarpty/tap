@@ -62,6 +62,8 @@ corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
 
 TAP 以 **可信知识 + 统一测试模型（Test IR）+ TAP-managed Revision + 统一执行证据** 为核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。MySQL 保存权威业务状态与 Outbox，Redis 只作可重建唤醒，MinIO 保存原件/Bundle/Evidence，Milvus 保存可重建 `doc` 检索投影，MySQL 同时保存 Knowledge Graph；模型经 LiteLLM，首个 Execution Provider 是外置 Jenkins。Git 是可选导出/同步 Adapter，不是发布和执行的必要事实源。
 
+目标 Chat 编排由 [ADR-028](docs/decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 固定：所有 Tap AI Project Chat 进入同一版本化 LangGraph，普通问答走图内 fast path，复杂任务走受预算限制的 agentic loop；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、工具循环或模型层级路由。
+
 ### Test IR 是什么？
 
 `Test IR` 是 **Test Intermediate Representation** 的缩写，在 TAP 中可以直接理解为“**统一测试模型**”。它不是客户需要操作的页面，也不是 Playwright、Selenium 或 Appium 脚本，而是平台内部用于统一记录测试内容的结构化格式。
@@ -104,6 +106,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 目标
 
 - 先让用户基于企业知识获得带引用、可核验、可恢复历史的回答和 Knowledge Graph。
+- 让所有 Tap AI Project Chat 共用一个 LangGraph 入口、状态和审计边界：简单问答走 fast path，只有复杂任务进入受控工具循环。
 - 让用户用自然语言或 BDD 创建 Test Plan 与 Web Automation，也能基于已有资产做定向更新。
 - 用稳定的统一测试模型（Test IR）连接需求、BDD、脚本、Locator、Fixture、Hook、测试数据和运行证据。
 - 在同一条 Run 时间线中关联 TAP Revision、Jenkins Attempt、测试结果、证据和人工审批。
@@ -124,6 +127,8 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 文档导航
 
 - [Tapper 知识与 Web 自动化平台架构](docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)：当前边界、组件、数据、流程、安全、可靠性与部署。
+- [RFC-011：跨平台测试与 AI 编排目标设计](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：统一 LangGraph、Milvus 知识工具、Insights API/ClickHouse 指标工具与可选 chDB 文件分析。
+- [ADR-028：LangGraph 作为统一 Chat Orchestrator](docs/decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md)：记录统一入口、fast path/agentic loop 与工具、模型、指标边界。
 - [RFC-009：平台设计](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)：完整产品旅程、数据模型、API、事件、质量门禁和阶段边界。
 - [Tapper 知识与 Web 自动化平台实施计划](docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md)：V0–P1 的精确文件、TDD 步骤、命令与提交边界。
 - [Tapper 平台设计基线评审](docs/reviews/2026-09-05-tapper-platform-design-baseline-review.md)：记录已关闭的关键问题、最终 READY 结论和“可进入 V0、尚未实现或生产就绪”的授权边界。

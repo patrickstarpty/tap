@@ -3,6 +3,8 @@
 本页把 [RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 中跨模块、必须在实现期间保持稳定的契约集中列出。它不是手写的最终 OpenAPI；HTTP DTO 仍由 Backend 定义并生成 TypeScript。若本页与 RFC-009 冲突，以 RFC 为准。
 
 > **2026-09-15 应用归属**：当前公开 HTTP DTO 由 `apps/tap-ai-backend` 定义，TypeScript 合同生成到 `apps/tap-ai-frontend`。目录迁移不改变本页稳定 DTO、路径、事件或问题类型；TAP 非 AI 应用之间的未来跨产品合同另行定义。
+>
+> **2026-09-18 目标编排合同**：[ADR-028](../decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 已确定 Tap AI Project Chat 将统一经过版本化 LangGraph，[RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 要求增加 Graph Run/Checkpoint、工具调用、模型用量与 TAP Insights API 的版本化合同。这些目标字段和事件尚未在本页定义或实现；现有 V1 DTO/事件继续是当前契约，不得仅凭 `conversation.turn.requested/completed` 声称目标图、恢复或跨产品 Insights 已交付。
 
 ## 1. 身份与范围
 
