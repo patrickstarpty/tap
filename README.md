@@ -62,7 +62,7 @@ corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
 
 TAP 以 **可信知识 + 统一测试模型（Test IR）+ TAP-managed Revision + 统一执行证据** 为核心，采用 **React + TypeScript 前端、Python + FastAPI/ASGI 后端**。MySQL 保存权威业务状态与 Outbox，Redis 只作可重建唤醒，MinIO 保存原件/Bundle/Evidence，Milvus 保存可重建 `doc` 检索投影，MySQL 同时保存 Knowledge Graph；模型经 LiteLLM，首个 Execution Provider 是外置 Jenkins。Git 是可选导出/同步 Adapter，不是发布和执行的必要事实源。
 
-目标 Chat 编排由 [ADR-028](docs/decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 固定：所有 Tap AI Project Chat 进入同一版本化 LangGraph，普通问答走图内 fast path，复杂任务走受预算限制的 agentic loop；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、工具循环或模型层级路由。
+目标 AI 编排由 [ADR-029](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 固定：Tap AI 的 Chat 与 AI Task 进入同一版本化 LangGraph，分别支持低延迟 Fast Chat、可恢复 Durable Workflow 和受预算限制的 Bounded Agentic Task；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。任务分类位于图内，模型选择位于 ModelGateway，不部署独立 Query Router 或 Model Router 服务。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
 ### Test IR 是什么？
 
@@ -106,7 +106,7 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 目标
 
 - 先让用户基于企业知识获得带引用、可核验、可恢复历史的回答和 Knowledge Graph。
-- 让所有 Tap AI Project Chat 共用一个 LangGraph 入口、状态和审计边界：简单问答走 fast path，只有复杂任务进入受控工具循环。
+- 让 Tap AI 的 Chat 与 AI Task 共用一个 LangGraph 入口、状态和审计边界：Fast Chat 保持低延迟，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受控复杂工具循环。
 - 让用户用自然语言或 BDD 创建 Test Plan 与 Web Automation，也能基于已有资产做定向更新。
 - 用稳定的统一测试模型（Test IR）连接需求、BDD、脚本、Locator、Fixture、Hook、测试数据和运行证据。
 - 在同一条 Run 时间线中关联 TAP Revision、Jenkins Attempt、测试结果、证据和人工审批。
@@ -128,10 +128,11 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 
 - [Tapper 知识与 Web 自动化平台架构](docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)：当前边界、组件、数据、流程、安全、可靠性与部署。
 - [RFC-011：跨平台测试与 AI 编排目标设计](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：统一 LangGraph、Milvus 知识工具、Insights API/ClickHouse 指标工具与可选 chDB 文件分析。
-- [ADR-028：LangGraph 作为统一 Chat Orchestrator](docs/decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md)：记录统一入口、fast path/agentic loop 与工具、模型、指标边界。
+- [ADR-029：LangGraph 统一编排 Tap AI 的 AI 交互与任务](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)：记录 Fast Chat、Durable Workflow、Bounded Agentic Task 及工具、模型、指标边界。
 - [RFC-009：平台设计](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)：完整产品旅程、数据模型、API、事件、质量门禁和阶段边界。
 - [Tapper 知识与 Web 自动化平台实施计划](docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md)：V0–P1 的精确文件、TDD 步骤、命令与提交边界。
 - [Tapper 平台设计基线评审](docs/reviews/2026-09-05-tapper-platform-design-baseline-review.md)：记录已关闭的关键问题、最终 READY 结论和“可进入 V0、尚未实现或生产就绪”的授权边界。
+- TAP AI 技术架构总览：[PNG 预览](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.png) / [draw.io 源文件](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)：面向技术与产品/管理联合评审，展示 Fast Chat、Durable Workflow、Bounded Agentic Task、领域端口、模型访问与数据底座。
 - TAP 平台架构简图：[draw.io 源文件](docs/architecture/2026-08-27-tap-platform-architecture.drawio) / [SVG 预览](docs/architecture/2026-08-27-tap-platform-architecture.svg)：面向管理层说明输入、统一平台、业务结果与共享底座。
 - RAG 知识问答简图：[draw.io 源文件](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.drawio) / [SVG 预览](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.svg)：用知识建设与在线问答两条主线说明从数据源到可溯源回答的完整链路。
 - [整体架构评审](docs/reviews/2026-08-21-architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。

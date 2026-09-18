@@ -15,7 +15,7 @@ related-adrs:
   - ADR-024
   - ADR-025
   - ADR-027
-  - ADR-028
+  - ADR-029
 ---
 
 # RFC-011：知识、测试管理、三端自动化、Test Insights 与负载测试
@@ -50,8 +50,8 @@ related-adrs:
 | 从需求生成时，先写清用例 | 文档能说清业务规则，却不能告诉系统当前按钮在哪里 | 用例写清“测什么、怎样算对”；连接真实应用后，再确定操作步骤和定位 |
 | 查依据与算数据分开 | 找到几段相关文字，不能证明已经读完十万行表格 | Knowledge Search Tool 经 SearchPort 从 Milvus 找文字/图片证据，并按需对获准 active MySQL Graph Snapshot 有界扩展；需要时，可选 File Analysis Tool 用 chDB 对获准文件或快照做筛选、比较、关联和计算 |
 | 可选 chDB 与 ClickHouse 分工 | 一次性核对文件与团队反复查历史，数据寿命和资源需求不同 | chDB 只在隔离任务内分析获准文件或快照，不在 Project Chat/RCA 主链；平台历史由 Insights Tool 经 TAP Insights API 查询 ClickHouse |
-| 保留 MySQL 和对象存储 | 审批、当前运行状态及可恢复对话需要及时准确；原件、视频需要完整留存 | MySQL 管业务记录、Conversation、Turn、图检查点、审计与幂等；对象存储放原件与证据；ClickHouse 承担大量历史数据分析 |
-| LangGraph、LiteLLM、Jenkins 各管一件事 | 决定任务步骤、调模型、安排测试机器是三种工作 | 每个 Tap AI Project Chat 请求进入同一版本化 LangGraph，简单请求走图内快速路径，复杂请求走有界 Agentic Loop；图节点经 ModelGateway→LiteLLM 调模型；Jenkins 安排正式测试，交互调试直接连执行服务 |
+| 保留 MySQL 和对象存储 | 审批、当前运行状态及可恢复对话/任务需要及时准确；原件、视频需要完整留存 | MySQL 管业务记录、Conversation、Turn、Task、GraphRun、图检查点、租约、审计与幂等；对象存储放原件与证据；ClickHouse 承担大量历史数据分析 |
+| LangGraph、LiteLLM、Jenkins 各管一件事 | 决定任务步骤、调模型、安排测试机器是三种工作 | Tap AI Chat 与 AI Task 进入同一版本化 LangGraph：Fast Chat 低延迟返回，Durable Workflow 可恢复执行长任务，Bounded Agentic Task 受预算限制地规划和调用工具；图节点经 ModelGateway→LiteLLM 调模型；Jenkins 安排正式测试，交互调试直接连执行服务 |
 | AI 草稿与正式版本分开 | 生成内容可能有误，运行中的内容也不能随编辑变化 | 人工确认后发布固定版本；每次执行记录所用版本，失败和重试分开保留 |
 | 功能测试与负载测试分开 | 验证一次操作正确，与验证高峰业务量下仍可用，目标不同 | 功能执行重在操作与检查；负载执行重在业务量、延迟和错误，使用独立资源避免互相干扰 |
 | Skills/Agents 保存完整包 | 一套测试方法可能依赖脚本、参考资料和模板，单段提示词不够 | Skill 保存可复用做法及文件；Agent 配置角色和可用工具，复用这些 Skills；运行固定版本 |
@@ -60,7 +60,7 @@ chDB 是可选的嵌入式分析引擎，只用于明确获准的文件或快照
 
 ### 本次需要对齐的交付安排
 
-先把一条真实业务流程从资料、用例走到执行证据，再逐步扩展平台和高级能力。第一批交付统一 Project Chat 图、Knowledge Search Tool/SearchPort/Milvus/MySQL Graph 知识核对和测试管理；获准文件确有完整计算需求时再启用可选 chDB。第二批接真实 Web 自动化与基础 Insights Tool/API/ClickHouse；之后分别完成移动端、完整质量分析和负载测试。Skills/Agents 可并行推进，详见“迁移或发布方式”。团队试点前须先完成共同的身份、项目权限、测试环境和数据准备。
+先把一条真实业务流程从资料、用例走到执行证据，再逐步扩展平台和高级能力。第一批交付统一 LangGraph 入口、Fast Chat、Durable Workflow、Knowledge Search Tool/SearchPort/Milvus/MySQL Graph 知识核对和测试管理；获准文件确有完整计算需求时再启用可选 chDB。第二批接真实 Web 自动化、Bounded Agentic Task 与基础 Insights Tool/API/ClickHouse；之后分别完成移动端、完整质量分析和负载测试。Skills/Agents 可并行推进，详见“迁移或发布方式”。团队试点前须先完成共同的身份、项目权限、测试环境和数据准备。
 
 收益用实际项目衡量：BA 核对资料的时间、QA 从需求到可执行测试的时间、生成内容的采纳与修改量、失败定位时间、回归耗时和未覆盖需求。试点前记录基线，试点后按相同范围比较；本文不预先承诺节省比例或交付日期。
 
@@ -76,18 +76,18 @@ chDB 是可选的嵌入式分析引擎，只用于明确获准的文件或快照
 | 移动端尚未打通完整流程 | 补 App 管理、设备连接与操作、Android/iOS 分别执行 |
 | Test Analytics 使用固定示例数据 | 改为真实报告接入、统一指标、失败处理、发布质量检查和五类工程质量分析 |
 | 负载测试尚未建立完整领域和执行链 | 新增 k6 协议/Playwright 浏览器负载、专用执行池、全局统计和基线比较 |
-| Project Chat 编排、知识检索与平台指标尚无统一 AI 调用链 | 所有 Tap AI Project Chat 进入同一版本化 LangGraph；知识经 Knowledge Search Tool→SearchPort→Milvus/MySQL active Graph Snapshot，历史指标经 Insights Tool→TAP Insights API→ClickHouse，可选文件计算才使用隔离 chDB；模型不自由连接数据库 |
+| Fast Chat、长任务、复杂任务、知识检索与平台指标尚无统一 AI 调用链 | Tap AI Chat 与 AI Task 进入同一版本化 LangGraph，明确区分 Fast Chat、Durable Workflow、Bounded Agentic Task；知识经 Knowledge Search Tool→SearchPort→Milvus/MySQL active Graph Snapshot，历史指标经 Insights Tool→TAP Insights API→ClickHouse，可选文件计算才使用隔离 chDB；模型不自由连接数据库 |
 | Skills/Agents 前端只编辑名称、描述和指令，导出单个 Markdown；后端已有版本只读接口 | 扩展完整资源包、文件树编辑、后端草稿、导入、市场同步与运行兼容检查，详见第 3.8 节 |
 
 核对入口：[知识适配器](../../apps/tap-ai-backend/src/tap/modules/knowledge/adapters/litellm.py)、[计划生成器](../../apps/tap-ai-backend/src/tap/modules/test_management/adapters/model_gateway_generation.py)、[自动化原型](../../apps/web/src/legacy/automation/AutomationWorkspace.tsx)、[分析原型](../../apps/web/src/legacy/TestAnalyticsWorkspace.tsx)。当前完成状态仍以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 为准。
 
 ## 目标
 
-用户上传资料后，可以得到有出处的回答，生成并评审测试计划，管理独立用例与手工执行，把用例变成经真实应用验证的三端脚本或负载场景，再通过 Test Insights 查看结果与改进质量。所有 Tap AI Project Chat 请求经过同一可审计、可恢复的 LangGraph 入口；文档、用例、脚本和运行证据能够相互追溯。
+用户上传资料后，可以得到有出处的回答，生成并评审测试计划，管理独立用例与手工执行，把用例变成经真实应用验证的三端脚本或负载场景，再通过 Test Insights 查看结果与改进质量。Tap AI 的 Chat 与 AI Task 经过同一可审计、可恢复的 LangGraph 入口；Fast Chat、Durable Workflow、Bounded Agentic Task 共享权限、状态和证据契约，文档、用例、脚本和运行证据能够相互追溯。
 
 ## 非目标
 
-不承诺“上传文档即得到无需核验的可运行脚本”；不让 AI 修改结果检查条件来掩盖失败；统一 LangGraph 只编排 Tap AI Project Chat，不扩展为通用 Agent 编排平台，也不另建 Query Router、Model Router 服务或商业设备云。RFC-006/ADR-018 已实现的 loopback、单操作者、无工具 Codex Answer Adapter 是独立本地能力，不纳入或改写为本目标图。Skills/Agents 管理服务于 Tapper，不等同于完整复刻 Claude Code 运行环境或自建公共插件市场。
+不承诺“上传文档即得到无需核验的可运行脚本”；不让 AI 修改结果检查条件来掩盖失败；统一 LangGraph 编排 Tap AI 自有入口发起的 Chat 与 AI Task，不建设为供其他产品或任意租户接入的通用 Agent/Workflow 平台。任务分类与工具选择仍然存在，但位于图内 Task Classification & Admission；模型层级选择位于 ModelGateway，不另建 Query Router、Model Router 服务或商业设备云。RFC-006/ADR-018 已实现的 loopback、单操作者、无工具 Codex Answer Adapter 是独立本地能力，不纳入或改写为本目标图。Skills/Agents 管理服务于 Tapper，不等同于完整复刻 Claude Code 运行环境或自建公共插件市场。
 
 ## 方案
 
@@ -150,7 +150,11 @@ chDB 是可选的嵌入式分析引擎，只用于明确获准的文件或快照
 
 #### 3.1 模块和调用关系
 
-TAP AI 后端编排、能力端口、模型访问与数据底座的单页总览：[打开可编辑 draw.io](../assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)。该图面向技术与产品/管理联合评审，与下方覆盖 TAP AI、TAP Platform 及执行能力的全平台技术架构图配套使用。
+下图是面向技术与产品/管理联合评审的 TAP AI 单页总览，直接展示 Fast Chat、Durable Workflow、Bounded Agentic Task、能力端口、模型访问与数据底座；[下载可编辑 draw.io](../assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)。
+
+![TAP AI 技术架构总览](../assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.png)
+
+下图继续展示覆盖 TAP AI、TAP Platform 及执行能力的全平台技术架构。
 
 ![技术架构图](../assets/rfc-011/2026-09-17-technical-architecture.png)
 
@@ -163,14 +167,14 @@ TAP AI 负责知识、测试管理（含手工执行）和 AI 生成；TAP 负�
 | 前端 | React、TypeScript、Vite、Ant Design；Insights 增加 ECharts | 沿用现有应用，新增真实数据图表，支持点击查看明细 |
 | Skills/Agents 编辑 | **MDXEditor + Monaco Editor（新增）**；沿用 Ant Design、react-markdown、rehype-sanitize | 文件树与配置表单；Markdown 可视化编辑；源码与差异查看；按需加载，不引入 docu.md，详见第 3.8 节 |
 | 后端 | Python、FastAPI | 沿用；接口处理用户请求，独立后台任务处理耗时工作 |
-| Project Chat 编排 | **统一版本化 LangGraph（新增）** | 所有 Tap AI Project Chat 请求使用同一入口、状态、权限、审计和收尾；简单请求走图内快速路径，复杂请求走有步骤/时间/调用/费用上限的 Agentic Loop；不另建 Query Router 或 AI 任务平台。RFC-006/ADR-018 的本地 loopback Codex Answer Adapter 保持独立 |
+| AI 交互与任务编排 | **统一版本化 LangGraph（新增）** | Tap AI Chat 与 AI Task 使用同一入口、状态、权限、审计和收尾；Fast Chat 低延迟返回，Durable Workflow 使用后台 Worker/checkpoint/progress 执行长任务，Bounded Agentic Task 使用有步骤/时间/调用/费用上限的工具循环；复杂任务可使用 durable runtime，长任务不必进入 agentic loop。不另建 Query Router 或通用 AI 任务平台。RFC-006/ADR-018 的本地 loopback Codex Answer Adapter 保持独立 |
 | 模型调用 | **ModelGateway + LiteLLM（沿用并扩展）** | 图节点只经 ModelGateway 调用模型；ModelGateway 校验能力、模型层级、输入输出、超时、重试、用量和记录，LiteLLM 把获准别名映射到供应商部署；不另建 Model Router 服务 |
 | 复杂文件解析 | **PaddleOCR PP-StructureV3 + openpyxl/文件内部 XML + 页面渲染（新增）** | 图片/PDF 识别版面、文字和表格，Excel 同时读取单元格及图形连线；沿用简单文字解析，详见第 3.4 节 |
 | 图片理解与检索重排 | **Qwen3-VL-Plus + Qwen3-VL-Embedding-2B / Reranker-2B（新增）** | 分别负责看懂复杂图、检索原图、对候选证据重新排序；输出仍须检查来源与完整性 |
 | 知识检索 | **Knowledge Search Tool → SearchPort → Milvus + MySQL Graph Snapshot（沿用并扩展）** | SearchPort 先做项目/来源范围内的 Milvus hybrid search，再仅对已授权 active Graph Snapshot 做深度、节点数和关系类型受限的 MySQL 图扩展；文字/图像索引查询后融合排序，并持续限定项目、来源版本、发布状态和访问范围 |
 | 可选文件分析 | **File Analysis Tool → chDB（新增、可选）+ Parquet** | 只在明确授权的隔离任务中计算本次文件或快照，例如比较费率表、核对跨表关系和汇总明细；不是 Project Chat/RCA 核心链路，详见第 3.6 节 |
-| 业务与编排数据 | MySQL | 内容版本、知识标注/审批/发布清单、Conversation、Turn、图状态与检查点、策略决策、工具调用、模型用量、审计、幂等、任务和运行状态 |
-| 任务与缓存 | 现有任务记录、待发送通知 + Redis + 后台任务 | 复用 TAP AI 已有的任务与可靠通知机制；TAP 执行/Insights 后台处理仍需建设，不能把基础机制当成现成功能 |
+| 业务与编排数据 | MySQL | 内容版本、知识标注/审批/发布清单、Conversation、Turn、Task、GraphRun、图版本与检查点、执行/推理模式、策略决策、工具调用、模型用量、审计、幂等、租约和运行状态 |
+| 任务与缓存 | 现有任务记录、待发送通知 + Redis + 独立 Worker | Durable Workflow 与 durable Agentic Task 使用 MySQL/Outbox 权威状态、Redis 至少一次唤醒和 Worker 租约；等待时释放 Worker，支持进度、暂停、恢复、取消和幂等重试。TAP 执行/Insights 后台处理仍需建设，不能把基础机制当成现成功能 |
 | 文件证据 | 现有对象存储接口 | 原文、报告、脚本包、日志、截图与视频 |
 | 共享历史数据分析 | **Insights Tool → TAP Insights API → ClickHouse（RFC-011 目标，新增）** | 从基础 Insights 阶段接入测试历史，逐步接入覆盖、缺陷、CI、代码质量与性能数据；Project Chat 不直连 ClickHouse，也不自行重定义指标。TAP 不可用时能力明确降级，核心知识 Chat 仍可运行，详见第 3.6 节 |
 | Web 自动化 | Playwright + TypeScript | 定位页面元素、执行操作、检查结果并记录执行过程 |
@@ -189,18 +193,18 @@ TAP AI 负责知识、测试管理（含手工执行）和 AI 生成；TAP 负�
 
 | 调用方向 | 传递内容与方式 | 关键约束 |
 | --- | --- | --- |
-| 前端→各自后端 | HTTPS 接口：资料、问题、计划、步骤和运行请求；SSE 持续返回任务进度；每个 Tap AI Project Chat 请求创建或恢复 Conversation/Turn 并进入版本化 LangGraph | 后端检查当前用户的项目权限；前端不直连数据库或模型供应商，简单 Project Chat 也不绕过图；本地 loopback Codex Answer Adapter 不在此范围 |
+| 前端→各自后端 | HTTPS 接口：资料、问题、计划、步骤和运行请求；Fast Chat 在线返回，Durable Workflow/Bounded Agentic Task 返回 Task/GraphRun 并经 SSE 持续发送进度；每次 Tap AI Chat 或 AI Task 创建或关联 Conversation/Turn/Task 并进入版本化 LangGraph | 后端检查当前用户的项目权限；前端不直连数据库或模型供应商，任何执行剖面都不绕过统一入口；本地 loopback Codex Answer Adapter 不在此范围 |
 | Skills/Agents 前端→资源管理→后台任务 | 完整包、来源地址、固定提交、文件修改和发布请求；返回文件树、兼容报告与版本 | 导入/同步只生成草稿；已发布包不可变，脚本仅在隔离环境显式执行，市场凭证不返回前端 |
 | 知识处理→存储/模型 | 原件、页面图片、结构化表格进对象存储；文字/图像索引进 Milvus；版本、解析状态、关系和定位进 MySQL | 按页/区域检查遗漏；严格模式须独立复核批准后发布；替换资料生成新版本，删除后立即停止提供该资料 |
-| Project Chat→LangGraph | 授权范围、Conversation、Turn、请求幂等键和图版本；图内首个分类节点及条件边选择简单快速路径或复杂 Agentic Loop | 两条路径共享权限、状态、审计、引用和结束处理；复杂路径受步骤、时间、调用次数和费用预算限制，不部署独立 Query Router |
+| Tap AI Chat/AI Task→LangGraph | 授权范围、Conversation、Turn、Task、请求幂等键和图版本；图内 Task Classification & Admission 记录 `execution_mode`、`reasoning_mode`、模型层级建议和预算，选择 Fast Chat、Durable Workflow 或 Bounded Agentic Task | 三种剖面共享权限、Task/GraphRun 状态、审计、引用、响应核验和结束处理；长任务不必进入 Agentic Loop，复杂任务超过在线预算时使用 durable runtime；不部署独立 Query Router |
 | 图节点→ModelGateway→LiteLLM | 逻辑模型层级、结构化输入输出、超时和预算；LiteLLM 将获准别名映射到供应商部署 | ModelGateway 校验能力和记录用量；不部署独立 Model Router，模型建议不能绕过后端策略 |
 | Knowledge Search Tool→SearchPort→Milvus/MySQL Graph Snapshot | 已授权的项目、来源版本、发布范围和检索参数；Milvus hybrid search 后可对已授权 active Graph Snapshot 做有界扩展，返回带证据位置的候选及引用 | 每次扩展上下文均检查权限、版本和 Snapshot；限制图深度、节点数及关系类型，回答可定位原页、图片区域或单元格，不能用旧缓存绕过权限 |
-| LangGraph→业务模块 | 确认后的需求、工具结果和当前步骤；保存每阶段进度与待确认问题 | 模型只生成草稿；用户评审、正式发布与外部副作用由业务接口处理并保持幂等 |
+| LangGraph→业务模块/Worker | 确认后的需求、类型化任务、工具结果、当前步骤、checkpoint、租约和待确认问题；Durable Workflow 与 durable Agentic Task 通过 MySQL Outbox/Redis 唤醒独立 Worker | 模型只生成草稿；用户评审、正式发布与外部副作用由业务接口处理并保持幂等；等待时释放 Worker，重复唤醒不得重复执行 |
 | TAP AI↔TAP | 带项目、内容版本和请求编号的接口：请求界面信息/试跑，返回步骤草稿、运行状态和证据引用 | TAP 检查可操作的应用与设备；重复请求不重复运行 |
 | 调试前端↔调试服务 | WebSocket 传操作和确认，画面通过独立视频/截图通道返回 | 每台设备只允许一个控制者；断线后重新确认界面，过期连接释放设备 |
 | 正式执行→Jenkins→执行机器 | 固定脚本包、应用版本、参数和凭证引用；通过结果回传和状态查询取得进度 | 调试直接调用调试服务；正式默认执行固定步骤，只有显式配置的动态 AI 块调用模型且受动作/预算约束；机器只能访问允许的测试环境 |
 | 执行/外部来源→Insights | 带来源、项目、用例、运行、重试编号和时间的报告；大文件存对象存储 | 先保存接收记录，再处理和统计；支持重试、补传和重新计算 |
-| File Analysis Tool→chDB（可选） | 受限查询结构、获准文件或结果快照 | chDB 不持平台数据库凭证，不在 Project Chat/RCA 主链；结果附计算范围和查询编号 |
+| File Analysis Tool→chDB（可选） | 受限查询结构、获准文件或结果快照 | chDB 不持平台数据库凭证，不在 Chat、Durable Workflow 或 RCA 默认主链；结果附计算范围和查询编号 |
 | Insights Tool→TAP Insights API→ClickHouse | 使用正式跨产品契约传递固定指标、筛选、项目范围和时间口径；返回指标事实、样本、截至时间、查询编号及证据引用 | 使用服务身份并在 TAP 侧再次检查项目授权；图和模型不直连 ClickHouse、不改写指标口径。鉴权、契约或 TAP/ClickHouse 不可用时 fail closed，并返回明确的“指标能力不可用”；核心知识 Chat 可继续 |
 | TAP AI 测试管理↔TAP 执行 | 固定用例/周期/实例/脚本/配置/数据行 ID；接收每次尝试与稳定步骤 ID 的结果 | 手工结果归测试管理，技术运行归 TAP；通过事件到 Insights，重复回执不重复计数 |
 | 负载执行→采集→Insights | 固定运行/分片/批次编号、实际负载、原始指标或可合并统计量、阶段和健康状态 | 统一测量窗；缺分片/未达负载不通过；停止经执行节点确认 |
@@ -210,7 +214,7 @@ TAP AI 负责知识、测试管理（含手工执行）和 AI 生成；TAP 负�
 
 | 位置 | 保存什么 | 由谁负责 |
 | --- | --- | --- |
-| MySQL | 资料/需求/用例/脚本版本、知识切片与标注/审批/发布清单、Conversation、Turn、图版本/状态/检查点、策略决策、工具调用、模型用量、审计、幂等、任务进度、Domain Event、Outbox、报告接收记录、权限和质量规则 | 两个产品分别维护自己的表；检查点/业务状态、Domain Event 与 Outbox 在同一事务提交，Redis 仅负责至少一次唤醒；消费者以幂等键去重。LangGraph 暂停/恢复、并发领取和外部副作用去重须真实验证 |
+| MySQL | 资料/需求/用例/脚本版本、知识切片与标注/审批/发布清单、Conversation、Turn、Task、GraphRun、图版本/状态/检查点、执行/推理模式、租约、策略决策、工具调用、模型用量、审计、幂等、任务进度、Domain Event、Outbox、报告接收记录、权限和质量规则 | 两个产品分别维护自己的表；检查点/业务状态、Domain Event 与 Outbox 在同一事务提交，Redis 仅负责至少一次唤醒；消费者以幂等键去重。Durable Workflow 与 durable Agentic Task 的暂停/恢复、并发领取和外部副作用去重须真实验证 |
 | MySQL + 对象存储（资源管理） | MySQL 保存 Skills/Agents 来源、版本、依赖、发布状态、文件清单和校验值；对象存储保存完整包及原始文件 | TAP AI；任务固定引用包版本，文件按项目授权读取，不默认送入知识向量索引 |
 | Redis | 等待处理的任务提示、短期缓存和设备占用信息 | 后台任务与调试服务；持久业务记录仍在 MySQL |
 | 对象存储 | 原件、页面/图片裁剪、结构化表格与解析文件、脚本包、原始报告、日志、截图与视频 | 各产品保存自己的文件；下载时检查权限 |
@@ -278,7 +282,7 @@ OCR、Office 转换、图像向量与重排部署在独立处理进程/推理服
 
 [Milvus 混合检索](https://milvus.io/docs/multi-vector-search.md)与[全文检索](https://milvus.io/docs/full-text-search.md)是检索基础；表格查询、关系扩展、模型重排和引用核对由 TAP AI 知识模块补齐。图像检索失败须显示能力降级；若问题依赖图片且无可靠文字证据，不能继续给出确定答案。
 
-**性能控制：** 沿用快速/深入两档。先以合并后的候选上限 20/50、重排后的证据上限 10/20 为起点评测；图片候选在同一预算内，每路保留最低名额，避免纯文字挤掉全部图片。所有 Tap AI Project Chat 都进入统一图；普通问答走图内快速路径而不进入 Agentic Loop，深入检索最多拆成 3 个子问题，共享总候选、图扩展、时间和费用预算。OCR/向量入库批量执行并限制并发，在线检索与后台解析使用不同队列；原图按需读取，重排批量推理、设置像素和输入长度上限。缓存键包含权限、来源版本、Graph Snapshot、模型和检索配置，资料删除/权限变更立即失效，不能仅按问题文字缓存答案。
+**性能控制：** 检索沿用快速/深入两档。先以合并后的候选上限 20/50、重排后的证据上限 10/20 为起点评测；图片候选在同一预算内，每路保留最低名额，避免纯文字挤掉全部图片。Tap AI Chat 与 AI Task 都进入统一图；普通问答使用 Fast Chat 而不进入 Agentic Loop，步骤已知但耗时的深入处理使用 Durable Workflow，开放式复杂检索才使用 Bounded Agentic Task，最多拆成 3 个子问题并共享总候选、图扩展、时间和费用预算。OCR/向量入库批量执行并限制并发，在线检索与后台解析使用不同队列；原图按需读取，重排批量推理、设置像素和输入长度上限。缓存键包含权限、来源版本、Graph Snapshot、模型和检索配置，资料删除/权限变更立即失效，不能仅按问题文字缓存答案。
 
 长表汇总和完整流程读取不受“前 10/20 条相似片段”限制，改走受权限约束的分批结构查询，并设置独立的行数、节点数与时间上限；超限返回范围不完整。模型只提交允许的筛选/聚合参数，不执行模型临时生成的 Python 代码。
 
@@ -363,7 +367,7 @@ MySQL 保存切片、字段标注、问题、审批记录、关系依赖和发�
 
 #### 3.6 AI 查知识、可选文件计算与历史指标
 
-所有 Tap AI Project Chat 查询都从统一 LangGraph 进入，但由不同的受控工具取得事实：**Knowledge Search Tool 经 SearchPort 做 Milvus hybrid search，并可对已授权 active MySQL Graph Snapshot 做有界扩展；Insights Tool 经正式 TAP Insights API 契约查询 ClickHouse；只有明确需要完整文件或获准快照计算时，才可选用 File Analysis Tool/chDB。** chDB 不是 Project Chat/RCA 的必经组件，模型和图都不得直连 ClickHouse。以下是可选文件计算与共享历史指标的职责划分，AI 只根据工具返回的事实和证据组织回答。
+Tap AI Chat 与 AI Task 都从统一 LangGraph 进入，但由不同的受控工具取得事实：**Knowledge Search Tool 经 SearchPort 做 Milvus hybrid search，并可对已授权 active MySQL Graph Snapshot 做有界扩展；Insights Tool 经正式 TAP Insights API 契约查询 ClickHouse；只有明确需要完整文件或获准快照计算时，才可选用 File Analysis Tool/chDB。** Fast Chat、Durable Workflow 与 Bounded Agentic Task 复用相同领域端口；chDB 不是 Chat、长任务或 RCA 的默认组件，模型和图都不得直连 ClickHouse。以下是可选文件计算与共享历史指标的职责划分，AI 只根据工具返回的事实和证据组织回答。
 
 | 对比项 | chDB：可选任务内文件分析 | ClickHouse：共享历史数据分析 |
 | --- | --- | --- |
@@ -427,7 +431,7 @@ ClickHouse 提供统计与关联能力；指标定义、数据接入、权限和
 
 **为什么本设计仍保留可选 chDB：** 准确查询与计算是必要能力，但 chDB 只是完整文件/快照计算的一种实现，不是 RAG、Project Chat 或 RCA 必备组件。选择它是为了让临时文件计算在独立任务内运行，分别限制资源、权限和生命周期，一次性资料无需全部装入平台指标库。平台历史数据统一留在 ClickHouse，并只经 Insights Tool/API 使用。图可以按稳定 ID 与时间口径组合多个工具的类型化结果；只有确需完整文件与平台快照做关系计算时，才把经授权的缩小快照交给 chDB。两者不是主从同步，也不要求每个问题依次调用。本项目不再增加 DuckDB；兼容版本和查询子集仍须实测。
 
-**与现有存储的区别：** MySQL 保存用例、审批、版本、Conversation、Turn、图检查点、审计和幂等状态；Milvus 通过 SearchPort 找相关文字/图片证据；可选 chDB 对获准文件或快照计算；ClickHouse 保存平台历史事实并通过 Insights API 提供指标。它们不能补回 OCR 漏字或替代人工核对，chDB/ClickHouse 也不是向量数据库。
+**与现有存储的区别：** MySQL 保存用例、审批、版本、Conversation、Turn、Task、GraphRun、图检查点、租约、审计和幂等状态；Milvus 通过 SearchPort 找相关文字/图片证据；可选 chDB 对获准文件或快照计算；ClickHouse 保存平台历史事实并通过 Insights API 提供指标。它们不能补回 OCR 漏字或替代人工核对，chDB/ClickHouse 也不是向量数据库。
 
 依据：[chDB 官方说明](https://clickhouse.com/docs/chdb)、[chDB 查询 Parquet](https://clickhouse.com/docs/chdb/guides/querying-parquet)、[ClickHouse 官方介绍](https://clickhouse.com/docs/get-started/about/intro)。以上为本项目部署与使用方式，不代表 chDB 只能临时使用或 ClickHouse 只能存测试数据。
 
@@ -439,7 +443,7 @@ ClickHouse 提供统计与关联能力；指标定义、数据接入、权限和
 
 资料有两种使用方式：**对话临时分析** 使用当前用户有权且明确选定的文件，先核对解析结果，答案标明“本次分析”，不自动变为团队正式知识；**正式知识问答和测试生成** 使用项目发布范围，严格项目须先独立复核。临时上传不能绕过正式发布要求。
 
-Tapper Project Chat 和 Insights 的提问入口先显示本次范围：项目、资料版本、日期、应用版本及指标口径。每个请求创建或恢复 Conversation/Turn 后进入同一版本化 LangGraph；意图/复杂度分类本身是图内节点，并通过 ModelGateway→LiteLLM 调模型，没有图外的首次 LLM 调用。图内条件边选择工具和快速路径/Agentic Loop，不部署独立 Query Router；回答统一附证据。遇到“本月”“通过率”“金额”等歧义先明确时区、分母、币种等条件。
+Tapper Project Chat、测试管理和 Insights 的 AI 入口先显示本次范围：项目、资料版本、日期、应用版本及指标口径。每个请求创建或关联 Conversation/Turn/Task 后进入同一版本化 LangGraph；Task Classification & Admission 是图内节点，必要时通过 ModelGateway→LiteLLM 调模型，没有图外的首次 LLM 调用。图内条件边选择受控工具及 Fast Chat、Durable Workflow 或 Bounded Agentic Task，不部署独立 Query Router；回答或任务结果统一附证据。遇到“本月”“通过率”“金额”等歧义先明确时区、分母、币种等条件。
 
 | 用户问题 | 实际查询路径 |
 | --- | --- |
@@ -466,12 +470,15 @@ chDB 与 ClickHouse 同源不代表各版本在空值、Decimal、时间和函�
 
 #### 3.7 模型、流程与分析的分工
 
-**LangGraph 是所有 Tap AI Project Chat 请求的统一 Orchestrator。** 后端只在图外完成当前用户、项目、Conversation、Turn、授权范围和请求幂等键检查，然后进入固定图版本；首次意图/复杂度分类也是图内节点，通过 ModelGateway→LiteLLM 调用模型，不存在图外的预分类 LLM。图内条件边选择两类执行路径，而不是把它们拆成两套服务。RFC-006/ADR-018 的 loopback、单操作者、无工具 Codex Answer Adapter 保持独立，不受此目标图替换：
+**LangGraph 是 Tap AI Chat 与 AI Task 的统一 Orchestrator。** 后端只在图外完成当前用户、项目、Conversation/Turn/Task、授权范围、请求幂等键和基础输入检查，然后进入固定图版本；Task Classification & Admission 是图内节点，必要时通过 ModelGateway→LiteLLM 调用模型，不存在图外的预分类 LLM。图内记录 `execution_mode = inline | durable` 与 `reasoning_mode = direct | workflow | agentic`，并选择三种常用执行剖面，而不是把它们拆成三套服务。RFC-006/ADR-018 的 loopback、单操作者、无工具 Codex Answer Adapter 保持独立，不受此目标图替换：
 
-- **Simple fast path：** 普通知识问答、单次受限检索或一次模型生成；仍经过统一入口、状态、权限、审计、引用和结束处理，但不进入反思、修复或多轮 Agentic Loop。
-- **Complex agentic loop：** 多步检索、RCA、受控工具组合、外部/人工等待或有限修复；每轮受最大步骤数、时间、工具调用次数和费用预算约束，在证据不足、权限不足、预算耗尽或需要人工确认时停止。
+- **Fast Chat：** 普通知识问答、澄清、单次受限检索或一次模型生成；在线、低延迟，仍经过统一入口、状态、权限、审计、引用、响应核验和结束处理，但不进入反思、修复或多轮 Agentic Loop。
+- **Durable Workflow：** 测试方案生成、完整文件处理、批量核对、外部等待或人工确认等步骤已知但耗时较长的任务；使用类型化节点、Task/GraphRun、MySQL checkpoint、Outbox、Redis 至少一次唤醒和独立 Worker，持续返回进度并支持暂停、恢复、取消、超时和幂等重试，默认不启动 Agentic Loop。
+- **Bounded Agentic Task：** 多步检索、RCA、受控工具组合、观察和有限修复；每轮受最大步骤数、时间、工具调用次数和费用预算约束，在证据不足、权限不足、预算耗尽或需要人工确认时停止。复杂任务超过在线预算或需要等待时使用 Durable Workflow 的持久化与 Worker 机制继续执行。
 
-图状态只保存完成任务所需的结构化记录，例如意图/任务类型、复杂度、模型层级、计划、工具输入输出、已验证事实、待验证假设、引用、预算与暂停原因；不要求保存或展示模型隐藏思维链。任务管理负责排队、开始和结束，LangGraph 负责节点顺序、条件判断、暂停和继续，业务模块继续负责发布、执行、质量规则及权威数据。
+执行时长与推理复杂度是两个维度：复杂任务可以是 durable，长任务不必是 agentic。Fast Chat 如果在产生外部副作用前发现超出在线预算，可记录提升原因并切换为 Durable Workflow；不得静默截断、丢失状态或把排队任务伪装成完成。三种剖面共享身份、权限、Conversation/Turn、Task/GraphRun、图版本、审计、引用、响应核验和结束处理。
+
+图状态只保存完成任务所需的结构化记录，例如意图/任务类型、执行/推理模式、模型层级、计划、工具输入输出、已验证事实、待验证假设、引用、预算与暂停原因；不要求保存或展示模型隐藏思维链。任务管理负责排队、领取、租约、开始和结束，LangGraph 负责节点顺序、条件判断、暂停和继续，业务模块继续负责发布、执行、质量规则及权威数据。
 
 **LangGraph 的意图理解、计划、推理和生成模型调用顺序固定为 `LangGraph 图节点 → ModelGateway → LiteLLM → 模型供应商`。** ModelGateway 检查允许的能力、逻辑模型层级、结构化输入输出、超时、重试、费用与调用记录；LiteLLM 只把获准别名映射到当前供应商部署。图可以提出 `fast`、`standard`、`reasoning`、`coding` 等逻辑层级，后端策略最终裁定；不部署独立 Model Router。SearchPort 内部的自部署图像向量与重排服务是检索子能力，不是 LangGraph 对话 LLM 节点；它们通过专用适配器调用并由 ModelGateway 记录，不强制绕行 LiteLLM 未验证的端点。OCR/文件解析由解析服务执行。
 
@@ -480,12 +487,12 @@ chDB 与 ClickHouse 同源不代表各版本在空值、Decimal、时间和函�
 以“为什么最近 Android Regression 失败率突然升高”为例，目标调用链为：
 
 1. 后端创建/恢复 Conversation 与 Turn，校验项目、时间范围和权限，进入统一 LangGraph。
-2. 图内的首个分类节点通过 ModelGateway→LiteLLM 调用标准模型，得到受约束的任务分类，例如 `root_cause_analysis`、`complexity=high` 和所需工具；后端策略决定使用复杂路径及 `reasoning` 层级。
+2. 图内 Task Classification & Admission 通过确定性规则及必要的 ModelGateway→LiteLLM 标准模型调用，得到受约束的任务分类，例如 `root_cause_analysis`、`execution_mode=durable`、`reasoning_mode=agentic` 和所需工具；后端策略决定使用 Bounded Agentic Task、durable runtime 及 `reasoning` 模型层级。
 3. Insights Tool 经 TAP Insights API 查询 ClickHouse 的近 30 天失败率和按模块/错误类型拆分，得到异常起点、样本、口径、查询编号与运行明细。
 4. Knowledge Search Tool 经 SearchPort 对 Milvus 做 hybrid search，并在需要时对已授权 active MySQL Graph Snapshot 做有界扩展，取得相似 Defect、Troubleshooting KB 与 Release 文档，返回来源版本和可定位引用。
 5. 图把工具结果记为事实，把“Login API 响应异常”等未证实原因记为假设；推理模型综合证据，后端复核数字与引用后输出结论和建议。该 RCA 主链不调用 chDB。
 
-MySQL 保存 Conversation、Turn、图版本、节点状态与检查点、策略决策、工具调用、模型用量、审计、幂等、Domain Event、Outbox 和暂停/恢复信息。检查点/业务状态、Domain Event 与 Outbox 在同一事务提交；Redis 只提供至少一次唤醒，Worker 使用幂等键安全处理重复投递。现有后台程序每次领取计划生成任务的有效期是 60 秒；多步骤流程需分段执行并定期确认租约。等待人工或外部结果时持久化检查点并释放 Worker；一个图运行同一时间只允许一个程序处理，恢复前检查外部副作用是否已发生，避免重复试跑、发布或写入。
+MySQL 保存 Conversation、Turn、Task、GraphRun、图版本、执行/推理模式、节点状态与检查点、策略决策、工具调用、模型用量、审计、幂等、租约、Domain Event、Outbox 和暂停/恢复信息。检查点/业务状态、Domain Event 与 Outbox 在同一事务提交；Redis 只提供至少一次唤醒，Worker 使用幂等键安全处理重复投递。现有后台程序每次领取计划生成任务的有效期是 60 秒；Durable Workflow 和 durable Agentic Task 需分段执行并定期确认租约。等待人工或外部结果时持久化检查点并释放 Worker；一个 GraphRun 同一时间只允许一个程序处理，恢复前检查外部副作用是否已发生，避免重复试跑、发布或写入。
 
 每次图运行创建时固定 `graph_version`；该版本的图定义和状态 schema 至少保留到运行终态或取消。升级默认只影响新运行，禁止把旧检查点直接载入不兼容的新图；确需迁移时必须提供显式、可回滚且经过恢复/幂等验证的迁移程序，并记录迁移前后版本。
 
@@ -728,7 +735,7 @@ BrowserStack Web 文档的导出是 `.side`/Nightwatch，且列有不可导出�
 | `apps/backend` 自动化模块 | App/测试/模块/数据集/版本、权限和套件运行 | 当前后端入口仅有健康检查；需新增持久化业务接口，不把原型的完成状态当作真实执行 |
 | 调试服务 + 本地连接器 | 会话创建、操作录制、界面结构、画面流、断点和资源释放 | Web 用 Playwright 并实现录制事件、元素上下文和远程画面协议，不能把 codegen 当成现成多人工作台；App 用 Appium；操作带会话/步骤/顺序编号，避免断线重连重复点击；设备与浏览器状态由执行端确认 |
 | 步骤检查与脚本生成 | 校验动作/平台能力、变量作用域、模块依赖、控制流与导出依赖 | 自有结构化步骤转换为 TypeScript；运行前锁定全部版本，并检查循环、未定义变量、缺失密钥和不支持动作 |
-| TAP AI + 统一 LangGraph | 所有 Tap AI Project Chat 经过同一图；图内快速路径生成/解释简单步骤，受限 Agentic Loop 分析定位失败或执行获准的动态 AI 块 | 知识经 Knowledge Search Tool/SearchPort/Milvus/MySQL active Graph Snapshot，模型经 ModelGateway/LiteLLM，通过正式 TAP 接口获取界面/试跑证据；限定应用、动作、步骤、时长与成本，不直接写执行数据库 |
+| TAP AI + 统一 LangGraph | Tap AI Chat 与 AI Task 经过同一图；Fast Chat 生成/解释简单步骤，Durable Workflow 承载耗时生成与等待，Bounded Agentic Task 分析定位失败或执行获准的动态 AI 块 | 知识经 Knowledge Search Tool/SearchPort/Milvus/MySQL active Graph Snapshot，模型经 ModelGateway/LiteLLM，通过正式 TAP 接口获取界面/试跑证据；限定应用、动作、步骤、时长与成本，不直接写执行数据库 |
 | 执行服务 + Jenkins | 正式调度、队列、并发配额、浏览器/设备矩阵、数据行、重试与取消 | 固定运行清单；回调丢失通过查询对账；停止后释放设备，保留每次尝试和不确定状态 |
 | 测试资源与连接器 | API、数据库、邮件/TOTP、文件、私网隧道、设备特殊能力 | 按项目配置权限与凭证引用，运行前检查依赖；能力不支持时阻断而不是伪造成功 |
 | Test Insights | 实时状态、逐步证据、版本/设备/数据维度、失败分析与外部关联 | 统一报告接入 ClickHouse；视频/日志/截图存对象存储，人工归因与质量规则存 MySQL |
@@ -873,7 +880,7 @@ JMeter、Gatling、Locust 的现有脚本不列为 TAP 首期原生执行能力�
 
 | 模块 | 技术与职责 |
 | --- | --- |
-| TAP AI | 从已批准资料和性能要求生成“负载场景定义”草稿，提出参数化、关联和检查建议；请求进入统一 LangGraph，图节点经 ModelGateway→LiteLLM 调用模型，复杂生成使用有界 Agentic Loop。正式测量期间不由模型修改脚本或负载 |
+| TAP AI | 从已批准资料和性能要求生成“负载场景定义”草稿，提出参数化、关联和检查建议；请求进入统一 LangGraph，耗时生成使用 Durable Workflow，需要开放式规划时才使用 Bounded Agentic Task，图节点经 ModelGateway→LiteLLM 调用模型。正式测量期间不由模型修改脚本或负载 |
 | TAP API + MySQL | 保存目标/环境、场景版本、数据与凭证引用、运行/分片清单、配额、门槛、基线及操作记录；提交、停止和报告处理均有幂等编号 |
 | Jenkins + 专用执行池 | 正式运行分配固定 k6 镜像与脚本包；Linux 容器的 CPU/内存/网络与功能测试、AI、TAP 服务及被测系统分离。首批单机校准，分布式由同一运行清单切分并等待各片完成，不将多个独立 CLI 自动视为完整分布式能力 |
 | 浏览器负载适配 | TAP 自建 Playwright 用户生命周期、业务循环、并发限额、步骤计时、网络和实际可测体验指标采集；独立池校准容量。直接运行功能脚本不具备这些压测能力，首批浏览器模式只承诺并发用户模型 |
@@ -898,7 +905,7 @@ Skills/Agents 采用完整包管理与 MDXEditor + Monaco 文件编辑，不引�
 
 知识检索选 Knowledge Search Tool→SearchPort→Milvus hybrid search→已授权 active MySQL Graph Snapshot 有界扩展，平台历史与 RCA 选 Insights Tool→TAP Insights API→ClickHouse；chDB 仅作为可选的获准文件/快照分析引擎，DuckDB 不纳入。文件解析/图像检索仍走原流程。负载执行选 k6 协议及 Playwright 浏览器，不将所有供应商脚本引擎并列接入。
 
-直接“文档→代码”虽然简单，但无法保证定位与结果检查条件正确，因此采用“知识→用例→真实应用→自动化步骤定义→脚本”。所有 Tap AI Project Chat 选择同一版本化 LangGraph，普通任务走图内快速路径，复杂任务走有界 Agentic Loop；不采用“普通 Project Chat 独立流程、复杂 Project Chat 才进图”的分叉，也不新增 Query Router 或 Model Router 服务。RFC-006/ADR-018 的本地 loopback Codex Answer Adapter 仍保持独立。测试分析固定采用 ClickHouse，容量按实际负载配置，不再保留先用 MySQL 分析再迁移的路线。
+直接“文档→代码”虽然简单，但无法保证定位与结果检查条件正确，因此采用“知识→用例→真实应用→自动化步骤定义→脚本”。Tap AI Chat 与 AI Task 选择同一版本化 LangGraph：Fast Chat 处理低延迟交互，Durable Workflow 处理可恢复长任务，Bounded Agentic Task 处理复杂工具循环；不按三种剖面拆分服务，也不新增 Query Router 或 Model Router 服务。RFC-006/ADR-018 的本地 loopback Codex Answer Adapter 仍保持独立。测试分析固定采用 ClickHouse，容量按实际负载配置，不再保留先用 MySQL 分析再迁移的路线。
 
 保留现有 React/FastAPI、MySQL/Milvus、Playwright/Appium。PostgreSQL + pgvector 适合新项目评估组件合并，Maestro 可作为轻量流程的备选执行器；本项目暂不迁移，也不同时引入 Temporal 或第二套工作流平台。
 
@@ -909,8 +916,8 @@ Skills/Agents 采用完整包管理与 MDXEditor + Monaco 文件编辑，不引�
 | 文档提取错误或模型编造 | 原件定位、字段/条件核对、严格模式独立复核、版本发布隔离；关键用例另行评审 |
 | 文档描述与产品能力不一致 | 逐页附录保留冲突与限制；动态 AI、特殊设备、导出和私网能力分别实测，不由首页宣传推断 |
 | 生成脚本不可用或修复掩盖失败 | 真实应用试跑、保留失败证据、禁止弱化结果检查条件 |
-| 图循环失控或路由绕过领域边界 | 快速路径与 Agentic Loop 共用版本化图；限制步骤、时间、调用和费用；工具只走 ModelGateway、SearchPort 与 TAP Insights API，不允许图/模型直连数据服务 |
-| 流程恢复或报告重放重复执行/计数 | MySQL 保存 Conversation、Turn、检查点、工具调用与幂等键；恢复前核对外部副作用，重复请求不重复执行，重复报告不重复统计，指标可重新计算 |
+| 长任务丢失、图循环失控或路由绕过领域边界 | 三种执行剖面共用版本化图；Durable Workflow 使用 checkpoint/Outbox/租约/幂等恢复，Bounded Agentic Task 限制步骤、时间、调用和费用；工具只走 ModelGateway、SearchPort、TAP Insights API 与 TAP Domain APIs，不允许图/模型直连数据服务 |
+| 流程恢复或报告重放重复执行/计数 | MySQL 保存 Conversation、Turn、Task、GraphRun、检查点、租约、工具调用与幂等键；恢复前核对外部副作用，重复请求/唤醒不重复执行，重复报告不重复统计，指标可重新计算 |
 | 图升级使旧检查点无法恢复 | 每个运行固定图版本并保留到终态/取消；默认只让新运行采用新图，旧检查点不载入不兼容图；迁移必须显式、可回滚并经过恢复/幂等验证 |
 | TAP Insights 跨产品接口不可用或越权 | 正式契约、服务身份和 TAP 侧项目再授权；鉴权/契约/服务失败时 fail closed 并明确指标能力不可用，核心知识 Chat 不改走直连或猜数 |
 | 数据不足、分析延迟或越权 | 明确不完整状态，服务端项目授权，质量检查不默认放行 |
@@ -922,11 +929,11 @@ Skills/Agents 采用完整包管理与 MDXEditor + Monaco 文件编辑，不引�
 
 **以下是依赖顺序，不是已承诺的工期。** 团队先选一条代表性业务流程贯穿验收，再按已明确的能力逐项扩展；第 5.7 节的 L1–L3 表示自动化能力深度，Web 在第 2 批交付，Android/iOS 在第 3 批分别交付，不能把三端 L1 当成第 2 批完成条件。
 
-**各批次共用的前置条件：** 确认跨产品的登录身份、项目与用例编号、Conversation/Turn/图状态和工具接口契约、凭证管理和结果回传方式；定义图版本保留/升级规则以及 TAP Insights API 的服务身份、项目授权、契约版本和 fail-closed 行为；准备真实资料、测试账号/数据及环境；验证 MySQL 检查点/业务状态、Domain Event 与 Outbox 同事务、Redis 至少一次唤醒、消费者幂等、备份恢复和模型数据使用范围。团队入口开放前完成统一登录与项目授权验收。当前回环、无认证演示不能直接开放为团队环境。该前置工作与第 1 批准备并行，不能留到所有功能完成后补做。
+**各批次共用的前置条件：** 确认跨产品的登录身份、项目与用例编号、Conversation/Turn/Task/GraphRun/图状态和工具接口契约、凭证管理和结果回传方式；定义三种执行剖面的准入/提升规则、图版本保留/升级规则以及 TAP Insights API 的服务身份、项目授权、契约版本和 fail-closed 行为；准备真实资料、测试账号/数据及环境；验证 MySQL 检查点/业务状态、Domain Event 与 Outbox 同事务、Redis 至少一次唤醒、Worker 租约/释放、消费者幂等、备份恢复和模型数据使用范围。团队入口开放前完成统一登录与项目授权验收。当前回环、无认证演示不能直接开放为团队环境。该前置工作与第 1 批准备并行，不能留到所有功能完成后补做。
 
 | 顺序 | 主要改造 | 完成标志 |
 | --- | --- | --- |
-| 1. 统一 Project Chat、知识与测试管理 | 建立版本化 LangGraph，接入图内首次分类与快速路径、Knowledge Search Tool→SearchPort→Milvus/MySQL active Graph Snapshot、ModelGateway→LiteLLM 及 MySQL Conversation/Turn/检查点/Domain Event/Outbox/审计/幂等；建立解析/检索评测集并补独立用例、评审、计划/手工执行、导入和基础 Jira REST。可选 File Analysis Tool/chDB 仅在试点确有完整文件计算时启用 | 简单 Project Chat 不绕过图；真实资料可生成有出处、可编辑发布的计划；检查点/业务状态、Domain Event 与 Outbox 原子持久化，重复唤醒不重复执行；运行固定图版本且不把旧检查点载入不兼容新图；模型调用、工具结果和引用可追溯。RFC-006/ADR-018 本地能力不变，自动结果映射、Insights RCA 及 Forge 不在本批验收 |
+| 1. 统一 AI 入口、知识与测试管理 | 建立版本化 LangGraph，接入 Task Classification & Admission、Fast Chat、Durable Workflow、Knowledge Search Tool→SearchPort→Milvus/MySQL active Graph Snapshot、ModelGateway→LiteLLM 及 MySQL Conversation/Turn/Task/GraphRun/检查点/租约/Domain Event/Outbox/审计/幂等；建立解析/检索评测集并补独立用例、评审、计划/手工执行、导入和基础 Jira REST。可选 File Analysis Tool/chDB 仅在试点确有完整文件计算时启用 | Fast Chat 不绕过图且满足延迟预算；测试方案生成等长任务可离页、显示进度并在重启/重复唤醒后幂等恢复；真实资料可生成有出处、可编辑发布的计划；检查点/业务状态、Domain Event 与 Outbox 原子持久化；运行固定图版本且不把旧检查点载入不兼容新图。RFC-006/ADR-018 本地能力不变，自动结果映射、Insights RCA 及 Forge 不在本批验收 |
 | 2. Web 自动化 + 基础 Insights | 按第 5.7 节分批补 Web 步骤版本、托管调试与本地连接器、脚本生成、Jenkins 与运行证据；接测试管理自动结果映射，真实报告进入 ClickHouse，补 Insights Tool→TAP Insights API 和 RCA Agentic Loop | 从用例到运行、报告及真实指标可追溯，多路上报不重复计数；Android Regression 等 RCA 可经 Insights/Milvus 工具链给出经核验的事实、引用与待证假设，不依赖 chDB |
 | 3. Android / iOS | App、设备池、平台动作/定位、数据与模块、生命周期及特殊能力；依第 5.7 节分批验收，生成和修复设置次数、时长上限 | 两个平台分别真实运行、导出和复跑 |
 | 4. 完整 Insights 与协作 | 工程连接、五类质量分析、评分、规则/告警、Forge Jira 内嵌操作；优化 ClickHouse 查询和重算 | 补齐第 4.2 节 Jira 内操作与安装身份/双方权限验收；逐项验证指标分母、缺数据/更正和连接故障，不以页面存在算完成 |
@@ -937,7 +944,7 @@ Insights 数据接入可与自动化并行，不必等待移动端完成。改�
 
 知识审核与 LCA 均沿用项目权限；项目可限定数据区域与允许使用的模型，原件、页面截图和界面数据发给视觉模型前执行同样检查，不把执行机器在内网等同于模型数据也留在内网。
 
-[ADR-028](../decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 已记录统一 Project Chat Orchestrator 的目标决策；本 RFC 仍为 `draft`，不因此把目标能力标为已实现，也不改写 [ADR-027 产品边界](../decisions/2026-09-15-adr-027-tap-ai-product-app-boundary.md) 或已有阶段完成状态。
+[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已记录统一 Tap AI Chat/AI Task Orchestrator 及三种执行剖面的目标决策，并正式替代 ADR-028；本 RFC 仍为 `draft`，不因此把目标能力标为已实现，也不改写 [ADR-027 产品边界](../decisions/2026-09-15-adr-027-tap-ai-product-app-boundary.md) 或已有阶段完成状态。
 
 ## 验收标准
 
@@ -952,7 +959,7 @@ Insights 数据接入可与自动化并行，不必等待移动端完成。改�
 | 测试管理 | 独立用例版本、三类模板、评审、导入部分失败、手工执行/关闭更正、数据组合、Jira 权限/同步及技术运行映射实际走通 |
 | AI 数据查询 | Knowledge Search Tool/SearchPort/Milvus/MySQL active Graph Snapshot 的引用与有界扩展、Insights Tool/API/ClickHouse 的指标口径与查询编号分别可追溯；RCA 不直连数据服务且不依赖 chDB。可选文件分析须验证完整行范围/Decimal/关联基数、隔离与授权；模型不能修改计算数字，后端区分事实与假设 |
 | 负载测试 | 第 7 节三种模式逐项标记成熟度；两类负载模型、采集/全局百分位、实际负载、停止/失联、报告完整性和可比基线有真实证据 |
-| LangGraph | 所有 Tap AI Project Chat 进入同一图，首次分类在图内经 ModelGateway/LiteLLM 完成；简单请求走图内快速路径且不启动 Agentic Loop；复杂任务的步骤、时间、工具调用和费用有上限。运行超过 60 秒的任务、人工/外部等待、程序中断与取消均可恢复或终止；检查点/业务状态、Domain Event 与 Outbox 同事务，Redis 重复唤醒可幂等处理；运行固定图版本，旧检查点不载入不兼容新图；Conversation/Turn/检查点/审计可追溯 |
+| LangGraph | Tap AI Chat 与 AI Task 进入同一图，Task Classification & Admission 在图内记录执行/推理模式并经 ModelGateway/LiteLLM 完成必要理解；Fast Chat 满足延迟和调用上限且不启动 Agentic Loop；Durable Workflow 的排队、进度、等待、暂停、恢复、取消和超时可观测；Bounded Agentic Task 的步骤、时间、工具调用和费用有上限。运行超过 60 秒、人工/外部等待、程序中断与取消均可恢复或终止；Task/GraphRun/检查点/业务状态、Domain Event 与 Outbox 同事务，Redis 重复唤醒可幂等处理；运行固定图版本，旧检查点不载入不兼容新图；Conversation/Turn/Task/GraphRun/检查点/审计可追溯 |
 | Test Insights | 功能逐项有证据；同一运行的多来源报告只计一次、重试分开、同名不同用例不误合并；尚未确认对应关系、延迟到达或缺失的数据明确展示；Insights Tool 以服务身份调用正式 API，TAP 再验项目权限；契约/鉴权/服务不可用时 fail closed 且核心知识 Chat 可继续；AI 数字可沿查询编号回溯 |
 | 质量检查与权限 | 通过、不通过、数据不足均说明原因；跨项目读取、分享、导出和 AI 查询均检查访问权限；通知可去重和追踪 |
 | 容量与恢复 | 基础 Insights 验收须包含真实报告进入 ClickHouse 并生成指标的完整过程；记录数据量、并发、查询延迟及数据备份和重新生成分析数据的结果，用于容量配置 |

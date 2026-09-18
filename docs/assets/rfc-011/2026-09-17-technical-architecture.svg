@@ -66,16 +66,16 @@
 <text x="1395.0" y="158.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LCA / Load Testing / Test Insights</text>
 <rect x="40.0" y="280.0" width="730.0" height="140.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="405.0" y="321.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 后端 · FastAPI</text>
-<text x="405.0" y="352.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Chat 入口：鉴权 / Conversation / Turn</text>
+<text x="405.0" y="352.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Chat / AI Task：鉴权 / Conversation / Task</text>
 <text x="405.0" y="383.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Knowledge / Insights / TAP Tools</text>
 <rect x="1030.0" y="280.0" width="730.0" height="140.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="1395.0" y="321.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP 后端 · FastAPI</text>
 <text x="1395.0" y="352.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP Insights API / 质量规则 / 权限</text>
 <text x="1395.0" y="383.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本版本 / 调试 / 功能与负载执行</text>
 <rect x="40.0" y="540.0" width="450.0" height="140.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="265.0" y="581.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">统一 LangGraph Chat Orchestrator</text>
-<text x="265.0" y="612.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Simple fast path / 有界 Complex loop</text>
-<text x="265.0" y="643.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">图版本 / 条件边 / 暂停与恢复</text>
+<text x="265.0" y="581.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">统一 LangGraph AI Orchestrator</text>
+<text x="265.0" y="612.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Fast Chat / Durable Workflow</text>
+<text x="265.0" y="643.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Bounded Agentic Task</text>
 <rect x="1030.0" y="540.0" width="320.0" height="140.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="1190.0" y="581.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">调试与本地连接服务</text>
 <text x="1190.0" y="612.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">录制 / 单步 / 画面</text>
@@ -101,8 +101,8 @@
 <rect x="610.0" y="540.0" width="350.0" height="155.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="785.0" y="573.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MySQL</text>
 <text x="785.0" y="604.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">业务资产 / Knowledge Graph</text>
-<text x="785.0" y="635.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Conversation / Turn / Checkpoint</text>
-<text x="785.0" y="666.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">幂等 / 工具与模型调用 / 审计</text>
+<text x="785.0" y="635.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Conversation / Turn / Task / GraphRun</text>
+<text x="785.0" y="666.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Checkpoint / 幂等 / 工具与模型审计</text>
 <rect x="610.0" y="820.0" width="350.0" height="140.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="785.0" y="861.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Redis</text>
 <text x="785.0" y="892.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">任务提示 / 短期缓存</text>
@@ -134,8 +134,8 @@
 <text x="590.0" y="238.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">HTTPS 接口 / SSE 进度</text>
 <text x="1595.0" y="238.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">HTTPS / SSE / WebSocket</text>
 <text x="900.0" y="258.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Insights Tool → TAP Insights API</text>
-<text x="530.0" y="483.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">业务记录、图状态与 Checkpoint 归 MySQL</text>
+<text x="530.0" y="483.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Conversation / Task / GraphRun / Checkpoint 归 MySQL</text>
 <text x="1268.0" y="768.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">操作与画面</text>
 <text x="1650.0" y="768.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">脚本执行</text>
-<text x="955.0" y="1643.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">所有 Tap AI Project Chat 进入统一 LangGraph；知识经 Milvus / MySQL Graph，RCA 指标经 TAP Insights API / ClickHouse；chDB 仅用于可选隔离文件分析。</text>
+<text x="955.0" y="1643.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Tap AI Chat 与 AI Task 进入统一 LangGraph；Fast Chat、Durable Workflow、Bounded Agentic Task 共享领域端口；chDB 仅用于可选隔离文件分析。</text>
 </svg>
