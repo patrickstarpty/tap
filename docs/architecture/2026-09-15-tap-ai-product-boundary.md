@@ -17,7 +17,7 @@
 
 Tap AI 前端仅调用 Tap AI 后端；不依赖 TAP 前后端进程。Tap AI 后端通过配置连接 MySQL、Redis、对象存储、LiteLLM 和 Milvus，独立执行当前迁移链并启动 API、Relay、ingestion、graph、test-design 和 generation workers。现有数据和对象引用保持可读；拆分不执行卷重置。部署入口沿用当前本机回环、无认证的 Demo 安全边界；远程访问和生产部署需要单独的安全设计。
 
-[ADR-028](../decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 进一步固定目标 Chat 运行边界：所有 Tap AI Project Chat 由 Tap AI 后端内同一版本化 LangGraph 编排，并只通过 ModelGateway、SearchPort 和 TAP Insights API 访问模型、Milvus/MySQL Graph 知识与 ClickHouse 历史指标。LangGraph 是后端库内编排边界，不改变本文的应用归属，也不新增独立 Query Router 或 Model Router 服务。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，不在该目标图作用域内。当前代码尚未实现该目标图。
+[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 进一步固定目标 AI 运行边界：Tap AI 的 Project Chat 与测试管理等 Tap AI 自有入口发起的 AI Task，由 Tap AI 后端内同一版本化 LangGraph 编排，明确支持 Fast Chat、Durable Workflow 和 Bounded Agentic Task，并只通过 ModelGateway、SearchPort、TAP Insights API 和 TAP Domain APIs 访问模型、Milvus/MySQL Graph 知识、ClickHouse 历史指标及业务动作。LangGraph 是后端库内编排边界，不改变本文的应用归属，也不新增独立 Query Router、Model Router 或跨产品通用 Agent 平台。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，不在该目标图作用域内。当前代码尚未实现该目标图。
 
 迁移时保留现有 `tap` Python 包、公开 HTTP 路径、数据库表名、事件格式及 `TAPPER_*` 配置名，以降低数据和客户端兼容风险。产品名与应用目录可变，公开契约不因目录迁移而改名。Tap AI 品牌素材必须随 Tap AI 前端构建包含，不依赖仓库根目录的额外运行文件。
 

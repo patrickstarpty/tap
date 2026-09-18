@@ -4,7 +4,7 @@
 
 > **2026-09-15 应用归属**：当前公开 HTTP DTO 由 `apps/tap-ai-backend` 定义，TypeScript 合同生成到 `apps/tap-ai-frontend`。目录迁移不改变本页稳定 DTO、路径、事件或问题类型；TAP 非 AI 应用之间的未来跨产品合同另行定义。
 >
-> **2026-09-18 目标编排合同**：[ADR-028](../decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 已确定 Tap AI Project Chat 将统一经过版本化 LangGraph，[RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 要求增加 Graph Run/Checkpoint、工具调用、模型用量与 TAP Insights API 的版本化合同。这些目标字段和事件尚未在本页定义或实现；现有 V1 DTO/事件继续是当前契约，不得仅凭 `conversation.turn.requested/completed` 声称目标图、恢复或跨产品 Insights 已交付。
+> **2026-09-18 目标编排合同**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已确定 Tap AI Chat 与 AI Task 将统一经过版本化 LangGraph，并区分 Fast Chat、Durable Workflow、Bounded Agentic Task；[RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 要求增加 Task/GraphRun/Checkpoint、Execution Mode、Reasoning Mode、进度/等待/取消事件、工具调用、模型用量与 TAP Insights API 的版本化合同。这些目标字段和事件尚未在本页定义或实现；现有 V1 DTO/事件继续是当前契约，不得仅凭 `conversation.turn.requested/completed` 声称目标图、长任务恢复或跨产品 Insights 已交付。
 
 ## 1. 身份与范围
 

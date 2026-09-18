@@ -2,7 +2,7 @@
 
 > **2026-09-15 应用边界更新**：现有 AI 能力已按 [Tap AI 产品边界](2026-09-15-tap-ai-product-boundary.md) 与 [ADR-027](../decisions/2026-09-15-adr-027-tap-ai-product-app-boundary.md) 迁入独立前后端应用；TAP 非 AI 原型保留独立入口。下文的企业内网 Compose 与 TLS Proxy 仍是后续目标设计，不能作为当前回环、无认证应用的生产部署声明。
 >
-> **2026-09-18 Chat 编排更新**：[ADR-028](../decisions/2026-09-18-adr-028-langgraph-unified-chat-orchestrator.md) 已接受所有 Tap AI Project Chat 进入同一版本化 LangGraph 的目标架构：简单请求走图内 fast path，复杂任务走受预算限制的 agentic loop。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不在该 Project API 作用域内。这不表示当前 V1 已实现 LangGraph、工具循环或模型层级路由。
+> **2026-09-18 AI 编排更新**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已接受 Tap AI 的 Chat 与 AI Task 进入同一版本化 LangGraph 的目标架构：Fast Chat 走低延迟路径，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受预算限制的复杂工具循环。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不在该 Project API 作用域内。这不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
 | 字段         | 值                                                                                                                           |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -41,7 +41,7 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 | 能力            | 当前仓库事实                                                                                             | 下一目标                                                                                    |
 | --------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Knowledge       | V1 Gate 已通过：Source、Milvus、ModelGateway、Conversation/SSE、Citation、脱敏/审计与真实 Web 已实现     | 在 V4/V5 中保持同一 Project、快照和 Citation 契约                                           |
-| Chat 编排       | Conversation generation 使用现有固定链路；尚无 LangGraph 工具循环                                        | 全部 Tap AI Project Chat 进入统一图；fast path 与有界 agentic loop 共享状态、审计与恢复契约 |
+| AI 编排         | Conversation generation 使用现有固定链路；尚无 LangGraph 三种执行剖面                                    | Tap AI Chat 与 AI Task 进入统一图；Fast Chat、Durable Workflow、Bounded Agentic Task 共享状态、审计与恢复契约 |
 | Knowledge Graph | 主体已实现；多 Document Revision 的 Snapshot 一致性与 E2E 证据待补，V2 Gate 重新打开                     | 关闭更正项后再为后续里程碑提供可核验 Graph Context                                          |
 | Test Management | 主体已实现；真实质量人审绑定与生成、编辑、冲突恢复 Web 旅程待补，V3 Gate 重新打开                        | 关闭更正项后再由 Test IR 和 Automation Revision 消费 Published Test Plan                    |
 | LCA             | 浏览器内 fixture、模拟 Run                                                                               | 权威 Automation/Test IR、三层编辑、确定性 Playwright 生成与 Web Recorder                    |
@@ -173,7 +173,7 @@ ObjectRef 绑定可信 Project、封闭 store identity 与 manifest digest；物
 
 Validation 和 Product 身份 Adapter、Milvus 与未来检索 Adapter、单一 LiteLLM Model Gateway、MinIO 与未来对象存储、Jenkins 与未来执行 Provider 都必须通过共同 contract tests；公共 API 不暴露 SDK 私有对象。Knowledge、Graph、Test Plan 与 Automation 只增加各自的结构化输出 Validator，不复制 alias、超时、脱敏和审计逻辑。RFC-006 的直接 Codex CLI 回答端口只保留为既有 loopback Demo 事实；V1 前必须把其 selector/Adapter 从默认 runtime/import graph 移入显式 legacy-loopback composition，后者不挂载 RFC-009 Project API、不计入 V1/VG，也不形成绕过 Model Gateway 的第二模型出口。
 
-ADR-028 的目标实现在上述 Port 之上增加库内 LangGraph Orchestrator，而不是新的 Query Router 或 Model Router 服务。图节点调模型时只经 `ModelGateway → LiteLLM`，查知识时只经 `Knowledge Search Tool → SearchPort → Milvus hybrid search → 可选的已授权 active MySQL Graph Snapshot 有界扩展`，查历史指标时只经 `Insights Tool → TAP Insights API → ClickHouse`。MySQL 将在该目标实现中承载 Conversation、Turn、图状态、checkpoint、幂等与工具/模型审计；chDB 只是明确授权的可选文件或快照计算，不进入 Project Chat/RCA 核心链路。
+ADR-029 的目标实现在上述 Port 之上增加库内 LangGraph Orchestrator，而不是新的 Query Router、Model Router 或通用 Agent 平台。图内 Task Classification & Admission 选择 Fast Chat、Durable Workflow 或 Bounded Agentic Task；图节点调模型时只经 `ModelGateway → LiteLLM`，查知识时只经 `Knowledge Search Tool → SearchPort → Milvus hybrid search → 可选的已授权 active MySQL Graph Snapshot 有界扩展`，查历史指标时只经 `Insights Tool → TAP Insights API → ClickHouse`。MySQL 将在该目标实现中承载 Conversation、Turn、Task、GraphRun、checkpoint、幂等与工具/模型审计；chDB 只是明确授权的可选文件或快照计算，不进入 Chat、长任务或 RCA 默认主链。
 
 ## 4. 数据主权与版本
 

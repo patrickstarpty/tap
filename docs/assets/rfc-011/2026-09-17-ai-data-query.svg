@@ -27,9 +27,9 @@
 <text x="225.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">明确时间范围和指标口径</text>
 <rect x="500.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="685.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">版本化 LangGraph Orchestrator</text>
-<text x="685.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">首节点 → ModelGateway</text>
-<text x="685.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LiteLLM standard：意图 / Planning</text>
-<text x="685.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">fast path / 有界 complex loop</text>
+<text x="685.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Task Classification &amp; Admission</text>
+<text x="685.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">execution=durable / reasoning=agentic</text>
+<text x="685.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Bounded Agentic Task</text>
 <rect x="960.0" y="100.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="1145.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">图内受控工具调度</text>
 <text x="1145.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">工具白名单 / 授权范围 / 预算</text>
@@ -44,8 +44,8 @@
 <text x="685.0" y="521.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Defect / KB / Release 文档与引用</text>
 <rect x="960.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="1145.0" y="443.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">LangGraph State + MySQL</text>
-<text x="1145.0" y="474.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Conversation / Turn / Checkpoint</text>
-<text x="1145.0" y="505.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">指标事实 / 知识证据 / 引用</text>
+<text x="1145.0" y="474.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Conversation / Turn / Task / GraphRun</text>
+<text x="1145.0" y="505.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Checkpoint / 租约 / 指标事实 / 引用</text>
 <text x="1145.0" y="536.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">预算 / 幂等 / 工具与模型审计</text>
 <rect x="1420.0" y="415.0" width="370.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
 <text x="1605.0" y="459.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">指标事实与查询证据</text>
@@ -59,6 +59,6 @@
 <text x="1145.0" y="804.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Graph Node → ModelGateway → LiteLLM</text>
 <text x="1145.0" y="835.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">reasoning：综合事实 / 假设 / 引用</text>
 <text x="1145.0" y="866.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不部署独立 Model Router</text>
-<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">所有 Tap AI Project Chat 进入一个版本化 LangGraph；不部署独立 Query Router 或 Model Router</text>
+<text x="925.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">Tap AI Chat 与 AI Task 进入一个版本化 LangGraph；任务路由在图内，模型选择在 ModelGateway，不部署独立 Router 服务</text>
 <text x="925.0" y="971.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">RCA 主链：Milvus / MySQL Graph 知识 + Insights API / ClickHouse 指标；chDB 仅用于本 RCA 主链外的可选隔离文件或快照分析</text>
 </svg>

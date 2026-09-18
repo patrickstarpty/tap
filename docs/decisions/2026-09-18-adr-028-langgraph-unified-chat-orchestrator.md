@@ -1,14 +1,17 @@
 ---
 id: ADR-028
-status: accepted
+status: superseded
 date: 2026-09-18
 supersedes: []
-superseded-by: []
+superseded-by:
+  - ADR-029
 related-rfcs:
   - RFC-011
 ---
 
 # ADR-028：LangGraph 作为统一 Chat Orchestrator
+
+> 本决策已由 [ADR-029](2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 替代。ADR-029 保留统一 LangGraph 与稳定领域端口，同时补齐 Fast Chat、Durable Workflow 和 Bounded Agentic Task 三种执行剖面，并将作用域从单一 Project Chat 明确为 Tap AI 的 AI 交互与任务。
 
 ## 背景
 

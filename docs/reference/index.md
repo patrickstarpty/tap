@@ -2,7 +2,7 @@
 
 本目录保存契约、来源和文档治理规范。
 
-- [Tapper 知识与 Web 自动化平台核心契约](2026-09-04-tapper-platform-contracts.md)：当前 Scope、事件、Knowledge/Conversation、Test Plan、Test IR、Recorder、Jenkins Run/Evidence 与错误语义；同时标明 ADR-028 所需 Graph/Checkpoint/Insights 合同尚待定义。
+- [Tapper 知识与 Web 自动化平台核心契约](2026-09-04-tapper-platform-contracts.md)：当前 Scope、事件、Knowledge/Conversation、Test Plan、Test IR、Recorder、Jenkins Run/Evidence 与错误语义；同时标明 ADR-029 所需 Task/GraphRun/Checkpoint/Execution Profile/Insights 合同尚待定义。
 - [Tapper 开发者指南](2026-09-13-tapper-developer-guide.md)：按当前 V3 进度说明本地启动、真实业务链路、代码入口、扩展规则、验证命令与能力边界。
 - [核心契约（历史 Intelligence-first 版本）](2026-08-20-contracts.md)：保留原 Intelligence、RunSpec、事件和 Provider Port 设计作为历史参考。
 - [来源与可追溯性](2026-08-20-source-notes.md)：记录 `engprod` 会话索引、官方资料和推断边界。
