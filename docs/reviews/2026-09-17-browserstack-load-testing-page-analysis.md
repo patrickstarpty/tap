@@ -1,6 +1,6 @@
 # BrowserStack Load Testing 逐页分析与 TAP 设计映射
 
-研究日期：2026-09-17。本文为[官方公开文档](https://www.browserstack.com/docs/load-testing)研究，不是产品账号实测或已完成功能清单。目标交互、技术架构与交付边界见 [RFC-011 第 7 节](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#7-load-testing负载测试)。
+研究日期：2026-09-17。本文为[官方公开文档](https://www.browserstack.com/docs/load-testing)研究，不是产品账号实测或已完成功能清单。目标交互、技术架构与交付边界见 [RFC-011 负载测试专题](../reference/2026-09-22-rfc-011-testing-execution-design.md#load-testing)。
 
 ## 阅读范围与证据
 

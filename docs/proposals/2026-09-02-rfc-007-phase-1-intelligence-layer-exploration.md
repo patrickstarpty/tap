@@ -59,6 +59,11 @@ TAP 的长期形态不应是一个通用 Chatbot，也不应把 Rovo、Gemini No
 正确的分层是：
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart TB
     User[测试人员 / 自动化工程师] --> Intelligence[Intelligence Layer]
     Intelligence --> Platform[BrowserStack-like Test Automation Platform]
@@ -69,6 +74,12 @@ flowchart TB
     Sources[资料 / 手工步骤 / 仓库 / 失败材料] --> Intelligence
     Intelligence --> Artifacts[Brief / Blueprint / Candidate / Review Package]
     Artifacts -. 后续阶段消费 .-> Platform
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Assets,Evidence,Sources,Artifacts data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class User action;
 ```
 
 长期平台主体参考 BrowserStack 的测试管理、自动化执行和证据体验；Intelligence Layer 则分别吸收以下产品原则：
@@ -237,7 +248,12 @@ evidence-informed  有人工提供的失败材料
 下图包含 P1.3 的条件工程分支；当前 P1.0–P1.2 在 H 节点固定走“否”，不会创建 workspace、代码、Patch 或工程检查结果。
 
 ```mermaid
-flowchart LR
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 40, "padding": 16}
+}}%%
+flowchart TB
     A[创建 Automation Brief] --> B[固定 Context Snapshot]
     B --> C{输入是否足够}
     C -->|不足但可继续| D[登记假设 / 未知 / 澄清问题]
@@ -251,6 +267,12 @@ flowchart LR
     I --> J[独立固定检查]
     J --> K
     K --> L[用户接受 / 要求修订 / 拒绝 / 导出]
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class B data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class A,L action;
 ```
 
 在任何输入不足的节点，系统优先提出少量能改变方案的澄清问题；用户也可以选择“带假设继续”。继续不代表假设已被确认。
@@ -412,6 +434,10 @@ usage: Controller-owned token observations / tool calls / duration / estimated c
 Attempt 状态机为：
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"}
+}}%%
 stateDiagram-v2
     [*] --> queued
     queued --> leased
@@ -539,6 +565,11 @@ Review 读取和提交时都按当前 scope 重授权；同一幂等键的冲突
 ### 7. 最小架构
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart TB
     UI[TAP Intelligence Lab] --> API[Intelligence API / BFF]
     API --> Context[Context Builder]
@@ -568,6 +599,12 @@ flowchart TB
     Stream --> UI
     Blob --> Eval[Evaluation Harness]
     SQL --> Eval
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class SQL,Wake,Blob,Stream data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class UI action;
 ```
 
 组件职责：

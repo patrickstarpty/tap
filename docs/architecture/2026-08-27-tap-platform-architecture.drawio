@@ -6,90 +6,90 @@
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <mxCell id="title" value="TAP Test Automation Platform｜企业级测试与知识平台" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Arial;fontSize=36;fontStyle=1;fontColor=#12304A;" vertex="1" parent="1">
+        <mxCell id="title" value="TAP Test Automation Platform｜企业级测试与知识平台" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Arial;fontSize=30;fontStyle=1;fontColor=#303447;" vertex="1" parent="1">
           <mxGeometry x="60" y="28" width="1480" height="54" as="geometry" />
         </mxCell>
-        <mxCell id="subtitle" value="统一入口、统一资产、统一执行、统一证据" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Arial;fontSize=18;fontColor=#66788A;" vertex="1" parent="1">
+        <mxCell id="subtitle" value="统一入口、统一资产、统一执行、统一证据" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Arial;fontSize=18;fontColor=#626575;" vertex="1" parent="1">
           <mxGeometry x="60" y="87" width="900" height="32" as="geometry" />
         </mxCell>
 
-        <mxCell id="platform" value="&lt;b&gt;TAP 统一平台&lt;/b&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2F6FED;strokeWidth=1.5;fontColor=#12304A;fontFamily=Arial;fontSize=26;align=left;verticalAlign=top;spacingTop=18;spacingLeft=38;spacingRight=20;" vertex="1" parent="1">
+        <mxCell id="platform" value="&lt;b&gt;TAP 统一平台&lt;/b&gt;" style="dashed=1;dashPattern=6 4;rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#A9A6B2;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=23;align=left;verticalAlign=top;spacingTop=18;spacingLeft=38;spacingRight=20;" vertex="1" parent="1">
           <mxGeometry x="340" y="165" width="880" height="470" as="geometry" />
         </mxCell>
 
-        <mxCell id="edge-user-platform" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
+        <mxCell id="edge-user-platform" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=1.5;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="295" y="307.5" as="sourcePoint" />
             <mxPoint x="340" y="307.5" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-assets-platform" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
+        <mxCell id="edge-assets-platform" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=1.5;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="295" y="480" as="sourcePoint" />
             <mxPoint x="340" y="480" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-platform-result" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
+        <mxCell id="edge-platform-result" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=1.5;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1220" y="410" as="sourcePoint" />
             <mxPoint x="1270" y="410" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-workbench-knowledge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
+        <mxCell id="edge-workbench-knowledge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=1.5;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="515" y="340" as="sourcePoint" />
             <mxPoint x="515" y="400" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-workbench-assets" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
+        <mxCell id="edge-workbench-assets" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=1.5;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="780" y="340" as="sourcePoint" />
             <mxPoint x="780" y="400" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-workbench-execution" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2F6FED;strokeWidth=2;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
+        <mxCell id="edge-workbench-execution" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=1.5;endArrow=block;endFill=1;endSize=8;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="1045" y="340" as="sourcePoint" />
             <mxPoint x="1045" y="400" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="support-foundation" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#0F8F78;strokeWidth=2.5;startArrow=none;endArrow=none;" edge="1" parent="1">
+        <mxCell id="support-foundation" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#737080;strokeWidth=2.5;startArrow=none;endArrow=none;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="780" y="635" as="sourcePoint" />
             <mxPoint x="780" y="690" as="targetPoint" />
           </mxGeometry>
         </mxCell>
 
-        <mxCell id="users" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;使用者&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:12px;&quot;&gt;研发 · QA · 产品&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F3F6F9;strokeColor=#C7D2DE;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=20;" vertex="1" parent="1">
+        <mxCell id="users" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;使用者&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:12px;&quot;&gt;研发 · QA · 产品&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#FFF3CC;strokeColor=#C8AF68;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=20;" vertex="1" parent="1">
           <mxGeometry x="60" y="250" width="235" height="115" as="geometry" />
         </mxCell>
-        <mxCell id="enterprise-assets" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;企业资产&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.55;margin-top:12px;&quot;&gt;文档 · 代码 · BDD&lt;br&gt;历史失败&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F3F6F9;strokeColor=#C7D2DE;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=20;" vertex="1" parent="1">
+        <mxCell id="enterprise-assets" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;企业资产&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.55;margin-top:12px;&quot;&gt;文档 · 代码 · BDD&lt;br&gt;历史失败&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#E4F0FA;strokeColor=#83A7C2;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=20;" vertex="1" parent="1">
           <mxGeometry x="60" y="405" width="235" height="150" as="geometry" />
         </mxCell>
 
-        <mxCell id="workbench" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;统一工作台&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;Tapper · Test Management · Low Code Automation (LCA)&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#2F6FED;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=center;verticalAlign=middle;spacingLeft=24;spacingRight=24;" vertex="1" parent="1">
+        <mxCell id="workbench" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;统一工作台&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;Tapper · Test Management · Low Code Automation (LCA)&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#E4F0FA;strokeColor=#83A7C2;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=17;align=center;verticalAlign=middle;spacingLeft=24;spacingRight=24;" vertex="1" parent="1">
           <mxGeometry x="390" y="235" width="780" height="105" as="geometry" />
         </mxCell>
 
-        <mxCell id="knowledge" value="&lt;div style=&quot;font-size:16px;line-height:1.2;color:#2457B3;&quot;&gt;&lt;b&gt;V1–V2&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:21px;line-height:1.3;margin-top:12px;&quot;&gt;&lt;b&gt;知识问答&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:12px;&quot;&gt;检索 · 生成 · 逐条引用&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#2F6FED;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=18;" vertex="1" parent="1">
+        <mxCell id="knowledge" value="&lt;div style=&quot;font-size:16px;line-height:1.2;color:#72568F;&quot;&gt;&lt;b&gt;V1–V2&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:21px;line-height:1.3;margin-top:12px;&quot;&gt;&lt;b&gt;知识问答&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:12px;&quot;&gt;检索 · 生成 · 逐条引用&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EDE5F7;strokeColor=#9983B7;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=18;" vertex="1" parent="1">
           <mxGeometry x="390" y="400" width="250" height="170" as="geometry" />
         </mxCell>
-        <mxCell id="test-assets" value="&lt;div style=&quot;font-size:16px;line-height:1.2;color:#4E6072;&quot;&gt;&lt;b&gt;V3–V4&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:21px;line-height:1.3;margin-top:12px;&quot;&gt;&lt;b&gt;测试资产&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;自然语言 / BDD&lt;br&gt;→ 统一测试模型 (Test IR)&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F3F6F9;strokeColor=#C7D2DE;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=18;" vertex="1" parent="1">
+        <mxCell id="test-assets" value="&lt;div style=&quot;font-size:16px;line-height:1.2;color:#72568F;&quot;&gt;&lt;b&gt;V3–V4&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:21px;line-height:1.3;margin-top:12px;&quot;&gt;&lt;b&gt;测试资产&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;自然语言 / BDD&lt;br&gt;→ 统一测试模型 (Test IR)&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EDE5F7;strokeColor=#9983B7;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=18;" vertex="1" parent="1">
           <mxGeometry x="655" y="400" width="250" height="170" as="geometry" />
         </mxCell>
-        <mxCell id="test-execution" value="&lt;div style=&quot;font-size:16px;line-height:1.2;color:#4E6072;&quot;&gt;&lt;b&gt;V5&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:21px;line-height:1.3;margin-top:12px;&quot;&gt;&lt;b&gt;测试执行&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:17px;line-height:1.5;margin-top:10px;&quot;&gt;Web · Jenkins Pipeline Agent&lt;br&gt;→ 统一证据&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F3F6F9;strokeColor=#C7D2DE;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=18;" vertex="1" parent="1">
+        <mxCell id="test-execution" value="&lt;div style=&quot;font-size:16px;line-height:1.2;color:#72568F;&quot;&gt;&lt;b&gt;V5&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:21px;line-height:1.3;margin-top:12px;&quot;&gt;&lt;b&gt;测试执行&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:16px;line-height:1.5;margin-top:10px;&quot;&gt;Web · Jenkins&lt;br&gt;Pipeline Agent&lt;br&gt;→ 统一证据&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EDE5F7;strokeColor=#9983B7;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=17;align=left;verticalAlign=middle;spacingLeft=24;spacingRight=18;" vertex="1" parent="1">
           <mxGeometry x="920" y="400" width="250" height="170" as="geometry" />
         </mxCell>
 
-        <mxCell id="business-results" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;业务结果&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:1.9;margin-top:16px;&quot;&gt;可信答案&lt;br&gt;可复用测试资产&lt;br&gt;可审计质量结论&lt;br&gt;持续改进&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EAF8F4;strokeColor=#0F8F78;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=18;align=left;verticalAlign=middle;spacingLeft=28;spacingRight=22;" vertex="1" parent="1">
+        <mxCell id="business-results" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;业务结果&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:18px;line-height:1.9;margin-top:16px;&quot;&gt;可信答案&lt;br&gt;可复用测试资产&lt;br&gt;可审计质量结论&lt;br&gt;持续改进&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#E4F0FA;strokeColor=#83A7C2;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=18;align=left;verticalAlign=middle;spacingLeft=28;spacingRight=22;" vertex="1" parent="1">
           <mxGeometry x="1270" y="265" width="270" height="290" as="geometry" />
         </mxCell>
 
-        <mxCell id="foundation" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;共享平台底座&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:16px;line-height:1.5;margin-top:10px;&quot;&gt;Validation Scope → P0 RBAC · MySQL / MinIO · Milvus / LiteLLM · 审计与审批&lt;/div&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#EAF8F4;strokeColor=#0F8F78;strokeWidth=2;fontColor=#12304A;fontFamily=Arial;fontSize=16;align=left;verticalAlign=middle;spacingLeft=28;spacingRight=24;" vertex="1" parent="1">
+        <mxCell id="foundation" value="&lt;div style=&quot;font-size:21px;line-height:1.25;&quot;&gt;&lt;b&gt;共享平台底座&lt;/b&gt;&lt;/div&gt;&lt;div style=&quot;font-size:16px;line-height:1.5;margin-top:10px;&quot;&gt;Validation Scope → P0 RBAC · MySQL / MinIO · Milvus / LiteLLM · 审计与审批&lt;/div&gt;" style="rounded=0;arcSize=12;whiteSpace=wrap;html=1;fillColor=#E4F0FA;strokeColor=#83A7C2;strokeWidth=1.5;fontColor=#303447;fontFamily=Arial;fontSize=16;align=left;verticalAlign=middle;spacingLeft=28;spacingRight=24;" vertex="1" parent="1">
           <mxGeometry x="340" y="690" width="880" height="95" as="geometry" />
         </mxCell>
 
-        <mxCell id="footer" value="&lt;b&gt;当前重点：&lt;/b&gt;可信知识问答 → Knowledge Graph → AI Test Design → Web LCA/Recorder → Jenkins 结果闭环。" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Arial;fontSize=16;fontColor=#66788A;" vertex="1" parent="1">
+        <mxCell id="footer" value="&lt;b&gt;当前重点：&lt;/b&gt;可信知识问答 → Knowledge Graph → AI Test Design → Web LCA/Recorder → Jenkins 结果闭环。" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Arial;fontSize=16;fontColor=#626575;" vertex="1" parent="1">
           <mxGeometry x="60" y="824" width="1480" height="42" as="geometry" />
         </mxCell>
       </root>

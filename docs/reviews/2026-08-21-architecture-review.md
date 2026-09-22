@@ -132,6 +132,11 @@ TAP 的总体方向正确：以 Test IR 隔离自然语言与具体执行框架�
 ## 5. 建议的 Phase 1 最小目标架构
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart LR
     User[React Chat] --> BFF[FastAPI BFF]
     BFF --> MySQL[(MySQL: Project / Turn / Event / Outbox)]
@@ -144,6 +149,12 @@ flowchart LR
     BFF -->|snapshot + SSE tail| User
     Source[One authoritative source] --> Relay
     Relay --> Blob[(Blob: source / trace artifacts)]
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class MySQL,Search,Source,Blob data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class User action;
 ```
 
 部署上可以使用同一 Python 代码库的 `api-sse`、`turn-worker`、`ingestion-worker`、`relay-reconciler` 四种角色；embedding 与 index writer 在吞吐证明需要前可先作为 ingestion role 内的独立队列处理器。逻辑模块边界保留，但不为每个框创建 Deployment。Redis 仅在多副本分发、租约或 live fanout 的压测证明需要后加入关键链路；MySQL 仍是可恢复事实源。

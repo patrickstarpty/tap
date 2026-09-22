@@ -19,6 +19,8 @@ TAP AI 前端仅调用 TAP AI 后端；不依赖 TAP 前后端进程。TAP AI �
 
 [ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 进一步固定目标 AI 运行边界：TAP AI 的 Project Chat 与测试管理等 TAP AI 自有入口发起的 AI Task，由 TAP AI 后端内同一版本化 LangGraph 编排，明确支持 Fast Chat、Durable Workflow 和 Bounded Agentic Task，并只通过 ModelGateway、SearchPort、TAP Insights API 和 TAP Domain APIs 访问模型、Milvus/MySQL Graph 知识、ClickHouse 历史指标及业务动作。LangGraph 是后端库内编排边界，不改变本文的应用归属，也不新增独立 Query Router、Model Router 或跨产品通用 Agent 平台。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，不在该目标图作用域内。当前代码尚未实现该目标图。
 
+[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 补充主动测试运营 Agent 的 **draft 功能目标**：项目事件准入、工作记忆、建议收件箱、订阅、批准与 AI Task 归 TAP AI，主动任务进入上述同一 LangGraph；正式 Run、执行证据、Insights 与 Jira/外部动作保持各自领域归属，经正式 API 和服务身份再授权。工作记忆不替代批准知识，启用订阅默认只授权分析及独立待审草稿；该目标不增加第四种执行剖面，不建立通用桌面监听服务，也不意味着当前 TAP 非 AI 后端已有相应接口。
+
 迁移时保留现有 `tap` Python 包、公开 HTTP 路径、数据库表名、事件格式及 `TAPPER_*` 配置名，以降低数据和客户端兼容风险。产品名与应用目录可变，公开契约不因目录迁移而改名。TAP AI 品牌素材必须随 TAP AI 前端构建包含，不依赖仓库根目录的额外运行文件。
 
 ## 验收

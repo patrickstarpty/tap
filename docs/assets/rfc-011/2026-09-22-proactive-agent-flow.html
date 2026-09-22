@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<!-- Adapted from https://github.com/Cocoon-AI/architecture-diagram-generator
+MIT License
+
+Copyright (c) 2025 Cocoon AI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>主动 Agent：发现变化，推动跟进 · TAP AI 流程图</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+
+    .container {
+      max-width: 2080px;
+      margin: 0 auto;
+    }
+
+    .header {
+      margin-bottom: 2rem;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .pulse-dot {
+      width: 12px;
+      height: 12px;
+      background: #22d3ee;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.875rem;
+      margin-left: 1.75rem;
+    }
+
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    svg {
+      width: 100%;
+      min-width: 900px;
+      display: block;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+
+    .card h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .card ul {
+      list-style: none;
+      color: #94a3b8;
+      font-size: 0.75rem;
+    }
+
+    .card li {
+      margin-bottom: 0.375rem;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      color: #475569;
+      font-size: 0.75rem;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 0.5rem;
+      margin-left: auto;
+      flex-shrink: 0;
+      align-items: center;
+    }
+    .toolbar-toggle {
+      background: transparent;
+      border: none;
+      color: #475569;
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions {
+      display: none;
+      gap: 0.5rem;
+    }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.375rem;
+      font-family: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .toolbar-actions button:hover {
+      background: rgba(51, 65, 85, 0.8);
+      color: white;
+      border-color: #475569;
+    }
+
+    @media print {
+      body { background: #020617; padding: 1rem; }
+      .toolbar { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>主动 Agent：发现变化，推动跟进</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">TAP / TAP AI · 目标流程设计 · 已按领域和阶段分区</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="主动 Agent：发现变化，推动跟进"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">主动 Agent：发现变化，推动跟进</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">受信事件触发分析，方案经批准后进入领域执行；每次行动都有依据、版本和负责人。</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">事件与订阅</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">项目负责人 / TAP</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">分析与建议</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP AI · 统一 LangGraph</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">人工决策</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">QA / 业务负责人</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">执行与反馈</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP / 领域服务</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">准入</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">待审</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">获准</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">发现相关变化</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">需求或知识版本更新</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">构建、部署或真实 Run 完成</text>
+<text x="86.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">按获准范围定时检查</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">先控制触发噪声</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">来源校验、去重、合并与冷却</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">订阅可暂停，通知频率可配置</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">不监听个人桌面与私人消息</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">形成可审阅方案</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">检索获准证据与项目记忆</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">分析影响、回归范围与失败</text>
+<text x="588.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">给出修改草稿、差异和成本</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">建议进入收件箱</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">展示触发原因、证据与影响</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">默认只分析和生成待审草稿</text>
+<text x="588.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">固定 Agent / Skill 与图版本</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">明确批准本次行动</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">接受、调整、延后或忽略</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">核对资源、环境与执行预算</text>
+<text x="1090.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">批准绑定方案版本与有效期</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">动作前再次校验</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">内容变化或撤权使批准失效</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">副作用须重新确认项目权限</text>
+<text x="1090.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">订阅启用不等于动作授权</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">执行获准动作</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">经领域 API 应用修订或建 Run</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">返回状态、证据与实际费用</text>
+<text x="1592.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">反馈用于后续建议质量评估</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">结果与异常可追踪</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">重复请求不重复执行</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">结果未知先对账，再决定重试</text>
+<text x="1592.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">暂停订阅、取消任务、停止 Run 分开</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">首批先做知识变更影响分析，再接真实 Run 跟进</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">正式 Run、发布与外部工单不默认自动批准</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">事实与假设分开；反馈不会自动扩大权限</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
+</svg>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      RFC-011 · 目标设计 · Cocoon AI / MIT
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'diagram.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('diagram.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

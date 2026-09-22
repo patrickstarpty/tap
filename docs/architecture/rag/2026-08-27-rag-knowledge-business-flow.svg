@@ -6,101 +6,81 @@
     <style>
       text { font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
     </style>
-    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#2F6FED"/>
+    <marker id="arrow-blue" markerWidth="7" markerHeight="7" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#737080" />
     </marker>
-    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#0F8F78"/>
+    <marker id="arrow-green" markerWidth="7" markerHeight="7" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#737080" />
     </marker>
   </defs>
-
-  <rect x="0" y="0" width="1600" height="900" fill="#FFFFFF"/>
-
-  <text x="80" y="79" fill="#12304A" font-size="36" font-weight="700">TAP RAG｜可信知识问答</text>
-  <text x="80" y="119" fill="#66788A" font-size="18">从企业知识到可追溯答案，只保留两条核心链路</text>
-
+  <rect x="0" y="0" width="1600" height="900" fill="#FFFFFF" />
+  <text x="80" y="79" fill="#303447" font-size="30" font-weight="700">TAP RAG｜可信知识问答</text>
+  <text x="80" y="119" fill="#626575" font-size="18">从企业知识到可追溯答案，只保留两条核心链路</text>
   <g id="knowledge-build" role="group" aria-label="知识建设">
-    <rect x="80" y="150" width="1440" height="225" rx="12" fill="#EAF2FF" stroke="#C7D2DE" stroke-width="1.5"/>
-    <text x="110" y="194" fill="#2F6FED" font-size="21" font-weight="700">1  知识建设</text>
-
-    <rect x="120" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
-    <text x="260" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">企业知识源</text>
-    <text x="260" y="298" text-anchor="middle" fill="#66788A" font-size="17">
+    <rect x="80" y="150" width="1440" height="225" fill="#FFFFFF" stroke="#A9A6B2" stroke-width="1.5" stroke-dasharray="6 4" />
+    <text x="110" y="194" fill="#737080" font-size="21" font-weight="700">1  知识建设</text>
+    <rect x="120" y="220" width="280" height="120" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="260" y="261" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">企业知识源</text>
+    <text x="260" y="298" text-anchor="middle" fill="#626575" font-size="17">
       <tspan x="260" dy="0">PDF · DOCX ·</tspan>
       <tspan x="260" dy="23">Markdown · TXT</tspan>
     </text>
-
-    <rect x="473" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
-    <text x="613" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">解析与切片</text>
-    <text x="613" y="298" text-anchor="middle" fill="#66788A" font-size="17">
+    <rect x="473" y="220" width="280" height="120" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+    <text x="613" y="261" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">解析与切片</text>
+    <text x="613" y="298" text-anchor="middle" fill="#626575" font-size="17">
       <tspan x="613" dy="0">权限元数据 · 脱敏 ·</tspan>
       <tspan x="613" dy="23">结构化切片 · 向量化</tspan>
     </text>
-
-    <rect x="826" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
-    <text x="966" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">知识存储</text>
-    <text x="966" y="294" text-anchor="middle" fill="#66788A" font-size="16">
+    <rect x="826" y="220" width="280" height="120" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="966" y="261" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">知识存储</text>
+    <text x="966" y="294" text-anchor="middle" fill="#626575" font-size="16">
       <tspan x="966" dy="0">Milvus doc：本地已实现</tspan>
       <tspan x="966" dy="22">MySQL Graph：V2 未实现</tspan>
     </text>
-
-    <rect x="1179" y="220" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="2"/>
-    <text x="1319" y="261" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">知识服务边界</text>
-    <text x="1319" y="306" text-anchor="middle" fill="#66788A" font-size="17">当前文档 · 后续图谱</text>
-
-    <line x1="400" y1="280" x2="473" y2="280" stroke="#2F6FED" stroke-width="2" marker-end="url(#arrow-blue)"/>
-    <line x1="753" y1="280" x2="826" y2="280" stroke="#2F6FED" stroke-width="2" marker-end="url(#arrow-blue)"/>
-    <line x1="1106" y1="280" x2="1179" y2="280" stroke="#2F6FED" stroke-width="2" marker-end="url(#arrow-blue)"/>
+    <rect x="1179" y="220" width="280" height="120" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="1319" y="261" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">知识服务边界</text>
+    <text x="1319" y="306" text-anchor="middle" fill="#626575" font-size="17">当前文档 · 后续图谱</text>
+    <line x1="400" y1="280" x2="473" y2="280" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-blue)" />
+    <line x1="753" y1="280" x2="826" y2="280" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-blue)" />
+    <line x1="1106" y1="280" x2="1179" y2="280" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-blue)" />
   </g>
-
   <g id="online-qa" role="group" aria-label="在线问答">
-    <rect x="80" y="420" width="1440" height="225" rx="12" fill="#EAF8F4" stroke="#C7D2DE" stroke-width="1.5"/>
-    <text x="110" y="464" fill="#0F8F78" font-size="21" font-weight="700">2  在线问答</text>
-
-    <rect x="120" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
-    <text x="260" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">用户提问</text>
-    <text x="260" y="576" text-anchor="middle" fill="#66788A" font-size="17">Tapper Q&amp;A</text>
-
-    <rect x="473" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
-    <text x="613" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">权限过滤</text>
-    <text x="613" y="576" text-anchor="middle" fill="#66788A" font-size="17">身份 · Project · 数据范围</text>
-
-    <rect x="826" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
-    <text x="966" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">检索与生成</text>
-    <text x="966" y="566" text-anchor="middle" fill="#66788A" font-size="16">
+    <rect x="80" y="420" width="1440" height="225" fill="#FFFFFF" stroke="#A9A6B2" stroke-width="1.5" stroke-dasharray="6 4" />
+    <text x="110" y="464" fill="#737080" font-size="21" font-weight="700">2  在线问答</text>
+    <rect x="120" y="490" width="280" height="120" fill="#FFF3CC" stroke="#C8AF68" stroke-width="1.5" />
+    <text x="260" y="531" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">用户提问</text>
+    <text x="260" y="576" text-anchor="middle" fill="#626575" font-size="17">Tapper Q&amp;A</text>
+    <rect x="473" y="490" width="280" height="120" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+    <text x="613" y="531" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">权限过滤</text>
+    <text x="613" y="576" text-anchor="middle" fill="#626575" font-size="17">身份 · Project · 数据范围</text>
+    <rect x="826" y="490" width="280" height="120" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+    <text x="966" y="531" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">检索与生成</text>
+    <text x="966" y="566" text-anchor="middle" fill="#626575" font-size="16">
       <tspan x="966" dy="0">当前：Milvus 证据</tspan>
       <tspan x="966" dy="22">V2：有界图扩展</tspan>
     </text>
-
-    <rect x="1179" y="490" width="280" height="120" rx="12" fill="#FFFFFF" stroke="#0F8F78" stroke-width="2"/>
-    <text x="1319" y="531" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">可信回答</text>
-    <text x="1319" y="568" text-anchor="middle" fill="#66788A" font-size="17">
+    <rect x="1179" y="490" width="280" height="120" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="1319" y="531" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">可信回答</text>
+    <text x="1319" y="568" text-anchor="middle" fill="#626575" font-size="17">
       <tspan x="1319" dy="0">逐条引用 ·</tspan>
       <tspan x="1319" dy="23">证据不足则拒答</tspan>
     </text>
-
-    <line x1="400" y1="550" x2="473" y2="550" stroke="#0F8F78" stroke-width="2" marker-end="url(#arrow-green)"/>
-    <line x1="753" y1="550" x2="826" y2="550" stroke="#0F8F78" stroke-width="2" marker-end="url(#arrow-green)"/>
-    <line x1="1106" y1="550" x2="1179" y2="550" stroke="#0F8F78" stroke-width="2" marker-end="url(#arrow-green)"/>
+    <line x1="400" y1="550" x2="473" y2="550" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-green)" />
+    <line x1="753" y1="550" x2="826" y2="550" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-green)" />
+    <line x1="1106" y1="550" x2="1179" y2="550" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-green)" />
   </g>
-
-  <path d="M 1319 340 V 397 H 966 V 490" fill="none" stroke="#0F8F78" stroke-width="2" marker-end="url(#arrow-green)"/>
-
+  <path d="M 1319 340 V 397 H 966 V 490" fill="none" stroke="#737080" stroke-width="1.5" marker-end="url(#arrow-green)" />
   <g id="continuous-assurance" role="group" aria-label="三项持续保障">
-    <text x="80" y="690" fill="#12304A" font-size="21" font-weight="700">三项持续保障</text>
-
-    <rect x="80" y="710" width="458" height="92" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="1.5"/>
-    <text x="309" y="748" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">权限安全</text>
-    <text x="309" y="780" text-anchor="middle" fill="#66788A" font-size="17">查询与引用都重新授权</text>
-
-    <rect x="571" y="710" width="458" height="92" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="1.5"/>
-    <text x="800" y="748" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">版本溯源</text>
-    <text x="800" y="780" text-anchor="middle" fill="#66788A" font-size="17">答案定位到原始版本与切片</text>
-
-    <rect x="1062" y="710" width="458" height="92" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="1.5"/>
-    <text x="1291" y="748" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">持续评测</text>
-    <text x="1291" y="780" text-anchor="middle" fill="#66788A" font-size="17">质量 · 时延 · 成本 · 用户反馈</text>
+    <text x="80" y="690" fill="#303447" font-size="21" font-weight="700">三项持续保障</text>
+    <rect x="80" y="710" width="458" height="92" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+    <text x="309" y="748" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">权限安全</text>
+    <text x="309" y="780" text-anchor="middle" fill="#626575" font-size="17">查询与引用都重新授权</text>
+    <rect x="571" y="710" width="458" height="92" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+    <text x="800" y="748" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">版本溯源</text>
+    <text x="800" y="780" text-anchor="middle" fill="#626575" font-size="17">答案定位到原始版本与切片</text>
+    <rect x="1062" y="710" width="458" height="92" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+    <text x="1291" y="748" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">持续评测</text>
+    <text x="1291" y="780" text-anchor="middle" fill="#626575" font-size="17">质量 · 时延 · 成本 · 用户反馈</text>
   </g>
-
-  <text x="800" y="863" text-anchor="middle" fill="#66788A" font-size="16">交付状态：Milvus doc 本地切片已实现；MySQL Knowledge Graph 已选型、V2 尚未实现。</text>
+  <text x="800" y="863" text-anchor="middle" fill="#626575" font-size="16">交付状态：Milvus doc 本地切片已实现；MySQL Knowledge Graph 已选型、V2 尚未实现。</text>
 </svg>

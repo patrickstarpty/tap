@@ -196,6 +196,11 @@ LCA 不依赖 Tapper 或 Test Plan。用户可以：
 ## 5. 总体架构
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 24, "rankSpacing": 40, "padding": 16}
+}}%%
 flowchart TB
     User[Validation Actor / Project User] --> Proxy[TLS Reverse Proxy]
     Proxy --> Web[React + TypeScript Web]
@@ -262,6 +267,14 @@ flowchart TB
     Agent --> Target[Target Web Application]
     Agent --> ArtifactGateway
     Jenkins -->|HMAC-signed callback| Proxy
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class MySQL,Redis,Milvus,Object,Jenkins,Agent,Target data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class User,Web action;
+    style Control fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style Async fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
 ```
 
 图中 Identity 边界表达目标模块接口，而不是要求方案验证前先实现用户系统。Validation Adapter 只产生服务端固定的 Scope/Actor；产品化时由 Session/Membership Adapter 替换它，其余模块接收同一种可信上下文。
@@ -287,7 +300,12 @@ flowchart TB
 目标部署为企业内网 Linux 主机上的 Docker Compose。只有 VG、P0 和 P1 的对应门禁全部通过后，该基线才可作为低运维成本的首个正式交付配置；它仍不宣称高可用：
 
 ```mermaid
-flowchart LR
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 40, "padding": 16}
+}}%%
+flowchart TB
     Browser[Enterprise Browser]
     Jenkins[Jenkins Controller]
     Agents[Jenkins Pipeline Agents]
@@ -317,6 +335,13 @@ flowchart LR
     Agents -->|HTTPS + one-time artifact token| Proxy
     Proxy --> ArtifactGateway
     Agents --> Apps
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Jenkins,Agents,Apps,MySQL,Milvus,MinIO,Redis data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Browser,Web action;
+    style TAPHost fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
 ```
 
 部署约束：
@@ -435,6 +460,11 @@ fetch_result(provider_run_ref) -> provider_result_manifest
 ## 8. 核心数据模型
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "er": {"nodeSpacing": 24, "rankSpacing": 40}
+}}%%
 erDiagram
     ENTERPRISE ||--o{ PROJECT : contains
     ACTOR_PRINCIPAL ||--o| USER : materializes_as
@@ -540,6 +570,10 @@ UNIQUE(project_id, automation_id)
 ### 8.3 Revision 状态
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"}
+}}%%
 stateDiagram-v2
     [*] --> Draft
     Draft --> Draft: edit / generate / record
@@ -561,7 +595,12 @@ stateDiagram-v2
 ### 9.1 摄取流程
 
 ```mermaid
-flowchart LR
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 40, "padding": 16}
+}}%%
+flowchart TB
     Upload[Upload Source] --> Original[Store original]
     Original --> Normalize[Normalize / Parse]
     Normalize --> Chunk[Chunk + Anchors]
@@ -572,6 +611,12 @@ flowchart LR
     Extract --> Validate[Schema + Evidence validation]
     Validate --> Community[Deduplicate + Community]
     Community --> GraphPublish[Publish Graph Snapshot]
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Ready data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Upload action;
 ```
 
 摄取使用现有 MySQL 账本、Outbox、lease 和可恢复 Worker 模式。关键规则：
@@ -789,6 +834,11 @@ Credential Binding Profile Revision 对 callback 明确保存 `callback_key_id`�
 ### 14.2 提交流程
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "sequence": {"actorMargin": 40, "messageMargin": 36, "boxMargin": 12, "noteMargin": 12}
+}}%%
 sequenceDiagram
     participant UI as TAP Web
     participant API as Execution API
@@ -1273,8 +1323,8 @@ Mobile、SSO、Azure DevOps、Git Sync、专用 Graph DB 和 Kubernetes HA 只�
 
 - 产品交互事实源：[RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。冲突范围以本 RFC 为准：`AUT-003` 的 Web Provider 从 Azure DevOps 改为 Jenkins，其 Mobile 部分以及 `AUT-005` 的 Web/Mobile 类型推断、`AUT-007` 全部后移到 P1 之后；`AUT-008` 保留 AI Agent 与 Pipeline Agent 分离，但首个 Pipeline Provider 改为 Jenkins。`ATH-008` 与最近一次消息上键召回语义继续有效。
 - 当前实现与进度入口：[Tapper 开发者指南](../reference/2026-09-13-tapper-developer-guide.md)和[实施计划状态表](../plans/2026-09-04-tapper-knowledge-web-automation-platform.md#执行状态2026-09-13)；RFC-005 仅记录最初本地知识切片。
-- 当前 Backend 装配入口：[`tapper_runtime.py`](../../apps/backend/src/tap/entrypoints/tapper_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
-- 当前默认 Web 产品壳：[`TapperPage.tsx`](../../apps/web/src/pages/TapperPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/web/src/widgets/tap/TapProductPrototype.tsx)；真实 API client/state 分布在 `apps/web/src/features/{runtime,knowledge,conversations,graph,testManagement}/`，旧 [`TapperWorkspace.tsx`](../../apps/web/src/widgets/tapper/TapperWorkspace.tsx)只保留兼容用途。
+- 当前 Backend 装配入口：[`tapper_runtime.py`](../../apps/tap-ai-backend/src/tap/entrypoints/tapper_runtime.py)；Knowledge 模块：[`apps/backend/src/tap/modules/knowledge/`](../../apps/backend/src/tap/modules/knowledge/)。
+- 当前默认 Web 产品壳：[`TapperPage.tsx`](../../apps/tap-ai-frontend/src/pages/TapperPage.tsx) 与 [`TapProductPrototype.tsx`](../../apps/tap-ai-frontend/src/widgets/tap/TapProductPrototype.tsx)；真实 API client/state 分布在 `apps/web/src/features/{runtime,knowledge,conversations,graph,testManagement}/`，旧 [`TapperWorkspace.tsx`](../../apps/tap-ai-frontend/src/widgets/tapper/TapperWorkspace.tsx)只保留兼容用途。
 - Milvus 实验证据：[Milvus 本地检索实验评审](../reviews/2026-08-27-milvus-local-search-experiment.md)。
 - 文档治理：[TAP 文档治理规范](../reference/2026-08-22-document-governance.md)。
 - 本 RFC 的接受动作同步创建替代 ADR，并更新[架构决策索引](../decisions/index.md)、总体架构、README 和路线图；既有 Azure/Git/Intelligence 决策仅通过生命周期元数据进入历史，不静默改写原语义。

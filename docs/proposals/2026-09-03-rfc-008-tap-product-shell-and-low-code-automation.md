@@ -116,6 +116,11 @@ related-adrs:
 下一版原型采用“资产优先的统一 Automation Builder”。Tapper 是意图理解和编排入口；Low Code Automation 是 Automation 的系统工作区。两处操作同一个资产身份。
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart LR
     Rail[产品一级导航] --> Tapper[Tapper]
     Rail --> TM[Test Management]
@@ -136,6 +141,12 @@ flowchart LR
     Chat -. 生成与 Review .-> TP
     Chat -. 生成与 Review .-> AD
     TP -. 可选关联 .-> AD
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Library,TP,AL,AD data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Rail,Tapper,TM,LCA,Chat,BDD,Run action;
 ```
 
 #### 一级产品 Rail（`confirmed`）
@@ -357,6 +368,11 @@ Test Plan 与 Automation 采用可选、严格双向 `1:1`：一个 Test Plan �
 ### 7. Tapper 编排与资产交接
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart TD
     A[识别到 Automation 生成意图] --> B{是否先创建 Test Plan?}
     B -->|需要| C[生成并 Review Test Plan 草稿]
@@ -373,6 +389,12 @@ flowchart TD
     J -->|否| L[Automation 卡片 + 未关联说明]
     K --> M[深链打开对应详情]
     L --> M
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class K,L data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class A,C,E,H,I,M action;
 ```
 
 #### 对话行为（`confirmed`）

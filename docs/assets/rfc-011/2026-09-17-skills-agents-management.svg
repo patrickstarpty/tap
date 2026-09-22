@@ -1,58 +1,103 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1580" height="1030" viewBox="0 0 1580 1030" role="img"><title>Skills 与 Agents 资源管理</title><rect width="100%" height="100%" fill="white"/>
-<polyline points="470.0,172.0 570.0,172.0" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="570.00,172.00 561.00,176.35 561.00,167.65" fill="#555"/>
-<polyline points="1000.0,172.0 1100.0,172.0" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1100.00,172.00 1091.00,176.35 1091.00,167.65" fill="#555"/>
-<polyline points="470.0,525.0 570.0,525.0" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="570.00,525.00 561.00,529.35 561.00,520.65" fill="#555"/>
-<polygon points="470.00,525.00 479.00,520.65 479.00,529.35" fill="#555"/>
-<polyline points="1000.0,525.0 1100.0,525.0" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1100.00,525.00 1091.00,529.35 1091.00,520.65" fill="#555"/>
-<polygon points="1000.00,525.00 1009.00,520.65 1009.00,529.35" fill="#555"/>
-<polyline points="785.0,615.0 785.0,770.0" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="785.00,770.00 780.65,761.00 789.35,761.00" fill="#555"/>
-<polygon points="785.00,615.00 789.35,624.00 780.65,624.00" fill="#555"/>
-<polyline points="1000.0,842.0 1100.0,842.0" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1100.00,842.00 1091.00,846.35 1091.00,837.65" fill="#555"/>
-<polygon points="1000.00,842.00 1009.00,837.65 1009.00,846.35" fill="#555"/>
-<rect x="40.0" y="100.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="255.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">上传文件夹 / ZIP / Git / 市场</text>
-<text x="255.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保留完整目录、模板与脚本</text>
-<text x="255.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">市场更新生成候选版本</text>
-<rect x="570.0" y="100.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="785.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">文件树中预览和编辑</text>
-<text x="785.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查依赖、权限与宿主兼容性</text>
-<text x="785.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存草稿，固定快照试运行</text>
-<rect x="1100.0" y="100.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1315.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布并启用固定版本</text>
-<text x="1315.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Agent 按配置使用 Skills</text>
-<text x="1315.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">定制创建副本，更新可回滚</text>
-<rect x="40.0" y="435.0" width="430.0" height="180.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="255.0" y="481.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 前端 · 现有技能/智能体入口</text>
-<text x="255.0" y="512.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MDXEditor：Markdown 可视化</text>
-<text x="255.0" y="543.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Monaco：源码与差异</text>
-<text x="255.0" y="574.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">react-markdown：预览</text>
-<rect x="570.0" y="435.0" width="430.0" height="180.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="785.0" y="481.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 资源管理 · FastAPI</text>
-<text x="785.0" y="512.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">来源 / 草稿 / 文件 / 依赖 / 版本</text>
-<text x="785.0" y="543.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">兼容报告 / 发布 / 项目权限</text>
-<text x="785.0" y="574.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">任务绑定固定包与资源版本</text>
-<rect x="1100.0" y="435.0" width="430.0" height="180.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1315.0" y="465.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">沿用 MySQL + 对象存储</text>
-<text x="1315.0" y="496.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">市场目录 / 插件 / 依赖分别锁版本</text>
-<text x="1315.0" y="527.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">来源与版本、文件清单及校验值</text>
-<text x="1315.0" y="558.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">完整包、原始文件、执行证据</text>
-<text x="1315.0" y="589.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">不默认进入知识向量索引</text>
-<rect x="570.0" y="770.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="785.0" y="814.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">现有后台任务 + Redis</text>
-<text x="785.0" y="845.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">拉取 / 安全解包 / 校验 / 导出</text>
-<text x="785.0" y="876.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">市场同步不覆盖当前启用版本</text>
-<rect x="1100.0" y="770.0" width="430.0" height="145.0" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1315.0" y="814.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 隔离执行任务</text>
-<text x="1315.0" y="845.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按需读文件，脚本在容器运行</text>
-<text x="1315.0" y="876.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定依赖、权限、预算与超时</text>
-<text x="785.0" y="53.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">业务流程：完整包进入草稿，验证后才发布使用</text>
-<text x="785.0" y="310.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">不兼容能力明确标出；定制内容不被上游覆盖；运行任务不随更新漂移</text>
-<text x="785.0" y="380.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">技术分工：沿用现有应用与存储，不引入 docu.md</text>
-<text x="785.0" y="993.0" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">导入不执行脚本；脚本运行须隔离；前端预览不执行 MDX / JSX / HTML</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="Skills 与 Agents 资源管理"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">Skills 与 Agents 资源管理</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">目标设计 · 完整包导入、编辑、验证与版本化使用</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">导入与识别</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">资源管理员 / 后台任务</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">编辑与试运行</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">作者 / TAP AI</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">发布与使用</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">项目发布人 / 任务执行器</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">同步与定制</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">资源管理员 / 项目负责人</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">兼容草稿</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">验证通过</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">后续更新</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">保留完整资源包</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">从文件、ZIP、Git 或市场导入</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保留脚本、模板、配置及依赖</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">形成兼容报告</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">分别标记可用、待配置、不支持</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">依赖缺失阻止受影响资源启用</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">导入不执行脚本或 Hooks</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">编辑文件与配置</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">文件树中编辑指令、脚本和模板</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保存后端草稿并真实试运行</text>
+<text x="588.0" y="428" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">MDXEditor / Monaco</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">保留内容与差异</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">未知字段和未改文件原样保留</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">内容或配置变化后重新验证</text>
+<text x="588.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">预览不执行 MDX 或脚本</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">发布不可变版本</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">校验依赖及发布权限后启用</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">任务固定包、Agent 与 Skill 版本</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">按范围隔离执行</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">只读挂载资源，限工具与网络</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">固定依赖并限制时间和资源</text>
+<text x="1090.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">安全撤回阻止继续执行</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">检查更新候选</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">比较来源提交、依赖及权限差异</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">验证后由有权限的人切换</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">保留旧版与定制</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">失败继续旧版，可回滚已发布版</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">定制建副本，上游不覆盖修改</text>
+<text x="1592.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">运行中版本不随更新漂移</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">当前仅有简化编辑与只读版本接口，完整包管理仍为目标。</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">包声明不能扩大项目权限；新增权限须重新确认。</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">Hooks 与插件自带 MCP 首批只保留并报告未适配。</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
 </svg>

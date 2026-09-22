@@ -84,6 +84,10 @@ spec:
 下面是 **Attempt 状态机**；Task 的汇总结论由 Workflow/Plan 根据一个或多个 Attempt 计算。
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"}
+}}%%
 stateDiagram-v2
     [*] --> queued
     queued --> leased
@@ -900,6 +904,10 @@ Validator 还必须执行语义引用规则：Report 的每个 Claim 至少被 s
 Task 是稳定目标，Attempt 是一次具体 Runtime 执行，TaskStep 是版本化工作流产生的可恢复业务投影。三者不复用 Chat Turn 或 Knowledge Ingestion Job。
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"}
+}}%%
 stateDiagram-v2
     [*] --> queued
     queued --> leased

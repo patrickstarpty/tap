@@ -4,6 +4,8 @@
 >
 > **2026-09-18 AI 编排更新**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已接受 TAP AI 的 Chat 与 AI Task 进入同一版本化 LangGraph 的目标架构：Fast Chat 走低延迟路径，Durable Workflow 承载可恢复长任务，Bounded Agentic Task 承载受预算限制的复杂工具循环。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不在该 Project API 作用域内。这不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
+> **2026-09-22 主动 Agent 功能设计**：[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将可信事件、项目工作记忆、行动提案、授权执行与反馈接入同一 LangGraph。该增量仍为 draft 目标，未改变本页已接受基线、当前实现状态或 TAP/TAP AI 产品归属；总览与专题图明确区分目标设计和历史架构。
+
 | 字段         | 值                                                                                                                           |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | 文档状态     | Architecture Baseline v0.4，已接受                                                                                           |
@@ -56,6 +58,11 @@ TAP 把 Tapper 的可信知识能力放在最前面，并沿一条可追溯链�
 ## 3. 逻辑架构
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart TB
     User[Validation Actor / Project User] --> Proxy[TLS Reverse Proxy]
     Proxy --> Web[React + TypeScript Web]
@@ -102,6 +109,14 @@ flowchart TB
     Agent --> Gateway[Artifact Gateway]
     Gateway --> MinIO
     Control --> LiteLLM[LiteLLM Gateway]
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class MySQL,Redis,Milvus,MinIO,Jenkins,Agent data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class User,Web action;
+    style Control fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style Workers fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
 ```
 
 ### 3.1 模块职责
@@ -200,6 +215,11 @@ Test Plan 与 Automation 是可选、严格双向 `1:1`：数据库同时约束 
 下图记录当前 V1 固定知识问答链路。目标实现会保留其 Scope、Milvus、ModelGateway 和 Citation 契约，并把它们收纳为统一 LangGraph 的 fast-path 节点；在实现与验收完成前，不将目标图当作当前运行事实。
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "sequence": {"actorMargin": 40, "messageMargin": 36, "boxMargin": 12, "noteMargin": 12}
+}}%%
 sequenceDiagram
     actor U as User
     participant A as Tapper API
@@ -246,6 +266,11 @@ Recorder 运行在独立非 root 隔离 Worker 中，只访问明确的非生产
 ### 5.5 Jenkins 运行与结果闭环
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "sequence": {"actorMargin": 40, "messageMargin": 36, "boxMargin": 12, "noteMargin": 12}
+}}%%
 sequenceDiagram
     actor U as User
     participant T as TAP API

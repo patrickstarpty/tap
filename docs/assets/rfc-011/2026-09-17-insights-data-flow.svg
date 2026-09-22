@@ -1,73 +1,105 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="910" viewBox="0 0 1660 910" role="img"><title>测试分析数据流</title><rect width="100%" height="100%" fill="white"/>
-<polyline points="360,155 450,155" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="450.00,155.00 441.00,159.35 441.00,150.65" fill="#555"/>
-<polyline points="360,405 405,405 405,190 450,190" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="450.00,190.00 441.00,194.35 441.00,185.65" fill="#555"/>
-<polyline points="770,155 860,155" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="860.00,155.00 851.00,159.35 851.00,150.65" fill="#555"/>
-<polyline points="1180,155 1270,155" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1270.00,155.00 1261.00,159.35 1261.00,150.65" fill="#555"/>
-<polyline points="610,220 610,340" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="610.00,340.00 605.65,331.00 614.35,331.00" fill="#555"/>
-<polyline points="710,220 710,280 1020,280 1020,340" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1020.00,340.00 1015.65,331.00 1024.35,331.00" fill="#555"/>
-<polyline points="1430,220 1430,340" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1430.00,340.00 1425.65,331.00 1434.35,331.00" fill="#555"/>
-<polyline points="1430,470 1430,650" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1430.00,650.00 1425.65,641.00 1434.35,641.00" fill="#555"/>
-<polyline points="1270,405 1220,405 1220,550 1020,550 1020,650" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1020.00,650.00 1015.65,641.00 1024.35,641.00" fill="#555"/>
-<polyline points="860,715 800,715 800,525 610,525 610,470" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="610.00,470.00 614.35,479.00 605.65,479.00" fill="#555"/>
-<polyline points="1180,715 1270,715" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1270.00,715.00 1261.00,719.35 1261.00,710.65" fill="#555"/>
-<polyline points="1430,780 1430,860 610,860 610,780" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="610.00,780.00 614.35,789.00 605.65,789.00" fill="#555"/>
-<polygon points="1430.00,780.00 1434.35,789.00 1425.65,789.00" fill="#555"/>
-<rect x="40" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="200.0" y="142.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">手工 / 自动化 / 负载报告</text>
-<text x="200.0" y="173.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Jenkins / JUnit / Allure</text>
-<rect x="450" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="610.0" y="126.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">接收、检查与保存</text>
-<text x="610.0" y="157.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">项目权限 / 报告格式</text>
-<text x="610.0" y="188.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存成功后安排处理</text>
-<rect x="860" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1020.0" y="126.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">确认对应关系 / 排除重复</text>
-<text x="1020.0" y="157.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">项目 / 发布 / 用例 / 运行</text>
-<text x="1020.0" y="188.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">每次重试单独记录</text>
-<rect x="1270" y="90" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1430.0" y="126.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">ClickHouse</text>
-<text x="1430.0" y="157.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">测试 / 工程 / 压测事实</text>
-<text x="1430.0" y="188.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">明细记录与统一统计结果</text>
-<rect x="40" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="200.0" y="392.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">工程数据来源</text>
-<text x="200.0" y="423.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Jira / 测试管理 / SonarQube</text>
-<rect x="450" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="610.0" y="376.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MySQL</text>
-<text x="610.0" y="407.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">接收记录 / 任务进度</text>
-<text x="610.0" y="438.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">对应关系 / 规则 / 检查结果</text>
-<rect x="860" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1020.0" y="376.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">对象存储</text>
-<text x="1020.0" y="407.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原始报告 / 日志 / 附件</text>
-<text x="1020.0" y="438.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">可查看、重新处理</text>
-<rect x="1270" y="340" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1430.0" y="376.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">统一指标查询接口</text>
-<text x="1430.0" y="407.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">先检查权限，再查询</text>
-<text x="1430.0" y="438.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">返回计算范围和更新时间</text>
-<rect x="450" y="650" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="610.0" y="686.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI + LiteLLM</text>
-<text x="610.0" y="717.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">根据获准指标和证据解释</text>
-<text x="610.0" y="748.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">提出改进建议</text>
-<rect x="860" y="650" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1020.0" y="686.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">质量检查与通知</text>
-<text x="1020.0" y="717.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定规则判断，保存原因</text>
-<text x="1020.0" y="748.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">用户启用后发送通知</text>
-<rect x="1270" y="650" width="320" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1430.0" y="686.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Test Insights 看板</text>
-<text x="1430.0" y="717.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">执行排错 / 整体质量</text>
-<text x="1430.0" y="748.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">门禁 / 趋势 / 查看原始记录</text>
-<text x="830.0" y="48" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">统一接入：缺失、迟到、重复和更正均保留处理记录</text>
-<text x="1545.0" y="283" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">补录后重算</text>
-<text x="605.0" y="568" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">保存判定记录</text>
-<text x="1070.0" y="838" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">用户经后端请求解释；后端查询指标与证据，AI 返回建议</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="测试与质量分析数据流"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">测试与质量分析数据流</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">目标设计 · 从真实报告到同口径指标、失败证据与质量判断</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">来源接入</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP / CI / 工程系统</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">校验与归一</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP 后台任务</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">历史与统一指标</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">ClickHouse / TAP Insights</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">报告与质量判断</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">QA / 负责人 / TAP AI</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">接收记录</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">统一事实</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="284.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">TAP</text>
+<text x="1522.0" y="304.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">Insights</text>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">API</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">接收真实测试与质量数据</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">接入手工、自动化及负载结果</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">补充缺陷、构建与代码质量</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">先保存原件与账本</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保留报告、日志、截图和视频</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">记录来源、接收批次与校验值</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">外部报告可独立接入</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">映射身份并去重</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">按运行、用例、数据行与尝试映射</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">校验重复、缺失和待映射记录</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">保留可恢复接收状态</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">重复回调不重复统计</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">失败补传报告，不重跑测试</text>
+<text x="588.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">重试与首次结果分开</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">保存事实并计算指标</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">明细携带来源版本与更正号</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">统一分母、规则和测量窗口</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">保留查询与判定版本</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">迟到、更正触发重算</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">返回查询编号、范围与截至时间</text>
+<text x="1090.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">业务状态和审批留在 MySQL</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">同一 API 支撑页面与 AI</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">页面钻取失败、趋势与原始证据</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">AI 经 Insights Tool 查询并解释</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">给出可追溯判断</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">按规则判通过、不通过或数据不足</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">AI 区分事实、假设与缺失数据</text>
+<text x="1592.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">缺数据不默认放行</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">原型示例数据不是真实历史；ClickHouse 与完整 Insights 尚为目标</text>
+<text x="60.0" y="864" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">。</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">Insights API 故障时明确指标不可用，不绕过接口或猜数字。</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">人工归因不覆盖原始失败，指标可沿查询编号追到原件。</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
 </svg>
