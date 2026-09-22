@@ -66,6 +66,8 @@ TAP 以 **可信知识 + 统一测试模型（Test IR）+ TAP-managed Revision +
 
 [RFC-011 主动 Agent](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将**主动测试运营 Agent** 列为平台目标能力：受信需求/知识、构建与运行事件触发项目影响分析、回归建议和失败跟进，先形成可审阅方案，再经授权调用领域接口执行并回收反馈。项目工作记忆、建议收件箱、订阅降噪与版本化批准共同支持该闭环；默认仅分析/草稿，首期不监听个人桌面。这仍是 draft 功能设计，未表示当前代码已实现。
 
+RFC-011 当前聚焦**知识问答与基础 Test Insights**，对应原第 1、2 阶段的部分能力；基础 Insights 先接已有 CI 或外部真实报告。测试管理扩展、自建 Web/App 执行、完整 Insights/协作、负载与完整主动 Agent 闭环保留后续目标，详细设计待补。各阶段设计深度与范围见[交付范围标注](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#迁移或发布方式)，不据此改写现有阶段完成状态。
+
 ### Test IR 是什么？
 
 `Test IR` 是 **Test Intermediate Representation** 的缩写，在 TAP 中可以直接理解为“**统一测试模型**”。它不是客户需要操作的页面，也不是 Playwright、Selenium 或 Appium 脚本，而是平台内部用于统一记录测试内容的结构化格式。
