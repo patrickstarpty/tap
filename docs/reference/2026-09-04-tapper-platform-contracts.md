@@ -6,6 +6,8 @@
 >
 > **2026-09-18 目标编排合同**：[ADR-029](../decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 已确定 TAP AI Chat 与 AI Task 将统一经过版本化 LangGraph，并区分 Fast Chat、Durable Workflow、Bounded Agentic Task；[RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 要求增加 Task/GraphRun/Checkpoint、Execution Mode、Reasoning Mode、进度/等待/取消事件、工具调用、模型用量与 TAP Insights API 的版本化合同。这些目标字段和事件尚未在本页定义或实现；现有 V1 DTO/事件继续是当前契约，不得仅凭 `conversation.turn.requested/completed` 声称目标图、长任务恢复或跨产品 Insights 已交付。
 
+> **2026-09-22 主动 Agent 目标合同（draft）**：[RFC-011 主动 Agent](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 要求在现有 ProjectEventEnvelope 上定义可信来源与资源版本映射、持久化准入/去重/合并账本、项目订阅与工作记忆、建议/批准/反馈合同。主动 Task 须携带触发事件、服务主体/负责人、订阅/策略、图及 Agent/Skill/包版本和 digest；没有用户消息时不得伪造 Turn。批准绑定输入/方案/资源版本、动作范围与有效期，变更或撤权失效；正式 Run/Jira 等副作用经领域 API 幂等处理。新事件与 DTO 尚待版本化登记，不能扩大下面 V1 事件闭集或声称已有主动任务运行时；Redis 继续只作唤醒，MySQL/Outbox 是权威记录。
+
 ## 1. 身份与范围
 
 ```python

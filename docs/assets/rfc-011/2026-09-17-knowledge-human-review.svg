@@ -1,61 +1,102 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="830" viewBox="0 0 1850 830" role="img"><title>知识切片人工审核</title><rect width="100%" height="100%" fill="white"/>
-<polyline points="410,165 500,165" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="500.00,165.00 491.00,169.35 491.00,160.65" fill="#555"/>
-<polyline points="870,165 960,165" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="960.00,165.00 951.00,169.35 951.00,160.65" fill="#555"/>
-<polyline points="1330,165 1420,165" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1420.00,165.00 1411.00,169.35 1411.00,160.65" fill="#555"/>
-<polyline points="1070,230 1070,290 800,290 800,365" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="800.00,365.00 795.65,356.00 804.35,356.00" fill="#555"/>
-<polyline points="685,365 685,230" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="685.00,230.00 689.35,239.00 680.65,239.00" fill="#555"/>
-<polyline points="1605,230 1605,365" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1605.00,365.00 1600.65,356.00 1609.35,356.00" fill="#555"/>
-<polyline points="1420,430 1330,430" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1330.00,430.00 1339.00,425.65 1339.00,434.35" fill="#555"/>
-<polyline points="1145,495 1145,630" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1145.00,630.00 1140.65,621.00 1149.35,621.00" fill="#555"/>
-<polyline points="960,695 870,695" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="870.00,695.00 879.00,690.65 879.00,699.35" fill="#555"/>
-<polyline points="685,630 685,495" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="685.00,495.00 689.35,504.00 680.65,504.00" fill="#555"/>
-<rect x="40" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">解析草稿与原件</text>
-<text x="225.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">完整条款 / 表格规则 / 流程分支</text>
-<text x="225.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">来源位置、条件、例外不拆散</text>
-<rect x="500" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">业务人员核对与标注</text>
-<text x="685.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">修正文字、数值、单位、关系</text>
-<text x="685.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">疑点未解决不能提交批准</text>
-<rect x="960" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">独立复核当前版本</text>
-<text x="1145.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">复核人与本版编校人员分离</text>
-<text x="1145.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">批准绑定内容、来源与适用范围</text>
-<rect x="1420" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">冻结批准清单并建立索引</text>
-<text x="1605.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">文字 / 图像 / 关系全部就绪</text>
-<text x="1605.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">未完成时不切换正式版本</text>
-<rect x="500" y="365" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="401.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">退回或变更后重新核对</text>
-<text x="685.0" y="432.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">修改记录与差异保留</text>
-<text x="685.0" y="463.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">条件、公式与关系依赖一起复核</text>
-<rect x="960" y="365" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="401.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正式检索与再次核验</text>
-<text x="1145.0" y="432.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">仅取已发布、有效、有权的切片</text>
-<text x="1145.0" y="463.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">补上下文、图表查询同样检查</text>
-<rect x="1420" y="365" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="401.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布当前有效版本</text>
-<text x="1605.0" y="432.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MySQL 发布清单控制可见范围</text>
-<text x="1605.0" y="463.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">撤回立即停用并清缓存</text>
-<rect x="500" y="630" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="666.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">记录采纳与纠错</text>
-<text x="685.0" y="697.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原样采纳 / 修改后采纳 / 拒绝</text>
-<text x="685.0" y="728.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">纠错进入草稿，不自动变成知识</text>
-<rect x="960" y="630" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="666.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">回答 / 用例 / 自动化检查条件</text>
-<text x="1145.0" y="697.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保留批准切片版本和原文证据</text>
-<text x="1145.0" y="728.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">交付前再查撤回与失效</text>
-<text x="920.0" y="50" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">严格审核模式：沿用 Tapper 工具区的知识库，不增加独立产品入口</text>
-<text x="912.5" y="278" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">退回 / 资料变更</text>
-<text x="915.0" y="808" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">普通模式与严格模式分别标识；部分批准用裁剪/遮罩图；人工审批是质量控制，不代表绝对无误。</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="知识切片人工审核"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">知识切片人工审核</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">目标设计 · 严格模式：编校、独立复核、发布分别留痕</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">准备切片</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">解析服务 / 资料负责人</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">人工编校</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">业务专家 / 资料负责人</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">独立复核</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">未参与本版编校的人</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">发布与正式使用</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">项目发布人 / 知识模块</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">待核对</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">待复核</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">已批准</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">组织完整业务规则</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保留条款、表格与流程分支</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">绑定原件位置和依赖条件</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">解析草稿</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">原件与切片并排对照</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">缺来源、缺条件标待澄清</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">草稿不进入正式检索</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">逐项核对与标注</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">纠正文字、单位、公式与连线</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">补齐适用范围、前提和例外</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">提交待复核版本</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">处理全部阻断问题后提交</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保存修订差异与版本指纹</text>
+<text x="588.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">AI 只建议，不代人批准</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">核对差异并裁定</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">复核关键字段及关联条件</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">批准本版或退回并说明原因</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">批准绑定版本</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">记录复核人、内容与来源版本</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">内容或条件变化使批准失效</text>
+<text x="1090.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">管理员也不能绕过自审限制</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">索引就绪后发布</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">冻结批准清单并验证索引</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">切换可见版本供正式检索</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">持续抽检与撤回</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">到期、变更、撤回阻止新使用</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">交付前复查所用依据仍有效</text>
+<text x="1592.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">资料变更标记下游待复核</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">复核人可兼任发布人，但不能参与当前版本编校。</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">图像只使用获准区域；上下文、关系与缓存同样受审查。</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">知识审核、用例评审和脚本试跑是三项独立记录。</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
 </svg>

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="主动 Agent：发现变化，推动跟进"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">主动 Agent：发现变化，推动跟进</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">受信事件触发分析，方案经批准后进入领域执行；每次行动都有依据、版本和负责人。</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">事件与订阅</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">项目负责人 / TAP</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">分析与建议</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP AI · 统一 LangGraph</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">人工决策</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">QA / 业务负责人</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">执行与反馈</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP / 领域服务</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">准入</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">待审</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">获准</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">发现相关变化</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">需求或知识版本更新</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">构建、部署或真实 Run 完成</text>
+<text x="86.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">按获准范围定时检查</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">先控制触发噪声</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">来源校验、去重、合并与冷却</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">订阅可暂停，通知频率可配置</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">不监听个人桌面与私人消息</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">形成可审阅方案</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">检索获准证据与项目记忆</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">分析影响、回归范围与失败</text>
+<text x="588.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">给出修改草稿、差异和成本</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">建议进入收件箱</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">展示触发原因、证据与影响</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">默认只分析和生成待审草稿</text>
+<text x="588.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">固定 Agent / Skill 与图版本</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">明确批准本次行动</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">接受、调整、延后或忽略</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">核对资源、环境与执行预算</text>
+<text x="1090.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">批准绑定方案版本与有效期</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">动作前再次校验</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">内容变化或撤权使批准失效</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">副作用须重新确认项目权限</text>
+<text x="1090.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">订阅启用不等于动作授权</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">执行获准动作</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">经领域 API 应用修订或建 Run</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">返回状态、证据与实际费用</text>
+<text x="1592.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">反馈用于后续建议质量评估</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">结果与异常可追踪</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">重复请求不重复执行</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">结果未知先对账，再决定重试</text>
+<text x="1592.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">暂停订阅、取消任务、停止 Run 分开</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">首批先做知识变更影响分析，再接真实 Run 跟进</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">正式 Run、发布与外部工单不默认自动批准</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">事实与假设分开；反馈不会自动扩大权限</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
+</svg>

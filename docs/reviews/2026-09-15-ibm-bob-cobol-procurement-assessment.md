@@ -312,7 +312,12 @@ Tapper should not copy:
 If the Bob proof of value succeeds and there is customer demand for mainframe assurance, the smallest defensible Tapper extension is a **read-only COBOL assurance lane**, not a COBOL coding agent.
 
 ```mermaid
-flowchart LR
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 40, "padding": 16}
+}}%%
+flowchart TB
     Z[IBM Z source and runtime definitions]
     A[Approved mainframe analyzer]
     M[Versioned analysis manifest]
@@ -327,6 +332,12 @@ flowchart LR
     K --> T
     T --> R
     R --> E
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Z,M,T,E data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class R action;
 ```
 
 The manifest would contain stable application and artifact IDs, source revision hashes, symbols, calls, copybook use, table/field access, job relationships, evidence locations, analyzer version, configuration digest, confidence/coverage, and unresolved dynamic links. Tapper would validate and store the manifest, then use it as evidence for impact-oriented test plans. It would not let the model directly change COBOL or claim complete impact when analyzer coverage is partial.

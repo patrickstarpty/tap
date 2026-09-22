@@ -1,83 +1,108 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="1040" viewBox="0 0 1850 1040" role="img"><title>复杂文件与知识检索</title><rect width="100%" height="100%" fill="white"/>
-<polyline points="410,172 500,172" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="500.00,172.00 491.00,176.35 491.00,167.65" fill="#555"/>
-<polyline points="870,172 960,172" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="960.00,172.00 951.00,176.35 951.00,167.65" fill="#555"/>
-<polyline points="1330,172 1420,172" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1420.00,172.00 1411.00,176.35 1411.00,167.65" fill="#555"/>
-<polyline points="225,245 225,370" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="225.00,370.00 220.65,361.00 229.35,361.00" fill="#555"/>
-<polyline points="410,442 500,442" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="500.00,442.00 491.00,446.35 491.00,437.65" fill="#555"/>
-<polyline points="870,412 915,412 915,205 960,205" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="960.00,205.00 951.00,209.35 951.00,200.65" fill="#555"/>
-<polyline points="1145,245 1145,370" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1145.00,370.00 1140.65,361.00 1149.35,361.00" fill="#555"/>
-<polygon points="1145.00,245.00 1149.35,254.00 1140.65,254.00" fill="#555"/>
-<polyline points="1605,245 1605,370" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1605.00,370.00 1600.65,361.00 1609.35,361.00" fill="#555"/>
-<polyline points="410,802 500,802" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="500.00,802.00 491.00,806.35 491.00,797.65" fill="#555"/>
-<polyline points="870,802 960,802" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="960.00,802.00 951.00,806.35 951.00,797.65" fill="#555"/>
-<polyline points="1330,802 1420,802" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1420.00,802.00 1411.00,806.35 1411.00,797.65" fill="#555"/>
-<polyline points="1605,515 1605,635 685,635 685,730" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="685.00,730.00 680.65,721.00 689.35,721.00" fill="#555"/>
-<rect x="40" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 工具区 · 知识库</text>
-<text x="225.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">文档 / 扫描 PDF / 图片 / Excel</text>
-<text x="225.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">清点页、表、图形及版本</text>
-<rect x="500" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按内容解析</text>
-<text x="685.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原生文字 / 版面与 OCR</text>
-<text x="685.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Excel 单元格 + 原生图形连线</text>
-<rect x="960" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="144.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查完整性与关系</text>
-<text x="1145.0" y="175.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">缺页 / 缺表头 / 箭头与条件</text>
-<text x="1145.0" y="206.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">记录已解析、失败、待确认</text>
-<rect x="1420" y="100" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="128.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存证据与索引</text>
-<text x="1605.0" y="159.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">对象存储：原件、图、表</text>
-<text x="1605.0" y="190.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">MySQL：关系与定位</text>
-<text x="1605.0" y="221.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Milvus：文字 / 图像独立索引</text>
-<rect x="40" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原件与页面预览</text>
-<text x="225.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">pypdfium2 / LibreOffice</text>
-<text x="225.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">全图 + 局部放大，保留坐标</text>
-<rect x="500" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">复杂图片理解</text>
-<text x="685.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">OCR + Qwen3-VL-Plus</text>
-<text x="685.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">节点 / 方向 / 条件 / 疑点</text>
-<rect x="960" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">知识库内核对与审批</text>
-<text x="1145.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">原件与结果对照，修正或重试</text>
-<text x="1145.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">严格模式由独立人员复核</text>
-<rect x="1420" y="370" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="414.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">按审核规则发布可检索版本</text>
-<text x="1605.0" y="445.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">同一版本的各路索引就绪</text>
-<text x="1605.0" y="476.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">严格模式缺关键内容不能发布</text>
-<rect x="40" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="774.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Tapper 对话提问</text>
-<text x="225.0" y="805.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">先检查权限、来源与版本</text>
-<text x="225.0" y="836.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">判断是否查图、查数或查流程</text>
-<rect x="500" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="774.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">同时查找候选证据</text>
-<text x="685.0" y="805.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">关键词 + 文字向量 + 图像向量</text>
-<text x="685.0" y="836.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">表格查数 / 流程查关系</text>
-<rect x="960" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="758.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">合并、重排与补齐</text>
-<text x="1145.0" y="789.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Qwen3-VL-Reranker-2B</text>
-<text x="1145.0" y="820.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">补表头、上下文、分支路径</text>
-<text x="1145.0" y="851.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">只用获准区域图像，按范围查表</text>
-<rect x="1420" y="730" width="370" height="145" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="774.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">回答或生成测试内容</text>
-<text x="1605.0" y="805.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">结论附原页 / 图块 / 单元格</text>
-<text x="1605.0" y="836.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">缺失、冲突和待确认明确提示</text>
-<text x="500.0" y="53" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">入库：按内容处理，不把向量化成功当作解析完整</text>
-<text x="620.0" y="321" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">疑难区域补充识别</text>
-<text x="1252.5" y="318" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">复核与修正</text>
-<text x="1150.0" y="606" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">按证据编号取回内容，并再次检查权限</text>
-<text x="340.0" y="680" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">查询：先找证据，再组织回答</text>
-<text x="935.0" y="968" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">图像向量：Qwen3-VL-Embedding-2B；文字向量沿用现有模型。按来源版本增量更新，检索结果可追溯。</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="复杂文件与知识检索"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">复杂文件与知识检索</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">目标设计 · 上排完成资料入库，下排按问题取得完整依据</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">来源与范围</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">资料负责人 / 用户</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">提取与候选</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">解析服务 / SearchPort</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">核对与补齐</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">业务人员 / 知识模块</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">发布与回答</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">知识模块 / TAP AI</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">原件清单</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">解析结果</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">确认范围</text>
+<path data-edge="0-detail--1-detail" d="M470.0,636.0 L566.0,636.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="611.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">获准问题</text>
+<path data-edge="1-detail--2-detail" d="M972.0,636.0 L1068.0,636.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="611.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">候选证据</text>
+<path data-edge="2-detail--3-detail" d="M1474.0,636.0 L1570.0,636.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="611.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">核验依据</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">上传并清点原件</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">记录页面、表格与图形清单</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保留原件版本与定位</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">提问与授权</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">确认项目、来源版本与日期</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">检查本次可用范围</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">检索与回答</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">按内容分别解析</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">提取文字、表格与流程关系</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">扫描页识字，疑难区域看图</text>
+<text x="588.0" y="428" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">OCR / Excel / 视觉</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">文字与图像检索</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">关键词、文字及图像多路召回</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">合并去重，再重排候选</text>
+<text x="588.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">Milvus 混合检索</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">检索与回答</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">对照原件查遗漏</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">核对条件、表头、方向与连线</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">纠错、局部重试并确认范围</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">补齐完整证据</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">补章节、表头与获准图关系</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">疑难图回到原图再次核对</text>
+<text x="1090.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">关系扩展有范围与预算</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">检索与回答</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">发布一致知识版本</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">文字、图像、关系索引就绪</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">固定可见清单后切换版本</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">回答并定位原件</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">引用原页、图块或单元格</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">冲突、缺口与不可用明确提示</text>
+<text x="1592.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">交付前再验权限与版本</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">检索与回答</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">图片、Excel 与 OCR 均属新增目标，现有演示尚不支持。</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">未确认内容不能作为确定结论；部分可用范围必须固定。</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">完整表格计算按需走可选文件分析，不用相似片段猜汇总。</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
 </svg>

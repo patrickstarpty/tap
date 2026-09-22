@@ -30,6 +30,11 @@ Codex 是 `AgentRuntime` 的一个实现，不是 TAP 领域模型。Job、Task�
 ## 2. 阶段架构
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
 flowchart TB
     User[Knowledge Chat / Enrichment Console] --> Gateway[Ingress + Entra ID]
     Gateway --> BFF[Chat BFF / Agent Job API]
@@ -100,6 +105,18 @@ flowchart TB
 
     Credential -->|model/auth channel<br/>not visible to command sandbox| SDK
     SDK -->|Responses API| Model[Approved model endpoint]
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Plan,Search,State,Queue,Evidence,Artifacts,Report,Staging,Model data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class User,Approval action;
+    style Online fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style Control fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style RuntimePod fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style TrustedControl fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style Sandbox fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style TrustedServices fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
 ```
 
 关键隔离点：

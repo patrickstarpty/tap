@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<!-- Adapted from Cocoon-AI/architecture-diagram-generator architecture-diagram/resources/template.html. License notice: THIRD-PARTY-NOTICES.txt. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TAP AI Architecture Diagram</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+
+    .container {
+      max-width: 1680px;
+      margin: 0 auto;
+    }
+
+    .header {
+      margin-bottom: 2rem;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .pulse-dot {
+      width: 12px;
+      height: 12px;
+      background: #22d3ee;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.875rem;
+      margin-left: 1.75rem;
+    }
+
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    svg {
+      width: 100%;
+      min-width: 900px;
+      display: block;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+
+    .card h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .card ul {
+      list-style: none;
+      color: #94a3b8;
+      font-size: 0.75rem;
+    }
+
+    .card li {
+      margin-bottom: 0.375rem;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      color: #475569;
+      font-size: 0.75rem;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 0.5rem;
+      margin-left: auto;
+      flex-shrink: 0;
+      align-items: center;
+    }
+    .toolbar-toggle {
+      background: transparent;
+      border: none;
+      color: #475569;
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions {
+      display: none;
+      gap: 0.5rem;
+    }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.375rem;
+      font-family: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .toolbar-actions button:hover {
+      background: rgba(51, 65, 85, 0.8);
+      color: white;
+      border-color: #475569;
+    }
+
+    @media print {
+      body { background: #020617; padding: 1rem; }
+      .toolbar { display: none !important; }
+    }
+  </style>
+<style>.card h3{font-size:16px}.card ul{font-size:14px;line-height:1.7}.footer{font-size:12px}.diagram-container{padding:20px}h1{font-size:30px}</style></head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>TAP AI · 技术架构</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">目标架构 · 同一编排承接用户请求与主动事件 · Cocoon 模板对照版</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1650 1090" role="img" aria-label="TAP AI 目标技术架构：交互及主动事件进入统一 LangGraph，通过受控工具调用模型、知识和 TAP 领域平台。">
+<defs><marker id="arrowhead" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7" fill="#64748b"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#1e293b" stroke-width=".5"/></pattern></defs>
+<rect width="1650" height="1090" fill="url(#grid)"/>
+<text x="60" y="55" text-anchor="start" font-size="24" font-weight="500" fill="#94a3b8">01  交互与事件</text>
+<text x="540" y="55" text-anchor="start" font-size="24" font-weight="500" fill="#94a3b8">02  统一 Agent 运行时</text>
+<text x="1160" y="55" text-anchor="start" font-size="24" font-weight="500" fill="#94a3b8">03  受控能力与领域系统</text>
+<rect x="500" y="110" width="520" height="895" rx="12" fill="rgba(6,78,59,.06)" stroke="#34d399" stroke-opacity=".38" stroke-dasharray="8 5"/>
+<text x="540" y="153" text-anchor="start" font-size="19" font-weight="400" fill="#34d399">TAP AI Backend · FastAPI</text>
+<path d="M360,352 L440,352 L440,460 L540,460" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<text x="446" y="337" text-anchor="middle" font-size="17" font-weight="400" fill="#94a3b8">Chat / AI Task</text>
+<path d="M360,610 L540,610" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<text x="450" y="588" text-anchor="middle" font-size="17" font-weight="400" fill="#94a3b8">受信事件</text>
+<path d="M760,310 L760,410" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<text x="799" y="370" text-anchor="middle" font-size="17" font-weight="400" fill="#94a3b8">装载</text>
+<path d="M760,645 L760,785" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<text x="847" y="723" text-anchor="middle" font-size="17" font-weight="400" fill="#94a3b8">持久化 / 恢复</text>
+<path d="M980,460 L1070,460 L1070,262 L1160,262" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<path d="M980,535 L1160,535" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<path d="M980,610 L1070,610 L1070,867 L1160,867" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+<g data-node="ui"><rect x="60" y="265" width="300" height="175" rx="6" fill="#0f172a"/>
+<rect x="60" y="265" width="300" height="175" rx="6" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="84" y="304" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">TAP AI 工作台</text>
+<text x="84" y="343" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">React · TypeScript</text>
+<text x="84" y="373" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">Tapper / 知识 / 测试管理</text>
+<text x="84" y="403" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">建议收件箱与人工审批</text>
+</g>
+<g data-node="proactive"><rect x="60" y="565" width="300" height="195" rx="6" fill="#0f172a"/>
+<rect x="60" y="565" width="300" height="195" rx="6" fill="rgba(124,45,18,.3)" stroke="#fb923c" stroke-width="1.5"/>
+<text x="84" y="604" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">主动 Agent</text>
+<text x="84" y="643" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">需求 / 知识 / Run 事件</text>
+<text x="84" y="673" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">订阅 · 去重 · 项目记忆</text>
+<text x="84" y="703" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">发现风险，生成待审建议</text>
+</g>
+<g data-node="skills"><rect x="540" y="195" width="440" height="115" rx="6" fill="#0f172a"/>
+<rect x="540" y="195" width="440" height="115" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+<text x="564" y="234" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">Agent / Skill Registry</text>
+<text x="564" y="273" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">版本化能力包 · 固定版本装载</text>
+</g>
+<g data-node="graph"><rect x="540" y="410" width="440" height="235" rx="6" fill="#0f172a"/>
+<rect x="540" y="410" width="440" height="235" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="2"/>
+<text x="564" y="449" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">统一 LangGraph 编排</text>
+<text x="564" y="491" text-anchor="start" font-size="20" font-weight="400" fill="#94a3b8">任务分类与准入 · 权限 · 预算</text>
+<line x1="564" y1="518" x2="956" y2="518" stroke="#1e514c"/>
+<text x="564" y="554" text-anchor="start" font-size="22" font-weight="400" fill="#34d399">Fast Chat</text>
+<text x="564" y="587" text-anchor="start" font-size="22" font-weight="400" fill="#34d399">Durable Workflow</text>
+<text x="564" y="620" text-anchor="start" font-size="22" font-weight="400" fill="#34d399">Bounded Agentic Task</text>
+</g>
+<g data-node="state"><rect x="540" y="785" width="440" height="175" rx="6" fill="#0f172a"/>
+<rect x="540" y="785" width="440" height="175" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="564" y="824" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">任务恢复与状态</text>
+<text x="564" y="863" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">Relay / Worker · Redis 唤醒</text>
+<text x="564" y="893" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">MySQL：检查点 / 审批 / Outbox</text>
+<text x="564" y="923" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">对象存储：原件 / 能力包 / 证据</text>
+</g>
+<g data-node="model"><rect x="1160" y="195" width="430" height="135" rx="6" fill="#0f172a"/>
+<rect x="1160" y="195" width="430" height="135" rx="6" fill="rgba(120,53,15,.3)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="1184" y="234" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">模型服务</text>
+<text x="1184" y="273" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">ModelGateway → LiteLLM</text>
+<text x="1184" y="303" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">LLM / 多模态模型</text>
+</g>
+<g data-node="knowledge"><rect x="1160" y="460" width="430" height="170" rx="6" fill="#0f172a"/>
+<rect x="1160" y="460" width="430" height="170" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="1184" y="499" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">知识与证据</text>
+<text x="1184" y="538" text-anchor="start" font-size="18" font-weight="400" fill="#acb9ce">Knowledge Search Tool → SearchPort</text>
+<text x="1184" y="568" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">Milvus 混合检索</text>
+<text x="1184" y="598" text-anchor="start" font-size="20" font-weight="400" fill="#acb9ce">MySQL Graph：获准关系有界扩展</text>
+</g>
+<g data-node="tap"><rect x="1160" y="740" width="430" height="245" rx="6" fill="#0f172a"/>
+<rect x="1160" y="740" width="430" height="245" rx="6" fill="rgba(30,41,59,.5)" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="1184" y="779" text-anchor="start" font-size="25" font-weight="600" fill="#f8fafc">TAP 领域平台</text>
+<text x="1184" y="818" text-anchor="start" font-size="18" font-weight="400" fill="#acb9ce">Insights Tool → Insights API</text>
+<text x="1184" y="848" text-anchor="start" font-size="18" font-weight="400" fill="#acb9ce">ClickHouse 指标 · 运行证据</text>
+<text x="1184" y="878" text-anchor="start" font-size="18" font-weight="400" fill="#acb9ce">Domain APIs → Jenkins → 执行资源</text>
+<text x="1184" y="908" text-anchor="start" font-size="18" font-weight="400" fill="#acb9ce">Playwright / Appium · 独立 k6</text>
+<text x="1184" y="961" text-anchor="start" font-size="18" font-weight="400" fill="#fb7185">正式 Run：人工审批后创建</text>
+</g>
+<text x="60" y="825" text-anchor="start" font-size="20" font-weight="400" fill="#fb923c">主动发现 → 待审建议</text>
+<text x="60" y="859" text-anchor="start" font-size="18" font-weight="400" fill="#94a3b8">复用同一编排与权限边界</text>
+<rect x="60" y="1042" width="20" height="14" rx="3" fill="rgba(8,51,68,.4)" stroke="#22d3ee"/>
+<text x="90" y="1055" text-anchor="start" font-size="17" font-weight="400" fill="#94a3b8">交互</text>
+<rect x="250" y="1042" width="20" height="14" rx="3" fill="rgba(124,45,18,.3)" stroke="#fb923c"/>
+<text x="280" y="1055" text-anchor="start" font-size="17" font-weight="400" fill="#94a3b8">主动触发</text>
+<rect x="460" y="1042" width="20" height="14" rx="3" fill="rgba(6,78,59,.4)" stroke="#34d399"/>
+<text x="490" y="1055" text-anchor="start" font-size="17" font-weight="400" fill="#94a3b8">编排</text>
+<rect x="650" y="1042" width="20" height="14" rx="3" fill="rgba(76,29,149,.4)" stroke="#a78bfa"/>
+<text x="680" y="1055" text-anchor="start" font-size="17" font-weight="400" fill="#94a3b8">数据与状态</text>
+<rect x="900" y="1042" width="20" height="14" rx="3" fill="rgba(120,53,15,.3)" stroke="#fbbf24"/>
+<text x="930" y="1055" text-anchor="start" font-size="17" font-weight="400" fill="#94a3b8">模型</text>
+<rect x="1110" y="1042" width="20" height="14" rx="3" fill="rgba(30,41,59,.5)" stroke="#94a3b8"/>
+<text x="1140" y="1055" text-anchor="start" font-size="17" font-weight="400" fill="#94a3b8">TAP 平台</text>
+</svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>主动 Agent</h3>
+        </div>
+        <ul><li>• 受信项目事件进入统一 AI Task</li><li>• 订阅与去重控制触发频率</li><li>• 生成有依据、可批准的行动建议</li></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>统一编排</h3>
+        </div>
+        <ul><li>• LangGraph 为后端内部编排库</li><li>• 三种执行 Profile 共享权限与工具</li><li>• Relay / Worker 恢复持久化任务</li></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>执行边界</h3>
+        </div>
+        <ul><li>• 知识与指标通过受控工具访问</li><li>• 正式 Run 在人工批准后创建</li><li>• TAP 执行资源独立于 AI Runtime</li></ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      TAP AI · RFC-011 目标设计（含未实现能力） · 2026-09-22 · Based on Cocoon AI / MIT
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'diagram.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('diagram.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # BrowserStack Test Insights 逐页分析与 TAP 设计映射
 
-研究日期：2026-09-17。仅阅读官方公开文档与TAP现有源码；没有登录或实测BrowserStack账户、SDK、API、连接器和套餐。下面的 TAP 落点均是目标设计，不是现有完成状态；交互、指标与技术架构见 [RFC-011 第 6 节](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)。
+研究日期：2026-09-17。仅阅读官方公开文档与TAP现有源码；没有登录或实测BrowserStack账户、SDK、API、连接器和套餐。下面的 TAP 落点均是目标设计，不是现有完成状态；交互、指标与技术架构见 [RFC-011 Insights 专题](../reference/2026-09-22-rfc-011-insights-contracts-design.md)。
 
 ## 对RFC-011的关键修订建议
 

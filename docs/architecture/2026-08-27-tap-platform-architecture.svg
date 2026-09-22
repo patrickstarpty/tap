@@ -4,23 +4,19 @@
   <desc id="svg-desc">管理层汇报视图：使用者与企业资产进入 TAP 统一平台，统一工作台连接知识问答、测试资产和测试执行三项能力，平台输出可信答案、可复用测试资产、可审计质量结论与持续改进；共享平台底座提供身份权限、数据、搜索、模型、审计与审批能力。</desc>
   <defs>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2F6FED" />
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#737080" />
     </marker>
   </defs>
-
   <rect width="1600" height="900" fill="#FFFFFF" />
-
   <g id="heading" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
-    <text x="60" y="68" fill="#12304A" font-size="36" font-weight="700">TAP Test Automation Platform｜企业级测试与知识平台</text>
-    <text x="60" y="108" fill="#66788A" font-size="18">统一入口、统一资产、统一执行、统一证据</text>
+    <text x="60" y="68" fill="#303447" font-size="30" font-weight="700">TAP Test Automation Platform｜企业级测试与知识平台</text>
+    <text x="60" y="108" fill="#626575" font-size="18">统一入口、统一资产、统一执行、统一证据</text>
   </g>
-
   <g id="platform-container">
-    <rect x="340" y="165" width="880" height="470" rx="12" fill="#FFFFFF" stroke="#2F6FED" stroke-width="1.5" />
-    <text x="378" y="205" fill="#12304A" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif" font-size="26" font-weight="700">TAP 统一平台</text>
+    <rect x="340" y="165" width="880" height="470" fill="#FFFFFF" stroke="#A9A6B2" stroke-width="1.5" stroke-dasharray="6 4" />
+    <text x="378" y="205" fill="#303447" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif" font-size="23" font-weight="700">TAP 统一平台</text>
   </g>
-
-  <g id="flow" fill="none" stroke="#2F6FED" stroke-width="2" stroke-linecap="round">
+  <g id="flow" fill="none" stroke="#737080" stroke-width="1.5" stroke-linecap="round">
     <line x1="295" y1="307.5" x2="340" y2="307.5" marker-end="url(#arrow-blue)" />
     <line x1="295" y1="480" x2="340" y2="480" marker-end="url(#arrow-blue)" />
     <line x1="1220" y1="410" x2="1270" y2="410" marker-end="url(#arrow-blue)" />
@@ -28,67 +24,63 @@
     <line x1="780" y1="340" x2="780" y2="400" marker-end="url(#arrow-blue)" />
     <line x1="1045" y1="340" x2="1045" y2="400" marker-end="url(#arrow-blue)" />
   </g>
-  <line id="foundation-support" x1="780" y1="635" x2="780" y2="690" stroke="#0F8F78" stroke-width="2.5" stroke-linecap="round" />
-
+  <line id="foundation-support" x1="780" y1="635" x2="780" y2="690" stroke="#737080" stroke-width="2.5" stroke-linecap="round" />
   <g id="inputs" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
     <g id="users">
-      <rect x="60" y="250" width="235" height="115" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="2" />
-      <text x="84" y="292" fill="#12304A" font-size="21" font-weight="700">使用者</text>
-      <text x="84" y="330" fill="#12304A" font-size="17">研发 · QA · 产品</text>
+      <rect x="60" y="250" width="235" height="115" fill="#FFF3CC" stroke="#C8AF68" stroke-width="1.5" />
+      <text x="84" y="292" fill="#303447" font-size="21" font-weight="700">使用者</text>
+      <text x="84" y="330" fill="#303447" font-size="17">研发 · QA · 产品</text>
     </g>
     <g id="enterprise-assets">
-      <rect x="60" y="405" width="235" height="150" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="2" />
-      <text x="84" y="447" fill="#12304A" font-size="21" font-weight="700">企业资产</text>
-      <text x="84" y="487" fill="#12304A" font-size="17">文档 · 代码 · BDD</text>
-      <text x="84" y="516" fill="#12304A" font-size="17">历史失败</text>
+      <rect x="60" y="405" width="235" height="150" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+      <text x="84" y="447" fill="#303447" font-size="21" font-weight="700">企业资产</text>
+      <text x="84" y="487" fill="#303447" font-size="17">文档 · 代码 · BDD</text>
+      <text x="84" y="516" fill="#303447" font-size="17">历史失败</text>
     </g>
   </g>
-
   <g id="workbench" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
-    <rect x="390" y="235" width="780" height="105" rx="12" fill="#EAF2FF" stroke="#2F6FED" stroke-width="2" />
-    <text x="780" y="278" text-anchor="middle" fill="#12304A" font-size="21" font-weight="700">统一工作台</text>
-    <text x="780" y="314" text-anchor="middle" fill="#12304A" font-size="17">Tapper · Test Management · Low Code Automation (LCA)</text>
+    <rect x="390" y="235" width="780" height="105" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="780" y="278" text-anchor="middle" fill="#303447" font-size="21" font-weight="700">统一工作台</text>
+    <text x="780" y="314" text-anchor="middle" fill="#303447" font-size="17">Tapper · Test Management · Low Code Automation (LCA)</text>
   </g>
-
   <g id="capabilities" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
     <g id="knowledge-capability">
-      <rect x="390" y="400" width="250" height="170" rx="12" fill="#EAF2FF" stroke="#2F6FED" stroke-width="2" />
-      <text x="414" y="433" fill="#2457B3" font-size="16" font-weight="700">V1–V2</text>
-      <text x="414" y="471" fill="#12304A" font-size="21" font-weight="700">知识问答</text>
-      <text x="414" y="514" fill="#12304A" font-size="17">检索 · 生成 · 逐条引用</text>
+      <rect x="390" y="400" width="250" height="170" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+      <text x="414" y="433" fill="#72568F" font-size="16" font-weight="700">V1–V2</text>
+      <text x="414" y="471" fill="#303447" font-size="21" font-weight="700">知识问答</text>
+      <text x="414" y="514" fill="#303447" font-size="17">检索 · 生成 · 逐条引用</text>
     </g>
     <g id="test-assets-capability">
-      <rect x="655" y="400" width="250" height="170" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="2" />
-      <text x="679" y="433" fill="#4E6072" font-size="16" font-weight="700">V3–V4</text>
-      <text x="679" y="471" fill="#12304A" font-size="21" font-weight="700">测试资产</text>
-      <text x="679" y="510" fill="#12304A" font-size="17">自然语言 / BDD</text>
-      <text x="679" y="540" fill="#12304A" font-size="17">→ 统一测试模型 (Test IR)</text>
+      <rect x="655" y="400" width="250" height="170" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+      <text x="679" y="433" fill="#72568F" font-size="16" font-weight="700">V3–V4</text>
+      <text x="679" y="471" fill="#303447" font-size="21" font-weight="700">测试资产</text>
+      <text x="679" y="510" fill="#303447" font-size="17">自然语言 / BDD</text>
+      <text x="679" y="540" fill="#303447" font-size="17">→ 统一测试模型 (Test IR)</text>
     </g>
     <g id="test-execution-capability">
-      <rect x="920" y="400" width="250" height="170" rx="12" fill="#F3F6F9" stroke="#C7D2DE" stroke-width="2" />
-      <text x="944" y="433" fill="#4E6072" font-size="16" font-weight="700">V5</text>
-      <text x="944" y="471" fill="#12304A" font-size="21" font-weight="700">测试执行</text>
-      <text x="944" y="510" fill="#12304A" font-size="17">Web · Jenkins Pipeline Agent</text>
-      <text x="944" y="540" fill="#12304A" font-size="17">→ 统一证据</text>
+      <rect x="920" y="400" width="250" height="170" fill="#EDE5F7" stroke="#9983B7" stroke-width="1.5" />
+      <text x="944" y="433" fill="#72568F" font-size="16" font-weight="700">V5</text>
+      <text x="944" y="471" fill="#303447" font-size="21" font-weight="700">测试执行</text>
+      <text x="944" y="503" fill="#303447" font-size="16">Web · Jenkins</text>
+      <text x="944" y="527" fill="#303447" font-size="16">Pipeline Agent</text>
+      <text x="944" y="551" fill="#303447" font-size="16">→ 统一证据</text>
     </g>
   </g>
-
   <g id="business-results" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
-    <rect x="1270" y="265" width="270" height="290" rx="12" fill="#EAF8F4" stroke="#0F8F78" stroke-width="2" />
-    <text x="1298" y="319" fill="#12304A" font-size="21" font-weight="700">业务结果</text>
-    <text x="1298" y="369" fill="#12304A" font-size="18">可信答案</text>
-    <text x="1298" y="407" fill="#12304A" font-size="18">可复用测试资产</text>
-    <text x="1298" y="445" fill="#12304A" font-size="18">可审计质量结论</text>
-    <text x="1298" y="483" fill="#12304A" font-size="18">持续改进</text>
+    <rect x="1270" y="265" width="270" height="290" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="1298" y="319" fill="#303447" font-size="21" font-weight="700">业务结果</text>
+    <text x="1298" y="369" fill="#303447" font-size="18">可信答案</text>
+    <text x="1298" y="407" fill="#303447" font-size="18">可复用测试资产</text>
+    <text x="1298" y="445" fill="#303447" font-size="18">可审计质量结论</text>
+    <text x="1298" y="483" fill="#303447" font-size="18">持续改进</text>
   </g>
-
   <g id="foundation" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif">
-    <rect x="340" y="690" width="880" height="95" rx="12" fill="#EAF8F4" stroke="#0F8F78" stroke-width="2" />
-    <text x="368" y="728" fill="#12304A" font-size="21" font-weight="700">共享平台底座</text>
-    <text x="368" y="762" fill="#12304A" font-size="16">Validation Scope → P0 RBAC · MySQL / MinIO · Milvus / LiteLLM · 审计与审批</text>
+    <rect x="340" y="690" width="880" height="95" fill="#E4F0FA" stroke="#83A7C2" stroke-width="1.5" />
+    <text x="368" y="728" fill="#303447" font-size="21" font-weight="700">共享平台底座</text>
+    <text x="368" y="762" fill="#303447" font-size="16">Validation Scope → P0 RBAC · MySQL / MinIO · Milvus / LiteLLM · 审计与审批</text>
   </g>
-
-  <text id="footer" x="60" y="852" fill="#66788A" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif" font-size="16">
-    <tspan font-weight="700">当前重点：</tspan><tspan>可信知识问答 → Knowledge Graph → AI Test Design → Web LCA/Recorder → Jenkins 结果闭环。</tspan>
+  <text id="footer" x="60" y="852" fill="#626575" font-family="Arial, Microsoft YaHei, PingFang SC, sans-serif" font-size="16">
+    <tspan font-weight="700">当前重点：</tspan>
+    <tspan>可信知识问答 → Knowledge Graph → AI Test Design → Web LCA/Recorder → Jenkins 结果闭环。</tspan>
   </text>
 </svg>

@@ -64,6 +64,8 @@ TAP 以 **可信知识 + 统一测试模型（Test IR）+ TAP-managed Revision +
 
 目标 AI 编排由 [ADR-029](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md) 固定：TAP AI 的 Chat 与 AI Task 进入同一版本化 LangGraph，分别支持低延迟 Fast Chat、可恢复 Durable Workflow 和受预算限制的 Bounded Agentic Task；知识检索经 `SearchPort → Milvus 混合检索 → 可选的有界 MySQL Graph 扩展`，历史指标经 `TAP Insights API → ClickHouse`，模型调用经 `ModelGateway → LiteLLM`。任务分类位于图内，模型选择位于 ModelGateway，不部署独立 Query Router 或 Model Router 服务。RFC-006/ADR-018 的 legacy loopback Codex 回答组合不挂载 Project API，是明确例外。这是已接受的目标架构，不表示当前 V1 已实现 LangGraph、三种执行剖面、工具循环或模型层级策略。
 
+[RFC-011 主动 Agent](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md#2-主动-agent) 将**主动测试运营 Agent** 列为平台目标能力：受信需求/知识、构建与运行事件触发项目影响分析、回归建议和失败跟进，先形成可审阅方案，再经授权调用领域接口执行并回收反馈。项目工作记忆、建议收件箱、订阅降噪与版本化批准共同支持该闭环；默认仅分析/草稿，首期不监听个人桌面。这仍是 draft 功能设计，未表示当前代码已实现。
+
 ### Test IR 是什么？
 
 `Test IR` 是 **Test Intermediate Representation** 的缩写，在 TAP 中可以直接理解为“**统一测试模型**”。它不是客户需要操作的页面，也不是 Playwright、Selenium 或 Appium 脚本，而是平台内部用于统一记录测试内容的结构化格式。
@@ -127,12 +129,12 @@ Linux + Docker Compose + MySQL + Redis + MinIO
 ## 文档导航
 
 - [Tapper 知识与 Web 自动化平台架构](docs/architecture/2026-09-04-tapper-knowledge-web-automation-overview.md)：当前边界、组件、数据、流程、安全、可靠性与部署。
-- [RFC-011：跨平台测试与 AI 编排目标设计](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：统一 LangGraph、Milvus 知识工具、Insights API/ClickHouse 指标工具与可选 chDB 文件分析。
+- [RFC-011：跨平台测试与 AI 编排目标设计](docs/proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：统一 LangGraph、主动测试运营 Agent、Milvus 知识工具、Insights API/ClickHouse 指标工具与可选 chDB 文件分析。
 - [ADR-029：LangGraph 统一编排 TAP AI 的 AI 交互与任务](docs/decisions/2026-09-18-adr-029-langgraph-ai-interaction-task-orchestrator.md)：记录 Fast Chat、Durable Workflow、Bounded Agentic Task 及工具、模型、指标边界。
 - [RFC-009：平台设计](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)：完整产品旅程、数据模型、API、事件、质量门禁和阶段边界。
 - [Tapper 知识与 Web 自动化平台实施计划](docs/plans/2026-09-04-tapper-knowledge-web-automation-platform.md)：V0–P1 的精确文件、TDD 步骤、命令与提交边界。
 - [Tapper 平台设计基线评审](docs/reviews/2026-09-05-tapper-platform-design-baseline-review.md)：记录已关闭的关键问题、最终 READY 结论和“可进入 V0、尚未实现或生产就绪”的授权边界。
-- TAP AI 技术架构总览：[PNG 预览](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.png) / [draw.io 源文件](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)：面向技术与产品/管理联合评审，展示 Fast Chat、Durable Workflow、Bounded Agentic Task、领域端口、模型访问与数据底座。
+- TAP AI 技术架构总览：[PNG 预览](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.png) / [SVG](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.svg) / [draw.io 源文件](docs/assets/rfc-011/2026-09-18-tap-ai-technical-architecture-overview.drawio)：面向技术与产品/管理联合评审，展示主动事件、统一 LangGraph、行动提案与授权反馈、领域端口及数据底座。
 - TAP 平台架构简图：[draw.io 源文件](docs/architecture/2026-08-27-tap-platform-architecture.drawio) / [SVG 预览](docs/architecture/2026-08-27-tap-platform-architecture.svg)：面向管理层说明输入、统一平台、业务结果与共享底座。
 - RAG 知识问答简图：[draw.io 源文件](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.drawio) / [SVG 预览](docs/architecture/rag/2026-08-27-rag-knowledge-business-flow.svg)：用知识建设与在线问答两条主线说明从数据源到可溯源回答的完整链路。
 - [整体架构评审](docs/reviews/2026-08-21-architecture-review.md)：评审结论、优先级问题、整改建议与分阶段决策门禁。

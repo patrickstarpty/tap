@@ -1,6 +1,6 @@
 # BrowserStack App / Web LCA 逐页分析与 TAP 设计映射
 
-评审日期：2026-09-17。本文为公开文档研究，**不是产品账号实测，也不是已完成功能清单**。目标设计见 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)：第 3.5 节是知识人工核对，第 5 节是 LCA 交互、选型与执行设计。
+评审日期：2026-09-17。本文为公开文档研究，**不是产品账号实测，也不是已完成功能清单**。目标设计见 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)；详细约束见 [知识人工核对、审批与发布](../reference/2026-09-22-rfc-011-ai-knowledge-design.md#人工核对审批与发布)及 [Web 与 App 低代码自动化](../reference/2026-09-22-rfc-011-testing-execution-design.md#web-与-app-低代码自动化)。
 
 ## 结论与阅读方式
 
@@ -14,7 +14,7 @@ TAP 自建低代码创作、步骤定义与脚本生成，沿用现有工作台�
 | 视频 | [BrowserStack Low Code Automation — Sneak Peak](https://www.youtube.com/watch?v=oOuogmSO5yI)：网页只返回标题/页脚；浏览器触发 YouTube 访问验证，未取得可播放视频或字幕，**未完成内容分析，不作为已核实设计依据** |
 | 范围边界 | 覆盖本次公开导航、正文链接和网站地图发现的产品文档集合；不声称覆盖未公开/未链接资料，也未展开其他 BrowserStack 产品的完整文档树 |
 
-A01–A30 对应 App 文档；W001–W108 对应 Web URL；F001–F007 对应 Web 支撑 FAQ。P0/P1/P2 表示本评审的建议优先级，最终交付批次以 RFC-011 第 5.7 节为准；不代表所有 P0 已实现。所有产品限额、套餐和实验状态仅代表本次读取的公开页面，冲突原样保留并列出核验点。
+A01–A30 对应 App 文档；W001–W108 对应 Web URL；F001–F007 对应 Web 支撑 FAQ。P0/P1/P2 表示本评审的建议优先级，最终交付批次以 [RFC-011 执行与交付专题](../reference/2026-09-22-rfc-011-testing-execution-design.md)为准；不代表所有 P0 已实现。所有产品限额、套餐和实验状态仅代表本次读取的公开页面，冲突原样保留并列出核验点。
 
 | 设计落点 | 主要来源 |
 | --- | --- |

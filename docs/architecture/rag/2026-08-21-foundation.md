@@ -39,7 +39,12 @@
 ## 3. 历史 Azure Knowledge Plane 架构（2026-08-21）
 
 ```mermaid
-flowchart LR
+%%{init: {
+  "theme": "base",
+  "themeVariables": {"fontFamily": "Arial, Noto Sans SC, sans-serif", "fontSize": "15px", "primaryColor": "#EEE9FA", "primaryTextColor": "#263445", "primaryBorderColor": "#94A3B8", "secondaryColor": "#E7F1FA", "secondaryTextColor": "#263445", "secondaryBorderColor": "#94A3B8", "tertiaryColor": "#FFF4D6", "tertiaryTextColor": "#263445", "tertiaryBorderColor": "#94A3B8", "lineColor": "#7E8B9B", "textColor": "#263445", "mainBkg": "#EEE9FA", "nodeBorder": "#94A3B8", "clusterBkg": "#F7F8FC", "clusterBorder": "#AAB4C2", "edgeLabelBackground": "#FFFFFF", "background": "#FFFFFF", "actorBkg": "#EEE9FA", "actorBorder": "#94A3B8", "actorTextColor": "#263445", "actorLineColor": "#AAB4C2", "signalColor": "#7E8B9B", "signalTextColor": "#263445", "labelBoxBkgColor": "#E7F1FA", "labelBoxBorderColor": "#94A3B8", "labelTextColor": "#263445", "loopTextColor": "#263445", "noteBkgColor": "#FFF4D6", "noteBorderColor": "#CDBD87", "noteTextColor": "#263445", "activationBkgColor": "#E7F1FA", "activationBorderColor": "#94A3B8", "attributeBackgroundColorOdd": "#F7F8FC", "attributeBackgroundColorEven": "#FFFFFF"},
+  "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 64, "padding": 16}
+}}%%
+flowchart TB
     subgraph Sources[Authoritative Sources]
       Git[Git<br/>Code / BDD / Test Assets]
       Blob[Blob<br/>Documents / Evidence]
@@ -110,6 +115,14 @@ flowchart LR
     Cite --> TracePolicy --> BFF
     BFF -->|SSE / citation response| Web
     BFF --> Resolver
+
+    classDef default fill:#EEE9FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    classDef data fill:#E7F1FA,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Git,Blob,MySQL,ChatDB,IngestDB,Redis,Search,KeyVault,Identity data;
+    classDef action fill:#FFF4D6,stroke:#94A3B8,stroke-width:1px,color:#263445;
+    class Web action;
+    style Sources fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
+    style AKS fill:#F7F8FC,stroke:#AAB4C2,stroke-width:1px,stroke-dasharray:6 4,color:#263445;
 ```
 
 Indexer、解析、切片、Embedding、权限元数据和删除传播均由 TAP 在 AKS 中控制。Azure AI Search 是可重建索引，不负责替代原始内容或 ACL 权威源。

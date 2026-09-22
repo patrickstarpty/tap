@@ -1,6 +1,6 @@
 # BrowserStack Test Management / Jira App 逐页分析与 TAP 设计映射
 
-本报告研究公开文档中的产品行为，不代表登录实测或 BrowserStack 对 TAP 的接口承诺；所有 TAP 项均为设计建议。研究日期：2026-09-17。正式交互、技术归属与迁移规则见 [RFC-011 第 4 节](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md)。
+本报告研究公开文档中的产品行为，不代表登录实测或 BrowserStack 对 TAP 的接口承诺；所有 TAP 项均为设计建议。研究日期：2026-09-17。正式交互、技术归属与迁移规则见 [RFC-011 测试管理专题](../reference/2026-09-22-rfc-011-testing-execution-design.md#测试管理)。
 
 ## 核心结论与产品边界
 

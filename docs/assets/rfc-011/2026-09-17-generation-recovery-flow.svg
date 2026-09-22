@@ -1,79 +1,103 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="940" viewBox="0 0 1480 940" role="img"><title>生成与异常处理</title><rect width="100%" height="100%" fill="white"/>
-<polyline points="330,140 400,140" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="400.00,140.00 391.00,144.35 391.00,135.65" fill="#555"/>
-<polyline points="690,140 760,140" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="760.00,140.00 751.00,144.35 751.00,135.65" fill="#555"/>
-<polyline points="1050,140 1120,140" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1120.00,140.00 1111.00,144.35 1111.00,135.65" fill="#555"/>
-<polyline points="545,190 545,280" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="545.00,280.00 540.65,271.00 549.35,271.00" fill="#555"/>
-<polyline points="400,330 185,330 185,190" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="185.00,190.00 189.35,199.00 180.65,199.00" fill="#555"/>
-<polyline points="905,190 905,280" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="905.00,280.00 900.65,271.00 909.35,271.00" fill="#555"/>
-<polygon points="905.00,190.00 909.35,199.00 900.65,199.00" fill="#555"/>
-<polyline points="1050,170 1090,170 1090,330 1120,330" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1120.00,330.00 1111.00,334.35 1111.00,325.65" fill="#555"/>
-<polygon points="1050.00,170.00 1059.00,165.65 1059.00,174.35" fill="#555"/>
-<polyline points="330,590 400,590" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="400.00,590.00 391.00,594.35 391.00,585.65" fill="#555"/>
-<polyline points="690,590 760,590" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="760.00,590.00 751.00,594.35 751.00,585.65" fill="#555"/>
-<polyline points="1050,590 1120,590" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1120.00,590.00 1111.00,594.35 1111.00,585.65" fill="#555"/>
-<polyline points="185,640 185,750" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="185.00,750.00 180.65,741.00 189.35,741.00" fill="#555"/>
-<polyline points="545,640 545,750" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="545.00,750.00 540.65,741.00 549.35,741.00" fill="#555"/>
-<polygon points="545.00,640.00 549.35,649.00 540.65,649.00" fill="#555"/>
-<polyline points="905,640 905,750" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="905.00,750.00 900.65,741.00 909.35,741.00" fill="#555"/>
-<polyline points="905,850 905,895 720,895 720,690 620,690 620,640" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="620.00,640.00 624.35,649.00 615.65,649.00" fill="#555"/>
-<rect x="40" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="185.0" y="142.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">确认资料、需求与平台</text>
-<rect x="400" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="545.0" y="127.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">生成计划与用例草稿</text>
-<text x="545.0" y="158.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">逐项检查需求覆盖</text>
-<rect x="760" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="905.0" y="142.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">人工编辑与评审</text>
-<rect x="1120" y="90" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1265.0" y="142.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布用例版本</text>
-<rect x="400" y="280" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="545.0" y="317.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">资料不足或生成失败</text>
-<text x="545.0" y="348.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">补充资料 / 重试失败阶段</text>
-<rect x="760" y="280" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="905.0" y="317.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">评审退回</text>
-<text x="905.0" y="348.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">修改草稿，保留已完成内容</text>
-<rect x="1120" y="280" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1265.0" y="317.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">等待人工确认</text>
-<text x="1265.0" y="348.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存进度，不占后台资源</text>
-<rect x="40" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="185.0" y="577.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选择用例、应用与设备</text>
-<text x="185.0" y="608.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">连接并确认测试环境</text>
-<rect x="400" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="545.0" y="577.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">录制或 AI 生成步骤</text>
-<text x="545.0" y="608.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">设置操作目标与检查条件</text>
-<rect x="760" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="905.0" y="577.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">检查步骤并真实试跑</text>
-<text x="905.0" y="608.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">区分脚本问题与产品缺陷</text>
-<rect x="1120" y="540" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1265.0" y="561.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本可执行性评审后发布</text>
-<text x="1265.0" y="592.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">正确发现缺陷仍可发布</text>
-<text x="1265.0" y="623.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保留失败，导出或正式执行</text>
-<rect x="40" y="750" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="185.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">取消 / 超时</text>
-<text x="185.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">保存状态，释放设备</text>
-<rect x="400" y="750" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="545.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">设备离线 / 画面断连</text>
-<text x="545.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">重连后检查当前界面</text>
-<rect x="760" y="750" width="290" height="100" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="905.0" y="787.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">脚本问题：保存证据</text>
-<text x="905.0" y="818.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">人工或 AI 提出修改</text>
-<text x="325.0" y="48" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">计划生成：缺失、失败与评审退回</text>
-<text x="1085.0" y="118" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">通过</text>
-<text x="1275.0" y="241" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">发布前等待 / 确认后继续</text>
-<text x="325.0" y="484" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">自动化：连接、生成、试跑与修正</text>
-<text x="1085.0" y="568" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">评审</text>
-<text x="1085.0" y="912" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">脚本修改后重新验证；限制次数与费用</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="生成、验证与异常恢复"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">生成、验证与异常恢复</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">目标设计 · 从用例草稿到真实试跑，人工确认后发布</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">确认范围</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">BA / QA</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">生成与评审</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">TAP AI / 评审人</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">真实应用验证</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">QA / 执行服务</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">发布与执行</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">评审人 / QA</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">范围确认</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">已发布用例</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="304.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">评审可执行</text>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">性</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">确定生成依据</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">选择资料、平台与版本</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">确认完整需求清单</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">缺资料先补齐</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">规则不清列出待确认项</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">保留缺口，不虚构预期</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">需求清单是覆盖分母</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">生成用例草稿</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">逐条关联需求与依据</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">人工编辑、评审并发布</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">暂停与恢复</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">等待确认时保存进度</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">退回改草稿，失败分段重试</text>
+<text x="588.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">等待时释放后台资源</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">连接并试跑</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">录制或生成操作步骤</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">核对定位、数据与业务断言</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">区分失败原因</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">脚本故障修复后重验</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">产品缺陷保留原失败证据</text>
+<text x="1090.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">断线暂停，重连检查状态</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">发布固定脚本版本</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">可执行性评审后发布</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">提交正式运行或导出复跑</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">终止与修复</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">取消、超时保存现场并释放资源</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">修改脚本后重新验证</text>
+<text x="1592.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">未执行步骤不能标通过</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">草稿、发布状态与业务测试结果分别记录。</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">正确发现产品缺陷的脚本可经评审发布，原断言仍判失败。</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">修复设次数、时间与费用上限；不弱化检查条件。</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
 </svg>

@@ -1,65 +1,106 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1850" height="1020" viewBox="0 0 1850 1020" role="img"><title>测试管理闭环</title><rect width="100%" height="100%" fill="white"/>
-<polyline points="410,165 500,165" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="500.00,165.00 491.00,169.35 491.00,160.65" fill="#555"/>
-<polyline points="870,165 960,165" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="960.00,165.00 951.00,169.35 951.00,160.65" fill="#555"/>
-<polyline points="1330,165 1420,165" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1420.00,165.00 1411.00,169.35 1411.00,160.65" fill="#555"/>
-<polyline points="410,455 455,455 455,195 500,195" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="500.00,195.00 491.00,199.35 491.00,190.65" fill="#555"/>
-<polyline points="685,230 685,390" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="685.00,390.00 680.65,381.00 689.35,381.00" fill="#555"/>
-<polyline points="1480,230 1480,300 1145,300 1145,390" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1145.00,390.00 1140.65,381.00 1149.35,381.00" fill="#555"/>
-<polyline points="1605,230 1605,390" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1605.00,390.00 1600.65,381.00 1609.35,381.00" fill="#555"/>
-<polyline points="1145,520 1145,740" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1145.00,740.00 1140.65,731.00 1149.35,731.00" fill="#555"/>
-<polyline points="1605,520 1605,625 1240,625 1240,740" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="1240.00,740.00 1235.65,731.00 1244.35,731.00" fill="#555"/>
-<polyline points="960,805 870,805" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="870.00,805.00 879.00,800.65 879.00,809.35" fill="#555"/>
-<polyline points="500,805 460,805 460,295 600,295 600,230" fill="none" stroke="#555" stroke-width="1.5"/>
-<polygon points="600.00,230.00 604.35,239.00 595.65,239.00" fill="#555"/>
-<rect x="40" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="152.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">资料 / Jira 需求 / 手工输入</text>
-<text x="225.0" y="183.06" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">确认范围、来源及需求版本</text>
-<rect x="500" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">用例库</text>
-<text x="685.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">手工 / 导入 / AI 草稿</text>
-<text x="685.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">普通步骤、BDD、文字模板</text>
-<rect x="960" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">编辑与独立评审</text>
-<text x="1145.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">来源、条件、数据和预期</text>
-<text x="1145.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">发布用例与公共步骤版本</text>
-<rect x="1420" y="100" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="136.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">测试计划与执行周期</text>
-<text x="1605.0" y="167.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">选用例版本 / 环境 / 数据行</text>
-<text x="1605.0" y="198.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定本次实际执行清单</text>
-<rect x="40" y="390" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="225.0" y="426.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Jira 内嵌操作入口（第4批）</text>
-<text x="225.0" y="457.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Forge Cloud 界面 + 同一 API</text>
-<text x="225.0" y="488.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">安装身份及双方项目权限</text>
-<rect x="500" y="390" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="426.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">资产版本与关系 · MySQL</text>
-<text x="685.0" y="457.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">用例 / 公共步骤 / 计划 / 评审</text>
-<text x="685.0" y="488.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">需求映射，不按标题自动合并</text>
-<rect x="960" y="390" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="426.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP AI 手工执行台</text>
-<text x="1145.0" y="457.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">逐步结果 / 附件 / 缺陷</text>
-<text x="1145.0" y="488.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">关闭后更正仍保留原记录</text>
-<rect x="1420" y="390" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1605.0" y="426.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">TAP 自动化 / 负载执行</text>
-<text x="1605.0" y="457.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">固定脚本与用例映射</text>
-<text x="1605.0" y="488.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">Jenkins 运行并回传证据</text>
-<rect x="500" y="740" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="685.0" y="776.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">修订与复测</text>
-<text x="685.0" y="807.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">需求变更 / 失败 / 采纳反馈</text>
-<text x="685.0" y="838.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">新版本不覆盖旧执行</text>
-<rect x="960" y="740" width="370" height="130" fill="white" stroke="#444" stroke-width="1.5"/>
-<text x="1145.0" y="776.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">统一 Test Insights</text>
-<text x="1145.0" y="807.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">覆盖 / 首次与重试 / 缺陷</text>
-<text x="1145.0" y="838.56" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="21" fill="#222">有权限的原始事实与指标</text>
-<text x="925.0" y="53" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">测试管理保留在 TAP AI；Jira 界面复用同一资产；TAP 拥有技术执行</text>
-<text x="925.0" y="956" text-anchor="middle" font-family="STHeiti, sans-serif" font-size="20" fill="#444">同一业务执行实例关联技术运行和每次尝试；导入 / API / UI 使用同样的评审规则</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2040 940" role="img" aria-label="测试管理：从用例资产到执行闭环"><style>text{font-family:"JetBrains Mono","PingFang SC","Microsoft YaHei",monospace}</style><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7" fill="#8398af"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#162338" stroke-width=".5"/></pattern></defs><rect width="2040" height="940" fill="#060e1d"/><rect width="2040" height="940" fill="url(#grid)"/>
+<text x="40" y="49" fill="#f1f5f9" font-size="31" font-weight="600" text-anchor="start">测试管理：从用例资产到执行闭环</text>
+<text x="40" y="89" fill="#91a3b9" font-size="20" font-weight="400" text-anchor="start">用例、计划、周期、执行实例与技术 Run 各有身份；手工结果与自动化证据汇入同一追溯链。</text>
+<g data-domain="domain-0">
+<rect x="40.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="40.0" y="140" width="4" height="624" rx="2" fill="#22d3ee" stroke="none" stroke-width="1"/>
+<text x="64.0" y="181" fill="#22d3ee" font-size="18" font-weight="600" text-anchor="start">01</text>
+<text x="107.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">用例资产</text>
+<text x="64.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">QA / BA · TAP AI</text>
+</g>
+<g data-domain="domain-1">
+<rect x="542.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="542.0" y="140" width="4" height="624" rx="2" fill="#34d399" stroke="none" stroke-width="1"/>
+<text x="566.0" y="181" fill="#34d399" font-size="18" font-weight="600" text-anchor="start">02</text>
+<text x="609.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">计划与周期</text>
+<text x="566.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">测试负责人 · TAP AI</text>
+</g>
+<g data-domain="domain-2">
+<rect x="1044.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1044.0" y="140" width="4" height="624" rx="2" fill="#fbbf24" stroke="none" stroke-width="1"/>
+<text x="1068.0" y="181" fill="#fbbf24" font-size="18" font-weight="600" text-anchor="start">03</text>
+<text x="1111.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">执行与记录</text>
+<text x="1068.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">QA / TAP 执行服务</text>
+</g>
+<g data-domain="domain-3">
+<rect x="1546.0" y="140" width="454.0" height="624" rx="10" fill="#0a1424" stroke="#2a3b50" stroke-width="1"/>
+<rect x="1546.0" y="140" width="4" height="624" rx="2" fill="#a78bfa" stroke="none" stroke-width="1"/>
+<text x="1570.0" y="181" fill="#a78bfa" font-size="18" font-weight="600" text-anchor="start">04</text>
+<text x="1613.0" y="181" fill="#eef3fa" font-size="24" font-weight="600" text-anchor="start">协作与质量</text>
+<text x="1570.0" y="214" fill="#92a5bb" font-size="17" font-weight="400" text-anchor="start">项目团队 / Insights</text>
+</g>
+<path data-edge="0-main--1-main" d="M470.0,349.0 L566.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="518.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">已发布</text>
+<path data-edge="1-main--2-main" d="M972.0,349.0 L1068.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1020.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">已固定</text>
+<path data-edge="2-main--3-main" d="M1474.0,349.0 L1570.0,349.0" fill="none" stroke="#8398af" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1522.0" y="324.0" fill="#a7b7ca" font-size="15" font-weight="400" text-anchor="middle">结果</text>
+<g data-node="0-main">
+<rect x="64.0" y="248" width="406.0" height="202" rx="6" fill="#0b2535" stroke="#22d3ee" stroke-width="1.4"/>
+<text x="86.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">创建与复用用例</text>
+<text x="86.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">手工编写、导入或 AI 生成</text>
+<text x="86.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">普通步骤、BDD、说明三种模板</text>
+<text x="86.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">关联需求并管理独立版本</text>
+</g>
+<g data-node="0-detail">
+<rect x="64.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="86.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">业务评审与发布</text>
+<text x="86.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">核对预期、边界与需求覆盖</text>
+<text x="86.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">修改已发布内容时新建版本</text>
+<text x="86.0" y="710" fill="#22d3ee" font-size="16" font-weight="400" text-anchor="start">AI 草稿与正式资产分开</text>
+</g>
+<text x="64.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="1-main">
+<rect x="566.0" y="248" width="406.0" height="202" rx="6" fill="#0d2c29" stroke="#34d399" stroke-width="1.4"/>
+<text x="588.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">安排测试范围</text>
+<text x="588.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">计划定义本次验证目标</text>
+<text x="588.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">周期安排负责人、环境与时间</text>
+<text x="588.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">固定用例 × 配置 × 数据行</text>
+</g>
+<g data-node="1-detail">
+<rect x="566.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="588.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">明确执行实例</text>
+<text x="588.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">稳定 ID 关联具体版本与组合</text>
+<text x="588.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">已有运行不随资产编辑而改变</text>
+<text x="588.0" y="710" fill="#34d399" font-size="16" font-weight="400" text-anchor="start">计划不等于周期或技术 Run</text>
+</g>
+<text x="566.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="2-main">
+<rect x="1068.0" y="248" width="406.0" height="202" rx="6" fill="#302719" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="1090.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">产生真实测试结果</text>
+<text x="1090.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">手工逐步记录结果与附件</text>
+<text x="1090.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">自动化关联 TAP Run 与证据</text>
+<text x="1090.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">缺陷对应失败步骤和版本</text>
+</g>
+<g data-node="2-detail">
+<rect x="1068.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1090.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">结果可更正可追溯</text>
+<text x="1090.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">关闭后更正新增记录</text>
+<text x="1090.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">重试保留首次结果与尝试编号</text>
+<text x="1090.0" y="710" fill="#fbbf24" font-size="16" font-weight="400" text-anchor="start">同名用例不能据名称合并</text>
+</g>
+<text x="1068.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<g data-node="3-main">
+<rect x="1570.0" y="248" width="406.0" height="202" rx="6" fill="#211e39" stroke="#a78bfa" stroke-width="1.4"/>
+<text x="1592.0" y="287" fill="#f1f5f9" font-size="25" font-weight="600" text-anchor="start">查看覆盖并推动改进</text>
+<text x="1592.0" y="329" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">确认未测、失败与阻塞原因</text>
+<text x="1592.0" y="357" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">在 Jira 复用资产和协作结果</text>
+<text x="1592.0" y="385" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">用执行证据支持质量分析</text>
+</g>
+<g data-node="3-detail">
+<rect x="1570.0" y="540" width="406.0" height="192" rx="6" fill="#101d2e" stroke="#35465d" stroke-width="1"/>
+<text x="1592.0" y="579" fill="#f1f5f9" font-size="23" font-weight="600" text-anchor="start">权限与数据一致性</text>
+<text x="1592.0" y="621" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">Jira 与 TAP 双方校验访问权限</text>
+<text x="1592.0" y="649" fill="#c4cede" font-size="19" font-weight="400" text-anchor="start">映射冲突与缺失附件明确显示</text>
+<text x="1592.0" y="710" fill="#a78bfa" font-size="16" font-weight="400" text-anchor="start">外部报告可独立接入</text>
+</g>
+<text x="1570.0" y="511" fill="#758ba3" font-size="16" font-weight="400" text-anchor="start">输出与控制</text>
+<rect x="40.0" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="60.0" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">用例与手工结果归 TAP AI，技术运行归 TAP</text>
+<rect x="693.3333333333334" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="713.3333333333334" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">用例历史按稳定 ID 迁移，不按标题合并</text>
+<rect x="1346.6666666666667" y="812" width="4" height="66" rx="2" fill="#39536b" stroke="none" stroke-width="1"/>
+<text x="1366.6666666666667" y="837" fill="#a6b5c9" font-size="18" font-weight="400" text-anchor="start">基础 Jira REST、自动结果、Forge 分批交付</text>
+<text x="40" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="start">TAP / TAP AI  ·  RFC-011  ·  目标设计，包含待建设能力</text>
+<text x="2000" y="919" fill="#72869d" font-size="16" font-weight="400" text-anchor="end">Cocoon  ·  2026-09-22</text>
 </svg>
