@@ -1,6 +1,6 @@
 # RFC-011 开发参考：Insights、契约与运行恢复
 
-本文形成于 2026-09-22，是 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 的 `draft` 配套技术说明；不构成新 RFC、已接受架构或实施完成声明。以下描述目标设计，当前状态以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 与代码为准。
+本文形成于 2026-09-22，是 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 的配套技术说明；RFC 于 2026-09-23 确认审批通过，状态为 `accepted`。以下描述已接受方案的目标设计，不是实施完成声明；当前状态以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 与代码为准。
 
 相关专题：[AI、主动 Agent 与知识](2026-09-22-rfc-011-ai-knowledge-design.md)、[测试管理与执行](2026-09-22-rfc-011-testing-execution-design.md)。
 

@@ -1,6 +1,6 @@
 # RFC-011 开发参考：测试管理与执行设计
 
-本文形成于 2026-09-22，是 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 的 `draft` 配套技术说明；不是新 RFC、已接受架构或实施完成声明。以下为目标约束，当前状态仍以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 和代码为准。
+本文形成于 2026-09-22，是 [RFC-011](../proposals/2026-09-17-rfc-011-rag-test-design-cross-platform-automation.md) 的配套技术说明；RFC 于 2026-09-23 确认审批通过，状态为 `accepted`。以下为已接受方案的目标约束，不是实施完成声明；当前状态仍以 [V2/V3 更正评审](../reviews/2026-09-14-v2-v3-gate-correction.md) 和代码为准。
 
 相关专题：[AI、主动 Agent 与知识](2026-09-22-rfc-011-ai-knowledge-design.md)、[Insights、契约与恢复](2026-09-22-rfc-011-insights-contracts-design.md)。TAP AI 管知识、测试设计与手工执行；TAP 管自动化/负载执行及 Test Insights，两者不互写业务表。
 
