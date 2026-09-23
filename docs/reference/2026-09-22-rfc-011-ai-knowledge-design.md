@@ -15,6 +15,12 @@
 
 代码核对：[解析器](../../apps/tap-ai-backend/src/tap/modules/knowledge/adapters/document_parsers.py)、[分段器](../../apps/tap-ai-backend/src/tap/modules/knowledge/adapters/document_chunker.py)、[Milvus](../../apps/tap-ai-backend/src/tap/modules/knowledge/adapters/milvus/transport.py)、[计划生成器](../../apps/tap-ai-backend/src/tap/modules/test_management/adapters/model_gateway_generation.py)、[资源接口](../../apps/tap-ai-backend/src/tap/interfaces/http/routes/ai_assets.py)。
 
+## 2026-09-23 开发输入冻结
+
+结构实现使用 [`trusted-checkout-v1.json`](../../apps/tap-ai-backend/tests/fixtures/quality/requirements/trusted-checkout-v1.json) 作为 `requirement-scope-snapshot-v1` 合成输入，合同版本为 `trusted-knowledge-inputs-v1`。范围固定一个受审核的 checkout 授权流程、三个来源修订、互异的编校/复核/发布角色，以及正常、边界、异常、冲突、无答案和越权六类需求。`sourceRevisionId + locator` 是需求分母和证据定位的最小稳定绑定；未在快照中的检索命中不能扩大分母。
+
+该文件只冻结开发契约，显式标记 `synthetic-development-fixture` 和 `pending-real-input`。真实业务资料 digest、有效期、具名业务复核者、项目身份映射和模型外发授权尚未取得；在这些输入完成前，可以验证解析、状态、权限和恢复结构，但不能宣称真实知识质量或多人审批通过。
+
 ## 统一 AI 编排与领域端口
 
 后端在图外只校验当前用户、项目、Conversation/Turn/Task、授权范围、幂等键与基础输入。固定版本 LangGraph 内的 **Task Classification & Admission** 负责分类与准入，必要的首轮理解也经 ModelGateway→LiteLLM 调模型；不存在图外预分类 LLM、独立 Query Router 或 Model Router。

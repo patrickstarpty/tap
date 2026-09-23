@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="synthetic-checkout-retry" tests="2" failures="1" errors="0" skipped="0" time="1.7">
+  <testcase classname="checkout.Authorization" name="risk_service[standard-us]#attempt-1" time="0.7">
+    <properties><property name="tap.test_id" value="checkout-risk-service"/><property name="tap.data_row" value="standard-us"/><property name="tap.attempt" value="1"/></properties>
+    <failure type="TimeoutError" message="synthetic upstream timeout">synthetic redacted stack</failure>
+  </testcase>
+  <testcase classname="checkout.Authorization" name="risk_service[standard-us]#attempt-2" time="1.0">
+    <properties><property name="tap.test_id" value="checkout-risk-service"/><property name="tap.data_row" value="standard-us"/><property name="tap.attempt" value="2"/></properties>
+  </testcase>
+</testsuite>

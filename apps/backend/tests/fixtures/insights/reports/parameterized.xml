@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="synthetic-checkout-parameterized" tests="2" failures="0" errors="0" skipped="0" time="1.1">
+  <testcase classname="checkout.Limits" name="order_limit[exact-limit]" time="0.5">
+    <properties><property name="tap.test_id" value="checkout-order-limit"/><property name="tap.data_row" value="exact-limit"/><property name="tap.attempt" value="1"/></properties>
+  </testcase>
+  <testcase classname="checkout.Limits" name="order_limit[one-cent-over]" time="0.6">
+    <properties><property name="tap.test_id" value="checkout-order-limit"/><property name="tap.data_row" value="one-cent-over"/><property name="tap.attempt" value="1"/></properties>
+  </testcase>
+</testsuite>

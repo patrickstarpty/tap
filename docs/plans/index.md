@@ -2,7 +2,7 @@
 
 本目录保存实施、交付和路线图计划。
 
-- [可信知识、测试设计与基础 Insights 实施计划](2026-09-23-trusted-knowledge-test-design-insights.md)（`planned`，本轮排期入口）：依据 RFC-011、完整产品原型及 2026-09-23 范围确认，分批交付知识审核/问答、既有测试设计闭环和外部真实报告 Insights；Web 自动化延后，不改变历史门禁状态。
+- [可信知识、测试设计与基础 Insights 实施计划](2026-09-23-trusted-knowledge-test-design-insights.md)（`active`，本轮实施入口）：依据 RFC-011、完整产品原型及 2026-09-23 范围确认，分批交付知识审核/问答、既有测试设计闭环和外部真实报告 Insights；开发契约先由显式合成 fixture 冻结，真实 M0 Gate 仍待输入，Web 自动化延后且不改变历史门禁状态。
 
 - [TAP AI 产品拆分实施计划](2026-09-15-tap-ai-product-separation.md)（`completed`）：迁移 AI 前后端、保留 TAP 非 AI 应用并提供本机独立启动入口。
 

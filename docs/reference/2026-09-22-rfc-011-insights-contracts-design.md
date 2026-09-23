@@ -29,6 +29,12 @@ TAP AI 独立前后端管知识、测试管理/手工执行、AI 生成；TAP �
 
 链路为来源连接/报告上传→对象存储原件＋MySQL 接收账本→校验/映射/去重→ClickHouse→TAP Insights API→页面/质量规则；TAP AI 的 Insights Tool 以服务身份调用同一 API，结合 SearchPort 的知识证据。chDB 只用于可选获准文件/快照计算，日常看板与 RCA 不依赖它。
 
+### 2026-09-23 开发输入冻结
+
+首个适配器的开发合同版本为 `insights-intake-v1`，合成输入索引见 [`task0-inputs-v1.json`](../../apps/backend/tests/fixtures/insights/task0-inputs-v1.json)，可手算指标见 [`metrics-oracle-v1.json`](../../apps/backend/tests/fixtures/insights/metrics-oracle-v1.json)。同一合成来源包含成功、失败、完整重试、参数化和缺分片五类 JUnit；索引固定项目/来源/外部 Run/批次/分片、应用与脚本提交、环境/配置、时区/时间、稳定测试 ID、数据行、尝试号、完整性及原件 SHA-256。缺尝试号为未知，不能从标题或到达顺序补造。
+
+开发 oracle 固定 `D=3`、首次通过 `1/3`、最终通过 `2/3`、重试恢复 `1/2`、恢复贡献 `1/3`，另列跳过 1；分母规则独立手算并由 fixture 契约测试保护。100 万尝试、90 天、10 并发、汇总 P95 ≤2 秒和钻取 P95 ≤3 秒只是 `development-target-not-measured`。这些输入均标记 `synthetic-development-fixture` / `pending-real-input`；真实 CI 语义、凭证、保留范围、硬件实测及数据源负责人签字仍是基础 Insights 交付 Gate。
+
 ### 视图与五类质量分析
 
 | 视图 | 目标交互与约束 |

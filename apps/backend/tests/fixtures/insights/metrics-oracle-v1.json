@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "insights-metric-oracle-v1",
+  "evidenceKind": "synthetic-development-fixture",
+  "instances": [
+    {
+      "instanceId": "synthetic-a",
+      "attempts": [
+        {"attempt": 1, "result": "pass"}
+      ]
+    },
+    {
+      "instanceId": "synthetic-b",
+      "attempts": [
+        {"attempt": 1, "result": "fail"},
+        {"attempt": 2, "result": "pass"}
+      ]
+    },
+    {
+      "instanceId": "synthetic-c",
+      "attempts": [
+        {"attempt": 1, "result": "error"}
+      ]
+    },
+    {
+      "instanceId": "synthetic-d",
+      "attempts": [
+        {"attempt": 1, "result": "skipped"}
+      ]
+    }
+  ],
+  "expected": {
+    "denominator": 3,
+    "firstPassNumerator": 1,
+    "finalPassNumerator": 2,
+    "retryRecoveryNumerator": 1,
+    "retryRecoveryDenominator": 2,
+    "recoveryContributionNumerator": 1,
+    "recoveryContributionDenominator": 3,
+    "skippedCount": 1
+  }
+}
