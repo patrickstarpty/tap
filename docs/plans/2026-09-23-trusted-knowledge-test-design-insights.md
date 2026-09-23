@@ -180,7 +180,7 @@ uv run --project apps/backend pytest apps/backend/tests/contract/test_insights_a
 
 - [x] 用混合 PDF 的无文字页、含表格/图片的 DOCX、空文本、编码异常和解析超时写失败测试；每个对象必须进入四态清单之一。
 - [x] 现有隔离 Parser 生成清单和原件定位；保留原始文件和重试版本，缺 OCR 的扫描区域标明确失败/待确认，不静默跳页。关键缺失阻止对应范围发布。
-- [ ] 验证升级前后原文/引用仍可读，Worker 中断重试不重复生成版本，重新解析不覆盖旧产物。
+- [x] 验证升级前后原文/引用仍可读，Worker 中断重试不重复生成版本，重新解析不覆盖旧产物。
 
 ```sh
 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowledge/test_parse_inventory.py apps/tap-ai-backend/tests/integration/test_ingestion_recovery.py -q
