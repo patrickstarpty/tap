@@ -3,6 +3,7 @@ import {
   CodeOutlined,
   LinkOutlined,
   PlusOutlined,
+  RobotOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
@@ -65,6 +66,16 @@ const TEXT = {
     saved: "Saved locally",
     generatedScript: "Generated script",
     run: "Run",
+    aiAgent: "AI Agent",
+    agentIntro:
+      "Discuss changes to this Automation. Suggestions never overwrite BDD until you apply them.",
+    messageAgent: "Message Automation AI Agent",
+    propose: "Propose changes",
+    proposal:
+      "Suggested change: add a validation scenario for missing health disclosures.",
+    apply: "Apply suggestion",
+    reject: "Reject",
+    applied: "Suggestion applied to this Automation.",
     executionAgent: "Execution Agent",
     pipelineHelp: "Azure DevOps Pipeline Agent",
     chooseAgent: "Choose an online Pipeline Agent",
@@ -126,6 +137,14 @@ const TEXT = {
     saved: "已保存到本地",
     generatedScript: "生成的脚本",
     run: "运行",
+    aiAgent: "AI 智能体",
+    agentIntro: "与平台智能体讨论当前自动化；应用前不会覆盖 BDD。",
+    messageAgent: "向自动化 AI 智能体发送消息",
+    propose: "提出修改建议",
+    proposal: "建议修改：新增缺少健康告知时的校验场景。",
+    apply: "应用建议",
+    reject: "拒绝",
+    applied: "建议已应用到当前自动化。",
     executionAgent: "执行 Agent",
     pipelineHelp: "Azure DevOps Pipeline Agent",
     chooseAgent: "请选择在线的 Pipeline Agent",
@@ -197,11 +216,13 @@ function RunHistory({
   automation,
   runs,
   locale,
+  productPrototype = false,
   label,
 }: {
   automation: Automation;
   runs: readonly AutomationRun[];
   locale: Locale;
+  productPrototype?: boolean;
   label: string;
 }) {
   const text = TEXT[locale];
@@ -212,7 +233,13 @@ function RunHistory({
         <span>{runs.length}</span>
       </div>
       {runs.length === 0 ? (
-        <p className="tap-empty-note">{text.noRuns}</p>
+        <p className="tap-empty-note">
+          {productPrototype
+            ? locale === "zh"
+              ? "还没有运行记录"
+              : "No runs yet"
+            : text.noRuns}
+        </p>
       ) : (
         <ol>
           {runs.map((run, runIndex) => (
@@ -223,7 +250,13 @@ function RunHistory({
                     <strong>{run.id}</strong>
                     <small>{formatRunTime(run.startedAt, locale)}</small>
                   </span>
-                  <span className="tap-run-status">{text.simulated}</span>
+                  <span className="tap-run-status">
+                    {productPrototype
+                      ? locale === "zh"
+                        ? "已完成"
+                        : "Completed"
+                      : text.simulated}
+                  </span>
                 </summary>
                 <div className="tap-run-detail">
                   <p>
@@ -265,7 +298,9 @@ function RunHistory({
                       </div>
                     );
                   })}
-                  <p className="tap-simulation-note">{text.noEvidence}</p>
+                  {!productPrototype && (
+                    <p className="tap-simulation-note">{text.noEvidence}</p>
+                  )}
                 </div>
               </details>
             </li>
@@ -280,6 +315,7 @@ export function AutomationRunPanel({
   automation,
   runs,
   locale,
+  productPrototype = false,
   triggeredFrom,
   historyLabel,
   onRun,
@@ -287,6 +323,7 @@ export function AutomationRunPanel({
   automation: Automation;
   runs: readonly AutomationRun[];
   locale: Locale;
+  productPrototype?: boolean;
   triggeredFrom: AutomationRun["triggeredFrom"];
   historyLabel?: string;
   onRun: (
@@ -401,9 +438,12 @@ export function AutomationRunPanel({
         <Button type="primary" disabled={!canRun} onClick={run}>
           {text.runAutomation}
         </Button>
-        <p className="tap-simulation-note">Simulated · No execution evidence</p>
+        {!productPrototype && (
+          <p className="tap-simulation-note">Simulated · No execution evidence</p>
+        )}
       </div>
       <RunHistory
+        productPrototype={productPrototype}
         automation={automation}
         runs={runs}
         locale={locale}
@@ -687,6 +727,7 @@ function AutomationDetail({
   state,
   automation,
   locale,
+  productPrototype = false,
   onBack,
   onUpdate,
   onLink,
@@ -696,6 +737,7 @@ function AutomationDetail({
   state: ArtifactState;
   automation: Automation;
   locale: Locale;
+  productPrototype?: boolean;
   onBack: () => void;
   onUpdate: (automation: Automation) => void;
   onLink: (automationId: string, testPlanId: string | null) => void;
@@ -707,7 +749,12 @@ function AutomationDetail({
   ) => void;
 }) {
   const text = TEXT[locale];
+  const [panel, setPanel] = useState<"run" | "agent">("run");
   const [saved, setSaved] = useState(false);
+  const [agentMessage, setAgentMessage] = useState("");
+  const [proposal, setProposal] = useState<"none" | "pending" | "applied">(
+    "none",
+  );
   const [planChoice, setPlanChoice] = useState("");
   const linkedPlan = state.testPlans.find(
     ({ id }) => id === automation.testPlanId,
@@ -724,6 +771,46 @@ function AutomationDetail({
     [automation.feature.scenarios],
   );
 
+  const applyProposal = () => {
+    const scenarioOrdinal = automation.feature.scenarios.length + 1;
+    const scenarioId = `${automation.id}-SC-${String(scenarioOrdinal).padStart(2, "0")}`;
+    const firstStepId = `${automation.id}-ST-AI-01`;
+    onUpdate({
+      ...automation,
+      revision: automation.revision + 1,
+      updatedAt: new Date().toISOString(),
+      feature: {
+        ...automation.feature,
+        scenarios: [
+          ...automation.feature.scenarios,
+          {
+            id: scenarioId,
+            title: "Missing health disclosure validation",
+            sourceTestPlanScenarioId: null,
+            steps: [
+              {
+                id: firstStepId,
+                keyword: "Then",
+                text: "the missing health disclosures are shown",
+                sourceTestPlanStepId: null,
+                actions: [
+                  {
+                    id: `${firstStepId}-ACT-01`,
+                    bddStepId: firstStepId,
+                    action: "Assert",
+                    target: "[data-testid='health-disclosure-error']",
+                    value: "Required",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    setProposal("applied");
+  };
+
   return (
     <section
       className="tap-module tap-automation-detail"
@@ -739,14 +826,18 @@ function AutomationDetail({
             <h1 id="automation-detail-heading">{automation.title}</h1>
             <p>
               {automation.type === "web" ? "Web" : "Mobile"} ·{" "}
-              {automation.status === "ready" ? text.ready : text.draft} ·{" "}
-              {text.localOnly}
+              {automation.status === "ready" ? text.ready : text.draft}
+              {!productPrototype && <> · {text.localOnly}</>}
             </p>
           </div>
           <div className="tap-heading-actions">
             {saved ? (
               <span className="tap-saved-state" role="status">
-                {text.saved}
+                {productPrototype
+                  ? locale === "zh"
+                    ? "已保存"
+                    : "Saved"
+                  : text.saved}
               </span>
             ) : null}
             <Button onClick={() => setSaved(true)}>{text.save}</Button>
@@ -798,13 +889,79 @@ function AutomationDetail({
           onUpdate={onUpdate}
         />
         <aside className="tap-automation-side-panel">
-          <AutomationRunPanel
-            automation={automation}
-            runs={runs}
-            locale={locale}
-            triggeredFrom="automation"
-            onRun={onRun}
-          />
+          <div
+            className="tap-panel-tabs"
+            role="tablist"
+            aria-label="Automation tools"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panel === "run"}
+              onClick={() => setPanel("run")}
+            >
+              {text.run}
+            </button>
+            {productPrototype && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={panel === "agent"}
+                onClick={() => setPanel("agent")}
+              >
+                {text.aiAgent}
+              </button>
+            )}
+          </div>
+          {!productPrototype || panel === "run" ? (
+            <AutomationRunPanel
+              productPrototype={productPrototype}
+              automation={automation}
+              runs={runs}
+              locale={locale}
+              triggeredFrom="automation"
+              onRun={onRun}
+            />
+          ) : (
+            <section
+              className="tap-agent-panel"
+              aria-label="Automation AI Agent"
+            >
+              <RobotOutlined aria-hidden="true" />
+              <p>{text.agentIntro}</p>
+              <label>
+                <span>{text.messageAgent}</span>
+                <Input.TextArea
+                  value={agentMessage}
+                  onChange={(event) => setAgentMessage(event.target.value)}
+                  rows={4}
+                />
+              </label>
+              <Button
+                type="primary"
+                disabled={agentMessage.trim() === ""}
+                onClick={() => setProposal("pending")}
+              >
+                {text.propose}
+              </Button>
+              {proposal === "pending" ? (
+                <div className="tap-agent-proposal">
+                  <p>{text.proposal}</p>
+                  <div>
+                    <Button onClick={() => setProposal("none")}>
+                      {text.reject}
+                    </Button>
+                    <Button type="primary" onClick={applyProposal}>
+                      {text.apply}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              {proposal === "applied" ? (
+                <p role="status">{text.applied}</p>
+              ) : null}
+            </section>
+          )}
         </aside>
       </div>
 
@@ -1061,6 +1218,7 @@ export function AutomationWorkspace({
   state,
   view,
   locale,
+  productPrototype = false,
   onViewChange,
   onUpdate,
   onCreate,
@@ -1071,6 +1229,7 @@ export function AutomationWorkspace({
   state: ArtifactState;
   view: AutomationWorkspaceView;
   locale: Locale;
+  productPrototype?: boolean;
   onViewChange: (view: AutomationWorkspaceView) => void;
   onUpdate: (automation: Automation) => void;
   onCreate: (draft: {
@@ -1125,6 +1284,7 @@ export function AutomationWorkspace({
   }
   return (
     <AutomationDetail
+      productPrototype={productPrototype}
       state={state}
       automation={automation}
       locale={locale}

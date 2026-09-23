@@ -91,3 +91,19 @@ it("separates latest observed failures from historical failures and measures sce
   expect(empty.executedScenarios).toBe(0);
   expect(empty.plannedScenarios).toBe(1);
 });
+
+it("leaves unavailable attempt fields unknown in JUnit exports", () => {
+  const rows = filterExecutions(scope).slice(0, 1);
+  const csv = executionCsv(rows, false);
+  expect(csv).toContain('"Unknown"');
+  expect(csv.split('"Unknown"')).toHaveLength(4);
+});
+
+it("isolates executions by project before applying build and environment filters", () => {
+  expect(
+    filterExecutions({ ...scope, project: "life-insurance" }),
+  ).toHaveLength(84);
+  expect(filterExecutions({ ...scope, project: "another-project" })).toEqual(
+    [],
+  );
+});

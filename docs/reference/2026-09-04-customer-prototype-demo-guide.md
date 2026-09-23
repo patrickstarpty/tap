@@ -1,22 +1,22 @@
 # TAP 客户原型演示指南
 
-更新日期：2026-09-16（补充拆分后的采集入口；正文与截图保留 2026-09-06 历史状态）。
+更新日期：2026-09-22（恢复完整组合原型为唯一设计基准与固定入口；逐页截图和历史讲解保留 2026-09-06 状态）。
 
-> **历史记录**：以下组合式平台旅程属于拆分前的原型，不是当前独立 TAP AI 的操作手册。现行产品入口与范围见 [TAP AI 产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md)。当前 TAP AI 不提供本文的 Low Code Automation、模拟本地 Test Plan 或悬浮助手旅程。
+> **现行设计基准与历史截图**：完整组合原型已恢复为持续演进的唯一产品设计基准，固定入口为 `apps/web` 的 `/prototype`；后续设计必须在其上增量修改并保留既有模块。本文 2026-09-06 的截图仍是历史采集，不是当前运行状态或已实现能力的证明。模块清单、产品 UI 边界与回归要求以[产品原型基准规范](2026-09-22-product-prototype-baseline.md)为准。TAP AI 与 TAP 仍按[产品边界](../architecture/2026-09-15-tap-ai-product-boundary.md)独立实现与部署，独立应用入口不能替代完整设计基准。
 
-本文用于向客户演示 TAP 当前前端交互原型。它按实际演示顺序覆盖 Tapper、Library、Test Management 和 Low Code Automation 的页面、弹窗、关键状态与跨模块旅程，并给出演示话术和能力边界。
+本文保留 TAP 前端交互原型的历史演示记录，覆盖 Tapper、Library、Test Management 和 Low Code Automation 的页面、弹窗、关键状态与跨模块旅程。完整现行基准还包括 Test Analytics/Insights；历史截图未覆盖它不构成删除该模块的理由。
 
-历史交互基线见 [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。本文按当前原型记录演示操作，不替代 RFC、ADR、实施计划或验收记录。
+历史交互设计见 [RFC-008：TAP 产品壳层与 Low Code Automation 交互原型](../proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)。下文逐页操作、`Simulated` 标签、演示提示与模拟场景描述均记录采集时状态，不要求复制到当前产品 UI。当前界面呈现拟交付产品体验，不放演示开关、模拟场景控件或实现说明；能力边界在文档和评审中说明。本文不替代 RFC、ADR、实施计划或验收记录。
 
 > **现行目标与原型边界**：[RFC-009](../proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md) 与 [ADR-021](../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 已确定 Web-only/Jenkins-first。本文截图中的 Mobile/iOS/Android 与 Azure DevOps Pipeline Agent 是遗留的模拟原型探索，只能用于解释曾验证的交互，不属于当前 V0–VG、P0 或 P1 目标；Mobile 与 Azure DevOps 均在 P1 之后另行设计。演示现行路线时，应把 Web 执行口径改为外置 Jenkins Pipeline Agent，且不得把截图中的 ADO 文案解释为计划中的 Provider。
 
 ## 2026-09-06 交互更新与截图说明
 
-当前原型沿用[浅色视觉规范](2026-09-05-tap-fwd-light-design.md)，新增 Listening/Aha 啄木鸟形象、常驻折叠图标栏、跨页面悬浮助手，以及默认打开的 Knowledge Graph 搜索工作区。品牌方案见 [Tapper LOGO 与助手形象设计提案](../proposals/2026-09-06-tapper-icon-design-proposal.md)。
+2026-09-06 原型沿用[浅色视觉规范](2026-09-05-tap-fwd-light-design.md)，新增 Listening/Aha 啄木鸟形象、常驻折叠图标栏、跨页面悬浮助手，以及默认打开的 Knowledge Graph 搜索工作区。品牌方案见 [Tapper LOGO 与助手形象设计提案](../proposals/2026-09-06-tapper-icon-design-proposal.md)。
 
-本文 **44 张截图均于 2026-09-06 从当前原型以 2× 像素密度重新采集**，包含 Listening 品牌、`Agents` 导航、`Documents` 标签、折叠图标栏，以及图谱搜索、悬浮助手上下文、Aha 未读状态和会话交接。截图统一为 **2560×1440 无损 PNG**，页面布局视口保持 1280×720，可点击图片查看原尺寸细节。截图使用隔离浏览器和确定性示例数据，不连接真实执行服务；Mobile 与 ADO 屏幕虽从当前代码采集，仍只代表遗留模拟交互。
+本文 **44 张截图均于 2026-09-06 从当时的原型以 2× 像素密度采集**，包含 Listening 品牌、`Agents` 导航、`Documents` 标签、折叠图标栏，以及图谱搜索、悬浮助手上下文、Aha 未读状态和会话交接。截图统一为 **2560×1440 无损 PNG**，页面布局视口保持 1280×720，可点击图片查看原尺寸细节。截图使用隔离浏览器和确定性示例数据，不连接真实执行服务；Mobile 与 ADO 屏幕只代表遗留交互探索。
 
-当前 TAP AI 截图采集命令（仓库根目录；不重建本文历史截图）：
+独立 TAP AI 应用截图采集命令（仓库根目录；不替代完整原型回归，也不重建本文历史截图）：
 
 ```sh
 corepack pnpm --dir apps/tap-ai-frontend run prototype:capture
@@ -28,13 +28,13 @@ corepack pnpm --dir apps/tap-ai-frontend run prototype:capture
 
 ### 启动方式
 
-从仓库根目录启动当前 TAP AI 前端（不包含下文历史的混合产品旅程）：
+从仓库根目录启动完整产品原型：
 
 ```sh
-corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
+corepack pnpm --dir apps/web dev --port 15176
 ```
 
-然后访问 `http://127.0.0.1:4175/`，浏览器标题应显示 `TAP AI`。端口以启动输出为准；当前开发会话若已在其他 loopback 端口运行，可直接使用该地址。该服务只用于本机原型演示；真实 API 仍需按 README 启动 TAP AI 后端。
+然后访问固定入口 `http://127.0.0.1:15176/prototype`，浏览器标题应显示 `TAP`。该入口用于完整产品体验设计与回归，不宣称后端已实现；真实 API 仍需按 README 启动相应应用后端。所有后续 UI 需求沿用此入口，不能另建独立原型取代它。
 
 演示前确认来源目录是否已有数据。没有来源时，可以通过 `Add source` 添加页面级示例文件；默认图谱仍显示编排的领域概念，不能把这些节点讲成已从上传文件自动抽取。若要演示真实文档 ingestion 与问答，使用 [README 的本地知识工作区说明](../../README.md#tapper-本地知识工作区)，不要与产品壳原型混为一谈。
 

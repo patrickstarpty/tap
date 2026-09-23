@@ -1,0 +1,115 @@
+import { BookOutlined } from "@ant-design/icons";
+import { Checkbox, Input, Spin } from "antd";
+import { useMemo, useState } from "react";
+
+import type { PrototypeCopy } from "./copy";
+import type { LibrarySource } from "./model";
+import { FileTypeIcon } from "./FileTypeIcon";
+import { PanelToggleIcon } from "./PanelToggleIcon";
+
+interface KnowledgeSourcesPanelProps {
+  copy: PrototypeCopy;
+  isLoading: boolean;
+  onCollapse: () => void;
+  onToggleSource: (sourceId: string) => void;
+  selectedSourceIds: readonly string[];
+  sources: readonly LibrarySource[];
+}
+
+export function KnowledgeSourcesPanel({
+  copy,
+  isLoading,
+  onCollapse,
+  onToggleSource,
+  selectedSourceIds,
+  sources,
+}: KnowledgeSourcesPanelProps) {
+  const [query, setQuery] = useState("");
+  const readySources = useMemo(
+    () => sources.filter((source) => source.status === "ready"),
+    [sources],
+  );
+  const visibleSources = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (normalized.length === 0) return readySources;
+    return readySources.filter((source) =>
+      source.name.toLowerCase().includes(normalized),
+    );
+  }, [query, readySources]);
+  const selectedIds = new Set(selectedSourceIds);
+
+  return (
+    <aside
+      id="tap-knowledge-sources"
+      className="tap-sources"
+      aria-labelledby="tap-sources-heading"
+    >
+      <header>
+        <button
+          type="button"
+          className="tap-panel-toggle tap-panel-toggle--right-collapse"
+          aria-controls="tap-knowledge-sources"
+          aria-expanded="true"
+          aria-label={copy.sources.collapse}
+          onClick={onCollapse}
+        >
+          <PanelToggleIcon side="right" state="expanded" />
+        </button>
+        <div>
+          <h2 id="tap-sources-heading">{copy.sources.heading}</h2>
+          <p>{copy.sources.description}</p>
+        </div>
+        <span className="tap-source-count">
+          {selectedSourceIds.length} {copy.sources.selected}
+        </span>
+      </header>
+
+      <Input
+        className="tap-source-search"
+        aria-label={copy.sources.search}
+        placeholder={copy.sources.search}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+
+      {isLoading ? (
+        <div className="tap-sources-loading" aria-label={copy.sources.loading}>
+          <Spin size="small" />
+          <span>{copy.sources.loading}</span>
+        </div>
+      ) : visibleSources.length === 0 ? (
+        <div className="tap-sources-empty">
+          <BookOutlined aria-hidden="true" />
+          <span>
+            {readySources.length === 0
+              ? copy.sources.noReadySources
+              : copy.sources.noResults}
+          </span>
+        </div>
+      ) : (
+        <div className="tap-source-list">
+          {visibleSources.map((source) => (
+            <Checkbox
+              key={source.id}
+              checked={selectedIds.has(source.id)}
+              onChange={() => onToggleSource(source.id)}
+            >
+              <span className="tap-source-name" title={source.name}>
+                <FileTypeIcon type={source.type} />
+                <strong>{source.name}</strong>
+                <small className="tapper-visually-hidden">
+                  {copy.sources.ready} ·{" "}
+                  {source.origin === "knowledge-base"
+                    ? copy.sources.immutableRevision
+                    : copy.sources.pageLocalSource}
+                </small>
+              </span>
+            </Checkbox>
+          ))}
+        </div>
+      )}
+
+      <p className="tap-source-footnote">{copy.sources.provenanceHint}</p>
+    </aside>
+  );
+}

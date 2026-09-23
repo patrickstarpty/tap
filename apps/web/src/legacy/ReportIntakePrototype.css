@@ -1,0 +1,341 @@
+.bs-intake-strip {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 18px 22px;
+  background: white;
+  border-bottom: 1px solid var(--tap-line, #dfe3e8);
+  font-size: 13px;
+}
+.bs-intake-strip > div {
+  margin-right: auto;
+}
+.bs-intake-strip strong {
+  display: block;
+  margin: 7px 0;
+}
+.bs-intake-strip p {
+  margin: 0;
+  color: var(--tap-muted, #5f6670);
+}
+.bs-intake-strip button,
+.bs-data-empty button,
+.bs-report-dialog button,
+.bs-failure-explanation button {
+  border: 1px solid var(--tap-line-strong, #cfd4da);
+  border-radius: 5px;
+  background: white;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.bs-intake-strip .bs-primary,
+.bs-report-dialog .bs-primary,
+.bs-failure-explanation .bs-primary {
+  color: white;
+  background: var(--tap-accent, #166bdb);
+  border-color: var(--tap-accent, #166bdb);
+}
+.bs-intake-strip select,
+.bs-report-dialog select {
+  border: 1px solid var(--tap-line-strong, #cfd4da);
+  padding: 7px;
+  background: white;
+  border-radius: 4px;
+}
+.bs-intake-notice {
+  padding: 10px 22px;
+  color: #326048;
+  background: #edf7f1;
+  font-size: 12px;
+}
+.bs-data-empty {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--tap-muted, #4c535c);
+}
+.bs-report-dialog {
+  width: min(940px, calc(100vw - 32px));
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: 28px;
+  background: white;
+  color: var(--tap-ink, #20242a);
+  border-radius: 12px;
+}
+.bs-report-dialog header,
+.bs-report-dialog footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+}
+.bs-report-dialog h2 {
+  margin: 8px 0;
+}
+.bs-report-dialog p {
+  color: var(--tap-muted, #5f6670);
+  line-height: 1.8;
+}
+.bs-report-columns {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 32px;
+  margin: 28px 0;
+}
+.bs-report-columns label {
+  display: grid;
+  gap: 12px;
+}
+.bs-report-columns pre {
+  font-size: 12px;
+  padding: 16px;
+  background: var(--tap-canvas, #f5f7f9);
+  white-space: pre-wrap;
+}
+.bs-report-columns aside {
+  background: var(--tap-canvas, #f5f7f9);
+  padding: 20px;
+  border-radius: 8px;
+}
+.bs-report-columns li {
+  padding-bottom: 12px;
+}
+.bs-report-upload {
+  border: 1px dashed #abb9cd;
+  padding: 24px;
+  margin: 20px 0 12px;
+}
+.bs-report-dialog footer {
+  border-top: 1px solid var(--tap-line, #dfe3e8);
+  padding-top: 20px;
+}
+.bs-metric-definitions {
+  margin: 16px 22px;
+  padding: 14px 18px;
+  background: white;
+  border: 1px solid var(--tap-line, #dfe3e8);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.bs-metric-definitions summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.bs-metric-definitions dl {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 8px;
+}
+.bs-metric-definitions dd {
+  margin: 0;
+}
+.bs-failure-list {
+  grid-column: 1/-1;
+}
+.bs-failure-list > button {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 14px 20px;
+  border: 0;
+  border-top: 1px solid var(--tap-line, #e4e8ed);
+  background: white;
+  text-align: left;
+  cursor: pointer;
+}
+.bs-failure-list small {
+  display: block;
+  margin-top: 5px;
+  color: var(--tap-muted, #5f6670);
+}
+.bs-failure-explanation {
+  margin-top: 20px;
+  line-height: 1.8;
+}
+.bs-failure-explanation article {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--tap-accent-soft, #f2f6fd);
+  border: 1px solid var(--tap-accent-line, #d7e2f2);
+}
+.bs-failure-explanation h3 small {
+  color: var(--tap-muted, #5f6670);
+  font-weight: 400;
+  font-size: 11px;
+}
+.bs-evidence-tabs {
+  display: flex;
+  gap: 8px;
+}
+.bs-evidence-tabs [aria-pressed="true"] {
+  color: var(--tap-accent, #166bdb);
+  border-color: var(--tap-accent, #166bdb);
+}
+.bs-prototype-stat {
+  padding: 24px;
+  color: var(--tap-muted, #5f6670);
+  line-height: 1.8;
+}
+.bs-prototype-stat strong {
+  display: block;
+  color: var(--tap-ink, #20242a);
+  font-size: 32px;
+}
+@media (max-width: 700px) {
+  .bs-report-columns {
+    grid-template-columns: 1fr;
+  }
+  .bs-report-dialog {
+    padding: 20px;
+  }
+}
+
+.bs-side-panel--review {
+  width: min(620px, 100vw);
+}
+.bs-side-panel--review .bs-failure-explanation {
+  padding: 0 20px 24px;
+}
+.bs-side-panel--review .bs-failure-explanation label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bs-side-panel--review .bs-failure-explanation input {
+  width: auto;
+  margin: 0;
+}
+.bs-side-panel--review .bs-failure-explanation article {
+  padding: 16px;
+}
+.bs-side-panel--review .bs-failure-explanation h4 {
+  margin: 16px 0 8px;
+}
+.bs-side-panel--review .bs-failure-explanation p {
+  margin: 8px 0;
+}
+
+.bs-report-dialog .bs-report-error {
+  color: #b42318;
+}
+.bs-intake-strip select {
+  max-width: 100%;
+}
+.bs-report-dialog input[type="file"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.bs-dashboard--product .bs-intake-strip {
+  padding: 18px 0;
+  background: transparent;
+  border-top: 1px solid var(--tap-line);
+  gap: 18px;
+}
+.bs-intake-strip label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.bs-data-coverage {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--tap-muted);
+  flex-wrap: wrap;
+}
+.bs-intake-strip .bs-data-warning {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-accent);
+  text-decoration: underline;
+}
+.bs-quality-details {
+  padding: 0 0 20px;
+  border-bottom: 1px solid var(--tap-line);
+}
+.bs-quality-details p {
+  color: var(--tap-muted);
+  line-height: 1.6;
+}
+.bs-quality-details button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--tap-line);
+  background: transparent;
+  color: var(--tap-ink);
+  text-align: left;
+}
+.bs-quality-details button span:last-child {
+  color: var(--tap-accent);
+}
+.bs-target-build {
+  margin-bottom: 20px;
+}
+html[data-tap-prototype] .bs-report-dialog {
+  border-radius: 14px;
+}
+html[data-tap-prototype] .bs-report-columns aside {
+  background: var(--tap-soft);
+}
+html[data-tap-prototype] .bs-report-columns summary {
+  cursor: pointer;
+  line-height: 1.7;
+}
+html[data-tap-prototype] .bs-report-dialog .bs-primary,
+html[data-tap-prototype] .bs-failure-explanation .bs-primary {
+  background: var(--tap-brand);
+  border-color: var(--tap-brand);
+  color: var(--tap-ink);
+}
+.bs-dashboard--product .bs-failure-list > button {
+  border-radius: 0;
+  line-height: 1.6;
+}
+.bs-dashboard--product .bs-failure-list > button:last-child {
+  border-radius: 0 0 14px 14px;
+}
+.bs-dashboard--product .bs-failure-list small {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .bs-intake-strip label {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .bs-intake-strip select {
+    width: 100%;
+  }
+  .bs-data-coverage {
+    width: 100%;
+  }
+  .bs-dashboard--product .bs-failure-list > button {
+    flex-direction: column;
+  }
+  .bs-quality-details button {
+    flex-wrap: wrap;
+  }
+}
+
+html[data-tap-prototype] .bs-report-upload {
+  border-color: var(--tap-line-strong);
+}
+html[data-tap-prototype] .bs-report-upload input::file-selector-button {
+  border: 1px solid var(--tap-line-strong);
+  border-radius: 8px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  padding: 8px 12px;
+  margin-right: 12px;
+  font: inherit;
+  cursor: pointer;
+}

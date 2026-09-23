@@ -1,4 +1,8 @@
-import { useEffect, useReducer, useState } from "react";
+import { ConfigProvider } from "antd";
+import { TapProductPrototype } from "./widgets/tap/TapProductPrototype";
+import { tapperTheme } from "./widgets/tap/PrototypeTheme";
+import "./widgets/tap/PrototypeTheme.css";
+import { useEffect, useLayoutEffect, useReducer, useState } from "react";
 
 import {
   createBlankAutomation,
@@ -20,6 +24,22 @@ import "./styles.css";
 import "./legacy/automation/AutomationWorkspace.css";
 
 export function App() {
+  const isPrototype = window.location.pathname === "/prototype";
+  useLayoutEffect(() => {
+    if (!isPrototype) return;
+    document.documentElement.dataset.tapPrototype = "true";
+    return () => { delete document.documentElement.dataset.tapPrototype; };
+  }, [isPrototype]);
+  return isPrototype ? (
+    <ConfigProvider theme={tapperTheme}>
+      <TapProductPrototype />
+    </ConfigProvider>
+  ) : (
+    <TapApplication />
+  );
+}
+
+function TapApplication() {
   const [section, setSection] = useState<"automation" | "analytics">(
     "automation",
   );

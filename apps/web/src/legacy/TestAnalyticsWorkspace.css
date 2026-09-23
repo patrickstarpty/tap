@@ -1,10 +1,10 @@
 .bs-dashboard {
-  --bs-blue: #166bdb;
-  --bs-line: #dfe3e8;
-  --bs-muted: #5f6670;
+  --bs-blue: var(--tap-accent, #166bdb);
+  --bs-line: var(--tap-line, #dfe3e8);
+  --bs-muted: var(--tap-muted, #5f6670);
   min-height: 100%;
-  background: #f5f7f9;
-  color: #20242a;
+  background: var(--tap-canvas, #f5f7f9);
+  color: var(--tap-ink, #20242a);
   font-family:
     Inter,
     ui-sans-serif,
@@ -47,11 +47,11 @@
 .bs-widget-catalog button,
 .bs-share-dialog button {
   min-height: 30px;
-  border: 1px solid #cfd4da;
+  border: 1px solid var(--tap-line-strong, #cfd4da);
   border-radius: 4px;
   background: #fff;
   padding: 0 10px;
-  color: #32373d;
+  color: var(--tap-ink, #32373d);
 }
 .bs-page-actions > button:first-child {
   width: 32px;
@@ -74,7 +74,7 @@
   justify-content: space-between;
   min-height: 56px;
   border-bottom: 1px solid var(--bs-line);
-  background: #f8fafb;
+  background: var(--tap-canvas, #f8fafb);
   padding: 10px 22px;
 }
 .bs-range {
@@ -83,22 +83,22 @@
 .bs-range button {
   min-width: 43px;
   min-height: 30px;
-  border: 1px solid #d4d9df;
+  border: 1px solid var(--tap-line, #d4d9df);
   border-right: 0;
   background: #fff;
-  color: #4c535c;
+  color: var(--tap-muted, #4c535c);
   font-size: 11px;
 }
 .bs-range button:first-child {
   border-radius: 4px 0 0 4px;
 }
 .bs-range button:last-child {
-  border-right: 1px solid #d4d9df;
+  border-right: 1px solid var(--tap-line, #d4d9df);
   border-radius: 0 4px 4px 0;
 }
 .bs-range button[aria-pressed="true"] {
-  background: #e7f0fc;
-  color: #145ebd;
+  background: var(--tap-accent-soft, #e7f0fc);
+  color: var(--tap-accent, #145ebd);
   font-weight: 650;
 }
 .bs-toolbar-actions {
@@ -111,9 +111,9 @@
 }
 .bs-filter-button {
   width: 34px;
-  border: 1px solid #cfd4da;
+  border: 1px solid var(--tap-line-strong, #cfd4da);
   background: #fff;
-  color: #333a42;
+  color: var(--tap-ink, #333a42);
 }
 .bs-add-button {
   border: 1px solid var(--bs-blue) !important;
@@ -126,11 +126,11 @@
   align-items: center;
   gap: 5px;
   margin: 10px 22px 0;
-  border: 1px solid #a9c9f2;
+  border: 1px solid var(--tap-accent-line, #a9c9f2);
   border-radius: 4px;
-  background: #edf5ff;
+  background: var(--tap-accent-soft, #edf5ff);
   padding: 5px 8px;
-  color: #285f9e;
+  color: var(--tap-accent, #285f9e);
   font-size: 11px;
 }
 .bs-filter-chip button {
@@ -200,7 +200,7 @@
   top: 26px;
   left: 68px;
   width: 96px;
-  color: #7c838b;
+  color: var(--tap-muted, #7c838b);
   font-size: 8px;
 }
 .bs-summary-bar {
@@ -275,9 +275,9 @@
   stroke: #e0ad4f;
 }
 .is-blue {
-  background-color: #526fbd !important;
-  fill: #526fbd;
-  stroke: #526fbd;
+  background-color: var(--tap-accent, #526fbd) !important;
+  fill: var(--tap-accent, #526fbd);
+  stroke: var(--tap-accent, #526fbd);
 }
 .is-purple {
   background-color: #8671bd !important;
@@ -400,7 +400,7 @@
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   min-height: 82px;
-  border: 1px solid #e2e5e9;
+  border: 1px solid var(--tap-line, #e2e5e9);
   border-radius: 2px;
   padding: 10px;
 }
@@ -415,7 +415,7 @@
 .bs-browser-grid b {
   display: block;
   margin-top: 4px;
-  color: #242a30;
+  color: var(--tap-ink, #242a30);
   font-size: 17px;
   font-weight: 550;
 }
@@ -468,7 +468,7 @@
 }
 .bs-side-panel select {
   min-height: 38px;
-  border: 1px solid #ccd2d8;
+  border: 1px solid var(--tap-line-strong, #ccd2d8);
   border-radius: 4px;
   background: #fff;
   padding: 0 10px;
@@ -505,11 +505,11 @@
   display: grid;
   height: 58px;
   place-items: center;
-  background: #f7f9fb;
+  background: var(--tap-soft, #f7f9fb);
 }
 .bs-catalog-preview svg path {
   fill: none;
-  stroke: #526fbd;
+  stroke: var(--tap-accent, #526fbd);
   stroke-width: 2;
 }
 .bs-share-dialog {
@@ -537,7 +537,7 @@
   justify-content: space-between;
   min-height: 66px;
   border: 0;
-  border-bottom: 1px solid #e7eaed;
+  border-bottom: 1px solid var(--tap-line, #e7eaed);
   border-radius: 0;
   text-align: left;
 }
@@ -557,9 +557,9 @@
 }
 .bs-breakdown-list b {
   border-radius: 10px;
-  background: #eef4ff;
+  background: var(--tap-accent-soft, #eef4ff);
   padding: 4px 7px;
-  color: #245fae;
+  color: var(--tap-accent, #245fae);
   font-size: 9px;
 }
 .bs-attempt {
@@ -579,7 +579,7 @@
   cursor: pointer;
 }
 .bs-dashboard button:focus-visible {
-  outline: 2px solid #2c77d8;
+  outline: 2px solid var(--tap-focus, #2c77d8);
   outline-offset: 2px;
 }
 .bs-dashboard button:disabled {
@@ -613,6 +613,188 @@
     grid-template-columns: repeat(2, 1fr);
   }
   .bs-catalog-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The combined product prototype inherits TAP's existing visual system. */
+.bs-dashboard--product {
+  padding: 36px clamp(24px, 4vw, 56px) 48px;
+  font-family: var(--tap-font);
+  color: var(--tap-ink);
+  font-size: 14px;
+}
+.bs-dashboard--product .bs-page-header {
+  align-items: center;
+  padding: 0 0 28px;
+  background: transparent;
+  border: 0;
+}
+.bs-dashboard--product .bs-page-header h1 {
+  margin: 0;
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.bs-project-context {
+  margin: 12px 0 0;
+  color: var(--tap-muted);
+}
+.bs-project-context strong {
+  margin-left: 10px;
+  color: var(--tap-ink);
+  font-weight: 500;
+}
+.bs-dashboard--product .bs-toolbar {
+  padding: 20px 0;
+  border: 0;
+  gap: 16px;
+}
+.bs-dashboard--product .bs-widget-grid {
+  padding: 0;
+  gap: 20px;
+}
+.bs-dashboard--product .bs-widget {
+  border-radius: 14px;
+  box-shadow: none;
+}
+.bs-dashboard--product .bs-widget-header {
+  min-height: 56px;
+  padding: 0 22px;
+}
+.bs-dashboard--product .bs-widget-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.bs-dashboard--product .bs-widget-more {
+  display: none;
+}
+.bs-dashboard--product .bs-summary-row {
+  padding: 10px 22px 26px;
+  gap: 20px;
+}
+.bs-dashboard--product .bs-summary-row span {
+  font-size: 12px;
+}
+.bs-dashboard--product .bs-summary-row strong {
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.bs-dashboard--product .bs-summary-row small {
+  position: static;
+  display: block;
+  width: auto;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.bs-dashboard--product .bs-summary-bar {
+  display: none;
+}
+.bs-dashboard--product .bs-metric-definitions {
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-muted);
+  font-size: 13px;
+}
+.bs-dashboard--product .bs-metric-definitions dl {
+  padding: 16px 0;
+  color: var(--tap-ink);
+}
+.bs-dashboard--product .bs-filter-chip {
+  margin: 0 8px 18px 0;
+  font-size: 12px;
+}
+.bs-dashboard--product .bs-legend {
+  font-size: 11px;
+  padding: 0 22px;
+  flex-wrap: wrap;
+}
+.bs-dashboard--product .bs-build-name {
+  font-size: 11px;
+}
+.bs-dashboard--product .bs-prototype-stat {
+  padding: 20px 22px;
+  font-size: 13px;
+}
+.bs-dashboard--product .bs-prototype-stat strong {
+  font-size: 28px;
+}
+.bs-dashboard--product button,
+.bs-dashboard--product select,
+html[data-tap-prototype]
+  :is(.bs-side-panel, .bs-widget-catalog, .bs-share-dialog, .bs-report-dialog)
+  :is(button, select) {
+  font: inherit;
+  min-height: 36px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.bs-dashboard--product .bs-range button {
+  padding: 0 14px;
+  min-width: 44px;
+  border-radius: 0;
+}
+.bs-dashboard--product .bs-range {
+  border-radius: 8px;
+}
+.bs-dashboard--product .bs-page-actions .bs-share-button,
+.bs-dashboard--product .bs-add-button {
+  border-color: var(--tap-line-strong) !important;
+  background: var(--tap-surface) !important;
+  color: var(--tap-ink) !important;
+}
+html[data-tap-prototype]
+  :is(.bs-side-panel, .bs-widget-catalog, .bs-share-dialog, .bs-report-dialog) {
+  font-family: var(--tap-font);
+  color: var(--tap-ink);
+  background: var(--tap-canvas);
+}
+html[data-tap-prototype]
+  :is(.bs-side-panel, .bs-widget-catalog, .bs-share-dialog, .bs-report-dialog)
+  :is(p, label) {
+  font-size: 14px;
+}
+@media (max-width: 900px) {
+  .bs-dashboard--product {
+    padding: 28px 20px;
+  }
+  .bs-dashboard--product .bs-widget-grid {
+    grid-template-columns: 1fr;
+  }
+  .bs-dashboard--product .bs-summary-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .bs-dashboard--product {
+    padding: 24px 16px;
+  }
+  .bs-dashboard--product .bs-page-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  .bs-dashboard--product .bs-page-header h1 {
+    font-size: 28px;
+  }
+  .bs-dashboard--product .bs-summary-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bs-dashboard--product .bs-summary-row strong {
+    font-size: 24px;
+  }
+  .bs-dashboard--product .bs-range {
+    max-width: 100%;
+  }
+  .bs-dashboard--product .bs-range button {
+    padding: 0 10px;
+  }
+  .bs-dashboard--product .bs-metric-definitions dl {
     grid-template-columns: 1fr;
   }
 }
