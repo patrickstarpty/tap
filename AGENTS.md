@@ -16,6 +16,12 @@ TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-fr
 
 Before materially changing `docs/`, read `docs/reference/2026-08-22-document-governance.md`. Use `docs/proposals/rfc-template.md` and `docs/decisions/adr-template.md` for RFCs and ADRs.
 
+## Product Prototype Baseline
+
+The `main` branch must always carry the latest approved complete product prototype. Merge confirmed prototype changes, required assets and README entry instructions into `main`; never leave the authoritative version only on a feature branch, worktree or temporary path. Keep the latest-prototype section at the top of README current.
+
+Before changing product UI or interaction design, read [the product prototype baseline](docs/reference/2026-09-22-product-prototype-baseline.md). The complete combined prototype at `apps/web` route `/prototype`, rooted in `apps/web/src/widgets/tap/TapProductPrototype.tsx`, is the sole evolving design baseline. Extend it incrementally; do not create a separate prototype or shell for each requirement, replace it with an independent application entry, or remove existing modules because near-term implementation scope narrows. Preserve Tapper (New chat, Agents, Skills, Library, Knowledge Graph), Test Management, Test Analytics/Insights, Low Code Automation, cross-module links and the floating assistant. Show the intended delivered product UI: no demo switches, simulated-scenario controls or implementation explanations in product screens. Keep fixture setup and capability disclosures in test tooling and documentation. Verify module navigation and cross-module journeys and compare before/after screenshots for UI changes. This design baseline does not merge TAP AI and TAP runtime boundaries or establish backend completion.
+
 ## Build, Test, and Development Commands
 
 Run commands from the repository root:

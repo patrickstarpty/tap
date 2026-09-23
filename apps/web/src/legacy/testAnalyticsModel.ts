@@ -1,6 +1,14 @@
 import { createInitialArtifactState } from "./artifacts/fixtures";
 
+export const ANALYTICS_PROJECT = {
+  id: "life-insurance",
+  name: "Life insurance",
+  nameZh: "寿险业务",
+} as const;
+
 export interface AnalyticsScope {
+  project?: string;
+  branch?: string;
   days: number;
   plan: string;
   environment: string;
@@ -20,6 +28,8 @@ export interface Execution {
   attempts: readonly Attempt[];
 }
 export interface Build {
+  projectId: string;
+  branch: string;
   id: string;
   date: string;
   environment: string;
@@ -95,6 +105,8 @@ for (let day = 0; day < 14; day++) {
   for (const [envIndex, environment] of ["qa", "staging"].entries()) {
     const build: Build = {
       id: `BUILD-${2840 + day * 2 + envIndex}`,
+      projectId: ANALYTICS_PROJECT.id,
+      branch: day < 9 ? "main" : "release/underwriting",
       date,
       environment,
       commit: day < 9 ? "7b2a190" : "a43c821",
@@ -156,6 +168,26 @@ for (let day = 0; day < 14; day++) {
 export const ANALYTICS = {
   tests,
   builds,
+  pendingBuilds: [
+    {
+      id: "BUILD-2868",
+      projectId: ANALYTICS_PROJECT.id,
+      branch: "release/underwriting",
+      date: "2026-09-06",
+      environment: "qa",
+      commit: "a43c821",
+      startedAt: "2026-09-06T10:00:00+08:00",
+    },
+    {
+      id: "BUILD-2869",
+      projectId: ANALYTICS_PROJECT.id,
+      branch: "release/underwriting",
+      date: "2026-09-06",
+      environment: "staging",
+      commit: "a43c821",
+      startedAt: "2026-09-06T11:00:00+08:00",
+    },
+  ] satisfies Build[],
   executions,
   errors,
   plans: snapshot.testPlans.map(({ id, title }) => ({ id, title })),
@@ -179,6 +211,10 @@ export function filterExecutions(scope: AnalyticsScope): Execution[] {
   return executions.filter((row) => {
     const build = getBuild(row);
     return (
+      build.projectId === (scope.project ?? ANALYTICS_PROJECT.id) &&
+      (!scope.branch ||
+        scope.branch === "all" ||
+        build.branch === scope.branch) &&
       build.date >= cutoff.toISOString().slice(0, 10) &&
       (scope.plan === "all" || getTest(row).planId === scope.plan) &&
       (scope.environment === "all" ||
@@ -274,7 +310,7 @@ export function dailyRows(rows: readonly Execution[]) {
     stats: summarize(rows.filter((r) => getBuild(r).date === date)),
   }));
 }
-export function executionCsv(rows: readonly Execution[]) {
+export function executionCsv(rows: readonly Execution[], attemptsKnown = true) {
   const quote = (value: string | number) =>
     `"${String(value).replaceAll('"', '""')}"`;
   return [
@@ -288,10 +324,10 @@ export function executionCsv(rows: readonly Execution[]) {
         getBuild(row).date,
         getBuild(row).environment,
         getBuild(row).commit,
-        row.attempts[0]?.status ?? "skipped",
+        attemptsKnown ? (row.attempts[0]?.status ?? "skipped") : "Unknown",
         outcome(row),
-        row.attempts.length,
-        retryMs(row),
+        attemptsKnown ? row.attempts.length : "Unknown",
+        attemptsKnown ? retryMs(row) : "Unknown",
         row.attempts
           .map((a) => a.errorId)
           .filter(Boolean)

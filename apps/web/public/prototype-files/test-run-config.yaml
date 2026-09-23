@@ -1,0 +1,13 @@
+# TAP sample configuration
+name: beneficiary-allocation
+environment: prototype
+retry:
+  attempts: 2
+  retain_request_id: true
+cases:
+  - id: BEN-001
+    allocation_percent: 100
+    expected: accepted
+  - id: BEN-002
+    allocation_percent: 99
+    expected: rejected

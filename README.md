@@ -2,35 +2,43 @@
 
 TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。当前已接受的路线先在固定 Validation Scope 中验证知识问答、Knowledge Graph、Test Plan、Web LCA/Recorder、Playwright/Jenkins 与结果闭环；验证通过后再实现用户、RBAC、多 Project 和生产治理。
 
+## 最新产品原型：以 main 为准
+
+**`main` 主分支始终承载最新已确认的完整产品原型，是唯一权威入口。** 原型变更确认后必须连同源码、资源和本节说明一起合入 `main`；不能只留在功能分支、worktree、临时目录或截图中。查看最新设计时直接使用最新 `main`，无需寻找历史分支或另一个原型项目。
+
+完整组合原型是持续演进的唯一设计基准，固定在 `apps/web` 的 `/prototype`，入口组件为 `apps/web/src/widgets/tap/TapProductPrototype.tsx`。从仓库根目录启动：
+
+```sh
+corepack pnpm --dir apps/web dev --port 15176
+```
+
+打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Analytics/Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/reference/2026-09-22-product-prototype-baseline.md)。
+
+当前原型包含资料核对与发布、知识问答引用、项目维度的 Test Insights 和数据接入。`/prototype` 是完整产品设计入口；下方独立应用入口及历史截图用于各自的实现和追溯，不代替最新原型。
+
+当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [资料核对与发布](docs/assets/prototype-current/document-review.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
+
 ## TAP AI 独立应用
 
 TAP AI 的前后端分别位于 `apps/tap-ai-frontend` 和 `apps/tap-ai-backend`，拥有 Tapper 问答、知识文档/图谱、模型与 Agent/Skill 资产，以及 AI 测试方案的生成、保存和评审。TAP 非 AI 应用入口保留在 `apps/web` 和 `apps/backend`；现有低代码与测试分析原型由 TAP Web 承载。公开 API 路径、数据库表、迁移链和 `TAPPER_*` 配置名在本次目录迁移中保持不变，因此已有 Tapper 数据和对象引用无需重建。
 
 TAP AI 可在不启动 TAP 前后端的情况下运行。先执行 `make tap-ai-bootstrap` 安装 TAP AI 冻结依赖，按 `.env.example` 配置并启动本机基础服务（现有 Demo 可用 `make demo-up`，或连接自行配置的服务），执行 `make tap-ai-migrate`，再执行 `make tap-ai-dev`；这会在回环地址启动 TAP AI API、Relay、后台任务和前端。结束 `tap-ai-dev` 会清理这些应用进程；现有 Demo 的基础服务可用 `make demo-down` 停止并保留卷。`make tap-ai-api` 与 `make tap-ai-web` 可分别启动两端；`make tap-web-dev`、`make tap-backend-dev` 则分别启动 TAP 非 AI 应用。`make tap-ai-check` 和 `make tap-ai-test` 只检查 TAP AI。当前入口仍是本机无认证 Demo，不承担局域网或生产访问。
 
-产品边界与验收见 [TAP AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。下方客户原型演示记录的是拆分前的组合式平台页面。
+产品边界与验收见 [TAP AI 产品边界与本机独立部署](docs/architecture/2026-09-15-tap-ai-product-boundary.md)。TAP AI 与 TAP 仍独立实现和部署；各独立应用入口不能替代上方完整设计基准。下方截图记录的是拆分前的页面，完整组合原型已恢复为持续演进的设计基准，这不表示相关后端能力均已实现。
 
 当前 AI 页面截图可运行 `corepack pnpm --dir apps/tap-ai-frontend run prototype:capture`：仅使用隔离的示例 API 响应，输出 6 张截图到应用的 `test-results/prototype-capture/`，不改写下方历史截图；追加 `--list` 可查看采集范围。
 
 旧版浏览器中的 Automation 编辑和模拟 Run 需按[浏览器原型工作区升级](docs/architecture/2026-09-15-tap-ai-product-boundary.md#浏览器原型工作区升级)迁移：同源可自动恢复；默认端口从 5173 变为 5174 时，使用 TAP 自有的 `Local workspace` 导出/导入功能转移。
 
-## 客户原型演示（2026-09-06 历史记录）
+## 产品原型参考截图（2026-09-06 采集）
 
-截至 2026-09-06，当前前端交互原型以 Tapper 为统一助手入口，组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Automation。BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。
+2026-09-06 采集时，前端交互原型以 Tapper 为统一助手入口，组合 Knowledge、AI Agent 与 Skill，生成并评审 Test Plan，再生成严格 `1:1` 关联的 Automation。BDD 步骤显式映射到 Navigate、Click、Send keys、Assert 等动作，已关联资产共享模拟 Run 历史。以下截图是视觉与交互参考，不是当前运行状态或后端能力的验收证据。
 
 - **导航与品牌**：平台与浏览器标题使用 TAP；Tapper 使用 Listening 啄木鸟标识。二级菜单为 `New chat`、`Agents`、`Skills`、`Library`，收起后保留图标导航。点击一级 Tapper 入口回到当前会话并保留草稿；新建会话使用 `New chat`。
 - **知识检索**：Library 默认打开 Knowledge Graph，搜索文档、概念或实体后可点击结果定位、高亮节点并查看关系。清空搜索恢复总览；`Documents`（文档列表）提供名称、类型与状态筛选。图谱支持平移、缩放、全屏及收起辅助面板；文档节点可跳到对应来源记录，尚无原文预览。
 - **跨页面助手**：Test Management 与 Low Code Automation 右下角提供 Tapper 悬浮入口，支持当前页面上下文、快捷提问、轻量对话和“在 Tapper 中继续”。Listening 为默认形象，Aha 表示收起后收到未读回复；回复是基于页面数据的确定性原型建议。
 
-当前操作步骤、现场话术、能力边界及 2026-09-06 从当前原型采集的 44 张截图见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)。历史交互基线见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。
-
-从仓库根目录启动原型：
-
-```sh
-corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
-```
-
-打开 `http://127.0.0.1:4175/`。下图为 2026-09-06 从当前原型重新采集的六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
+历史操作步骤、现场话术、能力边界及 2026-09-06 采集的 44 张截图见 [TAP 客户原型演示指南](docs/reference/2026-09-04-customer-prototype-demo-guide.md)。历史交互设计见 [RFC-008](docs/proposals/2026-09-03-rfc-008-tap-product-shell-and-low-code-automation.md)，正式产品和技术范围见 [RFC-009](docs/proposals/2026-09-04-rfc-009-tapper-knowledge-web-automation-platform.md)。使用本页上方固定 `/prototype` 入口查看当前设计。下图为其中六个页面，使用 2560×1440 无损 PNG，按整行展示，可点击图片查看原尺寸细节：
 
 **Tapper 统一对话入口**
 
@@ -56,7 +64,7 @@ corepack pnpm --dir apps/tap-ai-frontend dev --port 4175
 
 ![Tapper 生成关联资产](docs/assets/prototype-demo/36-tapper-linked-artifacts.png)
 
-演示时必须明确：Tapper 中的 **AI Agent** 负责分析、生成和调整；正式路线中的 **Execution Agent** 是 Jenkins **Pipeline Agent**。截图中的 Azure DevOps 与 Mobile 是旧的模拟交互探索，不属于当前实施范围。当前 Conversation、资产和 Run 使用浏览器状态模拟，所有运行均标为 `Simulated`；这不表示已连接真实 Pipeline、浏览器、移动设备或生成真实 Execution Evidence。
+讲解时必须明确：Tapper 中的 **AI Agent** 负责分析、生成和调整；正式路线中的 **Execution Agent** 是 Jenkins **Pipeline Agent**。截图中的 Azure DevOps 与 Mobile 是旧的交互探索，不属于当前实施范围。历史截图中的 Conversation、资产和 Run 使用浏览器状态模拟，运行标为 `Simulated`；这些历史标签不要求保留在产品 UI 中，也不表示已连接真实 Pipeline、浏览器、移动设备或生成真实 Execution Evidence。能力边界在文档与评审记录中说明。
 
 ## 一句话架构
 
