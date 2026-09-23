@@ -160,9 +160,10 @@ RFC-011 已于 2026-09-23 经用户确认审批通过，状态为 `accepted`。9
 
 **接口：** 两产品分别验证 `principal + action + project + resource`；TAP Insights 服务调用同时验证 TAP AI 服务身份与实际用户/项目授权范围。OIDC 为 RFC-011 团队目标，须明确与旧 P0 内建身份路线的关系后接入，不由本计划静默替换。
 
-- [ ] 写负向矩阵：错误 audience、错误项目、撤权、过期身份、服务身份越权、两个角色实为同一人、原件/引用/证据下载绕过鉴权。
+- [x] 写负向矩阵：错误 audience、错误项目、撤权、过期身份、服务身份越权、两个角色实为同一人、原件/引用/证据下载绕过鉴权。当前矩阵使用合成身份验证框架无关授权核心。
 - [ ] 接入确定的真实身份/角色映射及服务凭证，落实最小只读 Insights 权限与编校/复核/发布 action；原件和缓存也使用同一授权。
-- [ ] 运行新增 `apps/tap-ai-backend/tests/contract/test_review_authorization.py` 与 `apps/backend/tests/contract/test_insights_authorization.py`，加真实两人核对与撤权验证。登录会话还须覆盖退出、失效及写操作防伪造请求。
+- [x] 新增并运行 `apps/tap-ai-backend/tests/contract/test_review_authorization.py` 与 `apps/backend/tests/contract/test_insights_authorization.py`，验证项目动作、资源类型、职责分离以及用户＋服务身份双重授权。
+- [ ] 接入身份适配器后增加真实两人核对与撤权验证，并覆盖登录退出、会话失效及写操作防伪造请求；合成矩阵不能替代该 Gate。
 
 ```sh
 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/test_review_authorization.py -q

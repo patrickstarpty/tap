@@ -126,15 +126,27 @@ def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
             ResourceRef(
                 enterprise_id=scope.enterprise_id,
                 project_id=scope.project_id,
-                kind=(
-                    "ai"
-                    if action.startswith("ai.")
-                    else "test-plan"
-                    if action.startswith("test-plans.")
-                    else "knowledge"
-                ),
+                kind=_resource_kind_for_action(action),
             ),
         )
         request.state.project_scope = scope
 
     return authorize
+
+
+def _resource_kind_for_action(action: str) -> str:
+    exact = {
+        "knowledge.citation.read": "knowledge-citation",
+        "knowledge.evidence.read": "knowledge-evidence",
+        "knowledge.original.read": "knowledge-original",
+        "knowledge.publish": "knowledge-publication",
+    }
+    if action in exact:
+        return exact[action]
+    if action.startswith("knowledge.review."):
+        return "knowledge-review"
+    if action.startswith("ai."):
+        return "ai"
+    if action.startswith("test-plans."):
+        return "test-plan"
+    return "knowledge"
