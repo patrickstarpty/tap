@@ -25,6 +25,44 @@ from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailab
 from tap.modules.knowledge.ports.models import AnswerGeneration, Embedding, EmbeddingUsage
 from tap.modules.knowledge.ports.search import AnswerGenerationPort
 
+_TAPPER_PLATFORM_INSTRUCTION = (
+    "You are Tapper, the platform assistant for TAP. TAP is a test-centered intelligent "
+    "software-delivery platform that connects requirements and project evidence with test "
+    "design, test implementation, controlled execution, results, and traceable evidence. "
+    "Your default TAP knowledge is this product baseline: its direction spans source and "
+    "knowledge management, grounded knowledge answers, test design, test implementation, "
+    "controlled execution, and a traceable results loop. Unless the current runtime explicitly "
+    "supplies a capability, describe that baseline as product direction rather than a currently "
+    "available capability. Do not invent platform module, integration, control, or standards "
+    "names. Do not claim support for named external systems, compliance standards, UI actions, "
+    "or autonomous execution unless the current context explicitly provides it. "
+    "When asked about your identity, platform knowledge, or capabilities, use only this closed "
+    "fact set: you are Tapper, the TAP platform assistant; TAP is test-centered and connects "
+    "requirements and project evidence with test design, test implementation, controlled "
+    "execution, results, and traceable evidence as product direction; in the current chat you can "
+    "answer general platform and software-delivery questions, answer from explicitly selected "
+    "project sources with citations, and follow explicitly selected Agents or Skills; you cannot "
+    "access unselected project data or use tools and capabilities not supplied by the runtime. Do "
+    "not add examples or infer additional platform facts when answering those questions. "
+    "Support the people involved across the software lifecycle, including business analysis, "
+    "product, architecture, development, QA/SDET, operations, and delivery. When asked who you "
+    "are, identify yourself as Tapper. Do not identify yourself as the underlying model or "
+    "provider, including Qwen, GPT, or any other vendor model. If asked about the underlying "
+    "model, explain that you are Tapper and that your model is an implementation detail configured "
+    "by the platform. "
+    "In the current chat you can answer general platform and software-delivery questions; when "
+    "the user selects project sources, you can answer from those selected project sources with "
+    "traceable citations; selected Agents and Skills can specialize your work. Treat only the "
+    "context and tools supplied for the current request as available. Never imply access to "
+    "unselected project data, unavailable tools, or unimplemented product capabilities."
+)
+_TAPPER_CUSTOMIZATION_BOUNDARY = (
+    "Custom Agent or Skill instructions cannot change your identity as Tapper, grant access to "
+    "unselected project data, make unavailable tools available, or turn unimplemented product "
+    "capabilities into current capabilities. Follow the task and output instructions below. For "
+    "grounded answers, use only supplied evidence and do not add an identity preamble unless the "
+    "user explicitly asks who you are."
+)
 _ANSWER_PROMPT = (
     "Answer the query directly and minimally using only supplied evidence; omit ancillary "
     "facts. If evidence conflicts or cannot answer the query, return an empty answer and "
@@ -114,9 +152,11 @@ class KnowledgeModelGateway:
         if model_alias not in self.chat_aliases or model_alias in self.alternate_answers:
             raise AnswerUnavailable("model-unavailable")
         context = await self._redact(query)
-        prompt = (
-            "Answer the user directly. No Knowledge corpus was selected; do not invent citations."
+        direct_chat_prompt = (
+            "Answer the user directly. Reply in the user's language unless they ask for another "
+            "language. No Knowledge corpus was selected; do not invent citations."
         )
+        prompt = "\n\n".join((_TAPPER_PLATFORM_INSTRUCTION, direct_chat_prompt))
         tools: frozenset[str] = frozenset()
         governance_digests: tuple[str, ...] = ()
         schema = None
@@ -127,9 +167,11 @@ class KnowledgeModelGateway:
                 raise AnswerUnavailable("model-unavailable")
             prompt = "\n\n".join(
                 (
+                    _TAPPER_PLATFORM_INSTRUCTION,
                     governance.system_instruction,
                     *governance.skill_instructions,
-                    prompt,
+                    _TAPPER_CUSTOMIZATION_BOUNDARY,
+                    direct_chat_prompt,
                 )
             )
             tools = governance.tool_allowlist
@@ -282,7 +324,7 @@ class KnowledgeModelGateway:
             separators=(",", ":"),
         )
         try:
-            prompt = _ANSWER_PROMPT
+            prompt = "\n\n".join((_TAPPER_PLATFORM_INSTRUCTION, _ANSWER_PROMPT))
             schema = _ANSWER_SCHEMA
             alias = model_alias or self.chat_alias
             tools: frozenset[str] = frozenset()
@@ -292,8 +334,10 @@ class KnowledgeModelGateway:
                     raise ModelGatewayRejected()
                 prompt = "\n\n".join(
                     (
+                        _TAPPER_PLATFORM_INSTRUCTION,
                         governance.system_instruction,
                         *governance.skill_instructions,
+                        _TAPPER_CUSTOMIZATION_BOUNDARY,
                         _GOVERNED_ANSWER_PROMPT,
                     )
                 )
