@@ -273,6 +273,7 @@ class KnowledgePublicationDetail(ContractModel):
     source_revision_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
     approved_item_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=10_000)]
     published_at: TimestampValue
+    expires_at: TimestampValue
 
 
 class DocumentPage(ContractModel):
@@ -391,6 +392,7 @@ class DocumentAnchor(ContractModel):
     bbox: Annotated[list[BoundingBoxCoordinate], Field(min_length=4, max_length=4)] | None = None
     start_offset: NonNegativeAnchorInteger | None = None
     end_offset: NonNegativeAnchorInteger | None = None
+    inventory_item_id: ShortIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_ordered_offsets(self) -> Self:
@@ -605,6 +607,9 @@ class RetrievalHit(ContractModel):
     acl_decision_id: str = Field(min_length=1)
     schema_version: str = Field(min_length=1)
     embedding_model_version: str = Field(min_length=1)
+    publication_id: ShortIdentifier | None = None
+    approval_digest: CanonicalSha256 | None = None
+    approved_item_id: ShortIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_index_family(self) -> Self:
@@ -622,6 +627,9 @@ class RetrievalCitation(ContractModel):
     chunk_content_hash: CanonicalSha256
     content_role: ContentRole
     derived_from_chunk_ids: list[str] | None = None
+    publication_id: ShortIdentifier | None = None
+    approval_digest: CanonicalSha256 | None = None
+    approved_item_id: ShortIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_internal_source_family(self, info: ValidationInfo) -> Self:

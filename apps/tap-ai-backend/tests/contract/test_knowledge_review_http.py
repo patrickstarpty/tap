@@ -51,6 +51,7 @@ def publication_payload(*, status: str = "published") -> dict[str, object]:
         "sourceRevisionIds": ["rev_001"],
         "approvedItemIds": ["pi_001"],
         "publishedAt": "2026-09-23T09:00:00+00:00",
+        "expiresAt": "2026-10-23T09:00:00+00:00",
     }
 
 

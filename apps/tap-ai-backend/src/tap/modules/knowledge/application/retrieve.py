@@ -16,6 +16,10 @@ from tap.modules.access.domain.policy import (
     ResourceGrant,
     RetrievalPolicyContext,
 )
+from tap.modules.knowledge.application.publication import (
+    PublicationBinding,
+    PublishedKnowledgeAuthority,
+)
 from tap.modules.knowledge.domain.models import (
     AbstentionReason,
     AnswerMode,
@@ -112,6 +116,7 @@ class _RetrievalRun:
     plan: QueryPlan
     context_snapshot: ContextSnapshot
     policy: RetrievalPolicyContext
+    publication: PublicationBinding | None = None
 
 
 def _resolve_generated_claims(
@@ -170,6 +175,7 @@ class AuthorizedRetrieval:
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str],
+        publication_authority: PublishedKnowledgeAuthority | None = None,
     ) -> None:
         self._search = search
         if models is not None:
@@ -185,6 +191,7 @@ class AuthorizedRetrieval:
         self._policy_verifier = policy_verifier
         self._redactor = redactor
         self._id_factory = id_factory
+        self._publication_authority = publication_authority
 
     async def search(
         self,
@@ -214,6 +221,8 @@ class AuthorizedRetrieval:
             return self._abstain(run.response, missing_reason)
         if self._has_conflicting_sources(run.response.evidence):
             return self._abstain(run.response, AbstentionReason.CONFLICTING_SOURCES)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
         current = run.policy if frozen_policy else await self._verify_current(run.policy)
         self._validate_binding(current, run.plan, run.context_snapshot)
         generation = (
@@ -234,6 +243,8 @@ class AuthorizedRetrieval:
         )
         current = current if frozen_policy else await self._verify_current(current)
         self._validate_binding(current, run.plan, run.context_snapshot)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
         claims = _resolve_generated_claims(
             generation,
             run.response.evidence,
@@ -343,6 +354,11 @@ class AuthorizedRetrieval:
         self._validate_binding(current, plan, context_snapshot)
         if not all(self._hit_is_in_execution(hit, plan) for hit in hits):
             raise AuthorizationDenied("Search returned evidence outside bound execution")
+        publication = (
+            None
+            if self._publication_authority is None
+            else await self._publication_authority.authorize_hits(current.project_id, hits)
+        )
         authorized_hits = hits
         family_order = {family: index for index, family in enumerate(SourceFamily)}
         ordered_hits = sorted(
@@ -360,6 +376,7 @@ class AuthorizedRetrieval:
                 position,
                 current.decision_id,
                 self._fused_score(hit, plan.resources, profile),
+                publication,
             )
             for position, hit in enumerate(
                 ordered_hits[: min(profile.final_result_limit, candidate_limit)],
@@ -380,6 +397,7 @@ class AuthorizedRetrieval:
             plan=plan,
             context_snapshot=context_snapshot,
             policy=current,
+            publication=publication,
         )
 
     async def _verify_current(
@@ -548,6 +566,7 @@ class AuthorizedRetrieval:
         position: int,
         acl_decision_id: str,
         fused_score: float,
+        publication: PublicationBinding | None,
     ) -> Evidence:
         return Evidence(
             family=hit.family,
@@ -568,6 +587,13 @@ class AuthorizedRetrieval:
             score=fused_score,
             derived_from_chunk_ids=hit.derived_from_chunk_ids,
             provider_request_id=hit.provider_request_id,
+            publication_id=None if publication is None else publication.publication_id,
+            approval_digest=None if publication is None else publication.approval_digest,
+            approved_item_id=(
+                hit.source.anchor.inventory_item_id
+                if publication is not None and isinstance(hit.source.anchor, DocumentAnchor)
+                else None
+            ),
         )
 
     @staticmethod
@@ -662,6 +688,9 @@ class AuthorizedRetrieval:
             chunk_content_hash=evidence.chunk_content_hash,
             content_role=evidence.content_role,
             derived_from_chunk_ids=evidence.derived_from_chunk_ids,
+            publication_id=evidence.publication_id,
+            approval_digest=evidence.approval_digest,
+            approved_item_id=evidence.approved_item_id,
         )
 
     @staticmethod

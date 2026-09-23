@@ -249,6 +249,8 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
     }
     if anchor.page is not None:
         value["page"] = anchor.page
+    if anchor.inventory_item_id is not None:
+        value["inventoryItemId"] = anchor.inventory_item_id
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 

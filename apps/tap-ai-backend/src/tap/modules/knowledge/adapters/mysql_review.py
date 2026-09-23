@@ -70,6 +70,7 @@ knowledge_publication = Table(
     Column("generation", String(256), nullable=False),
     Column("published_by", String(128), nullable=False),
     Column("published_at", DATETIME(fsp=6), nullable=False),
+    Column("expires_at", DATETIME(fsp=6), nullable=False),
     Column("status", String(16), nullable=False),
     Column("withdrawn_by", String(128)),
     Column("withdrawn_at", DATETIME(fsp=6)),
@@ -599,6 +600,7 @@ def _publication_values(value: KnowledgePublication) -> dict[str, object]:
         "generation": value.generation,
         "published_by": value.published_by,
         "published_at": _naive_utc(value.published_at),
+        "expires_at": _naive_utc(value.expires_at),
         "status": value.status,
         "withdrawn_by": value.withdrawn_by,
         "withdrawn_at": None if value.withdrawn_at is None else _naive_utc(value.withdrawn_at),
@@ -610,6 +612,7 @@ def _publication_payload(value: KnowledgePublication) -> dict[str, object]:
     payload["source_revision_ids"] = list(value.source_revision_ids)
     payload["approved_item_ids"] = list(value.approved_item_ids)
     payload["published_at"] = value.published_at.isoformat()
+    payload["expires_at"] = value.expires_at.isoformat()
     payload["withdrawn_at"] = None if value.withdrawn_at is None else value.withdrawn_at.isoformat()
     return payload
 
@@ -626,6 +629,7 @@ def _publication(row) -> KnowledgePublication:  # type: ignore[no-untyped-def]
         generation=row["generation"],
         published_by=row["published_by"],
         published_at=_aware_utc(row["published_at"]),
+        expires_at=_aware_utc(row["expires_at"]),
         status=row["status"],
         withdrawn_by=row["withdrawn_by"],
         withdrawn_at=(None if row["withdrawn_at"] is None else _aware_utc(row["withdrawn_at"])),
@@ -644,6 +648,7 @@ def _publication_json(payload: dict[str, object]) -> KnowledgePublication:
         generation=cast(str, payload["generation"]),
         published_by=cast(str, payload["published_by"]),
         published_at=datetime.fromisoformat(cast(str, payload["published_at"])),
+        expires_at=datetime.fromisoformat(cast(str, payload["expires_at"])),
         status=cast(Literal["published", "withdrawn"], payload["status"]),
         withdrawn_by=cast(str | None, payload["withdrawn_by"]),
         withdrawn_at=(

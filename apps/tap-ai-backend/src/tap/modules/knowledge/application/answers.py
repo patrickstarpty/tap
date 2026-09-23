@@ -10,6 +10,10 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import PolicyUnavailable, RetrievalPolicyContext
 from tap.modules.ai.domain.models import GenerationGovernance
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+from tap.modules.knowledge.application.publication import (
+    PublicationBinding,
+    PublishedKnowledgeAuthority,
+)
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     AnswerRequest,
@@ -72,9 +76,11 @@ class AnswerService:
         repository: AnswerSnapshotRepository,
         knowledge: KnowledgeAnswerGateway,
         corpus_version: str = "tapper-demo-v1",
+        publication_authority: PublishedKnowledgeAuthority | None = None,
     ) -> None:
         self._repository = repository
         self._knowledge = knowledge
+        self._publication_authority = publication_authority
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
         self._corpus_version = corpus_version
@@ -89,19 +95,23 @@ class AnswerService:
 
         document_ids = validate_search_selection(request)
         ordered = await self._load_selected_revisions(document_ids)
+        publication = await self._authorize_selection(ordered)
         trusted = SearchRequest(
             query=request.query,
             answer_mode=AnswerMode.QUICK,
             source_families=(SourceFamily.DOC,),
             resource_refs=_scope_refs(ordered),
         )
-        return await self._knowledge.search(
+        response = await self._knowledge.search(
             trusted, build_demo_policy_context(ordered, corpus_version=self._corpus_version)
         )
+        await self._revalidate_publication(publication)
+        return response
 
     async def answer(self, request: AnswerRequest) -> AnswerResponse:
         document_ids = validate_answer_selection(request)
         ordered = await self._load_selected_revisions(document_ids)
+        publication = await self._authorize_selection(ordered)
         trusted = AnswerRequest(
             query=request.query,
             answer_mode=AnswerMode.QUICK,
@@ -110,6 +120,7 @@ class AnswerService:
         )
         policy = build_demo_policy_context(ordered, corpus_version=self._corpus_version)
         response = await self._knowledge.answer(trusted, policy)
+        await self._revalidate_publication(publication)
         try:
             if policy.active_corpus_version != self._corpus_version:
                 raise ValueError("answer policy corpus changed")
@@ -127,6 +138,7 @@ class AnswerService:
             raise
         except Exception as error:
             raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
+        await self._revalidate_publication(publication)
         return response
 
     async def answer_frozen(
@@ -150,6 +162,7 @@ class AnswerService:
             source_families=(SourceFamily.DOC,),
             resource_refs=_scope_refs(revisions),
         )
+        publication = await self._authorize_selection(revisions)
         grants = {
             (grant.source_id, grant.revision, grant.source_content_hash)
             for grant in policy.resource_grants
@@ -176,6 +189,7 @@ class AnswerService:
                 graph_context=graph_context,
                 model_alias=model_alias,
             )
+        await self._revalidate_publication(publication)
         try:
             snapshot = AnswerSnapshot.from_response(
                 response=response,
@@ -192,6 +206,7 @@ class AnswerService:
             raise
         except Exception as error:
             raise AnswerSnapshotUnavailable("answer snapshot commit failed") from error
+        await self._revalidate_publication(publication)
         return response
 
     async def resolve_conversation_selection(
@@ -221,6 +236,20 @@ class AnswerService:
         ):
             raise DocumentStateChanged("selected document is not ready and current")
         return tuple(sorted(rows, key=lambda item: item.document_id))
+
+    async def _authorize_selection(
+        self, rows: tuple[ReadyDocumentRevision, ...]
+    ) -> PublicationBinding | None:
+        if self._publication_authority is None:
+            return None
+        return await self._publication_authority.authorize_selection(
+            self.scope.project_id,
+            tuple(row.revision_id for row in rows),
+        )
+
+    async def _revalidate_publication(self, publication: PublicationBinding | None) -> None:
+        if self._publication_authority is not None and publication is not None:
+            await self._publication_authority.revalidate(publication)
 
 
 def validate_answer_selection(request: AnswerRequest) -> tuple[str, ...]:

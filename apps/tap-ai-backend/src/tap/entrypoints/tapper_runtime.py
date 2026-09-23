@@ -1497,6 +1497,18 @@ def _assemble_http_services(
     document_repository = cast(DocumentRepository, repository)
     artifact_store = cast(ArtifactStore, artifacts)
 
+    review_repository = None
+    publication_authority = None
+    if review_sessions is not None:
+        from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
+        from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
+
+        review_repository = MysqlKnowledgeReviewRepository(
+            review_sessions,
+            scope=repository.scope,  # type: ignore[arg-type]
+        )
+        publication_authority = PublishedKnowledgeAuthority(review_repository)
+
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
         search=search,
@@ -1508,16 +1520,19 @@ def _assemble_http_services(
             corpus_version=corpus_version,
         ),
         redactor=redactor,
+        publication_authority=publication_authority,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
         knowledge=knowledge,
         corpus_version=corpus_version,
+        publication_authority=publication_authority,
     )
     search_service = answer_service
     citations = CitationResolver(
         repository=cast(CitationRepository, repository),
         artifacts=cast(CitationArtifactStore, artifacts),
+        publication_authority=publication_authority,
     )
     conversations = None
     if conversation_sessions is not None:
@@ -1535,7 +1550,7 @@ def _assemble_http_services(
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
         graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
-        graph_enricher = GraphAnswerEnricher(graph)
+        graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
@@ -1549,14 +1564,10 @@ def _assemble_http_services(
         from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
         from tap.modules.knowledge.adapters.mysql_review import (
             MysqlApprovedProjectionVerifier,
-            MysqlKnowledgeReviewRepository,
         )
         from tap.modules.knowledge.application.review import KnowledgeReviewApplication
 
-        review_repository = MysqlKnowledgeReviewRepository(
-            review_sessions,
-            scope=repository.scope,  # type: ignore[arg-type]
-        )
+        assert review_repository is not None
         knowledge_reviews = KnowledgeReviewHttpService(
             KnowledgeReviewApplication(
                 review_repository,

@@ -56,7 +56,7 @@ _ROW_FIELDS = frozenset(
     }
 )
 _DOCUMENT_ANCHOR_FIELDS = frozenset(
-    {"type", "headingPath", "page", "bbox", "startOffset", "endOffset"}
+    {"type", "headingPath", "page", "bbox", "startOffset", "endOffset", "inventoryItemId"}
 )
 
 
@@ -253,6 +253,11 @@ def _document_anchor(raw: object) -> DocumentAnchor:
         bbox=tuple(bbox),
         start_offset=_optional_int(value, "startOffset", minimum=0),
         end_offset=_optional_int(value, "endOffset", minimum=0),
+        inventory_item_id=(
+            None
+            if "inventoryItemId" not in value
+            else _optional_string(value, "inventoryItemId", maximum=128)
+        ),
     )
 
 

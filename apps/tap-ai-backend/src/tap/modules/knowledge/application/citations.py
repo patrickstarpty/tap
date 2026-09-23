@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.domain.documents import (
     ChunkId,
     DocumentId,
@@ -54,9 +55,11 @@ class CitationResolver:
         *,
         repository: CitationRepository,
         artifacts: CitationArtifactStore,
+        publication_authority: PublishedKnowledgeAuthority | None = None,
     ) -> None:
         self._repository = repository
         self._artifacts = artifacts
+        self._publication_authority = publication_authority
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -87,6 +90,20 @@ class CitationResolver:
         if lookup is None:
             raise CitationStale
         self._validate_ledger_facts(lookup, historical=historical)
+        publication = None
+        authority = self._publication_authority
+        if authority is not None:
+            try:
+                if historical:
+                    publication = await authority.authorize_historical_access(self.scope.project_id)
+                else:
+                    publication = await authority.authorize_evidence(
+                        self.scope.project_id,
+                        source_revision_id=lookup.citation.revision_id,
+                        approved_item_id=_inventory_item_id(lookup.citation.anchor_json),
+                    )
+            except Exception as error:
+                raise CitationStale from error
         assert lookup.document is not None
         assert lookup.document.normalized_locator is not None
         assert lookup.document.chunks_locator is not None
@@ -118,6 +135,11 @@ class CitationResolver:
                 raise CitationUnavailable from error
             if not current:
                 raise CitationStale
+        if publication is not None and authority is not None:
+            try:
+                await authority.revalidate(publication)
+            except Exception as error:
+                raise CitationStale from error
         return preview
 
     @staticmethod
@@ -247,7 +269,14 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
     value = json.loads(anchor_json)
     if not isinstance(value, dict):
         raise ValueError("citation anchor must be an object")
-    allowed = {"endOffset", "headingPath", "page", "startOffset", "type"}
+    allowed = {
+        "endOffset",
+        "headingPath",
+        "inventoryItemId",
+        "page",
+        "startOffset",
+        "type",
+    }
     required = {"endOffset", "headingPath", "startOffset", "type"}
     if not required <= set(value) or not set(value) <= allowed or value["type"] != "document":
         raise ValueError("citation anchor shape is not the document chunk shape")
@@ -255,6 +284,7 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
     start = value["startOffset"]
     end = value["endOffset"]
     page = value.get("page")
+    inventory_item_id = value.get("inventoryItemId")
     if (
         not isinstance(headings, list)
         or any(not isinstance(item, str) or not item for item in headings)
@@ -263,6 +293,14 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
         or start < 0
         or end <= start
         or (page is not None and (type(page) is not int or page < 1))
+        or (
+            inventory_item_id is not None
+            and (
+                not isinstance(inventory_item_id, str)
+                or not inventory_item_id
+                or len(inventory_item_id) > 128
+            )
+        )
     ):
         raise ValueError("citation document anchor values are invalid")
     return DocumentAnchor(
@@ -270,4 +308,10 @@ def _document_anchor(anchor_json: str) -> DocumentAnchor:
         page=page,
         start_offset=start,
         end_offset=end,
+        inventory_item_id=inventory_item_id,
     )
+
+
+def _inventory_item_id(anchor_json: str) -> str | None:
+    value = json.loads(anchor_json)
+    return value.get("inventoryItemId") if isinstance(value, dict) else None

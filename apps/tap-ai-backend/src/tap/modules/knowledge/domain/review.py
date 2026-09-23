@@ -90,6 +90,7 @@ class KnowledgePublication:
     generation: str
     published_by: str
     published_at: datetime
+    expires_at: datetime
     status: Literal["published", "withdrawn"] = "published"
     withdrawn_by: str | None = None
     withdrawn_at: datetime | None = None
@@ -110,6 +111,8 @@ class KnowledgePublication:
             raise ValueError("publication status is invalid")
         if self.published_at.utcoffset() is None:
             raise ValueError("publication time must be timezone-aware")
+        if self.expires_at.utcoffset() is None or self.expires_at <= self.published_at:
+            raise ValueError("publication expiry must be aware and after publication")
         if self.status == "withdrawn":
             if self.withdrawn_by is None or self.withdrawn_at is None:
                 raise ValueError("withdrawn publication requires actor and time")

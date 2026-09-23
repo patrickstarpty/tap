@@ -45,7 +45,10 @@ class InMemoryGraphStore:
     ) -> GraphSnapshot | None:
         scope = require_project_scope(scope)
         identity = self._active.get((scope.project_id, source_set_digest(source_ids)))
-        return None if identity is None else self._drafts[(scope.project_id, identity)].snapshot
+        if identity is None:
+            return None
+        snapshot = self._drafts[(scope.project_id, identity)].snapshot
+        return snapshot if snapshot.source_revision_ids == tuple(sorted(source_ids)) else None
 
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str

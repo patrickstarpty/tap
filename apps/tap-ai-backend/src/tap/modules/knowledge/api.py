@@ -54,6 +54,7 @@ from tap.contracts.http import (
 from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
@@ -105,6 +106,7 @@ class KnowledgeAPI:
         policy_verifier: CurrentPolicyVerificationPort,
         redactor: EgressRedactionPort,
         id_factory: Callable[[], str] | None = None,
+        publication_authority: PublishedKnowledgeAuthority | None = None,
     ) -> None:
         self._retrieval = AuthorizedRetrieval(
             search=search,
@@ -114,6 +116,7 @@ class KnowledgeAPI:
             policy_verifier=policy_verifier,
             redactor=redactor,
             id_factory=id_factory or (lambda: str(uuid4())),
+            publication_authority=publication_authority,
         )
 
     async def search(
@@ -248,6 +251,7 @@ def _anchor_from_http(
             bbox=tuple(anchor.bbox or ()),
             start_offset=anchor.start_offset,
             end_offset=anchor.end_offset,
+            inventory_item_id=anchor.inventory_item_id,
         )
     if isinstance(anchor, HttpCodeAnchor):
         return CodeAnchor(
@@ -287,6 +291,7 @@ def _source_to_http(source: SourceRevisionRef) -> HttpSourceRevision:
             "bbox": list(source.anchor.bbox) or None,
             "startOffset": source.anchor.start_offset,
             "endOffset": source.anchor.end_offset,
+            "inventoryItemId": source.anchor.inventory_item_id,
         }
     elif isinstance(source.anchor, CodeAnchor):
         anchor = {
@@ -347,6 +352,9 @@ def _evidence_to_http(evidence: Evidence) -> HttpHit:
         acl_decision_id=evidence.acl_decision_id,
         schema_version=evidence.index_revision.schema_version,
         embedding_model_version=evidence.embedding_model_version,
+        publication_id=evidence.publication_id,
+        approval_digest=evidence.approval_digest,
+        approved_item_id=evidence.approved_item_id,
     )
 
 
@@ -361,6 +369,9 @@ def _citation_to_http(citation: Citation) -> HttpCitation:
             "chunkContentHash": citation.chunk_content_hash,
             "contentRole": citation.content_role.value,
             "derivedFromChunkIds": list(citation.derived_from_chunk_ids) or None,
+            "publicationId": citation.publication_id,
+            "approvalDigest": citation.approval_digest,
+            "approvedItemId": citation.approved_item_id,
         },
         context={"source_family": HttpSourceFamily(citation.family.value)},
     )

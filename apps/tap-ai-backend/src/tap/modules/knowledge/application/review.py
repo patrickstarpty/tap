@@ -180,6 +180,7 @@ class KnowledgeReviewApplication:
             generation=generation,
             published_by=actor_id,
             published_at=now,
+            expires_at=current.expires_at,
         )
         return await self._repository.publish(
             current,

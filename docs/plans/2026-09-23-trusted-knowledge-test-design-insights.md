@@ -227,9 +227,9 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integratio
 
 **接口：** 所有检索消费当前 publication；Graph Snapshot 绑定规范化完整 Revision 选择集及其 digest，而不是只取其中一个 Revision。产出 evidence 携来源/切片/批准版/locator，可在交付时复核。
 
-- [ ] 写至少两个 Revision 的查询与问答测试：选择集不匹配不得使用 Snapshot；跨项目、已撤回、已到期的父段/邻段/Graph 证据均拒绝。
-- [ ] 在 Milvus 预过滤后，再按 MySQL 当前批准清单核验；统一父段、缓存、图扩展和引用下载授权；生成结束前重新核验，失效时要求重生成。
-- [ ] 修复多 Revision Snapshot 创建/发布及重启读取，补多文档浏览器旅程；有冲突或关键条件未知时回答明确说明，不能给确定测试预期。
+- [x] 写至少两个 Revision 的查询与问答测试：选择集不匹配不得使用 Snapshot；跨项目、已撤回、已到期的父段/邻段/Graph 证据均拒绝。
+- [x] 在 Milvus 预过滤后，再按 MySQL 当前批准清单核验；统一父段、缓存、图扩展和引用下载授权；生成结束前重新核验，失效时要求重生成。
+- [x] 修复多 Revision Snapshot 创建/发布及重启读取，补多文档浏览器旅程；有冲突或关键条件未知时回答明确说明，不能给确定测试预期。
 
 ```sh
 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_published_retrieval.py apps/tap-ai-backend/tests/integration/test_graph_snapshot_publication.py -q

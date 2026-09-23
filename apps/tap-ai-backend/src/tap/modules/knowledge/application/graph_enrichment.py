@@ -8,8 +8,10 @@ from types import MappingProxyType
 from typing import Mapping
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.graph.domain.models import GraphSearchQuery
 from tap.modules.graph.ports.store import GraphFactNotFound, GraphStorePort
+from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 
 
 class GraphContextStatus(StrEnum):
@@ -39,11 +41,18 @@ class GraphAnswerContext:
 
 
 class GraphAnswerEnricher:
-    def __init__(self, store: GraphStorePort, *, node_limit: int = 20) -> None:
+    def __init__(
+        self,
+        store: GraphStorePort,
+        *,
+        node_limit: int = 20,
+        publication_authority: PublishedKnowledgeAuthority | None = None,
+    ) -> None:
         if not 1 <= node_limit <= 50:
             raise ValueError("answer Graph node limit must be between 1 and 50")
         self._store = store
         self._node_limit = node_limit
+        self._publication_authority = publication_authority
 
     async def enrich(
         self,
@@ -54,6 +63,13 @@ class GraphAnswerEnricher:
         if not source_revision_ids:
             return GraphAnswerContext(GraphContextStatus.NOT_SELECTED)
         try:
+            publication = (
+                None
+                if self._publication_authority is None
+                else await self._publication_authority.authorize_selection(
+                    scope.project_id, source_revision_ids
+                )
+            )
             snapshot = await self._store.active_snapshot(scope, source_revision_ids)
             if snapshot is None:
                 return GraphAnswerContext(GraphContextStatus.NOT_READY)
@@ -63,11 +79,32 @@ class GraphAnswerEnricher:
             )
         except GraphFactNotFound:
             return GraphAnswerContext(GraphContextStatus.FAILED)
+        except AuthorizationDenied:
+            return GraphAnswerContext(GraphContextStatus.FAILED)
         except Exception:
             return GraphAnswerContext(GraphContextStatus.UNAVAILABLE)
         allowed_sources = set(source_revision_ids)
-        if any(item.source_revision_id not in allowed_sources for item in graph.evidence):
+        if any(
+            item.source_revision_id not in allowed_sources
+            or item.document_revision_id not in snapshot.document_revision_ids
+            for item in graph.evidence
+        ):
             return GraphAnswerContext(GraphContextStatus.FAILED)
+        if self._publication_authority is not None and publication is not None:
+            try:
+                for item in graph.evidence:
+                    approved_item_id = item.anchor.get("inventoryItemId")
+                    await self._publication_authority.authorize_evidence(
+                        scope.project_id,
+                        source_revision_id=item.source_revision_id,
+                        document_revision_id=item.document_revision_id,
+                        approved_item_id=(
+                            approved_item_id if isinstance(approved_item_id, str) else None
+                        ),
+                    )
+                await self._publication_authority.revalidate(publication)
+            except Exception:
+                return GraphAnswerContext(GraphContextStatus.FAILED)
         if not graph.nodes:
             return GraphAnswerContext(GraphContextStatus.NOT_READY)
         evidence = {item.evidence_id: item for item in graph.evidence}

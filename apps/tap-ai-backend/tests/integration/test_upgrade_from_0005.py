@@ -181,6 +181,12 @@ def test_0016_knowledge_review_revision_is_literal_and_registered():
     assert validate_revision("0016_knowledge_review") == "0016_knowledge_review"
 
 
+def test_0017_publication_expiry_revision_is_literal_and_registered():
+    from scripts.migration_support import validate_revision
+
+    assert validate_revision("0017_publication_expiry") == "0017_publication_expiry"
+
+
 def test_applied_0012_upgrades_additively_and_reconciles_only_recoverable_authority(
     owned_project_mysql,
 ):

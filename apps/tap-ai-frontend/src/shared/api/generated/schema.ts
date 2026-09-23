@@ -1160,6 +1160,11 @@ export interface components {
              */
             headingPath?: string[] | null;
             /**
+             * Inventoryitemid
+             * @default null
+             */
+            inventoryItemId?: string | null;
+            /**
              * Page
              * @default null
              */
@@ -1183,6 +1188,8 @@ export interface components {
             endOffset?: number | null;
             /** Headingpath */
             headingPath?: string[] | null;
+            /** Inventoryitemid */
+            inventoryItemId?: string | null;
             /** Page */
             page?: number | null;
             /** Startoffset */
@@ -1510,6 +1517,8 @@ export interface components {
             approvalDigest: string;
             /** Approveditemids */
             approvedItemIds: string[];
+            /** Expiresat */
+            expiresAt: string;
             /** Generation */
             generation: string;
             /** Publicationid */
@@ -2273,6 +2282,16 @@ export interface components {
         };
         /** RetrievalCitation */
         RetrievalCitation: {
+            /**
+             * Approvaldigest
+             * @default null
+             */
+            approvalDigest?: string | null;
+            /**
+             * Approveditemid
+             * @default null
+             */
+            approvedItemId?: string | null;
             /** Chunkcontenthash */
             chunkContentHash: string;
             /** Chunkid */
@@ -2289,6 +2308,11 @@ export interface components {
             evidenceLabel: string;
             /** Logicalchunkid */
             logicalChunkId: string;
+            /**
+             * Publicationid
+             * @default null
+             */
+            publicationId?: string | null;
             source: components["schemas"]["RetrievalSourceRevision"];
         };
         /** RetrievalClaim */
@@ -2308,6 +2332,16 @@ export interface components {
         RetrievalHit: {
             /** Acldecisionid */
             aclDecisionId: string;
+            /**
+             * Approvaldigest
+             * @default null
+             */
+            approvalDigest?: string | null;
+            /**
+             * Approveditemid
+             * @default null
+             */
+            approvedItemId?: string | null;
             /** Chunkcontenthash */
             chunkContentHash: string;
             /** Chunkid */
@@ -2324,6 +2358,11 @@ export interface components {
             indexFamily: components["schemas"]["SourceFamily"];
             /** Logicalchunkid */
             logicalChunkId: string;
+            /**
+             * Publicationid
+             * @default null
+             */
+            publicationId?: string | null;
             /** Schemaversion */
             schemaVersion: string;
             scores: components["schemas"]["RetrievalScores"];
@@ -3112,6 +3151,8 @@ export interface components {
             endOffset?: number | null;
             /** Headingpath */
             headingPath?: string[] | null;
+            /** Inventoryitemid */
+            inventoryItemId?: string | null;
             /** Page */
             page?: number | null;
             /** Startoffset */

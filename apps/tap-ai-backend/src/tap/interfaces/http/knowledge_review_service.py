@@ -86,4 +86,5 @@ def _publication_detail(value: KnowledgePublication) -> KnowledgePublicationDeta
         source_revision_ids=list(value.source_revision_ids),
         approved_item_ids=list(value.approved_item_ids),
         published_at=value.published_at.isoformat(),
+        expires_at=value.expires_at.isoformat(),
     )
