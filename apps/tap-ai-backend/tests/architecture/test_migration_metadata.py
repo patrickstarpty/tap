@@ -57,6 +57,7 @@ EXPECTED_TABLES = {
     "knowledge_document_revision",
     "knowledge_ingestion_job",
     "knowledge_chunk_manifest",
+    "knowledge_parse_inventory",
     "knowledge_answer_snapshot",
     "knowledge_citation_snapshot",
     "knowledge_projection_state",

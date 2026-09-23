@@ -138,10 +138,25 @@ def test_pdf_records_page_numbers_for_text_from_later_pages() -> None:
     assert second.paragraph_index == 1
 
 
-def test_scanned_pdf_fails_as_ocr_required() -> None:
+def test_scanned_pdf_returns_a_visible_ocr_inventory_failure() -> None:
     """Treating an image-only PDF as empty hides the required user remediation."""
-    with pytest.raises(DocumentParseRejected, match="^ocr-required$"):
-        ParserRegistry().parse(DocumentSource("scan.pdf", MediaType.PDF, _pdf_with_text("")))
+    artifact = ParserRegistry().parse(DocumentSource("scan.pdf", MediaType.PDF, _pdf_with_text("")))
+
+    assert artifact.blocks == ()
+    assert [
+        (item.locator, item.status.value, item.reason) for item in artifact.parse_inventory
+    ] == [("page:1", "failed", "ocr-required")]
+
+
+@pytest.mark.parametrize("content", (b"\r\n\r\n", b" \t\r\n"))
+def test_empty_text_returns_a_visible_inventory_failure(content: bytes) -> None:
+    """An empty text object must remain visible instead of disappearing during parsing."""
+    artifact = ParserRegistry().parse(DocumentSource("empty.txt", MediaType.TEXT, content))
+
+    assert artifact.blocks == ()
+    assert [
+        (item.locator, item.status.value, item.reason) for item in artifact.parse_inventory
+    ] == [("document:text", "failed", "empty-document")]
 
 
 def test_encrypted_pdf_is_rejected_without_attempting_text_extraction() -> None:
@@ -201,8 +216,6 @@ def test_text_parser_normalizes_crlf_and_uses_unicode_code_point_offsets() -> No
 @pytest.mark.parametrize(
     ("source", "error"),
     [
-        (DocumentSource("empty.txt", MediaType.TEXT, b"\r\n\r\n"), "empty-document"),
-        (DocumentSource("blank.txt", MediaType.TEXT, b" \t\r\n"), "empty-document"),
         (DocumentSource("nul.txt", MediaType.TEXT, b"before\0after"), "invalid-document"),
         (
             DocumentSource("wrong.txt", MediaType.PDF, _pdf_with_text("text")),

@@ -45,6 +45,9 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
         ("document_id", "knowledge_document", "document_id", None),
         ("source_id", "knowledge_source", "source_id", None),
     ),
+    "knowledge_parse_inventory": (
+        ("source_revision_id", "knowledge_document_revision", "revision_id", None),
+    ),
     "knowledge_ingestion_job": (
         ("revision_id", "knowledge_document_revision", "revision_id", None),
     ),

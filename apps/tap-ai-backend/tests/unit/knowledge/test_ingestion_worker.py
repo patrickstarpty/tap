@@ -25,6 +25,13 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.domain.sources import projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
@@ -329,6 +336,13 @@ class BlockingWriteArtifacts(StatefulArtifacts):
 class Parser:
     async def parse(self, source):  # type: ignore[no-untyped-def]
         text = source.content.decode()
+        item = ParseInventoryItem.create(
+            source_revision_id=str(source.revision_id),
+            kind=ParseInventoryKind.DOCUMENT,
+            locator="document:text",
+            status=ParseInventoryStatus.PARSED,
+            artifact_digest=canonical_sha256(source.content),
+        )
         return NormalizedArtifact(
             filename=source.filename,
             media_type=source.media_type,
@@ -345,8 +359,12 @@ class Parser:
                     paragraph_index=0,
                     start_offset=0,
                     end_offset=len(text),
+                    inventory_item_id=item.item_id,
                 ),
             ),
+            parse_inventory=(item,),
+            parser_config_digest=parser_config_digest(source.media_type.value),
+            parse_inventory_digest=parse_inventory_digest((item,)),
         )
 
 
@@ -354,6 +372,12 @@ class RejectedParser(Parser):
     async def parse(self, source):  # type: ignore[no-untyped-def]
         del source
         raise DocumentParseRejected("ocr-required")
+
+
+class TimedOutParser(Parser):
+    async def parse(self, source):  # type: ignore[no-untyped-def]
+        del source
+        raise TimeoutError("private parser timeout")
 
 
 class Chunker:
@@ -979,6 +1003,36 @@ async def test_textless_parser_failure_is_closed_and_stays_at_parsing() -> None:
     assert repository.failed is not None
     assert repository.failed.expected_stage is JobStage.PARSING
     assert repository.failed.error_code == "ocr-required"
+
+
+@pytest.mark.asyncio
+async def test_parser_timeout_persists_a_failed_document_inventory_item() -> None:
+    """A timed-out parser must leave a durable completeness gap for the exact revision."""
+    repository = StatefulRepository()
+    artifacts = StatefulArtifacts()
+    embeddings = Embeddings()
+    index = Index()
+    clock = FakeClock()
+    worker = build_worker(
+        repository,
+        artifacts,
+        embeddings,
+        index,
+        clock,
+        parser=TimedOutParser(),
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.failed == 1
+    assert repository.failed is not None
+    assert repository.failed.expected_stage is JobStage.PARSING
+    assert repository.failed.error_code == "parser-unavailable"
+    assert [item.status for item in repository.failed.parse_inventory] == [
+        ParseInventoryStatus.FAILED
+    ]
+    assert repository.failed.parse_inventory[0].source_revision_id == REVISION_ID
+    assert repository.failed.parse_inventory[0].reason == "parser-unavailable"
     assert repository.work.normalized_locator is None
 
 

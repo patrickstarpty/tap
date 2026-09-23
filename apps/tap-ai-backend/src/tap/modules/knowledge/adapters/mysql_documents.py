@@ -59,6 +59,10 @@ from tap.modules.knowledge.domain.documents import (
     new_document_id,
     revision_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    parse_inventory_digest,
+)
 from tap.modules.knowledge.domain.sources import (
     SourceCommand,
     SourceCommandConflict,
@@ -209,6 +213,9 @@ knowledge_document_revision = Table(
     Column("parser_version", String(128), nullable=False),
     Column("chunker_version", String(128), nullable=False),
     Column("pipeline_version", String(128), nullable=False),
+    Column("parse_inventory_attempt", Integer),
+    Column("parser_config_digest", String(71)),
+    Column("parse_inventory_digest", String(71)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint(
         "document_id",
@@ -216,6 +223,40 @@ knowledge_document_revision = Table(
         "parser_version",
         name="uq_knowledge_revision_source_parser",
     ),
+)
+
+knowledge_parse_inventory = Table(
+    "knowledge_parse_inventory",
+    metadata,
+    Column("inventory_row_id", String(128), primary_key=True),
+    Column("source_revision_id", String(128), nullable=False),
+    Column("attempt", Integer, nullable=False),
+    Column("item_id", String(128), nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("item_kind", String(24), nullable=False),
+    Column("locator", String(1024), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("reason", String(128)),
+    Column("artifact_digest", String(71), nullable=False),
+    Column("decision_actor_id", String(128)),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    UniqueConstraint(
+        "source_revision_id",
+        "attempt",
+        "item_id",
+        name="uq_parse_inventory_attempt_item",
+    ),
+    UniqueConstraint(
+        "source_revision_id",
+        "attempt",
+        "ordinal",
+        name="uq_parse_inventory_attempt_ordinal",
+    ),
+)
+Index(
+    "ix_parse_inventory_revision_attempt",
+    knowledge_parse_inventory.c.source_revision_id,
+    knowledge_parse_inventory.c.attempt,
 )
 knowledge_document.append_constraint(
     ForeignKeyConstraint(
@@ -380,6 +421,7 @@ for _project_table in (
     knowledge_answer_source,
     knowledge_document,
     knowledge_document_revision,
+    knowledge_parse_inventory,
     knowledge_ingestion_job,
     knowledge_chunk_manifest,
     knowledge_answer_snapshot,
@@ -3567,6 +3609,22 @@ class MysqlDocumentRepository:
             if not is_complete:
                 results[index + 1] = StageResult(next_stage, StageState.PROCESSING)
             revision_values: dict[str, str] = {}
+            if commit.parse_inventory:
+                if commit.expected_stage is not JobStage.PARSING:
+                    raise ValueError("parse inventory can only be committed by parsing")
+                await self._persist_parse_inventory(
+                    session,
+                    source_revision_id=cast(str, row["revision_id"]),
+                    attempt=cast(int, row["attempt"]),
+                    items=commit.parse_inventory,
+                    parser_digest=commit.parser_config_digest,
+                    inventory_digest=commit.parse_inventory_digest,
+                    created_at=database_now,
+                )
+            elif (
+                commit.parser_config_digest is not None or commit.parse_inventory_digest is not None
+            ):
+                raise ValueError("parse inventory fingerprints require inventory items")
             if commit.normalized_locator is not None:
                 revision_values["normalized_blob_locator"] = str(commit.normalized_locator)
             if commit.chunks_locator is not None:
@@ -3891,6 +3949,9 @@ class MysqlDocumentRepository:
                 chunk_manifest_digest=revision["chunk_manifest_digest"],
                 projection_digest=revision["projection_digest"],
                 preserve_evidence_artifacts=preserve_evidence_artifacts,
+                parse_inventory_attempt=revision["parse_inventory_attempt"],
+                parser_config_digest=revision["parser_config_digest"],
+                parse_inventory_digest=revision["parse_inventory_digest"],
             )
 
     async def _revision_has_turn_evidence(self, session, revision_id: str) -> bool:
@@ -4006,6 +4067,26 @@ class MysqlDocumentRepository:
                 _utc_naive(failure.failed_at),
                 failure.error_code,
             )
+            if failure.parse_inventory:
+                if (
+                    row["kind"] != JobKind.INGESTION.value
+                    or failure.expected_stage is not JobStage.PARSING
+                ):
+                    raise ValueError("parse inventory failure is outside parsing")
+                await self._persist_parse_inventory(
+                    session,
+                    source_revision_id=cast(str, row["revision_id"]),
+                    attempt=cast(int, row["attempt"]),
+                    items=failure.parse_inventory,
+                    parser_digest=failure.parser_config_digest,
+                    inventory_digest=failure.parse_inventory_digest,
+                    created_at=database_now,
+                )
+            elif (
+                failure.parser_config_digest is not None
+                or failure.parse_inventory_digest is not None
+            ):
+                raise ValueError("parse failure fingerprints require inventory items")
             result = await session.execute(
                 update(knowledge_ingestion_job)
                 .where(
@@ -4062,6 +4143,97 @@ class MysqlDocumentRepository:
                     knowledge_document.c.status != DocumentState.DELETING.value,
                 )
             await session.execute(document_update.values(**public_values))
+
+    async def _persist_parse_inventory(
+        self,
+        session: AsyncSession,
+        *,
+        source_revision_id: str,
+        attempt: int,
+        items: tuple[ParseInventoryItem, ...],
+        parser_digest: str | None,
+        inventory_digest: str | None,
+        created_at: datetime,
+    ) -> None:
+        if (
+            not items
+            or len(items) > 10_000
+            or parser_digest is None
+            or inventory_digest != parse_inventory_digest(items)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", parser_digest) is None
+        ):
+            raise ValueError("parse inventory commit is incomplete or inconsistent")
+        if any(item.source_revision_id != source_revision_id for item in items):
+            raise ValueError("parse inventory revision differs from the job revision")
+        expected = [
+            {
+                "item_id": item.item_id,
+                "ordinal": ordinal,
+                "item_kind": item.kind.value,
+                "locator": item.locator,
+                "status": item.status.value,
+                "reason": item.reason,
+                "artifact_digest": item.artifact_digest,
+                "decision_actor_id": item.decision_actor_id,
+            }
+            for ordinal, item in enumerate(items)
+        ]
+        existing = list(
+            (
+                await session.execute(
+                    select(knowledge_parse_inventory)
+                    .where(
+                        *scope_predicates(knowledge_parse_inventory, self._scope),
+                        knowledge_parse_inventory.c.source_revision_id == source_revision_id,
+                        knowledge_parse_inventory.c.attempt == attempt,
+                    )
+                    .order_by(knowledge_parse_inventory.c.ordinal)
+                )
+            ).mappings()
+        )
+        comparable = tuple(expected[0])
+        if existing:
+            if [{key: row[key] for key in comparable} for row in existing] != expected:
+                raise RuntimeError("persisted parse inventory differs from replayed output")
+        else:
+            await session.execute(
+                insert(knowledge_parse_inventory),
+                [
+                    {
+                        **scope_values(self._scope),
+                        "inventory_row_id": "pir_"
+                        + sha256(
+                            (
+                                "parse-inventory-row-v1\0"
+                                f"{source_revision_id}\0{attempt}\0{item.item_id}"
+                            ).encode()
+                        ).hexdigest(),
+                        "source_revision_id": source_revision_id,
+                        "attempt": attempt,
+                        **values,
+                        "created_at": created_at,
+                    }
+                    for item, values in zip(items, expected, strict=True)
+                ],
+            )
+        updated = await session.execute(
+            update(knowledge_document_revision)
+            .where(
+                *scope_predicates(knowledge_document_revision, self._scope),
+                knowledge_document_revision.c.revision_id == source_revision_id,
+                or_(
+                    knowledge_document_revision.c.parse_inventory_attempt.is_(None),
+                    knowledge_document_revision.c.parse_inventory_attempt <= attempt,
+                ),
+            )
+            .values(
+                parse_inventory_attempt=attempt,
+                parser_config_digest=parser_digest,
+                parse_inventory_digest=inventory_digest,
+            )
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("parse inventory attempted to replace a newer parse result")
 
     async def _record_for_row(self, session: AsyncSession, row: RowMapping) -> DocumentRecord:
         job_row = (

@@ -41,6 +41,7 @@ CONVERSATION_REVISION = "0012_conversations"
 CONVERSATION_GOVERNANCE_REVISION = "0012a_conversation_governance"
 GRAPH_REVISION = "0013_knowledge_graph"
 TEST_MANAGEMENT_REVISION = "0014_test_management"
+PARSE_INVENTORY_REVISION = "0015_parse_inventory"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -587,6 +588,7 @@ def assert_preserved(
         CONVERSATION_GOVERNANCE_REVISION,
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
+        PARSE_INVENTORY_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -629,6 +631,7 @@ def assert_preserved(
         CONVERSATION_GOVERNANCE_REVISION,
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
+        PARSE_INVENTORY_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -642,6 +645,7 @@ def assert_preserved(
         CONVERSATION_GOVERNANCE_REVISION,
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
+        PARSE_INVENTORY_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1152,6 +1156,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         CONVERSATION_GOVERNANCE_REVISION,
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
+        PARSE_INVENTORY_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"
@@ -1274,6 +1279,49 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
                 with engine.connect() as connection:
                     assert_preserved(connection, before, TEST_MANAGEMENT_REVISION)
                 identity_result["test_plan_downgrade_replay"] = "passed"
+            if revision == PARSE_INVENTORY_REVISION:
+                with engine.connect() as connection:
+                    row = connection.execute(
+                        text(
+                            "SELECT source_revision_id, attempt, item_kind, locator, status, "
+                            "reason, artifact_digest FROM knowledge_parse_inventory"
+                        )
+                    ).one()
+                    if tuple(row) != (
+                        "legacy-revision",
+                        0,
+                        "document",
+                        "document:legacy",
+                        "needs_review",
+                        "historical-unreviewed",
+                        "sha256:" + "a" * 64,
+                    ):
+                        raise ValueError(
+                            "legacy revision was not retained as unreviewed"
+                        )
+                    revision_row = connection.execute(
+                        text(
+                            "SELECT parse_inventory_attempt, parser_config_digest, "
+                            "parse_inventory_digest FROM knowledge_document_revision "
+                            "WHERE revision_id='legacy-revision'"
+                        )
+                    ).one()
+                    if tuple(revision_row) != (0, None, None):
+                        raise ValueError(
+                            "legacy revision fabricated parser fingerprints"
+                        )
+                database.downgrade(TEST_MANAGEMENT_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, TEST_MANAGEMENT_REVISION)
+                    if (
+                        "knowledge_parse_inventory"
+                        in inspect(connection).get_table_names()
+                    ):
+                        raise ValueError("parse inventory downgrade retained its table")
+                database.upgrade(PARSE_INVENTORY_REVISION)
+                with engine.connect() as connection:
+                    assert_preserved(connection, before, PARSE_INVENTORY_REVISION)
+                identity_result["parse_inventory_downgrade_replay"] = "passed"
             if revision == AI_ASSET_CATALOG_REVISION:
                 with engine.connect() as connection:
                     assert_source_backfill(connection)

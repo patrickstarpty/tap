@@ -20,6 +20,7 @@ from tap.modules.knowledge.domain.documents import (
     NormalizedArtifact,
     canonical_sha256,
 )
+from tap.modules.knowledge.domain.parse_inventory import ParseInventoryItem
 
 if TYPE_CHECKING:
     from tap.modules.knowledge.domain.sources import SourceCommand
@@ -392,6 +393,9 @@ class JobFailure:
     expected_stage: JobStage
     error_code: str
     failed_at: datetime
+    parse_inventory: tuple[ParseInventoryItem, ...] = ()
+    parser_config_digest: str | None = None
+    parse_inventory_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.error_code not in SAFE_JOB_ERRORS:
@@ -519,6 +523,9 @@ class IngestionWork:
     enterprise_id: str | None = None
     project_id: str | None = None
     preserve_evidence_artifacts: bool = False
+    parse_inventory_attempt: int | None = None
+    parser_config_digest: str | None = None
+    parse_inventory_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -543,6 +550,9 @@ class JobStageCommit(JobCheckpoint):
     chunk_count: int | None = None
     chunk_manifest_digest: str | None = None
     projection_digest: str | None = None
+    parse_inventory: tuple[ParseInventoryItem, ...] = ()
+    parser_config_digest: str | None = None
+    parse_inventory_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.chunk_count is not None and (

@@ -31,6 +31,14 @@ from tap.modules.knowledge.domain.documents import (
     canonical_sha256,
     validate_filename_media_type,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    failed_document_inventory,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.ports.documents import DocumentParser
 
 _DOCX_MAX_ENTRIES = 2048
@@ -55,6 +63,7 @@ class _BlockBuilder:
         heading_path: tuple[str, ...],
         *,
         page: int | None = None,
+        inventory_item_id: str | None = None,
     ) -> None:
         clean = _normalize_text(text).strip("\n")
         if not clean:
@@ -80,6 +89,7 @@ class _BlockBuilder:
                 paragraph_index=self._paragraph_index,
                 start_offset=start,
                 end_offset=self._cursor,
+                inventory_item_id=inventory_item_id,
             )
         )
         self._paragraph_index += 1
@@ -132,12 +142,14 @@ class PdfParser:
             raise DocumentParseRejected("document-too-complex")
         decoded_total = 0
         builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
         heading_path: tuple[str, ...] = ()
-        extracted = False
         for page_number, page in enumerate(reader.pages, start=1):
             contents = page.get_contents()
+            page_bytes = b""
             if contents is not None:
-                decoded_size = len(contents.get_data())
+                page_bytes = contents.get_data()
+                decoded_size = len(page_bytes)
                 decoded_total += decoded_size
                 if decoded_size > 8 * 1024 * 1024 or decoded_total > 32 * 1024 * 1024:
                     raise DocumentParseRejected("document-too-complex")
@@ -145,21 +157,62 @@ class PdfParser:
             text = _normalize_text(raw).strip()
             if "\0" in text:
                 raise DocumentParseRejected("invalid-document")
+            page_item = _inventory_item(
+                source,
+                ParseInventoryKind.PAGE,
+                f"page:{page_number}",
+                ParseInventoryStatus.PARSED if text else ParseInventoryStatus.FAILED,
+                text.encode("utf-8") if text else page_bytes,
+                reason=None if text else "ocr-required",
+            )
+            inventory.append(page_item)
+            try:
+                images = tuple(page.images)
+            except Exception:
+                images = ()
+            for image_number, image in enumerate(images, start=1):
+                inventory.append(
+                    _inventory_item(
+                        source,
+                        ParseInventoryKind.IMAGE,
+                        f"page:{page_number}/image:{image_number}",
+                        ParseInventoryStatus.NEEDS_REVIEW,
+                        image.data,
+                        reason="image-not-text-extracted",
+                    )
+                )
             if not text:
                 continue
-            extracted = True
             lines = [line.strip() for line in text.split("\n") if line.strip()]
             if not lines:
                 continue
             if not heading_path:
                 heading_path = (lines[0],)
-                builder.add(BlockKind.HEADING, lines[0], heading_path, page=page_number)
+                builder.add(
+                    BlockKind.HEADING,
+                    lines[0],
+                    heading_path,
+                    page=page_number,
+                    inventory_item_id=page_item.item_id,
+                )
                 lines = lines[1:]
             for line in lines:
-                builder.add(BlockKind.PARAGRAPH, line, heading_path, page=page_number)
-        if not extracted:
-            raise DocumentParseRejected("ocr-required")
-        return _artifact(source, builder.blocks)
+                builder.add(
+                    BlockKind.PARAGRAPH,
+                    line,
+                    heading_path,
+                    page=page_number,
+                    inventory_item_id=page_item.item_id,
+                )
+        if not inventory:
+            inventory.extend(
+                failed_document_inventory(
+                    _source_revision_id(source),
+                    canonical_sha256(source.content),
+                    "empty-document",
+                )
+            )
+        return _artifact(source, builder.blocks, inventory)
 
 
 class DocxParser:
@@ -169,9 +222,13 @@ class DocxParser:
         _validate_docx_zip(source.content)
         document = Document(io.BytesIO(source.content))
         builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
         headings: list[str] = []
+        paragraph_number = 0
+        table_number = 0
         for child in document.element.body.iterchildren():
             if child.tag.endswith("}p"):
+                paragraph_number += 1
                 paragraph = Paragraph(child, document)
                 text = _normalize_text(paragraph.text).strip()
                 if "\0" in text:
@@ -179,13 +236,37 @@ class DocxParser:
                 if not text:
                     continue
                 level = _heading_level(paragraph)
+                kind = (
+                    ParseInventoryKind.HEADING
+                    if level is not None
+                    else ParseInventoryKind.PARAGRAPH
+                )
+                item = _inventory_item(
+                    source,
+                    kind,
+                    f"paragraph:{paragraph_number}",
+                    ParseInventoryStatus.PARSED,
+                    text.encode("utf-8"),
+                )
+                inventory.append(item)
                 if level is not None:
                     headings = headings[: level - 1]
                     headings.append(text)
-                    builder.add(BlockKind.HEADING, text, tuple(headings))
+                    builder.add(
+                        BlockKind.HEADING,
+                        text,
+                        tuple(headings),
+                        inventory_item_id=item.item_id,
+                    )
                 else:
-                    builder.add(BlockKind.PARAGRAPH, text, tuple(headings))
+                    builder.add(
+                        BlockKind.PARAGRAPH,
+                        text,
+                        tuple(headings),
+                        inventory_item_id=item.item_id,
+                    )
             elif child.tag.endswith("}tbl"):
+                table_number += 1
                 table = Table(child, document)
                 rows = [
                     "\t".join(_normalize_text(cell.text).strip() for cell in row.cells)
@@ -194,19 +275,74 @@ class DocxParser:
                 text = "\n".join(row for row in rows if row)
                 if "\0" in text:
                     raise DocumentParseRejected("invalid-document")
-                builder.add(BlockKind.TABLE_TEXT, text, tuple(headings))
-        return _artifact(source, builder.blocks)
+                item = _inventory_item(
+                    source,
+                    ParseInventoryKind.TABLE,
+                    f"table:{table_number}",
+                    ParseInventoryStatus.PARSED if text else ParseInventoryStatus.FAILED,
+                    text.encode("utf-8"),
+                    reason=None if text else "empty-table",
+                )
+                inventory.append(item)
+                builder.add(
+                    BlockKind.TABLE_TEXT,
+                    text,
+                    tuple(headings),
+                    inventory_item_id=item.item_id,
+                )
+        with zipfile.ZipFile(io.BytesIO(source.content)) as archive:
+            image_names = sorted(
+                name
+                for name in archive.namelist()
+                if name.startswith("word/media/") and not name.endswith("/")
+            )
+            for image_number, name in enumerate(image_names, start=1):
+                inventory.append(
+                    _inventory_item(
+                        source,
+                        ParseInventoryKind.IMAGE,
+                        f"image:{image_number}:{PurePosixPath(name).name}",
+                        ParseInventoryStatus.NEEDS_REVIEW,
+                        archive.read(name),
+                        reason="image-not-text-extracted",
+                    )
+                )
+        if not inventory:
+            inventory.extend(
+                failed_document_inventory(
+                    _source_revision_id(source),
+                    canonical_sha256(source.content),
+                    "empty-document",
+                )
+            )
+        return _artifact(source, builder.blocks, inventory)
 
 
 class MarkdownParser:
     """Retain headings, fenced code, lists, and pipe-table regions as addressable text."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
-        text = _decode_text(source.content)
+        try:
+            text = _decode_text(source.content)
+        except UnicodeError:
+            return _failed_text_artifact(source, "invalid-encoding")
         builder = _BlockBuilder()
+        inventory: list[ParseInventoryItem] = []
         headings: list[str] = []
         lines = text.split("\n")
         index = 0
+
+        def add(kind: BlockKind, content: str, locator: str) -> None:
+            item = _inventory_item(
+                source,
+                _inventory_kind(kind),
+                locator,
+                ParseInventoryStatus.PARSED,
+                _normalize_text(content).strip("\n").encode("utf-8"),
+            )
+            inventory.append(item)
+            builder.add(kind, content, tuple(headings), inventory_item_id=item.item_id)
+
         while index < len(lines):
             line = lines[index]
             match = _ATX_HEADING.match(line)
@@ -215,7 +351,7 @@ class MarkdownParser:
                 title = match.group(2).strip()
                 headings = headings[: level - 1]
                 headings.append(title)
-                builder.add(BlockKind.HEADING, title, tuple(headings))
+                add(BlockKind.HEADING, title, f"line:{index + 1}:heading")
                 index += 1
                 continue
             fence = _FENCE.match(line)
@@ -226,21 +362,25 @@ class MarkdownParser:
                     end += 1
                 if end < len(lines):
                     end += 1
-                builder.add(BlockKind.CODE, "\n".join(lines[index:end]), tuple(headings))
+                add(BlockKind.CODE, "\n".join(lines[index:end]), f"line:{index + 1}:code")
                 index = end
                 continue
             if _is_table_start(lines, index):
                 end = index + 2
                 while end < len(lines) and "|" in lines[end] and lines[end].strip():
                     end += 1
-                builder.add(BlockKind.TABLE_TEXT, "\n".join(lines[index:end]), tuple(headings))
+                add(
+                    BlockKind.TABLE_TEXT,
+                    "\n".join(lines[index:end]),
+                    f"line:{index + 1}:table",
+                )
                 index = end
                 continue
             if _LIST.match(line):
                 end = index + 1
                 while end < len(lines) and _LIST.match(lines[end]):
                     end += 1
-                builder.add(BlockKind.LIST, "\n".join(lines[index:end]), tuple(headings))
+                add(BlockKind.LIST, "\n".join(lines[index:end]), f"line:{index + 1}:list")
                 index = end
                 continue
             if not line.strip():
@@ -256,20 +396,48 @@ class MarkdownParser:
                 and not _is_table_start(lines, end)
             ):
                 end += 1
-            builder.add(BlockKind.PARAGRAPH, "\n".join(lines[index:end]), tuple(headings))
+            add(
+                BlockKind.PARAGRAPH,
+                "\n".join(lines[index:end]),
+                f"line:{index + 1}:paragraph",
+            )
             index = end
-        return _artifact(source, builder.blocks)
+        if not inventory:
+            return _failed_text_artifact(source, "empty-document")
+        return _artifact(source, builder.blocks, inventory)
 
 
 class TextParser:
     """Split normalized plain text into ordered Unicode paragraphs."""
 
     def parse(self, source: DocumentSource) -> NormalizedArtifact:
-        text = _decode_text(source.content)
+        try:
+            text = _decode_text(source.content)
+        except UnicodeError:
+            return _failed_text_artifact(source, "invalid-encoding")
         builder = _BlockBuilder()
-        for paragraph in re.split(r"\n[ \t]*\n+", text):
-            builder.add(BlockKind.PARAGRAPH, paragraph.strip(), ())
-        return _artifact(source, builder.blocks)
+        inventory: list[ParseInventoryItem] = []
+        for paragraph_number, paragraph in enumerate(re.split(r"\n[ \t]*\n+", text), start=1):
+            clean = paragraph.strip()
+            if not clean:
+                continue
+            item = _inventory_item(
+                source,
+                ParseInventoryKind.PARAGRAPH,
+                f"paragraph:{paragraph_number}",
+                ParseInventoryStatus.PARSED,
+                clean.encode("utf-8"),
+            )
+            inventory.append(item)
+            builder.add(
+                BlockKind.PARAGRAPH,
+                clean,
+                (),
+                inventory_item_id=item.item_id,
+            )
+        if not inventory:
+            return _failed_text_artifact(source, "empty-document")
+        return _artifact(source, builder.blocks, inventory)
 
 
 PARSERS: Mapping[MediaType, DocumentParser] = {
@@ -280,9 +448,12 @@ PARSERS: Mapping[MediaType, DocumentParser] = {
 }
 
 
-def _artifact(source: DocumentSource, blocks: list[NormalizedBlock]) -> NormalizedArtifact:
-    if not blocks:
-        raise DocumentParseRejected("empty-document")
+def _artifact(
+    source: DocumentSource,
+    blocks: list[NormalizedBlock],
+    inventory: list[ParseInventoryItem],
+) -> NormalizedArtifact:
+    items = tuple(inventory)
     return NormalizedArtifact(
         filename=source.filename,
         media_type=source.media_type,
@@ -290,7 +461,53 @@ def _artifact(source: DocumentSource, blocks: list[NormalizedBlock]) -> Normaliz
         blocks=tuple(blocks),
         document_id=source.document_id,
         revision_id=source.revision_id,
+        parse_inventory=items,
+        parser_config_digest=parser_config_digest(source.media_type.value),
+        parse_inventory_digest=parse_inventory_digest(items),
     )
+
+
+def _failed_text_artifact(source: DocumentSource, reason: str) -> NormalizedArtifact:
+    items = failed_document_inventory(
+        _source_revision_id(source),
+        canonical_sha256(source.content),
+        reason,
+        locator="document:text",
+    )
+    return _artifact(source, [], list(items))
+
+
+def _inventory_item(
+    source: DocumentSource,
+    kind: ParseInventoryKind,
+    locator: str,
+    status: ParseInventoryStatus,
+    content: bytes,
+    *,
+    reason: str | None = None,
+) -> ParseInventoryItem:
+    return ParseInventoryItem.create(
+        source_revision_id=_source_revision_id(source),
+        kind=kind,
+        locator=locator,
+        status=status,
+        reason=reason,
+        artifact_digest=canonical_sha256(content),
+    )
+
+
+def _source_revision_id(source: DocumentSource) -> str:
+    return str(source.revision_id or canonical_sha256(source.content))
+
+
+def _inventory_kind(kind: BlockKind) -> ParseInventoryKind:
+    return {
+        BlockKind.HEADING: ParseInventoryKind.HEADING,
+        BlockKind.PARAGRAPH: ParseInventoryKind.PARAGRAPH,
+        BlockKind.LIST: ParseInventoryKind.LIST,
+        BlockKind.CODE: ParseInventoryKind.CODE,
+        BlockKind.TABLE_TEXT: ParseInventoryKind.TABLE,
+    }[kind]
 
 
 def _normalize_text(value: str) -> str:

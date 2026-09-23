@@ -22,6 +22,14 @@ from tap.modules.knowledge.domain.documents import (
     chunk_id_for,
     logical_chunk_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    failed_document_inventory,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.domain.sources import projection_digest
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
@@ -44,12 +52,136 @@ KNOWLEDGE_TABLES = (
     "knowledge_answer_source",
     "knowledge_answer_snapshot",
     "knowledge_chunk_manifest",
+    "knowledge_parse_inventory",
     "knowledge_ingestion_job",
     "knowledge_document_revision",
     "knowledge_source_legacy_map",
     "knowledge_document",
     "knowledge_source",
 )
+
+
+def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_mysql) -> None:  # type: ignore[no-untyped-def]
+    """A successful retry must not overwrite the completeness evidence from attempt one."""
+
+    async def scenario() -> None:
+        database_url = owned_project_mysql.url.replace("+pymysql", "+asyncmy")
+        engine, sessions = create_engine_and_session_factory(database_url)
+        await _clean(engine)
+        try:
+            repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            source_hash = canonical_sha256(b"approved rule")
+            reservation = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="inventory.txt",
+                    media_type="text/plain",
+                    source_content_hash=source_hash,
+                    size=13,
+                    now=datetime.now(),
+                    staging_key="staging:parse-inventory-retry",
+                )
+            )
+            await repository.activate_upload(
+                reservation, ArtifactLocator("artifact:inventory-original")
+            )
+            first = (
+                await repository.claim_jobs(
+                    worker_id="parser-attempt-one",
+                    now=datetime.now(),
+                    lease_duration=timedelta(seconds=30),
+                    limit=1,
+                )
+            )[0]
+            await repository.commit_stage(
+                JobStageCommit(
+                    first.job_id,
+                    first.lease_token,
+                    JobStage.STORED,
+                    datetime.now(),
+                )
+            )
+            failed = failed_document_inventory(
+                reservation.revision_id,
+                source_hash,
+                "parser-unavailable",
+            )
+            await repository.fail_job(
+                JobFailure(
+                    first.job_id,
+                    first.lease_token,
+                    JobStage.PARSING,
+                    "parser-unavailable",
+                    datetime.now(),
+                    parse_inventory=failed,
+                    parser_config_digest=parser_config_digest("text/plain"),
+                    parse_inventory_digest=parse_inventory_digest(failed),
+                )
+            )
+            await repository.retry_failed(DocumentId(reservation.document_id), datetime.now())
+            second = (
+                await repository.claim_jobs(
+                    worker_id="parser-attempt-two",
+                    now=datetime.now(),
+                    lease_duration=timedelta(seconds=30),
+                    limit=1,
+                )
+            )[0]
+            parsed = (
+                ParseInventoryItem.create(
+                    source_revision_id=reservation.revision_id,
+                    kind=ParseInventoryKind.PARAGRAPH,
+                    locator="paragraph:1",
+                    status=ParseInventoryStatus.PARSED,
+                    artifact_digest=source_hash,
+                ),
+            )
+            parsed_digest = parse_inventory_digest(parsed)
+            config_digest = parser_config_digest("text/plain")
+            await repository.commit_stage(
+                JobStageCommit(
+                    second.job_id,
+                    second.lease_token,
+                    JobStage.PARSING,
+                    datetime.now(),
+                    normalized_locator=ArtifactLocator("artifact:inventory-normalized"),
+                    parse_inventory=parsed,
+                    parser_config_digest=config_digest,
+                    parse_inventory_digest=parsed_digest,
+                )
+            )
+
+            async with engine.connect() as connection:
+                rows = (
+                    await connection.execute(
+                        text(
+                            "SELECT attempt, status, reason FROM knowledge_parse_inventory "
+                            "WHERE source_revision_id=:revision_id ORDER BY attempt, ordinal"
+                        ),
+                        {"revision_id": reservation.revision_id},
+                    )
+                ).all()
+                revision = (
+                    await connection.execute(
+                        text(
+                            "SELECT parse_inventory_attempt, parser_config_digest, "
+                            "parse_inventory_digest FROM knowledge_document_revision "
+                            "WHERE revision_id=:revision_id"
+                        ),
+                        {"revision_id": reservation.revision_id},
+                    )
+                ).one()
+            assert [tuple(row) for row in rows] == [
+                (1, "failed", "parser-unavailable"),
+                (2, "parsed", None),
+            ]
+            assert tuple(revision) == (2, config_digest, parsed_digest)
+        finally:
+            await _clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
 
 
 async def _clean(engine) -> None:  # type: ignore[no-untyped-def]
