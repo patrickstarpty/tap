@@ -194,9 +194,9 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowl
 
 **接口：** 消费清单；生产 `KnowledgeReviewRevision` / `KnowledgePublication`；`approve_review(scope, revision_id, expected_version)` 与 `publish_review(scope, revision_id, idempotency_key)` 分开。复核者可以发布，但不能参与本版编校。
 
-- [ ] 写状态机测试：自审、未解决阻断项、缺出处、过期页面审批、依赖变化、未经批准发布、半索引失败全部拒绝；重复命令只有一条批准/发布记录。
-- [ ] 实现核对修订和独立审批；范围/条款/金额/单位/例外变化使批准失效。批准清单全部索引就绪后，原子切 MySQL 可见指针；投影失败保持原发布版。
-- [ ] 撤回先使权威清单不可读并失效缓存，再异步删除投影；用两事务并发测试“回答生成中撤回”和“新索引写一半进程退出”。
+- [x] 写状态机测试：自审、未解决阻断项、缺出处、过期页面审批、依赖变化、未经批准发布、半索引失败全部拒绝；重复命令只有一条批准/发布记录。
+- [x] 实现核对修订和独立审批；范围/条款/金额/单位/例外变化使批准失效。批准清单全部索引就绪后，原子切 MySQL 可见指针；投影失败保持原发布版。
+- [x] 撤回先使权威清单不可读并失效缓存，再异步删除投影；用两事务并发测试“回答生成中撤回”和“新索引写一半进程退出”。
 
 ```sh
 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowledge/test_knowledge_review.py apps/tap-ai-backend/tests/integration/test_knowledge_publication.py apps/tap-ai-backend/tests/contract/test_knowledge_review_http.py -q

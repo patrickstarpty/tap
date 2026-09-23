@@ -1,0 +1,396 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from tap.modules.knowledge.application.review import (
+    InMemoryKnowledgeReviewRepository,
+    KnowledgeReviewApplication,
+    ProjectionNotReady,
+    ReviewCommandConflict,
+    ReviewStateConflict,
+)
+from tap.modules.knowledge.domain.review import (
+    KnowledgeReviewRevision,
+    ReviewStatus,
+)
+
+NOW = datetime(2026, 9, 23, 9, tzinfo=UTC)
+DIGEST_A = "sha256:" + "a" * 64
+DIGEST_B = "sha256:" + "b" * 64
+DIGEST_C = "sha256:" + "c" * 64
+
+
+def review(**changes: object) -> KnowledgeReviewRevision:
+    base = KnowledgeReviewRevision(
+        review_id="krv_001",
+        project_id="synthetic-commerce-project",
+        source_revision_ids=("rev_001",),
+        inventory_digest=DIGEST_A,
+        chunk_manifest_digest=DIGEST_B,
+        annotation_digest=DIGEST_C,
+        dependency_digest=DIGEST_A,
+        editor_actor_ids=("synthetic-editor-01",),
+        reviewer_actor_id=None,
+        expires_at=NOW + timedelta(days=30),
+        status=ReviewStatus.REVIEWING,
+        version=3,
+        blocking_item_ids=(),
+        approved_item_ids=("pi_001",),
+    )
+    return replace(base, **changes)
+
+
+class ProjectionGate:
+    def __init__(self, *, ready: bool = True) -> None:
+        self.ready = ready
+        self.calls: list[tuple[str, str]] = []
+
+    async def verify(self, revision: KnowledgeReviewRevision, generation: str) -> bool:
+        self.calls.append((revision.review_id, generation))
+        return self.ready
+
+
+def run(coro):  # type: ignore[no-untyped-def]
+    return asyncio.run(coro)
+
+
+def test_review_approval_rejects_self_review_blockers_expiry_and_stale_version():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+
+        for candidate, actor, expected in (
+            (review(), "synthetic-editor-01", "separation-of-duties"),
+            (
+                review(blocking_item_ids=("pi_failed",)),
+                "synthetic-reviewer-02",
+                "review-has-blockers",
+            ),
+            (
+                review(expires_at=NOW),
+                "synthetic-reviewer-02",
+                "review-expired",
+            ),
+        ):
+            await repository.add(candidate)
+            with pytest.raises(ReviewStateConflict, match=expected):
+                await application.approve_review(
+                    candidate.review_id,
+                    actor_id=actor,
+                    expected_version=candidate.version,
+                    now=NOW,
+                )
+            await repository.clear()
+
+        await repository.add(review())
+        with pytest.raises(ReviewStateConflict, match="revision-conflict"):
+            await application.approve_review(
+                "krv_001",
+                actor_id="synthetic-reviewer-02",
+                expected_version=2,
+                now=NOW,
+            )
+
+    run(scenario())
+
+
+def test_concurrent_approval_accepts_only_one_optimistic_revision():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(review())
+
+        results = await asyncio.gather(
+            application.approve_review(
+                "krv_001",
+                actor_id="synthetic-reviewer-02",
+                expected_version=3,
+                now=NOW,
+            ),
+            application.approve_review(
+                "krv_001",
+                actor_id="synthetic-reviewer-03",
+                expected_version=3,
+                now=NOW,
+            ),
+            return_exceptions=True,
+        )
+
+        assert sum(isinstance(result, KnowledgeReviewRevision) for result in results) == 1
+        assert sum(isinstance(result, ReviewStateConflict) for result in results) == 1
+        approved = await repository.get_review("krv_001")
+        assert approved is not None
+        assert approved.status is ReviewStatus.APPROVED
+        assert approved.version == 4
+
+    run(scenario())
+
+
+def test_review_progression_is_ordered_and_return_to_checking_records_editor():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                status=ReviewStatus.DRAFT,
+                version=1,
+                editor_actor_ids=("synthetic-editor-01",),
+            )
+        )
+
+        checking = await application.transition_review(
+            "krv_001",
+            target=ReviewStatus.CHECKING,
+            actor_id="synthetic-editor-01",
+            expected_version=1,
+        )
+        reviewing = await application.transition_review(
+            "krv_001",
+            target=ReviewStatus.REVIEWING,
+            actor_id="synthetic-editor-01",
+            expected_version=2,
+        )
+        returned = await application.transition_review(
+            "krv_001",
+            target=ReviewStatus.CHECKING,
+            actor_id="synthetic-editor-03",
+            expected_version=3,
+        )
+
+        assert checking.status is ReviewStatus.CHECKING
+        assert reviewing.status is ReviewStatus.REVIEWING
+        assert returned.status is ReviewStatus.CHECKING
+        assert returned.editor_actor_ids == ("synthetic-editor-01", "synthetic-editor-03")
+        assert returned.reviewer_actor_id is None
+        with pytest.raises(ReviewStateConflict, match="invalid-review-transition"):
+            await application.transition_review(
+                "krv_001",
+                target=ReviewStatus.PUBLISHED,
+                actor_id="synthetic-editor-03",
+                expected_version=4,
+            )
+
+    run(scenario())
+
+
+def test_dependency_change_invalidates_approval_and_requires_new_review():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+
+        changed = await application.record_dependency_change(
+            "krv_001", dependency_digest=DIGEST_B, expected_version=3
+        )
+
+        assert changed.status is ReviewStatus.NEEDS_REVIEW
+        assert changed.reviewer_actor_id is None
+        assert changed.version == 4
+
+    run(scenario())
+
+
+def test_publish_verifies_projection_before_switch_and_replays_same_intent():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        gate = ProjectionGate()
+        application = KnowledgeReviewApplication(repository, gate)
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+
+        publication = await application.publish_review(
+            "krv_001",
+            generation="generation-001",
+            idempotency_key="publish-001",
+            actor_id="synthetic-reviewer-02",
+            now=NOW,
+        )
+        replay = await application.publish_review(
+            "krv_001",
+            generation="generation-001",
+            idempotency_key="publish-001",
+            actor_id="synthetic-reviewer-02",
+            now=NOW,
+        )
+
+        assert replay == publication
+        assert gate.calls == [("krv_001", "generation-001")]
+        assert (await repository.current_publication("synthetic-commerce-project")) == publication
+        assert publication.approved_item_ids == ("pi_001",)
+
+        with pytest.raises(ReviewCommandConflict, match="idempotency-conflict"):
+            await application.publish_review(
+                "krv_001",
+                generation="generation-002",
+                idempotency_key="publish-001",
+                actor_id="synthetic-reviewer-02",
+                now=NOW,
+            )
+
+    run(scenario())
+
+
+def test_publish_rejects_unapproved_or_expired_review_and_concurrent_replay_is_single():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        gate = ProjectionGate()
+        application = KnowledgeReviewApplication(repository, gate)
+
+        await repository.add(review(status=ReviewStatus.REVIEWING))
+        with pytest.raises(ReviewStateConflict, match="review-not-approved"):
+            await application.publish_review(
+                "krv_001",
+                generation="generation-001",
+                idempotency_key="publish-001",
+                actor_id="synthetic-reviewer-02",
+                now=NOW,
+            )
+
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+                expires_at=NOW,
+            )
+        )
+        with pytest.raises(ReviewStateConflict, match="review-expired"):
+            await application.publish_review(
+                "krv_001",
+                generation="generation-001",
+                idempotency_key="publish-001",
+                actor_id="synthetic-reviewer-02",
+                now=NOW,
+            )
+
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+        first, replay = await asyncio.gather(
+            application.publish_review(
+                "krv_001",
+                generation="generation-001",
+                idempotency_key="publish-001",
+                actor_id="synthetic-reviewer-02",
+                now=NOW,
+            ),
+            application.publish_review(
+                "krv_001",
+                generation="generation-001",
+                idempotency_key="publish-001",
+                actor_id="synthetic-reviewer-02",
+                now=NOW,
+            ),
+        )
+
+        assert first == replay
+        assert await repository.current_publication("synthetic-commerce-project") == first
+
+    run(scenario())
+
+
+def test_failed_projection_keeps_previous_publication_visible():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        first = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                review_id="krv_old",
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+        previous = await first.publish_review(
+            "krv_old",
+            generation="generation-old",
+            idempotency_key="publish-old",
+            actor_id="synthetic-reviewer-02",
+            now=NOW,
+        )
+        await repository.add(
+            review(
+                review_id="krv_new",
+                source_revision_ids=("rev_002",),
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-03",
+            )
+        )
+
+        failing = KnowledgeReviewApplication(repository, ProjectionGate(ready=False))
+        with pytest.raises(ProjectionNotReady):
+            await failing.publish_review(
+                "krv_new",
+                generation="generation-new",
+                idempotency_key="publish-new",
+                actor_id="synthetic-reviewer-03",
+                now=NOW,
+            )
+
+        assert await repository.current_publication("synthetic-commerce-project") == previous
+
+    run(scenario())
+
+
+def test_withdraw_makes_publication_unreadable_before_projection_cleanup():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+        publication = await application.publish_review(
+            "krv_001",
+            generation="generation-001",
+            idempotency_key="publish-001",
+            actor_id="synthetic-reviewer-02",
+            now=NOW,
+        )
+
+        generation_started = asyncio.Event()
+        withdrawal_committed = asyncio.Event()
+
+        async def answer_generation() -> tuple[object, object]:
+            before = await repository.current_publication("synthetic-commerce-project")
+            generation_started.set()
+            await withdrawal_committed.wait()
+            after = await repository.current_publication("synthetic-commerce-project")
+            return before, after
+
+        async def withdraw():
+            await generation_started.wait()
+            result = await application.withdraw_publication(
+                publication.publication_id,
+                idempotency_key="withdraw-001",
+                actor_id="synthetic-publisher-03",
+                now=NOW,
+            )
+            withdrawal_committed.set()
+            return result
+
+        (before, after), withdrawn = await asyncio.gather(answer_generation(), withdraw())
+
+        assert withdrawn.status == "withdrawn"
+        assert before == publication
+        assert after is None
+        assert await repository.current_publication("synthetic-commerce-project") is None
+        assert await repository.pending_projection_cleanup() == ("generation-001",)
+
+    run(scenario())

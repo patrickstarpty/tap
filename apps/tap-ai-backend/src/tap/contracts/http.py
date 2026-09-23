@@ -121,6 +121,17 @@ class DocumentStatus(str, Enum):
     DELETING = "deleting"
 
 
+class KnowledgeReviewStatus(str, Enum):
+    DRAFT = "draft"
+    CHECKING = "checking"
+    REVIEWING = "reviewing"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    NEEDS_REVIEW = "needs_review"
+    EXPIRED = "expired"
+    WITHDRAWN = "withdrawn"
+
+
 class IngestionStage(str, Enum):
     STORED = "stored"
     PARSING = "parsing"
@@ -237,6 +248,31 @@ class DocumentAccepted(ContractModel):
     document: DocumentSummary
     job_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     duplicate: bool
+
+
+class KnowledgeReviewSummary(ContractModel):
+    review_id: ShortIdentifier
+    status: KnowledgeReviewStatus
+    version: Annotated[StrictInt, Field(ge=1)]
+    reviewer_actor_id: ShortIdentifier | None = None
+    expires_at: TimestampValue
+    approval_digest: CanonicalSha256
+
+
+class KnowledgePublishRequest(ContractModel):
+    generation: ShortIdentifier
+
+
+class KnowledgePublicationDetail(ContractModel):
+    publication_id: ShortIdentifier
+    review_id: ShortIdentifier
+    review_version: Annotated[StrictInt, Field(ge=1)]
+    status: Literal["published", "withdrawn"]
+    generation: ShortIdentifier
+    approval_digest: CanonicalSha256
+    source_revision_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=100)]
+    approved_item_ids: Annotated[list[ShortIdentifier], Field(min_length=1, max_length=10_000)]
+    published_at: TimestampValue
 
 
 class DocumentPage(ContractModel):

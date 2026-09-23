@@ -34,6 +34,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_lineage,
     knowledge_projection_state,
 )
+from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 
@@ -68,6 +69,7 @@ BUSINESS_TABLES = (
     knowledge_projection_fence,
     knowledge_projection_cleanup,
     knowledge_projection_lineage,
+    *KNOWLEDGE_REVIEW_TABLES,
     ai_agent,
     ai_agent_revision,
     skill,

@@ -69,6 +69,13 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
     "knowledge_projection_lineage": (
         ("alias_name", "knowledge_projection_state", "alias_name", None),
     ),
+    "knowledge_publication": (("review_id", "knowledge_review_revision", "review_id", None),),
+    "knowledge_current_publication": (
+        ("publication_id", "knowledge_publication", "publication_id", None),
+    ),
+    "knowledge_publication_cleanup": (
+        ("publication_id", "knowledge_publication", "publication_id", None),
+    ),
 }
 
 

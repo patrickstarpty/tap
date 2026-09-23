@@ -714,6 +714,7 @@ async def create_api_runtime(
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
         return TapperApiRuntime(
@@ -1472,6 +1473,7 @@ def _assemble_http_services(
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
     test_plan_sessions: object | None = None,
+    review_sessions: async_sessionmaker[AsyncSession] | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
@@ -1542,6 +1544,29 @@ def _assemble_http_services(
         test_plans = TestPlanApplication(
             MysqlTestPlanRepository(test_plan_sessions, scope=repository.scope)  # type: ignore[arg-type]
         )
+    knowledge_reviews = None
+    if review_sessions is not None:
+        from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
+        from tap.modules.knowledge.adapters.mysql_review import (
+            MysqlApprovedProjectionVerifier,
+            MysqlKnowledgeReviewRepository,
+        )
+        from tap.modules.knowledge.application.review import KnowledgeReviewApplication
+
+        review_repository = MysqlKnowledgeReviewRepository(
+            review_sessions,
+            scope=repository.scope,  # type: ignore[arg-type]
+        )
+        knowledge_reviews = KnowledgeReviewHttpService(
+            KnowledgeReviewApplication(
+                review_repository,
+                MysqlApprovedProjectionVerifier(
+                    review_sessions,
+                    scope=repository.scope,  # type: ignore[arg-type]
+                ),
+            ),
+            scope=repository.scope,
+        )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         model_catalog=ModelCatalog(
@@ -1577,6 +1602,7 @@ def _assemble_http_services(
         conversations=conversations,
         graph=graph,
         test_plans=test_plans,
+        knowledge_reviews=knowledge_reviews,
     )
 
 

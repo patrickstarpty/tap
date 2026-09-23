@@ -42,6 +42,7 @@ CONVERSATION_GOVERNANCE_REVISION = "0012a_conversation_governance"
 GRAPH_REVISION = "0013_knowledge_graph"
 TEST_MANAGEMENT_REVISION = "0014_test_management"
 PARSE_INVENTORY_REVISION = "0015_parse_inventory"
+KNOWLEDGE_REVIEW_REVISION = "0016_knowledge_review"
 LEGACY_TIME = datetime(2026, 9, 4, 12, 34, 56, 123456)
 # Deliberately frozen, independent of current ORM definitions. Future migrations
 # must extend preservation assertions rather than regenerating historical rows.
@@ -589,6 +590,7 @@ def assert_preserved(
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
         PARSE_INVENTORY_REVISION,
+        KNOWLEDGE_REVIEW_REVISION,
     }:
         raise ValueError(
             "data preservation assertions are not registered for this revision"
@@ -632,6 +634,7 @@ def assert_preserved(
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
         PARSE_INVENTORY_REVISION,
+        KNOWLEDGE_REVIEW_REVISION,
     }:
         assert_identity_seed(connection)
     if revision in {
@@ -646,6 +649,7 @@ def assert_preserved(
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
         PARSE_INVENTORY_REVISION,
+        KNOWLEDGE_REVIEW_REVISION,
     }:
         assert_scope_backfill(connection)
     return counts
@@ -1157,6 +1161,7 @@ def run_migration_gate(revision: str) -> dict[str, Any]:
         GRAPH_REVISION,
         TEST_MANAGEMENT_REVISION,
         PARSE_INVENTORY_REVISION,
+        KNOWLEDGE_REVIEW_REVISION,
     }:
         raise ValueError(
             "register data preservation assertions before checking this revision"

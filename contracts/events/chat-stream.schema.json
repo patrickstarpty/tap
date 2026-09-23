@@ -1065,6 +1065,72 @@
         {
           "properties": {
             "detail": {
+              "const": "The approved knowledge projection did not validate for publication."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": true
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Knowledge projection not ready"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-projection-not-ready"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The knowledge review is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Knowledge review not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-review-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The requested knowledge review transition is not allowed."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Knowledge review state conflict"
+            },
+            "type": {
+              "const": "https://tap.example/problems/knowledge-review-state-conflict"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The knowledge runtime is not configured."
             },
             "failureStage": {
@@ -1490,6 +1556,9 @@
             "https://tap.example/problems/graph-fact-not-found",
             "https://tap.example/problems/graph-unavailable",
             "https://tap.example/problems/idempotency-conflict",
+            "https://tap.example/problems/knowledge-projection-not-ready",
+            "https://tap.example/problems/knowledge-review-not-found",
+            "https://tap.example/problems/knowledge-review-state-conflict",
             "https://tap.example/problems/knowledge-runtime-unavailable",
             "https://tap.example/problems/model-unavailable",
             "https://tap.example/problems/recorder-unavailable",

@@ -13,6 +13,13 @@ from tap.modules.knowledge.domain.documents import (
     canonical_sha256,
     revision_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.ports.documents import DeletionTarget
 from tap.modules.knowledge.ports.errors import ArtifactIntegrityFailure
 
@@ -35,6 +42,14 @@ class Upload:
 
 
 def normalized_artifact():
+    inventory_item = ParseInventoryItem.create(
+        source_revision_id=REVISION,
+        kind=ParseInventoryKind.PARAGRAPH,
+        locator="paragraph:0",
+        status=ParseInventoryStatus.PARSED,
+        artifact_digest=SOURCE_HASH,
+    )
+    inventory = (inventory_item,)
     return NormalizedArtifact(
         filename="policy.md",
         media_type=MediaType.MARKDOWN,
@@ -51,8 +66,12 @@ def normalized_artifact():
                 paragraph_index=0,
                 start_offset=0,
                 end_offset=14,
+                inventory_item_id=inventory_item.item_id,
             ),
         ),
+        parse_inventory=inventory,
+        parser_config_digest=parser_config_digest(MediaType.MARKDOWN.value),
+        parse_inventory_digest=parse_inventory_digest(inventory),
     )
 
 

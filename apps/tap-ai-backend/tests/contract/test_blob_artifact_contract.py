@@ -51,6 +51,13 @@ from tap.modules.knowledge.domain.documents import (
     logical_chunk_id_for,
     revision_id_for,
 )
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    parse_inventory_digest,
+    parser_config_digest,
+)
 from tap.modules.knowledge.ports.documents import (
     ArtifactLocator,
     DeletionTarget,
@@ -121,6 +128,14 @@ async def test_project_scavenger_preserves_foreign_legacy_and_pinned_staging(mon
 
 
 def normalized_artifact() -> NormalizedArtifact:
+    inventory_item = ParseInventoryItem.create(
+        source_revision_id=REVISION,
+        kind=ParseInventoryKind.PARAGRAPH,
+        locator="paragraph:0",
+        status=ParseInventoryStatus.PARSED,
+        artifact_digest=canonical_sha256(b"Tapper policy."),
+    )
+    inventory = (inventory_item,)
     return NormalizedArtifact(
         filename="policy.md",
         media_type=MediaType.MARKDOWN,
@@ -137,8 +152,12 @@ def normalized_artifact() -> NormalizedArtifact:
                 paragraph_index=0,
                 start_offset=0,
                 end_offset=14,
+                inventory_item_id=inventory_item.item_id,
             ),
         ),
+        parse_inventory=inventory,
+        parser_config_digest=parser_config_digest(MediaType.MARKDOWN.value),
+        parse_inventory_digest=parse_inventory_digest(inventory),
     )
 
 
@@ -333,7 +352,15 @@ def test_chunk_artifact_rejects_coordinated_document_source_revision_rebinding()
 
 def test_normalized_artifact_rejects_revision_rebinding() -> None:
     """A valid payload hash cannot bind one document/source pair to another revision locator."""
-    rebound = replace(normalized_artifact(), revision_id=RevisionId("rev_" + "f" * 64))
+    current = normalized_artifact()
+    rebound = replace(
+        current,
+        revision_id=RevisionId("rev_" + "f" * 64),
+        blocks=(replace(current.blocks[0], inventory_item_id=None),),
+        parse_inventory=(),
+        parser_config_digest=None,
+        parse_inventory_digest=None,
+    )
     with pytest.raises(ArtifactIntegrityError):
         encode_normalized_artifact("rev_" + "f" * 64, rebound)
 
