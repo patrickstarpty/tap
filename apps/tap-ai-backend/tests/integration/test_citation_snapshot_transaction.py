@@ -259,7 +259,14 @@ async def seed_ready(engine, suffix: str) -> ReadyDocumentRevision:  # type: ign
                 "now": now,
             },
         )
-    return ReadyDocumentRevision(document_id, revision_id, SOURCE_HASH, source_id)
+    return ReadyDocumentRevision(
+        document_id,
+        revision_id,
+        SOURCE_HASH,
+        source_id,
+        source_name="fixture",
+        filename=f"{suffix}.md",
+    )
 
 
 def snapshot(

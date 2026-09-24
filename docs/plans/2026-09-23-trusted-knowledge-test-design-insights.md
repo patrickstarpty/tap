@@ -233,8 +233,10 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integratio
 - [x] 在 Milvus 预过滤后，再按 MySQL 当前批准清单核验；统一父段、缓存、图扩展和引用下载授权；生成结束前重新核验，失效时要求重生成。
 - [x] 修复多 Revision Snapshot 创建/发布及重启读取，补多文档浏览器旅程；有冲突或关键条件未知时回答明确说明，不能给确定测试预期。
 
+**验收：** Task 5 单元与集成矩阵共 15 项通过；其中真实隔离 MySQL 覆盖两个 Revision 的 Snapshot 发布、Store 重建后的精确选择集读取，以及不完整选择集拒绝。
+
 ```sh
-uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_published_retrieval.py apps/tap-ai-backend/tests/integration/test_graph_snapshot_publication.py -q
+TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_published_retrieval.py apps/tap-ai-backend/tests/integration/test_graph_snapshot_publication.py -q
 ```
 
 **出口：** 越权/过期泄漏为 0；旧引用可按当前权限回看历史版本，但历史授权不授予新访问。V2 最终关闭还需 Task 8 的真实质量证据。
