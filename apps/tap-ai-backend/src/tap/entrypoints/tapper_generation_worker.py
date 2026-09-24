@@ -6,6 +6,7 @@ import asyncio
 import os
 import signal
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -27,10 +28,15 @@ class GenerationWorker:
     conversations: Any
     knowledge: Any
     checkpointer: BaseCheckpointSaver | None = None
+    lease_duration: timedelta = timedelta(seconds=60)
+    renew_interval_seconds: float = 20.0
 
     def __post_init__(self) -> None:
-        if self.checkpointer is None:
-            self.checkpointer = InMemorySaver()
+        if (
+            not timedelta(0) < self.lease_duration <= timedelta(minutes=15)
+            or not 0 < self.renew_interval_seconds < self.lease_duration.total_seconds()
+        ):
+            raise ValueError("generation worker lease renewal is invalid")
 
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
@@ -167,24 +173,53 @@ class GenerationWorker:
                 async def authorized() -> bool:
                     return True
 
-                assert self.checkpointer is not None
+                checkpointer_factory = getattr(
+                    self.conversations.repository, "graph_checkpointer", None
+                )
+                checkpointer = (
+                    checkpointer_factory(turn)
+                    if self.checkpointer is None and checkpointer_factory is not None
+                    else self.checkpointer or InMemorySaver()
+                )
                 graph = InteractionGraph(
                     graph_version="fast-chat-v1",
                     state_schema_version=1,
-                    checkpointer=self.checkpointer,
+                    checkpointer=checkpointer,
                     classify=classify,
                     admit=admit,
                     execute=execute,
                     authorize=authorized,
                 )
-                if await graph.has_checkpoint(run_id=turn.turn_id):
-                    await graph.resume(run_id=turn.turn_id)
-                else:
-                    await graph.start(
+
+                async def run_graph():
+                    if await graph.has_checkpoint(run_id=turn.turn_id):
+                        return await graph.resume(run_id=turn.turn_id)
+                    return await graph.start(
                         run_id=turn.turn_id,
                         payload={"conversationId": conversation_id, "turnId": turn.turn_id},
                         execution_mode="inline",
                     )
+
+                running = asyncio.create_task(run_graph())
+                renew = getattr(self.conversations.repository, "renew_processing_lease", None)
+                try:
+                    while True:
+                        done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
+                        if done:
+                            await running
+                            break
+                        if renew is not None:
+                            await renew(
+                                conversation_id,
+                                turn.turn_id,
+                                turn.lease_token,
+                                lease_duration=self.lease_duration,
+                            )
+                except BaseException:
+                    if not running.done():
+                        running.cancel()
+                        await asyncio.gather(running, return_exceptions=True)
+                    raise
             except ConversationConflict:
                 # Cancellation or lease reclaim won the terminal-state race.
                 continue

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from uuid import uuid4
 
@@ -64,6 +64,14 @@ class ConversationRepository(Protocol):
         citation_id: str,
         citation_digest: str,
     ) -> bool: ...
+    async def renew_processing_lease(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        lease_token: str,
+        *,
+        lease_duration: timedelta,
+    ) -> None: ...
 
 
 class InMemoryConversationRepository:
@@ -193,6 +201,15 @@ class InMemoryConversationRepository:
                 for item in turn.answer_snapshot.value.citations
             )
         )
+
+    async def renew_processing_lease(
+        self, conversation_id, turn_id, lease_token, *, lease_duration
+    ):
+        del lease_token, lease_duration
+        conversation = await self.load(conversation_id)
+        turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
+        if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
+            raise ConversationConflict("generation lease lost")
 
 
 class ConversationService:

@@ -1,4 +1,6 @@
+import asyncio
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -335,6 +337,114 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
         "turn.completed",
         {"answer": {"answer": "grounded", "citations": []}},
     )
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_renews_turn_lease_while_provider_is_running():
+    renewed = asyncio.Event()
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(
+                            value=SimpleNamespace(message="question", resolved_resources=())
+                        ),
+                    ),
+                ),
+            )
+
+        async def renew_processing_lease(
+            self, conversation_id, turn_id, lease_token, *, lease_duration
+        ):
+            assert conversation_id == "conversation-1"
+            assert turn_id == "turn-1"
+            assert lease_token == "lease-1"
+            assert lease_duration == timedelta(milliseconds=100)
+            renewed.set()
+
+    class Conversations:
+        repository = Repository()
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            pass
+
+    class Knowledge:
+        async def answer(self, _request):
+            await asyncio.wait_for(renewed.wait(), timeout=1)
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    worker = GenerationWorker(
+        Conversations(),
+        Knowledge(),
+        lease_duration=timedelta(milliseconds=100),
+        renew_interval_seconds=0.01,
+    )
+
+    assert await worker.run_once(limit=1) == 1
+    assert renewed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factory():
+    checkpointer = InMemorySaver()
+
+    class Repository:
+        checkpoint_claims = []
+
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(
+                            value=SimpleNamespace(message="question", resolved_resources=())
+                        ),
+                    ),
+                ),
+            )
+
+        def graph_checkpointer(self, turn):
+            self.checkpoint_claims.append((turn.turn_id, turn.lease_token))
+            return checkpointer
+
+    class Conversations:
+        repository = Repository()
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            pass
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
+    assert conversations.repository.checkpoint_claims == [("turn-1", "lease-1")]
 
 
 async def _async_value(value):

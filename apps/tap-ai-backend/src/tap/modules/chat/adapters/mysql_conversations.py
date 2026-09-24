@@ -929,6 +929,40 @@ class MysqlConversationRepository:
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
         return tuple(claimed)
 
+    async def renew_processing_lease(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        lease_token: str,
+        *,
+        lease_duration: timedelta,
+    ) -> None:
+        if not lease_token or not timedelta(0) < lease_duration <= timedelta(minutes=15):
+            raise ValueError("generation lease renewal is invalid")
+        now = datetime.now(timezone.utc)
+        async with self.sessions() as session, session.begin():
+            result = await session.execute(
+                update(chat_turn)
+                .where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    chat_turn.c.turn_id == turn_id,
+                    chat_turn.c.state == "running",
+                    chat_turn.c.processing_lease_token == lease_token,
+                    chat_turn.c.processing_lease_expires_at >= _naive(now),
+                )
+                .values(processing_lease_expires_at=_naive(now + lease_duration))
+            )
+            if result.rowcount != 1:
+                raise ConversationConflict("generation lease lost")
+
+    def graph_checkpointer(self, turn: ConversationTurn):
+        if not turn.lease_token:
+            raise ConversationConflict("generation lease lost")
+        from tap.modules.ai.adapters.mysql_checkpointer import MysqlGraphCheckpointer
+
+        return MysqlGraphCheckpointer(self.sessions, scope=self.scope)
+
     async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
         if event.event_type in {
             "conversation.turn.requested",
