@@ -8,8 +8,12 @@ import signal
 from dataclasses import dataclass
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
+
 from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest, SourceFamily
 from tap.contracts.problems import build_problem
+from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import (
@@ -22,6 +26,11 @@ from tap.modules.chat.domain.conversations import (
 class GenerationWorker:
     conversations: Any
     knowledge: Any
+    checkpointer: BaseCheckpointSaver | None = None
+
+    def __post_init__(self) -> None:
+        if self.checkpointer is None:
+            self.checkpointer = InMemorySaver()
 
     async def run_once(self, *, limit: int) -> int:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
@@ -142,9 +151,40 @@ class GenerationWorker:
                 )
 
             try:
-                await TurnProcessor(provider=provider, complete=complete).process(
-                    turn.input_snapshot
+
+                async def classify(_state):
+                    return {"reasoning_mode": "direct"}
+
+                async def admit(_state):
+                    return {"admitted": True}
+
+                async def execute(_state):
+                    evidence = await TurnProcessor(provider=provider, complete=complete).process(
+                        turn.input_snapshot
+                    )
+                    return {"result": {"outcome": evidence.outcome}}
+
+                async def authorized() -> bool:
+                    return True
+
+                assert self.checkpointer is not None
+                graph = InteractionGraph(
+                    graph_version="fast-chat-v1",
+                    state_schema_version=1,
+                    checkpointer=self.checkpointer,
+                    classify=classify,
+                    admit=admit,
+                    execute=execute,
+                    authorize=authorized,
                 )
+                if await graph.has_checkpoint(run_id=turn.turn_id):
+                    await graph.resume(run_id=turn.turn_id)
+                else:
+                    await graph.start(
+                        run_id=turn.turn_id,
+                        payload={"conversationId": conversation_id, "turnId": turn.turn_id},
+                        execution_mode="inline",
+                    )
             except ConversationConflict:
                 # Cancellation or lease reclaim won the terminal-state race.
                 continue

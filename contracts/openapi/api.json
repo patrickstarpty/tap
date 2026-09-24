@@ -5659,8 +5659,29 @@
             "title": "Deeplink",
             "type": "string"
           },
+          "failureCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failurecode"
+          },
           "jobId": {
             "title": "Jobid",
+            "type": "string"
+          },
+          "progress": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Progress",
             "type": "string"
           },
           "revisionId": {
@@ -5687,6 +5708,7 @@
           "testPlanId",
           "revisionId",
           "status",
+          "progress",
           "deepLink"
         ],
         "title": "TestPlanGenerationAccepted",

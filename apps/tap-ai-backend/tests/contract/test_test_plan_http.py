@@ -24,6 +24,22 @@ class PlansService:
         self.requests.append(request)
         return PlanGenerationJob(request, GenerationJobStatus.PENDING, now, now)
 
+    async def get_generation_job(self, scope, job_id):
+        assert scope == VALIDATION_SCOPE
+        request = self.requests[0]
+        assert job_id == request.job_id
+        now = request.created_at if hasattr(request, "created_at") else None
+        from datetime import datetime, timezone
+
+        instant = now or datetime.now(timezone.utc)
+        return PlanGenerationJob(
+            request,
+            GenerationJobStatus.FAILED,
+            instant,
+            instant,
+            failure_code="MODEL_GATEWAY_UNAVAILABLE",
+        )
+
     async def list_revisions(self, scope):
         assert scope == VALIDATION_SCOPE
         return ()
@@ -87,3 +103,30 @@ def test_generation_is_idempotent_project_scoped_and_returns_deep_link() -> None
         headers={"Idempotency-Key": "test-design-checkout"},
     )
     assert denied.status_code == 403
+
+
+def test_generation_status_exposes_failure_and_result_link() -> None:
+    service = PlansService()
+    client = _client(service)
+    body = {
+        "conversationId": "conversation_checkout",
+        "turnId": "turn_checkout",
+        "inputSnapshotDigest": "sha256:" + "1" * 64,
+        "answerEvidenceSnapshotDigest": "sha256:" + "2" * 64,
+        "modelAlias": "tapper-chat",
+        "agentRevisionId": "validation-test-design-agent-v1",
+        "skillRevisionIds": ["validation-test-design-skill-v1"],
+        "objective": "Design checkout tests",
+    }
+    accepted = client.post(
+        "/api/v1/projects/tapper-demo/test-plans/generations",
+        json=body,
+        headers={"Idempotency-Key": "test-design-checkout"},
+    ).json()
+
+    status = client.get(f"/api/v1/projects/tapper-demo/test-plans/generations/{accepted['jobId']}")
+    assert status.status_code == 200
+    assert status.json()["failureCode"] == "MODEL_GATEWAY_UNAVAILABLE"
+    assert status.json()["progress"] == "failed"
+
+    assert status.json()["deepLink"] == accepted["deepLink"]

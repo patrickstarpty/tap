@@ -2,10 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.application.interaction_graph import InteractionGraph
+from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
+from tap.modules.test_management.domain.models import (
+    BddKeyword,
+    CitationOrigin,
+    GapSeverity,
+    IdentityOrigin,
+    RevisionStatus,
+    TestCase,
+    TestPlanAssumption,
+    TestPlanCitation,
+    TestPlanCoverageGap,
+    TestPlanRevision,
+    TestPlanStep,
+    TestPlanUnknown,
+    TestScenario,
+)
 from tap.modules.test_management.ports.generation import (
     TestDesignGenerator,
     TestDesignJobStore,
@@ -21,6 +40,110 @@ class TestDesignWorkerRun:
     lease_lost: int
 
 
+def _revision_checkpoint(revision: TestPlanRevision) -> dict[str, object]:
+    return {
+        "testPlanId": revision.test_plan_id,
+        "revisionId": revision.revision_id,
+        "version": revision.version,
+        "status": revision.status.value,
+        "origin": revision.origin.value,
+        "adoptedFromRevisionId": revision.adopted_from_revision_id,
+        "contentDigest": revision.content_digest,
+        "rowVersion": revision.row_version,
+        "validationDigest": revision.validation_digest,
+        "createdAt": revision.created_at.isoformat() if revision.created_at else None,
+        "publishedAt": revision.published_at.isoformat() if revision.published_at else None,
+        "content": revision.canonical_content(),
+    }
+
+
+def _revision_from_checkpoint(value: object) -> TestPlanRevision:
+    if not isinstance(value, dict):
+        raise TypeError("test design checkpoint draft is malformed")
+    data = cast(dict[str, Any], value)
+    content = cast(dict[str, Any], data["content"])
+    cases = tuple(
+        TestCase(
+            item["caseId"],
+            item["ordinal"],
+            item["title"],
+            item["objective"],
+            item["critical"],
+            tuple(
+                TestScenario(
+                    scenario["scenarioId"],
+                    scenario["ordinal"],
+                    scenario["title"],
+                    tuple(
+                        TestPlanStep(
+                            step["stepId"],
+                            step["ordinal"],
+                            BddKeyword(step["keyword"]),
+                            step["text"],
+                            step["expectedResult"],
+                            step["critical"],
+                        )
+                        for step in scenario["steps"]
+                    ),
+                )
+                for scenario in item["scenarios"]
+            ),
+        )
+        for item in content["cases"]
+    )
+    citations = tuple(
+        TestPlanCitation(
+            item["citationId"],
+            item["sourceRevisionId"],
+            item["documentRevisionId"],
+            item["chunkId"],
+            item["contentDigest"],
+            item["claimText"],
+            CitationOrigin(item["origin"]),
+        )
+        for item in content["citations"]
+    )
+    assumptions = tuple(
+        TestPlanAssumption(item["assumptionId"], item["text"], item["graphEdgeId"])
+        for item in content["assumptions"]
+    )
+    unknowns = tuple(
+        TestPlanUnknown(item["unknownId"], item["text"]) for item in content["unknowns"]
+    )
+    coverage_gaps = tuple(
+        TestPlanCoverageGap(
+            item["gapId"],
+            item["requirementRef"],
+            item["reason"],
+            GapSeverity(item["severity"]),
+        )
+        for item in content["coverageGaps"]
+    )
+    return TestPlanRevision(
+        data["testPlanId"],
+        data["revisionId"],
+        data["version"],
+        content["title"],
+        content["objective"],
+        tuple(content["scope"]),
+        tuple(content["prerequisites"]),
+        tuple(content["risks"]),
+        cases,
+        citations,
+        assumptions,
+        unknowns,
+        coverage_gaps,
+        RevisionStatus(data["status"]),
+        IdentityOrigin(data["origin"]),
+        data["adoptedFromRevisionId"],
+        data["contentDigest"],
+        data["rowVersion"],
+        data["validationDigest"],
+        datetime.fromisoformat(data["createdAt"]) if data["createdAt"] else None,
+        datetime.fromisoformat(data["publishedAt"]) if data["publishedAt"] else None,
+    )
+
+
 class TestDesignWorker:
     def __init__(
         self,
@@ -29,13 +152,22 @@ class TestDesignWorker:
         generator: TestDesignGenerator,
         scope: ProjectScopeContext,
         worker_id: str,
+        lease_duration: timedelta = timedelta(seconds=60),
+        renew_interval_seconds: float = 20.0,
     ) -> None:
         self._jobs = jobs
         self._generator = generator
         self._scope = require_project_scope(scope)
         if not worker_id:
             raise ValueError("test design worker identity must be nonblank")
+        if (
+            not timedelta(0) < lease_duration <= timedelta(minutes=15)
+            or not 0 < renew_interval_seconds < lease_duration.total_seconds()
+        ):
+            raise ValueError("test design worker lease renewal is invalid")
         self._worker_id = worker_id
+        self._lease_duration = lease_duration
+        self._renew_interval_seconds = renew_interval_seconds
 
     @staticmethod
     def _now() -> datetime:
@@ -46,17 +178,88 @@ class TestDesignWorker:
             self._scope,
             worker_id=self._worker_id,
             now=self._now(),
-            lease_duration=timedelta(seconds=60),
+            lease_duration=self._lease_duration,
             limit=limit,
         )
         ready = failed = lease_lost = 0
         for claim in claims:
+            graph_ready = False
             try:
-                context = await self._jobs.generation_context(self._scope, claim)
-                draft = await self._generator.generate(context)
+                checkpointer = self._jobs.graph_checkpointer(claim)
+
+                async def authorized() -> bool:
+                    try:
+                        await self._jobs.generation_context(self._scope, claim)
+                    except Exception:
+                        return False
+                    return True
+
+                async def classify(_state):
+                    return {"reasoning_mode": "workflow"}
+
+                async def admit(_state):
+                    await self._jobs.generation_context(self._scope, claim)
+                    return {"admitted": True}
+
+                async def execute(_state):
+                    context = await self._jobs.generation_context(self._scope, claim)
+                    generated = await self._generator.generate(context)
+                    return {"result": {"draft": _revision_checkpoint(generated)}}
+
+                graph = InteractionGraph(
+                    graph_version="test-design-generation-v1",
+                    state_schema_version=1,
+                    checkpointer=checkpointer,
+                    classify=classify,
+                    admit=admit,
+                    execute=execute,
+                    authorize=authorized,
+                )
+
+                async def run_graph():
+                    return (
+                        await graph.resume(run_id=claim.job.request.job_id)
+                        if await graph.has_checkpoint(run_id=claim.job.request.job_id)
+                        else await graph.start(
+                            run_id=claim.job.request.job_id,
+                            payload={
+                                "jobId": claim.job.request.job_id,
+                                "requestDigest": claim.job.request.request_digest,
+                            },
+                            execution_mode="durable",
+                        )
+                    )
+
+                running = asyncio.create_task(run_graph())
+                try:
+                    while True:
+                        done, _ = await asyncio.wait(
+                            {running}, timeout=self._renew_interval_seconds
+                        )
+                        if done:
+                            state = await running
+                            break
+                        await self._jobs.renew_generation_job(
+                            self._scope,
+                            claim,
+                            now=self._now(),
+                            lease_duration=self._lease_duration,
+                        )
+                except BaseException:
+                    if not running.done():
+                        running.cancel()
+                        await asyncio.gather(running, return_exceptions=True)
+                    raise
+                draft = _revision_from_checkpoint(state.get("result", {}).get("draft"))
+                graph_ready = True
                 await self._jobs.complete_generation(self._scope, claim, draft, now=self._now())
                 ready += 1
+            except GraphCheckpointUnavailable:
+                lease_lost += 1
             except Exception:
+                if graph_ready:
+                    lease_lost += 1
+                    continue
                 try:
                     await self._jobs.fail_generation(
                         self._scope,

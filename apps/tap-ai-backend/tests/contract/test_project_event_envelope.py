@@ -280,7 +280,7 @@ def test_private_schema_uses_registered_payloads_and_bounds() -> None:
 
     schema = project_event_schema()
     variants = {item["properties"]["event_type"]["const"]: item for item in schema["oneOf"]}
-    assert len(variants) == 26
+    assert len(variants) == 27
     assert set(
         variants["knowledge.publication.published"]["properties"]["payload"]["required"]
     ) == {
@@ -299,6 +299,12 @@ def test_private_schema_uses_registered_payloads_and_bounds() -> None:
     assert requested["additionalProperties"] is False
     assert requested["properties"]["payload"]["additionalProperties"] is False
     assert requested["properties"]["aggregate_version"]["minimum"] == 1
+    assert set(variants["ai.graph-run.checkpointed"]["properties"]["payload"]["required"]) == {
+        "runId",
+        "checkpointId",
+        "graphVersion",
+        "stateSchemaVersion",
+    }
     compatibility = variants["chat.event_appended"]
     assert compatibility["properties"]["aggregate_version"]["minimum"] == 0
     assert {"type": "null"} in compatibility["properties"]["payload"]["properties"]["sequence"][

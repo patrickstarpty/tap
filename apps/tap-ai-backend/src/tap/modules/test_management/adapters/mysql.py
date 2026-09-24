@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     delete,
+    func,
     insert,
     or_,
     select,
@@ -310,6 +311,25 @@ class MysqlTestPlanRepository:
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
+
+    def graph_checkpointer(self, claim: ClaimedTestDesignJob):
+        from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
+
+        return MysqlGraphCheckpointer(
+            self._sessions,
+            scope=self.scope,
+            defer_completion=True,
+            fence=GraphFence(
+                table=test_plan_generation_job,
+                identity_column=test_plan_generation_job.c.job_id,
+                identity=claim.job.request.job_id,
+                token_column=test_plan_generation_job.c.lease_token,
+                token=claim.lease_token,
+                lease_until_column=test_plan_generation_job.c.lease_expires_at,
+                status_column=test_plan_generation_job.c.status,
+                running_status=GenerationJobStatus.RUNNING.value,
+            ),
+        )
 
     async def create_draft(
         self,
@@ -972,6 +992,33 @@ class MysqlTestPlanRepository:
             answer_snapshot,
         )
 
+    async def renew_generation_job(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None:
+        scope = self._matching_scope(scope)
+        if not timedelta(0) < lease_duration <= timedelta(minutes=15):
+            raise ValueError("test design worker lease is invalid")
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(test_plan_generation_job)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.job_id == claim.job.request.job_id,
+                    test_plan_generation_job.c.status == GenerationJobStatus.RUNNING.value,
+                    test_plan_generation_job.c.lease_token == claim.lease_token,
+                    test_plan_generation_job.c.lease_expires_at >= instant,
+                )
+                .values(lease_expires_at=instant + lease_duration, updated_at=instant)
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("test design worker lease was lost")
+
     async def complete_generation(
         self,
         scope: ProjectScopeContext,
@@ -1008,6 +1055,8 @@ class MysqlTestPlanRepository:
                 job is None
                 or job["status"] != GenerationJobStatus.RUNNING.value
                 or job["lease_token"] != claim.lease_token
+                or job["lease_expires_at"] is None
+                or job["lease_expires_at"] < instant
             ):
                 raise RevisionConflict("test design worker lease was lost")
             if await self._load_revision(session, revision.revision_id) is not None:
@@ -1042,6 +1091,7 @@ class MysqlTestPlanRepository:
                     *scope_predicates(test_plan_generation_job, scope),
                     test_plan_generation_job.c.job_id == request.job_id,
                     test_plan_generation_job.c.lease_token == claim.lease_token,
+                    test_plan_generation_job.c.lease_expires_at >= instant,
                 )
                 .values(
                     status=GenerationJobStatus.DRAFT_READY.value,
@@ -1053,6 +1103,75 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_checkpoint, graph_run
+
+            graph = (
+                (
+                    await session.execute(
+                        select(graph_run)
+                        .where(
+                            *scope_predicates(graph_run, scope),
+                            graph_run.c.run_id == request.job_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if graph is not None:
+                await session.execute(
+                    update(graph_run)
+                    .where(
+                        *scope_predicates(graph_run, scope),
+                        graph_run.c.run_id == request.job_id,
+                    )
+                    .values(status="SUCCEEDED", updated_at=instant)
+                )
+                checkpoint_count = int(
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(graph_checkpoint)
+                        .where(
+                            *scope_predicates(graph_checkpoint, scope),
+                            graph_checkpoint.c.run_id == request.job_id,
+                        )
+                    )
+                    or 1
+                )
+                checkpoint_id = graph["current_checkpoint_id"]
+                assert checkpoint_id is not None
+                await write_project_event(
+                    session,
+                    scope=scope,
+                    envelope=ProjectEventEnvelope(
+                        event_id=scoped_outbox_id(
+                            scope,
+                            kind="ai-graph-checkpoint",
+                            identity=f"{request.job_id}:{checkpoint_id}",
+                        ),
+                        event_type="ai.graph-run.checkpointed",
+                        schema_version=1,
+                        occurred_at=(now if now.tzinfo else now.replace(tzinfo=timezone.utc)),
+                        scope_kind="PROJECT",
+                        enterprise_id=scope.enterprise_id,
+                        project_id=scope.project_id,
+                        actor_id=scope.actor_id,
+                        identity_mode=scope.identity_mode.value,
+                        aggregate_type="GraphRun",
+                        aggregate_id=request.job_id,
+                        aggregate_version=max(1, checkpoint_count),
+                        correlation_id=request.job_id,
+                        causation_id=None,
+                        idempotency_key=f"graph-checkpoint:{checkpoint_id}",
+                        payload={
+                            "runId": request.job_id,
+                            "checkpointId": checkpoint_id,
+                            "graphVersion": graph["graph_version"],
+                            "stateSchemaVersion": str(graph["state_schema_version"]),
+                        },
+                    ),
+                )
         return replace(revision, created_at=instant)
 
     async def fail_generation(
@@ -1074,6 +1193,7 @@ class MysqlTestPlanRepository:
                     test_plan_generation_job.c.job_id == claim.job.request.job_id,
                     test_plan_generation_job.c.status == GenerationJobStatus.RUNNING.value,
                     test_plan_generation_job.c.lease_token == claim.lease_token,
+                    test_plan_generation_job.c.lease_expires_at >= _naive(now),
                 )
                 .values(
                     status=GenerationJobStatus.FAILED.value,
@@ -1086,6 +1206,16 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, scope),
+                    graph_run.c.run_id == claim.job.request.job_id,
+                )
+                .values(status="FAILED", updated_at=_naive(now))
+            )
 
     def _matching_scope(self, scope: ProjectScopeContext) -> ProjectScopeContext:
         scope = require_project_scope(scope)

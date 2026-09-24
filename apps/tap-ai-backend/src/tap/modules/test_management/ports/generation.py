@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Mapping, Protocol
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.test_management.domain.models import (
     TestPlanGenerationJob,
@@ -33,6 +35,8 @@ class ClaimedTestDesignJob:
 
 
 class TestDesignJobStore(Protocol):
+    def graph_checkpointer(self, claim: ClaimedTestDesignJob) -> BaseCheckpointSaver: ...
+
     async def claim_generation_jobs(
         self,
         scope: ProjectScopeContext,
@@ -46,6 +50,15 @@ class TestDesignJobStore(Protocol):
     async def generation_context(
         self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
     ) -> TestDesignContext: ...
+
+    async def renew_generation_job(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> None: ...
 
     async def complete_generation(
         self,

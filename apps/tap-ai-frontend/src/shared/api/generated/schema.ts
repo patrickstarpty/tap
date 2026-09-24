@@ -2749,8 +2749,15 @@ export interface components {
         TestPlanGenerationAccepted: {
             /** Deeplink */
             deepLink: string;
+            /** Failurecode */
+            failureCode?: string | null;
             /** Jobid */
             jobId: string;
+            /**
+             * Progress
+             * @enum {string}
+             */
+            progress: "queued" | "running" | "completed" | "failed";
             /** Revisionid */
             revisionId: string;
             /**

@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "ai_graph_run",
+    "ai_graph_checkpoint",
+    "ai_graph_checkpoint_write",
     "test_plan",
     "test_plan_revision",
     "test_case",

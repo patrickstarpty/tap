@@ -211,7 +211,7 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowl
 **接口：** 既有 Chat 和生成入口进入固定 `graph_version`；执行/推理分别记录 `inline|durable` 和 `direct|workflow|agentic`。本轮先 Fast Chat 与生成 Durable Workflow，Task 13 若需多步推理再启受预算 agentic 剖面。
 
 - [ ] 先以故障注入证明 checkpoint、业务状态和 Outbox 不能部分提交；测试超过 60 秒、重复唤醒、并发领取、旧 lease 写入、人工等待后撤权与取消。
-- [ ] 在 Python 3.13 环境验证 LangGraph/MySQL checkpointer 接口，固定依赖；图内执行 Classification & Admission，图外不新增模型分类器。节点只调用 ModelGateway、SearchPort、正式领域服务。
+- [x] 在 Python 3.13 环境验证 LangGraph/MySQL checkpointer 接口，固定依赖；图内执行 Classification & Admission，图外不新增模型分类器。节点只调用 ModelGateway、SearchPort、正式领域服务。
 - [ ] 落实分段续租、fencing、等待释放 Worker、重启恢复、图版本固定和兼容检查；调用响应未知先对账。生成重试最多产生一份对应草稿，不重复发布。
 - [ ] SSE 可恢复进度、失败原因、待确认和结果链接；不持久化模型隐藏思维链。旧 loopback Codex Answer Adapter 保持独立。
 

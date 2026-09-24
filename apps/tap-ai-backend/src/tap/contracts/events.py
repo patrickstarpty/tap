@@ -90,6 +90,11 @@ EVENT_REGISTRY: Mapping[str, EventDefinition] = MappingProxyType(
             "turnId answerEvidenceSnapshotId answerEvidenceSnapshotDigest outcome",
             outcome=("completed", "abstained", "canceled", "failed"),
         ),
+        "ai.graph-run.checkpointed": _definition(
+            "GraphRun",
+            "runId",
+            "runId checkpointId graphVersion stateSchemaVersion",
+        ),
         "test-plan.generation.requested": _definition(
             "TestPlanRevision",
             "revisionId",

@@ -2,6 +2,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
@@ -98,7 +99,16 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         SimpleNamespace(source_id="src_" + "1" * 32, revision_id="revision-1"),
     )
     conversations.repository.claim_queued = lambda **_: _async_value(original)
-    assert await GenerationWorker(conversations, knowledge).run_once(limit=1) == 1
+    checkpointer = InMemorySaver()
+    assert (
+        await GenerationWorker(conversations, knowledge, checkpointer=checkpointer).run_once(
+            limit=1
+        )
+        == 1
+    )
+    checkpoint = await checkpointer.aget_tuple({"configurable": {"thread_id": "turn-1"}})
+    assert checkpoint is not None
+    assert checkpoint.checkpoint["channel_values"]["graph_version"] == "fast-chat-v1"
     assert knowledge.requests[0].resource_refs[0].source_id == "src_" + "1" * 32
     assert knowledge.requests[0].resource_refs[0].mode.value == "scope"
     assert conversations.events == [

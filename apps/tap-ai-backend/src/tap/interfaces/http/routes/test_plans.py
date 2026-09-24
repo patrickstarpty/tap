@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Request, status
 
@@ -27,6 +27,7 @@ from tap.modules.test_management.domain.models import (
     BddKeyword,
     CitationOrigin,
     GapSeverity,
+    GenerationJobStatus,
     TestCase,
     TestPlanAssumption,
     TestPlanCitation,
@@ -41,6 +42,28 @@ from tap.modules.test_management.domain.models import (
 )
 
 router = APIRouter(prefix="/test-plans", tags=["test-management"])
+
+_GenerationProgress = Literal["queued", "running", "completed", "failed"]
+_GENERATION_PROGRESS: dict[GenerationJobStatus, _GenerationProgress] = {
+    GenerationJobStatus.PENDING: "queued",
+    GenerationJobStatus.RUNNING: "running",
+    GenerationJobStatus.DRAFT_READY: "completed",
+    GenerationJobStatus.FAILED: "failed",
+}
+
+
+def _generation_view(job) -> TestPlanGenerationAccepted:
+    return TestPlanGenerationAccepted(
+        job_id=job.request.job_id,
+        test_plan_id=job.request.test_plan_id,
+        revision_id=job.request.revision_id,
+        status=job.status.value,
+        progress=_GENERATION_PROGRESS[job.status],
+        failure_code=job.failure_code,
+        deep_link=(
+            f"/test-management/{job.request.test_plan_id}/revisions/{job.request.revision_id}"
+        ),
+    )
 
 
 def _view(revision) -> TestPlanRevisionView:
@@ -271,15 +294,7 @@ async def request_generation(
     job = await test_plan_service(request).request_generation(
         scope, generation, now=datetime.now(timezone.utc)
     )
-    return TestPlanGenerationAccepted(
-        job_id=job.request.job_id,
-        test_plan_id=job.request.test_plan_id,
-        revision_id=job.request.revision_id,
-        status=job.status.value,
-        deep_link=(
-            f"/test-management/{job.request.test_plan_id}/revisions/{job.request.revision_id}"
-        ),
-    )
+    return _generation_view(job)
 
 
 @router.get(
@@ -290,15 +305,7 @@ async def request_generation(
 )
 async def get_generation(request: Request, job_id: str) -> TestPlanGenerationAccepted:
     job = await test_plan_service(request).get_generation_job(request.state.project_scope, job_id)
-    return TestPlanGenerationAccepted(
-        job_id=job.request.job_id,
-        test_plan_id=job.request.test_plan_id,
-        revision_id=job.request.revision_id,
-        status=job.status.value,
-        deep_link=(
-            f"/test-management/{job.request.test_plan_id}/revisions/{job.request.revision_id}"
-        ),
-    )
+    return _generation_view(job)
 
 
 @router.post(
