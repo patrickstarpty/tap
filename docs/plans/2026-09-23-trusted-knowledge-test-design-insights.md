@@ -74,7 +74,7 @@ RFC-011 已于 2026-09-23 经用户确认审批通过，状态为 `accepted`。9
 | 批次 | 任务 | 可独立评审的出口 | 主责 |
 | --- | --- | --- | --- |
 | M0 输入与边界 | 0 | 来源样本、字段映射、需求清单、授权/契约及质量口径冻结 | 产品/QA、架构、数据源负责人 |
-| M1 可信知识 | 1–6 | 核对发布后可问答，撤回与恢复可靠；知识质量实测 | TAP AI 后端/前端、QA、业务复核人 |
+| M1 可信知识 | 1–6（含 5A） | 核对发布后可问答，撤回与恢复可靠；知识质量实测 | TAP AI 后端/前端、QA、业务复核人 |
 | M2 测试设计 | 7–8，依赖 3–6 | 可编辑且有人审的测试计划；V2/V3 用新证据重新判定 | TAP AI 团队、QA、业务负责人 |
 | M3 基础 Insights | 9–12，可与 M1 并行 | 外部真实报告在 ClickHouse 形成可追溯指标和页面 | TAP 后端/前端、数据源负责人 |
 | M4 联合解释与交付 | 13–14，依赖 M1/M3；完整范围还需 M2 | 有据解释、恢复/隔离、整体旅程与试点结论 | 两产品团队、QA、运维/安全 |
@@ -237,11 +237,67 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integratio
 
 **出口：** 越权/过期泄漏为 0；旧引用可按当前权限回看历史版本，但历史授权不授予新访问。V2 最终关闭还需 Task 8 的真实质量证据。
 
+### Task 5A：问答意图理解、查询规划与模板组装
+
+**状态：** `planned`（2026-09-24 新增）。本项是本计划 Task 4/5 的知识问答增量；已有任务、复选框和 Gate 证据保持原记录。
+
+**Spec:** [问答意图理解、查询规划与模板组装](../reference/2026-09-22-rfc-011-ai-knowledge-design.md#问答意图理解查询规划与模板组装)。采用 ADR-029 图内分类；与统一 LangGraph 执行工作共用图入口，不在 HTTP 层新增图外模型分类或第二套 Orchestrator。复用 Task 4 已接入的 `ai/application/interaction_graph.py` 与 `ai/domain/graph_runs.py`；Task 4 尚未完成的恢复/原子性验收仍须独立完成，不能以本项通过替代。实施前核对迁移头，不重建现有图。
+
+**Files（当前应用路径）：**
+
+- Create: `apps/tap-ai-backend/src/tap/modules/chat/domain/answer_plan.py`（不可变计划及约束）
+- Create: `apps/tap-ai-backend/src/tap/modules/chat/application/plan_answer.py`（图内规划与确定性准入）
+- Create: `apps/tap-ai-backend/src/tap/modules/chat/adapters/model_gateway_planner.py`（结构化规划模型适配）
+- Create: `apps/tap-ai-backend/src/tap/modules/knowledge/application/answer_templates.py`（版本化回答模板与受控组装）
+- Modify: `apps/tap-ai-backend/src/tap/modules/chat/application/process_turn.py`、`apps/tap-ai-backend/src/tap/modules/chat/adapters/mysql_conversations.py`（计划记录、恢复与完成绑定）
+- Modify: `apps/tap-ai-backend/src/tap/interfaces/http/knowledge_service.py`、`apps/tap-ai-backend/src/tap/modules/knowledge/application/retrieve.py`、`apps/tap-ai-backend/src/tap/modules/knowledge/domain/models.py`、`apps/tap-ai-backend/src/tap/modules/knowledge/adapters/litellm.py`（消费计划、共享检索预算、模板与原问题分离）
+- Modify: `apps/tap-ai-backend/src/tap/entrypoints/tapper_runtime.py`及 `apps/tap-ai-backend/src/tap/modules/ai/application/interaction_graph.py`（沿现有统一图装配规划器）
+- Create: `apps/tap-ai-backend/tests/unit/chat/test_answer_planning.py`、`apps/tap-ai-backend/tests/unit/knowledge/test_answer_templates.py`、`apps/tap-ai-backend/tests/integration/test_answer_plan_execution.py`
+- Modify: `apps/tap-ai-backend/tests/integration/test_conversation_persistence.py`、`apps/tap-ai-backend/tests/unit/knowledge/test_answer_service.py`
+- 持久化需新增迁移时，在当前 migration head 后分配新 revision，并同步 DB registry/升级测试；禁止复用历史 `0012` 或修改已执行迁移。仅在公开事件/DTO 变化时修改 `chat_stream.py` 并运行 `make contracts`，浏览器不得提交权威计划。
+
+**接口与交付边界：** `AnswerPlan` 为服务端不可变领域类型，包含设计中的身份/版本/digest、意图、路由、约束、查询依赖、模板与预算字段；`route` 为 `direct | retrieve | clarify | insights | file_analysis`。`plan_answer` 消费 现有 Conversation 固定的 Input Snapshot、当前授权上下文和服务器预算，返回经确定性验证的 `AnswerPlan`。模型适配仅给建议，不能裁定权限；知识模块通过公开应用接口消费已授权查询，不导入 Chat 内部 Repository。`answer_templates` 消费模板 ID/version、已批准 Agent/Skill、原问题及证据映射，产出固定 Schema 的生成输入，不改变检索文本。
+
+- [ ] **1. 契约和 RED。** 先建立下表的参数化测试与模型/SearchPort spy；固化结构化模型输出 Schema、计划构造验证和模板版本。未知意图/路由、超 3 查询、循环依赖、跨 Project、失配 Input/ACL digest、精确编号或否定/时间变更必须被拒绝。运行下列窄测试，确认因缺少目标行为而失败，而不是环境错误。
+
+  ```sh
+  uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/chat/test_answer_planning.py apps/tap-ai-backend/tests/unit/knowledge/test_answer_templates.py -v
+  ```
+
+  | 输入/注入条件 | 必须断言 |
+  | --- | --- |
+  | “你好”、改写用户给定段落 | `direct`，SearchPort 调用数 0；生成最多 1 次，无虚假引用 |
+  | “错误码 E104 如何处理？” | `retrieve`，查询数 1，`E104` 字节不变，无拆题/反思 |
+  | “它和上一版有什么不同？”且有唯一授权对象 | 独立问题补齐对象/版本；历史回答不能作为引用证据 |
+  | 同一句但无唯一指代 | `clarify`，查询数 0，不猜版本 |
+  | 跨章节比较并包含依赖 | 查询最多 3，依赖无环；独立查询可并行，有依赖者按序 |
+  | 子问题均请求最大候选数 | 总候选/证据仍受 20/50 与 10/20 共享上限约束 |
+  | 模型规划超时、无效 Schema 或改坏编号 | 明确原问题可原文单次检索，否则澄清/不可用；记录原因 |
+  | 无来源的企业政策问题、子问题证据缺失 | 不转无证据企业事实直答；明确缺项/部分回答 |
+  | 最近 30 天失败率、完整表格汇总 | 路由到指标/文件能力；未启用时明确不可用，不伪造统计 |
+  | 用户/文档要求忽略权限或修改模板 | 不扩权；不能覆盖平台证据规则和输出 Schema |
+
+- [ ] **2. 规划与模板 GREEN。** 在统一图节点内实现确定性快速判定；必要时经唯一 ModelGateway 用一次结构化调用同时完成意图判断与规划。默认规划超时上限 3 秒且不超过请求剩余预算，不自动重试；验证原意、精确标识符、否定/日期/版本、来源范围及依赖。查询模板仅输出检索表达，回答模板按意图选择并固定 digest；原问题、用户输出要求、证据和 Agent/Skill 分层组装。重跑步骤 1 至 PASS。
+
+- [ ] **3. 接入、持久化与失败路径 RED/GREEN。** 先写集成失败用例，再接入现有会话/知识链路。Input Snapshot 不回写；计划绑定当前授权和输入 digest，生成/检索均绑定计划 ID；保存原计划并让重规划创建新 ID。恢复复用持久计划且重新授权，不读取漂移的模板 latest；重复唤醒不重复完成 Turn，撤权阻后续调用。故障注入覆盖规划完成后重启、部分子查询失败、预算耗尽、取消、模型不可用和精确引用核验失败。
+
+  ```sh
+  uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_answer_plan_execution.py apps/tap-ai-backend/tests/integration/test_conversation_persistence.py apps/tap-ai-backend/tests/unit/knowledge/test_answer_service.py -v
+  ```
+
+  集成测试只使用隔离服务。首次运行应因缺少目标行为 FAIL，实现后同命令 PASS；如增加迁移，同时按本计划迁移规则验证非空旧数据升级与 schema drift。
+
+- [ ] **4. 产品链路回归。** 沿 Task 6 现有 Tapper 入口与 Conversation/SSE 测试验证直接答复、单次检索、澄清后继续、复杂问题部分回答和引用定位；不新增原型或实现说明 UI。公开投影只显示必要阶段/停止原因，不暴露完整内部计划/Prompt。如改 UI，执行基线要求的前后截图与跨模块导航对比；合同变更运行 `make contracts`。集成后运行 `make check`、`make test`、隔离 `make demo-e2e` 和 `git diff --check`。
+
+- [ ] **5. 真实质量与增量验收。** 复用 Task 8 知识评测框架，在设计规定的至少 200 题中标注意图/路由、关键约束、必要子问题和证据，按七类各至少 20 题分层；固定语料/会话、模型、planner/template 与评测版本。对比原文基线和新链路：路由准确率 ≥95%、关键约束保留率 100%、必要子问题证据覆盖 ≥90%，并满足现有答案/引用质量门槛；越权/精确编号改写/无依据确定结论/超预算均为 0。逐路径报告 P50/P95 首字与完整响应、规划耗时、调用数和费用，不以总体均值掩盖简单问题退化。真实模型与人工标注不足则记 `not run`，不得以 fake GREEN 代替。增量 Review 链接本任务与旧 V1 Gate，明确“新增能力通过/未通过”，不重写旧 Gate。
+
+**完成条件：** 上述测试、真实质量和增量 Review 均有实际证据，才把本增量从 `planned` 更新为完成；本次文档补充不改变任何实现完成状态。
+
 ### Task 6：真实知识审核、问答与引用界面
 
 **文件：** 修改 `apps/tap-ai-frontend/src/features/knowledge/components/KnowledgeLibrary.tsx`、`DocumentDetail.tsx`、`CitationViewer.tsx`、`api/client.ts`；新增 `components/KnowledgeReview.tsx` 及测试、`tests/e2e/knowledge-review.spec.ts`。设计状态增量同步现有 `apps/web/src/widgets/tap/prototype/DocumentReview.tsx`，不另造审核壳。
 
-**接口：** UI 消费 Task 2/3/4/5 的生成类型；业务审批状态和解析/索引状态分列，所有写操作携版本。
+**接口：** UI 消费 Task 2/3/4/5/5A 的生成类型；业务审批状态和解析/索引状态分列，所有写操作携版本。
 
 - [ ] 写原件/提取对照、问题定位、关键字段/例外、退回、独立复核、发布、撤回、冲突 reload、刷新恢复和权限按钮测试。
 - [ ] 将原型的核对意图落到真实审核清单和修订记录；处理解析失败、部分可用、待复核、发布中、发布失败，无数据不能显示成功。
@@ -426,7 +482,7 @@ git diff -- README.md docs/ AGENTS.md
 | --- | --- | --- |
 | 原件完整性与正式使用范围 | 2/3/5/6 | 每页/关键对象有处理结果，未确认关键规则不进入正式回答与预期；混合文件不静默丢页 |
 | 审核和撤回 | 1/3/5 | 自审拒绝、过期版本拒绝、依赖变化失效、半发布不切换、生成中撤回拦截 |
-| 可信回答 | 4/5/6/8 | 原文定位、当前授权、多轮范围、冲突/无答案，质量集分类型实测 |
+| 可信回答 | 4/5/5A/6/8 | 意图与路由、按需改写/拆题、版本化模板、简单问题快速返回；原文定位、当前授权、多轮范围、冲突/无答案，质量与延迟分路径实测 |
 | 测试设计 | 7/8 | 完整需求分母、编辑/冲突/Job 深链、人审绑定本次输出，模型不能发布 |
 | Graph 历史缺口 | 5/8 | 两个以上 Revision 的 Snapshot 一致性与真实质量复验；不能复用撤销的 PASS |
 | 报告真实性与身份 | 9/10 | 真实 CI 原件、稳定测试/尝试/配置、重复不重计、同名不乱合并、补报可重放 |
