@@ -344,6 +344,8 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
     renewed = asyncio.Event()
 
     class Repository:
+        renewals = 0
+
         async def claim_queued(self, *, limit):
             return (
                 (
@@ -365,7 +367,9 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
             assert turn_id == "turn-1"
             assert lease_token == "lease-1"
             assert lease_duration == timedelta(milliseconds=100)
-            renewed.set()
+            self.renewals += 1
+            if self.renewals >= 4:
+                renewed.set()
 
     class Conversations:
         repository = Repository()
@@ -396,6 +400,7 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
 
     assert await worker.run_once(limit=1) == 1
     assert renewed.is_set()
+    assert worker.conversations.repository.renewals >= 4
 
 
 @pytest.mark.asyncio
@@ -445,6 +450,51 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
     assert conversations.repository.checkpoint_claims == [("turn-1", "lease-1")]
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_rechecks_turn_lease_before_provider_call():
+    class Repository:
+        validations = 0
+
+        async def claim_queued(self, *, limit):
+            return (
+                (
+                    "conversation-1",
+                    SimpleNamespace(
+                        turn_id="turn-1",
+                        lease_token="lease-1",
+                        input_snapshot=SimpleNamespace(
+                            value=SimpleNamespace(message="question", resolved_resources=())
+                        ),
+                    ),
+                ),
+            )
+
+        async def renew_processing_lease(self, *_args, **_kwargs):
+            self.validations += 1
+            if self.validations >= 3:
+                raise ConversationConflict("generation lease lost")
+
+    class Conversations:
+        repository = Repository()
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, *_args, **_kwargs):
+            pass
+
+    class Knowledge:
+        calls = 0
+
+        async def answer(self, _request):
+            self.calls += 1
+            raise AssertionError("stale worker must not call the provider")
+
+    knowledge = Knowledge()
+    assert await GenerationWorker(Conversations(), knowledge).run_once(limit=1) == 1
+    assert knowledge.calls == 0
 
 
 async def _async_value(value):

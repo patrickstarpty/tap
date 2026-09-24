@@ -42,6 +42,7 @@ class GenerationWorker:
         claimed = await self.conversations.repository.claim_queued(limit=limit)
         for conversation_id, turn in claimed:
             answer_response = None
+            renew = getattr(self.conversations.repository, "renew_processing_lease", None)
 
             async def provider(_snapshot, value=turn.input_snapshot.value):
                 nonlocal answer_response
@@ -171,6 +172,17 @@ class GenerationWorker:
                     return {"result": {"outcome": evidence.outcome}}
 
                 async def authorized() -> bool:
+                    if renew is None:
+                        return True
+                    try:
+                        await renew(
+                            conversation_id,
+                            turn.turn_id,
+                            turn.lease_token,
+                            lease_duration=self.lease_duration,
+                        )
+                    except ConversationConflict:
+                        return False
                     return True
 
                 checkpointer_factory = getattr(
@@ -201,7 +213,6 @@ class GenerationWorker:
                     )
 
                 running = asyncio.create_task(run_graph())
-                renew = getattr(self.conversations.repository, "renew_processing_lease", None)
                 try:
                     while True:
                         done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
@@ -220,7 +231,7 @@ class GenerationWorker:
                         running.cancel()
                         await asyncio.gather(running, return_exceptions=True)
                     raise
-            except ConversationConflict:
+            except (ConversationConflict, PermissionError):
                 # Cancellation or lease reclaim won the terminal-state race.
                 continue
         return len(claimed)
