@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -395,7 +396,7 @@ class MysqlReconciledTestDesign:
             )
         try:
             revision = await self._delegate.generate(context)
-        except ModelGatewayUnavailable as error:
+        except (ModelGatewayUnavailable, asyncio.CancelledError) as error:
             async with self._sessions() as session, session.begin():
                 await session.execute(
                     update(test_design_model_call)
@@ -408,8 +409,10 @@ class MysqlReconciledTestDesign:
                         status="UNKNOWN", updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
                     )
                 )
+            if isinstance(error, asyncio.CancelledError):
+                raise
             raise GenerationResponseUnknown("provider response requires reconciliation") from error
-        except BaseException:
+        except Exception:
             async with self._sessions() as session, session.begin():
                 await session.execute(
                     update(test_design_model_call)
