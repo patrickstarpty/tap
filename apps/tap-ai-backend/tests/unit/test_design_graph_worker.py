@@ -16,6 +16,7 @@ from tap.modules.test_management.domain.models import (
 )
 from tap.modules.test_management.ports.generation import (
     ClaimedTestDesignJob,
+    GenerationResponseUnknown,
 )
 from tap.modules.test_management.ports.generation import (
     TestDesignContext as DesignContext,
@@ -53,6 +54,7 @@ class RestartableJobs:
         self.checkpointer = InMemorySaver()
         self.completed = []
         self.failed = []
+        self.waiting = []
         self.renewed = asyncio.Event()
         self.renew_count = 0
         self.expected_lease_duration = timedelta(seconds=60)
@@ -92,6 +94,9 @@ class RestartableJobs:
 
     async def fail_generation(self, scope, claim, *, failure_code, now):
         self.failed.append(failure_code)
+
+    async def wait_generation(self, scope, claim, *, reason, now):
+        self.waiting.append(reason)
 
 
 class CancellableGenerator:
@@ -141,6 +146,11 @@ class ImmediateGenerator:
             revision_id=context.request.revision_id,
         ).with_recomputed_digest()
         return self.draft
+
+
+class UnknownResponseGenerator:
+    async def generate(self, _context):
+        raise GenerationResponseUnknown("provider response requires reconciliation")
 
 
 @pytest.mark.asyncio
@@ -258,3 +268,21 @@ async def test_transient_checkpoint_failure_keeps_job_retryable() -> None:
     assert resumed.ready == 1
     assert jobs.failed == []
     assert generator.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_response_releases_worker_into_waiting() -> None:
+    jobs = RestartableJobs()
+    worker = DesignWorker(
+        jobs=jobs,
+        generator=UnknownResponseGenerator(),
+        scope=VALIDATION_SCOPE,
+        worker_id="worker",
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.waiting == 1
+    assert result.failed == 0
+    assert result.lease_lost == 0
+    assert jobs.waiting == ["provider-response-unknown"]

@@ -55,7 +55,11 @@ class InteractionGraph:
         builder.add_node("execute", RunnableLambda(self._guarded(execute)))
         builder.add_edge(START, "classify")
         builder.add_edge("classify", "admit")
-        builder.add_edge("admit", "execute")
+        builder.add_conditional_edges(
+            "admit",
+            lambda state: "wait" if state.get("waiting_reason") else "execute",
+            {"wait": END, "execute": "execute"},
+        )
         builder.add_edge("execute", END)
         self._compiled = builder.compile(
             checkpointer=checkpointer,

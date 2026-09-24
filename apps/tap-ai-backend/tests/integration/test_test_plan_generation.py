@@ -1,20 +1,24 @@
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql_conversations import turn_artifact_link
 from tap.modules.test_management.adapters.mysql import (
+    MysqlReconciledTestDesign,
     MysqlTestPlanRepository,
+    test_design_model_call,
     test_plan_generation_job,
     test_plan_revision,
 )
 from tap.modules.test_management.domain.models import GenerationJobStatus
 from tap.modules.test_management.domain.validation import RevisionConflict
+from tap.modules.test_management.ports.generation import GenerationResponseUnknown
 from tap.platform.db.project_scope import scope_values
 from tests.integration.test_test_plan_publish import _draft
 from tests.integration.test_test_plan_repository import (
@@ -30,17 +34,16 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
+        base = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
         await _seed_completed_turn(sessions)
         repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
         request = _request()
-        await repository.request_generation(
-            VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 12, 0)
-        )
+        await repository.request_generation(VALIDATION_SCOPE, request, now=base)
         first = (
             await repository.claim_generation_jobs(
                 VALIDATION_SCOPE,
                 worker_id="worker_first",
-                now=datetime(2026, 9, 13, 12, 1),
+                now=base + timedelta(seconds=1),
                 lease_duration=timedelta(seconds=60),
                 limit=1,
             )
@@ -52,7 +55,7 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
             await repository.claim_generation_jobs(
                 VALIDATION_SCOPE,
                 worker_id="worker_restart",
-                now=datetime(2026, 9, 13, 12, 2, 1),
+                now=base + timedelta(seconds=62),
                 lease_duration=timedelta(seconds=60),
                 limit=1,
             )
@@ -67,13 +70,13 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
                 VALIDATION_SCOPE,
                 first,
                 generated,
-                now=datetime(2026, 9, 13, 12, 2, 2),
+                now=base + timedelta(seconds=63),
             )
         draft = await repository.complete_generation(
             VALIDATION_SCOPE,
             reclaimed,
             generated,
-            now=datetime(2026, 9, 13, 12, 2, 3),
+            now=base + timedelta(seconds=64),
         )
 
         assert draft.status.value == "DRAFT"
@@ -84,7 +87,7 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
             await repository.claim_generation_jobs(
                 VALIDATION_SCOPE,
                 worker_id="worker_duplicate",
-                now=datetime(2026, 9, 13, 12, 4),
+                now=base + timedelta(seconds=120),
                 lease_duration=timedelta(seconds=60),
                 limit=1,
             )
@@ -194,5 +197,90 @@ async def test_generation_completion_rolls_back_business_graph_and_outbox_togeth
         assert link_count == 0
         assert job_status == GenerationJobStatus.RUNNING.value
         assert graph_status == "RUNNING"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_expired_generation_claim_cannot_load_model_context(owned_project_mysql) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await _seed_completed_turn(sessions)
+        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        request = _request()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=now)
+        claim = (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="expired-worker",
+                now=now,
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+        )[0]
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(test_plan_generation_job)
+                .where(test_plan_generation_job.c.job_id == request.job_id)
+                .values(lease_expires_at=func.utc_timestamp(6) - text("INTERVAL 1 SECOND"))
+            )
+
+        with pytest.raises(RevisionConflict, match="lease"):
+            await repository.generation_context(VALIDATION_SCOPE, claim)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_response_is_held_for_reconciliation_without_reissue(
+    owned_project_mysql,
+) -> None:
+    class AmbiguousProvider:
+        calls = 0
+
+        async def generate(self, _context):
+            self.calls += 1
+            raise ModelGatewayUnavailable
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await _seed_completed_turn(sessions)
+        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        request = _request()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=now)
+        claim = (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="reconcile-worker",
+                now=now,
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+        )[0]
+        context = await repository.generation_context(VALIDATION_SCOPE, claim)
+        provider = AmbiguousProvider()
+        generator = MysqlReconciledTestDesign(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            delegate=provider,
+        )
+
+        with pytest.raises(GenerationResponseUnknown, match="reconciliation"):
+            await generator.generate(context)
+        with pytest.raises(GenerationResponseUnknown, match="reconciliation"):
+            await generator.generate(context)
+
+        assert provider.calls == 1
+        async with sessions() as session:
+            state = await session.scalar(
+                select(test_design_model_call.c.status).where(
+                    test_design_model_call.c.job_id == request.job_id
+                )
+            )
+        assert state == "UNKNOWN"
     finally:
         await engine.dispose()

@@ -922,7 +922,7 @@ class TestPlanGenerationAccepted(ContractModel):
     test_plan_id: str
     revision_id: str
     status: Literal["PENDING", "RUNNING", "DRAFT_READY", "FAILED"]
-    progress: Literal["queued", "running", "completed", "failed"]
+    progress: Literal["queued", "running", "waiting", "completed", "failed", "canceled"]
     failure_code: str | None = None
     deep_link: str
 

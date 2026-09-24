@@ -2757,7 +2757,7 @@ export interface components {
              * Progress
              * @enum {string}
              */
-            progress: "queued" | "running" | "completed" | "failed";
+            progress: "queued" | "running" | "waiting" | "completed" | "failed" | "canceled";
             /** Revisionid */
             revisionId: string;
             /**

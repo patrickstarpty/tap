@@ -43,12 +43,14 @@ from tap.modules.test_management.domain.models import (
 
 router = APIRouter(prefix="/test-plans", tags=["test-management"])
 
-_GenerationProgress = Literal["queued", "running", "completed", "failed"]
+_GenerationProgress = Literal["queued", "running", "waiting", "completed", "failed", "canceled"]
 _GENERATION_PROGRESS: dict[GenerationJobStatus, _GenerationProgress] = {
     GenerationJobStatus.PENDING: "queued",
     GenerationJobStatus.RUNNING: "running",
+    GenerationJobStatus.WAITING: "waiting",
     GenerationJobStatus.DRAFT_READY: "completed",
     GenerationJobStatus.FAILED: "failed",
+    GenerationJobStatus.CANCELED: "canceled",
 }
 
 

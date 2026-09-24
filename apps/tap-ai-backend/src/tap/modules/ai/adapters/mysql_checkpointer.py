@@ -166,6 +166,8 @@ class GraphFence:
     lease_until_column: Any
     status_column: Any
     running_status: str
+    lease_owner: str
+    attempt_count_column: Any | None = None
 
 
 class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
@@ -178,18 +180,25 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
         scope: ProjectScopeContext,
         fence: GraphFence | None = None,
         defer_completion: bool = False,
+        budget: dict[str, int] | None = None,
     ) -> None:
         super().__init__(serde=JsonPlusSerializer(allowed_msgpack_modules=None))
         self._sessions = sessions
         self._scope = require_project_scope(scope)
         self._fence = fence
         self._defer_completion = defer_completion
+        self._budget = dict(budget or {})
 
-    async def _assert_fence(self, session: AsyncSession, *, lock: bool = False) -> None:
+    async def _assert_fence(
+        self, session: AsyncSession, *, lock: bool = False
+    ) -> tuple[datetime, int] | None:
         if self._fence is None:
-            return
+            return None
         fence = self._fence
-        query = select(fence.identity_column).where(
+        selected = [fence.lease_until_column]
+        if fence.attempt_count_column is not None:
+            selected.append(fence.attempt_count_column)
+        query = select(*selected).where(
             *scope_predicates(fence.table, self._scope),
             fence.identity_column == fence.identity,
             fence.token_column == fence.token,
@@ -198,9 +207,10 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
         )
         if lock:
             query = query.with_for_update()
-        valid = await session.scalar(query)
+        valid = (await session.execute(query)).one_or_none()
         if valid is None:
             raise PermissionError("graph run fencing token is stale")
+        return valid[0], int(valid[1]) if len(valid) > 1 else 1
 
     @staticmethod
     def _coordinates(config: RunnableConfig) -> tuple[str, str, str | None]:
@@ -357,7 +367,17 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
         instant = created_at.replace(tzinfo=None)
         identity = scope_values(self._scope)
         async with _checkpoint_storage(), self._sessions() as session, session.begin():
-            await self._assert_fence(session, lock=True)
+            fence_state = await self._assert_fence(session, lock=True)
+            lease_values = (
+                {}
+                if self._fence is None or fence_state is None
+                else {
+                    "lease_owner": None if status == "WAITING" else self._fence.lease_owner,
+                    "lease_token": None if status == "WAITING" else self._fence.token,
+                    "lease_until": None if status == "WAITING" else fence_state[0],
+                }
+            )
+            attempt_count = 0 if fence_state is None else fence_state[1]
             await session.execute(
                 insert(graph_run)
                 .values(
@@ -370,17 +390,20 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
                     status=status,
                     waiting_reason=waiting_reason,
                     current_checkpoint_id=checkpoint["id"],
-                    attempt_count=0,
-                    budget={},
+                    attempt_count=attempt_count,
+                    budget=self._budget,
                     created_at=instant,
                     updated_at=instant,
+                    **lease_values,
                 )
                 .on_duplicate_key_update(
                     current_checkpoint_id=checkpoint["id"],
                     reasoning_mode=reasoning_mode,
                     status=status,
                     waiting_reason=waiting_reason,
+                    attempt_count=attempt_count,
                     updated_at=instant,
+                    **lease_values,
                 )
             )
             await session.execute(

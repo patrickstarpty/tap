@@ -422,6 +422,23 @@ class IsolatedMysql:
     def downgrade(self, revision: str) -> None:
         self._migrate("downgrade", revision)
 
+    def rebuild(self, revision: str) -> None:
+        """Recreate only this owned disposable schema at an historical revision."""
+
+        validate_isolated_database(self.url, self.project)
+        engine = create_engine(self.url)
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+                table_names = tuple(inspect(connection).get_table_names())
+                for table_name in table_names:
+                    quoted = table_name.replace("`", "``")
+                    connection.execute(text(f"DROP TABLE `{quoted}`"))
+                connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+        finally:
+            engine.dispose()
+        self.upgrade(revision)
+
     def _migrate(self, direction: str, revision: str) -> None:
         validate_isolated_database(self.url, self.project)
         env = _local_environment()

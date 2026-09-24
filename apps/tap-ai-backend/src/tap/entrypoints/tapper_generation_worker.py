@@ -18,9 +18,59 @@ from tap.modules.ai.application.interaction_graph import InteractionGraph
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    CitationEvidence,
     GraphContextStatus,
     RetrievalSummary,
 )
+
+
+def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
+    return {
+        "answer": evidence.answer,
+        "outcome": evidence.outcome,
+        "retrievalSummary": {
+            "status": evidence.retrieval_summary.status,
+            "traceId": evidence.retrieval_summary.trace_id,
+            "authorizedHitCount": evidence.retrieval_summary.authorized_hit_count,
+        },
+        "graphContextStatus": evidence.graph_context_status.value,
+        "graphSnapshotId": evidence.graph_snapshot_id,
+        "citations": [
+            {
+                "citationSnapshotId": item.citation_snapshot_id,
+                "citationDigest": item.citation_digest,
+            }
+            for item in evidence.citations
+        ],
+        "diagnostics": list(evidence.diagnostics),
+    }
+
+
+def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
+    if not isinstance(raw, dict) or not isinstance(raw.get("retrievalSummary"), dict):
+        raise ValueError("chat graph checkpoint lacks answer evidence")
+    summary = raw["retrievalSummary"]
+    citations = raw.get("citations", [])
+    if not isinstance(citations, list):
+        raise ValueError("chat graph checkpoint citations are invalid")
+    return AnswerEvidence(
+        str(raw.get("answer", "")),
+        str(raw["outcome"]),
+        RetrievalSummary(
+            str(summary["status"]),
+            trace_id=summary.get("traceId"),
+            authorized_hit_count=int(summary.get("authorizedHitCount", 0)),
+        ),
+        GraphContextStatus(str(raw["graphContextStatus"])),
+        graph_snapshot_id=raw.get("graphSnapshotId"),
+        citations=tuple(
+            CitationEvidence(str(item["citationSnapshotId"]), str(item["citationDigest"]))
+            for item in citations
+            if isinstance(item, dict)
+        ),
+        diagnostics=tuple(str(item) for item in raw.get("diagnostics", [])),
+    )
 
 
 @dataclass(slots=True)
@@ -89,20 +139,6 @@ class GenerationWorker:
 
             async def complete(evidence, chat=conversation_id, identity=turn.turn_id):
                 if evidence.outcome == "failed":
-                    await self.conversations.complete_evidence(
-                        chat,
-                        identity,
-                        evidence,
-                        lease_token=turn.lease_token,
-                        terminal_event=(
-                            "turn.failed",
-                            {
-                                "problem": build_problem(
-                                    "answer-unavailable", correlation_id=identity
-                                ).model_dump(mode="json", by_alias=True)
-                            },
-                        ),
-                    )
                     return
                 await self.conversations.emit(
                     chat,
@@ -134,9 +170,6 @@ class GenerationWorker:
                         lease_token=turn.lease_token,
                     )
                 if answer_response is None:
-                    await self.conversations.complete_evidence(
-                        chat, identity, evidence, lease_token=turn.lease_token
-                    )
                     return
                 for citation in answer_response.citations:
                     await self.conversations.emit(
@@ -146,16 +179,6 @@ class GenerationWorker:
                         {"citation": citation.model_dump(mode="json", by_alias=True)},
                         lease_token=turn.lease_token,
                     )
-                await self.conversations.complete_evidence(
-                    chat,
-                    identity,
-                    evidence,
-                    lease_token=turn.lease_token,
-                    terminal_event=(
-                        "turn.abstained" if answer_response.abstained else "turn.completed",
-                        {"answer": answer_response.model_dump(mode="json", by_alias=True)},
-                    ),
-                )
 
             try:
 
@@ -169,7 +192,33 @@ class GenerationWorker:
                     evidence = await TurnProcessor(provider=provider, complete=complete).process(
                         turn.input_snapshot
                     )
-                    return {"result": {"outcome": evidence.outcome}}
+                    terminal_event: dict[str, object] | None
+                    if evidence.outcome == "failed":
+                        terminal_event = {
+                            "type": "turn.failed",
+                            "payload": {
+                                "problem": build_problem(
+                                    "answer-unavailable", correlation_id=turn.turn_id
+                                ).model_dump(mode="json", by_alias=True)
+                            },
+                        }
+                    elif answer_response is None:
+                        terminal_event = None
+                    else:
+                        terminal_event = {
+                            "type": (
+                                "turn.abstained" if answer_response.abstained else "turn.completed"
+                            ),
+                            "payload": {
+                                "answer": answer_response.model_dump(mode="json", by_alias=True)
+                            },
+                        }
+                    return {
+                        "result": {
+                            "evidence": _evidence_checkpoint(evidence),
+                            "terminalEvent": terminal_event,
+                        }
+                    }
 
                 async def authorized() -> bool:
                     if renew is None:
@@ -217,7 +266,7 @@ class GenerationWorker:
                     while True:
                         done, _ = await asyncio.wait({running}, timeout=self.renew_interval_seconds)
                         if done:
-                            await running
+                            state = await running
                             break
                         if renew is not None:
                             await renew(
@@ -231,6 +280,21 @@ class GenerationWorker:
                         running.cancel()
                         await asyncio.gather(running, return_exceptions=True)
                     raise
+                result = state.get("result", {})
+                evidence = _evidence_from_checkpoint(result.get("evidence"))
+                raw_terminal = result.get("terminalEvent")
+                terminal_event = (
+                    None
+                    if raw_terminal is None
+                    else (str(raw_terminal["type"]), dict(raw_terminal["payload"]))
+                )
+                await self.conversations.complete_evidence(
+                    conversation_id,
+                    turn.turn_id,
+                    evidence,
+                    lease_token=turn.lease_token,
+                    terminal_event=terminal_event,
+                )
             except (ConversationConflict, PermissionError):
                 # Cancellation or lease reclaim won the terminal-state race.
                 continue

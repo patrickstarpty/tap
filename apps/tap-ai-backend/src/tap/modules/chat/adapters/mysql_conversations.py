@@ -14,6 +14,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     and_,
+    func,
     insert,
     or_,
     select,
@@ -818,6 +819,113 @@ class MysqlConversationRepository:
                     processing_lease_expires_at=None,
                 )
             )
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_checkpoint, graph_run
+
+            graph_tables_available = bool(
+                await session.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.tables "
+                        "WHERE table_schema=DATABASE() "
+                        "AND table_name IN ('ai_graph_run','ai_graph_checkpoint')"
+                    )
+                )
+                == 2
+            )
+            graph = (
+                None
+                if not graph_tables_available
+                else (
+                    (
+                        await session.execute(
+                            select(graph_run)
+                            .where(
+                                *scope_predicates(graph_run, self.scope),
+                                graph_run.c.run_id == turn_id,
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+            )
+            if graph is not None:
+                graph_status = {
+                    "completed": "SUCCEEDED",
+                    "abstained": "SUCCEEDED",
+                    "failed": "FAILED",
+                    "canceled": "CANCELLED",
+                }[snapshot.value.outcome]
+                graph_update = update(graph_run).where(
+                    *scope_predicates(graph_run, self.scope),
+                    graph_run.c.run_id == turn_id,
+                    graph_run.c.status.in_(("RUNNING", "WAITING")),
+                )
+                if graph_status != "CANCELLED":
+                    graph_update = graph_update.where(
+                        graph_run.c.lease_token == lease_token,
+                        graph_run.c.lease_until >= func.utc_timestamp(6),
+                    )
+                settled = await session.execute(
+                    graph_update.values(
+                        status=graph_status,
+                        waiting_reason=None,
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=None,
+                        updated_at=_naive(snapshot.created_at),
+                    )
+                )
+                if settled.rowcount != 1 and graph["status"] not in {
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                }:
+                    raise ConversationConflict("generation lease lost")
+                checkpoint_id = graph["current_checkpoint_id"]
+                if checkpoint_id and graph_status != "CANCELLED":
+                    checkpoint_count = int(
+                        await session.scalar(
+                            select(func.count())
+                            .select_from(graph_checkpoint)
+                            .where(
+                                *scope_predicates(graph_checkpoint, self.scope),
+                                graph_checkpoint.c.run_id == turn_id,
+                            )
+                        )
+                        or 1
+                    )
+                    await write_project_event(
+                        session,
+                        scope=self.scope,
+                        envelope=ProjectEventEnvelope(
+                            event_id=scoped_outbox_id(
+                                self.scope,
+                                kind="ai-graph-checkpoint",
+                                identity=f"{turn_id}:{checkpoint_id}",
+                            ),
+                            event_type="ai.graph-run.checkpointed",
+                            schema_version=1,
+                            occurred_at=snapshot.created_at,
+                            scope_kind="PROJECT",
+                            enterprise_id=self.scope.enterprise_id,
+                            project_id=self.scope.project_id,
+                            actor_id=self.scope.actor_id,
+                            identity_mode=self.scope.identity_mode.value,
+                            aggregate_type="GraphRun",
+                            aggregate_id=turn_id,
+                            aggregate_version=max(1, checkpoint_count),
+                            correlation_id=turn_id,
+                            causation_id=None,
+                            idempotency_key=f"graph-checkpoint:{checkpoint_id}",
+                            payload={
+                                "runId": turn_id,
+                                "checkpointId": checkpoint_id,
+                                "graphVersion": graph["graph_version"],
+                                "stateSchemaVersion": str(graph["state_schema_version"]),
+                            },
+                        ),
+                    )
         persisted = await self.load(conversation_id)
         return next(turn for turn in persisted.turns if turn.turn_id == turn_id)
 
@@ -955,13 +1063,45 @@ class MysqlConversationRepository:
             )
             if result.rowcount != 1:
                 raise ConversationConflict("generation lease lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, self.scope),
+                    graph_run.c.run_id == turn_id,
+                    graph_run.c.status == "RUNNING",
+                    graph_run.c.lease_token == lease_token,
+                )
+                .values(
+                    lease_until=_naive(now + lease_duration),
+                    updated_at=_naive(now),
+                )
+            )
 
     def graph_checkpointer(self, turn: ConversationTurn):
         if not turn.lease_token:
             raise ConversationConflict("generation lease lost")
-        from tap.modules.ai.adapters.mysql_checkpointer import MysqlGraphCheckpointer
+        from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
 
-        return MysqlGraphCheckpointer(self.sessions, scope=self.scope)
+        return MysqlGraphCheckpointer(
+            self.sessions,
+            scope=self.scope,
+            defer_completion=True,
+            budget={"maxModelCalls": 1, "maxSeconds": 60, "maxCostMicros": 0},
+            fence=GraphFence(
+                table=chat_turn,
+                identity_column=chat_turn.c.turn_id,
+                identity=turn.turn_id,
+                token_column=chat_turn.c.processing_lease_token,
+                token=turn.lease_token,
+                lease_until_column=chat_turn.c.processing_lease_expires_at,
+                status_column=chat_turn.c.state,
+                running_status="running",
+                lease_owner=f"chat:{turn.turn_id}",
+                attempt_count_column=chat_turn.c.processing_attempt,
+            ),
+        )
 
     async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
         if event.event_type in {

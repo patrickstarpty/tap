@@ -902,7 +902,10 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         from tap.modules.test_management.adapters.model_gateway_generation import (
             ModelGatewayTestDesign,
         )
-        from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
+        from tap.modules.test_management.adapters.mysql import (
+            MysqlReconciledTestDesign,
+            MysqlTestPlanRepository,
+        )
         from tap.modules.test_management.application.generation import TestDesignWorker
         from tap.platform.messaging.redis_dispatch import AsyncRedisStream
         from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
@@ -910,8 +913,12 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         generator = (
             DeterministicTestDesign()
             if settings.e2e_mode
-            else ModelGatewayTestDesign(
-                models.gateway, timeout_seconds=settings.model_timeout_seconds
+            else MysqlReconciledTestDesign(
+                sessions,
+                scope=scope,
+                delegate=ModelGatewayTestDesign(
+                    models.gateway, timeout_seconds=settings.model_timeout_seconds
+                ),
             )
         )
         worker_id = settings.worker_id + "-test-design"

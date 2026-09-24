@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -16,6 +16,17 @@ from tap.modules.ai.application.interaction_graph import (
     InteractionGraph,
     InteractionGraphState,
 )
+from tap.modules.chat.adapters.mysql_conversations import (
+    MysqlConversationRepository,
+    turn_answer_evidence_snapshot,
+)
+from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    GraphContextStatus,
+    RetrievalSummary,
+)
+from tests.integration.test_conversation_persistence import _input
 
 
 def _graph(
@@ -141,6 +152,38 @@ async def test_new_graph_version_cannot_take_over_existing_checkpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admission_wait_releases_worker_before_execute() -> None:
+    executed = False
+
+    async def authorized() -> bool:
+        return True
+
+    async def classify(_state):
+        return {"reasoning_mode": "workflow"}
+
+    async def admit(_state):
+        return {"admitted": False, "waiting_reason": "human-confirmation"}
+
+    async def execute(_state):
+        nonlocal executed
+        executed = True
+        return {"result": {"unexpected": True}}
+
+    state = await InteractionGraph(
+        graph_version="wait-v1",
+        state_schema_version=1,
+        checkpointer=InMemorySaver(),
+        classify=classify,
+        admit=admit,
+        execute=execute,
+        authorize=authorized,
+    ).start(run_id="run-wait", payload={}, execution_mode="durable")
+
+    assert state["waiting_reason"] == "human-confirmation"
+    assert executed is False
+
+
+@pytest.mark.asyncio
 async def test_mysql_checkpoint_and_outbox_survive_runtime_recreation(
     owned_project_mysql,
 ) -> None:
@@ -241,5 +284,129 @@ async def test_mysql_checkpoint_rolls_back_when_outbox_write_fails(
             )
         assert run_count == 0
         assert checkpoint_count == 0
+    finally:
+        await engine.dispose()
+
+
+async def _completed_graph(checkpointer, run_id: str) -> None:
+    async def authorized() -> bool:
+        return True
+
+    async def classify(_state):
+        return {"reasoning_mode": "direct"}
+
+    async def admit(_state):
+        return {"admitted": True}
+
+    async def execute(_state):
+        return {"result": {"evidence": "ready"}}
+
+    await InteractionGraph(
+        graph_version="fast-chat-v1",
+        state_schema_version=1,
+        checkpointer=checkpointer,
+        classify=classify,
+        admit=admit,
+        execute=execute,
+        authorize=authorized,
+    ).start(run_id=run_id, payload={"turnId": run_id}, execution_mode="inline")
+
+
+@pytest.mark.asyncio
+async def test_chat_terminal_business_graph_and_outbox_settle_atomically(
+    owned_project_mysql, monkeypatch
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        service = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await service.create("chat-atomic", "turn-atomic", "request-atomic", _input())
+        claim = (await service.repository.claim_queued(limit=1))[0][1]
+        await _completed_graph(service.repository.graph_checkpointer(claim), claim.turn_id)
+
+        async def fail_event(*_args, **_kwargs):
+            raise RuntimeError("injected chat settlement outbox failure")
+
+        monkeypatch.setattr(
+            "tap.modules.chat.adapters.mysql_conversations.write_project_event", fail_event
+        )
+        with pytest.raises(RuntimeError, match="chat settlement"):
+            await service.complete_evidence(
+                "chat-atomic",
+                claim.turn_id,
+                AnswerEvidence(
+                    "grounded",
+                    "completed",
+                    RetrievalSummary("completed"),
+                    GraphContextStatus.NOT_REQUESTED,
+                ),
+                lease_token=claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "grounded"}}),
+            )
+
+        async with sessions() as session:
+            turn_state = await session.scalar(
+                text("SELECT state FROM chat_turn WHERE turn_id='turn-atomic'")
+            )
+            snapshot_count = await session.scalar(
+                select(func.count())
+                .select_from(turn_answer_evidence_snapshot)
+                .where(turn_answer_evidence_snapshot.c.turn_id == "turn-atomic")
+            )
+            graph_state = await session.scalar(
+                select(graph_run.c.status).where(graph_run.c.run_id == "turn-atomic")
+            )
+        assert turn_state == "running"
+        assert snapshot_count == 0
+        assert graph_state == "RUNNING"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_chat_checkpoint_is_fenced_and_cancel_releases_graph_lease(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        service = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await service.create("chat-fence", "turn-fence", "request-fence", _input())
+        stale = (await service.repository.claim_queued(limit=1))[0][1]
+        stale_checkpointer = service.repository.graph_checkpointer(stale)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                text(
+                    "UPDATE chat_turn SET processing_lease_expires_at="
+                    "UTC_TIMESTAMP(6)-INTERVAL 1 SECOND WHERE turn_id='turn-fence'"
+                )
+            )
+        current = (await service.repository.claim_queued(limit=1))[0][1]
+
+        with pytest.raises(PermissionError, match="fencing token"):
+            await _completed_graph(stale_checkpointer, stale.turn_id)
+
+        await _completed_graph(service.repository.graph_checkpointer(current), current.turn_id)
+        await service.cancel("chat-fence", current.turn_id)
+        async with sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == current.turn_id)
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert row["status"] == "CANCELLED"
+        assert row["lease_owner"] is None
+        assert row["lease_token"] is None
+        assert row["lease_until"] is None
     finally:
         await engine.dispose()

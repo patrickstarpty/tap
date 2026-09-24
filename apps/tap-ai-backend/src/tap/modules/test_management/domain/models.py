@@ -64,8 +64,10 @@ class GapSeverity(StrEnum):
 class GenerationJobStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING = "WAITING"
     DRAFT_READY = "DRAFT_READY"
     FAILED = "FAILED"
+    CANCELED = "CANCELED"
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,6 +26,7 @@ from tap.modules.test_management.domain.models import (
     TestScenario,
 )
 from tap.modules.test_management.ports.generation import (
+    GenerationResponseUnknown,
     TestDesignGenerator,
     TestDesignJobStore,
 )
@@ -38,6 +39,7 @@ class TestDesignWorkerRun:
     ready: int
     failed: int
     lease_lost: int
+    waiting: int = 0
 
 
 def _revision_checkpoint(revision: TestPlanRevision) -> dict[str, object]:
@@ -181,7 +183,7 @@ class TestDesignWorker:
             lease_duration=self._lease_duration,
             limit=limit,
         )
-        ready = failed = lease_lost = 0
+        ready = failed = lease_lost = waiting = 0
         for claim in claims:
             graph_ready = False
             try:
@@ -254,6 +256,17 @@ class TestDesignWorker:
                 graph_ready = True
                 await self._jobs.complete_generation(self._scope, claim, draft, now=self._now())
                 ready += 1
+            except GenerationResponseUnknown:
+                try:
+                    await self._jobs.wait_generation(
+                        self._scope,
+                        claim,
+                        reason="provider-response-unknown",
+                        now=self._now(),
+                    )
+                    waiting += 1
+                except Exception:
+                    lease_lost += 1
             except GraphCheckpointUnavailable:
                 lease_lost += 1
             except Exception:
@@ -270,4 +283,4 @@ class TestDesignWorker:
                     failed += 1
                 except Exception:
                     lease_lost += 1
-        return TestDesignWorkerRun(len(claims), ready, failed, lease_lost)
+        return TestDesignWorkerRun(len(claims), ready, failed, lease_lost, waiting)

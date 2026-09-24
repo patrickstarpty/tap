@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import (
     conversation,
@@ -64,7 +65,9 @@ from tap.modules.test_management.domain.models import (
 from tap.modules.test_management.domain.validation import RevisionConflict, RevisionImmutable
 from tap.modules.test_management.ports.generation import (
     ClaimedTestDesignJob,
+    GenerationResponseUnknown,
     TestDesignContext,
+    TestDesignGenerator,
 )
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
@@ -286,6 +289,21 @@ test_plan_generation_job = _scoped(
         (("turn_id",), "chat_turn", ("turn_id",), "fk_test_plan_generation_turn"),
     ),
 )
+test_design_model_call = _scoped(
+    "test_design_model_call",
+    Column("call_id", String(64), primary_key=True),
+    Column("job_id", String(64), nullable=False),
+    Column("request_digest", String(71), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("result", JSON),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("updated_at", DATETIME(fsp=6), nullable=False),
+    uniques=(
+        (("call_id",), "uq_test_design_model_call_project_pk"),
+        (("request_digest",), "uq_test_design_model_call_request"),
+    ),
+    parents=((("job_id",), "test_plan_generation_job", ("job_id",), "fk_test_design_call_job"),),
+)
 
 TEST_MANAGEMENT_TABLES = (
     test_plan,
@@ -298,11 +316,130 @@ TEST_MANAGEMENT_TABLES = (
     test_plan_unknown,
     test_plan_coverage_gap,
     test_plan_generation_job,
+    test_design_model_call,
 )
 
 
 def _naive(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+
+class MysqlReconciledTestDesign:
+    """Persist model-call intent/result so an unknown response is never blindly reissued."""
+
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+        delegate: TestDesignGenerator,
+    ) -> None:
+        self._sessions = sessions
+        self._scope = require_project_scope(scope)
+        self._delegate = delegate
+
+    async def generate(self, context: TestDesignContext) -> TestPlanRevision:
+        if context.scope != self._scope:
+            raise ValueError("model-call ledger is bound to a different Project")
+        from tap.modules.test_management.application.generation import (
+            _revision_checkpoint,
+            _revision_from_checkpoint,
+        )
+
+        call_id = hashlib.sha256(
+            f"{self._scope.project_id}:{context.request.request_digest}".encode()
+        ).hexdigest()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        async with self._sessions() as session, session.begin():
+            existing = (
+                (
+                    await session.execute(
+                        select(test_design_model_call)
+                        .where(
+                            *scope_predicates(test_design_model_call, self._scope),
+                            test_design_model_call.c.call_id == call_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing is not None:
+                if existing["request_digest"] != context.request.request_digest:
+                    raise RevisionConflict("model-call idempotency conflict")
+                if existing["status"] == "SUCCEEDED":
+                    return _revision_from_checkpoint(existing["result"])
+                if existing["status"] in {"STARTED", "UNKNOWN"}:
+                    await session.execute(
+                        update(test_design_model_call)
+                        .where(
+                            *scope_predicates(test_design_model_call, self._scope),
+                            test_design_model_call.c.call_id == call_id,
+                        )
+                        .values(status="UNKNOWN", updated_at=now)
+                    )
+                    raise GenerationResponseUnknown("provider response requires reconciliation")
+                raise RuntimeError("previous model call failed before provider acceptance")
+            await session.execute(
+                insert(test_design_model_call).values(
+                    **scope_values(self._scope),
+                    call_id=call_id,
+                    job_id=context.request.job_id,
+                    request_digest=context.request.request_digest,
+                    status="STARTED",
+                    result=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        try:
+            revision = await self._delegate.generate(context)
+        except ModelGatewayUnavailable as error:
+            async with self._sessions() as session, session.begin():
+                await session.execute(
+                    update(test_design_model_call)
+                    .where(
+                        *scope_predicates(test_design_model_call, self._scope),
+                        test_design_model_call.c.call_id == call_id,
+                        test_design_model_call.c.status == "STARTED",
+                    )
+                    .values(
+                        status="UNKNOWN", updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                    )
+                )
+            raise GenerationResponseUnknown("provider response requires reconciliation") from error
+        except BaseException:
+            async with self._sessions() as session, session.begin():
+                await session.execute(
+                    update(test_design_model_call)
+                    .where(
+                        *scope_predicates(test_design_model_call, self._scope),
+                        test_design_model_call.c.call_id == call_id,
+                        test_design_model_call.c.status == "STARTED",
+                    )
+                    .values(
+                        status="FAILED", updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                    )
+                )
+            raise
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(test_design_model_call)
+                .where(
+                    *scope_predicates(test_design_model_call, self._scope),
+                    test_design_model_call.c.call_id == call_id,
+                    test_design_model_call.c.status == "STARTED",
+                )
+                .values(
+                    status="SUCCEEDED",
+                    result=_revision_checkpoint(revision),
+                    updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                )
+            )
+            if result.rowcount != 1:
+                raise GenerationResponseUnknown("model result settlement lost ownership")
+        return revision
 
 
 class MysqlTestPlanRepository:
@@ -319,6 +456,7 @@ class MysqlTestPlanRepository:
             self._sessions,
             scope=self.scope,
             defer_completion=True,
+            budget={"maxModelCalls": 1, "maxSeconds": 60, "maxCostMicros": 0},
             fence=GraphFence(
                 table=test_plan_generation_job,
                 identity_column=test_plan_generation_job.c.job_id,
@@ -328,6 +466,8 @@ class MysqlTestPlanRepository:
                 lease_until_column=test_plan_generation_job.c.lease_expires_at,
                 status_column=test_plan_generation_job.c.status,
                 running_status=GenerationJobStatus.RUNNING.value,
+                lease_owner=claim.job.lease_owner or "test-design-worker",
+                attempt_count_column=test_plan_generation_job.c.attempt_count,
             ),
         )
 
@@ -907,6 +1047,7 @@ class MysqlTestPlanRepository:
                         select(
                             test_plan_generation_job.c.status,
                             test_plan_generation_job.c.lease_token,
+                            test_plan_generation_job.c.lease_expires_at,
                             turn_input_snapshot.c.snapshot.label("input_snapshot"),
                             turn_answer_evidence_snapshot.c.snapshot.label("answer_snapshot"),
                         )
@@ -933,6 +1074,7 @@ class MysqlTestPlanRepository:
                         .where(
                             *scope_predicates(test_plan_generation_job, scope),
                             test_plan_generation_job.c.job_id == request.job_id,
+                            test_plan_generation_job.c.lease_expires_at >= func.utc_timestamp(6),
                         )
                     )
                 )
@@ -943,6 +1085,7 @@ class MysqlTestPlanRepository:
             row is None
             or row["status"] != GenerationJobStatus.RUNNING.value
             or row["lease_token"] != claim.lease_token
+            or row["lease_expires_at"] is None
         ):
             raise RevisionConflict("test design worker lease was lost")
         answer_snapshot = dict(row["answer_snapshot"])
@@ -1018,6 +1161,21 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, scope),
+                    graph_run.c.run_id == claim.job.request.job_id,
+                    graph_run.c.status == "RUNNING",
+                    graph_run.c.lease_token == claim.lease_token,
+                )
+                .values(
+                    lease_until=instant + lease_duration,
+                    updated_at=instant,
+                )
+            )
 
     async def complete_generation(
         self,
@@ -1126,7 +1284,14 @@ class MysqlTestPlanRepository:
                         *scope_predicates(graph_run, scope),
                         graph_run.c.run_id == request.job_id,
                     )
-                    .values(status="SUCCEEDED", updated_at=instant)
+                    .values(
+                        status="SUCCEEDED",
+                        waiting_reason=None,
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=None,
+                        updated_at=instant,
+                    )
                 )
                 checkpoint_count = int(
                     await session.scalar(
@@ -1214,7 +1379,67 @@ class MysqlTestPlanRepository:
                     *scope_predicates(graph_run, scope),
                     graph_run.c.run_id == claim.job.request.job_id,
                 )
-                .values(status="FAILED", updated_at=_naive(now))
+                .values(
+                    status="FAILED",
+                    waiting_reason=None,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    updated_at=_naive(now),
+                )
+            )
+
+    async def wait_generation(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        scope = self._matching_scope(scope)
+        if not reason.strip() or len(reason) > 128:
+            raise ValueError("test design waiting reason is invalid")
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            result = await session.execute(
+                update(test_plan_generation_job)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.job_id == claim.job.request.job_id,
+                    test_plan_generation_job.c.status == GenerationJobStatus.RUNNING.value,
+                    test_plan_generation_job.c.lease_token == claim.lease_token,
+                    test_plan_generation_job.c.lease_expires_at >= instant,
+                )
+                .values(
+                    status=GenerationJobStatus.WAITING.value,
+                    failure_code=reason,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    updated_at=instant,
+                )
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("test design worker lease was lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, scope),
+                    graph_run.c.run_id == claim.job.request.job_id,
+                    graph_run.c.status == "RUNNING",
+                    graph_run.c.lease_token == claim.lease_token,
+                )
+                .values(
+                    status="WAITING",
+                    waiting_reason=reason,
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    updated_at=instant,
+                )
             )
 
     def _matching_scope(self, scope: ProjectScopeContext) -> ProjectScopeContext:

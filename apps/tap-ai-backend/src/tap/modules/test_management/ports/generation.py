@@ -28,6 +28,10 @@ class TestDesignGenerator(Protocol):
     async def generate(self, context: TestDesignContext) -> TestPlanRevision: ...
 
 
+class GenerationResponseUnknown(RuntimeError):
+    """The provider may have accepted a call whose response was not durably recorded."""
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimedTestDesignJob:
     job: TestPlanGenerationJob
@@ -75,5 +79,14 @@ class TestDesignJobStore(Protocol):
         claim: ClaimedTestDesignJob,
         *,
         failure_code: str,
+        now: datetime,
+    ) -> None: ...
+
+    async def wait_generation(
+        self,
+        scope: ProjectScopeContext,
+        claim: ClaimedTestDesignJob,
+        *,
+        reason: str,
         now: datetime,
     ) -> None: ...

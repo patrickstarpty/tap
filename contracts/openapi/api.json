@@ -5678,8 +5678,10 @@
             "enum": [
               "queued",
               "running",
+              "waiting",
               "completed",
-              "failed"
+              "failed",
+              "canceled"
             ],
             "title": "Progress",
             "type": "string"
