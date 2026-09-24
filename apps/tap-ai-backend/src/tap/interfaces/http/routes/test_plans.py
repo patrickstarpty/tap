@@ -311,6 +311,21 @@ async def get_generation(request: Request, job_id: str) -> TestPlanGenerationAcc
 
 
 @router.post(
+    "/generations/{job_id}/cancel",
+    operation_id="test_plan_cancel_generation",
+    response_model=TestPlanGenerationAccepted,
+    dependencies=[Depends(project_authorization("test-plans.write"))],
+)
+async def cancel_generation(request: Request, job_id: str) -> TestPlanGenerationAccepted:
+    job = await test_plan_service(request).cancel_generation(
+        request.state.project_scope,
+        job_id,
+        now=datetime.now(timezone.utc),
+    )
+    return _generation_view(job)
+
+
+@router.post(
     "/{test_plan_id}/revisions/{revision_id}/publish",
     operation_id="test_plan_publish_revision",
     response_model=TestPlanRevisionView,

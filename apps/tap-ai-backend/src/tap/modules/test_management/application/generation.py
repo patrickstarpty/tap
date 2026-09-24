@@ -201,7 +201,11 @@ class TestDesignWorker:
 
                 async def admit(_state):
                     await self._jobs.generation_context(self._scope, claim)
-                    return {"admitted": True}
+                    waiting_reason = await self._jobs.generation_waiting_reason(self._scope, claim)
+                    return {
+                        "admitted": waiting_reason is None,
+                        "waiting_reason": waiting_reason,
+                    }
 
                 async def execute(_state):
                     context = await self._jobs.generation_context(self._scope, claim)
@@ -252,6 +256,16 @@ class TestDesignWorker:
                         running.cancel()
                         await asyncio.gather(running, return_exceptions=True)
                     raise
+                waiting_reason = state.get("waiting_reason")
+                if waiting_reason:
+                    await self._jobs.wait_generation(
+                        self._scope,
+                        claim,
+                        reason=waiting_reason,
+                        now=self._now(),
+                    )
+                    waiting += 1
+                    continue
                 draft = _revision_from_checkpoint(state.get("result", {}).get("draft"))
                 graph_ready = True
                 await self._jobs.complete_generation(self._scope, claim, draft, now=self._now())

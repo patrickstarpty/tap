@@ -946,6 +946,109 @@ class MysqlTestPlanRepository:
             raise LookupError("test design generation job not found")
         return self._job(row)
 
+    async def cancel_generation(
+        self, scope: ProjectScopeContext, job_id: str, *, now: datetime
+    ) -> TestPlanGenerationJob:
+        scope = self._matching_scope(scope)
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_generation_job)
+                        .where(
+                            *scope_predicates(test_plan_generation_job, scope),
+                            test_plan_generation_job.c.job_id == job_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("test design generation job not found")
+            if row["status"] in {
+                GenerationJobStatus.DRAFT_READY.value,
+                GenerationJobStatus.FAILED.value,
+                GenerationJobStatus.CANCELED.value,
+            }:
+                return self._job(row)
+            await session.execute(
+                update(test_plan_generation_job)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.job_id == job_id,
+                )
+                .values(
+                    status=GenerationJobStatus.CANCELED.value,
+                    failure_code="canceled-by-user",
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    updated_at=instant,
+                )
+            )
+            from tap.modules.ai.adapters.mysql_checkpointer import (
+                graph_run,
+                graph_settlement,
+            )
+
+            graph = (
+                (
+                    await session.execute(
+                        select(graph_run)
+                        .where(
+                            *scope_predicates(graph_run, scope),
+                            graph_run.c.run_id == job_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if graph is not None and graph["status"] not in {
+                "SUCCEEDED",
+                "FAILED",
+                "CANCELLED",
+            }:
+                if graph["current_checkpoint_id"]:
+                    await session.execute(
+                        insert(graph_settlement).values(
+                            **scope_values(scope),
+                            run_id=job_id,
+                            checkpoint_id=graph["current_checkpoint_id"],
+                            outcome="CANCELLED",
+                            created_at=instant,
+                        )
+                    )
+                await session.execute(
+                    update(graph_run)
+                    .where(
+                        *scope_predicates(graph_run, scope),
+                        graph_run.c.run_id == job_id,
+                    )
+                    .values(
+                        status="CANCELLED",
+                        waiting_reason=None,
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=None,
+                        updated_at=instant,
+                    )
+                )
+            canceled = dict(row)
+            canceled.update(
+                status=GenerationJobStatus.CANCELED.value,
+                failure_code="canceled-by-user",
+                lease_owner=None,
+                lease_token=None,
+                lease_expires_at=None,
+                updated_at=instant,
+            )
+            return self._job(canceled)
+
     async def is_authorized(self, scope: ProjectScopeContext, citation: TestPlanCitation) -> bool:
         scope = self._matching_scope(scope)
         async with self._sessions() as session:
@@ -1138,6 +1241,12 @@ class MysqlTestPlanRepository:
             answer_snapshot,
         )
 
+    async def generation_waiting_reason(
+        self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
+    ) -> str | None:
+        await self.generation_context(scope, claim)
+        return None
+
     async def renew_generation_job(
         self,
         scope: ProjectScopeContext,
@@ -1264,7 +1373,11 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
-            from tap.modules.ai.adapters.mysql_checkpointer import graph_checkpoint, graph_run
+            from tap.modules.ai.adapters.mysql_checkpointer import (
+                graph_checkpoint,
+                graph_run,
+                graph_settlement,
+            )
 
             graph = (
                 (
@@ -1281,6 +1394,17 @@ class MysqlTestPlanRepository:
                 .one_or_none()
             )
             if graph is not None:
+                checkpoint_id = graph["current_checkpoint_id"]
+                assert checkpoint_id is not None
+                await session.execute(
+                    insert(graph_settlement).values(
+                        **scope_values(scope),
+                        run_id=request.job_id,
+                        checkpoint_id=checkpoint_id,
+                        outcome="SUCCEEDED",
+                        created_at=instant,
+                    )
+                )
                 await session.execute(
                     update(graph_run)
                     .where(
@@ -1307,8 +1431,6 @@ class MysqlTestPlanRepository:
                     )
                     or 1
                 )
-                checkpoint_id = graph["current_checkpoint_id"]
-                assert checkpoint_id is not None
                 await write_project_event(
                     session,
                     scope=scope,

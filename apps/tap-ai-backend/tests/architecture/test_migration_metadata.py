@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "ai_graph_run",
     "ai_graph_checkpoint",
     "ai_graph_checkpoint_write",
+    "ai_graph_settlement",
     "test_plan",
     "test_plan_revision",
     "test_case",

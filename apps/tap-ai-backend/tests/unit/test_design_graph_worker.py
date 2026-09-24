@@ -55,6 +55,7 @@ class RestartableJobs:
         self.completed = []
         self.failed = []
         self.waiting = []
+        self.admission_waiting_reason = None
         self.renewed = asyncio.Event()
         self.renew_count = 0
         self.expected_lease_duration = timedelta(seconds=60)
@@ -81,6 +82,10 @@ class RestartableJobs:
     async def generation_context(self, scope, claim):
         assert scope == VALIDATION_SCOPE and claim == self.claim
         return DesignContext(scope, claim.job.request, {}, {})
+
+    async def generation_waiting_reason(self, scope, claim):
+        assert scope == VALIDATION_SCOPE and claim == self.claim
+        return self.admission_waiting_reason
 
     async def complete_generation(self, scope, claim, revision, *, now):
         if self.cancel_complete_once:
@@ -286,3 +291,23 @@ async def test_unknown_provider_response_releases_worker_into_waiting() -> None:
     assert result.failed == 0
     assert result.lease_lost == 0
     assert jobs.waiting == ["provider-response-unknown"]
+
+
+@pytest.mark.asyncio
+async def test_admission_wait_releases_worker_without_invoking_generator() -> None:
+    jobs = RestartableJobs()
+    jobs.admission_waiting_reason = "human-confirmation"
+    generator = ImmediateGenerator()
+    worker = DesignWorker(
+        jobs=jobs,
+        generator=generator,
+        scope=VALIDATION_SCOPE,
+        worker_id="worker",
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.waiting == 1
+    assert result.failed == 0
+    assert generator.calls == 0
+    assert jobs.waiting == ["human-confirmation"]

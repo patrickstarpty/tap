@@ -94,6 +94,13 @@ class TestPlanApplication:
     ) -> TestPlanGenerationJob:
         return await self._repository.get_generation_job(require_project_scope(scope), job_id)
 
+    async def cancel_generation(
+        self, scope: ProjectScopeContext, job_id: str, *, now: datetime
+    ) -> TestPlanGenerationJob:
+        return await self._repository.cancel_generation(
+            require_project_scope(scope), job_id, now=now
+        )
+
     async def publish(
         self,
         scope: ProjectScopeContext,

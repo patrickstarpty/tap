@@ -55,6 +55,10 @@ class TestDesignJobStore(Protocol):
         self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
     ) -> TestDesignContext: ...
 
+    async def generation_waiting_reason(
+        self, scope: ProjectScopeContext, claim: ClaimedTestDesignJob
+    ) -> str | None: ...
+
     async def renew_generation_job(
         self,
         scope: ProjectScopeContext,

@@ -819,7 +819,11 @@ class MysqlConversationRepository:
                     processing_lease_expires_at=None,
                 )
             )
-            from tap.modules.ai.adapters.mysql_checkpointer import graph_checkpoint, graph_run
+            from tap.modules.ai.adapters.mysql_checkpointer import (
+                graph_checkpoint,
+                graph_run,
+                graph_settlement,
+            )
 
             graph_tables_available = bool(
                 await session.scalar(
@@ -866,6 +870,17 @@ class MysqlConversationRepository:
                         graph_run.c.lease_token == lease_token,
                         graph_run.c.lease_until >= func.utc_timestamp(6),
                     )
+                checkpoint_id = graph["current_checkpoint_id"]
+                if checkpoint_id:
+                    await session.execute(
+                        insert(graph_settlement).values(
+                            **scope_values(self.scope),
+                            run_id=turn_id,
+                            checkpoint_id=checkpoint_id,
+                            outcome=graph_status,
+                            created_at=_naive(snapshot.created_at),
+                        )
+                    )
                 settled = await session.execute(
                     graph_update.values(
                         status=graph_status,
@@ -882,7 +897,6 @@ class MysqlConversationRepository:
                     "CANCELLED",
                 }:
                     raise ConversationConflict("generation lease lost")
-                checkpoint_id = graph["current_checkpoint_id"]
                 if checkpoint_id and graph_status != "CANCELLED":
                     checkpoint_count = int(
                         await session.scalar(

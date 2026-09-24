@@ -18,6 +18,7 @@ class PlansService:
 
     def __init__(self):
         self.requests = []
+        self.generation_status = GenerationJobStatus.FAILED
 
     async def request_generation(self, scope, request, *, now):
         assert scope == VALIDATION_SCOPE
@@ -34,10 +35,23 @@ class PlansService:
         instant = now or datetime.now(timezone.utc)
         return PlanGenerationJob(
             request,
-            GenerationJobStatus.FAILED,
+            self.generation_status,
             instant,
             instant,
             failure_code="MODEL_GATEWAY_UNAVAILABLE",
+        )
+
+    async def cancel_generation(self, scope, job_id, *, now):
+        assert scope == VALIDATION_SCOPE
+        request = self.requests[0]
+        assert job_id == request.job_id
+        self.generation_status = GenerationJobStatus.CANCELED
+        return PlanGenerationJob(
+            request,
+            GenerationJobStatus.CANCELED,
+            now,
+            now,
+            failure_code="canceled-by-user",
         )
 
     async def list_revisions(self, scope):
@@ -59,6 +73,7 @@ def test_test_plan_routes_and_generation_contract_are_registered() -> None:
     paths = app.openapi()["paths"]
     assert "/api/v1/projects/{project_id}/test-plans" in paths
     assert "/api/v1/projects/{project_id}/test-plans/generations" in paths
+    assert "/api/v1/projects/{project_id}/test-plans/generations/{job_id}/cancel" in paths
     assert (
         "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/publish"
         in paths
@@ -130,3 +145,36 @@ def test_generation_status_exposes_failure_and_result_link() -> None:
     assert status.json()["progress"] == "failed"
 
     assert status.json()["deepLink"] == accepted["deepLink"]
+
+
+def test_generation_status_exposes_waiting_and_cancelled_lifecycle() -> None:
+    service = PlansService()
+    client = _client(service)
+    body = {
+        "conversationId": "conversation_checkout",
+        "turnId": "turn_checkout",
+        "inputSnapshotDigest": "sha256:" + "1" * 64,
+        "answerEvidenceSnapshotDigest": "sha256:" + "2" * 64,
+        "modelAlias": "tapper-chat",
+        "agentRevisionId": "validation-test-design-agent-v1",
+        "skillRevisionIds": ["validation-test-design-skill-v1"],
+        "objective": "Design checkout tests",
+    }
+    accepted = client.post(
+        "/api/v1/projects/tapper-demo/test-plans/generations",
+        json=body,
+        headers={"Idempotency-Key": "test-design-waiting"},
+    ).json()
+    service.generation_status = GenerationJobStatus.WAITING
+
+    waiting = client.get(f"/api/v1/projects/tapper-demo/test-plans/generations/{accepted['jobId']}")
+    canceled = client.post(
+        f"/api/v1/projects/tapper-demo/test-plans/generations/{accepted['jobId']}/cancel"
+    )
+
+    assert waiting.status_code == 200
+    assert waiting.json()["status"] == "WAITING"
+    assert waiting.json()["progress"] == "waiting"
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] == "CANCELED"
+    assert canceled.json()["progress"] == "canceled"

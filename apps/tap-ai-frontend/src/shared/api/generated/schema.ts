@@ -551,6 +551,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/test-plans/generations/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Generation */
+        post: operations["test_plan_cancel_generation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}": {
         parameters: {
             query?: never;
@@ -2764,7 +2781,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "PENDING" | "RUNNING" | "DRAFT_READY" | "FAILED";
+            status: "PENDING" | "RUNNING" | "WAITING" | "DRAFT_READY" | "FAILED" | "CANCELED";
             /** Testplanid */
             testPlanId: string;
         };
@@ -5490,6 +5507,47 @@ export interface operations {
         };
     };
     test_plan_get_generation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestPlanGenerationAccepted"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_plan_cancel_generation: {
         parameters: {
             query?: never;
             header?: never;

@@ -6,7 +6,7 @@ from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+from tap.modules.ai.adapters.mysql_checkpointer import graph_run, graph_settlement
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql_conversations import turn_artifact_link
 from tap.modules.test_management.adapters.mysql import (
@@ -193,10 +193,16 @@ async def test_generation_completion_rolls_back_business_graph_and_outbox_togeth
             graph_status = await session.scalar(
                 select(graph_run.c.status).where(graph_run.c.run_id == request.job_id)
             )
+            settlement_count = await session.scalar(
+                select(func.count())
+                .select_from(graph_settlement)
+                .where(graph_settlement.c.run_id == request.job_id)
+            )
         assert revision_count == 0
         assert link_count == 0
         assert job_status == GenerationJobStatus.RUNNING.value
         assert graph_status == "RUNNING"
+        assert settlement_count == 0
     finally:
         await engine.dispose()
 
@@ -282,5 +288,47 @@ async def test_unknown_provider_response_is_held_for_reconciliation_without_reis
                 )
             )
         assert state == "UNKNOWN"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_running_generation_can_be_cancelled_and_not_reclaimed(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await _seed_completed_turn(sessions)
+        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        request = _request()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=now)
+        await repository.claim_generation_jobs(
+            VALIDATION_SCOPE,
+            worker_id="cancel-worker",
+            now=now,
+            lease_duration=timedelta(seconds=60),
+            limit=1,
+        )
+
+        canceled = await repository.cancel_generation(
+            VALIDATION_SCOPE,
+            request.job_id,
+            now=now + timedelta(seconds=1),
+        )
+
+        assert canceled.status is GenerationJobStatus.CANCELED
+        assert canceled.failure_code == "canceled-by-user"
+        assert (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="other-worker",
+                now=now + timedelta(seconds=61),
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+            == ()
+        )
     finally:
         await engine.dispose()

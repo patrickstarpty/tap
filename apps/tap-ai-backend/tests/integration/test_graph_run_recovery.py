@@ -10,6 +10,7 @@ from tap.modules.ai.adapters.mysql_checkpointer import (
     MysqlGraphCheckpointer,
     graph_checkpoint,
     graph_run,
+    graph_settlement,
 )
 from tap.modules.ai.application.interaction_graph import (
     GraphVersionConflict,
@@ -359,9 +360,15 @@ async def test_chat_terminal_business_graph_and_outbox_settle_atomically(
             graph_state = await session.scalar(
                 select(graph_run.c.status).where(graph_run.c.run_id == "turn-atomic")
             )
+            settlement_count = await session.scalar(
+                select(func.count())
+                .select_from(graph_settlement)
+                .where(graph_settlement.c.run_id == "turn-atomic")
+            )
         assert turn_state == "running"
         assert snapshot_count == 0
         assert graph_state == "RUNNING"
+        assert settlement_count == 0
     finally:
         await engine.dispose()
 
@@ -408,5 +415,14 @@ async def test_chat_checkpoint_is_fenced_and_cancel_releases_graph_lease(
         assert row["lease_owner"] is None
         assert row["lease_token"] is None
         assert row["lease_until"] is None
+        async with sessions() as session:
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(graph_settlement)
+                    .where(graph_settlement.c.run_id == current.turn_id)
+                )
+                == 1
+            )
     finally:
         await engine.dispose()

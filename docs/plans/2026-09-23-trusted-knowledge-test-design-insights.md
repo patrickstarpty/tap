@@ -215,7 +215,7 @@ uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/knowl
 - [x] 落实分段续租、fencing、等待释放 Worker、重启恢复、图版本固定和兼容检查；调用响应未知先对账。生成重试最多产生一份对应草稿，不重复发布。
 - [x] SSE 可恢复进度、失败原因、待确认和结果链接；不持久化模型隐藏思维链。旧 loopback Codex Answer Adapter 保持独立。
 
-**验收：** 真实 MySQL 故障注入验证 checkpoint、业务状态与 Outbox 同事务回滚；Task 4 单元、契约和集成矩阵共 44 项通过，覆盖续租/围栏、取消竞态、等待释放、未知模型响应对账、重启恢复、SSE 续传、失败原因和结果链接。
+**验收：** 真实 MySQL 故障注入验证最终 checkpoint 的结算 marker、业务状态、GraphRun 终态与 Outbox 同事务回滚；Task 4 单元、契约和集成矩阵共 47 项通过，覆盖续租/围栏、取消竞态、等待释放、未知模型响应对账、重启恢复、SSE 续传、失败原因和结果链接。
 
 ```sh
 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_graph_run_recovery.py apps/tap-ai-backend/tests/integration/test_chat_sse_resume.py apps/tap-ai-backend/tests/integration/test_test_plan_generation.py -q

@@ -144,8 +144,17 @@ graph_checkpoint_write = _scoped(
         ),
     ),
 )
+graph_settlement = _scoped(
+    "ai_graph_settlement",
+    Column("run_id", String(128), primary_key=True),
+    Column("checkpoint_id", String(64), nullable=False),
+    Column("outcome", String(16), nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    uniques=((("run_id",), "uq_ai_graph_settlement_project_pk"),),
+    parents=((("run_id",), "ai_graph_run", ("run_id",), "fk_ai_graph_settlement_run"),),
+)
 
-AI_GRAPH_TABLES = (graph_run, graph_checkpoint, graph_checkpoint_write)
+AI_GRAPH_TABLES = (graph_run, graph_checkpoint, graph_checkpoint_write, graph_settlement)
 
 
 @asynccontextmanager
