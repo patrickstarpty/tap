@@ -196,3 +196,50 @@ async def test_mysql_checkpoint_and_outbox_survive_runtime_recreation(
         assert checkpoint_count and checkpoint_count >= 4
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_checkpoint_rolls_back_when_outbox_write_fails(
+    owned_project_mysql, monkeypatch
+) -> None:
+    async def fail_event(*_args, **_kwargs):
+        raise RuntimeError("injected outbox failure")
+
+    monkeypatch.setattr(
+        "tap.modules.ai.adapters.mysql_checkpointer.write_project_event", fail_event
+    )
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+
+        async def authorized() -> bool:
+            return True
+
+        graph = _graph(
+            checkpointer=MysqlGraphCheckpointer(sessions, scope=VALIDATION_SCOPE),
+            calls=[],
+            authorize=authorized,
+        )
+
+        with pytest.raises(RuntimeError, match="injected outbox failure"):
+            await graph.start(
+                run_id="run-outbox-rollback",
+                payload={"objective": "Prove atomic graph persistence"},
+                execution_mode="durable",
+            )
+
+        async with sessions() as session:
+            run_count = await session.scalar(
+                select(func.count())
+                .select_from(graph_run)
+                .where(graph_run.c.run_id == "run-outbox-rollback")
+            )
+            checkpoint_count = await session.scalar(
+                select(func.count())
+                .select_from(graph_checkpoint)
+                .where(graph_checkpoint.c.run_id == "run-outbox-rollback")
+            )
+        assert run_count == 0
+        assert checkpoint_count == 0
+    finally:
+        await engine.dispose()
