@@ -145,6 +145,18 @@ class GraphRun:
             raise ValueError("checkpoint identity must be nonblank")
         return replace(self, current_checkpoint_id=checkpoint_id, updated_at=now)
 
+    def renew(
+        self,
+        lease_token: str,
+        *,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> GraphRun:
+        self._require_lease(lease_token, now)
+        if not timedelta(0) < lease_duration <= timedelta(minutes=15):
+            raise ValueError("graph run lease renewal is invalid")
+        return replace(self, lease_until=now + lease_duration, updated_at=now)
+
     def wait(self, lease_token: str, *, reason: str, now: datetime) -> GraphRun:
         self._require_lease(lease_token, now)
         if not reason.strip():
@@ -153,6 +165,32 @@ class GraphRun:
             self,
             status=GraphRunStatus.WAITING,
             waiting_reason=reason,
+            lease_owner=None,
+            lease_token=None,
+            lease_until=None,
+            updated_at=now,
+        )
+
+    def cancel(self, *, now: datetime) -> GraphRun:
+        if self.status is GraphRunStatus.CANCELLED:
+            return self
+        if self.status in {GraphRunStatus.SUCCEEDED, GraphRunStatus.FAILED}:
+            raise GraphLeaseLost("terminal graph run cannot be cancelled")
+        return self._terminal(GraphRunStatus.CANCELLED, now=now)
+
+    def succeed(self, lease_token: str, *, now: datetime) -> GraphRun:
+        self._require_lease(lease_token, now)
+        return self._terminal(GraphRunStatus.SUCCEEDED, now=now)
+
+    def fail(self, lease_token: str, *, now: datetime) -> GraphRun:
+        self._require_lease(lease_token, now)
+        return self._terminal(GraphRunStatus.FAILED, now=now)
+
+    def _terminal(self, status: GraphRunStatus, *, now: datetime) -> GraphRun:
+        return replace(
+            self,
+            status=status,
+            waiting_reason=None,
             lease_owner=None,
             lease_token=None,
             lease_until=None,

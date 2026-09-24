@@ -59,6 +59,58 @@ def test_waiting_run_releases_worker_without_becoming_terminal() -> None:
     assert waiting.lease_until is None
 
 
+def test_running_lease_renews_without_changing_fencing_token_or_attempt() -> None:
+    claimed = _run().claim("worker-a", now=NOW, lease_duration=timedelta(seconds=30))
+
+    renewed = claimed.renew(
+        claimed.lease_token or "",
+        now=NOW + timedelta(seconds=10),
+        lease_duration=timedelta(seconds=45),
+    )
+
+    assert renewed.lease_token == claimed.lease_token
+    assert renewed.lease_until == NOW + timedelta(seconds=55)
+    assert renewed.attempt_count == 1
+
+
+def test_cancelled_run_releases_lease_and_fences_inflight_worker() -> None:
+    claimed = _run().claim("worker-a", now=NOW, lease_duration=timedelta(seconds=30))
+
+    cancelled = claimed.cancel(now=NOW + timedelta(seconds=5))
+
+    assert cancelled.status is GraphRunStatus.CANCELLED
+    assert cancelled.lease_owner is None
+    assert cancelled.lease_token is None
+    assert cancelled.lease_until is None
+    with pytest.raises(GraphLeaseLost, match="fencing token"):
+        cancelled.checkpoint(
+            claimed.lease_token or "",
+            checkpoint_id="checkpoint-after-cancel",
+            now=NOW + timedelta(seconds=6),
+        )
+
+
+@pytest.mark.parametrize(
+    ("transition", "expected_status"),
+    [("succeed", GraphRunStatus.SUCCEEDED), ("fail", GraphRunStatus.FAILED)],
+)
+def test_terminal_transition_requires_current_fencing_token(
+    transition: str, expected_status: GraphRunStatus
+) -> None:
+    claimed = _run().claim("worker-a", now=NOW, lease_duration=timedelta(seconds=30))
+
+    with pytest.raises(GraphLeaseLost, match="fencing token"):
+        getattr(claimed, transition)("stale-token", now=NOW + timedelta(seconds=1))
+
+    terminal = getattr(claimed, transition)(
+        claimed.lease_token or "", now=NOW + timedelta(seconds=1)
+    )
+    assert terminal.status is expected_status
+    assert terminal.lease_owner is None
+    assert terminal.lease_token is None
+    assert terminal.lease_until is None
+
+
 def test_mysql_checkpoint_serializer_allows_domain_draft_but_blocks_unknown_constructor() -> None:
     checkpointer = MysqlGraphCheckpointer(None, scope=VALIDATION_SCOPE)  # type: ignore[arg-type]
 
