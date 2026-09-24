@@ -793,7 +793,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -2785,6 +2785,38 @@ export interface components {
             /** Testplanid */
             testPlanId: string;
         };
+        /** TestPlanGenerationCanceledEvent */
+        TestPlanGenerationCanceledEvent: {
+            payload: components["schemas"]["TestPlanGenerationCanceledPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "test-plan.generation.canceled";
+        };
+        /** TestPlanGenerationCanceledPayload */
+        TestPlanGenerationCanceledPayload: {
+            /** Jobid */
+            jobId: string;
+            /** Reason */
+            reason: string;
+        };
+        /** TestPlanGenerationFailedEvent */
+        TestPlanGenerationFailedEvent: {
+            payload: components["schemas"]["TestPlanGenerationFailedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "test-plan.generation.failed";
+        };
+        /** TestPlanGenerationFailedPayload */
+        TestPlanGenerationFailedPayload: {
+            /** Failurecode */
+            failureCode: string;
+            /** Jobid */
+            jobId: string;
+        };
         /** TestPlanGenerationRequestBody */
         TestPlanGenerationRequestBody: {
             /** Agentrevisionid */
@@ -2803,6 +2835,42 @@ export interface components {
             skillRevisionIds: string[];
             /** Turnid */
             turnId: string;
+        };
+        /** TestPlanGenerationResultEvent */
+        TestPlanGenerationResultEvent: {
+            payload: components["schemas"]["TestPlanGenerationResultPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "test-plan.generation.result_ready";
+        };
+        /** TestPlanGenerationResultPayload */
+        TestPlanGenerationResultPayload: {
+            /** Deeplink */
+            deepLink: string;
+            /** Jobid */
+            jobId: string;
+            /** Revisionid */
+            revisionId: string;
+            /** Testplanid */
+            testPlanId: string;
+        };
+        /** TestPlanGenerationWaitingEvent */
+        TestPlanGenerationWaitingEvent: {
+            payload: components["schemas"]["TestPlanGenerationWaitingPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "test-plan.generation.waiting";
+        };
+        /** TestPlanGenerationWaitingPayload */
+        TestPlanGenerationWaitingPayload: {
+            /** Jobid */
+            jobId: string;
+            /** Reason */
+            reason: string;
         };
         /** TestPlanRevisionPage */
         TestPlanRevisionPage: {

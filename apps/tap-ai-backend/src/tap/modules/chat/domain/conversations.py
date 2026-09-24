@@ -362,6 +362,10 @@ class ConversationEvent:
             "turn.failed",
             "conversation.turn.requested",
             "conversation.turn.completed",
+            "test-plan.generation.waiting",
+            "test-plan.generation.result_ready",
+            "test-plan.generation.failed",
+            "test-plan.generation.canceled",
         }:
             raise ValueError("unknown conversation event")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))

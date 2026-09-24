@@ -96,3 +96,46 @@ def test_http_sse_reconnect_returns_complete_envelope_for_events_added_while_dis
     )
     assert invalid.status_code == 422
     assert invalid.headers["content-type"].startswith("application/problem+json")
+
+
+def test_http_sse_reconnect_replays_generation_waiting_and_result_link() -> None:
+    service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    value = TurnInput(
+        message="design tests",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode="validation",
+        model_alias="tapper-chat",
+    )
+    asyncio.run(service.create("chat-plan", "turn-plan", "request-plan", value))
+    asyncio.run(
+        service.emit(
+            "chat-plan",
+            "turn-plan",
+            "test-plan.generation.waiting",
+            {"jobId": "job-1", "reason": "human-confirmation"},
+        )
+    )
+    asyncio.run(
+        service.emit(
+            "chat-plan",
+            "turn-plan",
+            "test-plan.generation.result_ready",
+            {
+                "jobId": "job-1",
+                "testPlanId": "plan-1",
+                "revisionId": "revision-1",
+                "deepLink": "/test-management/plan-1/revisions/revision-1",
+            },
+        )
+    )
+    client = TestClient(create_app(replace(validation_http_services(), conversations=service)))
+
+    resumed = client.get(
+        "/api/v1/projects/tapper-demo/conversations/chat-plan/stream",
+        headers={"Last-Event-ID": "1"},
+    )
+
+    assert resumed.status_code == 200
+    assert "event: test-plan.generation.waiting" in resumed.text
+    assert "event: test-plan.generation.result_ready" in resumed.text
+    assert "/test-management/plan-1/revisions/revision-1" in resumed.text

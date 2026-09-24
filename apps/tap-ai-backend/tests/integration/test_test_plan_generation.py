@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import graph_run, graph_settlement
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
+from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.adapters.mysql_conversations import turn_artifact_link
 from tap.modules.test_management.adapters.mysql import (
     MysqlReconciledTestDesign,
@@ -105,8 +106,29 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
                 .mappings()
                 .one()
             )
+            event = (
+                (
+                    await session.execute(
+                        select(chat_event).where(
+                            chat_event.c.turn_id == request.turn_id,
+                            chat_event.c.event_type == "test-plan.generation.result_ready",
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
         assert link["artifact_id"] == request.test_plan_id
         assert link["artifact_digest"] == generated.content_digest
+        assert event["payload"] == {
+            "jobId": request.job_id,
+            "testPlanId": request.test_plan_id,
+            "revisionId": request.revision_id,
+            "deepLink": (
+                f"/test-management/{request.test_plan_id}/revisions/{request.revision_id}"
+            ),
+        }
+        assert event["stream_sequence"] == 3
     finally:
         await engine.dispose()
 
@@ -304,18 +326,26 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
         request = _request()
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
-        await repository.claim_generation_jobs(
+        claim = (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="cancel-worker",
+                now=now,
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+        )[0]
+        await repository.wait_generation(
             VALIDATION_SCOPE,
-            worker_id="cancel-worker",
-            now=now,
-            lease_duration=timedelta(seconds=60),
-            limit=1,
+            claim,
+            reason="human-confirmation",
+            now=now + timedelta(seconds=1),
         )
 
         canceled = await repository.cancel_generation(
             VALIDATION_SCOPE,
             request.job_id,
-            now=now + timedelta(seconds=1),
+            now=now + timedelta(seconds=2),
         )
 
         assert canceled.status is GenerationJobStatus.CANCELED
@@ -330,5 +360,32 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
             )
             == ()
         )
+        async with sessions() as session:
+            events = (
+                (
+                    await session.execute(
+                        select(
+                            chat_event.c.event_type,
+                            chat_event.c.payload,
+                            chat_event.c.stream_sequence,
+                        )
+                        .where(chat_event.c.turn_id == request.turn_id)
+                        .order_by(chat_event.c.stream_sequence)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            last_sequence = await session.scalar(
+                select(chat_turn.c.last_sequence).where(chat_turn.c.turn_id == request.turn_id)
+            )
+        assert [event["event_type"] for event in events] == [
+            "test-plan.generation.waiting",
+            "test-plan.generation.canceled",
+        ]
+        assert [event["stream_sequence"] for event in events] == [3, 4]
+        assert events[0]["payload"]["reason"] == "human-confirmation"
+        assert events[1]["payload"]["reason"] == "canceled-by-user"
+        assert last_sequence == 4
     finally:
         await engine.dispose()

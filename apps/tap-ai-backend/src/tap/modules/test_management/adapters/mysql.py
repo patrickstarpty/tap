@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
-from tap.modules.chat.adapters.mysql import chat_turn
+from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.adapters.mysql_conversations import (
     conversation,
     turn_answer_evidence_snapshot,
@@ -472,6 +472,60 @@ class MysqlTestPlanRepository:
                 lease_owner=claim.job.lease_owner or "test-design-worker",
                 attempt_count_column=test_plan_generation_job.c.attempt_count,
             ),
+        )
+
+    async def _generation_stream_event(
+        self,
+        session: AsyncSession,
+        request: TestPlanGenerationRequest,
+        *,
+        event_type: str,
+        payload: dict[str, object],
+        now: datetime,
+    ) -> None:
+        await session.execute(
+            select(conversation.c.conversation_id)
+            .where(
+                *scope_predicates(conversation, self.scope),
+                conversation.c.conversation_id == request.conversation_id,
+            )
+            .with_for_update()
+        )
+        latest = await session.scalar(
+            select(func.max(chat_turn.c.last_sequence)).where(
+                *scope_predicates(chat_turn, self.scope),
+                chat_turn.c.chat_id == request.conversation_id,
+            )
+        )
+        sequence = (0 if latest is None else int(latest)) + 1
+        await session.execute(
+            insert(chat_event).values(
+                **scope_values(self.scope),
+                event_id=uuid4().hex,
+                turn_id=request.turn_id,
+                sequence=sequence,
+                stream_sequence=sequence,
+                event_type=event_type,
+                payload=payload,
+                schema_version=1,
+                occurred_at=_naive(now),
+            )
+        )
+        await session.execute(
+            update(chat_turn)
+            .where(
+                *scope_predicates(chat_turn, self.scope),
+                chat_turn.c.turn_id == request.turn_id,
+            )
+            .values(last_sequence=sequence)
+        )
+        await session.execute(
+            update(conversation)
+            .where(
+                *scope_predicates(conversation, self.scope),
+                conversation.c.conversation_id == request.conversation_id,
+            )
+            .values(updated_at=_naive(now))
         )
 
     async def create_draft(
@@ -989,6 +1043,13 @@ class MysqlTestPlanRepository:
                     updated_at=instant,
                 )
             )
+            await self._generation_stream_event(
+                session,
+                self._job(row).request,
+                event_type="test-plan.generation.canceled",
+                payload={"jobId": job_id, "reason": "canceled-by-user"},
+                now=instant,
+            )
             from tap.modules.ai.adapters.mysql_checkpointer import (
                 graph_run,
                 graph_settlement,
@@ -1373,6 +1434,20 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
+            await self._generation_stream_event(
+                session,
+                request,
+                event_type="test-plan.generation.result_ready",
+                payload={
+                    "jobId": request.job_id,
+                    "testPlanId": request.test_plan_id,
+                    "revisionId": request.revision_id,
+                    "deepLink": (
+                        f"/test-management/{request.test_plan_id}/revisions/{request.revision_id}"
+                    ),
+                },
+                now=instant,
+            )
             from tap.modules.ai.adapters.mysql_checkpointer import (
                 graph_checkpoint,
                 graph_run,
@@ -1496,6 +1571,16 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
+            await self._generation_stream_event(
+                session,
+                claim.job.request,
+                event_type="test-plan.generation.failed",
+                payload={
+                    "jobId": claim.job.request.job_id,
+                    "failureCode": failure_code,
+                },
+                now=_naive(now),
+            )
             from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
             await session.execute(
@@ -1547,6 +1632,13 @@ class MysqlTestPlanRepository:
             )
             if result.rowcount != 1:
                 raise RevisionConflict("test design worker lease was lost")
+            await self._generation_stream_event(
+                session,
+                claim.job.request,
+                event_type="test-plan.generation.waiting",
+                payload={"jobId": claim.job.request.job_id, "reason": reason},
+                now=instant,
+            )
             from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
             await session.execute(

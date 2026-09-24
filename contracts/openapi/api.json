@@ -317,6 +317,10 @@
                 "retrieval.hits_ready": "#/components/schemas/RetrievalHitsReadyEvent",
                 "stage.completed": "#/components/schemas/StageCompletedEvent",
                 "stage.started": "#/components/schemas/StageStartedEvent",
+                "test-plan.generation.canceled": "#/components/schemas/TestPlanGenerationCanceledEvent",
+                "test-plan.generation.failed": "#/components/schemas/TestPlanGenerationFailedEvent",
+                "test-plan.generation.result_ready": "#/components/schemas/TestPlanGenerationResultEvent",
+                "test-plan.generation.waiting": "#/components/schemas/TestPlanGenerationWaitingEvent",
                 "turn.abstained": "#/components/schemas/TurnAbstainedEvent",
                 "turn.canceled": "#/components/schemas/TurnCanceledEvent",
                 "turn.completed": "#/components/schemas/TurnCompletedEvent",
@@ -374,6 +378,18 @@
               },
               {
                 "$ref": "#/components/schemas/ConversationTurnCompletedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TestPlanGenerationWaitingEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TestPlanGenerationResultEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TestPlanGenerationFailedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/TestPlanGenerationCanceledEvent"
               }
             ],
             "title": "Event"
@@ -5718,6 +5734,86 @@
         "title": "TestPlanGenerationAccepted",
         "type": "object"
       },
+      "TestPlanGenerationCanceledEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TestPlanGenerationCanceledPayload"
+          },
+          "type": {
+            "const": "test-plan.generation.canceled",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TestPlanGenerationCanceledEvent",
+        "type": "object"
+      },
+      "TestPlanGenerationCanceledPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "minLength": 1,
+            "title": "Jobid",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "reason"
+        ],
+        "title": "TestPlanGenerationCanceledPayload",
+        "type": "object"
+      },
+      "TestPlanGenerationFailedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TestPlanGenerationFailedPayload"
+          },
+          "type": {
+            "const": "test-plan.generation.failed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TestPlanGenerationFailedEvent",
+        "type": "object"
+      },
+      "TestPlanGenerationFailedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "failureCode": {
+            "minLength": 1,
+            "title": "Failurecode",
+            "type": "string"
+          },
+          "jobId": {
+            "minLength": 1,
+            "title": "Jobid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "failureCode"
+        ],
+        "title": "TestPlanGenerationFailedPayload",
+        "type": "object"
+      },
       "TestPlanGenerationRequestBody": {
         "additionalProperties": false,
         "properties": {
@@ -5786,6 +5882,98 @@
           "objective"
         ],
         "title": "TestPlanGenerationRequestBody",
+        "type": "object"
+      },
+      "TestPlanGenerationResultEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TestPlanGenerationResultPayload"
+          },
+          "type": {
+            "const": "test-plan.generation.result_ready",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TestPlanGenerationResultEvent",
+        "type": "object"
+      },
+      "TestPlanGenerationResultPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "deepLink": {
+            "minLength": 1,
+            "title": "Deeplink",
+            "type": "string"
+          },
+          "jobId": {
+            "minLength": 1,
+            "title": "Jobid",
+            "type": "string"
+          },
+          "revisionId": {
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "testPlanId": {
+            "minLength": 1,
+            "title": "Testplanid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "testPlanId",
+          "revisionId",
+          "deepLink"
+        ],
+        "title": "TestPlanGenerationResultPayload",
+        "type": "object"
+      },
+      "TestPlanGenerationWaitingEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/TestPlanGenerationWaitingPayload"
+          },
+          "type": {
+            "const": "test-plan.generation.waiting",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "TestPlanGenerationWaitingEvent",
+        "type": "object"
+      },
+      "TestPlanGenerationWaitingPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "jobId": {
+            "minLength": 1,
+            "title": "Jobid",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "reason"
+        ],
+        "title": "TestPlanGenerationWaitingPayload",
         "type": "object"
       },
       "TestPlanRevisionPage": {

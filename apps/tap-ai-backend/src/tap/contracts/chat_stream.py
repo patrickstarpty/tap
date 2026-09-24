@@ -312,6 +312,48 @@ class ConversationTurnCompletedEvent(StreamContractModel):
     payload: ConversationTurnCompletedPayload
 
 
+class TestPlanGenerationWaitingPayload(StreamContractModel):
+    job_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class TestPlanGenerationWaitingEvent(StreamContractModel):
+    type: Literal["test-plan.generation.waiting"]
+    payload: TestPlanGenerationWaitingPayload
+
+
+class TestPlanGenerationResultPayload(StreamContractModel):
+    job_id: str = Field(min_length=1)
+    test_plan_id: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    deep_link: str = Field(min_length=1)
+
+
+class TestPlanGenerationResultEvent(StreamContractModel):
+    type: Literal["test-plan.generation.result_ready"]
+    payload: TestPlanGenerationResultPayload
+
+
+class TestPlanGenerationFailedPayload(StreamContractModel):
+    job_id: str = Field(min_length=1)
+    failure_code: str = Field(min_length=1)
+
+
+class TestPlanGenerationFailedEvent(StreamContractModel):
+    type: Literal["test-plan.generation.failed"]
+    payload: TestPlanGenerationFailedPayload
+
+
+class TestPlanGenerationCanceledPayload(StreamContractModel):
+    job_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class TestPlanGenerationCanceledEvent(StreamContractModel):
+    type: Literal["test-plan.generation.canceled"]
+    payload: TestPlanGenerationCanceledPayload
+
+
 ChatStreamEvent = Annotated[
     TurnStartedEvent
     | ContextAssembledEvent
@@ -328,7 +370,11 @@ ChatStreamEvent = Annotated[
     | TurnCanceledEvent
     | TurnFailedEvent
     | ConversationTurnRequestedEvent
-    | ConversationTurnCompletedEvent,
+    | ConversationTurnCompletedEvent
+    | TestPlanGenerationWaitingEvent
+    | TestPlanGenerationResultEvent
+    | TestPlanGenerationFailedEvent
+    | TestPlanGenerationCanceledEvent,
     Field(discriminator="type"),
 ]
 
