@@ -560,7 +560,7 @@
           "approvedItemId": {
             "anyOf": [
               {
-                "maxLength": 128,
+                "maxLength": 256,
                 "minLength": 1,
                 "type": "string"
               },
@@ -615,7 +615,7 @@
           "publicationId": {
             "anyOf": [
               {
-                "maxLength": 128,
+                "maxLength": 256,
                 "minLength": 1,
                 "type": "string"
               },
@@ -6785,7 +6785,7 @@
           "inventoryItemId": {
             "anyOf": [
               {
-                "maxLength": 128,
+                "maxLength": 256,
                 "minLength": 1,
                 "type": "string"
               },

@@ -53,7 +53,7 @@ class DocumentAnchor(StreamContractModel):
     bbox: list[float] | None = None
     start_offset: int | None = None
     end_offset: int | None = None
-    inventory_item_id: str | None = Field(default=None, min_length=1, max_length=128)
+    inventory_item_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class CodeAnchor(StreamContractModel):
@@ -115,9 +115,9 @@ class Citation(StreamContractModel):
     chunk_content_hash: str = Field(min_length=1)
     content_role: ContentRole
     derived_from_chunk_ids: list[str] | None = None
-    publication_id: str | None = Field(default=None, min_length=1, max_length=128)
+    publication_id: str | None = Field(default=None, min_length=1, max_length=256)
     approval_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
-    approved_item_id: str | None = Field(default=None, min_length=1, max_length=128)
+    approved_item_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class AnswerClaim(StreamContractModel):

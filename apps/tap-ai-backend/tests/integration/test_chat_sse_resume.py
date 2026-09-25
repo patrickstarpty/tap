@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from tap.contracts.http import RetrievalAnswerResponse
+from tap.contracts.http import DocumentAnchor, RetrievalAnswerResponse, RetrievalCitation
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.sse import encode_sse
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -149,6 +150,8 @@ def test_http_sse_reconnect_replays_generation_waiting_and_result_link() -> None
 
 
 def test_http_sse_replays_published_terminal_answer_and_closes() -> None:
+    item_id = "i" * 256
+    publication_id = "p" * 256
     service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
     asyncio.run(
         service.create(
@@ -199,20 +202,26 @@ def test_http_sse_replays_published_terminal_answer_and_closes() -> None:
                         "sourceContentHash": "sha256:" + "a" * 64,
                         "anchor": {
                             "type": "document",
-                            "inventoryItemId": "pi_1",
+                            "inventoryItemId": item_id,
                             "startOffset": 0,
                             "endOffset": 8,
                         },
                     },
                     "chunkContentHash": "sha256:" + "b" * 64,
                     "contentRole": "source",
-                    "publicationId": "publication-1",
+                    "publicationId": publication_id,
                     "approvalDigest": "sha256:" + "c" * 64,
-                    "approvedItemId": "pi_1",
+                    "approvedItemId": item_id,
                 }
             ],
         }
     )
+    citation_payload = answer.citations[0].model_dump(mode="json", by_alias=True)
+    for field in ("publicationId", "approvedItemId"):
+        with pytest.raises(ValidationError):
+            RetrievalCitation.model_validate({**citation_payload, field: "x" * 257})
+    with pytest.raises(ValidationError):
+        DocumentAnchor.model_validate({"type": "document", "inventoryItemId": "x" * 257})
     asyncio.run(
         service.complete_evidence(
             "chat-published",
@@ -252,9 +261,9 @@ def test_http_sse_replays_published_terminal_answer_and_closes() -> None:
         next(line[6:] for line in resumed.text.splitlines() if line.startswith("data: "))
     )
     citation = terminal["event"]["payload"]["answer"]["citations"][0]
-    assert citation["source"]["anchor"]["inventoryItemId"] == "pi_1"
-    assert citation["publicationId"] == "publication-1"
+    assert citation["source"]["anchor"]["inventoryItemId"] == item_id
+    assert citation["publicationId"] == publication_id
     assert citation["approvalDigest"] == "sha256:" + "c" * 64
-    assert citation["approvedItemId"] == "pi_1"
+    assert citation["approvedItemId"] == item_id
     assert "Question kept out" not in resumed.text
     assert '"answerPlan"' not in resumed.text
