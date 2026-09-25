@@ -489,6 +489,8 @@ class MysqlKnowledgeReviewRepository:
                 *scope_predicates(knowledge_parse_inventory, self._scope),
                 *scope_predicates(knowledge_document_revision, self._scope),
                 knowledge_review_revision.c.review_id.in_(review_ids),
+                knowledge_parse_inventory.c.source_revision_id.in_(source_revision_ids),
+                knowledge_document_revision.c.revision_id.in_(source_revision_ids),
                 knowledge_parse_inventory.c.attempt
                 == knowledge_document_revision.c.parse_inventory_attempt,
             )

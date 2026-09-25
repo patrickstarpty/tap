@@ -1199,7 +1199,25 @@ async def test_batched_inventory_first_page_matches_child_cursor_order_beyond_50
             authorization_policy=ValidationAuthorizationPolicy(MysqlIdentityRegistry(sessions)),
             clock=lambda: NOW,
         )
-        detail = (await service.list_reviews(None, limit=50)).items[0]
+        statements: list[str] = []
+
+        def capture_statement(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            del conn, cursor, parameters, context, executemany
+            statements.append(" ".join(statement.lower().split()))
+
+        event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+        try:
+            detail = (await service.list_reviews(None, limit=50)).items[0]
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+        batch_inventory_queries = [
+            statement
+            for statement in statements
+            if "json_contains" in statement and "knowledge_parse_inventory" in statement
+        ]
+        assert len(batch_inventory_queries) == 1
+        assert "knowledge_parse_inventory.source_revision_id in" in batch_inventory_queries[0]
+        assert "knowledge_document_revision.revision_id in" in batch_inventory_queries[0]
         first_child_page = await service.get_review_inventory("krv_inventory_order", limit=100)
 
         assert [item.item_id for item in detail.inventory.items] == [
