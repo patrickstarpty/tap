@@ -1262,18 +1262,26 @@ export function TapProductPrototype({
       sourcesQuery.data?.items,
     ],
   );
-  const publishedItems = useMemo<readonly LibrarySource[]>(
-    () =>
-      (publishedSourcesQuery.data?.items ?? []).map((source) => ({
+  const publishedItems = useMemo<readonly LibrarySource[]>(() => {
+    const grouped = new Map<string, LibrarySource>();
+    for (const source of publishedSourcesQuery.data?.items ?? []) {
+      const prior = grouped.get(source.sourceId);
+      grouped.set(source.sourceId, {
         id: source.sourceId,
         name: source.sourceName,
         origin: "knowledge-base",
-        type: source.filename.split(".").pop()?.toUpperCase() ?? "FILE",
+        type: prior
+          ? "SOURCE"
+          : (source.filename.split(".").pop()?.toUpperCase() ?? "FILE"),
         status: "ready",
-        description: source.partial ? "已发布 · 部分范围可用" : "已发布",
-      })),
-    [publishedSourcesQuery.data?.items],
-  );
+        description:
+          source.partial || prior?.description.includes("部分范围可用")
+            ? "已发布 · 部分范围可用"
+            : "已发布",
+      });
+    }
+    return [...grouped.values()];
+  }, [publishedSourcesQuery.data?.items]);
   const documentSources = useMemo<readonly LibrarySource[]>(
     () =>
       (documentsQuery.data?.items ?? []).map((document) => ({

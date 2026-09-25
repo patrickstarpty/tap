@@ -19,7 +19,7 @@ type Document = {
   state: DocumentState;
   checks: boolean[];
   revision: number;
-  history: { action: string; revision: number }[];
+  history: { action: string; revision: number; actorId: string }[];
 };
 const initial: Document[] = [
   {
@@ -40,12 +40,24 @@ const initial: Document[] = [
     revision: 1,
     history: [],
   },
+  {
+    id: "health-disclosure-approved",
+    name: "Health disclosure policy · approved.md",
+    version: "v1.0",
+    state: "approved",
+    checks: [true, true, true, true],
+    revision: 3,
+    history: [
+      { action: "submitted", revision: 2, actorId: "Content editor" },
+      { action: "approved", revision: 3, actorId: "Independent reviewer" },
+    ],
+  },
 ];
 export function useDocumentReview(locale: Locale) {
   const [documents, setDocuments] = useState<Document[]>(() => {
     try {
       const saved: unknown = JSON.parse(
-        localStorage.getItem("tap.prototype.document-reviews.v2") ?? "null",
+        localStorage.getItem("tap.prototype.document-reviews.v3") ?? "null",
       );
       if (
         Array.isArray(saved) &&
@@ -68,7 +80,18 @@ export function useDocumentReview(locale: Locale) {
             d.checks.length === 4 &&
             d.checks.every((value: unknown) => typeof value === "boolean") &&
             Number.isInteger(d.revision) &&
-            Array.isArray(d.history),
+            Array.isArray(d.history) &&
+            d.history.every(
+              (event: unknown) =>
+                typeof event === "object" &&
+                event !== null &&
+                "action" in event &&
+                typeof event.action === "string" &&
+                "revision" in event &&
+                Number.isInteger(event.revision) &&
+                "actorId" in event &&
+                typeof event.actorId === "string",
+            ),
         )
       )
         return saved;
@@ -80,7 +103,7 @@ export function useDocumentReview(locale: Locale) {
   useEffect(() => {
     try {
       localStorage.setItem(
-        "tap.prototype.document-reviews.v2",
+        "tap.prototype.document-reviews.v3",
         JSON.stringify(documents),
       );
     } catch {
@@ -148,7 +171,20 @@ export function useDocumentReview(locale: Locale) {
           ...patch,
           revision: changedState ? d.revision + 1 : d.revision,
           history: changedState
-            ? [...d.history, { action: patch.state!, revision: d.revision + 1 }]
+            ? [
+                ...d.history,
+                {
+                  action: patch.state!,
+                  revision: d.revision + 1,
+                  actorId:
+                    patch.state === "reviewing"
+                      ? "Content editor"
+                      : patch.state === "published" ||
+                          patch.state === "withdrawn"
+                        ? "Publisher"
+                        : "Independent reviewer",
+                },
+              ]
             : d.history,
         };
       }),
@@ -363,7 +399,8 @@ export function DocumentReview({
               <ol>
                 {d.history.map((event) => (
                   <li key={event.revision}>
-                    {t("Revision", "修订")} {event.revision} · {event.action}
+                    {t("Revision", "修订")} {event.revision} · {event.action} ·{" "}
+                    {event.actorId}
                   </li>
                 ))}
               </ol>
@@ -396,20 +433,10 @@ export function DocumentReview({
                 {t("Publication withdrawn", "发布已撤回")}
               </span>
             ) : d.state === "reviewing" ? (
-              <>
-                <span role="status">
-                  {t("Awaiting independent review", "待独立复核")}
-                </span>
-                <Button onClick={() => review.update({ state: "review" })}>
-                  {t("Return for changes", "退回修改")}
-                </Button>
-                <Button
-                  type="primary"
-                  onClick={() => review.update({ state: "approved" })}
-                >
-                  {t("Approve review", "批准审核")}
-                </Button>
-              </>
+              <span role="status">
+                {t("Awaiting independent review", "待独立复核")} ·{" "}
+                {t("Handed off to reviewer", "已移交复核人")}
+              </span>
             ) : d.state === "approved" ? (
               <>
                 <span role="status">

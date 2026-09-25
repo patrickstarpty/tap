@@ -207,6 +207,27 @@ it("does not offer an ingestion-ready source that has not been published", async
   ).not.toBeInTheDocument();
 });
 
+it("offers a multi-document published Source only once", async () => {
+  const api = fakeKnowledgeClient().withPublishedSources({
+    items: ["first", "second"].map((suffix) => ({
+      sourceId: `src_${"c".repeat(32)}`,
+      sourceName: "Grouped policy source",
+      documentId: `doc_${suffix}`,
+      filename: `${suffix}.md`,
+      revisionId: `rev_${suffix}`,
+      publicationId: "pub_grouped",
+      approvedItemCount: 1,
+      inventoryItemCount: 1,
+      partial: false,
+      expiresAt: "2027-01-01T00:00:00Z",
+    })),
+  });
+  renderKnowledgeApp(<TapProductPrototype conversationSource="api" />, { api });
+  expect(
+    await screen.findAllByRole("checkbox", { name: /Grouped policy source/u }),
+  ).toHaveLength(1);
+});
+
 it("shows Source documents in Library and targets retry and confirmed deletion", async () => {
   const api = fakeKnowledgeClient();
   const source = {

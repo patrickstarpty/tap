@@ -1,8 +1,11 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { KnowledgeReviewDetail } from "../api/types";
+import type {
+  KnowledgeReviewDetail,
+  KnowledgeReviewItemComparison,
+} from "../api/types";
 import { KnowledgeClientError } from "../api/client";
 import { fakeKnowledgeClient } from "../testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../testing/renderKnowledgeApp";
@@ -238,12 +241,52 @@ describe("KnowledgeReview", () => {
       }),
     );
     await user.click(await screen.findByRole("button", { name: "撤回发布" }));
+    expect(api.reviewCommands).not.toContainEqual({
+      action: "withdraw",
+      version: 1,
+    });
+    await user.click(await screen.findByRole("button", { name: "确认撤回" }));
     await waitFor(() =>
       expect(api.reviewCommands).toContainEqual({
         action: "withdraw",
         version: 1,
       }),
     );
+  });
+
+  it("treats a committed publication as committed even when follow-up reload fails", async () => {
+    const user = userEvent.setup();
+    const onPublicationChange = vi.fn();
+    const api = fakeKnowledgeClient().withReviews([
+      review({
+        status: "approved",
+        allowedActions: ["publish"],
+        publicationTarget: {
+          status: "ready",
+          generation: "generation-7",
+          reason: null,
+        },
+      }),
+    ]);
+    const publish = api.publishReview.bind(api);
+    api.publishReview = async (...args) => {
+      const result = await publish(...args);
+      api.getReview = async () => {
+        throw new Error("refresh unavailable");
+      };
+      return result;
+    };
+    renderKnowledgeApp(
+      <KnowledgeReview
+        sourceRevisionId={REVISION}
+        onPublicationChange={onPublicationChange}
+      />,
+      { api },
+    );
+    await user.click(await screen.findByRole("button", { name: /发\s*布/u }));
+    await waitFor(() => expect(onPublicationChange).toHaveBeenCalledOnce());
+    expect(screen.getByRole("alert")).toHaveTextContent("已提交");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("操作未完成");
   });
 
   it("reloads the server review after remount, preserving revision history", async () => {
@@ -281,6 +324,92 @@ describe("KnowledgeReview", () => {
     );
     await user.click(await screen.findByText(/krv_2 · 已批准/u));
     expect(await screen.findByText("审核版本 6")).toBeVisible();
+  });
+
+  it("does not let a slower prior review replace the current selection", async () => {
+    const user = userEvent.setup();
+    const first = review();
+    const later = review({ reviewId: "krv_2", version: 6, status: "approved" });
+    const api = fakeKnowledgeClient().withReviews([first, later]);
+    const getReview = api.getReview.bind(api);
+    let resolveLater: (value: KnowledgeReviewDetail) => void = () => undefined;
+    api.getReview = async (id) =>
+      id === later.reviewId
+        ? new Promise((resolve) => {
+            resolveLater = resolve;
+          })
+        : getReview(id);
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    const chooser = await screen.findByRole("combobox", {
+      name: "选择审核修订",
+    });
+    await user.click(chooser);
+    await user.click(await screen.findByText(/krv_2 · 已批准/u));
+    await user.click(chooser);
+    await user.click(await screen.findByText(/krv_1 · 核对中/u));
+    await act(async () => resolveLater(later));
+    expect(screen.getByText("审核版本 3")).toBeVisible();
+    expect(screen.queryByText("审核版本 6")).not.toBeInTheDocument();
+  });
+
+  it("ignores an older comparison response after another item is selected", async () => {
+    const user = userEvent.setup();
+    const first = review();
+    const secondItem = {
+      ...first.inventory.items[0]!,
+      itemId: "pi_second",
+      locator: "page:5:paragraph:1",
+    };
+    const api = fakeKnowledgeClient().withReviews([
+      review({
+        inventory: {
+          ...first.inventory,
+          items: [...first.inventory.items, secondItem],
+          totalCount: 2,
+          needsReviewCount: 2,
+        },
+      }),
+    ]);
+    const pending = new Map<
+      string,
+      (value: KnowledgeReviewItemComparison) => void
+    >();
+    api.compareReviewItem = async (_reviewId, itemId) =>
+      new Promise((resolve) => {
+        pending.set(itemId, resolve);
+      });
+    renderKnowledgeApp(<KnowledgeReview sourceRevisionId={REVISION} />, {
+      api,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /page:4:paragraph:2/u }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /page:5:paragraph:1/u }),
+    );
+    const comparison = (
+      itemId: string,
+      excerpt: string,
+    ): KnowledgeReviewItemComparison => ({
+      reviewId: "krv_1",
+      itemId,
+      original: {
+        availability: "unavailable",
+        excerpt: null,
+        reason: "unavailable",
+      },
+      extracted: { availability: "available", excerpt, reason: null },
+    });
+    await act(async () =>
+      pending.get("pi_second")!(comparison("pi_second", "Second content")),
+    );
+    await act(async () =>
+      pending.get(ITEM)!(comparison(ITEM, "First content")),
+    );
+    expect(screen.getByText("Second content")).toBeVisible();
+    expect(screen.queryByText("First content")).not.toBeInTheDocument();
   });
 
   it("loads historical publications after a withdrawal instead of treating them as current", async () => {

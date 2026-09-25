@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Input,
+  Popconfirm,
   Select,
   Skeleton,
   Space,
@@ -88,6 +89,7 @@ export function KnowledgeReview({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [writeLocked, setWriteLocked] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [comparison, setComparison] =
     useState<KnowledgeReviewItemComparison | null>(null);
@@ -112,6 +114,8 @@ export function KnowledgeReview({
     null,
   );
   const itemTrigger = useRef<HTMLElement | null>(null);
+  const selectedReview = useRef<string | null>(null);
+  const comparisonRequest = useRef(0);
 
   const adopt = useCallback((value: KnowledgeReviewDetail) => {
     setReview(value);
@@ -130,10 +134,13 @@ export function KnowledgeReview({
   const reload = useCallback(
     async (reviewId: string) => {
       const latest = await client.getReview(reviewId);
-      adopt(latest);
+      if (selectedReview.current !== reviewId) return;
       const page = await client.listReviewPublications(reviewId);
+      if (selectedReview.current !== reviewId) return;
+      adopt(latest);
       setPublications(page.items);
       setPublicationCursor(page.nextCursor ?? null);
+      setWriteLocked(false);
     },
     [adopt, client],
   );
@@ -144,6 +151,8 @@ export function KnowledgeReview({
     setError(null);
     setReviews([]);
     setReviewCursor(null);
+    selectedReview.current = null;
+    comparisonRequest.current += 1;
     setReview(null);
     setSelectedId(null);
     void client
@@ -154,6 +163,7 @@ export function KnowledgeReview({
         setReviewCursor(page.nextCursor ?? null);
         const first = page.items[0];
         if (first) {
+          selectedReview.current = first.reviewId;
           setSelectedId(first.reviewId);
           adopt(first);
         }
@@ -188,29 +198,38 @@ export function KnowledgeReview({
     work: (current: KnowledgeReviewDetail) => Promise<unknown>,
     publication = false,
   ) => {
-    if (!review || pending) return false;
+    if (!review || pending || writeLocked) return false;
     setPending(true);
     setError(null);
     try {
-      await work(review);
-      await reload(review.reviewId);
+      try {
+        await work(review);
+      } catch (failure) {
+        if (failure instanceof KnowledgeClientError && failure.status === 409) {
+          setWriteLocked(true);
+          try {
+            await reload(review.reviewId);
+          } catch {
+            /* Keep the conflict message and require a retry. */
+          }
+        }
+        setError(errorMessage(failure));
+        return false;
+      }
+      setWriteLocked(true);
       if (publication) {
-        await queryClient.invalidateQueries({
+        onPublicationChange?.();
+        void queryClient.invalidateQueries({
           queryKey: knowledgeKeys.publishedSources(client.projectId),
         });
-        onPublicationChange?.();
       }
-      return true;
-    } catch (failure) {
-      if (failure instanceof KnowledgeClientError && failure.status === 409) {
-        try {
-          await reload(review.reviewId);
-        } catch {
-          /* Keep the actionable conflict message. */
-        }
+      try {
+        await reload(review.reviewId);
+        return true;
+      } catch {
+        setError("操作已提交，但最新状态读取失败。请重新加载后再操作。");
+        return true;
       }
-      setError(errorMessage(failure));
-      return false;
     } finally {
       setPending(false);
     }
@@ -218,18 +237,31 @@ export function KnowledgeReview({
 
   const openItem = async (itemId: string, trigger: HTMLElement) => {
     if (!review) return;
+    const request = ++comparisonRequest.current;
+    const reviewId = review.reviewId;
     itemTrigger.current = trigger;
     setSelectedItemId(itemId);
     setComparison(null);
     setError(null);
     try {
-      setComparison(await client.compareReviewItem(review.reviewId, itemId));
+      const value = await client.compareReviewItem(reviewId, itemId);
+      if (
+        comparisonRequest.current === request &&
+        selectedReview.current === reviewId &&
+        value.itemId === itemId
+      )
+        setComparison(value);
     } catch (failure) {
-      setError(errorMessage(failure));
+      if (
+        comparisonRequest.current === request &&
+        selectedReview.current === reviewId
+      )
+        setError(errorMessage(failure));
     }
   };
 
   const closeItem = () => {
+    comparisonRequest.current += 1;
     setSelectedItemId(null);
     setComparison(null);
     queueMicrotask(() => itemTrigger.current?.focus());
@@ -326,7 +358,16 @@ export function KnowledgeReview({
           title={error}
           action={
             review ? (
-              <Button size="small" onClick={() => void reload(review.reviewId)}>
+              <Button
+                size="small"
+                onClick={() =>
+                  void reload(review.reviewId)
+                    .then(() => setError(null))
+                    .catch((failure: unknown) =>
+                      setError(errorMessage(failure)),
+                    )
+                }
+              >
                 重新加载
               </Button>
             ) : undefined
@@ -341,8 +382,16 @@ export function KnowledgeReview({
       {reviews.length > 1 ? (
         <Select
           aria-label="选择审核修订"
+          disabled={pending}
           value={selectedId}
-          onChange={setSelectedId}
+          onChange={(id) => {
+            selectedReview.current = id;
+            comparisonRequest.current += 1;
+            setSelectedItemId(null);
+            setComparison(null);
+            setReview(null);
+            setSelectedId(id);
+          }}
           options={reviews.map((item) => ({
             value: item.reviewId,
             label: `${item.reviewId} · ${REVIEW_STATUS[item.status]}`,
@@ -469,7 +518,7 @@ export function KnowledgeReview({
                   />
                   <Button
                     type="primary"
-                    disabled={!note.trim()}
+                    disabled={writeLocked || !note.trim()}
                     loading={pending}
                     onClick={() =>
                       void execute((value) =>
@@ -502,6 +551,7 @@ export function KnowledgeReview({
               {review.allowedActions.includes("submit") ? (
                 <Button
                   loading={pending}
+                  disabled={writeLocked}
                   onClick={() =>
                     void execute((value) =>
                       client.transitionReview(
@@ -518,6 +568,7 @@ export function KnowledgeReview({
               {review.allowedActions.includes("return") ? (
                 <Button
                   loading={pending}
+                  disabled={writeLocked}
                   onClick={() =>
                     void execute((value) =>
                       client.transitionReview(
@@ -534,6 +585,7 @@ export function KnowledgeReview({
               {review.allowedActions.includes("approve") ? (
                 <Button
                   loading={pending}
+                  disabled={writeLocked}
                   onClick={() =>
                     void execute((value) =>
                       client.transitionReview(
@@ -552,6 +604,7 @@ export function KnowledgeReview({
                   type="primary"
                   loading={pending}
                   disabled={
+                    writeLocked ||
                     review.publicationTarget.status !== "ready" ||
                     !review.publicationTarget.generation
                   }
@@ -572,10 +625,12 @@ export function KnowledgeReview({
               ) : null}
               {review.allowedActions.includes("withdraw") &&
               review.currentPublication ? (
-                <Button
-                  danger
-                  loading={pending}
-                  onClick={() =>
+                <Popconfirm
+                  title="撤回当前发布？"
+                  description="撤回后，该来源不再可用于新的正式问答。"
+                  okText="确认撤回"
+                  cancelText="取消"
+                  onConfirm={() =>
                     void execute(
                       (value) =>
                         client.withdrawPublication(
@@ -586,8 +641,10 @@ export function KnowledgeReview({
                     )
                   }
                 >
-                  撤回发布
-                </Button>
+                  <Button danger loading={pending} disabled={writeLocked}>
+                    撤回发布
+                  </Button>
+                </Popconfirm>
               ) : null}
             </Space>
           </section>

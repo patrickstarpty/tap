@@ -46,7 +46,7 @@ it("places document review inside the existing Library", () => {
   ).toBeVisible();
 });
 
-it("requires review before publishing and preserves the published source after reload", () => {
+it("hands submitted work to an independent reviewer and only publishes an approved fixture", () => {
   const view = render(<TapProductPrototype />);
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
@@ -69,25 +69,35 @@ it("requires review before publishing and preserves the published source after r
   expect(screen.getByRole("status")).toHaveTextContent(
     "Awaiting independent review",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Approve review" }));
+  expect(screen.queryByRole("button", { name: "Approve review" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "View Health disclosure policy · approved.md",
+    }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Publish" }));
   expect(screen.getByRole("status")).toHaveTextContent(
     "Published to knowledge library",
   );
   fireEvent.click(screen.getByRole("button", { name: "Ask Tapper" }));
   expect(
-    screen.getByRole("checkbox", { name: /Life underwriting guide · v1.2.md/ }),
+    screen.getByRole("checkbox", {
+      name: /Health disclosure policy · approved.md/,
+    }),
   ).toBeChecked();
   view.unmount();
   render(<TapProductPrototype />);
   expect(
-    screen.getByRole("checkbox", { name: /Life underwriting guide · v1.2.md/ }),
+    screen.getByRole("checkbox", {
+      name: /Health disclosure policy · approved.md/,
+    }),
   ).toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "Library" }));
   fireEvent.click(screen.getByRole("tab", { name: "Documents" }));
   fireEvent.click(
     screen.getByRole("button", {
-      name: "View Life underwriting guide · v1.2.md",
+      name: "View Health disclosure policy · approved.md",
     }),
   );
   fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
@@ -95,7 +105,7 @@ it("requires review before publishing and preserves the published source after r
   fireEvent.click(screen.getByRole("button", { name: "New chat" }));
   expect(
     screen.queryByRole("checkbox", {
-      name: /Life underwriting guide · v1.2.md/,
+      name: /Health disclosure policy · approved.md/,
     }),
   ).toBeNull();
 });
