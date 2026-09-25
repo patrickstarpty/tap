@@ -1769,6 +1769,10 @@ export interface components {
             /** Blockingitemids */
             blockingItemIds: string[];
             currentPublication?: components["schemas"]["KnowledgePublicationDetail"] | null;
+            /** Decisionhistory */
+            decisionHistory: components["schemas"]["KnowledgeReviewItemDecisionDetail"][];
+            /** Decisionhistorynextcursor */
+            decisionHistoryNextCursor?: string | null;
             /** Decisions */
             decisions: components["schemas"]["KnowledgeReviewItemDecisionDetail"][];
             /** Editoractorids */
@@ -1777,7 +1781,11 @@ export interface components {
             expiresAt: string;
             /** History */
             history: components["schemas"]["KnowledgeReviewHistoryDetail"][];
+            /** Historynextcursor */
+            historyNextCursor?: number | null;
             inventory: components["schemas"]["KnowledgeReviewInventory"];
+            /** Publicationids */
+            publicationIds: string[];
             publicationTarget: components["schemas"]["KnowledgePublicationTarget"];
             /** Reviewid */
             reviewId: string;
@@ -1795,6 +1803,10 @@ export interface components {
             action: string;
             /** Actorid */
             actorId: string;
+            /** Decisiondigest */
+            decisionDigest?: string | null;
+            /** Decisionid */
+            decisionId?: string | null;
             /** Itemid */
             itemId?: string | null;
             /** Occurredat */
@@ -1812,6 +1824,8 @@ export interface components {
             items: components["schemas"]["KnowledgeReviewInventoryItem"][];
             /** Needsreviewcount */
             needsReviewCount: number;
+            /** Nextcursor */
+            nextCursor?: string | null;
             /** Parsedcount */
             parsedCount: number;
         };
@@ -1854,6 +1868,10 @@ export interface components {
             checkKind: components["schemas"]["KnowledgeReviewCheckKind"];
             /** Decidedat */
             decidedAt: string;
+            /** Decisiondigest */
+            decisionDigest: string;
+            /** Decisionid */
+            decisionId: string;
             /** Itemid */
             itemId: string;
             /** Note */
@@ -1866,6 +1884,8 @@ export interface components {
         KnowledgeReviewPage: {
             /** Items */
             items: components["schemas"]["KnowledgeReviewDetail"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
         };
         /** KnowledgeReviewPreview */
         KnowledgeReviewPreview: {
@@ -5415,6 +5435,8 @@ export interface operations {
         parameters: {
             query?: {
                 sourceRevisionId?: string | null;
+                limit?: number;
+                afterReviewId?: string | null;
             };
             header?: never;
             path: {

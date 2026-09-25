@@ -54,8 +54,9 @@ def upgrade() -> None:
         "ON publication.project_id = command_result.project_id "
         "AND publication.publication_id = "
         "JSON_UNQUOTE(JSON_EXTRACT(command_result.result, '$.publication_id')) "
-        "SET command_result.result = "
-        "JSON_SET(command_result.result, '$.version', publication.version)"
+        "SET command_result.result = JSON_SET(command_result.result, '$.version', "
+        "CASE JSON_UNQUOTE(JSON_EXTRACT(command_result.result, '$.status')) "
+        "WHEN 'withdrawn' THEN 2 ELSE 1 END)"
     )
     op.alter_column(
         "knowledge_publication", "version", existing_type=sa.Integer(), server_default=None
@@ -76,7 +77,11 @@ def upgrade() -> None:
             "project_id", "decision_id", name="uq_knowledge_review_item_decision_project_pk"
         ),
         sa.UniqueConstraint(
-            "project_id", "review_id", "item_id", name="uq_review_item_decision_item"
+            "project_id",
+            "review_id",
+            "item_id",
+            "review_version",
+            name="uq_review_item_decision_version",
         ),
         sa.ForeignKeyConstraint(
             ["project_id", "review_id"],
@@ -93,6 +98,8 @@ def upgrade() -> None:
         sa.Column("action", sa.String(64), nullable=False),
         sa.Column("history_actor_id", sa.String(128), nullable=False),
         sa.Column("item_id", sa.String(128)),
+        sa.Column("decision_id", sa.String(128)),
+        sa.Column("decision_digest", sa.String(71)),
         sa.Column("occurred_at", DATETIME(fsp=6), nullable=False),
         *_scope_columns(),
         sa.UniqueConstraint(
@@ -105,6 +112,14 @@ def upgrade() -> None:
             ["project_id", "review_id"],
             ["knowledge_review_revision.project_id", "knowledge_review_revision.review_id"],
             name="fk_knowledge_review_history_project_parent_0",
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id", "decision_id"],
+            [
+                "knowledge_review_item_decision.project_id",
+                "knowledge_review_item_decision.decision_id",
+            ],
+            name="fk_knowledge_review_history_project_parent_1",
         ),
         *_scope_constraints("knowledge_review_history"),
     )

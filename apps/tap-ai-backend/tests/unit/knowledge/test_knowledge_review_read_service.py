@@ -57,11 +57,22 @@ class Projection:
 
 
 class Policy:
-    def __init__(self, allowed: frozenset[str]) -> None:
+    def __init__(
+        self,
+        allowed: frozenset[str],
+        *,
+        resource_ids: dict[str, str] | None = None,
+    ) -> None:
         self.allowed = allowed
+        self.resource_ids = resource_ids or {}
+        self.calls: list[tuple[str, str, str | None]] = []
 
     async def authorize(self, scope, action, resource):  # type: ignore[no-untyped-def]
-        return AuthorizationDecision(action in self.allowed, "policy-decision")
+        self.calls.append((action, resource.kind, resource.resource_id))
+        allowed = action in self.allowed and (
+            action not in self.resource_ids or self.resource_ids[action] == resource.resource_id
+        )
+        return AuthorizationDecision(allowed, "policy-decision")
 
 
 class ComparisonRepository(InMemoryKnowledgeReviewRepository):
@@ -77,8 +88,10 @@ class Artifacts:
     def __init__(self, *, original: bytes | Exception, normalized: NormalizedArtifact | Exception):
         self.original = original
         self.normalized = normalized
+        self.original_read_calls = 0
 
     async def read_original(self, locator):  # type: ignore[no-untyped-def]
+        self.original_read_calls += 1
         if isinstance(self.original, Exception):
             raise self.original
         return self.original
@@ -125,7 +138,78 @@ def test_allowed_actions_are_intersection_of_state_and_server_policy():
     run(scenario())
 
 
-def test_review_comparison_bounds_text_and_never_returns_object_locators():
+def test_allowed_actions_share_command_resource_targets_expiry_and_inventory_preconditions():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, Projection())
+        await repository.add(
+            review(
+                status=ReviewStatus.APPROVED,
+                reviewer_actor_id="synthetic-reviewer-02",
+            )
+        )
+        publication = await application.publish_review(
+            "krv_001",
+            generation="generation-001",
+            idempotency_key="publish-actions",
+            actor_id="synthetic-reviewer-02",
+            expected_version=3,
+            now=NOW,
+        )
+        policy = Policy(
+            frozenset({"knowledge.publish", "knowledge.original.read"}),
+            resource_ids={
+                "knowledge.publish": publication.publication_id,
+                "knowledge.original.read": "krv_001",
+            },
+        )
+        service = KnowledgeReviewHttpService(
+            application,
+            scope=VALIDATION_SCOPE,
+            authorization_policy=policy,
+            clock=lambda: NOW,
+        )
+
+        published = await service.get_review("krv_001")
+        assert [item.value for item in published.allowed_actions] == [
+            "withdraw",
+            "read_original",
+        ]
+        assert published.publication_ids == [publication.publication_id]
+        assert (
+            "knowledge.publish",
+            "knowledge-publication",
+            publication.publication_id,
+        ) in policy.calls
+
+        await repository.add(
+            review(expires_at=NOW),
+            inventory_item_ids=("pi_001",),
+        )
+        expired_policy = Policy(frozenset({"knowledge.review.edit", "knowledge.original.read"}))
+        expired = await KnowledgeReviewHttpService(
+            application,
+            scope=VALIDATION_SCOPE,
+            authorization_policy=expired_policy,
+            clock=lambda: NOW,
+        ).get_review("krv_001")
+        assert {item.value for item in expired.allowed_actions} == {"read_original"}
+
+        await repository.add(review(), inventory_item_ids=("pi_other",))
+        stale = await KnowledgeReviewHttpService(
+            application,
+            scope=VALIDATION_SCOPE,
+            authorization_policy=Policy(
+                frozenset({"knowledge.review.edit", "knowledge.original.read"})
+            ),
+            clock=lambda: NOW,
+        ).get_review("krv_001")
+        assert {item.value for item in stale.allowed_actions} == {"read_original"}
+
+    run(scenario())
+
+
+def test_review_comparison_uses_the_exact_late_item_without_reading_the_whole_original():
     async def scenario() -> None:
         target = ReviewComparisonTarget(
             media_type="text/markdown",
@@ -135,36 +219,50 @@ def test_review_comparison_bounds_text_and_never_returns_object_locators():
         )
         repository = ComparisonRepository(target)
         await repository.add(review(), inventory_item_ids=("pi_001",))
-        text = "A" * 5_000
+        prefix = "A" * 1_000_000
+        target_text = "后部精确条款"
         artifact = NormalizedArtifact(
             filename="rule.md",
             media_type=MediaType.MARKDOWN,
             source_hash=DIGEST,
             blocks=(
                 NormalizedBlock(
-                    block_id="block-1",
+                    block_id="block-prefix",
                     kind=BlockKind.PARAGRAPH,
-                    text=text,
+                    text=prefix,
                     heading_path=(),
                     page=None,
                     paragraph_index=0,
                     start_offset=0,
-                    end_offset=len(text),
+                    end_offset=len(prefix),
+                    inventory_item_id="pi_other",
+                ),
+                NormalizedBlock(
+                    block_id="block-target",
+                    kind=BlockKind.PARAGRAPH,
+                    text=target_text,
+                    heading_path=(),
+                    page=None,
+                    paragraph_index=1,
+                    start_offset=len(prefix),
+                    end_offset=len(prefix) + len(target_text),
                     inventory_item_id="pi_001",
                 ),
             ),
         )
+        artifacts = Artifacts(original=(prefix + target_text).encode(), normalized=artifact)
         application = KnowledgeReviewApplication(
             repository,
             Projection(),
-            Artifacts(original=text.encode(), normalized=artifact),  # type: ignore[arg-type]
+            artifacts,  # type: ignore[arg-type]
         )
 
         comparison = await application.compare_review_item("krv_001", "pi_001")
-        assert comparison.original.availability == "available"
+        assert comparison.original.availability == "unavailable"
+        assert comparison.original.reason == "item-aligned-original-unavailable"
         assert comparison.extracted.availability == "available"
-        assert len(comparison.original.excerpt or "") == 4_000
-        assert len(comparison.extracted.excerpt or "") == 4_000
+        assert comparison.extracted.excerpt == target_text
+        assert artifacts.original_read_calls == 0
         assert "private/original" not in repr(comparison)
         assert "private/normalized" not in repr(comparison)
 
@@ -181,18 +279,20 @@ def test_review_comparison_reports_artifact_unavailable_instead_of_leaking_provi
         )
         repository = ComparisonRepository(target)
         await repository.add(review(), inventory_item_ids=("pi_001",))
+        artifacts = Artifacts(  # type: ignore[arg-type]
+            original=ArtifactUnavailable("provider detail"),
+            normalized=ArtifactUnavailable("provider detail"),
+        )
         application = KnowledgeReviewApplication(
             repository,
             Projection(),
-            Artifacts(  # type: ignore[arg-type]
-                original=ArtifactUnavailable("provider detail"),
-                normalized=ArtifactUnavailable("provider detail"),
-            ),
+            artifacts,
         )
 
         comparison = await application.compare_review_item("krv_001", "pi_001")
         assert comparison.original.availability == "unavailable"
-        assert comparison.original.reason == "original-preview-unavailable"
+        assert comparison.original.reason == "item-aligned-original-unavailable"
+        assert artifacts.original_read_calls == 0
         assert comparison.extracted.availability == "unavailable"
         assert comparison.extracted.reason == "extraction-preview-unavailable"
 

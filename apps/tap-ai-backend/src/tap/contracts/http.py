@@ -323,14 +323,17 @@ class KnowledgeReviewInventoryItem(ContractModel):
 
 
 class KnowledgeReviewInventory(ContractModel):
-    items: Annotated[list[KnowledgeReviewInventoryItem], Field(max_length=10_000)]
+    items: Annotated[list[KnowledgeReviewInventoryItem], Field(max_length=500)]
     parsed_count: Annotated[StrictInt, Field(ge=0)]
     failed_count: Annotated[StrictInt, Field(ge=0)]
     needs_review_count: Annotated[StrictInt, Field(ge=0)]
     excluded_count: Annotated[StrictInt, Field(ge=0)]
+    next_cursor: ShortIdentifier | None = None
 
 
 class KnowledgeReviewItemDecisionDetail(ContractModel):
+    decision_id: ShortIdentifier
+    decision_digest: CanonicalSha256
     item_id: ShortIdentifier
     check_kind: KnowledgeReviewCheckKind
     status: KnowledgeReviewDecisionStatus
@@ -346,6 +349,8 @@ class KnowledgeReviewHistoryDetail(ContractModel):
     actor_id: ShortIdentifier
     occurred_at: TimestampValue
     item_id: ShortIdentifier | None = None
+    decision_id: ShortIdentifier | None = None
+    decision_digest: CanonicalSha256 | None = None
 
 
 class KnowledgePublicationTarget(ContractModel):
@@ -360,8 +365,12 @@ class KnowledgeReviewDetail(KnowledgeReviewSummary):
     blocking_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
     approved_item_ids: Annotated[list[ShortIdentifier], Field(max_length=10_000)]
     inventory: KnowledgeReviewInventory
-    decisions: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=10_000)]
-    history: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=10_000)]
+    decisions: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=500)]
+    decision_history: Annotated[list[KnowledgeReviewItemDecisionDetail], Field(max_length=500)]
+    decision_history_next_cursor: ShortIdentifier | None = None
+    history: Annotated[list[KnowledgeReviewHistoryDetail], Field(max_length=500)]
+    history_next_cursor: Annotated[StrictInt, Field(ge=1)] | None = None
+    publication_ids: Annotated[list[ShortIdentifier], Field(max_length=500)]
     current_publication: KnowledgePublicationDetail | None = None
     publication_target: KnowledgePublicationTarget
     allowed_actions: Annotated[list[KnowledgeReviewAction], Field(max_length=7)]
@@ -369,6 +378,7 @@ class KnowledgeReviewDetail(KnowledgeReviewSummary):
 
 class KnowledgeReviewPage(ContractModel):
     items: Annotated[list[KnowledgeReviewDetail], Field(max_length=100)]
+    next_cursor: ShortIdentifier | None = None
 
 
 class KnowledgeReviewDecisionRequest(ContractModel):

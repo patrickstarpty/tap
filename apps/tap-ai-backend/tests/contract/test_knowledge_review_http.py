@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
+from tap.modules.access.domain.authorization import AuthorizationDecision
 from tests.conftest import validation_http_services
 
 BASE = "/api/v1/projects/tapper-demo/knowledge/reviews/krv_001"
@@ -16,9 +17,11 @@ class ReviewHttpSpy:
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
 
-    async def list_reviews(self, source_revision_id):  # type: ignore[no-untyped-def]
-        self.calls.append(("list", source_revision_id))
-        return {"items": [review_detail_payload()]}
+    async def list_reviews(  # type: ignore[no-untyped-def]
+        self, source_revision_id, limit=50, after_review_id=None
+    ):
+        self.calls.append(("list", source_revision_id, limit, after_review_id))
+        return {"items": [review_detail_payload()], "nextCursor": None}
 
     async def get_review(self, review_id):  # type: ignore[no-untyped-def]
         self.calls.append(("get", review_id))
@@ -158,7 +161,9 @@ def review_detail_payload(*, status: str = "checking", version: int = 3) -> dict
             "excludedCount": 0,
         },
         "decisions": [],
+        "decisionHistory": [],
         "history": [],
+        "publicationIds": ["kpb_historical", "kpb_001"],
         "currentPublication": None,
         "publicationTarget": {
             "status": "ready",
@@ -169,18 +174,58 @@ def review_detail_payload(*, status: str = "checking", version: int = 3) -> dict
     }
 
 
-def client() -> tuple[TestClient, ReviewHttpSpy]:
+class RecordingPolicy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    async def authorize(self, scope, action, resource):  # type: ignore[no-untyped-def]
+        self.calls.append((action, resource.kind, resource.resource_id))
+        return AuthorizationDecision(True, "test-allowed")
+
+
+def client(policy=None) -> tuple[TestClient, ReviewHttpSpy]:  # type: ignore[no-untyped-def]
     spy = ReviewHttpSpy()
     base = validation_http_services()
     services = HttpServices(
         knowledge=base.knowledge,
         readiness=base.readiness,
         scope_provider=base.scope_provider,
-        authorization_policy=base.authorization_policy,
+        authorization_policy=base.authorization_policy if policy is None else policy,
         scope=base.scope,
         knowledge_reviews=spy,
     )
     return TestClient(create_app(services=services, allowed_origins=frozenset({ORIGIN}))), spy
+
+
+def test_route_authorization_uses_the_same_review_and_publication_resource_ids_as_actions():
+    policy = RecordingPolicy()
+    http, _ = client(policy)
+
+    decided = http.put(
+        BASE + "/items/pi_001/decision",
+        headers={"Origin": ORIGIN, "If-Match": '"3"'},
+        json={"checkKind": "amount", "status": "accepted", "note": "与原件一致"},
+    )
+    withdrawn = http.post(
+        "/api/v1/projects/tapper-demo/knowledge/publications/kpb_001/withdraw",
+        headers={
+            "Origin": ORIGIN,
+            "If-Match": '"1"',
+            "Idempotency-Key": "withdraw-resource-target",
+        },
+    )
+
+    assert decided.status_code == withdrawn.status_code == 200
+    assert (
+        "knowledge.review.edit",
+        "knowledge-review",
+        "krv_001",
+    ) in policy.calls
+    assert (
+        "knowledge.publish",
+        "knowledge-publication",
+        "kpb_001",
+    ) in policy.calls
 
 
 def test_review_http_preserves_optimistic_version_and_idempotent_publish_intent():
@@ -253,7 +298,11 @@ def test_review_read_model_survives_refresh_and_exposes_partial_failure_and_capa
 
     listed = http.get(
         "/api/v1/projects/tapper-demo/knowledge/reviews",
-        params={"sourceRevisionId": "rev_001"},
+        params={
+            "sourceRevisionId": "rev_001",
+            "limit": 25,
+            "afterReviewId": "krv_000",
+        },
     )
     refreshed = http.get(BASE)
     comparison = http.get(BASE + "/items/pi_failed/comparison")
@@ -265,18 +314,31 @@ def test_review_read_model_survives_refresh_and_exposes_partial_failure_and_capa
         "failedCount": 1,
         "needsReviewCount": 0,
         "excludedCount": 0,
+        "nextCursor": None,
     }
     assert refreshed.status_code == 200
+    assert refreshed.json()["publicationIds"] == ["kpb_historical", "kpb_001"]
     assert refreshed.json()["allowedActions"] == ["edit", "submit", "read_original"]
     assert refreshed.json()["publicationTarget"]["generation"] == "generation-001"
     assert comparison.status_code == 200
     assert comparison.json()["original"]["availability"] == "unsupported"
     assert comparison.json()["extracted"]["availability"] == "unavailable"
     assert spy.calls == [
-        ("list", "rev_001"),
+        ("list", "rev_001", 25, "krv_000"),
         ("get", "krv_001"),
         ("compare", "krv_001", "pi_failed"),
     ]
+
+
+def test_review_contract_bounds_embedded_collections_to_500_items():
+    schemas = create_app().openapi()["components"]["schemas"]
+    detail = schemas["KnowledgeReviewDetail"]["properties"]
+    inventory = schemas["KnowledgeReviewInventory"]["properties"]
+
+    assert inventory["items"]["maxItems"] == 500
+    assert detail["decisions"]["maxItems"] == 500
+    assert detail["decisionHistory"]["maxItems"] == 500
+    assert detail["history"]["maxItems"] == 500
 
 
 def test_review_mutations_all_carry_versions_and_return_reloadable_state():

@@ -469,6 +469,82 @@ def test_item_decision_is_durable_updates_checklist_and_survives_application_ref
     run(scenario())
 
 
+def test_repeated_item_decisions_are_append_only_and_publication_remains_traceable():
+    async def scenario() -> None:
+        repository = InMemoryKnowledgeReviewRepository()
+        application = KnowledgeReviewApplication(repository, ProjectionGate())
+        await repository.add(
+            review(
+                status=ReviewStatus.CHECKING,
+                blocking_item_ids=("pi_001",),
+                approved_item_ids=(),
+            ),
+            inventory_item_ids=("pi_001",),
+        )
+
+        await application.record_item_decision(
+            "krv_001",
+            item_id="pi_001",
+            check_kind=ReviewCheckKind.AMOUNT,
+            status=ReviewDecisionStatus.BLOCKED,
+            note="金额与原件不一致",
+            actor_id="synthetic-editor-01",
+            expected_version=3,
+            now=NOW,
+        )
+        await application.record_item_decision(
+            "krv_001",
+            item_id="pi_001",
+            check_kind=ReviewCheckKind.EXCEPTION,
+            status=ReviewDecisionStatus.ACCEPTED,
+            note="第二次核对确认例外条款适用",
+            actor_id="synthetic-editor-01",
+            expected_version=4,
+            now=NOW + timedelta(minutes=1),
+        )
+        await application.transition_review(
+            "krv_001",
+            target=ReviewStatus.REVIEWING,
+            actor_id="synthetic-editor-01",
+            expected_version=5,
+        )
+        approved = await application.approve_review(
+            "krv_001",
+            actor_id="synthetic-reviewer-02",
+            expected_version=6,
+            now=NOW + timedelta(minutes=2),
+        )
+        publication = await application.publish_review(
+            "krv_001",
+            generation="generation-001",
+            idempotency_key="publish-decision-history",
+            actor_id="synthetic-reviewer-02",
+            expected_version=7,
+            now=NOW + timedelta(minutes=3),
+        )
+
+        detail = await application.get_review("krv_001")
+        assert [
+            (item.review_version, item.status.value, item.note) for item in detail.decisions
+        ] == [(5, "accepted", "第二次核对确认例外条款适用")]
+        assert [
+            (item.review_version, item.check_kind.value, item.status.value, item.note)
+            for item in detail.decision_history
+        ] == [
+            (4, "amount", "blocked", "金额与原件不一致"),
+            (5, "exception", "accepted", "第二次核对确认例外条款适用"),
+        ]
+        decision_events = [item for item in detail.history if item.action == "item_decided"]
+        assert all(item.decision_id and item.decision_digest for item in decision_events)
+        assert [item.decision_id for item in decision_events] == [
+            item.decision_id for item in detail.decision_history
+        ]
+        assert publication.review_version == approved.version
+        assert publication.approval_digest == approved.approval_digest
+
+    run(scenario())
+
+
 def test_item_decision_rejects_unknown_item_and_stale_version_without_mutation():
     async def scenario() -> None:
         repository = InMemoryKnowledgeReviewRepository()

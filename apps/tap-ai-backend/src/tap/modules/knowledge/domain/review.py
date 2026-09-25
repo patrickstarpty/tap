@@ -64,6 +64,34 @@ class KnowledgeReviewItemDecision:
         if self.decided_at.utcoffset() is None:
             raise ValueError("review decision time must be timezone-aware")
 
+    @property
+    def decision_id(self) -> str:
+        return (
+            "krd_"
+            + canonical_digest(
+                {
+                    "itemId": self.item_id,
+                    "reviewId": self.review_id,
+                    "reviewVersion": self.review_version,
+                }
+            )[7:39]
+        )
+
+    @property
+    def decision_digest(self) -> str:
+        return canonical_digest(
+            {
+                "actorId": self.actor_id,
+                "checkKind": self.check_kind.value,
+                "decidedAt": self.decided_at.isoformat(),
+                "itemId": self.item_id,
+                "note": self.note,
+                "reviewId": self.review_id,
+                "reviewVersion": self.review_version,
+                "status": self.status.value,
+            }
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeReviewHistoryEntry:
@@ -73,6 +101,8 @@ class KnowledgeReviewHistoryEntry:
     actor_id: str
     occurred_at: datetime
     item_id: str | None = None
+    decision_id: str | None = None
+    decision_digest: str | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -83,6 +113,12 @@ class KnowledgeReviewHistoryEntry:
             _identifier(name, value)
         if self.item_id is not None:
             _identifier("item", self.item_id)
+        if (self.decision_id is None) != (self.decision_digest is None):
+            raise ValueError("review history decision identity and digest must be paired")
+        if self.decision_id is not None:
+            _identifier("decision", self.decision_id)
+            assert self.decision_digest is not None
+            _digest(self.decision_digest)
         if type(self.review_version) is not int or self.review_version < 1:
             raise ValueError("review history version must be positive")
         if self.occurred_at.utcoffset() is None:
@@ -212,6 +248,33 @@ def canonical_digest(value: object) -> str:
         "utf-8"
     )
     return "sha256:" + sha256(payload).hexdigest()
+
+
+def review_dependency_digest(
+    values: tuple[tuple[str, str, str | None, str | None], ...],
+) -> str:
+    if not values or len({value[0] for value in values}) != len(values):
+        raise ValueError("review dependencies require unique source revisions")
+    for revision_id, source_hash, parser_digest, projection_digest in values:
+        _identifier("source revision", revision_id)
+        _digest(source_hash)
+        if parser_digest is not None:
+            _digest(parser_digest)
+        if projection_digest is not None:
+            _digest(projection_digest)
+    return canonical_digest(
+        {
+            "sourceRevisions": [
+                {
+                    "parserConfigDigest": parser_digest,
+                    "projectionDigest": projection_digest,
+                    "sourceContentHash": source_hash,
+                    "sourceRevisionId": revision_id,
+                }
+                for revision_id, source_hash, parser_digest, projection_digest in sorted(values)
+            ]
+        }
+    )
 
 
 def _identifier(name: str, value: str) -> None:

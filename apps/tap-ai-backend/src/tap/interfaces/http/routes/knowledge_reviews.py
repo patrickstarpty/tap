@@ -40,15 +40,21 @@ async def list_reviews(
     source_revision_id: str | None = Query(
         default=None, alias="sourceRevisionId", min_length=1, max_length=256
     ),
+    limit: int = Query(default=50, ge=1, le=100),
+    after_review_id: str | None = Query(
+        default=None, alias="afterReviewId", min_length=1, max_length=256
+    ),
 ) -> KnowledgeReviewPage:
-    return await knowledge_review_service(request).list_reviews(source_revision_id)
+    return await knowledge_review_service(request).list_reviews(
+        source_revision_id, limit, after_review_id
+    )
 
 
 @router.get(
     "/knowledge/reviews/{review_id}",
     operation_id="knowledge_get_review",
     response_model=KnowledgeReviewDetail,
-    dependencies=[Depends(project_authorization("knowledge.read"))],
+    dependencies=[Depends(project_authorization("knowledge.read", resource_id_param="review_id"))],
 )
 async def get_review(request: Request, review_id: str) -> KnowledgeReviewDetail:
     return await knowledge_review_service(request).get_review(review_id)
@@ -58,7 +64,9 @@ async def get_review(request: Request, review_id: str) -> KnowledgeReviewDetail:
     "/knowledge/reviews/{review_id}/items/{item_id}/comparison",
     operation_id="knowledge_compare_review_item",
     response_model=KnowledgeReviewItemComparison,
-    dependencies=[Depends(project_authorization("knowledge.original.read"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.original.read", resource_id_param="review_id"))
+    ],
 )
 async def compare_review_item(
     request: Request, review_id: str, item_id: str
@@ -70,7 +78,9 @@ async def compare_review_item(
     "/knowledge/reviews/{review_id}/items/{item_id}/decision",
     operation_id="knowledge_update_review_item_decision",
     response_model=KnowledgeReviewDetail,
-    dependencies=[Depends(project_authorization("knowledge.review.edit"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.review.edit", resource_id_param="review_id"))
+    ],
 )
 async def update_review_item_decision(
     request: Request,
@@ -91,7 +101,9 @@ async def update_review_item_decision(
     "/knowledge/reviews/{review_id}/return",
     operation_id="knowledge_return_review",
     response_model=KnowledgeReviewDetail,
-    dependencies=[Depends(project_authorization("knowledge.review.edit"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.review.edit", resource_id_param="review_id"))
+    ],
 )
 async def return_review(
     request: Request,
@@ -105,7 +117,9 @@ async def return_review(
     "/knowledge/reviews/{review_id}/submit",
     operation_id="knowledge_submit_review",
     response_model=KnowledgeReviewDetail,
-    dependencies=[Depends(project_authorization("knowledge.review.edit"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.review.edit", resource_id_param="review_id"))
+    ],
 )
 async def submit_review(
     request: Request,
@@ -119,7 +133,9 @@ async def submit_review(
     "/knowledge/reviews/{review_id}/approve",
     operation_id="knowledge_approve_review",
     response_model=KnowledgeReviewSummary,
-    dependencies=[Depends(project_authorization("knowledge.review.approve"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.review.approve", resource_id_param="review_id"))
+    ],
 )
 async def approve_review(
     request: Request,
@@ -133,7 +149,9 @@ async def approve_review(
     "/knowledge/reviews/{review_id}/publish",
     operation_id="knowledge_publish_review",
     response_model=KnowledgePublicationDetail,
-    dependencies=[Depends(project_authorization("knowledge.publish"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.publish", resource_id_param="review_id"))
+    ],
 )
 async def publish_review(
     request: Request,
@@ -171,7 +189,9 @@ async def list_published_sources(request: Request) -> PublishedKnowledgeSourcePa
     "/knowledge/publications/{publication_id}",
     operation_id="knowledge_get_publication",
     response_model=KnowledgePublicationDetail,
-    dependencies=[Depends(project_authorization("knowledge.read"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.read", resource_id_param="publication_id"))
+    ],
 )
 async def get_publication(request: Request, publication_id: str) -> KnowledgePublicationDetail:
     return await knowledge_review_service(request).get_publication(publication_id)
@@ -181,7 +201,9 @@ async def get_publication(request: Request, publication_id: str) -> KnowledgePub
     "/knowledge/publications/{publication_id}/withdraw",
     operation_id="knowledge_withdraw_publication",
     response_model=KnowledgePublicationDetail,
-    dependencies=[Depends(project_authorization("knowledge.publish"))],
+    dependencies=[
+        Depends(project_authorization("knowledge.publish", resource_id_param="publication_id"))
+    ],
 )
 async def withdraw_publication(
     request: Request,

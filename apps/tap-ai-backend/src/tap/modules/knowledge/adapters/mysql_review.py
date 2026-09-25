@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     delete,
+    func,
     insert,
     select,
     update,
@@ -22,6 +23,7 @@ from sqlalchemy.dialects.mysql import DATETIME, JSON
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
+from tap.modules.access.adapters.mysql import project
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
@@ -31,12 +33,19 @@ from tap.modules.knowledge.adapters.mysql_documents import (
 )
 from tap.modules.knowledge.adapters.mysql_projection import knowledge_projection_state
 from tap.modules.knowledge.application.review import (
+    ProjectionNotReady,
     PublishedSourceRecord,
     ReviewCommandConflict,
     ReviewComparisonTarget,
     ReviewInventoryRecord,
     ReviewNotFound,
     ReviewStateConflict,
+)
+from tap.modules.knowledge.domain.parse_inventory import (
+    ParseInventoryItem,
+    ParseInventoryKind,
+    ParseInventoryStatus,
+    parse_inventory_digest,
 )
 from tap.modules.knowledge.domain.review import (
     KnowledgePublication,
@@ -46,6 +55,8 @@ from tap.modules.knowledge.domain.review import (
     ReviewCheckKind,
     ReviewDecisionStatus,
     ReviewStatus,
+    canonical_digest,
+    review_dependency_digest,
 )
 from tap.modules.knowledge.ports.documents import ArtifactLocator
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
@@ -103,7 +114,9 @@ knowledge_review_item_decision = Table(
     Column("decided_by", String(128), nullable=False),
     Column("review_version", Integer, nullable=False),
     Column("decided_at", DATETIME(fsp=6), nullable=False),
-    UniqueConstraint("review_id", "item_id", name="uq_review_item_decision_item"),
+    UniqueConstraint(
+        "review_id", "item_id", "review_version", name="uq_review_item_decision_version"
+    ),
 )
 
 knowledge_review_history = Table(
@@ -115,6 +128,8 @@ knowledge_review_history = Table(
     Column("action", String(64), nullable=False),
     Column("history_actor_id", String(128), nullable=False),
     Column("item_id", String(128)),
+    Column("decision_id", String(128)),
+    Column("decision_digest", String(71)),
     Column("occurred_at", DATETIME(fsp=6), nullable=False),
     UniqueConstraint("review_id", "review_version", name="uq_review_history_version"),
 )
@@ -280,69 +295,68 @@ class MysqlKnowledgeReviewRepository:
         return None if row is None else _review(row)
 
     async def list_reviews(
-        self, source_revision_id: str | None = None
+        self,
+        source_revision_id: str | None = None,
+        *,
+        limit: int = 50,
+        after_review_id: str | None = None,
     ) -> tuple[KnowledgeReviewRevision, ...]:
+        predicates = list(scope_predicates(knowledge_review_revision, self._scope))
+        if source_revision_id is not None:
+            predicates.append(
+                func.json_contains(
+                    knowledge_review_revision.c.source_revision_ids,
+                    func.json_quote(source_revision_id),
+                )
+                == 1
+            )
+        if after_review_id is not None:
+            predicates.append(knowledge_review_revision.c.review_id > after_review_id)
         async with self._sessions() as session:
             rows = (
                 (
                     await session.execute(
                         select(knowledge_review_revision)
-                        .where(*scope_predicates(knowledge_review_revision, self._scope))
-                        .order_by(
-                            knowledge_review_revision.c.updated_at.desc(),
-                            knowledge_review_revision.c.review_id,
-                        )
-                        .limit(100)
+                        .where(*predicates)
+                        .order_by(knowledge_review_revision.c.review_id)
+                        .limit(limit)
                     )
                 )
                 .mappings()
                 .all()
             )
-        return tuple(
-            _review(row)
-            for row in rows
-            if source_revision_id is None or source_revision_id in row["source_revision_ids"]
-        )
+        return tuple(_review(row) for row in rows)
 
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         review = await self.get_review(review_id)
         if review is None:
             raise ReviewNotFound("review-not-found")
         async with self._sessions() as session:
-            attempts = {
-                row["revision_id"]: row["parse_inventory_attempt"]
-                for row in (
-                    (
-                        await session.execute(
-                            select(
-                                knowledge_document_revision.c.revision_id,
-                                knowledge_document_revision.c.parse_inventory_attempt,
-                            ).where(
-                                *scope_predicates(knowledge_document_revision, self._scope),
-                                knowledge_document_revision.c.revision_id.in_(
-                                    review.source_revision_ids
-                                ),
-                            )
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
-            }
             rows = (
                 (
                     await session.execute(
                         select(knowledge_parse_inventory)
+                        .select_from(
+                            knowledge_parse_inventory.join(
+                                knowledge_document_revision,
+                                knowledge_document_revision.c.revision_id
+                                == knowledge_parse_inventory.c.source_revision_id,
+                            )
+                        )
                         .where(
                             *scope_predicates(knowledge_parse_inventory, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_parse_inventory.c.source_revision_id.in_(
                                 review.source_revision_ids
                             ),
+                            knowledge_parse_inventory.c.attempt
+                            == knowledge_document_revision.c.parse_inventory_attempt,
                         )
                         .order_by(
                             knowledge_parse_inventory.c.source_revision_id,
                             knowledge_parse_inventory.c.ordinal,
                         )
+                        .limit(501)
                     )
                 )
                 .mappings()
@@ -361,7 +375,131 @@ class MysqlKnowledgeReviewRepository:
                 decision_actor_id=row["decision_actor_id"],
             )
             for row in rows
-            if attempts.get(row["source_revision_id"]) == row["attempt"]
+        )
+
+    async def review_authority(self, revision: KnowledgeReviewRevision) -> bool:
+        async with self._sessions() as session:
+            return await self._review_authority(session, revision, lock=False)
+
+    async def _review_authority(
+        self,
+        session: AsyncSession,
+        revision: KnowledgeReviewRevision,
+        *,
+        lock: bool,
+    ) -> bool:
+        statement = (
+            select(
+                knowledge_document_revision.c.revision_id,
+                knowledge_document_revision.c.source_content_hash,
+                knowledge_document_revision.c.parser_config_digest,
+                knowledge_document_revision.c.parse_inventory_attempt,
+                knowledge_document_revision.c.parse_inventory_digest,
+                knowledge_document_revision.c.chunk_manifest_digest,
+                knowledge_document_revision.c.projection_digest,
+            )
+            .where(
+                *scope_predicates(knowledge_document_revision, self._scope),
+                knowledge_document_revision.c.revision_id.in_(revision.source_revision_ids),
+            )
+            .order_by(knowledge_document_revision.c.revision_id)
+        )
+        if lock:
+            statement = statement.with_for_update()
+        rows = (await session.execute(statement)).mappings().all()
+        if len(rows) != len(revision.source_revision_ids):
+            return False
+        inventory_statement = (
+            select(knowledge_parse_inventory)
+            .select_from(
+                knowledge_parse_inventory.join(
+                    knowledge_document_revision,
+                    knowledge_document_revision.c.revision_id
+                    == knowledge_parse_inventory.c.source_revision_id,
+                )
+            )
+            .where(
+                *scope_predicates(knowledge_parse_inventory, self._scope),
+                *scope_predicates(knowledge_document_revision, self._scope),
+                knowledge_parse_inventory.c.source_revision_id.in_(revision.source_revision_ids),
+                knowledge_parse_inventory.c.attempt
+                == knowledge_document_revision.c.parse_inventory_attempt,
+            )
+            .order_by(
+                knowledge_parse_inventory.c.source_revision_id,
+                knowledge_parse_inventory.c.ordinal,
+            )
+            .limit(501)
+        )
+        if lock:
+            inventory_statement = inventory_statement.with_for_update()
+        inventory_rows = (await session.execute(inventory_statement)).mappings().all()
+        if len(inventory_rows) > 500:
+            return False
+        latest = inventory_rows
+        if any(
+            not any(item["source_revision_id"] == source_id for item in latest)
+            for source_id in revision.source_revision_ids
+        ):
+            return False
+        inventory_digests = tuple(
+            (row["revision_id"], row["parse_inventory_digest"]) for row in rows
+        )
+        try:
+            actual_inventory_digests = tuple(
+                (
+                    source_id,
+                    parse_inventory_digest(
+                        tuple(
+                            ParseInventoryItem(
+                                source_revision_id=item["source_revision_id"],
+                                item_id=item["item_id"],
+                                kind=ParseInventoryKind(item["item_kind"]),
+                                locator=item["locator"],
+                                status=ParseInventoryStatus(item["status"]),
+                                artifact_digest=item["artifact_digest"],
+                                reason=item["reason"],
+                                decision_actor_id=item["decision_actor_id"],
+                            )
+                            for item in latest
+                            if item["source_revision_id"] == source_id
+                        )
+                    ),
+                )
+                for source_id in (row["revision_id"] for row in rows)
+            )
+        except (TypeError, ValueError):
+            return False
+        if inventory_digests != actual_inventory_digests:
+            return False
+        chunk_digests = tuple((row["revision_id"], row["chunk_manifest_digest"]) for row in rows)
+        expected_inventory = (
+            inventory_digests[0][1]
+            if len(inventory_digests) == 1
+            else canonical_digest({"sourceRevisionInventoryDigests": inventory_digests})
+        )
+        expected_chunks = (
+            chunk_digests[0][1]
+            if len(chunk_digests) == 1
+            else canonical_digest({"sourceRevisionChunkDigests": chunk_digests})
+        )
+        expected_dependency = review_dependency_digest(
+            tuple(
+                (
+                    row["revision_id"],
+                    row["source_content_hash"],
+                    row["parser_config_digest"],
+                    row["projection_digest"],
+                )
+                for row in rows
+            )
+        )
+        latest_ids = {row["item_id"] for row in latest}
+        return (
+            expected_inventory == revision.inventory_digest
+            and expected_chunks == revision.chunk_manifest_digest
+            and expected_dependency == revision.dependency_digest
+            and set(revision.approved_item_ids) <= latest_ids
         )
 
     async def save_review(
@@ -374,6 +512,25 @@ class MysqlKnowledgeReviewRepository:
         occurred_at: datetime,
     ) -> KnowledgeReviewRevision:
         async with self._sessions() as session, session.begin():
+            if action in {"submitted", "approved"}:
+                locked = (
+                    (
+                        await session.execute(
+                            select(knowledge_review_revision)
+                            .where(
+                                *scope_predicates(knowledge_review_revision, self._scope),
+                                knowledge_review_revision.c.review_id == revision.review_id,
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if locked is None or locked["version"] != expected_version:
+                    raise ReviewStateConflict("revision-conflict")
+                if not await self._review_authority(session, _review(locked), lock=True):
+                    raise ReviewStateConflict("review-authority-changed")
             result = await session.execute(
                 update(knowledge_review_revision)
                 .where(
@@ -436,6 +593,14 @@ class MysqlKnowledgeReviewRepository:
         return isinstance(count, str)
 
     async def list_decisions(self, review_id: str) -> tuple[KnowledgeReviewItemDecision, ...]:
+        latest: dict[str, KnowledgeReviewItemDecision] = {}
+        for decision in await self.list_decision_history(review_id):
+            latest[decision.item_id] = decision
+        return tuple(latest[item_id] for item_id in sorted(latest))
+
+    async def list_decision_history(
+        self, review_id: str
+    ) -> tuple[KnowledgeReviewItemDecision, ...]:
         async with self._sessions() as session:
             rows = (
                 (
@@ -445,13 +610,17 @@ class MysqlKnowledgeReviewRepository:
                             *scope_predicates(knowledge_review_item_decision, self._scope),
                             knowledge_review_item_decision.c.review_id == review_id,
                         )
-                        .order_by(knowledge_review_item_decision.c.item_id)
+                        .order_by(
+                            knowledge_review_item_decision.c.review_version.desc(),
+                            knowledge_review_item_decision.c.item_id,
+                        )
+                        .limit(501)
                     )
                 )
                 .mappings()
                 .all()
             )
-        return tuple(_decision(row) for row in rows)
+        return tuple(reversed([_decision(row) for row in rows]))
 
     async def list_history(self, review_id: str) -> tuple[KnowledgeReviewHistoryEntry, ...]:
         async with self._sessions() as session:
@@ -463,13 +632,14 @@ class MysqlKnowledgeReviewRepository:
                             *scope_predicates(knowledge_review_history, self._scope),
                             knowledge_review_history.c.review_id == review_id,
                         )
-                        .order_by(knowledge_review_history.c.review_version)
+                        .order_by(knowledge_review_history.c.review_version.desc())
+                        .limit(501)
                     )
                 )
                 .mappings()
                 .all()
             )
-        return tuple(_history(row) for row in rows)
+        return tuple(reversed([_history(row) for row in rows]))
 
     async def save_item_decision(
         self,
@@ -479,6 +649,8 @@ class MysqlKnowledgeReviewRepository:
         expected_version: int,
     ) -> KnowledgeReviewRevision:
         async with self._sessions() as session, session.begin():
+            if not await self._review_authority(session, revision, lock=True):
+                raise ReviewStateConflict("review-authority-changed")
             result = await session.execute(
                 update(knowledge_review_revision)
                 .where(
@@ -513,20 +685,9 @@ class MysqlKnowledgeReviewRepository:
             if item_exists is None:
                 raise ReviewStateConflict("review-item-not-found")
             await session.execute(
-                delete(knowledge_review_item_decision).where(
-                    *scope_predicates(knowledge_review_item_decision, self._scope),
-                    knowledge_review_item_decision.c.review_id == revision.review_id,
-                    knowledge_review_item_decision.c.item_id == decision.item_id,
-                )
-            )
-            await session.execute(
                 insert(knowledge_review_item_decision).values(
                     **scope_values(self._scope),
-                    decision_id=scoped_outbox_id(
-                        self._scope,
-                        kind="knowledge-review-decision",
-                        identity=f"{revision.review_id}:{decision.item_id}",
-                    ),
+                    decision_id=decision.decision_id,
                     review_id=revision.review_id,
                     item_id=decision.item_id,
                     check_kind=decision.check_kind.value,
@@ -545,10 +706,14 @@ class MysqlKnowledgeReviewRepository:
                 actor_id=decision.actor_id,
                 occurred_at=decision.decided_at,
                 item_id=decision.item_id,
+                decision_id=decision.decision_id,
+                decision_digest=decision.decision_digest,
             )
         return revision
 
-    async def command_result(self, key: str, digest: str) -> KnowledgePublication | None:
+    async def command_result(
+        self, key: str, digest: str, *, legacy_digest: str | None = None
+    ) -> KnowledgePublication | None:
         async with self._sessions() as session:
             row = (
                 (
@@ -564,7 +729,7 @@ class MysqlKnowledgeReviewRepository:
             )
         if row is None:
             return None
-        if row["request_digest"] != digest:
+        if row["request_digest"] not in {digest, legacy_digest}:
             raise ReviewCommandConflict("idempotency-conflict")
         return _publication_json(cast(dict[str, object], row["result"]))
 
@@ -579,6 +744,7 @@ class MysqlKnowledgeReviewRepository:
     ) -> KnowledgePublication:
         pointer_id = _current_pointer_id(self._scope)
         async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
             locked_review = (
                 (
                     await session.execute(
@@ -605,6 +771,18 @@ class MysqlKnowledgeReviewRepository:
                 or locked_review["status"] != ReviewStatus.APPROVED.value
             ):
                 raise ReviewStateConflict("revision-conflict")
+            if not await self._review_authority(session, revision, lock=True):
+                raise ReviewStateConflict("review-authority-changed")
+            generation = await session.scalar(
+                select(knowledge_projection_state.c.physical_collection)
+                .where(
+                    *scope_predicates(knowledge_projection_state, self._scope),
+                    knowledge_projection_state.c.physical_collection == publication.generation,
+                )
+                .with_for_update()
+            )
+            if generation != publication.generation:
+                raise ProjectionNotReady("projection-not-ready")
             result = await session.execute(
                 update(knowledge_review_revision)
                 .where(
@@ -729,13 +907,14 @@ class MysqlKnowledgeReviewRepository:
                             *scope_predicates(knowledge_publication, self._scope),
                             knowledge_publication.c.review_id == review_id,
                         )
-                        .order_by(knowledge_publication.c.published_at)
+                        .order_by(knowledge_publication.c.published_at.desc())
+                        .limit(500)
                     )
                 )
                 .mappings()
                 .all()
             )
-        return tuple(_publication(row) for row in rows)
+        return tuple(reversed([_publication(row) for row in rows]))
 
     async def list_published_sources(self, *, now: datetime) -> tuple[PublishedSourceRecord, ...]:
         publication = await self.current_publication()
@@ -799,7 +978,7 @@ class MysqlKnowledgeReviewRepository:
                 .all()
             )
         approved = set(publication.approved_item_ids)
-        return tuple(
+        records = tuple(
             PublishedSourceRecord(
                 source_id=row["source_id"],
                 document_id=row["document_id"],
@@ -823,6 +1002,7 @@ class MysqlKnowledgeReviewRepository:
             )
             for row in revision_rows
         )
+        return tuple(record for record in records if record.approved_item_count > 0)
 
     async def comparison_target(
         self, review_id: str, item_id: str
@@ -892,6 +1072,7 @@ class MysqlKnowledgeReviewRepository:
         assert publication.withdrawn_at is not None
         pointer_id = _current_pointer_id(self._scope)
         async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
             locked_publication = (
                 (
                     await session.execute(
@@ -1035,6 +1216,18 @@ class MysqlKnowledgeReviewRepository:
             raise ReviewCommandConflict("idempotency-conflict")
         return _publication_json(cast(dict[str, object], row["result"]))
 
+    async def _lock_project(self, session: AsyncSession) -> None:
+        locked = await session.scalar(
+            select(project.c.project_id)
+            .where(
+                project.c.enterprise_id == self._scope.enterprise_id,
+                project.c.project_id == self._scope.project_id,
+            )
+            .with_for_update()
+        )
+        if locked != self._scope.project_id:
+            raise ReviewStateConflict("scope-mismatch")
+
     async def _insert_command(
         self,
         session: AsyncSession,
@@ -1066,6 +1259,8 @@ class MysqlKnowledgeReviewRepository:
         actor_id: str,
         occurred_at: datetime,
         item_id: str | None = None,
+        decision_id: str | None = None,
+        decision_digest: str | None = None,
     ) -> None:
         await session.execute(
             insert(knowledge_review_history).values(
@@ -1080,6 +1275,8 @@ class MysqlKnowledgeReviewRepository:
                 action=action,
                 history_actor_id=actor_id,
                 item_id=item_id,
+                decision_id=decision_id,
+                decision_digest=decision_digest,
                 occurred_at=_naive_utc(occurred_at),
             )
         )
@@ -1259,6 +1456,8 @@ def _history(row) -> KnowledgeReviewHistoryEntry:  # type: ignore[no-untyped-def
         actor_id=row["history_actor_id"],
         occurred_at=_aware_utc(row["occurred_at"]),
         item_id=row["item_id"],
+        decision_id=row["decision_id"],
+        decision_digest=row["decision_digest"],
     )
 
 

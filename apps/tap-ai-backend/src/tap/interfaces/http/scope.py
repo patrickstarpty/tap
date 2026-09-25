@@ -118,7 +118,9 @@ async def resolve_project_scope(request: Request) -> ProjectScopeContext:
     return scope
 
 
-def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
+def project_authorization(
+    action: str, *, resource_id_param: str | None = None
+) -> Callable[[Request], Awaitable[None]]:
     async def authorize(request: Request) -> None:
         scope = await resolve_project_scope(request)
         services: HttpServices = request.app.state.http_services
@@ -132,6 +134,11 @@ def project_authorization(action: str) -> Callable[[Request], Awaitable[None]]:
                 enterprise_id=scope.enterprise_id,
                 project_id=scope.project_id,
                 kind=_resource_kind_for_action(action),
+                resource_id=(
+                    None
+                    if resource_id_param is None
+                    else request.path_params.get(resource_id_param)
+                ),
             ),
         )
         request.state.project_scope = scope

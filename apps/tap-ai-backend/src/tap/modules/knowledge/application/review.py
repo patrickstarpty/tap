@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from tap.modules.knowledge.domain.review import (
     KnowledgePublication,
@@ -48,6 +49,7 @@ class ProjectionVerifier(Protocol):
 class KnowledgeReviewRead:
     revision: KnowledgeReviewRevision
     decisions: tuple[KnowledgeReviewItemDecision, ...]
+    decision_history: tuple[KnowledgeReviewItemDecision, ...]
     history: tuple[KnowledgeReviewHistoryEntry, ...]
 
 
@@ -103,9 +105,14 @@ class ReviewItemComparisonRead:
 class KnowledgeReviewRepository(Protocol):
     async def get_review(self, review_id: str) -> KnowledgeReviewRevision | None: ...
     async def list_reviews(
-        self, source_revision_id: str | None = None
+        self,
+        source_revision_id: str | None = None,
+        *,
+        limit: int = 50,
+        after_review_id: str | None = None,
     ) -> tuple[KnowledgeReviewRevision, ...]: ...
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]: ...
+    async def review_authority(self, revision: KnowledgeReviewRevision) -> bool: ...
     async def save_review(
         self,
         revision: KnowledgeReviewRevision,
@@ -117,6 +124,9 @@ class KnowledgeReviewRepository(Protocol):
     ) -> KnowledgeReviewRevision: ...
     async def has_review_item(self, review_id: str, item_id: str) -> bool: ...
     async def list_decisions(self, review_id: str) -> tuple[KnowledgeReviewItemDecision, ...]: ...
+    async def list_decision_history(
+        self, review_id: str
+    ) -> tuple[KnowledgeReviewItemDecision, ...]: ...
     async def list_history(self, review_id: str) -> tuple[KnowledgeReviewHistoryEntry, ...]: ...
     async def save_item_decision(
         self,
@@ -125,7 +135,9 @@ class KnowledgeReviewRepository(Protocol):
         *,
         expected_version: int,
     ) -> KnowledgeReviewRevision: ...
-    async def command_result(self, key: str, digest: str) -> KnowledgePublication | None: ...
+    async def command_result(
+        self, key: str, digest: str, *, legacy_digest: str | None = None
+    ) -> KnowledgePublication | None: ...
     async def publish(
         self,
         revision: KnowledgeReviewRevision,
@@ -174,9 +186,11 @@ class KnowledgeReviewApplication:
         target: ReviewStatus,
         actor_id: str,
         expected_version: int,
+        now: datetime | None = None,
     ) -> KnowledgeReviewRevision:
         current = await self._required_review(review_id)
         _expected_version(current, expected_version)
+        effective_now = datetime.now(UTC) if now is None else now
         allowed = {
             ReviewStatus.DRAFT: frozenset({ReviewStatus.CHECKING}),
             ReviewStatus.CHECKING: frozenset({ReviewStatus.REVIEWING}),
@@ -185,10 +199,13 @@ class KnowledgeReviewApplication:
         }
         if target not in allowed.get(current.status, frozenset()):
             raise ReviewStateConflict("invalid-review-transition")
+        if current.expires_at <= effective_now:
+            raise ReviewStateConflict("review-expired")
         if target is ReviewStatus.REVIEWING and current.blocking_item_ids:
             raise ReviewStateConflict("review-has-blockers")
         if target is ReviewStatus.REVIEWING and not current.approved_item_ids:
             raise ReviewStateConflict("review-has-no-approved-items")
+        await self._require_review_authority(current)
         editors = current.editor_actor_ids
         if target is ReviewStatus.CHECKING and actor_id not in editors:
             editors = (*editors, actor_id)
@@ -204,7 +221,7 @@ class KnowledgeReviewApplication:
             expected_version=expected_version,
             actor_id=actor_id,
             action="submitted" if target is ReviewStatus.REVIEWING else "returned",
-            occurred_at=datetime.now(UTC),
+            occurred_at=effective_now,
         )
 
     async def get_review(self, review_id: str) -> KnowledgeReviewRead:
@@ -212,14 +229,27 @@ class KnowledgeReviewApplication:
         return KnowledgeReviewRead(
             revision=revision,
             decisions=await self._repository.list_decisions(review_id),
+            decision_history=await self._repository.list_decision_history(review_id),
             history=await self._repository.list_history(review_id),
         )
 
     async def list_reviews(
-        self, source_revision_id: str | None = None
+        self,
+        source_revision_id: str | None = None,
+        *,
+        limit: int = 50,
+        after_review_id: str | None = None,
     ) -> tuple[KnowledgeReviewRead, ...]:
-        revisions = await self._repository.list_reviews(source_revision_id)
+        revisions = await self._repository.list_reviews(
+            source_revision_id,
+            limit=limit,
+            after_review_id=after_review_id,
+        )
         return tuple([await self.get_review(item.review_id) for item in revisions])
+
+    async def list_publications(self, review_id: str) -> tuple[KnowledgePublication, ...]:
+        await self._required_review(review_id)
+        return await self._repository.list_publications(review_id)
 
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         await self._required_review(review_id)
@@ -249,7 +279,54 @@ class KnowledgeReviewApplication:
         discover = getattr(self._projection, "generation_for", None)
         if discover is None:
             return None
-        return await discover(revision)
+        typed_discover = cast(Callable[[KnowledgeReviewRevision], Awaitable[str | None]], discover)
+        return await typed_discover(revision)
+
+    async def review_capabilities(
+        self,
+        revision: KnowledgeReviewRevision,
+        *,
+        current_publication: KnowledgePublication | None,
+        generation: str | None,
+        actor_id: str,
+        now: datetime,
+    ) -> frozenset[str]:
+        authoritative = await self._repository.review_authority(revision)
+        active = revision.expires_at > now
+        values: set[str] = {"read_original"}
+        if (
+            authoritative
+            and active
+            and revision.status
+            in {ReviewStatus.DRAFT, ReviewStatus.CHECKING, ReviewStatus.NEEDS_REVIEW}
+        ):
+            values.add("edit")
+        if (
+            authoritative
+            and active
+            and revision.status is ReviewStatus.CHECKING
+            and not revision.blocking_item_ids
+            and bool(revision.approved_item_ids)
+        ):
+            values.add("submit")
+        if authoritative and active and revision.status is ReviewStatus.REVIEWING:
+            values.add("return")
+            if (
+                not revision.blocking_item_ids
+                and bool(revision.approved_item_ids)
+                and actor_id not in revision.editor_actor_ids
+            ):
+                values.add("approve")
+        if (
+            authoritative
+            and active
+            and revision.status is ReviewStatus.APPROVED
+            and generation is not None
+        ):
+            values.add("publish")
+        if current_publication is not None and current_publication.status == "published":
+            values.add("withdraw")
+        return frozenset(values)
 
     async def list_published_sources(self, *, now: datetime) -> tuple[PublishedSourceRecord, ...]:
         return await self._repository.list_published_sources(now=now)
@@ -268,15 +345,8 @@ class KnowledgeReviewApplication:
         return ReviewItemComparisonRead(review_id, item_id, original, extracted)
 
     async def _original_preview(self, target: ReviewComparisonTarget) -> ReviewPreview:
-        if target.media_type not in {"text/plain", "text/markdown"}:
-            return ReviewPreview("unsupported", reason="preview-not-supported")
-        assert self._artifacts is not None
-        try:
-            content = await self._artifacts.read_original(target.original_locator)
-            text = content.decode("utf-8")
-        except (ArtifactUnavailable, UnicodeDecodeError, OSError):
-            return ReviewPreview("unavailable", reason="original-preview-unavailable")
-        return ReviewPreview("available", excerpt=text[:4_000])
+        del target
+        return ReviewPreview("unavailable", reason="item-aligned-original-unavailable")
 
     async def _extracted_preview(self, target: ReviewComparisonTarget) -> ReviewPreview:
         if target.normalized_locator is None:
@@ -307,6 +377,9 @@ class KnowledgeReviewApplication:
     ) -> KnowledgeReviewRevision:
         current = await self._required_review(review_id)
         _expected_version(current, expected_version)
+        if current.expires_at <= now:
+            raise ReviewStateConflict("review-expired")
+        await self._require_review_authority(current)
         if current.status not in {
             ReviewStatus.DRAFT,
             ReviewStatus.CHECKING,
@@ -392,6 +465,7 @@ class KnowledgeReviewApplication:
             raise ReviewStateConflict("review-has-blockers")
         if not current.approved_item_ids:
             raise ReviewStateConflict("review-has-no-approved-items")
+        await self._require_review_authority(current)
         if current.expires_at <= now:
             raise ReviewStateConflict("review-expired")
         approved = replace(
@@ -449,7 +523,18 @@ class KnowledgeReviewApplication:
                 "expectedVersion": expected_version,
             }
         )
-        replay = await self._repository.command_result(idempotency_key, command_digest)
+        replay = await self._repository.command_result(
+            idempotency_key,
+            command_digest,
+            legacy_digest=canonical_digest(
+                {
+                    "actorId": actor_id,
+                    "generation": generation,
+                    "operation": "publish",
+                    "reviewId": review_id,
+                }
+            ),
+        )
         if replay is not None:
             return replay
         current = await self._required_review(review_id)
@@ -458,6 +543,7 @@ class KnowledgeReviewApplication:
             raise ReviewStateConflict("review-not-approved")
         if current.expires_at <= now:
             raise ReviewStateConflict("review-expired")
+        await self._require_review_authority(current)
         if not await self._projection.verify(current, generation):
             raise ProjectionNotReady("projection-not-ready")
         publication = KnowledgePublication(
@@ -498,7 +584,17 @@ class KnowledgeReviewApplication:
                 "expectedVersion": expected_version,
             }
         )
-        replay = await self._repository.command_result(idempotency_key, command_digest)
+        replay = await self._repository.command_result(
+            idempotency_key,
+            command_digest,
+            legacy_digest=canonical_digest(
+                {
+                    "actorId": actor_id,
+                    "operation": "withdraw",
+                    "publicationId": publication_id,
+                }
+            ),
+        )
         if replay is not None:
             return replay
         publication = await self._repository.get_publication(publication_id)
@@ -528,6 +624,10 @@ class KnowledgeReviewApplication:
             raise ReviewNotFound("review-not-found")
         return review
 
+    async def _require_review_authority(self, revision: KnowledgeReviewRevision) -> None:
+        if not await self._repository.review_authority(revision):
+            raise ReviewStateConflict("review-authority-changed")
+
 
 class InMemoryKnowledgeReviewRepository:
     """Deterministic repository with the same atomic boundaries as the SQL adapter."""
@@ -539,7 +639,8 @@ class InMemoryKnowledgeReviewRepository:
         self._commands: dict[str, tuple[str, KnowledgePublication]] = {}
         self._cleanup: list[str] = []
         self._inventory: dict[str, frozenset[str]] = {}
-        self._decisions: dict[str, dict[str, KnowledgeReviewItemDecision]] = {}
+        self._authority_valid: dict[str, bool] = {}
+        self._decisions: dict[str, list[KnowledgeReviewItemDecision]] = {}
         self._history: dict[str, list[KnowledgeReviewHistoryEntry]] = {}
         self._lock = asyncio.Lock()
 
@@ -554,7 +655,8 @@ class InMemoryKnowledgeReviewRepository:
             self._inventory[revision.review_id] = frozenset(
                 inventory_item_ids or (*revision.approved_item_ids, *revision.blocking_item_ids)
             )
-            self._decisions.setdefault(revision.review_id, {})
+            self._authority_valid[revision.review_id] = True
+            self._decisions.setdefault(revision.review_id, [])
             self._history.setdefault(revision.review_id, [])
 
     async def clear(self) -> None:
@@ -565,6 +667,7 @@ class InMemoryKnowledgeReviewRepository:
             self._commands.clear()
             self._cleanup.clear()
             self._inventory.clear()
+            self._authority_valid.clear()
             self._decisions.clear()
             self._history.clear()
 
@@ -572,9 +675,13 @@ class InMemoryKnowledgeReviewRepository:
         return self._reviews.get(review_id)
 
     async def list_reviews(
-        self, source_revision_id: str | None = None
+        self,
+        source_revision_id: str | None = None,
+        *,
+        limit: int = 50,
+        after_review_id: str | None = None,
     ) -> tuple[KnowledgeReviewRevision, ...]:
-        return tuple(
+        values = tuple(
             sorted(
                 (
                     item
@@ -584,9 +691,20 @@ class InMemoryKnowledgeReviewRepository:
                 key=lambda item: item.review_id,
             )
         )
+        if after_review_id is not None:
+            values = tuple(item for item in values if item.review_id > after_review_id)
+        return values[:limit]
 
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         return ()
+
+    async def review_authority(self, revision: KnowledgeReviewRevision) -> bool:
+        inventory = self._inventory.get(revision.review_id, frozenset())
+        return (
+            self._authority_valid.get(revision.review_id, False)
+            and bool(inventory)
+            and set(revision.approved_item_ids) <= inventory
+        )
 
     async def save_review(
         self,
@@ -601,6 +719,8 @@ class InMemoryKnowledgeReviewRepository:
             current = self._reviews.get(revision.review_id)
             if current is None or current.version != expected_version:
                 raise ReviewStateConflict("revision-conflict")
+            if action in {"submitted", "approved"} and not await self.review_authority(current):
+                raise ReviewStateConflict("review-authority-changed")
             self._reviews[revision.review_id] = revision
             self._history.setdefault(revision.review_id, []).append(
                 KnowledgeReviewHistoryEntry(
@@ -617,9 +737,15 @@ class InMemoryKnowledgeReviewRepository:
         return item_id in self._inventory.get(review_id, frozenset())
 
     async def list_decisions(self, review_id: str) -> tuple[KnowledgeReviewItemDecision, ...]:
-        return tuple(
-            sorted(self._decisions.get(review_id, {}).values(), key=lambda item: item.item_id)
-        )
+        latest: dict[str, KnowledgeReviewItemDecision] = {}
+        for decision in self._decisions.get(review_id, []):
+            latest[decision.item_id] = decision
+        return tuple(latest[item_id] for item_id in sorted(latest))
+
+    async def list_decision_history(
+        self, review_id: str
+    ) -> tuple[KnowledgeReviewItemDecision, ...]:
+        return tuple(self._decisions.get(review_id, []))
 
     async def list_history(self, review_id: str) -> tuple[KnowledgeReviewHistoryEntry, ...]:
         return tuple(self._history.get(review_id, ()))
@@ -635,10 +761,12 @@ class InMemoryKnowledgeReviewRepository:
             current = self._reviews.get(revision.review_id)
             if current is None or current.version != expected_version:
                 raise ReviewStateConflict("revision-conflict")
+            if not await self.review_authority(current):
+                raise ReviewStateConflict("review-authority-changed")
             if decision.item_id not in self._inventory.get(revision.review_id, frozenset()):
                 raise ReviewStateConflict("review-item-not-found")
             self._reviews[revision.review_id] = revision
-            self._decisions.setdefault(revision.review_id, {})[decision.item_id] = decision
+            self._decisions.setdefault(revision.review_id, []).append(decision)
             self._history.setdefault(revision.review_id, []).append(
                 KnowledgeReviewHistoryEntry(
                     review_id=revision.review_id,
@@ -646,16 +774,20 @@ class InMemoryKnowledgeReviewRepository:
                     action="item_decided",
                     actor_id=decision.actor_id,
                     item_id=decision.item_id,
+                    decision_id=decision.decision_id,
+                    decision_digest=decision.decision_digest,
                     occurred_at=decision.decided_at,
                 )
             )
             return revision
 
-    async def command_result(self, key: str, digest: str) -> KnowledgePublication | None:
+    async def command_result(
+        self, key: str, digest: str, *, legacy_digest: str | None = None
+    ) -> KnowledgePublication | None:
         existing = self._commands.get(key)
         if existing is None:
             return None
-        if existing[0] != digest:
+        if existing[0] not in {digest, legacy_digest}:
             raise ReviewCommandConflict("idempotency-conflict")
         return existing[1]
 

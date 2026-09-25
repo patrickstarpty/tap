@@ -2878,11 +2878,32 @@
               }
             ]
           },
+          "decisionHistory": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeReviewItemDecisionDetail"
+            },
+            "maxItems": 500,
+            "title": "Decisionhistory",
+            "type": "array"
+          },
+          "decisionHistoryNextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisionhistorynextcursor"
+          },
           "decisions": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeReviewItemDecisionDetail"
             },
-            "maxItems": 10000,
+            "maxItems": 500,
             "title": "Decisions",
             "type": "array"
           },
@@ -2907,12 +2928,34 @@
             "items": {
               "$ref": "#/components/schemas/KnowledgeReviewHistoryDetail"
             },
-            "maxItems": 10000,
+            "maxItems": 500,
             "title": "History",
             "type": "array"
           },
+          "historyNextCursor": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historynextcursor"
+          },
           "inventory": {
             "$ref": "#/components/schemas/KnowledgeReviewInventory"
+          },
+          "publicationIds": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Publicationids",
+            "type": "array"
           },
           "publicationTarget": {
             "$ref": "#/components/schemas/KnowledgePublicationTarget"
@@ -2968,7 +3011,9 @@
           "approvedItemIds",
           "inventory",
           "decisions",
+          "decisionHistory",
           "history",
+          "publicationIds",
           "publicationTarget",
           "allowedActions"
         ],
@@ -2989,6 +3034,33 @@
             "minLength": 1,
             "title": "Actorid",
             "type": "string"
+          },
+          "decisionDigest": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 71,
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisiondigest"
+          },
+          "decisionId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisionid"
           },
           "itemId": {
             "anyOf": [
@@ -3041,7 +3113,7 @@
             "items": {
               "$ref": "#/components/schemas/KnowledgeReviewInventoryItem"
             },
-            "maxItems": 10000,
+            "maxItems": 500,
             "title": "Items",
             "type": "array"
           },
@@ -3049,6 +3121,19 @@
             "minimum": 0.0,
             "title": "Needsreviewcount",
             "type": "integer"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
           },
           "parsedCount": {
             "minimum": 0.0,
@@ -3204,6 +3289,19 @@
             "title": "Decidedat",
             "type": "string"
           },
+          "decisionDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Decisiondigest",
+            "type": "string"
+          },
+          "decisionId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Decisionid",
+            "type": "string"
+          },
           "itemId": {
             "maxLength": 256,
             "minLength": 1,
@@ -3226,6 +3324,8 @@
           }
         },
         "required": [
+          "decisionId",
+          "decisionDigest",
           "itemId",
           "checkKind",
           "status",
@@ -3247,6 +3347,19 @@
             "maxItems": 100,
             "title": "Items",
             "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
           }
         },
         "required": [
@@ -10803,6 +10916,36 @@
                 }
               ],
               "title": "Sourcerevisionid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterReviewId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Afterreviewid"
             }
           }
         ],

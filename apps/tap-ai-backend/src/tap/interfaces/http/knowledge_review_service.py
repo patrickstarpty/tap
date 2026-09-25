@@ -59,12 +59,20 @@ class KnowledgeReviewHttpService:
     def scope(self) -> ProjectScopeContext:
         return self._scope
 
-    async def list_reviews(self, source_revision_id: str | None) -> KnowledgeReviewPage:
+    async def list_reviews(
+        self,
+        source_revision_id: str | None,
+        limit: int = 50,
+        after_review_id: str | None = None,
+    ) -> KnowledgeReviewPage:
+        values = await self._application.list_reviews(
+            source_revision_id,
+            limit=limit + 1,
+            after_review_id=after_review_id,
+        )
         return KnowledgeReviewPage(
-            items=[
-                await self._review_detail(item)
-                for item in await self._application.list_reviews(source_revision_id)
-            ]
+            items=[await self._review_detail(item) for item in values[:limit]],
+            next_cursor=values[limit - 1].revision.review_id if len(values) > limit else None,
         )
 
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail:
@@ -139,6 +147,7 @@ class KnowledgeReviewHttpService:
             target=ReviewStatus.CHECKING,
             actor_id=self._scope.actor_id,
             expected_version=expected_version,
+            now=self._clock(),
         )
         return await self.get_review(review_id)
 
@@ -148,6 +157,7 @@ class KnowledgeReviewHttpService:
             target=ReviewStatus.REVIEWING,
             actor_id=self._scope.actor_id,
             expected_version=expected_version,
+            now=self._clock(),
         )
         return await self.get_review(review_id)
 
@@ -188,6 +198,7 @@ class KnowledgeReviewHttpService:
     async def _review_detail(self, value: KnowledgeReviewRead) -> KnowledgeReviewDetail:
         revision = value.revision
         inventory = await self._application.list_inventory(revision.review_id)
+        publications = await self._application.list_publications(revision.review_id)
         current = await self._application.current_publication_for_review(revision)
         generation = await self._application.publication_generation(revision)
         allowed = await self._allowed_actions(revision, current, generation)
@@ -211,25 +222,21 @@ class KnowledgeReviewHttpService:
                         reason=item.reason,
                         decision_actor_id=item.decision_actor_id,
                     )
-                    for item in inventory
+                    for item in inventory[:500]
                 ],
                 parsed_count=statuses.count("parsed"),
                 failed_count=statuses.count("failed"),
                 needs_review_count=statuses.count("needs_review"),
                 excluded_count=statuses.count("excluded"),
+                next_cursor=inventory[499].item_id if len(inventory) > 500 else None,
             ),
-            decisions=[
-                KnowledgeReviewItemDecisionDetail(
-                    item_id=item.item_id,
-                    check_kind=KnowledgeReviewCheckKind(item.check_kind.value),
-                    status=KnowledgeReviewDecisionStatus(item.status.value),
-                    note=item.note,
-                    actor_id=item.actor_id,
-                    review_version=item.review_version,
-                    decided_at=item.decided_at.isoformat(),
-                )
-                for item in value.decisions
-            ],
+            decisions=[_decision_detail(item) for item in value.decisions[:500]],
+            decision_history=[_decision_detail(item) for item in value.decision_history[-500:]],
+            decision_history_next_cursor=(
+                value.decision_history[-500].decision_id
+                if len(value.decision_history) > 500
+                else None
+            ),
             history=[
                 KnowledgeReviewHistoryDetail(
                     review_version=item.review_version,
@@ -237,9 +244,15 @@ class KnowledgeReviewHttpService:
                     actor_id=item.actor_id,
                     occurred_at=item.occurred_at.isoformat(),
                     item_id=item.item_id,
+                    decision_id=item.decision_id,
+                    decision_digest=item.decision_digest,
                 )
-                for item in value.history
+                for item in value.history[-500:]
             ],
+            history_next_cursor=(
+                value.history[-500].review_version if len(value.history) > 500 else None
+            ),
+            publication_ids=[item.publication_id for item in publications[-500:]],
             current_publication=None if current is None else _publication_detail(current),
             publication_target=KnowledgePublicationTarget(
                 status="ready" if generation is not None else "unavailable",
@@ -255,59 +268,60 @@ class KnowledgeReviewHttpService:
         current: KnowledgePublication | None,
         generation: str | None,
     ) -> list[KnowledgeReviewAction]:
-        candidates: list[tuple[KnowledgeReviewAction, str, str, bool]] = [
+        applicable = await self._application.review_capabilities(
+            revision,
+            current_publication=current,
+            generation=generation,
+            actor_id=self._scope.actor_id,
+            now=self._clock(),
+        )
+        candidates: list[tuple[KnowledgeReviewAction, str, str, str]] = [
             (
                 KnowledgeReviewAction.EDIT,
                 "knowledge.review.edit",
                 "knowledge-review",
-                revision.status
-                in {ReviewStatus.DRAFT, ReviewStatus.CHECKING, ReviewStatus.NEEDS_REVIEW},
+                revision.review_id,
             ),
             (
                 KnowledgeReviewAction.SUBMIT,
                 "knowledge.review.edit",
                 "knowledge-review",
-                revision.status is ReviewStatus.CHECKING
-                and not revision.blocking_item_ids
-                and bool(revision.approved_item_ids),
+                revision.review_id,
             ),
             (
                 KnowledgeReviewAction.RETURN,
                 "knowledge.review.edit",
                 "knowledge-review",
-                revision.status is ReviewStatus.REVIEWING,
+                revision.review_id,
             ),
             (
                 KnowledgeReviewAction.APPROVE,
                 "knowledge.review.approve",
                 "knowledge-review",
-                revision.status is ReviewStatus.REVIEWING
-                and not revision.blocking_item_ids
-                and bool(revision.approved_item_ids)
-                and self._scope.actor_id not in revision.editor_actor_ids,
+                revision.review_id,
             ),
             (
                 KnowledgeReviewAction.PUBLISH,
                 "knowledge.publish",
                 "knowledge-publication",
-                revision.status is ReviewStatus.APPROVED and generation is not None,
+                revision.review_id,
             ),
             (
                 KnowledgeReviewAction.WITHDRAW,
                 "knowledge.publish",
                 "knowledge-publication",
-                current is not None and current.status == "published",
+                current.publication_id if current is not None else revision.review_id,
             ),
             (
                 KnowledgeReviewAction.READ_ORIGINAL,
                 "knowledge.original.read",
                 "knowledge-original",
-                True,
+                revision.review_id,
             ),
         ]
         allowed: list[KnowledgeReviewAction] = []
-        for public, action, kind, applicable in candidates:
-            if not applicable:
+        for public, action, kind, resource_id in candidates:
+            if public.value not in applicable:
                 continue
             try:
                 decision = await self._authorization_policy.authorize(
@@ -317,7 +331,7 @@ class KnowledgeReviewHttpService:
                         enterprise_id=self._scope.enterprise_id,
                         project_id=self._scope.project_id,
                         kind=kind,
-                        resource_id=revision.review_id,
+                        resource_id=resource_id,
                     ),
                 )
             except Exception as error:
@@ -335,6 +349,20 @@ def _review_summary(value: KnowledgeReviewRevision) -> KnowledgeReviewSummary:
         reviewer_actor_id=value.reviewer_actor_id,
         expires_at=value.expires_at.isoformat(),
         approval_digest=value.approval_digest,
+    )
+
+
+def _decision_detail(value) -> KnowledgeReviewItemDecisionDetail:  # type: ignore[no-untyped-def]
+    return KnowledgeReviewItemDecisionDetail(
+        decision_id=value.decision_id,
+        decision_digest=value.decision_digest,
+        item_id=value.item_id,
+        check_kind=KnowledgeReviewCheckKind(value.check_kind.value),
+        status=KnowledgeReviewDecisionStatus(value.status.value),
+        note=value.note,
+        actor_id=value.actor_id,
+        review_version=value.review_version,
+        decided_at=value.decided_at.isoformat(),
     )
 
 
