@@ -8,6 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
+from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
@@ -450,6 +451,60 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
     conversations = Conversations()
     assert await GenerationWorker(conversations, Knowledge()).run_once(limit=1) == 1
     assert conversations.repository.checkpoint_claims == [("turn-1", "lease-1")]
+
+
+@pytest.mark.asyncio
+async def test_generation_worker_keeps_checkpoint_failure_retryable_and_continues_batch():
+    class UnavailableCheckpointer(InMemorySaver):
+        async def aget_tuple(self, config):
+            del config
+            raise GraphCheckpointUnavailable("checkpoint database unavailable")
+
+    turns = tuple(
+        (
+            "conversation-1",
+            SimpleNamespace(
+                turn_id=f"turn-{number}",
+                lease_token=f"lease-{number}",
+                input_snapshot=SimpleNamespace(
+                    value=SimpleNamespace(message="question", resolved_resources=())
+                ),
+            ),
+        )
+        for number in (1, 2)
+    )
+
+    class Repository:
+        async def claim_queued(self, *, limit):
+            assert limit == 2
+            return turns
+
+        def graph_checkpointer(self, turn):
+            return UnavailableCheckpointer() if turn.turn_id == "turn-1" else InMemorySaver()
+
+    class Conversations:
+        repository = Repository()
+        completed = []
+
+        async def emit(self, *_args, **_kwargs):
+            pass
+
+        async def complete_evidence(self, _conversation_id, turn_id, *_args, **_kwargs):
+            self.completed.append(turn_id)
+
+    class Knowledge:
+        async def answer(self, _request):
+            return SimpleNamespace(
+                answer="grounded",
+                citations=(),
+                abstained=False,
+                trace_id="trace",
+                model_dump=lambda **_: {"answer": "grounded", "citations": []},
+            )
+
+    conversations = Conversations()
+    assert await GenerationWorker(conversations, Knowledge()).run_once(limit=2) == 2
+    assert conversations.completed == ["turn-2"]
 
 
 @pytest.mark.asyncio

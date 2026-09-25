@@ -16,6 +16,7 @@ from tap.contracts.http import ResourceMode, ResourceRef, RetrievalAnswerRequest
 from tap.contracts.problems import build_problem
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
+from tap.modules.ai.domain.graph_runs import GraphCheckpointUnavailable
 from tap.modules.chat.application.conversations import ConversationConflict
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
@@ -331,8 +332,9 @@ class GenerationWorker:
                     lease_token=turn.lease_token,
                     terminal_event=terminal_event,
                 )
-            except (ConversationConflict, PermissionError):
-                # Cancellation or lease reclaim won the terminal-state race.
+            except (ConversationConflict, PermissionError, GraphCheckpointUnavailable):
+                # Cancellation, lease reclaim, or transient checkpoint storage leaves
+                # the turn non-terminal so a later claim can recover it.
                 continue
             except AuthorizationDenied:
                 try:

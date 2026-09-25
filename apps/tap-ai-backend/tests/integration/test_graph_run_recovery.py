@@ -1,6 +1,8 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import pytest
+from langgraph.checkpoint.base import empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -9,6 +11,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import (
     MysqlGraphCheckpointer,
     graph_checkpoint,
+    graph_checkpoint_write,
     graph_run,
     graph_settlement,
 )
@@ -285,6 +288,145 @@ async def test_mysql_checkpoint_rolls_back_when_outbox_write_fails(
             )
         assert run_count == 0
         assert checkpoint_count == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_checkpoint_accepts_task_writes_before_parent_commit(
+    owned_project_mysql, monkeypatch
+) -> None:
+    """LangGraph may submit task writes while the parent put is still in flight."""
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    service = ConversationService(
+        MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+        scope=VALIDATION_SCOPE,
+    )
+    await service.create("chat-parent-race", "turn-parent-race", "request-parent-race", _input())
+    claim = (await service.repository.claim_queued(limit=1))[0][1]
+    saver = service.repository.graph_checkpointer(claim)
+    checkpoint = empty_checkpoint()
+    checkpoint["channel_values"] = {
+        "graph_version": "fast-chat-v1",
+        "state_schema_version": 1,
+        "execution_mode": "inline",
+        "reasoning_mode": "direct",
+    }
+    base_config = {
+        "configurable": {
+            "thread_id": claim.turn_id,
+            "graph_version": "fast-chat-v1",
+            "state_schema_version": 1,
+            "execution_mode": "inline",
+        }
+    }
+    write_config = {
+        "configurable": {
+            **base_config["configurable"],
+            "checkpoint_id": checkpoint["id"],
+        }
+    }
+    parent_missing = asyncio.Event()
+    retry_parent = asyncio.Event()
+    write_task = None
+    missing_task = None
+
+    async def controlled_parent_wait(_delay: float) -> None:
+        parent_missing.set()
+        await retry_parent.wait()
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_parent_wait)
+    try:
+        write_task = asyncio.create_task(
+            saver.aput_writes(
+                write_config,
+                [("result", {"revisionId": "revision-race"})],
+                "task-race",
+            )
+        )
+        missing_task = asyncio.create_task(parent_missing.wait())
+        completed, _ = await asyncio.wait(
+            {write_task, missing_task},
+            timeout=2,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        assert missing_task in completed, (
+            "task writes failed instead of waiting for their in-flight parent: "
+            f"{write_task.exception()!r}"
+        )
+
+        saved_config = await saver.aput(base_config, checkpoint, {"step": -1}, {})
+        retry_parent.set()
+        await asyncio.wait_for(write_task, timeout=2)
+
+        saved = await saver.aget_tuple(saved_config)
+        assert saved is not None
+        assert saved.pending_writes == [("task-race", "result", {"revisionId": "revision-race"})]
+        async with sessions() as session:
+            write_count = await session.scalar(
+                select(func.count())
+                .select_from(graph_checkpoint_write)
+                .where(graph_checkpoint_write.c.run_id == claim.turn_id)
+            )
+        assert write_count == 1
+    finally:
+        retry_parent.set()
+        for task in (write_task, missing_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (write_task, missing_task) if task is not None),
+            return_exceptions=True,
+        )
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_checkpoint_replay_deduplicates_concurrent_task_writes_after_restart(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    first = MysqlGraphCheckpointer(sessions, scope=VALIDATION_SCOPE)
+    second = MysqlGraphCheckpointer(sessions, scope=VALIDATION_SCOPE)
+    checkpoint = empty_checkpoint()
+    checkpoint["channel_values"] = {
+        "graph_version": "concurrent-replay-v1",
+        "state_schema_version": 1,
+        "execution_mode": "durable",
+        "reasoning_mode": "direct",
+    }
+    base_config = {
+        "configurable": {
+            "thread_id": "run-concurrent-replay",
+            "graph_version": "concurrent-replay-v1",
+            "state_schema_version": 1,
+            "execution_mode": "durable",
+        }
+    }
+    try:
+        saved_config = await first.aput(base_config, checkpoint, {"step": -1}, {})
+        writes = [("result", {"revisionId": "revision-once"})]
+
+        await asyncio.gather(
+            first.aput_writes(saved_config, writes, "task-replayed"),
+            second.aput_writes(saved_config, writes, "task-replayed"),
+        )
+
+        restarted = MysqlGraphCheckpointer(sessions, scope=VALIDATION_SCOPE)
+        saved = await restarted.aget_tuple(saved_config)
+        assert saved is not None
+        assert saved.pending_writes == [
+            ("task-replayed", "result", {"revisionId": "revision-once"})
+        ]
+        async with sessions() as session:
+            write_count = await session.scalar(
+                select(func.count())
+                .select_from(graph_checkpoint_write)
+                .where(graph_checkpoint_write.c.run_id == "run-concurrent-replay")
+            )
+        assert write_count == 1
     finally:
         await engine.dispose()
 

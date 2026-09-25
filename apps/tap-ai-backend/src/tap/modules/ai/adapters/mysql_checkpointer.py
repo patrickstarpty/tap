@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -156,6 +157,9 @@ graph_settlement = _scoped(
 
 AI_GRAPH_TABLES = (graph_run, graph_checkpoint, graph_checkpoint_write, graph_settlement)
 
+_CHECKPOINT_PARENT_POLL_SECONDS = 0.01
+_CHECKPOINT_PARENT_WAIT_SECONDS = 1.0
+
 
 @asynccontextmanager
 async def _checkpoint_storage():
@@ -220,6 +224,30 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
         if valid is None:
             raise PermissionError("graph run fencing token is stale")
         return valid[0], int(valid[1]) if len(valid) > 1 else 1
+
+    async def _wait_for_checkpoint_parent(
+        self, *, run_id: str, namespace: str, checkpoint_id: str
+    ) -> None:
+        """Wait outside the fenced write transaction for an in-flight parent put."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CHECKPOINT_PARENT_WAIT_SECONDS
+        while True:
+            async with _checkpoint_storage(), self._sessions() as session:
+                await self._assert_fence(session)
+                parent_exists = await session.scalar(
+                    select(graph_checkpoint.c.checkpoint_id).where(
+                        *scope_predicates(graph_checkpoint, self._scope),
+                        graph_checkpoint.c.run_id == run_id,
+                        graph_checkpoint.c.checkpoint_ns == namespace,
+                        graph_checkpoint.c.checkpoint_id == checkpoint_id,
+                    )
+                )
+            if parent_exists is not None:
+                return
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise GraphCheckpointUnavailable("graph checkpoint parent did not become durable")
+            await asyncio.sleep(min(_CHECKPOINT_PARENT_POLL_SECONDS, remaining))
 
     @staticmethod
     def _coordinates(config: RunnableConfig) -> tuple[str, str, str | None]:
@@ -482,6 +510,11 @@ class MysqlGraphCheckpointer(BaseCheckpointSaver[str]):
         run_id, namespace, checkpoint_id = self._coordinates(config)
         if checkpoint_id is None:
             raise ValueError("checkpoint writes require a checkpoint identity")
+        await self._wait_for_checkpoint_parent(
+            run_id=run_id,
+            namespace=namespace,
+            checkpoint_id=checkpoint_id,
+        )
         identity = scope_values(self._scope)
         async with _checkpoint_storage(), self._sessions() as session, session.begin():
             await self._assert_fence(session, lock=True)
