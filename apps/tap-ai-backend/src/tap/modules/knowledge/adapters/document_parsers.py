@@ -894,7 +894,7 @@ def _pdf_skip_hex_string(content: bytes, cursor: int, limit: int) -> int | None:
     return None
 
 
-def _pdf_tokens(content: bytes) -> tuple[_PdfToken, ...]:
+def _pdf_tokens(content: bytes) -> tuple[_PdfToken, ...] | None:
     tokens: list[_PdfToken] = []
     index = 0
     whitespace = b"\x00\t\n\x0c\r "
@@ -929,7 +929,7 @@ def _pdf_tokens(content: bytes) -> tuple[_PdfToken, ...]:
                         break
                 index += 1
             if depth:
-                return ()
+                return None
             continue
         if value in b"[]":
             tokens.append(_PdfToken(chr(value), index, index + 1))
@@ -949,6 +949,8 @@ def _pdf_tokens(content: bytes) -> tuple[_PdfToken, ...]:
             kind = content[index:end].decode("ascii")
         except UnicodeDecodeError:
             kind = "other"
+        if kind == "BI":
+            return None
         tokens.append(_PdfToken(kind, index, end))
         index = end
     return tuple(tokens)
@@ -965,7 +967,10 @@ def _pdf_text_operator_excerpt(
     array_literals: list[_PdfToken] | None = None
     closed_array: tuple[_PdfToken, ...] | None = None
     shown: list[_PdfToken | None] = []
-    for token in _pdf_tokens(decoded_stream):
+    tokens = _pdf_tokens(decoded_stream)
+    if tokens is None:
+        return None
+    for token in tokens:
         if token.kind == "BT":
             in_text = True
         elif token.kind == "ET":

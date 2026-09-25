@@ -83,6 +83,43 @@ def _pdf_with_streams(*streams: bytes, dictionary_prefix: bytes = b"") -> bytes:
     return bytes(body)
 
 
+def _pdf_with_inline_image_decoy_and_form() -> bytes:
+    visible = b"BT /F1 12 Tf 72 720 Td (Visible clause) Tj ET"
+    page_stream = b"q BI /W 1 /H 1 /CS /G /BPC 8 ID " + visible + b" EI Q /Fm1 Do"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /Resources "
+            b"<< /Font << /F1 3 0 R >> /XObject << /Fm1 6 0 R >> >> "
+            b"/MediaBox [0 0 612 792] /Contents 5 0 R >>"
+        ),
+        f"<< /Length {len(page_stream)} >>\nstream\n".encode() + page_stream + b"\nendstream",
+        (
+            b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 3 0 R >> >> "
+            + f"/Length {len(visible)} >>\nstream\n".encode()
+            + visible
+            + b"\nendstream"
+        ),
+    ]
+    body = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, value in enumerate(objects, start=1):
+        offsets.append(len(body))
+        body.extend(f"{number} 0 obj\n".encode())
+        body.extend(value)
+        body.extend(b"\nendobj\n")
+    xref = len(body)
+    body.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    body.extend(b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:]))
+    body.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    )
+    return bytes(body)
+
+
 def _identified_source(filename: str, media_type: MediaType, content: bytes) -> DocumentSource:
     document_id = DocumentId("doc_inventory")
     return DocumentSource(
@@ -368,6 +405,45 @@ def test_pdf_provenance_skips_stream_decoy_inside_object_dictionary() -> None:
     span = item.original_excerpt
     actual_stream_start = payload.rfind(b"\nstream\n") + len(b"\nstream\n")
     assert span.start_byte >= actual_stream_start
+    assert payload[span.start_byte : span.end_byte] == b"Visible clause"
+
+
+def test_pdf_provenance_is_unsupported_when_inline_image_payload_contains_fake_text() -> None:
+    """Inline image bytes must never impersonate text rendered by a Form XObject."""
+    payload = _pdf_with_inline_image_decoy_and_form()
+
+    artifact = ParserRegistry().parse(_identified_source("inline.pdf", MediaType.PDF, payload))
+
+    item = next(item for item in artifact.parse_inventory if item.kind is ParseInventoryKind.PAGE)
+    assert artifact.blocks[0].text == "Visible clause"
+    assert item.original_excerpt is None
+    assert item.original_alignment_reason == "source-text-not-stably-addressable"
+
+
+def test_pdf_provenance_lexer_stops_before_inline_image_payload() -> None:
+    """Fail-closed inline-image detection must not inspect attacker-controlled image bytes."""
+    from tap.modules.knowledge.adapters import document_parsers
+
+    class PayloadGuard(bytes):
+        def __getitem__(self, key):  # type: ignore[no-untyped-def]
+            if isinstance(key, int) and key > 2:
+                raise AssertionError("inline image payload was scanned")
+            return super().__getitem__(key)
+
+    content = PayloadGuard(b"BI attacker-controlled payload with (Visible clause) Tj")
+
+    assert document_parsers._pdf_tokens(content) is None
+
+
+def test_pdf_provenance_remains_available_without_inline_image() -> None:
+    """The inline-image guard must not disable a direct text-showing page stream."""
+    payload = _pdf_with_text("Visible clause")
+
+    artifact = ParserRegistry().parse(_identified_source("plain.pdf", MediaType.PDF, payload))
+
+    item = next(item for item in artifact.parse_inventory if item.kind is ParseInventoryKind.PAGE)
+    assert item.original_excerpt is not None
+    span = item.original_excerpt
     assert payload[span.start_byte : span.end_byte] == b"Visible clause"
 
 
