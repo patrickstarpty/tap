@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -60,6 +61,8 @@ from tests.integration.test_knowledge_publication import (
     seed_authority,
 )
 from tests.integration.test_test_plan_repository import (
+    TEST_DESIGN_MODEL_MAPPING,
+    _repository,
     _request,
     _seed_completed_turn,
     _seed_test_design_authority,
@@ -244,7 +247,7 @@ async def _seed_governed_draft(sessions):  # type: ignore[no-untyped-def]
                 created_at=NOW.replace(tzinfo=None),
             )
         )
-    repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+    repository = _repository(sessions)
     instant = datetime.now(timezone.utc).replace(tzinfo=None)
     job = await repository.request_generation_from_turn(
         VALIDATION_SCOPE,
@@ -377,6 +380,71 @@ async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
             now=datetime(2026, 9, 13, 12, 5),
         )
         assert (first_fork.version, second_fork.version) == (2, 3)
+
+        concurrent_forks = await asyncio.gather(
+            *(
+                repository.fork_revision(
+                    VALIDATION_SCOPE,
+                    published.test_plan_id,
+                    published.revision_id,
+                    expected_version=published.row_version,
+                    idempotency_key="fork-published-concurrent",
+                    now=datetime(2026, 9, 13, 12, 6),
+                )
+                for _ in range(2)
+            )
+        )
+        assert concurrent_forks[0].revision_id == concurrent_forks[1].revision_id
+        assert concurrent_forks[0].version == concurrent_forks[1].version == 4
+
+        editable = replace(
+            concurrent_forks[0], title="Checkout validation — revised"
+        ).with_recomputed_digest()
+        concurrent_edits = await asyncio.gather(
+            *(
+                repository.replace_draft(
+                    VALIDATION_SCOPE,
+                    editable,
+                    concurrent_forks[0].row_version,
+                    idempotency_key="edit-fork-concurrent",
+                    now=datetime(2026, 9, 13, 12, 7),
+                )
+                for _ in range(2)
+            )
+        )
+        assert concurrent_edits[0] == concurrent_edits[1]
+
+        concurrent_reviews = await asyncio.gather(
+            *(
+                repository.record_review(
+                    VALIDATION_SCOPE,
+                    editable.test_plan_id,
+                    editable.revision_id,
+                    disposition=ReviewDisposition.ACCEPTED_MODIFIED,
+                    reason="Confirmed the revised published-plan copy.",
+                    expected_version=concurrent_edits[0].row_version,
+                    idempotency_key="review-fork-concurrent",
+                    now=datetime(2026, 9, 13, 12, 8),
+                )
+                for _ in range(2)
+            )
+        )
+        assert concurrent_reviews[0] == concurrent_reviews[1]
+
+        concurrent_published = await asyncio.gather(
+            *(
+                PublishTestPlan(repository, CitationAuthority()).execute(
+                    VALIDATION_SCOPE,
+                    editable.test_plan_id,
+                    editable.revision_id,
+                    expected_version=concurrent_reviews[0].row_version,
+                    idempotency_key="publish-fork-concurrent",
+                )
+                for _ in range(2)
+            )
+        )
+        assert concurrent_published[0] == concurrent_published[1]
+        assert concurrent_published[0].status.value == "PUBLISHED"
     finally:
         await engine.dispose()
 
@@ -502,7 +570,11 @@ async def test_mysql_publish_holds_authority_lock_against_concurrent_withdrawal(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         _, reviewed, publication, review_application = await _seed_governed_draft(sessions)
-        repository = PausingPublishRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = PausingPublishRepository(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+        )
         publish_task = asyncio.create_task(
             PublishTestPlan(repository, CitationAuthority()).execute(
                 VALIDATION_SCOPE,
@@ -544,7 +616,11 @@ async def test_mysql_generation_insertion_holds_authority_lock_against_withdrawa
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = PausingGenerationRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = PausingGenerationRepository(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            model_mapping=TEST_DESIGN_MODEL_MAPPING,
+        )
         request = _request(publication)
         generation_task = asyncio.create_task(
             repository.request_generation(

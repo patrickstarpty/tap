@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from typing import cast
 
+from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.test_management.domain.models import (
@@ -175,9 +177,26 @@ TEST_DESIGN_PROMPT = (
 TEST_DESIGN_PROFILE_DIGEST = text_digest(
     TEST_DESIGN_PROMPT + "\n" + schema_digest(TEST_DESIGN_SCHEMA)
 )
-# Versioned server route binding for the Test Design workload. Changing model
-# routing semantics requires changing this value and therefore the frozen ID.
-TEST_DESIGN_MODEL_ROUTE_VERSION = "test-design-route-v1"
+
+
+def design_model_revision_id(model_alias: str, mapping: ProviderModelMapping) -> str:
+    """Freeze the actual private provider/model route plus the workload profile."""
+
+    if not isinstance(model_alias, str) or not model_alias.strip():
+        raise ValueError("test design model alias must be nonblank")
+    if not isinstance(mapping, ProviderModelMapping):
+        raise TypeError("test design model mapping is required")
+    material = json.dumps(
+        {
+            "modelAlias": model_alias,
+            "provider": mapping.provider,
+            "providerModel": mapping.model,
+            "promptSchemaProfileDigest": TEST_DESIGN_PROFILE_DIGEST,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "tmr_" + hashlib.sha256(material.encode()).hexdigest()
 
 
 class ModelGatewayTestDesign:

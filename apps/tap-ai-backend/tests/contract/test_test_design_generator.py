@@ -3,11 +3,13 @@ from copy import deepcopy
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.application.schema import check_schema
 from tap.modules.ai.domain.models import ModelCallAudit, ModelOperation, ModelResult, ModelUsage
 from tap.modules.test_management.adapters.model_gateway_generation import (
     TEST_DESIGN_SCHEMA,
     ModelGatewayTestDesign,
+    design_model_revision_id,
 )
 from tap.modules.test_management.domain.models import (
     RequirementScopeItem,
@@ -44,6 +46,18 @@ class Gateway:
                 usage=ModelUsage(10, 20),
             ),
         )
+
+
+def test_model_revision_binds_actual_provider_model_mapping() -> None:
+    first = design_model_revision_id(
+        "tapper-chat", ProviderModelMapping("dashscope", "qwen-plus-2026-09")
+    )
+    changed = design_model_revision_id(
+        "tapper-chat", ProviderModelMapping("dashscope", "qwen-plus-2026-10")
+    )
+
+    assert first.startswith("tmr_")
+    assert first != changed
 
 
 def _context() -> DesignContext:

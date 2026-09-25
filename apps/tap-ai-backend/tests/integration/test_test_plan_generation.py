@@ -6,6 +6,8 @@ from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.litellm import ProviderModelMapping
+from tap.modules.ai.adapters.mysql import ai_agent_revision
 from tap.modules.ai.adapters.mysql_checkpointer import graph_run, graph_settlement
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
@@ -23,6 +25,7 @@ from tap.modules.test_management.ports.generation import GenerationResponseUnkno
 from tap.platform.db.project_scope import scope_values
 from tests.integration.test_test_plan_publish import _draft
 from tests.integration.test_test_plan_repository import (
+    _repository,
     _request,
     _seed_completed_turn,
     _seed_test_design_authority,
@@ -39,7 +42,7 @@ async def test_generation_worker_reclaims_expired_job_and_commits_draft_with_art
         base = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = _repository(sessions)
         request = _request(publication)
         await repository.request_generation(VALIDATION_SCOPE, request, now=base)
         first = (
@@ -147,7 +150,7 @@ async def test_generation_completion_rolls_back_business_graph_and_outbox_togeth
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = _repository(sessions)
         request = _request(publication)
         await repository.request_generation(
             VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 12, 0)
@@ -239,7 +242,7 @@ async def test_expired_generation_claim_cannot_load_model_context(owned_project_
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = _repository(sessions)
         request = _request(publication)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
@@ -266,6 +269,75 @@ async def test_expired_generation_claim_cannot_load_model_context(owned_project_
 
 
 @pytest.mark.asyncio
+async def test_generation_context_rejects_revoked_agent_before_model_io(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
+        repository = _repository(sessions)
+        request = _request(publication)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=now)
+        claim = (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="revoked-agent-worker",
+                now=now,
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+        )[0]
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(ai_agent_revision)
+                .where(ai_agent_revision.c.revision_id == request.agent_revision_id)
+                .values(status="DISABLED")
+            )
+
+        with pytest.raises(ValueError, match="enabled Agent and Skill"):
+            await repository.generation_context(VALIDATION_SCOPE, claim)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_generation_context_rejects_changed_provider_model_mapping(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        publication = await _seed_test_design_authority(sessions)
+        await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
+        repository = _repository(sessions)
+        request = _request(publication)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=now)
+        claim = (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="changed-model-worker",
+                now=now,
+                lease_duration=timedelta(seconds=60),
+                limit=1,
+            )
+        )[0]
+        changed_repository = MysqlTestPlanRepository(
+            sessions,
+            scope=VALIDATION_SCOPE,
+            model_mapping=ProviderModelMapping("fake", "deterministic-chat-v2"),
+        )
+
+        with pytest.raises(ValueError, match="model route"):
+            await changed_repository.generation_context(VALIDATION_SCOPE, claim)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_unknown_provider_response_is_held_for_reconciliation_without_reissue(
     owned_project_mysql,
 ) -> None:
@@ -281,7 +353,7 @@ async def test_unknown_provider_response_is_held_for_reconciliation_without_reis
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = _repository(sessions)
         request = _request(publication)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
@@ -328,7 +400,7 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = _repository(sessions)
         request = _request(publication)
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)

@@ -7,6 +7,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
 from tap.modules.ai.application.assets import validation_asset_seed
 from tap.modules.chat.adapters.mysql import chat_turn
@@ -17,6 +18,9 @@ from tap.modules.chat.adapters.mysql_conversations import (
 )
 from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
 from tap.modules.knowledge.application.review import KnowledgeReviewApplication
+from tap.modules.test_management.adapters.model_gateway_generation import (
+    design_model_revision_id,
+)
 from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
 from tap.modules.test_management.domain.models import (
     RequirementScopeItem,
@@ -33,6 +37,16 @@ from tests.integration.test_knowledge_publication import (
     approved_review,
     seed_authority,
 )
+
+TEST_DESIGN_MODEL_MAPPING = ProviderModelMapping("fake", "deterministic-chat-v1")
+
+
+def _repository(sessions):  # type: ignore[no-untyped-def]
+    return MysqlTestPlanRepository(
+        sessions,
+        scope=VALIDATION_SCOPE,
+        model_mapping=TEST_DESIGN_MODEL_MAPPING,
+    )
 
 
 async def _seed_test_design_authority(sessions):  # type: ignore[no-untyped-def]
@@ -154,7 +168,7 @@ def _request(publication=None, **changes: str) -> PlanGenerationRequest:  # type
             ),
         ),
         "approved_knowledge_revision_ids": (source_revision_id,),
-        "model_revision_id": "tapper-chat-2026-09",
+        "model_revision_id": design_model_revision_id("tapper-chat", TEST_DESIGN_MODEL_MAPPING),
     }
     values.update(changes)
     return PlanGenerationRequest.create(**values)  # type: ignore[arg-type]
@@ -169,7 +183,7 @@ async def test_generation_job_binds_exact_completed_turn_snapshots_and_replays(
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        repository = _repository(sessions)
         request = _request(publication)
 
         first = await repository.request_generation(
@@ -225,8 +239,8 @@ async def test_generation_job_rejects_tampered_or_cross_turn_snapshots(
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
-        with pytest.raises(ValueError, match="snapshot|Turn|governance"):
+        repository = _repository(sessions)
+        with pytest.raises(ValueError, match="snapshot|Turn|governance|model route"):
             await repository.request_generation(
                 VALIDATION_SCOPE,
                 _request(publication, **changes),

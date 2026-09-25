@@ -714,6 +714,7 @@ async def create_api_runtime(
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            test_design_model_mapping=_test_design_model_mapping(settings),
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             corpus_version=settings.corpus_version,
         )
@@ -923,7 +924,11 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
         )
         worker_id = settings.worker_id + "-test-design"
         worker = TestDesignWorker(
-            jobs=MysqlTestPlanRepository(sessions, scope=scope),
+            jobs=MysqlTestPlanRepository(
+                sessions,
+                scope=scope,
+                model_mapping=_test_design_model_mapping(settings),
+            ),
             generator=generator,
             scope=scope,
             worker_id=worker_id,
@@ -1027,11 +1032,7 @@ def _create_embeddings(
         api_key=settings.litellm_api_key,
         chat_alias=settings.chat_alias,
         embedding_alias=settings.embedding_alias,
-        chat_model=(
-            ProviderModelMapping("fake", "deterministic-chat-v1")
-            if settings.e2e_mode
-            else ProviderModelMapping.from_route(settings.litellm_model)
-        ),
+        chat_model=_test_design_model_mapping(settings),
         embedding_model=(
             ProviderModelMapping("fake", "deterministic-embedding-v1")
             if settings.e2e_mode
@@ -1064,6 +1065,14 @@ def _create_embeddings(
         alternate_answers=(
             {} if codex_answers is None else {_FIXED_CODEX_CHAT_ALIAS: codex_answers}
         ),
+    )
+
+
+def _test_design_model_mapping(settings: TapperSettings) -> ProviderModelMapping:
+    return (
+        ProviderModelMapping("fake", "deterministic-chat-v1")
+        if settings.e2e_mode
+        else ProviderModelMapping.from_route(settings.litellm_model)
     )
 
 
@@ -1489,6 +1498,7 @@ def _assemble_http_services(
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
     test_plan_sessions: object | None = None,
+    test_design_model_mapping: ProviderModelMapping | None = None,
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
     corpus_version: str = "tapper-demo-v1",
 ) -> HttpServices:
@@ -1572,8 +1582,14 @@ def _assemble_http_services(
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
         from tap.modules.test_management.application.plans import TestPlanApplication
 
+        if test_design_model_mapping is None:
+            raise ValueError("Test Plan service requires the actual model mapping")
         test_plans = TestPlanApplication(
-            MysqlTestPlanRepository(test_plan_sessions, scope=repository.scope)  # type: ignore[arg-type]
+            MysqlTestPlanRepository(
+                test_plan_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,  # type: ignore[arg-type]
+                model_mapping=test_design_model_mapping,
+            )
         )
     knowledge_reviews = None
     if review_sessions is not None:

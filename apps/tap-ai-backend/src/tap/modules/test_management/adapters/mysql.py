@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+from tap.modules.ai.adapters.litellm import ProviderModelMapping
 from tap.modules.ai.adapters.mysql import ai_agent_revision, skill_revision
 from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
@@ -58,6 +59,9 @@ from tap.modules.knowledge.adapters.mysql_review import (
     _current_pointer_id,
     knowledge_current_publication,
     knowledge_publication,
+)
+from tap.modules.test_management.adapters.model_gateway_generation import (
+    design_model_revision_id,
 )
 from tap.modules.test_management.domain.models import (
     BddKeyword,
@@ -600,10 +604,53 @@ class MysqlReconciledTestDesign:
 
 class MysqlTestPlanRepository:
     def __init__(
-        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+        model_mapping: ProviderModelMapping,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
+        if not isinstance(model_mapping, ProviderModelMapping):
+            raise TypeError("test design model mapping is required")
+        self._model_mapping = model_mapping
+
+    def _assert_model_route(self, model_alias: str, model_revision_id: str | None) -> None:
+        if model_revision_id != design_model_revision_id(model_alias, self._model_mapping):
+            raise ValueError("test design model route revision is no longer current")
+
+    async def _assert_enabled_generation_assets(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        agent_revision_id: str,
+        skill_revision_ids: tuple[str, ...],
+    ) -> None:
+        agent_rows = tuple(
+            await session.scalars(
+                select(ai_agent_revision.c.revision_id)
+                .where(
+                    *scope_predicates(ai_agent_revision, scope),
+                    ai_agent_revision.c.revision_id == agent_revision_id,
+                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+                .with_for_update()
+            )
+        )
+        skill_rows = tuple(
+            await session.scalars(
+                select(skill_revision.c.revision_id)
+                .where(
+                    *scope_predicates(skill_revision, scope),
+                    skill_revision.c.revision_id.in_(skill_revision_ids),
+                    skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+                .with_for_update()
+            )
+        )
+        if len(agent_rows) != 1 or set(skill_rows) != set(skill_revision_ids):
+            raise ValueError("generation requires enabled Agent and Skill revisions")
 
     @staticmethod
     def _write_digest(
@@ -874,12 +921,6 @@ class MysqlTestPlanRepository:
             "edit", revision.revision_id, expected_version, revision.content_digest
         )
         async with self._sessions() as session, session.begin():
-            replay = await self._write_replay(session, scope, idempotency_key, digest)
-            if replay is not None:
-                existing = await self._load_revision(session, replay["result_id"])
-                if existing is None:
-                    raise RevisionConflict("edit replay result no longer exists")
-                return existing
             row = (
                 (
                     await session.execute(
@@ -897,6 +938,12 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test plan revision not found")
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("edit replay result no longer exists")
+                return existing
             if row["status"] != RevisionStatus.DRAFT.value:
                 raise RevisionImmutable("published and superseded revisions are immutable")
             if row["row_version"] != expected_version:
@@ -975,12 +1022,6 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         digest = self._write_digest("fork", source_revision_id, expected_version, test_plan_id)
         async with self._sessions() as session, session.begin():
-            replay = await self._write_replay(session, scope, idempotency_key, digest)
-            if replay is not None:
-                existing = await self._load_revision(session, replay["result_id"])
-                if existing is None:
-                    raise RevisionConflict("fork replay result no longer exists")
-                return existing
             plan_exists = await session.scalar(
                 select(test_plan.c.test_plan_id)
                 .where(
@@ -991,6 +1032,12 @@ class MysqlTestPlanRepository:
             )
             if plan_exists is None:
                 raise LookupError("test plan not found")
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("fork replay result no longer exists")
+                return existing
             row = (
                 (
                     await session.execute(
@@ -1057,12 +1104,6 @@ class MysqlTestPlanRepository:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         digest = self._write_digest("publish", revision_id, expected_version, validation_digest)
         async with self._sessions() as session, session.begin():
-            replay = await self._write_replay(session, scope, idempotency_key, digest)
-            if replay is not None:
-                existing = await self._load_revision(session, replay["result_id"])
-                if existing is None:
-                    raise RevisionConflict("publish replay result no longer exists")
-                return existing
             row = (
                 (
                     await session.execute(
@@ -1079,6 +1120,12 @@ class MysqlTestPlanRepository:
             )
             if row is None:
                 raise LookupError("test plan revision not found")
+            replay = await self._write_replay(session, scope, idempotency_key, digest)
+            if replay is not None:
+                existing = await self._load_revision(session, replay["result_id"])
+                if existing is None:
+                    raise RevisionConflict("publish replay result no longer exists")
+                return existing
             if row["status"] not in {RevisionStatus.DRAFT.value, RevisionStatus.VALIDATING.value}:
                 raise RevisionImmutable("published and superseded revisions are immutable")
             if row["row_version"] != expected_version:
@@ -1330,43 +1377,74 @@ class MysqlTestPlanRepository:
                 or anchor.get("inventoryItemId") not in approved_items
             ):
                 raise ValueError("test plan citation item is not currently approved")
-        agent_rows = tuple(
-            await session.scalars(
-                select(ai_agent_revision.c.revision_id)
-                .where(
-                    *scope_predicates(ai_agent_revision, scope),
-                    ai_agent_revision.c.revision_id == revision.agent_revision_id,
-                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                )
-                .with_for_update()
-            )
+        await self._assert_enabled_generation_assets(
+            session,
+            scope,
+            revision.agent_revision_id,
+            revision.skill_revision_ids,
         )
-        skill_rows = tuple(
-            await session.scalars(
-                select(skill_revision.c.revision_id)
-                .where(
-                    *scope_predicates(skill_revision, scope),
-                    skill_revision.c.revision_id.in_(revision.skill_revision_ids),
-                    skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+        provenance_revision_id = revision.revision_id
+        if revision.adopted_from_revision_id is not None:
+            source = (
+                (
+                    await session.execute(
+                        select(test_plan_revision)
+                        .where(
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.revision_id == revision.adopted_from_revision_id,
+                            test_plan_revision.c.test_plan_id == revision.test_plan_id,
+                        )
+                        .with_for_update()
+                    )
                 )
-                .with_for_update()
+                .mappings()
+                .one_or_none()
             )
-        )
-        model_rows = tuple(
-            await session.scalars(
-                select(test_plan_generation_job.c.job_id)
-                .where(
-                    *scope_predicates(test_plan_generation_job, scope),
-                    test_plan_generation_job.c.revision_id == revision.revision_id,
-                    test_plan_generation_job.c.model_revision_id == revision.model_revision_id,
+            if (
+                source is None
+                or source["status"]
+                not in {
+                    RevisionStatus.PUBLISHED.value,
+                    RevisionStatus.SUPERSEDED.value,
+                }
+                or source["content_digest"] != revision.generated_content_digest
+                or source["requirement_scope_id"] != revision.requirement_scope_id
+                or source["requirement_scope_version"] != revision.requirement_scope_version
+                or source["requirement_scope_digest"] != revision.requirement_scope_digest
+                or tuple(source["approved_knowledge_revision_ids"])
+                != revision.approved_knowledge_revision_ids
+                or source["model_revision_id"] != revision.model_revision_id
+                or source["agent_revision_id"] != revision.agent_revision_id
+                or tuple(source["skill_revision_ids"]) != revision.skill_revision_ids
+            ):
+                raise ValueError("fork generation provenance is invalid")
+            provenance_revision_id = revision.adopted_from_revision_id
+        model_rows = (
+            (
+                await session.execute(
+                    select(test_plan_generation_job)
+                    .where(
+                        *scope_predicates(test_plan_generation_job, scope),
+                        test_plan_generation_job.c.test_plan_id == revision.test_plan_id,
+                        test_plan_generation_job.c.revision_id == provenance_revision_id,
+                        test_plan_generation_job.c.model_revision_id == revision.model_revision_id,
+                        test_plan_generation_job.c.status == GenerationJobStatus.DRAFT_READY.value,
+                    )
+                    .with_for_update()
                 )
-                .with_for_update()
             )
+            .mappings()
+            .all()
         )
+        if len(model_rows) != 1:
+            raise ValueError("test plan generation versions are no longer current")
+        model_row = model_rows[0]
+        self._assert_model_route(model_row["model_alias"], model_row["model_revision_id"])
         if (
-            len(agent_rows) != 1
-            or set(skill_rows) != set(revision.skill_revision_ids)
-            or len(model_rows) != 1
+            model_row["agent_revision_id"] != revision.agent_revision_id
+            or tuple(model_row["skill_revision_ids"]) != revision.skill_revision_ids
+            or tuple(model_row["approved_knowledge_revision_ids"])
+            != revision.approved_knowledge_revision_ids
         ):
             raise ValueError("test plan generation versions are no longer current")
 
@@ -1504,6 +1582,23 @@ class MysqlTestPlanRepository:
         )
         instant = _naive(now)
         async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_revision)
+                        .where(
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.test_plan_id == test_plan_id,
+                            test_plan_revision.c.revision_id == revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("test plan revision not found")
             replay = (
                 (
                     await session.execute(
@@ -1523,23 +1618,6 @@ class MysqlTestPlanRepository:
                 if replayed is None:
                     raise RevisionConflict("review result no longer exists")
                 return replayed
-            row = (
-                (
-                    await session.execute(
-                        select(test_plan_revision)
-                        .where(
-                            *scope_predicates(test_plan_revision, scope),
-                            test_plan_revision.c.test_plan_id == test_plan_id,
-                            test_plan_revision.c.revision_id == revision_id,
-                        )
-                        .with_for_update()
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-            if row is None:
-                raise LookupError("test plan revision not found")
             if row["status"] != RevisionStatus.DRAFT.value:
                 raise RevisionImmutable("only Draft revisions can be reviewed")
             if row["row_version"] != expected_version:
@@ -1856,21 +1934,7 @@ class MysqlTestPlanRepository:
                 or not all(isinstance(item, str) for item in skill_revision_ids)
             ):
                 raise ValueError("frozen Turn execution versions are incomplete")
-            from tap.modules.test_management.adapters.model_gateway_generation import (
-                TEST_DESIGN_MODEL_ROUTE_VERSION,
-                TEST_DESIGN_PROFILE_DIGEST,
-            )
-
-            model_material = json.dumps(
-                {
-                    "modelAlias": model_alias,
-                    "modelRouteVersion": TEST_DESIGN_MODEL_ROUTE_VERSION,
-                    "promptSchemaProfileDigest": TEST_DESIGN_PROFILE_DIGEST,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            model_revision_id = "tmr_" + hashlib.sha256(model_material.encode()).hexdigest()
+            model_revision_id = design_model_revision_id(model_alias, self._model_mapping)
         request = TestPlanGenerationRequest.create(
             project_id=scope.project_id,
             conversation_id=conversation_id,
@@ -1900,6 +1964,17 @@ class MysqlTestPlanRepository:
         if request.project_id != self.scope.project_id:
             raise ValueError("generation request is outside Project scope")
         async with self._sessions() as session, session.begin():
+            turn_exists = await session.scalar(
+                select(chat_turn.c.turn_id)
+                .where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.turn_id == request.turn_id,
+                    chat_turn.c.chat_id == request.conversation_id,
+                )
+                .with_for_update()
+            )
+            if turn_exists is None:
+                raise ValueError("completed Turn snapshot binding was not found")
             existing = (
                 (
                     await session.execute(
@@ -1975,6 +2050,7 @@ class MysqlTestPlanRepository:
                 or request.model_revision_id is None
             ):
                 raise ValueError("generation governance versions are incomplete")
+            self._assert_model_route(request.model_alias, request.model_revision_id)
             await self._assert_generation_authority(session, self.scope, request, _naive(now))
             approved_versions = set(request.approved_knowledge_revision_ids)
             if any(
@@ -2008,28 +2084,12 @@ class MysqlTestPlanRepository:
                 or tuple(snapshot_skill_ids) != request.skill_revision_ids
             ):
                 raise ValueError("generation governance binding is invalid")
-            enabled_agent = await session.scalar(
-                select(func.count())
-                .select_from(ai_agent_revision)
-                .where(
-                    *scope_predicates(ai_agent_revision, self.scope),
-                    ai_agent_revision.c.revision_id == request.agent_revision_id,
-                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                )
+            await self._assert_enabled_generation_assets(
+                session,
+                self.scope,
+                request.agent_revision_id,
+                request.skill_revision_ids,
             )
-            enabled_skills = await session.scalar(
-                select(func.count())
-                .select_from(skill_revision)
-                .where(
-                    *scope_predicates(skill_revision, self.scope),
-                    skill_revision.c.revision_id.in_(request.skill_revision_ids),
-                    skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                )
-            )
-            if int(enabled_agent or 0) != 1 or int(enabled_skills or 0) != len(
-                request.skill_revision_ids
-            ):
-                raise ValueError("generation requires enabled Agent and Skill revisions")
             values = scope_values(self.scope)
             await session.execute(
                 insert(test_plan_generation_job).values(
@@ -2596,6 +2656,13 @@ class MysqlTestPlanRepository:
             raise ValueError("Answer Evidence citation trace is missing")
         authorized_evidence: list[dict[str, object]] = []
         async with self._sessions() as session, session.begin():
+            self._assert_model_route(request.model_alias, request.model_revision_id)
+            await self._assert_enabled_generation_assets(
+                session,
+                scope,
+                request.agent_revision_id,
+                request.skill_revision_ids,
+            )
             approved_items = await self._assert_generation_authority(
                 session, scope, request, datetime.now(timezone.utc).replace(tzinfo=None)
             )
