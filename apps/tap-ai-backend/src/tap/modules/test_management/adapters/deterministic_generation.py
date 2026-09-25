@@ -46,13 +46,21 @@ class DeterministicTestDesign:
                     "No source evidence was available for this generated draft.",
                 ),
             )
-            gaps = (
+            requirement_ids = (
+                tuple(
+                    item.requirement_id for item in context.request.requirement_scope.requirements
+                )
+                if context.request.requirement_scope is not None
+                else ("Grounded behavior",)
+            )
+            gaps = tuple(
                 TestPlanCoverageGap(
-                    "gap_source_evidence",
-                    "Grounded behavior",
+                    f"gap_source_evidence_{index}",
+                    requirement_id,
                     "Source evidence is required before publication.",
                     GapSeverity.CRITICAL,
-                ),
+                )
+                for index, requirement_id in enumerate(requirement_ids, start=1)
             )
         return TestPlanRevision.create(
             test_plan_id=context.request.test_plan_id,
@@ -95,9 +103,18 @@ class DeterministicTestDesign:
                                     "the expected outcome is observed",
                                     "The expected outcome is visible and persisted.",
                                     True,
+                                    tuple(item.citation_id for item in citations),
                                 ),
                             ),
                         ),
+                    ),
+                    (
+                        tuple(
+                            item.requirement_id
+                            for item in context.request.requirement_scope.requirements
+                        )
+                        if citations and context.request.requirement_scope is not None
+                        else ()
                     ),
                 ),
             ),
@@ -106,4 +123,13 @@ class DeterministicTestDesign:
             unknowns=unknowns,
             coverage_gaps=gaps,
             origin=IdentityOrigin.VALIDATION,
+            requirement_scope=context.request.requirement_scope,
+            approved_knowledge_revision_ids=context.request.approved_knowledge_revision_ids,
+            model_revision_id=context.request.model_revision_id,
+            agent_revision_id=context.request.agent_revision_id,
+            skill_revision_ids=context.request.skill_revision_ids,
+            author_actor_id=context.scope.actor_id,
+            strict_review_required=bool(
+                context.input_snapshot.get("strict_test_design_review", False)
+            ),
         )

@@ -24,6 +24,8 @@ EXPECTED_TABLES = {
     "test_plan_coverage_gap",
     "test_plan_generation_job",
     "test_design_model_call",
+    "test_plan_review_decision",
+    "test_plan_source_impact",
     "graph_snapshot",
     "graph_snapshot_revision",
     "graph_active_snapshot",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import cast
 
@@ -58,11 +58,15 @@ class KnowledgeReviewHttpService:
         scope: ProjectScopeContext,
         authorization_policy: AuthorizationPolicy,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        source_impact_notifier: (
+            Callable[[tuple[str, ...], str, str, datetime], Awaitable[object]] | None
+        ) = None,
     ) -> None:
         self._application = application
         self._scope = scope
         self._authorization_policy = authorization_policy
         self._clock = clock
+        self._source_impact_notifier = source_impact_notifier
 
     @property
     def scope(self) -> ProjectScopeContext:
@@ -276,13 +280,21 @@ class KnowledgeReviewHttpService:
     async def withdraw_publication(
         self, publication_id: str, expected_version: int, key: str
     ) -> KnowledgePublicationDetail:
+        now = self._clock()
         publication = await self._application.withdraw_publication(
             publication_id,
             idempotency_key=key,
             actor_id=self._scope.actor_id,
             expected_version=expected_version,
-            now=self._clock(),
+            now=now,
         )
+        if self._source_impact_notifier is not None and publication.source_revision_ids:
+            await self._source_impact_notifier(
+                publication.source_revision_ids,
+                "approved knowledge publication withdrawn",
+                f"withdraw:{key}",
+                now,
+            )
         return _publication_detail(publication)
 
     async def _review_detail(

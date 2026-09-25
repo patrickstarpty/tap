@@ -15,6 +15,10 @@ from tap.modules.chat.adapters.mysql_conversations import (
 )
 from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
 from tap.modules.test_management.domain.models import (
+    RequirementScopeItem,
+    RequirementScopeSnapshot,
+)
+from tap.modules.test_management.domain.models import (
     TestPlanGenerationRequest as PlanGenerationRequest,
 )
 from tap.platform.db.project_scope import scope_values
@@ -68,7 +72,18 @@ async def _seed_completed_turn(sessions, *, turn_id: str = "turn_checkout") -> N
                 input_snapshot_digest="sha256:" + "1" * 64,
                 answer_digest="sha256:" + "3" * 64,
                 snapshot_digest="sha256:" + "2" * 64,
-                snapshot={},
+                snapshot={
+                    "citations": [
+                        {
+                            "sourceRevisionId": "source_revision_checkout",
+                            "documentRevisionId": "document_revision_checkout",
+                            "chunkId": "chunk_checkout",
+                            "contentDigest": "sha256:" + "a" * 64,
+                            "claimText": "Checkout creates an order",
+                            "origin": "SOURCE",
+                        }
+                    ]
+                },
                 created_at=now,
             )
         )
@@ -86,6 +101,19 @@ def _request(**changes: str) -> PlanGenerationRequest:
         "skill_revision_ids": ("validation_test_design_skill_v1",),
         "objective": "Design checkout tests",
         "idempotency_key": "quality_test_design_checkout",
+        "requirement_scope": RequirementScopeSnapshot.create(
+            scope_id="checkout_scope_v1",
+            version=1,
+            requirements=(
+                RequirementScopeItem(
+                    "requirement_checkout",
+                    "source_revision_checkout",
+                    "section:checkout",
+                ),
+            ),
+        ),
+        "approved_knowledge_revision_ids": ("source_revision_checkout",),
+        "model_revision_id": "tapper-chat-2026-09",
     }
     values.update(changes)
     return PlanGenerationRequest.create(**values)  # type: ignore[arg-type]

@@ -3449,9 +3449,39 @@
 
 .tap-plan-review-actions {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 12px;
   margin-bottom: 18px;
+}
+
+.tap-plan-review-actions > :first-child {
+  margin-right: auto;
+}
+
+.tap-plan-editor,
+.tap-plan-review-decision {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding: 20px;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 14px;
+  background: var(--tap-surface);
+}
+
+.tap-plan-editor h2,
+.tap-plan-review-decision h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.tap-plan-editor label {
+  display: grid;
+  gap: 7px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .tap-plan-detail {
@@ -3484,6 +3514,14 @@
   background: var(--tap-workbench-teal-soft);
   color: var(--tap-workbench-teal);
   font-size: 11px;
+  font-weight: 700;
+}
+
+.tap-plan-needs-review {
+  display: inline-flex;
+  margin-left: 8px;
+  color: var(--tap-danger, #9b2c2c);
+  font-size: 12px;
   font-weight: 700;
 }
 

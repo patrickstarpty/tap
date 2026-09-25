@@ -1,21 +1,47 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { usePublishTestPlan, useTestPlan } from "../api/queries";
+import {
+  useForkTestPlan,
+  usePublishTestPlan,
+  useReviewTestPlan,
+  useTestPlan,
+  useUpdateTestPlan,
+} from "../api/queries";
 import { TestPlanReview } from "./TestPlanReview";
 
 vi.mock("../api/queries", () => ({
   usePublishTestPlan: vi.fn(),
+  useReviewTestPlan: vi.fn(),
+  useUpdateTestPlan: vi.fn(),
+  useForkTestPlan: vi.fn(),
   useTestPlan: vi.fn(),
 }));
 
 describe("TestPlanReview", () => {
   it("renders BDD evidence and publishes with the current row version", () => {
     const mutate = vi.fn();
+    const updateDraft = vi.fn().mockResolvedValue(undefined);
+    const reviewDraft = vi.fn().mockResolvedValue(undefined);
     vi.mocked(usePublishTestPlan).mockReturnValue({
       mutate,
       isPending: false,
       isError: false,
+    } as never);
+    vi.mocked(useReviewTestPlan).mockReturnValue({
+      mutateAsync: reviewDraft,
+      isPending: false,
+      isError: false,
+    } as never);
+    vi.mocked(useUpdateTestPlan).mockReturnValue({
+      mutateAsync: updateDraft,
+      isPending: false,
+      isError: false,
+      error: null,
+    } as never);
+    vi.mocked(useForkTestPlan).mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
     } as never);
     vi.mocked(useTestPlan).mockReturnValue({
       isPending: false,
@@ -111,6 +137,32 @@ describe("TestPlanReview", () => {
             severity: "HIGH",
           },
         ],
+        requirementScopeId: "checkout_scope_v1",
+        requirementScopeVersion: 1,
+        requirementScopeDigest: `sha256:${"c".repeat(64)}`,
+        requirementIds: ["requirement_checkout"],
+        coveredRequirementIds: ["requirement_checkout"],
+        coverageDenominator: 1,
+        coveredRequirementCount: 1,
+        approvedKnowledgeRevisionIds: ["source_checkout"],
+        modelRevisionId: "tapper-chat-2026-09",
+        agentRevisionId: "agent_checkout",
+        skillRevisionIds: ["skill_checkout"],
+        authorActorId: "draft_author",
+        strictReviewRequired: false,
+        generatedContentDigest: `sha256:${"a".repeat(64)}`,
+        reviewDecisions: [
+          {
+            decisionId: "review_checkout",
+            disposition: "ACCEPTED_UNCHANGED",
+            reason: "Verified against the approved policy.",
+            actorId: "business_reviewer",
+            reviewedContentDigest: `sha256:${"a".repeat(64)}`,
+            createdAt: "2026-09-26T00:00:00Z",
+          },
+        ],
+        needsReview: false,
+        needsReviewReason: null,
       },
     } as never);
     render(
@@ -130,6 +182,27 @@ describe("TestPlanReview", () => {
     expect(screen.getByText("The payment provider is available")).toBeVisible();
     expect(screen.getByText("Whether retry is supported")).toBeVisible();
     expect(screen.getByText(/The refund policy is missing/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("计划目标"), {
+      target: { value: "Verify checkout and review failures" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    expect(updateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plan: expect.objectContaining({
+          objective: "Verify checkout and review failures",
+        }),
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("评审理由"), {
+      target: { value: "已逐项核对需求和证据。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "修改后采纳" }));
+    expect(reviewDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        disposition: "ACCEPTED_MODIFIED",
+        reason: "已逐项核对需求和证据。",
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "批准并发布" }));
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({

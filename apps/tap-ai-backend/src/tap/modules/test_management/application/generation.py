@@ -55,6 +55,19 @@ def _revision_checkpoint(revision: TestPlanRevision) -> dict[str, object]:
         "validationDigest": revision.validation_digest,
         "createdAt": revision.created_at.isoformat() if revision.created_at else None,
         "publishedAt": revision.published_at.isoformat() if revision.published_at else None,
+        "requirementScopeId": revision.requirement_scope_id,
+        "requirementScopeVersion": revision.requirement_scope_version,
+        "requirementScopeDigest": revision.requirement_scope_digest,
+        "requirementIds": list(revision.requirement_ids),
+        "approvedKnowledgeRevisionIds": list(revision.approved_knowledge_revision_ids),
+        "modelRevisionId": revision.model_revision_id,
+        "agentRevisionId": revision.agent_revision_id,
+        "skillRevisionIds": list(revision.skill_revision_ids),
+        "authorActorId": revision.author_actor_id,
+        "strictReviewRequired": revision.strict_review_required,
+        "generatedContentDigest": revision.generated_content_digest,
+        "needsReview": revision.needs_review,
+        "needsReviewReason": revision.needs_review_reason,
         "content": revision.canonical_content(),
     }
 
@@ -84,12 +97,15 @@ def _revision_from_checkpoint(value: object) -> TestPlanRevision:
                             step["text"],
                             step["expectedResult"],
                             step["critical"],
+                            tuple(step.get("citationIds", [])),
+                            tuple(step.get("unknownIds", [])),
                         )
                         for step in scenario["steps"]
                     ),
                 )
                 for scenario in item["scenarios"]
             ),
+            tuple(item.get("coveredRequirementIds", [])),
         )
         for item in content["cases"]
     )
@@ -143,6 +159,20 @@ def _revision_from_checkpoint(value: object) -> TestPlanRevision:
         data["validationDigest"],
         datetime.fromisoformat(data["createdAt"]) if data["createdAt"] else None,
         datetime.fromisoformat(data["publishedAt"]) if data["publishedAt"] else None,
+        data.get("requirementScopeId"),
+        data.get("requirementScopeVersion"),
+        data.get("requirementScopeDigest"),
+        tuple(data.get("requirementIds", [])),
+        tuple(data.get("approvedKnowledgeRevisionIds", [])),
+        data.get("modelRevisionId"),
+        data.get("agentRevisionId"),
+        tuple(data.get("skillRevisionIds", [])),
+        data.get("authorActorId"),
+        bool(data.get("strictReviewRequired", False)),
+        data.get("generatedContentDigest"),
+        (),
+        bool(data.get("needsReview", False)),
+        data.get("needsReviewReason"),
     )
 
 

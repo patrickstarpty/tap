@@ -10,6 +10,10 @@ from tap.modules.test_management.adapters.model_gateway_generation import (
     ModelGatewayTestDesign,
 )
 from tap.modules.test_management.domain.models import (
+    RequirementScopeItem,
+    RequirementScopeSnapshot,
+)
+from tap.modules.test_management.domain.models import (
     TestPlanGenerationRequest as PlanGenerationRequest,
 )
 from tap.modules.test_management.ports.generation import TestDesignContext as DesignContext
@@ -43,6 +47,18 @@ class Gateway:
 
 
 def _context() -> DesignContext:
+    requirement_scope = RequirementScopeSnapshot.create(
+        scope_id="checkout_scope_v1",
+        version=1,
+        requirements=tuple(
+            RequirementScopeItem(
+                f"requirement_{index:02d}",
+                f"source_revision_{index:02d}",
+                f"section:{index:02d}",
+            )
+            for index in range(1, 11)
+        ),
+    )
     request = PlanGenerationRequest.create(
         project_id=VALIDATION_SCOPE.project_id,
         conversation_id="conversation_checkout",
@@ -54,6 +70,9 @@ def _context() -> DesignContext:
         skill_revision_ids=("validation-test-design-skill-v1",),
         objective="Design checkout tests",
         idempotency_key="test-design-checkout",
+        requirement_scope=requirement_scope,
+        approved_knowledge_revision_ids=("source_revision_checkout",),
+        model_revision_id="tapper-chat-2026-09",
     )
     return DesignContext(
         VALIDATION_SCOPE,
@@ -70,6 +89,8 @@ def _context() -> DesignContext:
                     "documentRevisionId": "document_revision_checkout",
                     "chunkId": "chunk_checkout",
                     "contentDigest": "sha256:" + "a" * 64,
+                    "claimText": "Checkout creates an order",
+                    "origin": "SOURCE",
                 }
             ]
         },
@@ -89,6 +110,14 @@ def _output() -> dict[str, object]:
                 "title": "Approved payment",
                 "objective": "Complete checkout",
                 "critical": True,
+                "coveredRequirementIds": [
+                    "requirement_01",
+                    "requirement_02",
+                    "requirement_03",
+                    "requirement_04",
+                    "requirement_05",
+                    "requirement_06",
+                ],
                 "scenarios": [
                     {
                         "id": "scenario_checkout",
@@ -100,6 +129,8 @@ def _output() -> dict[str, object]:
                                 "text": "a product is in the cart",
                                 "expectedResult": "",
                                 "critical": False,
+                                "citationIds": [],
+                                "unknownIds": [],
                             },
                             {
                                 "id": "step_when",
@@ -107,6 +138,8 @@ def _output() -> dict[str, object]:
                                 "text": "checkout is submitted",
                                 "expectedResult": "",
                                 "critical": False,
+                                "citationIds": [],
+                                "unknownIds": [],
                             },
                             {
                                 "id": "step_then",
@@ -114,6 +147,8 @@ def _output() -> dict[str, object]:
                                 "text": "the order is confirmed",
                                 "expectedResult": "An order confirmation is visible",
                                 "critical": True,
+                                "citationIds": ["citation_checkout"],
+                                "unknownIds": [],
                             },
                         ],
                     }
@@ -133,7 +168,15 @@ def _output() -> dict[str, object]:
         ],
         "assumptions": [],
         "unknowns": [],
-        "coverageGaps": [],
+        "coverageGaps": [
+            {
+                "id": f"gap_{index:02d}",
+                "requirementRef": f"requirement_{index:02d}",
+                "reason": "The retrieved evidence did not cover this requirement.",
+                "severity": "HIGH",
+            }
+            for index in range(7, 11)
+        ],
     }
 
 
@@ -146,6 +189,8 @@ async def test_test_design_generation_is_schema_locked_grounded_and_draft_only()
 
     assert draft.status.value == "DRAFT"
     assert draft.citations[0].chunk_id == "chunk_checkout"
+    assert draft.coverage_denominator == 10
+    assert draft.covered_requirement_count == 6
     assert gateway.requests[0].operation is ModelOperation.STRUCTURED
     assert gateway.requests[0].schema_digest.startswith("sha256:")
 
@@ -175,6 +220,8 @@ async def test_citation_fields_cannot_be_composed_from_different_evidence_rows()
             "documentRevisionId": "document_revision_other",
             "chunkId": "chunk_other",
             "contentDigest": "sha256:" + "b" * 64,
+            "claimText": "A different authorized claim",
+            "origin": "SOURCE",
         },
     ]
     composite = deepcopy(_output())
@@ -188,3 +235,24 @@ async def test_citation_fields_cannot_be_composed_from_different_evidence_rows()
 
     with pytest.raises(ValueError, match="outside frozen evidence"):
         await ModelGatewayTestDesign(Gateway(composite)).generate(mixed_context)
+
+
+@pytest.mark.asyncio
+async def test_citation_claim_cannot_be_spliced_onto_an_authorized_evidence_identity() -> None:
+    composite = deepcopy(_output())
+    composite["citations"][0]["claimText"] = "A claim not present in that evidence row"  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="outside frozen evidence"):
+        await ModelGatewayTestDesign(Gateway(composite)).generate(_context())
+
+
+@pytest.mark.asyncio
+async def test_unknown_business_condition_cannot_be_emitted_as_a_definite_then() -> None:
+    output = deepcopy(_output())
+    output["unknowns"] = [{"id": "unknown_retry_policy", "text": "Whether retry is permitted"}]
+    output["cases"][0]["scenarios"][0]["steps"][2]["unknownIds"] = [  # type: ignore[index]
+        "unknown_retry_policy"
+    ]
+
+    with pytest.raises(ValueError, match="unknown"):
+        await ModelGatewayTestDesign(Gateway(output)).generate(_context())

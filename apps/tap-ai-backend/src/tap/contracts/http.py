@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal, Self
 
@@ -1078,12 +1079,27 @@ class GraphPathRequest(ContractModel):
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
 
 
+class RequirementScopeItemBody(ContractModel):
+    requirement_id: Annotated[str, Field(strict=True, min_length=3, max_length=128)]
+    source_revision_id: Annotated[str, Field(strict=True, min_length=3, max_length=128)]
+    locator: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+
+
+class RequirementScopeSnapshotBody(ContractModel):
+    scope_id: Annotated[str, Field(strict=True, min_length=3, max_length=128)]
+    version: Annotated[StrictInt, Field(ge=1)]
+    requirements: Annotated[list[RequirementScopeItemBody], Field(min_length=1, max_length=1000)]
+
+
 class TestPlanGenerationRequestBody(ContractModel):
     conversation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     turn_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     input_snapshot_digest: CanonicalSha256
     answer_evidence_snapshot_digest: CanonicalSha256
+    requirement_scope: RequirementScopeSnapshotBody
+    approved_knowledge_revision_ids: Annotated[list[str], Field(min_length=1, max_length=100)]
     model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    model_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     skill_revision_ids: Annotated[list[str], Field(min_length=1, max_length=16)]
     objective: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
@@ -1106,6 +1122,8 @@ class TestPlanStepView(ContractModel):
     text: str
     expected_result: str | None = None
     critical: bool
+    citation_ids: list[str] = []
+    unknown_ids: list[str] = []
 
 
 class TestPlanScenarioView(ContractModel):
@@ -1122,6 +1140,7 @@ class TestPlanCaseView(ContractModel):
     objective: str
     critical: bool
     scenarios: list[TestPlanScenarioView]
+    covered_requirement_ids: list[str] = []
 
 
 class TestPlanCitationView(ContractModel):
@@ -1147,6 +1166,29 @@ class TestPlanCoverageGapView(ContractModel):
     severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
 
+class TestPlanReviewDecisionView(ContractModel):
+    decision_id: str
+    disposition: Literal["PENDING", "ACCEPTED_UNCHANGED", "ACCEPTED_MODIFIED", "REJECTED"]
+    reason: str
+    actor_id: str
+    reviewed_content_digest: CanonicalSha256
+    created_at: datetime | None = None
+
+
+class TestPlanReviewRequest(ContractModel):
+    disposition: Literal["PENDING", "ACCEPTED_UNCHANGED", "ACCEPTED_MODIFIED", "REJECTED"]
+    reason: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+
+
+class TestPlanReviewSummaryView(ContractModel):
+    reviewed_count: StrictInt
+    unchanged_count: StrictInt
+    modified_count: StrictInt
+    rejected_count: StrictInt
+    unchanged_adoption_rate: float | None
+    total_adoption_rate: float | None
+
+
 class TestPlanRevisionView(ContractModel):
     test_plan_id: str
     revision_id: str
@@ -1167,6 +1209,23 @@ class TestPlanRevisionView(ContractModel):
     assumptions: list[TestPlanTextFactView]
     unknowns: list[TestPlanTextFactView]
     coverage_gaps: list[TestPlanCoverageGapView]
+    requirement_scope_id: str | None = None
+    requirement_scope_version: StrictInt | None = None
+    requirement_scope_digest: CanonicalSha256 | None = None
+    requirement_ids: list[str] = []
+    covered_requirement_ids: list[str] = []
+    coverage_denominator: StrictInt = 0
+    covered_requirement_count: StrictInt = 0
+    approved_knowledge_revision_ids: list[str] = []
+    model_revision_id: str | None = None
+    agent_revision_id: str | None = None
+    skill_revision_ids: list[str] = []
+    author_actor_id: str | None = None
+    strict_review_required: bool = False
+    generated_content_digest: CanonicalSha256 | None = None
+    review_decisions: list[TestPlanReviewDecisionView] = []
+    needs_review: bool = False
+    needs_review_reason: str | None = None
     deep_link: str
 
 

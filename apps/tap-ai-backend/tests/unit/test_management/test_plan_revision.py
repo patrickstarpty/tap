@@ -74,6 +74,7 @@ def _revision() -> PlanRevision:
                                 "the order is confirmed",
                                 "An immutable order confirmation is shown.",
                                 True,
+                                ("tpc_checkout_requirement",),
                             ),
                         ),
                     ),
@@ -154,7 +155,21 @@ def test_publish_validation_rejects_inferred_graph_as_fact() -> None:
         citation_id="tpc_inferred",
         origin=CitationOrigin.GRAPH_INFERRED,
     )
-    changed = replace(revision, citations=(inferred,)).with_recomputed_digest()
+    scenario = revision.cases[0].scenarios[0]
+    steps = tuple(
+        replace(step, citation_ids=("tpc_inferred",)) if step.citation_ids else step
+        for step in scenario.steps
+    )
+    changed = replace(
+        revision,
+        citations=(inferred,),
+        cases=(
+            replace(
+                revision.cases[0],
+                scenarios=(replace(scenario, steps=steps),),
+            ),
+        ),
+    ).with_recomputed_digest()
 
     with pytest.raises(ValueError, match="INFERRED"):
         validate_publishable(changed)

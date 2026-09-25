@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -30,6 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.contracts.events import ProjectEventEnvelope
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.adapters.mysql import ai_agent_revision, skill_revision
+from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.adapters.mysql_conversations import (
@@ -51,6 +55,9 @@ from tap.modules.test_management.domain.models import (
     GapSeverity,
     GenerationJobStatus,
     IdentityOrigin,
+    RequirementScopeItem,
+    RequirementScopeSnapshot,
+    ReviewDisposition,
     RevisionStatus,
     TestCase,
     TestPlanAssumption,
@@ -58,6 +65,8 @@ from tap.modules.test_management.domain.models import (
     TestPlanCoverageGap,
     TestPlanGenerationJob,
     TestPlanGenerationRequest,
+    TestPlanReviewDecision,
+    TestPlanReviewSummary,
     TestPlanRevision,
     TestPlanStep,
     TestPlanUnknown,
@@ -140,6 +149,19 @@ test_plan_revision = _scoped(
     Column("validation_digest", String(71)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("published_at", DATETIME(fsp=6)),
+    Column("requirement_scope_id", String(128)),
+    Column("requirement_scope_version", Integer),
+    Column("requirement_scope_digest", String(71)),
+    Column("requirement_ids", JSON, nullable=False),
+    Column("approved_knowledge_revision_ids", JSON, nullable=False),
+    Column("model_revision_id", String(128)),
+    Column("agent_revision_id", String(128)),
+    Column("skill_revision_ids", JSON, nullable=False),
+    Column("author_actor_id", String(128)),
+    Column("strict_review_required", Boolean, nullable=False, server_default="0"),
+    Column("generated_content_digest", String(71)),
+    Column("needs_review", Boolean, nullable=False, server_default="0"),
+    Column("needs_review_reason", String(512)),
     uniques=(
         (("revision_id",), "uq_test_plan_revision_project_pk"),
         (("test_plan_id", "version"), "uq_test_plan_revision_version"),
@@ -162,6 +184,7 @@ test_case = _scoped(
     Column("title", String(512), nullable=False),
     Column("objective", Text, nullable=False),
     Column("critical", Boolean, nullable=False),
+    Column("covered_requirement_ids", JSON, nullable=False),
     uniques=(
         (("revision_id", "case_id"), "uq_test_case_revision_pk"),
         (("revision_id", "ordinal"), "uq_test_case_ordinal"),
@@ -199,6 +222,8 @@ test_plan_step = _scoped(
     Column("text", Text, nullable=False),
     Column("expected_result", Text),
     Column("critical", Boolean, nullable=False),
+    Column("citation_ids", JSON, nullable=False),
+    Column("unknown_ids", JSON, nullable=False),
     uniques=(
         (("revision_id", "step_id"), "uq_test_plan_step_revision_pk"),
         (("scenario_id", "ordinal"), "uq_test_plan_step_ordinal"),
@@ -261,7 +286,11 @@ test_plan_generation_job = _scoped(
     Column("turn_id", String(64), nullable=False),
     Column("input_snapshot_digest", String(71), nullable=False),
     Column("answer_evidence_snapshot_digest", String(71), nullable=False),
+    Column("requirement_scope", JSON),
+    Column("approved_knowledge_revision_ids", JSON, nullable=False),
     Column("model_alias", String(128), nullable=False),
+    Column("model_revision_id", String(128)),
+    Column("retry_idempotency_key", String(128)),
     Column("agent_revision_id", String(128), nullable=False),
     Column("skill_revision_ids", JSON, nullable=False),
     Column("objective", Text, nullable=False),
@@ -288,6 +317,51 @@ test_plan_generation_job = _scoped(
             "fk_test_plan_generation_conversation",
         ),
         (("turn_id",), "chat_turn", ("turn_id",), "fk_test_plan_generation_turn"),
+    ),
+)
+test_plan_review_decision = _scoped(
+    "test_plan_review_decision",
+    Column("decision_id", String(128), primary_key=True),
+    Column("revision_id", String(64), nullable=False),
+    Column("disposition", String(32), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("review_actor_id", String(128), nullable=False),
+    Column("reviewed_content_digest", String(71), nullable=False),
+    Column("idempotency_key", String(128), nullable=False),
+    Column("decision_digest", String(71), nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    uniques=(
+        (("decision_id",), "uq_test_plan_review_decision_project_pk"),
+        (("idempotency_key",), "uq_test_plan_review_decision_idempotency"),
+    ),
+    parents=(
+        (
+            ("revision_id",),
+            "test_plan_revision",
+            ("revision_id",),
+            "fk_test_plan_review_decision_revision",
+        ),
+    ),
+)
+test_plan_source_impact = _scoped(
+    "test_plan_source_impact",
+    Column("impact_id", String(128), primary_key=True),
+    Column("revision_id", String(64), nullable=False),
+    Column("source_revision_id", String(128), nullable=False),
+    Column("reason", String(512), nullable=False),
+    Column("idempotency_key", String(128), nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    uniques=(
+        (("impact_id",), "uq_test_plan_source_impact_project_pk"),
+        (("idempotency_key",), "uq_test_plan_source_impact_idempotency"),
+    ),
+    parents=(
+        (
+            ("revision_id",),
+            "test_plan_revision",
+            ("revision_id",),
+            "fk_test_plan_source_impact_revision",
+        ),
     ),
 )
 test_design_model_call = _scoped(
@@ -318,11 +392,55 @@ TEST_MANAGEMENT_TABLES = (
     test_plan_coverage_gap,
     test_plan_generation_job,
     test_design_model_call,
+    test_plan_review_decision,
+    test_plan_source_impact,
 )
 
 
 def _naive(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+
+def _requirement_scope_value(
+    snapshot: RequirementScopeSnapshot | None,
+) -> dict[str, object] | None:
+    if snapshot is None:
+        return None
+    return {
+        "scopeId": snapshot.scope_id,
+        "version": snapshot.version,
+        "contentDigest": snapshot.content_digest,
+        "requirements": [
+            {
+                "requirementId": item.requirement_id,
+                "sourceRevisionId": item.source_revision_id,
+                "locator": item.locator,
+            }
+            for item in snapshot.requirements
+        ],
+    }
+
+
+def _requirement_scope(raw: object) -> RequirementScopeSnapshot | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("requirements"), list):
+        raise ValueError("stored Requirement Scope Snapshot is malformed")
+    requirements = tuple(
+        RequirementScopeItem(
+            str(item["requirementId"]),
+            str(item["sourceRevisionId"]),
+            str(item["locator"]),
+        )
+        for item in raw["requirements"]
+        if isinstance(item, dict)
+    )
+    return RequirementScopeSnapshot(
+        str(raw["scopeId"]),
+        int(raw["version"]),
+        requirements,
+        str(raw["contentDigest"]),
+    )
 
 
 class MysqlReconciledTestDesign:
@@ -780,6 +898,205 @@ class MysqlTestPlanRepository:
             assert published is not None
             return published
 
+    async def record_review(
+        self,
+        scope: ProjectScopeContext,
+        test_plan_id: str,
+        revision_id: str,
+        *,
+        disposition: ReviewDisposition,
+        reason: str,
+        expected_version: int,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TestPlanRevision:
+        scope = self._matching_scope(scope)
+        if not reason.strip() or len(reason) > 4096:
+            raise ValueError("review reason must be bounded nonblank text")
+        material = json.dumps(
+            {
+                "testPlanId": test_plan_id,
+                "revisionId": revision_id,
+                "disposition": disposition.value,
+                "reason": reason,
+                "expectedVersion": expected_version,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        decision_digest = "sha256:" + hashlib.sha256(material.encode()).hexdigest()
+        decision_id = (
+            "tprd_"
+            + hashlib.sha256(f"{scope.project_id}:{idempotency_key}".encode()).hexdigest()[:32]
+        )
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            replay = (
+                (
+                    await session.execute(
+                        select(test_plan_review_decision).where(
+                            *scope_predicates(test_plan_review_decision, scope),
+                            test_plan_review_decision.c.idempotency_key == idempotency_key,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if replay is not None:
+                if replay["decision_digest"] != decision_digest:
+                    raise RevisionConflict("review idempotency conflict")
+                replayed = await self._load_revision(session, revision_id)
+                if replayed is None:
+                    raise RevisionConflict("review result no longer exists")
+                return replayed
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_revision)
+                        .where(
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.test_plan_id == test_plan_id,
+                            test_plan_revision.c.revision_id == revision_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("test plan revision not found")
+            if row["status"] != RevisionStatus.DRAFT.value:
+                raise RevisionImmutable("only Draft revisions can be reviewed")
+            if row["row_version"] != expected_version:
+                raise RevisionConflict("revision version changed")
+            unchanged = row["content_digest"] == row["generated_content_digest"]
+            if disposition is ReviewDisposition.ACCEPTED_UNCHANGED and not unchanged:
+                raise ValueError("edited generated content requires modified acceptance")
+            if disposition is ReviewDisposition.ACCEPTED_MODIFIED and unchanged:
+                raise ValueError("unchanged generated content requires unchanged acceptance")
+            await session.execute(
+                insert(test_plan_review_decision).values(
+                    **scope_values(scope),
+                    decision_id=decision_id,
+                    revision_id=revision_id,
+                    disposition=disposition.value,
+                    reason=reason,
+                    review_actor_id=scope.actor_id,
+                    reviewed_content_digest=row["content_digest"],
+                    idempotency_key=idempotency_key,
+                    decision_digest=decision_digest,
+                    created_at=instant,
+                )
+            )
+            await session.execute(
+                update(test_plan_revision)
+                .where(
+                    *scope_predicates(test_plan_revision, scope),
+                    test_plan_revision.c.revision_id == revision_id,
+                    test_plan_revision.c.row_version == expected_version,
+                )
+                .values(
+                    row_version=expected_version + 1,
+                    needs_review=False,
+                    needs_review_reason=None,
+                )
+            )
+            reviewed = await self._load_revision(session, revision_id)
+            assert reviewed is not None
+            return reviewed
+
+    async def review_summary(self, scope: ProjectScopeContext) -> TestPlanReviewSummary:
+        scope = self._matching_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(test_plan_review_decision)
+                        .where(*scope_predicates(test_plan_review_decision, scope))
+                        .order_by(
+                            test_plan_review_decision.c.created_at,
+                            test_plan_review_decision.c.decision_id,
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        current = {row["revision_id"]: ReviewDisposition(row["disposition"]) for row in rows}
+        reviewed = [value for value in current.values() if value is not ReviewDisposition.PENDING]
+        return TestPlanReviewSummary(
+            len(reviewed),
+            reviewed.count(ReviewDisposition.ACCEPTED_UNCHANGED),
+            reviewed.count(ReviewDisposition.ACCEPTED_MODIFIED),
+            reviewed.count(ReviewDisposition.REJECTED),
+        )
+
+    async def mark_source_changed(
+        self,
+        scope: ProjectScopeContext,
+        source_revision_id: str,
+        *,
+        reason: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        scope = self._matching_scope(scope)
+        if not reason.strip() or len(reason) > 512:
+            raise ValueError("source impact reason must be bounded nonblank text")
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            revision_ids = tuple(
+                (
+                    await session.scalars(
+                        select(test_plan_citation.c.revision_id)
+                        .where(
+                            *scope_predicates(test_plan_citation, scope),
+                            test_plan_citation.c.source_revision_id == source_revision_id,
+                        )
+                        .distinct()
+                        .order_by(test_plan_citation.c.revision_id)
+                    )
+                ).all()
+            )
+            for revision_id in revision_ids:
+                impact_key = hashlib.sha256(
+                    f"{scope.project_id}:{idempotency_key}:{revision_id}".encode()
+                ).hexdigest()
+                impact_id = "tpsi_" + impact_key[:32]
+                existing = await session.scalar(
+                    select(test_plan_source_impact.c.impact_id).where(
+                        *scope_predicates(test_plan_source_impact, scope),
+                        test_plan_source_impact.c.impact_id == impact_id,
+                    )
+                )
+                if existing is None:
+                    await session.execute(
+                        insert(test_plan_source_impact).values(
+                            **scope_values(scope),
+                            impact_id=impact_id,
+                            revision_id=revision_id,
+                            source_revision_id=source_revision_id,
+                            reason=reason,
+                            idempotency_key=impact_key,
+                            created_at=instant,
+                        )
+                    )
+                    await session.execute(
+                        update(test_plan_revision)
+                        .where(
+                            *scope_predicates(test_plan_revision, scope),
+                            test_plan_revision.c.revision_id == revision_id,
+                        )
+                        .values(
+                            needs_review=True,
+                            needs_review_reason=reason,
+                            row_version=test_plan_revision.c.row_version + 1,
+                        )
+                    )
+        return revision_ids
+
     async def request_generation(
         self,
         scope: ProjectScopeContext,
@@ -818,6 +1135,7 @@ class MysqlTestPlanRepository:
                             turn_input_snapshot.c.snapshot_digest.label("input_digest"),
                             turn_input_snapshot.c.snapshot.label("input_snapshot"),
                             turn_answer_evidence_snapshot.c.snapshot_digest.label("answer_digest"),
+                            turn_answer_evidence_snapshot.c.snapshot.label("answer_snapshot"),
                             turn_answer_evidence_snapshot.c.input_snapshot_digest.label(
                                 "answer_input_digest"
                             ),
@@ -859,6 +1177,31 @@ class MysqlTestPlanRepository:
                 or snapshot["answer_input_digest"] != request.input_snapshot_digest
             ):
                 raise ValueError("generation snapshot digest binding is invalid")
+            if (
+                request.requirement_scope is None
+                or not request.approved_knowledge_revision_ids
+                or request.model_revision_id is None
+            ):
+                raise ValueError("generation governance versions are incomplete")
+            approved_versions = set(request.approved_knowledge_revision_ids)
+            if any(
+                item.source_revision_id not in approved_versions
+                for item in request.requirement_scope.requirements
+            ):
+                raise ValueError("Requirement Scope uses an unapproved knowledge version")
+            answer_snapshot = snapshot["answer_snapshot"]
+            evidence: list[Any] = (
+                answer_snapshot.get("authorizedEvidence", answer_snapshot.get("citations", []))
+                if isinstance(answer_snapshot, dict)
+                else []
+            ) or []
+            evidence_versions = {
+                item.get("sourceRevisionId")
+                for item in evidence
+                if isinstance(item, dict) and isinstance(item.get("sourceRevisionId"), str)
+            }
+            if evidence_versions and not evidence_versions <= approved_versions:
+                raise ValueError("Answer Evidence uses an unapproved knowledge version")
             input_snapshot = snapshot["input_snapshot"]
             snapshot_skill_ids = (
                 input_snapshot.get("skill_revision_ids")
@@ -872,6 +1215,28 @@ class MysqlTestPlanRepository:
                 or tuple(snapshot_skill_ids) != request.skill_revision_ids
             ):
                 raise ValueError("generation governance binding is invalid")
+            enabled_agent = await session.scalar(
+                select(func.count())
+                .select_from(ai_agent_revision)
+                .where(
+                    *scope_predicates(ai_agent_revision, self.scope),
+                    ai_agent_revision.c.revision_id == request.agent_revision_id,
+                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+            )
+            enabled_skills = await session.scalar(
+                select(func.count())
+                .select_from(skill_revision)
+                .where(
+                    *scope_predicates(skill_revision, self.scope),
+                    skill_revision.c.revision_id.in_(request.skill_revision_ids),
+                    skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+            )
+            if int(enabled_agent or 0) != 1 or int(enabled_skills or 0) != len(
+                request.skill_revision_ids
+            ):
+                raise ValueError("generation requires enabled Agent and Skill revisions")
             values = scope_values(self.scope)
             await session.execute(
                 insert(test_plan_generation_job).values(
@@ -883,7 +1248,10 @@ class MysqlTestPlanRepository:
                     turn_id=request.turn_id,
                     input_snapshot_digest=request.input_snapshot_digest,
                     answer_evidence_snapshot_digest=request.answer_evidence_snapshot_digest,
+                    requirement_scope=_requirement_scope_value(request.requirement_scope),
+                    approved_knowledge_revision_ids=list(request.approved_knowledge_revision_ids),
                     model_alias=request.model_alias,
+                    model_revision_id=request.model_revision_id,
                     agent_revision_id=request.agent_revision_id,
                     skill_revision_ids=list(request.skill_revision_ids),
                     objective=request.objective,
@@ -1110,6 +1478,60 @@ class MysqlTestPlanRepository:
             )
             return self._job(canceled)
 
+    async def retry_generation(
+        self,
+        scope: ProjectScopeContext,
+        job_id: str,
+        *,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TestPlanGenerationJob:
+        scope = self._matching_scope(scope)
+        instant = _naive(now)
+        async with self._sessions() as session, session.begin():
+            row = (
+                (
+                    await session.execute(
+                        select(test_plan_generation_job)
+                        .where(
+                            *scope_predicates(test_plan_generation_job, scope),
+                            test_plan_generation_job.c.job_id == job_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("test design generation job not found")
+            if row["retry_idempotency_key"] == idempotency_key:
+                return self._job(row)
+            if row["status"] != GenerationJobStatus.FAILED.value:
+                raise ValueError("only failed generation jobs can be retried")
+            await session.execute(
+                update(test_plan_generation_job)
+                .where(
+                    *scope_predicates(test_plan_generation_job, scope),
+                    test_plan_generation_job.c.job_id == job_id,
+                    test_plan_generation_job.c.status == GenerationJobStatus.FAILED.value,
+                )
+                .values(
+                    status=GenerationJobStatus.PENDING.value,
+                    failure_code=None,
+                    retry_idempotency_key=idempotency_key,
+                    updated_at=instant,
+                )
+            )
+            retried = dict(row)
+            retried.update(
+                status=GenerationJobStatus.PENDING.value,
+                failure_code=None,
+                retry_idempotency_key=idempotency_key,
+                updated_at=instant,
+            )
+            return self._job(retried)
+
     async def is_authorized(self, scope: ProjectScopeContext, citation: TestPlanCitation) -> bool:
         scope = self._matching_scope(scope)
         async with self._sessions() as session:
@@ -1131,6 +1553,57 @@ class MysqlTestPlanRepository:
                 },
             )
         return row == 1
+
+    async def is_requirement_scope_current(
+        self, scope: ProjectScopeContext, revision: TestPlanRevision
+    ) -> bool:
+        self._matching_scope(scope)
+        if revision.requirement_scope_id is None:
+            return True
+        return (
+            revision.requirement_scope_version is not None
+            and revision.requirement_scope_digest is not None
+            and bool(revision.requirement_ids)
+            and not revision.needs_review
+        )
+
+    async def are_knowledge_versions_current(
+        self, scope: ProjectScopeContext, revision: TestPlanRevision
+    ) -> bool:
+        scope = self._matching_scope(scope)
+        approved = set(revision.approved_knowledge_revision_ids)
+        if approved and any(
+            citation.source_revision_id not in approved for citation in revision.citations
+        ):
+            return False
+        if revision.needs_review:
+            return False
+        if revision.agent_revision_id is None and not revision.skill_revision_ids:
+            return True
+        async with self._sessions() as session:
+            agent_enabled = (
+                revision.agent_revision_id is None
+                or await session.scalar(
+                    select(func.count())
+                    .select_from(ai_agent_revision)
+                    .where(
+                        *scope_predicates(ai_agent_revision, scope),
+                        ai_agent_revision.c.revision_id == revision.agent_revision_id,
+                        ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                    )
+                )
+                == 1
+            )
+            skill_count = await session.scalar(
+                select(func.count())
+                .select_from(skill_revision)
+                .where(
+                    *scope_predicates(skill_revision, scope),
+                    skill_revision.c.revision_id.in_(revision.skill_revision_ids),
+                    skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                )
+            )
+        return agent_enabled and int(skill_count or 0) == len(revision.skill_revision_ids)
 
     async def claim_generation_jobs(
         self,
@@ -1688,6 +2161,19 @@ class MysqlTestPlanRepository:
                 validation_digest=revision.validation_digest,
                 created_at=now,
                 published_at=revision.published_at,
+                requirement_scope_id=revision.requirement_scope_id,
+                requirement_scope_version=revision.requirement_scope_version,
+                requirement_scope_digest=revision.requirement_scope_digest,
+                requirement_ids=list(revision.requirement_ids),
+                approved_knowledge_revision_ids=list(revision.approved_knowledge_revision_ids),
+                model_revision_id=revision.model_revision_id,
+                agent_revision_id=revision.agent_revision_id,
+                skill_revision_ids=list(revision.skill_revision_ids),
+                author_actor_id=revision.author_actor_id,
+                strict_review_required=revision.strict_review_required,
+                generated_content_digest=revision.generated_content_digest,
+                needs_review=revision.needs_review,
+                needs_review_reason=revision.needs_review_reason,
             )
         )
         await self._insert_revision_children(session, revision)
@@ -1706,6 +2192,7 @@ class MysqlTestPlanRepository:
                     title=case.title,
                     objective=case.objective,
                     critical=case.critical,
+                    covered_requirement_ids=list(case.covered_requirement_ids),
                 )
             )
             for scenario in case.scenarios:
@@ -1731,6 +2218,8 @@ class MysqlTestPlanRepository:
                             text=step.text,
                             expected_result=step.expected_result,
                             critical=step.critical,
+                            citation_ids=list(step.citation_ids),
+                            unknown_ids=list(step.unknown_ids),
                         )
                     )
         for citation in revision.citations:
@@ -1851,6 +2340,8 @@ class MysqlTestPlanRepository:
                             step["text"],
                             step["expected_result"],
                             bool(step["critical"]),
+                            tuple(step["citation_ids"]),
+                            tuple(step["unknown_ids"]),
                         )
                         for step in step_rows
                         if step["scenario_id"] == candidate["scenario_id"]
@@ -1869,6 +2360,7 @@ class MysqlTestPlanRepository:
                 item["objective"],
                 bool(item["critical"]),
                 scenarios[item["case_id"]],
+                tuple(item["covered_requirement_ids"]),
             )
             for item in cases_rows
         )
@@ -1916,6 +2408,19 @@ class MysqlTestPlanRepository:
             )
             for item in await rows(test_plan_coverage_gap)
         )
+        decisions = tuple(
+            TestPlanReviewDecision(
+                item["decision_id"],
+                ReviewDisposition(item["disposition"]),
+                item["reason"],
+                item["review_actor_id"],
+                item["reviewed_content_digest"],
+                item["created_at"],
+            )
+            for item in sorted(
+                await rows(test_plan_review_decision), key=lambda value: value["created_at"]
+            )
+        )
         return TestPlanRevision(
             row["test_plan_id"],
             row["revision_id"],
@@ -1938,6 +2443,20 @@ class MysqlTestPlanRepository:
             row["validation_digest"],
             row["created_at"],
             row["published_at"],
+            row["requirement_scope_id"],
+            row["requirement_scope_version"],
+            row["requirement_scope_digest"],
+            tuple(row["requirement_ids"]),
+            tuple(row["approved_knowledge_revision_ids"]),
+            row["model_revision_id"],
+            row["agent_revision_id"],
+            tuple(row["skill_revision_ids"]),
+            row["author_actor_id"],
+            bool(row["strict_review_required"]),
+            row["generated_content_digest"],
+            decisions,
+            bool(row["needs_review"]),
+            row["needs_review_reason"],
         )
 
     @staticmethod
@@ -1957,6 +2476,9 @@ class MysqlTestPlanRepository:
             row["objective"],
             row["idempotency_key"],
             row["request_digest"],
+            _requirement_scope(row["requirement_scope"]),
+            tuple(row["approved_knowledge_revision_ids"]),
+            row["model_revision_id"],
         )
         return TestPlanGenerationJob(
             request,

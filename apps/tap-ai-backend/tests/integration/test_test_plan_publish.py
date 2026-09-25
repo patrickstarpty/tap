@@ -17,6 +17,7 @@ from tap.modules.test_management.domain.models import (
     BddKeyword,
     CitationOrigin,
     IdentityOrigin,
+    ReviewDisposition,
 )
 from tap.modules.test_management.domain.models import (
     TestCase as PlanCase,
@@ -68,6 +69,7 @@ def _draft() -> PlanRevision:
                                 "an order is created",
                                 "Order confirmation exists",
                                 True,
+                                ("tpc_checkout",),
                             ),
                         ),
                     ),
@@ -96,6 +98,12 @@ class CitationAuthority:
     async def is_authorized(self, scope, citation):
         return scope == VALIDATION_SCOPE and citation.citation_id == "tpc_checkout"
 
+    async def is_requirement_scope_current(self, scope, revision):
+        return scope == VALIDATION_SCOPE
+
+    async def are_knowledge_versions_current(self, scope, revision):
+        return scope == VALIDATION_SCOPE
+
 
 @pytest.mark.asyncio
 async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
@@ -115,8 +123,21 @@ async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
             == draft
         )
 
+        reviewed = await repository.record_review(
+            VALIDATION_SCOPE,
+            draft.test_plan_id,
+            draft.revision_id,
+            disposition=ReviewDisposition.ACCEPTED_UNCHANGED,
+            reason="Verified against the approved checkout requirement.",
+            expected_version=1,
+            idempotency_key="review-checkout-v1",
+            now=datetime(2026, 9, 13, 12, 2),
+        )
         published = await PublishTestPlan(repository, CitationAuthority()).execute(
-            VALIDATION_SCOPE, draft.test_plan_id, draft.revision_id, expected_version=1
+            VALIDATION_SCOPE,
+            draft.test_plan_id,
+            draft.revision_id,
+            expected_version=reviewed.row_version,
         )
         assert published.status.value == "PUBLISHED"
         assert published.validation_digest is not None
@@ -162,5 +183,70 @@ async def test_mysql_publish_is_atomic_immutable_and_emits_closed_event(
             "validationDigest": published.validation_digest,
         }
         assert audit["action"] == "test-plan-revision-published"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_review_disposition_summary_excludes_pending_and_source_change_preserves_history(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        repository = MysqlTestPlanRepository(sessions, scope=VALIDATION_SCOPE)
+        draft = await repository.create_draft(
+            VALIDATION_SCOPE, _draft(), now=datetime(2026, 9, 13, 12, 0)
+        )
+        pending = await repository.record_review(
+            VALIDATION_SCOPE,
+            draft.test_plan_id,
+            draft.revision_id,
+            disposition=ReviewDisposition.PENDING,
+            reason="Waiting for business confirmation.",
+            expected_version=draft.row_version,
+            idempotency_key="review-checkout-pending",
+            now=datetime(2026, 9, 13, 12, 1),
+        )
+        accepted = await repository.record_review(
+            VALIDATION_SCOPE,
+            draft.test_plan_id,
+            draft.revision_id,
+            disposition=ReviewDisposition.ACCEPTED_UNCHANGED,
+            reason="Confirmed against the approved policy.",
+            expected_version=pending.row_version,
+            idempotency_key="review-checkout-accepted",
+            now=datetime(2026, 9, 13, 12, 2),
+        )
+        summary = await repository.review_summary(VALIDATION_SCOPE)
+
+        assert summary.reviewed_count == 1
+        assert summary.unchanged_count == 1
+        assert summary.modified_count == 0
+        assert summary.rejected_count == 0
+        assert summary.unchanged_adoption_rate == 1
+        assert summary.total_adoption_rate == 1
+
+        published = await PublishTestPlan(repository, CitationAuthority()).execute(
+            VALIDATION_SCOPE,
+            draft.test_plan_id,
+            draft.revision_id,
+            expected_version=accepted.row_version,
+        )
+        impacted = await repository.mark_source_changed(
+            VALIDATION_SCOPE,
+            "source_revision_checkout",
+            reason="Approved source revision was superseded.",
+            idempotency_key="source-change-checkout-v2",
+            now=datetime(2026, 9, 13, 12, 3),
+        )
+        historical = await repository.get_revision(
+            VALIDATION_SCOPE, published.test_plan_id, published.revision_id
+        )
+
+        assert impacted == (published.revision_id,)
+        assert historical.needs_review is True
+        assert historical.review_decisions[-1].disposition is ReviewDisposition.ACCEPTED_UNCHANGED
+        assert historical.citations[0].source_revision_id == "source_revision_checkout"
     finally:
         await engine.dispose()

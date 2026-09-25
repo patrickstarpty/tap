@@ -2,13 +2,23 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 
-import { useTestPlanGeneration, useTestPlans } from "../api/queries";
+import {
+  useRetryTestPlanGeneration,
+  useTestPlanGeneration,
+  useTestPlans,
+} from "../api/queries";
 import { TestPlanLibrary } from "./TestPlanLibrary";
 
 vi.mock("../api/queries", () => ({
   useTestPlans: vi.fn(),
   useTestPlanGeneration: vi.fn(),
+  useRetryTestPlanGeneration: vi.fn(),
 }));
+
+vi.mocked(useRetryTestPlanGeneration).mockReturnValue({
+  mutate: vi.fn(),
+  isPending: false,
+} as never);
 
 vi.mocked(useTestPlanGeneration).mockReturnValue({
   isError: false,
@@ -116,13 +126,26 @@ it("shows generation progress instead of the empty state and reloads the list on
 
   vi.mocked(useTestPlanGeneration).mockReturnValue({
     isError: false,
-    data: { status: "DRAFT_READY" },
+    data: {
+      status: "DRAFT_READY",
+      testPlanId: "tp_review",
+      revisionId: "tpr_review",
+    },
   } as never);
   view.rerender(<TestPlanLibrary {...props} />);
   await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open generated draft" }),
+  );
+  expect(props.onOpen).toHaveBeenCalledWith("tp_review", "tpr_review");
 });
 
-it("explains a failed generation without claiming a plan exists", () => {
+it("explains a failed generation and retries the same durable job", async () => {
+  const retry = vi.fn();
+  vi.mocked(useRetryTestPlanGeneration).mockReturnValue({
+    mutate: retry,
+    isPending: false,
+  } as never);
   vi.mocked(useTestPlans).mockReturnValue({
     isPending: false,
     isError: false,
@@ -143,4 +166,10 @@ it("explains a failed generation without claiming a plan exists", () => {
     />,
   );
   expect(screen.getByRole("alert")).toHaveTextContent("could not be generated");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry generation" }),
+  );
+  expect(retry).toHaveBeenCalledWith(
+    expect.objectContaining({ jobId: "tpj_failed" }),
+  );
 });

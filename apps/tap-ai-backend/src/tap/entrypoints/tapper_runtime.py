@@ -1595,6 +1595,9 @@ def _assemble_http_services(
             ),
             scope=repository.scope,
             authorization_policy=authorization_policy,
+            source_impact_notifier=(
+                None if test_plans is None else test_plans.mark_knowledge_sources_changed
+            ),
         )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]

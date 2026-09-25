@@ -855,6 +855,19 @@ export function TapProductPrototype({
   } | null>(() => (durable ? durableTestPlanPath() : null));
   const [generationJobId, setGenerationJobId] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!durable || projectId === null) return;
+    setGenerationJobId(
+      window.sessionStorage.getItem(`tap:test-plan-generation:${projectId}`),
+    );
+  }, [durable, projectId]);
+  useEffect(() => {
+    if (!durable || projectId === null || generationJobId === null) return;
+    window.sessionStorage.setItem(
+      `tap:test-plan-generation:${projectId}`,
+      generationJobId,
+    );
+  }, [durable, generationJobId, projectId]);
   const [agents, setAgents] = useState<readonly CatalogItem[]>(() =>
     durable ? [] : BUILT_IN_AGENTS,
   );
@@ -1342,6 +1355,76 @@ export function TapProductPrototype({
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const generateTestPlan = (
+    conversation: Conversation,
+    turn: AssistantTurn,
+  ) => {
+    if (
+      projectId === null ||
+      turn.response === null ||
+      turn.response === undefined ||
+      turn.answerEvidenceSnapshotDigest == null ||
+      turn.inputSnapshotDigest === undefined ||
+      turn.agentRevisionId == null ||
+      turn.skillRevisionIds === undefined
+    )
+      return;
+    const approvedKnowledgeRevisionIds = [
+      ...new Set(
+        turn.response.citations.map((citation) => citation.source.revision),
+      ),
+    ];
+    const sourceRevisionId = approvedKnowledgeRevisionIds[0];
+    if (sourceRevisionId === undefined) return;
+    const stableTurn = turn.id.replace(/[^a-zA-Z0-9_-]/gu, "-");
+    const api = createTestPlanClient(projectId);
+    setGenerationJobId(null);
+    window.sessionStorage.removeItem(`tap:test-plan-generation:${projectId}`);
+    setGenerationError(null);
+    void api
+      .generate(
+        {
+          conversationId: conversation.id,
+          turnId: turn.id,
+          inputSnapshotDigest: turn.inputSnapshotDigest,
+          answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
+          requirementScope: {
+            scopeId: `scope-${stableTurn}`,
+            version: 1,
+            requirements: [
+              {
+                requirementId: `requirement-${stableTurn}`,
+                sourceRevisionId,
+                locator: `turn:${turn.id}`,
+              },
+            ],
+          },
+          approvedKnowledgeRevisionIds,
+          modelAlias: turn.modelId,
+          modelRevisionId: turn.modelId,
+          agentRevisionId: turn.agentRevisionId,
+          skillRevisionIds: [...turn.skillRevisionIds],
+          objective: `为“${turn.prompt}”设计测试计划`,
+        },
+        crypto.randomUUID(),
+      )
+      .then((job) => {
+        setGenerationJobId(job.jobId);
+        setSelectedDurablePlan(null);
+        setActiveModule("test-management");
+        setSidebarCollapsed(true);
+      })
+      .catch(() => {
+        setGenerationError(
+          locale === "zh"
+            ? "无法启动测试计划生成，请返回 Tapper 重试。"
+            : "Test Plan generation could not start. Try again from Tapper.",
+        );
+        setSelectedDurablePlan(null);
+        setActiveModule("test-management");
+        setSidebarCollapsed(true);
+      });
+  };
   const updateActiveConversation = (
     update: (conversation: Conversation) => Conversation,
   ) => {
@@ -1768,43 +1851,9 @@ export function TapProductPrototype({
                     turn.answerEvidenceSnapshotDigest != null &&
                     turn.inputSnapshotDigest !== undefined &&
                     turn.agentRevisionId != null &&
-                    (turn.skillRevisionIds?.length ?? 0) > 0
-                      ? () => {
-                          const api = createTestPlanClient(projectId);
-                          setGenerationJobId(null);
-                          setGenerationError(null);
-                          void api
-                            .generate(
-                              {
-                                conversationId: activeConversation.id,
-                                turnId: turn.id,
-                                inputSnapshotDigest: turn.inputSnapshotDigest!,
-                                answerEvidenceSnapshotDigest:
-                                  turn.answerEvidenceSnapshotDigest!,
-                                modelAlias: turn.modelId,
-                                agentRevisionId: turn.agentRevisionId!,
-                                skillRevisionIds: [...turn.skillRevisionIds!],
-                                objective: `为“${turn.prompt}”设计测试计划`,
-                              },
-                              crypto.randomUUID(),
-                            )
-                            .then((job) => {
-                              setGenerationJobId(job.jobId);
-                              setSelectedDurablePlan(null);
-                              setActiveModule("test-management");
-                              setSidebarCollapsed(true);
-                            })
-                            .catch(() => {
-                              setGenerationError(
-                                locale === "zh"
-                                  ? "无法启动测试计划生成，请返回 Tapper 重试。"
-                                  : "Test Plan generation could not start. Try again from Tapper.",
-                              );
-                              setSelectedDurablePlan(null);
-                              setActiveModule("test-management");
-                              setSidebarCollapsed(true);
-                            });
-                        }
+                    (turn.skillRevisionIds?.length ?? 0) > 0 &&
+                    (turn.response?.citations.length ?? 0) > 0
+                      ? () => generateTestPlan(activeConversation, turn)
                       : undefined
                   }
                 />
@@ -1937,6 +1986,20 @@ export function TapProductPrototype({
               locale={locale}
               generationJobId={generationJobId}
               generationError={generationError}
+              onGenerateFromLatest={() => {
+                const latest = [...activeConversation.turns]
+                  .reverse()
+                  .find(
+                    (turn) =>
+                      turn.status === "completed" &&
+                      turn.answerEvidenceSnapshotDigest != null &&
+                      turn.inputSnapshotDigest !== undefined &&
+                      turn.agentRevisionId != null &&
+                      (turn.skillRevisionIds?.length ?? 0) > 0 &&
+                      (turn.response?.citations.length ?? 0) > 0,
+                  );
+                if (latest) generateTestPlan(activeConversation, latest);
+              }}
               onGoTapper={() => {
                 setActiveModule("tapper");
                 setSidebarCollapsed(isNarrowViewport);
@@ -1959,6 +2022,21 @@ export function TapProductPrototype({
               onBack={() => {
                 window.history.pushState(null, "", "/");
                 setSelectedDurablePlan(null);
+              }}
+              onOpenRevision={(planId, revisionId) => {
+                window.history.pushState(
+                  null,
+                  "",
+                  `/test-management/${encodeURIComponent(planId)}/revisions/${encodeURIComponent(revisionId)}`,
+                );
+                setSelectedDurablePlan({ planId, revisionId });
+              }}
+              onOpenAutomation={() => {
+                window.history.pushState(
+                  null,
+                  "",
+                  `/automation/new?testPlan=${encodeURIComponent(selectedDurablePlan.planId)}`,
+                );
               }}
             />
           )

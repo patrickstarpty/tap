@@ -4957,6 +4957,68 @@
         "title": "ReadyHealth",
         "type": "object"
       },
+      "RequirementScopeItemBody": {
+        "additionalProperties": false,
+        "properties": {
+          "locator": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Locator",
+            "type": "string"
+          },
+          "requirementId": {
+            "maxLength": 128,
+            "minLength": 3,
+            "title": "Requirementid",
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "maxLength": 128,
+            "minLength": 3,
+            "title": "Sourcerevisionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirementId",
+          "sourceRevisionId",
+          "locator"
+        ],
+        "title": "RequirementScopeItemBody",
+        "type": "object"
+      },
+      "RequirementScopeSnapshotBody": {
+        "additionalProperties": false,
+        "properties": {
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementScopeItemBody"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Requirements",
+            "type": "array"
+          },
+          "scopeId": {
+            "maxLength": 128,
+            "minLength": 3,
+            "title": "Scopeid",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scopeId",
+          "version",
+          "requirements"
+        ],
+        "title": "RequirementScopeSnapshotBody",
+        "type": "object"
+      },
       "RerankCompletedEvent": {
         "additionalProperties": false,
         "properties": {
@@ -6527,6 +6589,14 @@
             "title": "Caseid",
             "type": "string"
           },
+          "coveredRequirementIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Coveredrequirementids",
+            "type": "array"
+          },
           "critical": {
             "title": "Critical",
             "type": "boolean"
@@ -6568,6 +6638,14 @@
           "caseId": {
             "title": "Caseid",
             "type": "string"
+          },
+          "coveredRequirementIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Coveredrequirementids",
+            "type": "array"
           },
           "critical": {
             "title": "Critical",
@@ -6852,6 +6930,15 @@
             "title": "Answerevidencesnapshotdigest",
             "type": "string"
           },
+          "approvedKnowledgeRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Approvedknowledgerevisionids",
+            "type": "array"
+          },
           "conversationId": {
             "maxLength": 64,
             "minLength": 1,
@@ -6871,11 +6958,20 @@
             "title": "Modelalias",
             "type": "string"
           },
+          "modelRevisionId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Modelrevisionid",
+            "type": "string"
+          },
           "objective": {
             "maxLength": 4096,
             "minLength": 1,
             "title": "Objective",
             "type": "string"
+          },
+          "requirementScope": {
+            "$ref": "#/components/schemas/RequirementScopeSnapshotBody"
           },
           "skillRevisionIds": {
             "items": {
@@ -6898,7 +6994,10 @@
           "turnId",
           "inputSnapshotDigest",
           "answerEvidenceSnapshotDigest",
+          "requirementScope",
+          "approvedKnowledgeRevisionIds",
           "modelAlias",
+          "modelRevisionId",
           "agentRevisionId",
           "skillRevisionIds",
           "objective"
@@ -6996,6 +7095,141 @@
           "reason"
         ],
         "title": "TestPlanGenerationWaitingPayload",
+        "type": "object"
+      },
+      "TestPlanReviewDecisionView": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "decisionId": {
+            "title": "Decisionid",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "PENDING",
+              "ACCEPTED_UNCHANGED",
+              "ACCEPTED_MODIFIED",
+              "REJECTED"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reviewedContentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Reviewedcontentdigest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decisionId",
+          "disposition",
+          "reason",
+          "actorId",
+          "reviewedContentDigest"
+        ],
+        "title": "TestPlanReviewDecisionView",
+        "type": "object"
+      },
+      "TestPlanReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "enum": [
+              "PENDING",
+              "ACCEPTED_UNCHANGED",
+              "ACCEPTED_MODIFIED",
+              "REJECTED"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "disposition",
+          "reason"
+        ],
+        "title": "TestPlanReviewRequest",
+        "type": "object"
+      },
+      "TestPlanReviewSummaryView": {
+        "additionalProperties": false,
+        "properties": {
+          "modifiedCount": {
+            "title": "Modifiedcount",
+            "type": "integer"
+          },
+          "rejectedCount": {
+            "title": "Rejectedcount",
+            "type": "integer"
+          },
+          "reviewedCount": {
+            "title": "Reviewedcount",
+            "type": "integer"
+          },
+          "totalAdoptionRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totaladoptionrate"
+          },
+          "unchangedAdoptionRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unchangedadoptionrate"
+          },
+          "unchangedCount": {
+            "title": "Unchangedcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reviewedCount",
+          "unchangedCount",
+          "modifiedCount",
+          "rejectedCount",
+          "unchangedAdoptionRate",
+          "totalAdoptionRate"
+        ],
+        "title": "TestPlanReviewSummaryView",
         "type": "object"
       },
       "TestPlanRevisionPage": {
@@ -7116,12 +7350,42 @@
             ],
             "title": "Adoptedfromrevisionid"
           },
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "approvedKnowledgeRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Approvedknowledgerevisionids",
+            "type": "array"
+          },
           "assumptions": {
             "items": {
               "$ref": "#/components/schemas/TestPlanTextFactView"
             },
             "title": "Assumptions",
             "type": "array"
+          },
+          "authorActorId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authoractorid"
           },
           "cases": {
             "items": {
@@ -7144,6 +7408,11 @@
             "title": "Contentdigest",
             "type": "string"
           },
+          "coverageDenominator": {
+            "default": 0,
+            "title": "Coveragedenominator",
+            "type": "integer"
+          },
           "coverageGaps": {
             "items": {
               "$ref": "#/components/schemas/TestPlanCoverageGapView"
@@ -7151,9 +7420,63 @@
             "title": "Coveragegaps",
             "type": "array"
           },
+          "coveredRequirementCount": {
+            "default": 0,
+            "title": "Coveredrequirementcount",
+            "type": "integer"
+          },
+          "coveredRequirementIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Coveredrequirementids",
+            "type": "array"
+          },
           "deepLink": {
             "title": "Deeplink",
             "type": "string"
+          },
+          "generatedContentDigest": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 71,
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generatedcontentdigest"
+          },
+          "modelRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelrevisionid"
+          },
+          "needsReview": {
+            "default": false,
+            "title": "Needsreview",
+            "type": "boolean"
+          },
+          "needsReviewReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needsreviewreason"
           },
           "objective": {
             "title": "Objective",
@@ -7172,6 +7495,58 @@
               "type": "string"
             },
             "title": "Prerequisites",
+            "type": "array"
+          },
+          "requirementIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirementids",
+            "type": "array"
+          },
+          "requirementScopeDigest": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 71,
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementscopedigest"
+          },
+          "requirementScopeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementscopeid"
+          },
+          "requirementScopeVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementscopeversion"
+          },
+          "reviewDecisions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TestPlanReviewDecisionView"
+            },
+            "title": "Reviewdecisions",
             "type": "array"
           },
           "revisionId": {
@@ -7196,6 +7571,14 @@
             "title": "Scopeitems",
             "type": "array"
           },
+          "skillRevisionIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Skillrevisionids",
+            "type": "array"
+          },
           "status": {
             "enum": [
               "DRAFT",
@@ -7205,6 +7588,11 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "strictReviewRequired": {
+            "default": false,
+            "title": "Strictreviewrequired",
+            "type": "boolean"
           },
           "testPlanId": {
             "title": "Testplanid",
@@ -7298,6 +7686,14 @@
       "TestPlanStepView": {
         "additionalProperties": false,
         "properties": {
+          "citationIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Citationids",
+            "type": "array"
+          },
           "critical": {
             "title": "Critical",
             "type": "boolean"
@@ -7335,6 +7731,14 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "unknownIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknownids",
+            "type": "array"
           }
         },
         "required": [
@@ -13481,6 +13885,134 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/test-plans/generations/{job_id}/retry": {
+      "post": {
+        "operationId": "test_plan_retry_generation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanGenerationAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Generation",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/reviews/summary": {
+      "get": {
+        "operationId": "test_plan_review_summary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanReviewSummaryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Summary",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}": {
       "get": {
         "operationId": "test_plan_get_revision",
@@ -13593,6 +14125,17 @@
               "title": "If-Match",
               "type": "integer"
             }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -13638,6 +14181,89 @@
           }
         },
         "summary": "Replace Draft",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/fork": {
+      "post": {
+        "operationId": "test_plan_fork_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "test_plan_id",
+            "required": true,
+            "schema": {
+              "title": "Test Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fork Revision",
         "tags": [
           "test-management"
         ]
@@ -13731,6 +14357,109 @@
           }
         },
         "summary": "Publish Revision",
+        "tags": [
+          "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/test-plans/{test_plan_id}/revisions/{revision_id}/reviews": {
+      "post": {
+        "operationId": "test_plan_review_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "test_plan_id",
+            "required": true,
+            "schema": {
+              "title": "Test Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "If-Match",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Revision",
         "tags": [
           "test-management"
         ]

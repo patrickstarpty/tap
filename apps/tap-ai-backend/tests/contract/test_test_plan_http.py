@@ -85,7 +85,13 @@ def test_test_plan_routes_and_generation_contract_are_registered() -> None:
     operation = paths["/api/v1/projects/{project_id}/test-plans/generations"]["post"]
     assert operation["responses"]["202"]
     schema = app.openapi()["components"]["schemas"]["TestPlanGenerationRequestBody"]
-    assert {"inputSnapshotDigest", "answerEvidenceSnapshotDigest"} <= set(schema["required"])
+    assert {
+        "inputSnapshotDigest",
+        "answerEvidenceSnapshotDigest",
+        "requirementScope",
+        "approvedKnowledgeRevisionIds",
+        "modelRevisionId",
+    } <= set(schema["required"])
 
 
 def test_generation_is_idempotent_project_scoped_and_returns_deep_link() -> None:
@@ -96,7 +102,20 @@ def test_generation_is_idempotent_project_scoped_and_returns_deep_link() -> None
         "turnId": "turn_checkout",
         "inputSnapshotDigest": "sha256:" + "1" * 64,
         "answerEvidenceSnapshotDigest": "sha256:" + "2" * 64,
+        "requirementScope": {
+            "scopeId": "checkout_scope_v1",
+            "version": 1,
+            "requirements": [
+                {
+                    "requirementId": "requirement_checkout",
+                    "sourceRevisionId": "source_revision_checkout",
+                    "locator": "section:checkout",
+                }
+            ],
+        },
+        "approvedKnowledgeRevisionIds": ["source_revision_checkout"],
         "modelAlias": "tapper-chat",
+        "modelRevisionId": "tapper-chat-2026-09",
         "agentRevisionId": "validation-test-design-agent-v1",
         "skillRevisionIds": ["validation-test-design-skill-v1"],
         "objective": "Design checkout tests",
@@ -128,7 +147,20 @@ def test_generation_status_exposes_failure_and_result_link() -> None:
         "turnId": "turn_checkout",
         "inputSnapshotDigest": "sha256:" + "1" * 64,
         "answerEvidenceSnapshotDigest": "sha256:" + "2" * 64,
+        "requirementScope": {
+            "scopeId": "checkout_scope_v1",
+            "version": 1,
+            "requirements": [
+                {
+                    "requirementId": "requirement_checkout",
+                    "sourceRevisionId": "source_revision_checkout",
+                    "locator": "section:checkout",
+                }
+            ],
+        },
+        "approvedKnowledgeRevisionIds": ["source_revision_checkout"],
         "modelAlias": "tapper-chat",
+        "modelRevisionId": "tapper-chat-2026-09",
         "agentRevisionId": "validation-test-design-agent-v1",
         "skillRevisionIds": ["validation-test-design-skill-v1"],
         "objective": "Design checkout tests",
@@ -155,7 +187,20 @@ def test_generation_status_exposes_waiting_and_cancelled_lifecycle() -> None:
         "turnId": "turn_checkout",
         "inputSnapshotDigest": "sha256:" + "1" * 64,
         "answerEvidenceSnapshotDigest": "sha256:" + "2" * 64,
+        "requirementScope": {
+            "scopeId": "checkout_scope_v1",
+            "version": 1,
+            "requirements": [
+                {
+                    "requirementId": "requirement_checkout",
+                    "sourceRevisionId": "source_revision_checkout",
+                    "locator": "section:checkout",
+                }
+            ],
+        },
+        "approvedKnowledgeRevisionIds": ["source_revision_checkout"],
         "modelAlias": "tapper-chat",
+        "modelRevisionId": "tapper-chat-2026-09",
         "agentRevisionId": "validation-test-design-agent-v1",
         "skillRevisionIds": ["validation-test-design-skill-v1"],
         "objective": "Design checkout tests",
