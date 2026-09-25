@@ -130,6 +130,23 @@ def test_projection_metadata_preserves_existing_migration_constraints() -> None:
         )
 
 
+def test_review_cursor_queries_have_scoped_composite_indexes() -> None:
+    from tap.platform.db.registry import load_authoritative_metadata
+
+    metadata = load_authoritative_metadata()
+    expected = {
+        "knowledge_review_item_decision": (
+            "project_id",
+            "review_id",
+            "review_version",
+        ),
+        "knowledge_publication": ("project_id", "review_id", "publication_id"),
+    }
+    for table_name, columns in expected.items():
+        indexes = {tuple(index.columns.keys()) for index in metadata.tables[table_name].indexes}
+        assert columns in indexes, (table_name, columns, indexes)
+
+
 def test_all_business_metadata_requires_project_scope_and_parent_consistency() -> None:
     from sqlalchemy import ForeignKeyConstraint
 

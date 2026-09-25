@@ -33,8 +33,12 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import PolicyUnavailable
 from tap.modules.knowledge.application.review import (
     KnowledgeReviewApplication,
+    KnowledgeReviewListItemRead,
     KnowledgeReviewRead,
+    ReviewDecisionPageRead,
+    ReviewHistoryPageRead,
     ReviewInventoryPageRead,
+    ReviewPublicationPageRead,
 )
 from tap.modules.knowledge.domain.review import (
     KnowledgePublication,
@@ -69,14 +73,16 @@ class KnowledgeReviewHttpService:
         limit: int = 50,
         after_review_id: str | None = None,
     ) -> KnowledgeReviewPage:
-        values = await self._application.list_reviews(
+        values = await self._application.list_review_details(
             source_revision_id,
             limit=limit + 1,
             after_review_id=after_review_id,
         )
         return KnowledgeReviewPage(
-            items=[await self._review_detail(item) for item in values[:limit]],
-            next_cursor=values[limit - 1].revision.review_id if len(values) > limit else None,
+            items=[await self._batched_review_detail(item) for item in values[:limit]],
+            next_cursor=(
+                values[limit - 1].review.revision.review_id if len(values) > limit else None
+            ),
         )
 
     async def get_review(self, review_id: str) -> KnowledgeReviewDetail:
@@ -265,30 +271,36 @@ class KnowledgeReviewHttpService:
         current = await self._application.current_publication_for_review(revision)
         generation = await self._application.publication_generation(revision)
         allowed = await self._allowed_actions(revision, current, generation)
-        return KnowledgeReviewDetail(
-            **_review_summary(revision).model_dump(),
-            source_revision_ids=list(revision.source_revision_ids),
-            editor_actor_ids=list(revision.editor_actor_ids),
-            blocking_item_ids=list(revision.blocking_item_ids),
-            approved_item_ids=list(revision.approved_item_ids),
-            inventory=_inventory_page_detail(inventory),
-            decisions=[_decision_detail(item) for item in value.decisions[:500]],
-            decision_history=[_decision_detail(item) for item in decision_history.items],
-            decision_history_total_count=decision_history.total_count,
-            decision_history_next_cursor=decision_history.next_cursor,
-            history=[_history_detail(item) for item in history.items],
-            history_total_count=history.total_count,
-            history_next_cursor=history.next_cursor,
-            publication_ids=[item.publication_id for item in publications.items],
-            publication_total_count=publications.total_count,
-            publication_next_cursor=publications.next_cursor,
-            current_publication=None if current is None else _publication_detail(current),
-            publication_target=KnowledgePublicationTarget(
-                status="ready" if generation is not None else "unavailable",
-                generation=generation,
-                reason=None if generation is not None else "projection-not-ready",
-            ),
-            allowed_actions=allowed,
+        return _review_detail_from_parts(
+            value,
+            inventory=inventory,
+            decision_history=decision_history,
+            history=history,
+            publications=publications,
+            current=current,
+            generation=generation,
+            allowed=allowed,
+        )
+
+    async def _batched_review_detail(
+        self, value: KnowledgeReviewListItemRead
+    ) -> KnowledgeReviewDetail:
+        revision = value.review.revision
+        allowed = await self._allowed_actions(
+            revision,
+            value.current_publication,
+            value.generation,
+            authoritative=value.authoritative,
+        )
+        return _review_detail_from_parts(
+            value.review,
+            inventory=value.inventory,
+            decision_history=value.decision_history,
+            history=value.history,
+            publications=value.publications,
+            current=value.current_publication,
+            generation=value.generation,
+            allowed=allowed,
         )
 
     async def _allowed_actions(
@@ -296,6 +308,8 @@ class KnowledgeReviewHttpService:
         revision: KnowledgeReviewRevision,
         current: KnowledgePublication | None,
         generation: str | None,
+        *,
+        authoritative: bool | None = None,
     ) -> list[KnowledgeReviewAction]:
         applicable = await self._application.review_capabilities(
             revision,
@@ -303,6 +317,7 @@ class KnowledgeReviewHttpService:
             generation=generation,
             actor_id=self._scope.actor_id,
             now=self._clock(),
+            authoritative=authoritative,
         )
         candidates: list[tuple[KnowledgeReviewAction, str, str, str]] = [
             (
@@ -368,6 +383,45 @@ class KnowledgeReviewHttpService:
             if decision.allowed:
                 allowed.append(public)
         return allowed
+
+
+def _review_detail_from_parts(
+    value: KnowledgeReviewRead,
+    *,
+    inventory: ReviewInventoryPageRead,
+    decision_history: ReviewDecisionPageRead,
+    history: ReviewHistoryPageRead,
+    publications: ReviewPublicationPageRead,
+    current: KnowledgePublication | None,
+    generation: str | None,
+    allowed: list[KnowledgeReviewAction],
+) -> KnowledgeReviewDetail:
+    revision = value.revision
+    return KnowledgeReviewDetail(
+        **_review_summary(revision).model_dump(),
+        source_revision_ids=list(revision.source_revision_ids),
+        editor_actor_ids=list(revision.editor_actor_ids),
+        blocking_item_ids=list(revision.blocking_item_ids),
+        approved_item_ids=list(revision.approved_item_ids),
+        inventory=_inventory_page_detail(inventory),
+        decisions=[_decision_detail(item) for item in value.decisions[:500]],
+        decision_history=[_decision_detail(item) for item in decision_history.items],
+        decision_history_total_count=decision_history.total_count,
+        decision_history_next_cursor=decision_history.next_cursor,
+        history=[_history_detail(item) for item in history.items],
+        history_total_count=history.total_count,
+        history_next_cursor=history.next_cursor,
+        publication_ids=[item.publication_id for item in publications.items],
+        publication_total_count=publications.total_count,
+        publication_next_cursor=publications.next_cursor,
+        current_publication=None if current is None else _publication_detail(current),
+        publication_target=KnowledgePublicationTarget(
+            status="ready" if generation is not None else "unavailable",
+            generation=generation,
+            reason=None if generation is not None else "projection-not-ready",
+        ),
+        allowed_actions=allowed,
+    )
 
 
 def _review_summary(value: KnowledgeReviewRevision) -> KnowledgeReviewSummary:

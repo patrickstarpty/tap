@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import insert, update
+from sqlalchemy import event, insert, update
 
+from tap.interfaces.http.knowledge_review_service import KnowledgeReviewHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
     knowledge_document_revision,
@@ -14,6 +17,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
 )
 from tap.modules.knowledge.adapters.mysql_projection import knowledge_projection_state
 from tap.modules.knowledge.adapters.mysql_review import (
+    MysqlApprovedProjectionVerifier,
     MysqlKnowledgeReviewRepository,
     knowledge_publication,
     knowledge_review_history,
@@ -56,6 +60,23 @@ class ReadyProjection:
 
     async def generation_for(self, revision):  # type: ignore[no-untyped-def]
         return "generation-001"
+
+
+class AllowPolicy:
+    async def authorize(self, scope, action, resource):  # type: ignore[no-untyped-def]
+        return AuthorizationDecision(True, "test-allowed")
+
+
+class PausingPickerRepository(MysqlKnowledgeReviewRepository):
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self.project_locked = asyncio.Event()
+        self.release_picker = asyncio.Event()
+
+    async def _lock_project(self, session):  # type: ignore[no-untyped-def]
+        await super()._lock_project(session)
+        self.project_locked.set()
+        await self.release_picker.wait()
 
 
 async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
@@ -185,6 +206,175 @@ async def _seed_revision(sessions):  # type: ignore[no-untyped-def]
             )
         )
     return parsed, failed
+
+
+async def _publish_seeded_review(sessions, review_id):  # type: ignore[no-untyped-def]
+    parsed, failed = await _seed_revision(sessions)
+    repository = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
+    await repository.create_review(
+        KnowledgeReviewRevision(
+            review_id=review_id,
+            project_id=VALIDATION_SCOPE.project_id,
+            source_revision_ids=("rev_mysql_001",),
+            inventory_digest=parse_inventory_digest((parsed, failed)),
+            chunk_manifest_digest=DIGEST_B,
+            annotation_digest=DIGEST_C,
+            dependency_digest=AUTHORITY_DEPENDENCY_DIGEST,
+            editor_actor_ids=("synthetic-editor-01",),
+            reviewer_actor_id=None,
+            expires_at=NOW + timedelta(days=30),
+            status=ReviewStatus.CHECKING,
+            version=1,
+            blocking_item_ids=(),
+            approved_item_ids=(parsed.item_id,),
+        )
+    )
+    application = KnowledgeReviewApplication(repository, ReadyProjection())
+    submitted = await application.transition_review(
+        review_id,
+        target=ReviewStatus.REVIEWING,
+        actor_id="synthetic-editor-01",
+        expected_version=1,
+        now=NOW,
+    )
+    approved = await application.approve_review(
+        review_id,
+        actor_id=VALIDATION_SCOPE.actor_id,
+        expected_version=submitted.version,
+        now=NOW,
+    )
+    publication = await application.publish_review(
+        review_id,
+        generation="generation-001",
+        idempotency_key=f"publish-{review_id}",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        expected_version=approved.version,
+        now=NOW,
+    )
+    return parsed, failed, publication
+
+
+async def test_picker_holds_one_authority_snapshot_against_concurrent_withdraw(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        _, _, publication = await _publish_seeded_review(sessions, "krv_picker_snapshot")
+        picker_repository = PausingPickerRepository(sessions, scope=VALIDATION_SCOPE)
+        withdrawal_application = KnowledgeReviewApplication(
+            MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE), ReadyProjection()
+        )
+
+        picker_task = asyncio.create_task(picker_repository.list_published_sources(now=NOW))
+        await asyncio.wait_for(picker_repository.project_locked.wait(), timeout=1)
+        withdraw_task = asyncio.create_task(
+            withdrawal_application.withdraw_publication(
+                publication.publication_id,
+                idempotency_key="withdraw-picker-snapshot",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                expected_version=1,
+                now=NOW + timedelta(minutes=1),
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(withdraw_task), timeout=0.1)
+
+        picker_repository.release_picker.set()
+        assert [item.publication_id for item in await picker_task] == [publication.publication_id]
+        assert (await withdraw_task).status == "withdrawn"
+        assert await picker_repository.list_published_sources(now=NOW) == ()
+    finally:
+        await engine.dispose()
+
+
+async def test_picker_fetches_only_latest_inventory_attempt_with_a_bounded_sql_join(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        parsed, failed, publication = await _publish_seeded_review(
+            sessions, "krv_picker_latest_attempt"
+        )
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_parse_inventory),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "inventory_row_id": f"inventory-old-{attempt:04d}",
+                        "source_revision_id": "rev_mysql_001",
+                        "attempt": attempt,
+                        "item_id": f"pi_old_{attempt:04d}",
+                        "ordinal": 0,
+                        "item_kind": ParseInventoryKind.PARAGRAPH.value,
+                        "locator": f"paragraph:{attempt}",
+                        "status": ParseInventoryStatus.PARSED.value,
+                        "reason": None,
+                        "artifact_digest": DIGEST_A,
+                        "decision_actor_id": None,
+                        "created_at": NOW.replace(tzinfo=None),
+                    }
+                    for attempt in range(3, 1003)
+                ],
+            )
+            await session.execute(
+                insert(knowledge_parse_inventory),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "inventory_row_id": f"inventory-current-{ordinal}",
+                        "source_revision_id": item.source_revision_id,
+                        "attempt": 1003,
+                        "item_id": item.item_id,
+                        "ordinal": ordinal,
+                        "item_kind": item.kind.value,
+                        "locator": item.locator,
+                        "status": item.status.value,
+                        "reason": item.reason,
+                        "artifact_digest": item.artifact_digest,
+                        "decision_actor_id": item.decision_actor_id,
+                        "created_at": NOW.replace(tzinfo=None),
+                    }
+                    for ordinal, item in enumerate((parsed, failed))
+                ],
+            )
+            await session.execute(
+                update(knowledge_document_revision)
+                .where(knowledge_document_revision.c.revision_id == "rev_mysql_001")
+                .values(parse_inventory_attempt=1003)
+            )
+
+        statements: list[str] = []
+
+        def capture_statement(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            del conn, cursor, parameters, context, executemany
+            statements.append(" ".join(statement.lower().split()))
+
+        event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+        try:
+            result = await MysqlKnowledgeReviewRepository(
+                sessions, scope=VALIDATION_SCOPE
+            ).list_published_sources(now=NOW)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+        assert [item.publication_id for item in result] == [publication.publication_id]
+        assert result[0].approved_item_count == 1
+        inventory_queries = [
+            statement for statement in statements if "from knowledge_parse_inventory" in statement
+        ]
+        assert len(inventory_queries) == 1
+        assert "join knowledge_document_revision" in inventory_queries[0]
+        assert (
+            "knowledge_parse_inventory.attempt = "
+            "knowledge_document_revision.parse_inventory_attempt"
+        ) in inventory_queries[0]
+        assert " limit " in inventory_queries[0]
+        assert parsed.item_id in publication.approved_item_ids
+    finally:
+        await engine.dispose()
 
 
 async def test_review_state_decisions_history_and_picker_survive_repository_restart(
@@ -733,6 +923,49 @@ async def test_child_collection_pages_reach_all_rows_beyond_501(
                 ],
             )
 
+        child_query_count = 0
+
+        def count_child_queries(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            del conn, cursor, statement, parameters, context, executemany
+            nonlocal child_query_count
+            child_query_count += 1
+
+        event.listen(engine.sync_engine, "before_cursor_execute", count_child_queries)
+        try:
+            first_child_page = await KnowledgeReviewApplication(
+                repository, ReadyProjection()
+            ).decision_history_page("krv_mysql_pages", limit=200, after_version=None)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_child_queries)
+        assert len(first_child_page.items) == 200
+        assert child_query_count <= 3
+
+        detail_query_count = 0
+
+        def count_detail_queries(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            del conn, cursor, statement, parameters, context, executemany
+            nonlocal detail_query_count
+            detail_query_count += 1
+
+        service = KnowledgeReviewHttpService(
+            KnowledgeReviewApplication(
+                repository,
+                MysqlApprovedProjectionVerifier(sessions, scope=VALIDATION_SCOPE),
+            ),
+            scope=VALIDATION_SCOPE,
+            authorization_policy=AllowPolicy(),
+            clock=lambda: NOW,
+        )
+        event.listen(engine.sync_engine, "before_cursor_execute", count_detail_queries)
+        try:
+            review_page = await service.list_reviews(None, limit=50)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_detail_queries)
+        assert review_page.items[0].decision_history_total_count == 503
+        assert review_page.items[0].history_total_count == 504
+        assert review_page.items[0].publication_total_count == 502
+        assert detail_query_count <= 20
+
         inventory_one = await repository.inventory_page(
             "krv_mysql_pages", limit=1, after_item_id=None
         )
@@ -838,5 +1071,66 @@ async def test_source_revision_filter_is_applied_before_stable_review_page_limit
         )
 
         assert [item.review_id for item in page] == ["krv_zzz_target"]
+    finally:
+        await engine.dispose()
+
+
+async def test_review_list_batches_one_hundred_details_with_a_fixed_query_budget(
+    owned_project_mysql,
+):
+    url = owned_project_mysql.url.replace("mysql+pymysql://", "mysql+asyncmy://", 1)
+    engine, sessions = create_engine_and_session_factory(url)
+    try:
+        parsed, failed = await _seed_revision(sessions)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_review_revision),
+                [
+                    {
+                        **scope_values(VALIDATION_SCOPE),
+                        "review_id": f"krv_batch_{index:03d}",
+                        "source_revision_ids": ["rev_mysql_001"],
+                        "inventory_digest": parse_inventory_digest((parsed, failed)),
+                        "chunk_manifest_digest": DIGEST_B,
+                        "annotation_digest": DIGEST_C,
+                        "dependency_digest": AUTHORITY_DEPENDENCY_DIGEST,
+                        "editor_actor_ids": ["synthetic-editor-01"],
+                        "reviewer_actor_id": None,
+                        "expires_at": (NOW + timedelta(days=30)).replace(tzinfo=None),
+                        "status": ReviewStatus.CHECKING.value,
+                        "version": 1,
+                        "blocking_item_ids": [],
+                        "approved_item_ids": [parsed.item_id],
+                        "created_at": NOW.replace(tzinfo=None),
+                        "updated_at": NOW.replace(tzinfo=None),
+                    }
+                    for index in range(100)
+                ],
+            )
+
+        query_count = 0
+
+        def count_queries(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            del conn, cursor, statement, parameters, context, executemany
+            nonlocal query_count
+            query_count += 1
+
+        service = KnowledgeReviewHttpService(
+            KnowledgeReviewApplication(
+                MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE),
+                MysqlApprovedProjectionVerifier(sessions, scope=VALIDATION_SCOPE),
+            ),
+            scope=VALIDATION_SCOPE,
+            authorization_policy=AllowPolicy(),
+            clock=lambda: NOW,
+        )
+        event.listen(engine.sync_engine, "before_cursor_execute", count_queries)
+        try:
+            page = await service.list_reviews(None, limit=100)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_queries)
+
+        assert len(page.items) == 100
+        assert query_count <= 20
     finally:
         await engine.dispose()

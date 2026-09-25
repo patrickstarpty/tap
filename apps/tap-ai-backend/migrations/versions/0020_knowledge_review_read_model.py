@@ -123,6 +123,16 @@ def upgrade() -> None:
         ),
         *_scope_constraints("knowledge_review_history"),
     )
+    op.create_index(
+        "ix_review_decision_project_review_version",
+        "knowledge_review_item_decision",
+        ["project_id", "review_id", "review_version"],
+    )
+    op.create_index(
+        "ix_publication_project_review_cursor",
+        "knowledge_publication",
+        ["project_id", "review_id", "publication_id"],
+    )
     op.execute(
         "INSERT INTO knowledge_review_history ("
         "history_id, review_id, review_version, action, history_actor_id, item_id, "

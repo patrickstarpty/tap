@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
@@ -153,6 +153,25 @@ async def test_0019_publish_and_withdraw_commands_replay_after_0020_upgrade(
                     },
                 )
         owned_project_mysql.upgrade("0020_knowledge_review_read_model")
+        schema = inspect(sync_engine)
+        indexes = {
+            table_name: {
+                (index["name"], tuple(index["column_names"]))
+                for index in schema.get_indexes(table_name)
+            }
+            for table_name in (
+                "knowledge_review_item_decision",
+                "knowledge_publication",
+            )
+        }
+        assert (
+            "ix_review_decision_project_review_version",
+            ("project_id", "review_id", "review_version"),
+        ) in indexes["knowledge_review_item_decision"]
+        assert (
+            "ix_publication_project_review_cursor",
+            ("project_id", "review_id", "publication_id"),
+        ) in indexes["knowledge_publication"]
     finally:
         sync_engine.dispose()
 

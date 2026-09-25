@@ -8,6 +8,7 @@ from typing import Literal, cast
 
 from sqlalchemy import (
     Column,
+    Index,
     Integer,
     String,
     Table,
@@ -33,6 +34,8 @@ from tap.modules.knowledge.adapters.mysql_documents import (
 )
 from tap.modules.knowledge.adapters.mysql_projection import knowledge_projection_state
 from tap.modules.knowledge.application.review import (
+    KnowledgeReviewListItemRead,
+    KnowledgeReviewRead,
     ProjectionNotReady,
     PublishedSourceRecord,
     ReviewCommandConflict,
@@ -176,6 +179,19 @@ for _table in (
 ):
     augment_project_table(_table)
 
+Index(
+    "ix_review_decision_project_review_version",
+    knowledge_review_item_decision.c.project_id,
+    knowledge_review_item_decision.c.review_id,
+    knowledge_review_item_decision.c.review_version,
+)
+Index(
+    "ix_publication_project_review_cursor",
+    knowledge_publication.c.project_id,
+    knowledge_publication.c.review_id,
+    knowledge_publication.c.publication_id,
+)
+
 KNOWLEDGE_REVIEW_TABLES = (
     knowledge_review_revision,
     knowledge_review_item_decision,
@@ -247,6 +263,45 @@ class MysqlApprovedProjectionVerifier:
             return None
         generation = values[0]
         return generation if await self.verify(revision, generation) else None
+
+    async def generations_for(
+        self, revisions: tuple[KnowledgeReviewRevision, ...]
+    ) -> dict[str, str | None]:
+        if not revisions:
+            return {}
+        source_revision_ids = tuple(
+            sorted({item for revision in revisions for item in revision.source_revision_ids})
+        )
+        async with self._sessions() as session:
+            generations = tuple(
+                (
+                    await session.execute(
+                        select(knowledge_projection_state.c.physical_collection).where(
+                            *scope_predicates(knowledge_projection_state, self._scope)
+                        )
+                    )
+                ).scalars()
+            )
+            projected = frozenset(
+                (
+                    await session.execute(
+                        select(knowledge_document_revision.c.revision_id).where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id.in_(source_revision_ids),
+                            knowledge_document_revision.c.projection_digest.is_not(None),
+                        )
+                    )
+                ).scalars()
+            )
+        generation = generations[0] if len(generations) == 1 else None
+        return {
+            revision.review_id: (
+                generation
+                if generation is not None and set(revision.source_revision_ids) <= projected
+                else None
+            )
+            for revision in revisions
+        }
 
 
 class MysqlKnowledgeReviewRepository:
@@ -330,6 +385,400 @@ class MysqlKnowledgeReviewRepository:
                 .all()
             )
         return tuple(_review(row) for row in rows)
+
+    async def review_list_batch(
+        self,
+        revisions: tuple[KnowledgeReviewRevision, ...],
+        *,
+        child_limit: int,
+    ) -> tuple[KnowledgeReviewListItemRead, ...]:
+        if not revisions:
+            return ()
+        review_ids = tuple(revision.review_id for revision in revisions)
+        source_revision_ids = tuple(
+            sorted({item for revision in revisions for item in revision.source_revision_ids})
+        )
+        current_decisions = (
+            select(
+                *knowledge_review_item_decision.c,
+                func.row_number()
+                .over(
+                    partition_by=(
+                        knowledge_review_item_decision.c.review_id,
+                        knowledge_review_item_decision.c.item_id,
+                    ),
+                    order_by=(
+                        knowledge_review_item_decision.c.review_version.desc(),
+                        knowledge_review_item_decision.c.decision_id.desc(),
+                    ),
+                )
+                .label("decision_rank"),
+            )
+            .where(
+                *scope_predicates(knowledge_review_item_decision, self._scope),
+                knowledge_review_item_decision.c.review_id.in_(review_ids),
+            )
+            .subquery()
+        )
+        current_decision_pages = (
+            select(
+                *current_decisions.c,
+                func.row_number()
+                .over(
+                    partition_by=current_decisions.c.review_id,
+                    order_by=current_decisions.c.item_id,
+                )
+                .label("review_rank"),
+            )
+            .where(current_decisions.c.decision_rank == 1)
+            .subquery()
+        )
+        inventory_pages = (
+            select(
+                *knowledge_parse_inventory.c,
+                func.row_number()
+                .over(
+                    partition_by=knowledge_parse_inventory.c.source_revision_id,
+                    order_by=knowledge_parse_inventory.c.ordinal,
+                )
+                .label("source_rank"),
+            )
+            .select_from(
+                knowledge_parse_inventory.join(
+                    knowledge_document_revision,
+                    knowledge_document_revision.c.revision_id
+                    == knowledge_parse_inventory.c.source_revision_id,
+                )
+            )
+            .where(
+                *scope_predicates(knowledge_parse_inventory, self._scope),
+                *scope_predicates(knowledge_document_revision, self._scope),
+                knowledge_parse_inventory.c.source_revision_id.in_(source_revision_ids),
+                knowledge_parse_inventory.c.attempt
+                == knowledge_document_revision.c.parse_inventory_attempt,
+            )
+            .subquery()
+        )
+        decision_pages = (
+            select(
+                *knowledge_review_item_decision.c,
+                func.count()
+                .over(partition_by=knowledge_review_item_decision.c.review_id)
+                .label("total_count"),
+                func.row_number()
+                .over(
+                    partition_by=knowledge_review_item_decision.c.review_id,
+                    order_by=(
+                        knowledge_review_item_decision.c.review_version,
+                        knowledge_review_item_decision.c.item_id,
+                    ),
+                )
+                .label("page_rank"),
+            )
+            .where(
+                *scope_predicates(knowledge_review_item_decision, self._scope),
+                knowledge_review_item_decision.c.review_id.in_(review_ids),
+            )
+            .subquery()
+        )
+        history_pages = (
+            select(
+                *knowledge_review_history.c,
+                func.count()
+                .over(partition_by=knowledge_review_history.c.review_id)
+                .label("total_count"),
+                func.row_number()
+                .over(
+                    partition_by=knowledge_review_history.c.review_id,
+                    order_by=knowledge_review_history.c.review_version,
+                )
+                .label("page_rank"),
+            )
+            .where(
+                *scope_predicates(knowledge_review_history, self._scope),
+                knowledge_review_history.c.review_id.in_(review_ids),
+            )
+            .subquery()
+        )
+        publication_pages = (
+            select(
+                *knowledge_publication.c,
+                func.count()
+                .over(partition_by=knowledge_publication.c.review_id)
+                .label("total_count"),
+                func.row_number()
+                .over(
+                    partition_by=knowledge_publication.c.review_id,
+                    order_by=knowledge_publication.c.publication_id,
+                )
+                .label("page_rank"),
+            )
+            .where(
+                *scope_predicates(knowledge_publication, self._scope),
+                knowledge_publication.c.review_id.in_(review_ids),
+            )
+            .subquery()
+        )
+        async with self._sessions() as session:
+            decision_rows = (
+                (
+                    await session.execute(
+                        select(current_decision_pages)
+                        .where(current_decision_pages.c.review_rank <= 501)
+                        .order_by(
+                            current_decision_pages.c.review_id,
+                            current_decision_pages.c.item_id,
+                        )
+                        .limit(len(review_ids) * 501)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            inventory_rows = (
+                (
+                    await session.execute(
+                        select(inventory_pages)
+                        .where(inventory_pages.c.source_rank <= 501)
+                        .order_by(
+                            inventory_pages.c.source_revision_id,
+                            inventory_pages.c.ordinal,
+                        )
+                        .limit(len(source_revision_ids) * 501)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            inventory_count_rows = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_parse_inventory.c.source_revision_id,
+                            knowledge_parse_inventory.c.status,
+                            func.count().label("item_count"),
+                        )
+                        .select_from(
+                            knowledge_parse_inventory.join(
+                                knowledge_document_revision,
+                                knowledge_document_revision.c.revision_id
+                                == knowledge_parse_inventory.c.source_revision_id,
+                            )
+                        )
+                        .where(
+                            *scope_predicates(knowledge_parse_inventory, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_parse_inventory.c.source_revision_id.in_(source_revision_ids),
+                            knowledge_parse_inventory.c.attempt
+                            == knowledge_document_revision.c.parse_inventory_attempt,
+                        )
+                        .group_by(
+                            knowledge_parse_inventory.c.source_revision_id,
+                            knowledge_parse_inventory.c.status,
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            revision_rows = (
+                (
+                    await session.execute(
+                        select(
+                            knowledge_document_revision.c.revision_id,
+                            knowledge_document_revision.c.source_content_hash,
+                            knowledge_document_revision.c.parser_config_digest,
+                            knowledge_document_revision.c.parse_inventory_attempt,
+                            knowledge_document_revision.c.parse_inventory_digest,
+                            knowledge_document_revision.c.chunk_manifest_digest,
+                            knowledge_document_revision.c.projection_digest,
+                        )
+                        .where(
+                            *scope_predicates(knowledge_document_revision, self._scope),
+                            knowledge_document_revision.c.revision_id.in_(source_revision_ids),
+                        )
+                        .order_by(knowledge_document_revision.c.revision_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            decision_page_rows = (
+                (
+                    await session.execute(
+                        select(decision_pages)
+                        .where(decision_pages.c.page_rank <= child_limit + 1)
+                        .order_by(decision_pages.c.review_id, decision_pages.c.review_version)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            history_page_rows = (
+                (
+                    await session.execute(
+                        select(history_pages)
+                        .where(history_pages.c.page_rank <= child_limit + 1)
+                        .order_by(history_pages.c.review_id, history_pages.c.review_version)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            publication_page_rows = (
+                (
+                    await session.execute(
+                        select(publication_pages)
+                        .where(publication_pages.c.page_rank <= child_limit + 1)
+                        .order_by(
+                            publication_pages.c.review_id,
+                            publication_pages.c.publication_id,
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            current_row = (
+                (
+                    await session.execute(
+                        select(knowledge_publication)
+                        .join(
+                            knowledge_current_publication,
+                            (
+                                knowledge_current_publication.c.project_id
+                                == knowledge_publication.c.project_id
+                            )
+                            & (
+                                knowledge_current_publication.c.publication_id
+                                == knowledge_publication.c.publication_id
+                            ),
+                        )
+                        .where(
+                            *scope_predicates(knowledge_publication, self._scope),
+                            knowledge_current_publication.c.pointer_id
+                            == _current_pointer_id(self._scope),
+                            knowledge_publication.c.status == "published",
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+
+        current = None if current_row is None else _publication(current_row)
+        values: list[KnowledgeReviewListItemRead] = []
+        for revision in revisions:
+            review_decisions = tuple(
+                _decision(row) for row in decision_rows if row["review_id"] == revision.review_id
+            )
+            inventory = tuple(
+                row
+                for row in inventory_rows
+                if row["source_revision_id"] in revision.source_revision_ids
+            )
+            inventory_by_item = tuple(sorted(inventory, key=lambda row: row["item_id"]))
+            inventory_items = tuple(
+                _inventory_record(row) for row in inventory_by_item[:child_limit]
+            )
+            inventory_counts = {
+                status: sum(
+                    int(row["item_count"])
+                    for row in inventory_count_rows
+                    if row["source_revision_id"] in revision.source_revision_ids
+                    and row["status"] == status
+                )
+                for status in ("parsed", "failed", "needs_review", "excluded")
+            }
+            review_decision_page_rows = tuple(
+                row for row in decision_page_rows if row["review_id"] == revision.review_id
+            )
+            decision_items = tuple(
+                _decision(row) for row in review_decision_page_rows[:child_limit]
+            )
+            review_history_page_rows = tuple(
+                row for row in history_page_rows if row["review_id"] == revision.review_id
+            )
+            history_items = tuple(_history(row) for row in review_history_page_rows[:child_limit])
+            review_publication_page_rows = tuple(
+                row for row in publication_page_rows if row["review_id"] == revision.review_id
+            )
+            publication_items = tuple(
+                _publication(row) for row in review_publication_page_rows[:child_limit]
+            )
+            review_revision_rows = tuple(
+                row for row in revision_rows if row["revision_id"] in revision.source_revision_ids
+            )
+            review_current = (
+                current if current is not None and current.review_id == revision.review_id else None
+            )
+            values.append(
+                KnowledgeReviewListItemRead(
+                    review=KnowledgeReviewRead(
+                        revision=revision,
+                        decisions=review_decisions,
+                        decision_history=decision_items,
+                        history=history_items,
+                    ),
+                    inventory=ReviewInventoryPageRead(
+                        items=inventory_items,
+                        total_count=sum(inventory_counts.values()),
+                        parsed_count=inventory_counts["parsed"],
+                        failed_count=inventory_counts["failed"],
+                        needs_review_count=inventory_counts["needs_review"],
+                        excluded_count=inventory_counts["excluded"],
+                        next_cursor=(
+                            inventory_items[-1].item_id
+                            if len(inventory_by_item) > child_limit and inventory_items
+                            else None
+                        ),
+                    ),
+                    decision_history=ReviewDecisionPageRead(
+                        items=decision_items,
+                        total_count=(
+                            int(review_decision_page_rows[0]["total_count"])
+                            if review_decision_page_rows
+                            else 0
+                        ),
+                        next_cursor=(
+                            decision_items[-1].review_version
+                            if len(review_decision_page_rows) > child_limit and decision_items
+                            else None
+                        ),
+                    ),
+                    history=ReviewHistoryPageRead(
+                        items=history_items,
+                        total_count=(
+                            int(review_history_page_rows[0]["total_count"])
+                            if review_history_page_rows
+                            else 0
+                        ),
+                        next_cursor=(
+                            history_items[-1].review_version
+                            if len(review_history_page_rows) > child_limit and history_items
+                            else None
+                        ),
+                    ),
+                    publications=ReviewPublicationPageRead(
+                        items=publication_items,
+                        total_count=(
+                            int(review_publication_page_rows[0]["total_count"])
+                            if review_publication_page_rows
+                            else 0
+                        ),
+                        next_cursor=(
+                            publication_items[-1].publication_id
+                            if len(review_publication_page_rows) > child_limit and publication_items
+                            else None
+                        ),
+                    ),
+                    current_publication=review_current,
+                    authoritative=_review_authority_matches(
+                        revision, review_revision_rows, inventory
+                    ),
+                )
+            )
+        return tuple(values)
 
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         review = await self.get_review(review_id)
@@ -487,73 +936,7 @@ class MysqlKnowledgeReviewRepository:
         if lock:
             inventory_statement = inventory_statement.with_for_update()
         inventory_rows = (await session.execute(inventory_statement)).mappings().all()
-        if len(inventory_rows) > 500:
-            return False
-        latest = inventory_rows
-        if any(
-            not any(item["source_revision_id"] == source_id for item in latest)
-            for source_id in revision.source_revision_ids
-        ):
-            return False
-        inventory_digests = tuple(
-            (row["revision_id"], row["parse_inventory_digest"]) for row in rows
-        )
-        try:
-            actual_inventory_digests = tuple(
-                (
-                    source_id,
-                    parse_inventory_digest(
-                        tuple(
-                            ParseInventoryItem(
-                                source_revision_id=item["source_revision_id"],
-                                item_id=item["item_id"],
-                                kind=ParseInventoryKind(item["item_kind"]),
-                                locator=item["locator"],
-                                status=ParseInventoryStatus(item["status"]),
-                                artifact_digest=item["artifact_digest"],
-                                reason=item["reason"],
-                                decision_actor_id=item["decision_actor_id"],
-                            )
-                            for item in latest
-                            if item["source_revision_id"] == source_id
-                        )
-                    ),
-                )
-                for source_id in (row["revision_id"] for row in rows)
-            )
-        except (TypeError, ValueError):
-            return False
-        if inventory_digests != actual_inventory_digests:
-            return False
-        chunk_digests = tuple((row["revision_id"], row["chunk_manifest_digest"]) for row in rows)
-        expected_inventory = (
-            inventory_digests[0][1]
-            if len(inventory_digests) == 1
-            else canonical_digest({"sourceRevisionInventoryDigests": inventory_digests})
-        )
-        expected_chunks = (
-            chunk_digests[0][1]
-            if len(chunk_digests) == 1
-            else canonical_digest({"sourceRevisionChunkDigests": chunk_digests})
-        )
-        expected_dependency = review_dependency_digest(
-            tuple(
-                (
-                    row["revision_id"],
-                    row["source_content_hash"],
-                    row["parser_config_digest"],
-                    row["projection_digest"],
-                )
-                for row in rows
-            )
-        )
-        latest_ids = {row["item_id"] for row in latest}
-        return (
-            expected_inventory == revision.inventory_digest
-            and expected_chunks == revision.chunk_manifest_digest
-            and expected_dependency == revision.dependency_digest
-            and set(revision.approved_item_ids) <= latest_ids
-        )
+        return _review_authority_matches(revision, rows, inventory_rows)
 
     async def save_review(
         self,
@@ -1095,10 +1478,39 @@ class MysqlKnowledgeReviewRepository:
         )
 
     async def list_published_sources(self, *, now: datetime) -> tuple[PublishedSourceRecord, ...]:
-        publication = await self.current_publication()
-        if publication is None or publication.expires_at <= now:
-            return ()
-        async with self._sessions() as session:
+        pointer_id = _current_pointer_id(self._scope)
+        async with self._sessions() as session, session.begin():
+            await self._lock_project(session)
+            publication_row = (
+                (
+                    await session.execute(
+                        select(knowledge_publication)
+                        .join(
+                            knowledge_current_publication,
+                            (
+                                knowledge_current_publication.c.project_id
+                                == knowledge_publication.c.project_id
+                            )
+                            & (
+                                knowledge_current_publication.c.publication_id
+                                == knowledge_publication.c.publication_id
+                            ),
+                        )
+                        .where(
+                            *scope_predicates(knowledge_publication, self._scope),
+                            knowledge_current_publication.c.pointer_id == pointer_id,
+                            knowledge_publication.c.status == "published",
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if publication_row is None:
+                return ()
+            publication = _publication(publication_row)
+            if publication.expires_at <= now:
+                return ()
             revision_rows = (
                 (
                     await session.execute(
@@ -1149,12 +1561,28 @@ class MysqlKnowledgeReviewRepository:
                             knowledge_parse_inventory.c.attempt,
                             knowledge_parse_inventory.c.item_id,
                             knowledge_parse_inventory.c.status,
-                        ).where(
+                        )
+                        .select_from(
+                            knowledge_parse_inventory.join(
+                                knowledge_document_revision,
+                                knowledge_document_revision.c.revision_id
+                                == knowledge_parse_inventory.c.source_revision_id,
+                            )
+                        )
+                        .where(
                             *scope_predicates(knowledge_parse_inventory, self._scope),
+                            *scope_predicates(knowledge_document_revision, self._scope),
                             knowledge_parse_inventory.c.source_revision_id.in_(
                                 publication.source_revision_ids
                             ),
+                            knowledge_parse_inventory.c.attempt
+                            == knowledge_document_revision.c.parse_inventory_attempt,
                         )
+                        .order_by(
+                            knowledge_parse_inventory.c.source_revision_id,
+                            knowledge_parse_inventory.c.ordinal,
+                        )
+                        .limit(501)
                     )
                 )
                 .mappings()
@@ -1163,12 +1591,9 @@ class MysqlKnowledgeReviewRepository:
         approved = set(publication.approved_item_ids)
         if {row["revision_id"] for row in revision_rows} != set(publication.source_revision_ids):
             return ()
-        attempts = {row["revision_id"]: row["parse_inventory_attempt"] for row in revision_rows}
-        latest_inventory = tuple(
-            item
-            for item in inventory_rows
-            if item["attempt"] == attempts.get(item["source_revision_id"])
-        )
+        if len(inventory_rows) > 500:
+            return ()
+        latest_inventory = tuple(inventory_rows)
         publishable_ids = {
             item["item_id"] for item in latest_inventory if item["status"] == "parsed"
         }
@@ -1523,6 +1948,81 @@ class MysqlKnowledgeReviewRepository:
                 payload=payload,
             ),
         )
+
+
+def _review_authority_matches(
+    revision: KnowledgeReviewRevision,
+    revision_rows,  # type: ignore[no-untyped-def]
+    inventory_rows,  # type: ignore[no-untyped-def]
+) -> bool:
+    if len(revision_rows) != len(revision.source_revision_ids) or len(inventory_rows) > 500:
+        return False
+    if any(
+        not any(item["source_revision_id"] == source_id for item in inventory_rows)
+        for source_id in revision.source_revision_ids
+    ):
+        return False
+    inventory_digests = tuple(
+        (row["revision_id"], row["parse_inventory_digest"]) for row in revision_rows
+    )
+    try:
+        actual_inventory_digests = tuple(
+            (
+                source_id,
+                parse_inventory_digest(
+                    tuple(
+                        ParseInventoryItem(
+                            source_revision_id=item["source_revision_id"],
+                            item_id=item["item_id"],
+                            kind=ParseInventoryKind(item["item_kind"]),
+                            locator=item["locator"],
+                            status=ParseInventoryStatus(item["status"]),
+                            artifact_digest=item["artifact_digest"],
+                            reason=item["reason"],
+                            decision_actor_id=item["decision_actor_id"],
+                        )
+                        for item in inventory_rows
+                        if item["source_revision_id"] == source_id
+                    )
+                ),
+            )
+            for source_id in (row["revision_id"] for row in revision_rows)
+        )
+    except (TypeError, ValueError):
+        return False
+    if inventory_digests != actual_inventory_digests:
+        return False
+    chunk_digests = tuple(
+        (row["revision_id"], row["chunk_manifest_digest"]) for row in revision_rows
+    )
+    expected_inventory = (
+        inventory_digests[0][1]
+        if len(inventory_digests) == 1
+        else canonical_digest({"sourceRevisionInventoryDigests": inventory_digests})
+    )
+    expected_chunks = (
+        chunk_digests[0][1]
+        if len(chunk_digests) == 1
+        else canonical_digest({"sourceRevisionChunkDigests": chunk_digests})
+    )
+    expected_dependency = review_dependency_digest(
+        tuple(
+            (
+                row["revision_id"],
+                row["source_content_hash"],
+                row["parser_config_digest"],
+                row["projection_digest"],
+            )
+            for row in revision_rows
+        )
+    )
+    latest_ids = {row["item_id"] for row in inventory_rows}
+    return (
+        expected_inventory == revision.inventory_digest
+        and expected_chunks == revision.chunk_manifest_digest
+        and expected_dependency == revision.dependency_digest
+        and set(revision.approved_item_ids) <= latest_ids
+    )
 
 
 def _review_values(value: KnowledgeReviewRevision) -> dict[str, object]:

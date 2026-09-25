@@ -99,6 +99,18 @@ class ReviewPublicationPageRead:
 
 
 @dataclass(frozen=True, slots=True)
+class KnowledgeReviewListItemRead:
+    review: KnowledgeReviewRead
+    inventory: ReviewInventoryPageRead
+    decision_history: ReviewDecisionPageRead
+    history: ReviewHistoryPageRead
+    publications: ReviewPublicationPageRead
+    current_publication: KnowledgePublication | None
+    authoritative: bool
+    generation: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PublishedSourceRecord:
     source_id: str
     document_id: str
@@ -143,6 +155,12 @@ class KnowledgeReviewRepository(Protocol):
         limit: int = 50,
         after_review_id: str | None = None,
     ) -> tuple[KnowledgeReviewRevision, ...]: ...
+    async def review_list_batch(
+        self,
+        revisions: tuple[KnowledgeReviewRevision, ...],
+        *,
+        child_limit: int,
+    ) -> tuple[KnowledgeReviewListItemRead, ...]: ...
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]: ...
     async def inventory_page(
         self, review_id: str, *, limit: int, after_item_id: str | None
@@ -289,7 +307,35 @@ class KnowledgeReviewApplication:
             limit=limit,
             after_review_id=after_review_id,
         )
-        return tuple([await self.get_review(item.review_id) for item in revisions])
+        values = await self._repository.review_list_batch(revisions, child_limit=501)
+        return tuple(item.review for item in values)
+
+    async def list_review_details(
+        self,
+        source_revision_id: str | None = None,
+        *,
+        limit: int = 50,
+        after_review_id: str | None = None,
+        child_limit: int = 100,
+    ) -> tuple[KnowledgeReviewListItemRead, ...]:
+        revisions = await self._repository.list_reviews(
+            source_revision_id,
+            limit=limit,
+            after_review_id=after_review_id,
+        )
+        values = await self._repository.review_list_batch(revisions, child_limit=child_limit)
+        discover_many = getattr(self._projection, "generations_for", None)
+        if discover_many is not None:
+            generations = await discover_many(revisions)
+        else:
+            generations = {
+                revision.review_id: await self.publication_generation(revision)
+                for revision in revisions
+            }
+        return tuple(
+            replace(value, generation=generations.get(value.review.revision.review_id))
+            for value in values
+        )
 
     async def list_publications(self, review_id: str) -> tuple[KnowledgePublication, ...]:
         await self._required_review(review_id)
@@ -384,8 +430,10 @@ class KnowledgeReviewApplication:
         generation: str | None,
         actor_id: str,
         now: datetime,
+        authoritative: bool | None = None,
     ) -> frozenset[str]:
-        authoritative = await self._repository.review_authority(revision)
+        if authoritative is None:
+            authoritative = await self._repository.review_authority(revision)
         active = revision.expires_at > now
         values: set[str] = {"read_original"}
         if (
@@ -788,6 +836,49 @@ class InMemoryKnowledgeReviewRepository:
         if after_review_id is not None:
             values = tuple(item for item in values if item.review_id > after_review_id)
         return values[:limit]
+
+    async def review_list_batch(
+        self,
+        revisions: tuple[KnowledgeReviewRevision, ...],
+        *,
+        child_limit: int,
+    ) -> tuple[KnowledgeReviewListItemRead, ...]:
+        current_by_project = {
+            revision.project_id: await self.current_publication(revision.project_id)
+            for revision in revisions
+        }
+        values: list[KnowledgeReviewListItemRead] = []
+        for revision in revisions:
+            current = current_by_project[revision.project_id]
+            if current is not None and current.review_id != revision.review_id:
+                current = None
+            values.append(
+                KnowledgeReviewListItemRead(
+                    review=KnowledgeReviewRead(
+                        revision=revision,
+                        decisions=await self.list_decisions(revision.review_id),
+                        decision_history=await self.list_decision_history(revision.review_id),
+                        history=await self.list_history(revision.review_id),
+                    ),
+                    inventory=await self.inventory_page(
+                        revision.review_id, limit=child_limit, after_item_id=None
+                    ),
+                    decision_history=await self.decision_history_page(
+                        revision.review_id, limit=child_limit, after_version=None
+                    ),
+                    history=await self.history_page(
+                        revision.review_id, limit=child_limit, after_version=None
+                    ),
+                    publications=await self.publication_page(
+                        revision.review_id,
+                        limit=child_limit,
+                        after_publication_id=None,
+                    ),
+                    current_publication=current,
+                    authoritative=await self.review_authority(revision),
+                )
+            )
+        return tuple(values)
 
     async def list_inventory(self, review_id: str) -> tuple[ReviewInventoryRecord, ...]:
         return ()
