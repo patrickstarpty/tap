@@ -46,7 +46,7 @@ def _pdf_with_text(*pages: str) -> bytes:
     )
 
 
-def _pdf_with_streams(*streams: bytes) -> bytes:
+def _pdf_with_streams(*streams: bytes, dictionary_prefix: bytes = b"") -> bytes:
     objects: list[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>"]
     page_ids = [4 + index * 2 for index in range(len(streams))]
     kids = " ".join(f"{item} 0 R" for item in page_ids)
@@ -60,7 +60,13 @@ def _pdf_with_streams(*streams: bytes) -> bytes:
                 f"/MediaBox [0 0 612 792] /Contents {page_id + 1} 0 R >>"
             ).encode()
         )
-        objects.append(f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream")
+        objects.append(
+            b"<< "
+            + dictionary_prefix
+            + f"/Length {len(stream)} >>\nstream\n".encode()
+            + stream
+            + b"\nendstream"
+        )
     body = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for number, value in enumerate(objects, start=1):
@@ -242,6 +248,32 @@ def test_text_provenance_does_not_scan_the_source_once_per_inventory_item() -> N
     assert CountingBytes.find_calls == 0
 
 
+def test_text_provenance_hashes_a_large_source_once_per_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Excerpt construction must reuse the artifact digest instead of rehashing per item."""
+    from tap.modules.knowledge.adapters import document_parsers
+
+    content = "\n\n".join(f"item-{index}-" + "x" * 6000 for index in range(200)).encode()
+    source = _identified_source("many.txt", MediaType.TEXT, content)
+    original_sha256 = document_parsers.canonical_sha256
+    source_hash_calls = 0
+
+    def counted_sha256(value: bytes) -> str:
+        nonlocal source_hash_calls
+        if value is source.content:
+            source_hash_calls += 1
+        return original_sha256(value)
+
+    monkeypatch.setattr(document_parsers, "canonical_sha256", counted_sha256)
+
+    artifact = ParserRegistry().parse(source)
+
+    assert len(artifact.parse_inventory) == 200
+    assert len(source.content) > 1_000_000
+    assert source_hash_calls == 1
+
+
 def test_markdown_original_range_keeps_source_markup_instead_of_relabeling_extracted_text() -> None:
     """The normalized heading title must never masquerade as the Markdown original."""
     content = "# 原始标题🙂\r\n\r\n正文".encode()
@@ -321,6 +353,24 @@ def test_pdf_provenance_uses_the_text_showing_token_not_an_identical_comment() -
     assert payload[: span.start_byte].endswith(b"[(")
 
 
+def test_pdf_provenance_skips_stream_decoy_inside_object_dictionary() -> None:
+    """Only the stream keyword after the parsed object dictionary can anchor text."""
+    stream = b"BT /F1 12 Tf 72 720 Td (Visible clause) Tj ET"
+    payload = _pdf_with_streams(
+        stream,
+        dictionary_prefix=b"/Decoy (stream\n" + stream + b") ",
+    )
+
+    artifact = ParserRegistry().parse(_identified_source("decoy.pdf", MediaType.PDF, payload))
+
+    item = next(item for item in artifact.parse_inventory if item.kind is ParseInventoryKind.PAGE)
+    assert item.original_excerpt is not None
+    span = item.original_excerpt
+    actual_stream_start = payload.rfind(b"\nstream\n") + len(b"\nstream\n")
+    assert span.start_byte >= actual_stream_start
+    assert payload[span.start_byte : span.end_byte] == b"Visible clause"
+
+
 def test_docx_split_runs_never_bind_to_matching_hidden_attribute_text() -> None:
     """A bookmark/attribute match is not provenance for visible split-run text."""
     payload = _stored_docx_body(
@@ -336,6 +386,20 @@ def test_docx_split_runs_never_bind_to_matching_hidden_attribute_text() -> None:
     )
     assert item.original_excerpt is None
     assert item.original_alignment_reason == "source-text-not-stably-addressable"
+
+
+def test_docx_text_tag_end_ignores_greater_than_inside_quoted_attribute() -> None:
+    """A quoted greater-than character must not become the visible text start."""
+    payload = _stored_docx_body('<w:p><w:r><w:t data-x=">">Visible clause</w:t></w:r></w:p>')
+
+    artifact = ParserRegistry().parse(_identified_source("quoted.docx", MediaType.DOCX, payload))
+
+    item = next(
+        item for item in artifact.parse_inventory if item.kind is ParseInventoryKind.PARAGRAPH
+    )
+    assert item.original_excerpt is not None
+    span = item.original_excerpt
+    assert payload[span.start_byte : span.end_byte] == b"Visible clause"
 
 
 def test_original_excerpt_range_rejects_malformed_or_unbounded_offsets() -> None:
